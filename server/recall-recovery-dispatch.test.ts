@@ -57,18 +57,23 @@ for(const venue of ['bot','channel'] as const)for(const cause of ['double-revoke
    // Two real refusals: the third request is the one memory-free send. Exactly one engine turn, in exactly this shape.
    const requests=[...log.matchAll(/fixture final fields=([^\n]+)/g)].map(match=>JSON.parse(match[1]));
    expect(requests).toHaveLength(1);
-   expect(requests[0]).toEqual({system:'',tools:['agents'],...(venue==='bot'?{transcript:[]}:{}),resumed:false,recall:'withheld',memoryFree:true,prepared:['agents']});
+   // MAIN Q3: the final memory-free attempt mounts zero tools; agents (a thread reader) can never bring refused context back.
+   // SABLE-IDENTITY-1020: a direct last rebuild keeps the bot's instructions (never an empty system); a room member's is unchanged.
+   const {system,...shape}=requests[0];// SABLE-IDENTITY-1020 room extension: a room member's memory-free send carries its room identity too, never the empty system.
+   expect(system).toContain('Fixture persona');
+   expect(shape).toEqual({tools:[],...(venue==='bot'?{transcript:[]}:{}),resumed:false,recall:'withheld',memoryFree:true,prepared:[]});
+   expect(requests[0].tools).not.toContain('agents');expect(requests[0].prepared).not.toContain('agents');
    expect([...log.matchAll(/turn dispatch recall=(\w+) thread=/g)].map(match=>match[1])).toEqual(['withheld']);
    expect((log.match(/\[memory\] starting turn without recalled memory /g)??[])).toHaveLength(1);
    const rows=await run(['messages',...destination,'--limit','30']);const shown=JSON.stringify(rows);
    expect(shown).toContain('Fixture reply.');expect(shown.split('Fixture reply.')).toHaveLength(2);
-   expect(shown).not.toContain('still being prepared');expect(shown).not.toContain('Could not start this reply');
+   expect(shown).not.toContain('still being prepared');expect(shown).not.toMatch(/could not start this reply|couldn't start this reply/i);
   }else{
    expect((log.match(/turn dispatch recall=/g)??[])).toHaveLength(0);
    if(cause==='selective-drop'){
     // The refused request had the message-only shape and the withheld label, and lacked only the prepared memory-free fact.
     const requests=[...log.matchAll(/fixture final fields=([^\n]+)/g)].map(match=>JSON.parse(match[1]));
-    expect(requests).toHaveLength(1);expect(requests[0].system).toBe('');expect(requests[0].tools).not.toContain('memory');
+    expect(requests).toHaveLength(1);expect(requests[0].system).toContain('Fixture persona');expect(requests[0].tools).not.toContain('memory');
     expect(requests[0].recall).toBe('withheld');expect(requests[0].memoryFree).toBeUndefined();expect(attempts).toBe(1);
    }
    const rows=await run(['messages',...destination,'--limit','30']);

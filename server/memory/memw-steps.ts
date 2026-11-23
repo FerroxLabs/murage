@@ -289,7 +289,7 @@ export interface IndexWriter {
   readonly pageSize: number; readonly stopped: boolean;
   L(): number; admit(kind: AdmitKind, reserve: number): boolean;
   write<T>(kind: AdmitKind, reserve: number, body: (meta: (key: string, value: string) => void) => T): T;
-  checkOwed(): boolean; check(): Promise<void>; sealAndTruncate(): Promise<{ truncated: boolean }>; prepareExit(): Promise<void>;
+  checkOwed(): boolean; check(): Promise<void>; sealAndTruncate(): Promise<{ truncated: boolean }>; prepareExit(): Promise<import("./index-wal.ts").ExitSealOutcome>;
 }
 // 1.8 merges and tier --------------------------------------------------------------------------------------------------------------
 

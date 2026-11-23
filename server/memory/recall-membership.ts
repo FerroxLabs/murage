@@ -21,6 +21,14 @@ function* rows(db: DatabaseSync, table: 'memory_scope_bindings'|'memory_scopes')
     for(const row of page){after=Number(row.position);yield row;}
   }
 }
+const BINDING_FIELDS="id,scope_id,subject_type,subject_id,state,CASE WHEN subject_type='human-thread' THEN json_extract(intent,'$.personId') END AS person";
+/** The bindings an owner view reads, in rowid order per subject (a later binding of one thread wins, as in the walk): each named thread's
+ * human-thread rows and the grants to one subject. Bounded by what the view names, never by how many bindings exist. */
+function* ownerBindings(db: DatabaseSync, threads: readonly string[], grantee: [string,string]): Generator<Row> {
+  const human=db.prepare(`SELECT rowid AS position,${BINDING_FIELDS} FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type='human-thread' AND subject_id=? ORDER BY rowid`);
+  for(const thread of new Set(threads))for(const row of human.all(thread))yield row;
+  yield* db.prepare(`SELECT rowid AS position,${BINDING_FIELDS} FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type=? AND subject_id=? AND state='granted' ORDER BY rowid`).all(...grantee);
+}
 export interface ConstructedMembership {scopes:string[];lineage:string[];personScopes:Set<string>;room:boolean;threadRecall?:boolean}
 /** The legacy oracle's complete rules, including partition-added scopes and the separate S(P) lineage union.
  * Every roster item, authority row, membership lookup, sort move and output copy is a resumable step. */
@@ -62,7 +70,12 @@ export function* recallMembershipSteps(db: DatabaseSync,binding: RecallViewBindi
   function* add(kind:string,key:string): Generator<void> {const row=scopeRow(db,kind,key);if(row)scopes.add(String(row.id));yield;}
   yield* add('conversation',threadId);
   if(isGroupPrincipal(principal)){for(const scope of scopes){result.scopes.push(scope);yield;}return result;}
-  for(const row of rows(db,'memory_scope_bindings')) {
+  // 1020 CTXSTOP-ROSTER B: for the workspace owner only the bindings of the threads this view can name (its own, the rooms') and the
+  // grants to its own bot or room are read, by memory_bindings_subject. A full page walk of every binding per view (system, pip and
+  // checkpoint rows included) made a rebuild of 1167 views after one roster change read 158k-285k pages a minute and held the
+  // admission ledger lock past its deadline. Another principal still walks every binding (personThreads needs them all).
+  const bindings=isWorkspaceOwner(principal)?ownerBindings(db,[threadId,...ownThreads,...[...roomThreads.values()].flatMap(threads=>[...threads])],group?['room',group.id]:['bot',botId]):rows(db,'memory_scope_bindings');
+  for(const row of bindings) {
     budget.add(String(row.id),String(row.scope_id),String(row.subject_id));
     if(row.subject_type==='human-thread') {
       const person=row.person;

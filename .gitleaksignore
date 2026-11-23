@@ -6,3 +6,10 @@ f82fb658358b6f00675d8445475d3d2b22e8df47:server/approval-attention-race.test.ts:
 # reserved .invalid host with a stubbed transport. Not a credential for any service.
 b9eb4626babdc40a53fa454454a5e1f15dbff688:server/drivers/nativecrash-openai-1019.test.ts:generic-api-key:63
 b9eb4626babdc40a53fa454454a5e1f15dbff688:server/drivers/nativecrash-openai-1019.test.ts:generic-api-key:85
+# cause22 history: a hyphenated placeholder key in an e2e test of an intermediate commit (removed before the lane tips).
+# Made up in the test against a stubbed transport; not a credential for any service.
+f08c112343dca2ffa2af7de3f02ad1f78547f107:server/cause22-owner-caps-1021.e2e.test.ts:generic-api-key:32
+# cause22 group E history: a made-up fixture key in a redact witness against a .invalid stub URL; not a credential.
+f51a9336707f2b3a3bb40e6fb876f6183bf1aaf4:server/drivers/cause22-redact-witness-1021.test.ts:generic-api-key:94
+e0f86183722531f380e13b792483543129a9da43:server/drivers/cause22-redact-witness-1021.test.ts:generic-api-key:94
+1c54b93f863ea18bdfcdadbcbd7a24723520e7ef:server/cause22-owner-caps-1021.e2e.test.ts:generic-api-key:32

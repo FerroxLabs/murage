@@ -5,7 +5,7 @@
 // pages of 200 lines, 20 quoted lines from 20 other threads, 32 recall candidates, 1 retained session with 2,000 receipts, the send fence)
 // run on a 1k-message file and on a 3M-message-shaped file (one 3M-line thread, 500k receipts, 300k records, history-sized marks). The
 // statements run, the rows they return and every verdict are identical, and every statement's query plan is an index search (no table
-// scan other than the bounded existence probes). build host only (hz-test.sh): the large fixture is built in SQL in about a minute.
+// scan other than the bounded existence probes). Hetzner only (hz-test.sh): the large fixture is built in SQL in about a minute.
 import { observeSqlReads } from "./testing/sql-read-observer.ts";
 import { afterAll, expect, it } from "vitest";
 import { denyLookup, denyReadMeter, fenceVerdict, memoryLookup, refsLookup, resetDenyReadMeter, sessionLookup } from "./deny-read.ts";

@@ -708,7 +708,7 @@ describe("DL wiring: original case reaches the registry and the disk", () => {
   it("the scan asks the registry with each word and the cwd as written, not folded", () => {
     const asked: Array<[string, boolean, boolean]> = [];
     const registry = (word: string, implied: boolean, searched: boolean) => { asked.push([word, implied, searched]); return null; };
-    outsideScanMarks('cat "/Work/Saved Pages/Notes.TXT" ${X:-/Srv/A.bin}', { registry, cwd: "/Home/Sean" });
+    outsideScanMarks('cat "/Work/Saved Pages/Notes.TXT" ${X:-/Srv/A.bin}', { registry, cwd: "/Home/ExampleUser" });
     const words = asked.map(([w]) => w);
     expect(words).toContain("/Work/Saved Pages/Notes.TXT");
     expect(words).toContain("Notes.TXT");
@@ -716,8 +716,8 @@ describe("DL wiring: original case reaches the registry and the disk", () => {
     expect(words.some((w) => w !== w.toLowerCase())).toBe(true);
     expect(words).not.toContain("/work/saved pages/notes.txt");
     asked.length = 0;
-    outsideScanMarks("rg -n Api", { registry, cwd: "/Home/Sean" });
-    expect(asked).toContainEqual(["/Home/Sean", true, true]);
+    outsideScanMarks("rg -n Api", { registry, cwd: "/Home/ExampleUser" });
+    expect(asked).toContainEqual(["/Home/ExampleUser", true, true]);
   });
   it("step 4 (agreed design): the cwd is the implied folder of a search form only", () => {
     const registry = (word: string, implied: boolean) => (implied && word === "/work" ? "downloaded file" as const : null);
@@ -794,7 +794,7 @@ describe("DL wiring: original case reaches the registry and the disk", () => {
     const registry = new reg.DownloadRegistry();
     registry.add([{ path: "/srv/clone", kind: "tree", since: 0, cloned: true }]);
     const budget = new reg.TextBudget({ lstat: () => null, realpath: () => null });
-    const repo = dl.scanRepoHook(registry, { cwd: "/home/sean", budget });
+    const repo = dl.scanRepoHook(registry, { cwd: "/home/exampleuser", budget });
     expect(outsideScanMarks("git -C /Srv/Clone log", { repo })).toEqual(["cloned folder"]);
     expect(outsideScanMarks("git -C /srv/other log", { repo })).toEqual([]);
   });

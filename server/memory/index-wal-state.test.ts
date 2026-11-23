@@ -804,3 +804,23 @@ for(const shm of ['kept','removed'] as const)it.each(crashCuts)('R4 process deat
  expect(await again.exited).toEqual({code:0,signal:null});expect(durable.pid).not.toBe(after.pid);
  expect(durable.verdict.state).toBe(state);
 });
+
+it("seal once: a seal whose TRUNCATE charge is refused is not written again by the retry; a write after it is sealed again", async () => {
+  let refuse = false, seals = 0;
+  const path = fresh(), o = await open(path, async () => { if (!refuse) return true; refuse = false; return false; });
+  await fill(o, "open", 4 * MB, 100_000);
+  walTestHooks.sealBody = () => { seals++; };
+  walTestHooks.point = name => { if (name === "after-walok") refuse = true; };
+  expect(await o.wal.prepareExit()).toBe("unsealed:charge");
+  expect(seals).toBe(1);
+  delete walTestHooks.point;
+  expect(await o.wal.prepareExit()).toBe("sealed");
+  expect({ seals, wal: statSync(`${path}-wal`).size }).toEqual({ seals: 1, wal: 0 });
+  walTestHooks.point = name => { if (name === "after-walok") refuse = true; };
+  await fill(o, "fill", 4 * MB, 20_000);
+  expect(await o.wal.prepareExit()).toBe("unsealed:charge");
+  await fill(o, "fill", 4 * MB, 20_000);
+  delete walTestHooks.point;
+  expect(await o.wal.prepareExit()).toBe("sealed");
+  expect({ seals, wal: statSync(`${path}-wal`).size }).toEqual({ seals: 3, wal: 0 });
+});

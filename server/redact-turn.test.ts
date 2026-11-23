@@ -66,24 +66,33 @@ describe("redact-turn", () => {
     const changed = p.consume(a, batch("replacement", "assistant", "snapshot")); expect(changed.operations[0]?.speech).toBe("append"); expect(changed.operations[0]?.op).toBe("append"); expect(text(changed)).toBe("replacement"); // r3.1 §3.5: a new item after completion.
     p.consume(a, batch("**password**:")); expect(text(p.consume(a, batch("replacement hunter2", "assistant", "snapshot")))).not.toContain("hunter2");
   });
+  // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z: "The audience display budgets ... are size cuts on shown text: remove them".
+  // These three rows pinned the 64 KiB pending cut, the 256 live-turn cut and the 64 open-stream cut; each now pins that the
+  // same input is NOT masked: an unfinished line past 64 KiB stays pending (held, never released on size) and is shown at its end.
   it("redact-turn.pending-64ki", () => {
-    for (const n of [65535, 65536, 65537]) { const { p, a } = fresh(); expect(p.consume(a, batch("x".repeat(n))).masked).toBe(n > 65536); expect(p.stats().pending).toBe(n > 65536 ? 0 : n); }
-    const { p, a } = fresh(); p.consume(a, batch("x".repeat(40000))); expect(p.consume(a, batch("y".repeat(25537), "tool")).masked).toBe(true);
+    for (const n of [65535, 65536, 65537]) { const { p, a } = fresh(); expect(p.consume(a, batch("x".repeat(n))).masked).toBe(false); expect(p.stats().pending).toBe(n); expect(text(p.finish(a, "complete"))).toBe("x".repeat(n)); }
+    const { p, a } = fresh(); p.consume(a, batch("x".repeat(40000))); expect(p.consume(a, batch("y".repeat(25537), "tool")).masked).toBe(false); expect(p.stats().pending).toBe(65537);
   });
-  it("redact-turn.clean-256", () => { const p = make(), all = Array.from({ length: 257 }, cap); all.forEach(a => p.admit(a)); expect(p.stats().clean).toBe(256); expect(p.consume(all[256], batch("secret\n")).masked).toBe(true); });
+  it("redact-turn.clean-256", () => { const p = make(), all = Array.from({ length: 257 }, cap); all.forEach(a => p.admit(a)); expect(p.stats().clean).toBe(257); const d = p.consume(all[256], batch("the 257th live turn\n")); expect(d.masked).toBe(false); expect(text(d)).toBe("the 257th live turn\n"); });
   it("redact-turn.streams-64-global4096", () => {
-    const { p, a } = fresh(); for (let i = 0; i < 64; i++) expect(p.consume(a, batch("", `s${i}`)).masked).toBe(false); expect(p.stats().streams).toBe(64); expect(p.consume(a, batch("", "s64")).masked).toBe(true);
+    const { p, a } = fresh(); for (let i = 0; i < 65; i++) expect(p.consume(a, batch("", `s${i}`)).masked).toBe(false); expect(p.stats().streams).toBe(65);
     const q = make(); for (let i = 0; i < 64; i++) { const c = cap(); q.admit(c); for (let j = 0; j < 64; j++) q.consume(c, batch("", `s${j}`)); }
-    expect(q.stats().streams).toBe(4096); const c = cap(); q.admit(c); expect(q.consume(c, batch("", "overflow")).masked).toBe(true);
+    // 1.0.20 redact-acp (owner rule): a full process table no longer masks the next turn. Every entry here is an open
+    // text item (never let go), so the one new carrier is withheld alone and the table stays at its limit.
+    expect(q.stats().streams).toBe(4096); const c = cap(); q.admit(c); const over = q.consume(c, batch("", "overflow"));
+    expect(over.masked).toBe(false); expect(over.operations.map(o => o.op)).toEqual(["omit"]); expect(text(over)).toBe("«redacted»"); expect(q.stats().streams).toBe(4096);
   });
   it("redact-turn.empty-id-flood", () => { const { p, a } = fresh(); for (let i = 0; i < 5000; i++) p.consume(a, batch("", "")); expect(p.stats().streams).toBe(1); });
   it("redact-turn.no-tombstones", () => { const p = make(); for (let i = 0; i < 10000; i++) p.consume(cap(), batch("secret")); expect(p.stats()).toMatchObject({ clean: 0, streams: 0, pending: 0 }); });
-  it("redact-turn.huge-scalar", () => { const { p, a } = fresh(); const d = p.consume(a, batch("x".repeat(262145), "x", "whole")); expect(d.exhausted).toBe(true); expect(text(d)).toBe("«redacted»"); });
+  // cause22-E (b) (same ruling): a 256 KiB + 1 field was the scalar cut; it is now scanned (work per character) and shown whole.
+  it("redact-turn.huge-scalar", () => { const { p, a } = fresh(); const d = p.consume(a, batch("x".repeat(262145), "x", "whole")); expect(d.exhausted).toBe(false); expect(d.masked).toBe(false); expect(text(d)).toBe("x".repeat(262145)); });
   // Arbitrary map/depth/node extraction is 1B's job; F2 must never traverse unrelated data.
   for (const name of ["wide-object", "depth-nodes", "budget-no-second-walk"]) it(`redact-turn.${name}`, () => {
-    const { p, a } = fresh(), b = batch("x".repeat(262145), "x", "whole"), getter = vi.fn(() => { throw new Error("must not inspect"); }); Object.defineProperty(b, "unknown", { get: getter }); expect(p.consume(a, b).exhausted).toBe(true); expect(getter).not.toHaveBeenCalled();
+    const { p, a } = fresh(), b = batch("x".repeat(262145), "x", "whole"), getter = vi.fn(() => { throw new Error("must not inspect"); }); Object.defineProperty(b, "unknown", { get: getter }); const d = p.consume(a, b); expect(d.exhausted).toBe(false); expect(text(d)).toBe("x".repeat(262145)); expect(getter).not.toHaveBeenCalled(); // cause22-E (b): the text is no longer cut for size; the walk guarantee (no unrelated read) is unchanged
   });
-  it("redact-turn.detector-failure", () => { const { p, a } = fresh({ scan: () => { throw new Error("SECRET"); } }); const d = p.consume(a, batch("innocent", "x", "whole")); expect(d.exhausted).toBe(true); expect(text(d)).toBe("«redacted»"); });
+  // cause22-E (b), MAIN-RULING 17:47:36Z SAFETY FLOOR: "If a chunk cannot be redacted, that chunk alone is withheld with a plain marker,
+  // never the whole turn." The field the scanner failed on still reads «redacted» (nothing unscanned shows); the turn is no longer ended.
+  it("redact-turn.detector-failure", () => { const { p, a } = fresh({ scan: () => { throw new Error("SECRET"); } }); const d = p.consume(a, batch("innocent", "x", "whole")); expect(d.exhausted).toBe(false); expect(d.masked).toBe(false); expect(d.withheld).toBe(true); expect(text(d)).toBe("«redacted»"); expect(p.stats().clean).toBe(1); });
   it("redact-turn.plain-colon-numeric-password", () => {
     for (const row of PLAIN_CASES) expect(scan(row.input).text, row.id).toBe(row.output);
     for (const s of ["password: hunter2 and more", "tokens: 1200", "token:", "foopassword: x", "password = x"]) expect(scan(s).text).toBe(s);

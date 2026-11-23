@@ -21,12 +21,12 @@
   |---|---|---|---|
   | P1 | Control plane down (external) | Better Stack: the `/health/readiness` monitor of the prod Worker fails 2 checks in a row | Check the last Worker deploy, roll back with `wrangler rollback`, check Cloudflare status |
   | P2 | `rollout.halted` | `rollout.halted` (raised by the rollout controller) | Open the release, look at the failed homes, then cancel the release or ship a fixed N+1 |
-  | P3 | `homes.not_created` | `provision.failed` on 2 homes in 30 min; `pool.empty`, `pool.create_failing`, `pool.spend_cap_reached`; `home.ui_render_missing` on 2 or more homes | Check build host stock, the server limit and the spend cap, and grab stock in another region |
-  | P4 | `homes.unhealthy` | `home.heartbeat_missed` on 3 or more homes, or 5% of the fleet (at least 2 homes), within 10 min | Check build host status and the last deploy or rollout. One page with the count |
+  | P3 | `homes.not_created` | `provision.failed` on 2 homes in 30 min; `pool.empty`, `pool.create_failing`, `pool.spend_cap_reached`; `home.ui_render_missing` on 2 or more homes | Check Hetzner stock, the server limit and the spend cap, and grab stock in another region |
+  | P4 | `homes.unhealthy` | `home.heartbeat_missed` on 3 or more homes, or 5% of the fleet (at least 2 homes), within 10 min | Check Hetzner status and the last deploy or rollout. One page with the count |
   | P5 | `homes.repair_gave_up` | `home.watchdog_exhausted`, `home.fixit_exhausted`, `update.stuck` | Open the home in admin, then resume it, or rebuild it from backup |
   | P6 | `sales.stopped` | `image.sales_hold`, `image.trust_unreadable`, `image.pubkey_invalid`, `image.env_conflict` | Check the pinned image IDs, the digest and the trust key against PROD-RUNBOOK |
   | P7 | `checkout.stuck` | `billing.webhook_stuck` | Look at the Stripe event in the dashboard, then replay it, or refund |
-  | P8 | `account.compromise` | `pool.secret_misuse`; `access.provider_action_unexpected` (rescue, console or password reset seen at the provider, which this Worker never does; closes itself after 24 h) | Rotate the build host token, review the provider's audit log, and freeze provisioning |
+  | P8 | `account.compromise` | `pool.secret_misuse`; `access.provider_action_unexpected` (rescue, console or password reset seen at the provider, which this Worker never does; closes itself after 24 h) | Rotate the Hetzner token, review the provider's audit log, and freeze provisioning |
 
 - **P1 in Better Stack** (outside our infra, set up by hand, not by this Worker): a monitor on `https://<prod worker>/health/readiness`,
   fail after 2 checks in a row, notifying the same Slack channel and policy as Flux. This is the only alert that still works when the

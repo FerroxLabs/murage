@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The timed Phase 0 gates on the 60k-source store (PROPOSAL-v2 sections 10.7 and 12). Off unless MEMORY_PERF=1
-// (the nightly timing job and the build host runs set it). Every run prints one `PERF {json}` line per measurement
+// (the nightly timing job and the Hetzner runs set it). Every run prints one `PERF {json}` line per measurement
 // and appends it to MEMORY_PERF_OUT; the targets are enforced when MEMORY_PERF_ASSERT=1, so the same file
 // records a "before" on an older checkout without failing it.
 import { openTestIndex } from "./testing/open-index.ts";
@@ -88,7 +88,7 @@ suite("memory performance on the 60k fixture", async () => {
     report("fixture", { firstCheckMs: Math.round(firstCheckMs * 10) / 10, sources: shape.sources, resumedSessionHolds: !resumedOnce, whyNot: why.reason ?? null, receiptsInSession: Number(database().prepare("SELECT count(*) n FROM memory_disclosures WHERE native_session=?").get(session)!.n) });
 
     // The first check of a resumed session with nothing remembered (80 receipts, 500 distinct records): 3,500 ms before, about 120 ms now
-    // (build host, 2 CPUs). The target is 100 ms; what is left is roughly twenty statements per cited record (hydration plus the lineage check),
+    // (Hetzner, 2 CPUs). The target is 100 ms; what is left is roughly twenty statements per cited record (hydration plus the lineage check),
     // so the gate holds at 150 ms until the receipts' verdicts are kept durably (a root-set schema v7 item).
     if (enforce) expect(firstCheckMs).toBeLessThanOrEqual(150);
 

@@ -28,11 +28,12 @@ import type { Readable } from "node:stream";
 import type { LineageRef, LineageVerdict, StagedResultProvenance, TurnLineage } from "./memory/lineage-types.ts";
 import { captureTurnParentAdditions, checkedOpenTurns, commitTurnParents, proposeTurnParents, retainedTurnDatabase } from "./memory/lineage-write.ts";
 import { releaseTransaction, ReleaseCommitFailed } from "./memory/release-transaction.ts";
-import { assertRetainedFence } from "./memory/send-fence.ts";
+import { assertRetainedFence, isPendingFenceDeferral } from "./memory/send-fence.ts";
 import type { ConsumingIdentity } from "./ledger-refusal.ts";
-import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
+import { ledgerRefusalCause, refusalLineFor, REFUSAL_KIND_HEADER } from "./ledger-refusal.ts";
 import { consumingSinkEntry, type SinkInventoryEntry } from "./consuming-sink-inventory.ts";
 import { checkReleaseAvailable, reserveRelease, withReleaseBudgets, RELEASE_CHUNK_MAX } from "./memory/release-budget.ts";
+import { logSwallowedConsumingError } from "./consuming-error-log.ts";
 import { isDatabaseBusy, setBusy, DEFAULT_BUSY_MS, BACKGROUND_BUSY_MS } from "./db-busy.ts";
 
 export interface ConsumingTurnBinding {
@@ -95,6 +96,7 @@ export function assertConsumingBinding(binding: ConsumingTurnBinding): void {
     if (!terminalAllowances.has(binding)) terminalAllowances.set(binding, members.map(member => member.budget!));
   } catch (error) {
     if (error instanceof Object && reportedRefusals.has(error)) throw error;
+    logSwallowedConsumingError("binding.assert", error);
     refuseConsumingTurn(binding, (error as { fence?: LineageVerdict }).fence);
   }
 }
@@ -123,7 +125,11 @@ interface ConsumingEmission<T> {
   refs: readonly LineageRef[];
   prepareAttribution?: () => void;
   commitAttribution?: () => void;
-  write: () => T;
+  /** `confirm` is for a destination that learns later whether it took the frame (see `confirms`). */
+  write: (confirm: () => void) => T;
+  /** The destination reports failure after write() has returned (a socket: Node never throws for a dead one). write() then calls
+   * `confirm` once the destination itself reported the frame taken; a write() that merely returned accepted nothing. */
+  confirms?: boolean;
 }
 export function emitConsumingTurnResponse<T>(binding: ConsumingTurnBinding, descriptor: ConsumingDescriptor,
   emission: ConsumingEmission<T>): T {
@@ -179,11 +185,30 @@ function emitPreparedConsumingResponse<T>(binding: ConsumingTurnBinding, descrip
         assertRetainedFence(binding.turn, db);
       },
       onRelease: () => reserveRelease(budgets, { attempts: 1, bytes: emission.bytes, work: 1 }),
-      emit: () => { entered = true; return emission.write(); },
+      // 1.0.21 cause4: the fence passed and the destination took the frame, so this window of the turn's budget may be followed by
+      // another (release-budget.ts). A write that throws accepted nothing, and neither did a frame with no bytes (headers alone).
+      // Round 2: a socket's write returns normally even when the socket is gone and reports the failure later, so a destination that
+      // `confirms` is believed only when it says so itself (at most once per frame); until then the frame renews nothing.
+      emit: () => {
+        entered = true;
+        let confirmed = false;
+        // A late report counts only for the window its frame was written in: it never renews a window that released nothing itself.
+        const written = budgets.map(budget => budget.windows);
+        const confirm = () => {
+          if (confirmed) return;
+          confirmed = true;
+          if (emission.bytes > 0) budgets.forEach((budget, index) => { if (budget.windows === written[index]) budget.accepted(); });
+        };
+        const taken = emission.write(confirm);
+        if (!emission.confirms) confirm();
+        return taken;
+      },
       }); } finally { try { setBusy(db, DEFAULT_BUSY_MS); } catch { /* closed handle remains a fence failure */ } }
     });
   } catch (error) {
     if (error instanceof ConsumingPreparationFailed) throw error;
+    // 1.0.20 revkill: nothing was released and nothing is refused; the deferring caller waits for the check (send-fence.ts).
+    if (!entered && isPendingFenceDeferral(error)) throw error;
     if (error instanceof ReleaseCommitFailed || entered && error instanceof Error && error.message === "ASYNC_RELEASE_TRANSACTION") {
       // The transport may own bytes even though durable commit or the writer
       // contract failed. Keep its charge and seal; never retry the frame.
@@ -192,6 +217,7 @@ function emitPreparedConsumingResponse<T>(binding: ConsumingTurnBinding, descrip
     }
     if (entered) throw error; // Native transport errors retain identity.
     if (error instanceof Object && reportedRefusals.has(error)) throw error;
+    logSwallowedConsumingError(isDatabaseBusy(error) ? "response.emit:busy" : "response.emit", error);
     if (isDatabaseBusy(error)) {
       // A committed revoke still wins over contention. Read the retained
       // ledger without trying to acquire the already-held writer again.
@@ -252,12 +278,15 @@ export function consumingHttpWriter(raw: ServerResponse, binding: ConsumingTurnB
         return { bytes: finalBytes, refs: mode === "headers" ? [] : staged.refs,
         ...(mode !== "headers" && staged.prepares.length ? { prepareAttribution: () => { for (const prepare of staged.prepares) synchronousAttribution(prepare); } } : {}),
         commitAttribution: () => { if (mode !== "headers") for (const commit of staged.commits) synchronousAttribution(commit); },
-        write: () => {
+        confirms: true,
+        write: (confirm: () => void) => {
           entered = true;
           if (!raw.headersSent) raw.writeHead(status, Object.fromEntries(headers));
           if (mode === "headers") return true;
           const onDone = callback;
-          const done = onDone ? () => onDone.call(facade) : undefined;
+          // Node calls this with the error when the write failed (ERR_STREAM_DESTROYED and the like) and, for end(), only on
+          // 'finish': a response whose socket is gone never finishes. Only an error-free report is an accepted release.
+          const done = (error?: Error | null) => { if (!error) confirm(); onDone?.call(facade); };
           const accepted = mode === "body" ? raw.end(data, encoding ?? "utf8", done) : raw.write(data!, encoding ?? "utf8", done);
           if (accepted && typeof (accepted as { then?: unknown }).then === "function") refuseConsumingTurn(binding);
           staged.refs = []; staged.prepares = []; staged.commits = [];
@@ -443,7 +472,7 @@ export function stageProvenance(writer: object, provenance: StagedResultProvenan
   stageConsumingResponse(writer, provenance.refs, provenance.commit, provenance.prepare);
 }
 /** Only context-free denial is available without a consuming binding. */
-export function denyConsumingHttp(raw: ServerResponse, binding?: ConsumingTurnBinding): void {
+export function denyConsumingHttp(raw: ServerResponse, binding?: ConsumingTurnBinding, cause?: unknown): void {
   if (raw.destroyed || raw.writableEnded) return;
   if (binding) {
     const budgets = terminalAllowances.get(binding);
@@ -452,8 +481,17 @@ export function denyConsumingHttp(raw: ServerResponse, binding?: ConsumingTurnBi
   }
   if (raw.headersSent) { raw.destroy(); return; }
   for (const name of raw.getHeaderNames()) raw.removeHeader(name);
-  raw.writeHead(409, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
-  raw.end(LEDGER_REFUSAL_LINE);
+  // 1.0.21 cause22: the refusing check's own verdict when the caller holds it (fixed vocabulary only, ledgerRefusalCause); the door
+  // name alone hid a real budget stop behind a label.
+  const fence = (cause as { fence?: LineageVerdict } | null | undefined)?.fence;
+  const word = fence && typeof fence === "object" ? ledgerRefusalCause(fence) : "invalid-verdict";
+  console.warn(word === "invalid-verdict" ? "[memory] ledger refusal cause=consuming-http-denied" : `[memory] ledger refusal cause=${word} door=consuming-http-denied`);
+  // cause22 r2: the engine-facing body is the same truthful line the owner is shown. A budget stop (the verdict the caller holds, or the
+  // bound turn's own budget having refused) lost no context, so it is never told "context is no longer available". The header is the
+  // fixed word a spawned proxy reads to give its own terminal JSON-RPC error the same line (proxy-turn-release.ts); no other value exists.
+  const budgetStop = word === "checking:retained-budget" || (binding ? terminalAllowances.get(binding)?.some(budget => budget.refused) === true : false);
+  raw.writeHead(409, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", ...(budgetStop ? { [REFUSAL_KIND_HEADER]: "retained-budget" } : {}) });
+  raw.end(refusalLineFor(budgetStop ? { state: "checking", reason: "retained-budget" } : undefined));
 }
 
 /** A consuming source never receives the destination. Every bounded piece is

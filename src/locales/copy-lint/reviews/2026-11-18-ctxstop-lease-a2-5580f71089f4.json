@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "ctxstop-lease-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.20 A-2 refusal line"
+  },
+  "author": "ctxstop-lease-1020q",
+  "date": "2026-11-18",
+  "base": "0d686e25d274d843d79fc33ff6006600fb33d77c",
+  "scope": "1.0.20 A-2: a refusal at the send names Murage, not the engine (memoryRecall.murageNotStarted) in 8 languages, and the ctxstop-lease-copyrev reviewer seat",
+  "strings": {
+    "en:memoryRecall.murageNotStarted": {
+      "text": "Murage couldn't start this reply. Send it again.",
+      "en": "Murage couldn't start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Matches the owner-required English verbatim, names Murage as the subject, and keeps the resend action from memoryRecall.generic."
+    },
+    "de:memoryRecall.murageNotStarted": {
+      "text": "Murage konnte diese Antwort nicht starten. Sende die Nachricht noch einmal.",
+      "en": "Murage couldn't start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, Murage stays untranslated as the subject, and the du-form \"Sende die Nachricht noch einmal\" matches memoryRecall.generic."
+    },
+    "es:memoryRecall.murageNotStarted": {
+      "text": "Murage no pudo iniciar esta respuesta. Vuelve a enviar el mensaje.",
+      "en": "Murage couldn't start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, Murage is the subject in preterite, and the tú-form \"Vuelve a enviar el mensaje\" matches memoryRecall.generic."
+    },
+    "fr:memoryRecall.murageNotStarted": {
+      "text": "Murage n’a pas pu démarrer cette réponse. Renvoie le message.",
+      "en": "Murage couldn't start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, Murage is the subject, and the tu-form \"Renvoie le message\" with the typographic apostrophe matches memoryRecall.generic."
+    },
+    "hi:memoryRecall.murageNotStarted": {
+      "text": "Murage यह जवाब शुरू नहीं कर सका। संदेश फिर भेजें।",
+      "en": "Murage couldn't start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Accurate, Murage stays in Latin script as the agent with the active \"शुरू नहीं कर सका\", and the polite \"संदेश फिर भेजें\" matches memoryRecall.generic."
+    },
+    "ja:memoryRecall.murageNotStarted": {
+      "text": "Murage はこの返信を開始できませんでした。もう一度送信してください。",
+      "en": "Murage couldn't start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, Murage is the topic, and the polite resend phrase matches memoryRecall.generic exactly."
+    },
+    "pt-br:memoryRecall.murageNotStarted": {
+      "text": "O Murage não conseguiu iniciar esta resposta. Envie a mensagem novamente.",
+      "en": "Murage couldn't start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, \"O Murage\" is the subject with a normal article for a product name, and the você-form \"Envie a mensagem novamente\" matches memoryRecall.generic."
+    },
+    "zh:memoryRecall.murageNotStarted": {
+      "text": "Murage 无法开始此回复。请重新发送。",
+      "en": "Murage couldn't start this reply. Send it again.",
+      "verdict": "pass",
+      "note": "Accurate and concise, Murage is the subject, and the wording mirrors memoryRecall.generic with the product name prefixed."
+    }
+  },
+  "files": {
+    "reviewers.json": {
+      "text": "{\n  \"version\": 1,\n  \"reviewers\": [\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol\",\n      \"account\": \"gpt-6.1-sol read-only, codex acct2 and acct6\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"claude-copyrev\",\n      \"account\": \"claude sonnet 5.5, copy-review seat for MurageMain\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"muragemain-copyrev\",\n      \"account\": \"claude opus 5.5, MurageMain copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-sc-issues-r3\",\n      \"account\": \"sc-issues-r3 independent review of inherited sc-issues copy\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-copyrev-m5-followup\",\n      \"account\": \"Independent Sol review session for the copyrev-m5 replacement titles\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"g9-ux-fable\",\n      \"account\": \"Fable copy seat g9-ux-fable, read-only G9 Settings copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"ctxstop-lease-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.20 A-2 refusal line\"\n    }\n  ]\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

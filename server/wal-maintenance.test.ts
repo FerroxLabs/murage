@@ -486,7 +486,7 @@ it("no connection of the server process runs TRUNCATE or RESTART on messages.db 
   const revoke = readFileSync(join(root, "memory/revoke-budget.ts"), "utf8");
   expect(revoke.match(/wal_checkpoint\(\s*(TRUNCATE|RESTART)/g)).toHaveLength(1);
   expect(revoke).toMatch(/PRAGMA busy_timeout=0[\s\S]*nBackfill < again\.mxFrame[\s\S]*wal_checkpoint\(TRUNCATE\)/);
-  for (const file of ["wal-maintenance.ts", "engine-history-offthread.ts", "engine-history-worker.ts"]) expect(readFileSync(join(root, file), "utf8"), file).not.toMatch(/Atomics\.wait|execSync|spawnSync/);
+  for (const file of ["wal-maintenance.ts", "engine-history-offthread.ts", "engine-history-worker.ts"]) expect(readFileSync(join(root, file), "utf8"), file).not.toMatch(/Atomics\.wait(?!Async)|execSync|spawnSync/); // 1.0.21 W4: Atomics.waitAsync never blocks a thread (the checkpointer waits on the commit notice with it)
 });
 
 it("every promise the module hands out resolves, even with no checkpointer running", async () => {

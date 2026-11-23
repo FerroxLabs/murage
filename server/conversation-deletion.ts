@@ -398,6 +398,9 @@ export interface DeletionServiceOptions {
   retryDelaysMs?: number[];
   /** tests: the shortest gap between two `home not read` lines for one home another program keeps open (FOREIGN_RELOG_MS) */
   foreignRelogMs?: number;
+  /** The least time between two whole attempts (pause, hold, plan) on a home another program keeps open, across every pending deletion
+   * (default FULL_TRY_MS). "Try again now" is not bound by it. */
+  fullTryMs?: number;
   /** The pause between replays once the list above has run out (default 6 hours). */
   slowRetryMs?: number;
   /** How long the worker-exit barrier waits before it logs one warning that the engine's holds are still up (default
@@ -446,8 +449,12 @@ export interface DeletionServiceOptions {
 }
 
 /** A home skipped because another program has it open is still given one whole attempt (pause, hold, plan) every this many tries
- * (an hour at the ten-minute pace), so a home held by a process of Murage's own that the probe cannot place still gets the hold. */
+ * (an hour at the ten-minute pace; a look that made no attempt counts as one, noteLook), so a home held by a process of Murage's own that the probe cannot place still gets the hold. */
 export const FULL_TRY_EVERY = 6;
+/** The least time between two such whole attempts on ONE home, whichever deletions ask (cause7-1021): the try counter is per home, so
+ * with many deletions pending on one home every sixth try of ANY of them was a whole attempt (several a minute: each pauses the
+ * background runs, holds the engine's new turns and closes Murage's own idle sessions on it). Just under the hour of six 10-minute tries. */
+export const FULL_TRY_MS = 3_000_000;
 /** While another program keeps an engine home open, a changed holder is logged again at most this often. */
 export const FOREIGN_RELOG_MS = 3_600_000;
 
@@ -760,7 +767,7 @@ export class ConversationDeletions {
     const homes = deferred.length ? entry.engineHomes.filter((home) => !deferredKeys.has(homeKey(home.engine, home.home))) : entry.engineHomes;
     // The engines' history and messages.db's log are independent: both start now, and neither waits for the other (an engine
     // job can take as long as its own timeout).
-    const engineWork = folders.length ? this.removeEngineHistory(entry, { homes, folders: [...new Set(folders)], memoryFolders, sessions: entry.engineSessions ?? {}, redoDir: this.redoDir, nativeDir: this.dir.native }) : undefined;
+    const engineWork = folders.length ? this.removeEngineHistory(entry, { homes, folders: [...new Set(folders)], memoryFolders, sessions: entry.engineSessions ?? {}, redoDir: this.redoDir, nativeDir: this.dir.native }, allHomes) : undefined;
     // The rows are gone and overwritten (secure_delete); the write-ahead log still holds the old pages until the log is
     // copied and restarted. That happens without holding the writer lock (wal-maintenance.ts); if a reader holds the log
     // for now, the scrub stays owed there and is retried, and the next start's TRUNCATE settles it after a crash.
@@ -1058,7 +1065,7 @@ export class ConversationDeletions {
       const state = this.retries.get(entry.id);
       if (state?.timer) clearTimeout(state.timer);
       // the schedule starts again; the ladder of attempts lost to Murage's own turns does not (a press never lowers the rung)
-      this.retries.set(entry.id, { attempts: 0, ...(state?.ownTurnLosses ? { ownTurnLosses: state.ownTurnLosses } : {}) });
+      this.retries.set(entry.id, { attempts: 0, ...(state?.ownTurnLosses ? { ownTurnLosses: state.ownTurnLosses } : {}), ...(state?.logged !== undefined ? { logged: state.logged } : {}) });
       started++;
       try { await this.finish(entry, { allHomes: true }); } catch (error) { console.warn("conversation deletion: a retry could not finish", error); }
     }
@@ -1120,7 +1127,8 @@ export class ConversationDeletions {
   /** Replays: after the pauses of the list, one more every `slowRetryMs` (6 hours), and the next start's reconcile. */
   private readonly retries = new Map<string, { attempts: number; timer?: NodeJS.Timeout; /** the last attempt was held back by Murage's own turn */ ownTurn?: boolean;
     /** the holders of the owed homes after the last attempt (probeHomes), and the looks since that found them unchanged */ holders?: string; looks?: number;
-    /** attempts in a row lost to Murage's own running turn (engine-running): the next hold waits longer */ ownTurnLosses?: number }>();
+    /** attempts in a row lost to Murage's own running turn (engine-running): the next hold waits longer */ ownTurnLosses?: number;
+    /** the holders the "still open" line was last written for */ logged?: string }>();
   private disposed = false;
 
   /** An unfinished deletion keeps its pending record, and is tried again after a growing pause (the record is the retry
@@ -1151,7 +1159,17 @@ export class ConversationDeletions {
       // made (no worker, no pause of the background runs, no plan line in the log). The look is repeated every openRetryMs.
       if (this.heldBySameHolders(current, state)) {
         state.looks = (state.looks ?? 0) + 1;
-        if (state.looks === 1) console.warn("conversation deletion: the engine history is still open by the same program; looked at again every 10 minutes, planned again once it changes");
+        this.noteLook(current);
+        // once per deletion and holder set: an attempt the looks force (OPEN_LOOKS_MAX) zeroes `looks`, and the line came back after
+        // every one of them, all day against a program the owner keeps open (DELETE-LOOP-1020)
+        // cause7-1021: and once per holder set across deletions: thirty deletions owed on one home wrote thirty lines per round
+        // MUTANT:still-open-per-deletion (drop `&& !this.openLogged.has(state.holders!)`)
+        if (state.looks === 1 && state.logged !== state.holders && !this.openLogged.has(state.holders!)) {
+          state.logged = state.holders;
+          if (this.openLogged.size >= 256) this.openLogged.delete(this.openLogged.values().next().value!);
+          this.openLogged.add(state.holders!);
+          console.warn("conversation deletion: the engine history is still open by the same program; looked at again every 10 minutes, planned again once it changes");
+        }
         this.retryAfter(entry, state, Math.min(this.options.openRetryMs ?? 600_000, 600_000));
         return;
       }
@@ -1181,6 +1199,16 @@ export class ConversationDeletions {
     if ((state.looks ?? 0) >= (this.options.openLooksMax ?? OPEN_LOOKS_MAX)) { state.looks = 0; return false; }
     return true;
   }
+  /** A look that made no attempt counts toward the whole try of each home another program holds (FULL_TRY_EVERY), as the attempt it
+   * stands for did: with the probe no longer changing at every look (cause7-1021), attempts on a held home are an hour apart, and a
+   * count of attempts alone would put the whole try six hours out. FULL_TRY_MS still bounds it per home. */
+  private noteLook(entry: PendingConversationDeletion): void {
+    // MUTANT:looks-not-counted (make this method return at once)
+    for (const home of entry.engineHomes) {
+      const key = homeKey(home.engine, home.home), skips = this.foreignSkips.get(key);
+      if (skips !== undefined) this.foreignSkips.set(key, Math.min(skips + 1, FULL_TRY_EVERY));
+    }
+  }
   /** The next look at `pause`, outside the schedule's own delays: a probe, and the attempt only once the holders changed or went. */
   private retryAfter(entry: PendingConversationDeletion, state: { timer?: NodeJS.Timeout }, pause: number): void {
     if (this.disposed) return;
@@ -1190,7 +1218,7 @@ export class ConversationDeletions {
       try { current = this.pending().find((item) => item.id === entry.id); } catch { this.retryAfter(entry, state, pause); return; }
       if (!current || this.disposed) { this.retries.delete(entry.id); return; }
       const held = this.retries.get(entry.id);
-      if (held && this.heldBySameHolders(current, held)) { held.looks = (held.looks ?? 0) + 1; this.retryAfter(entry, held, pause); return; }
+      if (held && this.heldBySameHolders(current, held)) { held.looks = (held.looks ?? 0) + 1; this.noteLook(current); this.retryAfter(entry, held, pause); return; }
       void this.finish(current).catch((error) => console.warn("conversation deletion: a retry could not finish", error));
     }, pause);
     state.timer.unref();
@@ -1222,7 +1250,7 @@ export class ConversationDeletions {
    * Every attempt starts from a fresh plan of all homes; nothing saved by an earlier attempt counts as proof. Up to
    * MAX_ENGINE_ROUNDS plan/execute/verify rounds per attempt; what is still owed stays in the record for the retry schedule.
    * Never throws. */
-  private async removeEngineHistory(entry: PendingConversationDeletion, base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">): Promise<EngineHistoryResult & { failedHomes: string[]; yielded?: boolean; yieldedHomes?: string[] }> {
+  private async removeEngineHistory(entry: PendingConversationDeletion, base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">, /** the owner pressed "Try again now" */ pressed = false): Promise<EngineHistoryResult & { failedHomes: string[]; yielded?: boolean; yieldedHomes?: string[] }> {
     const homesFailed = (): EngineHistoryResult & { failedHomes: string[] } => ({ removed: [], failed: [...new Set(base.homes.map((home) => home.home))], leftovers: [], failedHomes: [...new Set(base.homes.map((home) => homeKey(home.engine, home.home)))] });
     if (!base.homes.length) return { removed: [], failed: [], leftovers: [], failedHomes: [] };
     const removed: string[] = [], leftovers: EngineHistoryResult["leftovers"] = [];
@@ -1328,8 +1356,19 @@ export class ConversationDeletions {
         // process in the list (a parent that exited before it) reads as another program here, and only the hold can close it.
         const skips = (this.foreignSkips.get(key) ?? 0) + 1;
         // a full map never renews a skip allowance: a home with no counter left is given its whole attempt now
-        if (skips >= FULL_TRY_EVERY || (!this.foreignSkips.has(key) && this.foreignSkips.size >= 256)) { this.foreignSkips.delete(key); if (this.foreignLogged.has(key)) logged.push(key); continue; }
-        this.foreignSkips.set(key, skips);
+        const due = skips >= FULL_TRY_EVERY || (!this.foreignSkips.has(key) && this.foreignSkips.size >= 256);
+        // cause7-1021: the counter is per home and every pending deletion on the home counts into it, so the whole try is also held to
+        // one per FULL_TRY_MS per home (an owner's press is not). A due try inside that time stays a skip and stays due.
+        // MUTANT:whole-try-per-count (drop the time floor: `const soon = false;`)
+        const soon = !pressed && Date.now() - (this.foreignFullAt.get(key) ?? -Infinity) < (this.options.fullTryMs ?? FULL_TRY_MS);
+        if (due && !soon) {
+          this.foreignSkips.delete(key);
+          if (!this.foreignFullAt.has(key) && this.foreignFullAt.size >= 256) this.foreignFullAt.delete(this.foreignFullAt.keys().next().value!);
+          this.foreignFullAt.set(key, Date.now());
+          if (this.foreignLogged.has(key)) logged.push(key);
+          continue;
+        }
+        if (this.foreignSkips.has(key) || this.foreignSkips.size < 256) this.foreignSkips.set(key, Math.min(skips, FULL_TRY_EVERY));
         stuck.add(key); failedHomes.add(key); failed.add(homeOf(key).home);
         homeReasons[key] ??= "engine-open";
         if (seen.app) homeApps[key] = seen.app;
@@ -1505,6 +1544,10 @@ export class ConversationDeletions {
   private readonly foreignLogged = new Map<string, { signature: string; at: number }>();
   /** How many attempts in a row skipped each home for another program (see FULL_TRY_EVERY). */
   private readonly foreignSkips = new Map<string, number>();
+  /** When each home last got its whole try while another program held it (see FULL_TRY_MS). */
+  private readonly foreignFullAt = new Map<string, number>();
+  /** The holder sets the "still open" line was written for, whichever deletion wrote it (bounded). */
+  private readonly openLogged = new Set<string>();
 
   /** The homes of this attempt that a program Murage did not start has open (engine-history-run.ts probeEngineHomes, off the thread).
    * Logs one `home not read` line per home when another program starts holding it, then at most once an hour while it is still held,
@@ -1516,7 +1559,7 @@ export class ConversationDeletions {
     const found = probed.foreignHomes ?? {};
     for (const key of keys) {
       const seen = found[key];
-      if (!seen) { this.foreignLogged.delete(key); this.foreignSkips.delete(key); continue; }
+      if (!seen) { this.foreignLogged.delete(key); this.foreignSkips.delete(key); this.foreignFullAt.delete(key); continue; }
       const holders = seen.holders ?? [];
       const signature = JSON.stringify([seen.app ?? null, seen.kinds ?? [...new Set(holders.map((item) => `${item.name ?? ""}|${item.by}`))].sort()]);
       const last = this.foreignLogged.get(key);

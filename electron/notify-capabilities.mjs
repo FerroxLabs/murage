@@ -12,13 +12,28 @@ export function linuxSessionType(env) {
   return null;
 }
 
+// Electron returns the NSStatusItem button's window frame in display points.
+function macTrayHidden(tray, screen) {
+  try {
+    if (!tray || tray.isDestroyed()) return undefined;
+    const { x, y, width, height } = tray.getBounds();
+    const displays = screen.getAllDisplays();
+    if (!displays.length || ![x, y, width, height].every(Number.isFinite)) return undefined;
+    if (width <= 0 || height <= 0) return true;
+    const cx = x + width / 2, cy = y + height / 2;
+    return !displays.some(({ bounds, workArea }) => cx >= bounds.x && cx < bounds.x + bounds.width &&
+      cy >= bounds.y && cy < bounds.y + Math.max(height, workArea.y - bounds.y));
+  } catch { return undefined; }
+}
+
 /** trayHost: true | false | null (unknown / not probed). */
-export function notifyCapabilities({ platform, env = {}, trayHost = null } = {}) {
+export function notifyCapabilities({ platform, env = {}, trayHost = null, tray, screen } = {}) {
   const session = platform === "linux" ? linuxSessionType(env) : null;
   const wayland = session === "wayland";
   const floatOk = platform !== "linux" || session === "x11";
+  const trayHidden = platform === "darwin" ? macTrayHidden(tray, screen) : undefined;
   return {
-    platform, session,
+    platform, session, ...(trayHidden === undefined ? {} : { trayHidden }),
     surfaces: {
       notify: { available: true },
       receipt: { available: true },

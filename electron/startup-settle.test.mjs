@@ -2,6 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { startupRecoveryReason } from './installation-recovery-controller.mjs';
 const main = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
 function splashFixture({ missing = false, destroys = true } = {}) {
   const ticks = [], windows = [];
@@ -185,7 +186,7 @@ test('BF-2 integration: owned handoff, real cleanup and retained Quit surface su
     CUA_STOP_TIMEOUT_MS: 100, desktopDataOwner: { release: () => calls.push('release') }, exitedServerChildren: [],
     recordStartupRefusal: error => { failures.push(error); calls.push('record'); }, shutdownCause: null, noteShutdownCause: noop,
     startupFailureExit: false, closedBackupRequested: false, closeStartupSplash: noop,
-    showDesktopRecovery: () => { calls.push('recovery'); throw Error('recovery'); },
+    showDesktopRecovery: () => { calls.push('recovery'); throw Error('recovery'); }, startupRecoveryReason,
     dialog: { showErrorBox: () => { calls.push('box'); throw Error('box'); }, showMessageBox: options => {
       calls.push('surface'); assert.deepEqual(Array.from(options.buttons), ['Quit']);
       return new Promise(resolve => { quitRetry = resolve; });

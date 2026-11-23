@@ -10,7 +10,8 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { createProxyReleaseAuthority } from "../consuming-turn-ingress.ts";
 import { createMcpMountAdmission } from "../drivers/mcp-mounts.ts";
 
-export function bindOpenAIFixture(instance: ProviderInstance): ProviderInstance {
+/** ownerTurn: bind each turn as the owner's own turn (the production owner path; default is a non-owner turn). */
+export function bindOpenAIFixture(instance: ProviderInstance, { ownerTurn = false }: { ownerTurn?: boolean } = {}): ProviderInstance {
   const cleanups: Array<() => void> = [];
   const send = instance.adapter.sendTurn.bind(instance.adapter);
   const dispose = instance.dispose.bind(instance);
@@ -18,7 +19,7 @@ export function bindOpenAIFixture(instance: ProviderInstance): ProviderInstance 
     if (input.releaseBinding) return send(input);
     const f = new WritetimeFixture();
     const turn = openTurnLineage(f.db, { threadId: input.threadId, turnId: randomUUID() });
-    const bound = bindFixtureTurn(f.db, turn, input.warmIdentity?.botId ?? "fixture");
+    const bound = bindFixtureTurn(f.db, turn, input.warmIdentity?.botId ?? "fixture", undefined, undefined, ownerTurn);
     const caps = new InternalCapabilities();
     caps.begin(bound.binding.identity.botId, input.threadId, turn.turnId);
     // Fixture MCP executables are custom children accepted in this process;

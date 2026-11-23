@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // OpenCode 1.19.0 never needs npm for a Go or Zen turn, and registry.npmjs.org stays off the
-// engine allowlist. Measured 2026-10-15 (build host, the pinned linux-x64-baseline binary): Go
+// engine allowlist. Measured 2026-10-15 (Hetzner, the pinned linux-x64-baseline binary): Go
 // and Zen models of every SDK family load with ~/.cache/opencode/packages empty, because the
 // binary embeds each SDK their catalogues name. Its remaining on-demand npm fetch is the
 // @opencode-ai/plugin install into any WRITABLE config directory it loads; the rigoc request

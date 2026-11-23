@@ -7,7 +7,7 @@ beforeEach(() => expect(readerModule, "T-UPSTREAM-BUDGET requires accounting bef
 const budgetUrl = new URL("./release-budget.ts", import.meta.url), readerUrl = new URL("./upstream-reader.ts", import.meta.url);
 const budgetApi = existsSync(budgetUrl) ? await import(budgetUrl.href) as typeof import("./release-budget.ts") : undefined;
 const readerApi = existsSync(readerUrl) ? await import(readerUrl.href) as typeof import("./upstream-reader.ts") : undefined;
-const RELEASE_LIMITS = budgetModule?.RELEASE_LIMITS ?? { attempts: 4096, bytes: 67108864, work: 16777216, statements: 65536 };
+const RELEASE_LIMITS = budgetModule?.RELEASE_LIMITS ?? { work: 16777216, statements: 65536 };
 const { UPSTREAM_COLLECTION_MAX, UPSTREAM_EVENT_MAX } = budgetModule ?? {} as typeof import("./release-budget.ts");
 beforeEach(() => {
   expect(UPSTREAM_COLLECTION_MAX).toBe(8 * 1024 * 1024);
@@ -27,9 +27,11 @@ function setup(mode: "sse" | "collection", collect = false) {
   return { budget, stop, accounting: new readerApi!.UpstreamAccounting([budget], mode, refuse, collect) };
 }
 // red-at-4df086541: upstream bytes consume budget even without downstream events.
-it("T-UPSTREAM-BUDGET stops an endless stream before decoding its crossing bytes", async () => {
+// "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, the stream was stopped by crossing the
+// 64 MiB byte budget; now the budget is sealed first by a work crossing with no accepted release, and the sealed budget stops it.
+it("T-UPSTREAM-BUDGET stops an endless stream on a sealed budget before decoding its next bytes", async () => {
   const f = setup("sse"), decode = vi.fn(), cancel = vi.fn();
-  f.budget.charge({ bytes: RELEASE_LIMITS.bytes });
+  expect(() => f.budget.charge({ work: RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
   const response = new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array([65])); }, cancel }));
   await expect(readConsumingUpstream(response, f.accounting, decode)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
   expect(decode).not.toHaveBeenCalled(); expect(cancel).toHaveBeenCalledTimes(1); expect(f.stop).toHaveBeenCalledTimes(1);
@@ -37,27 +39,38 @@ it("T-UPSTREAM-BUDGET stops an endless stream before decoding its crossing bytes
 
 // red-at-4df086541: exhaustion is shared across reads; starting another stream
 // or ending an event must not reset byte/work charges.
+// "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, the second reader was refused at the
+// 64 MiB byte budget; now the shared byte count is asserted directly and the shared refusal is reached by sealing the generation.
 it("T-UPSTREAM-BUDGET separate readers debit the same generation", () => {
   const f = setup("collection");
-  f.budget.charge({ bytes: RELEASE_LIMITS.bytes - 2 });
+  f.budget.charge({ bytes: 64 * 1024 * 1024 - 2 });
   f.accounting.accept(new Uint8Array(1)); f.accounting.end();
   const next = new readerApi!.UpstreamAccounting([f.budget], "collection", () => { throw new Error("MEMORY_CONTEXT_REVOKED"); });
   next.accept(new Uint8Array(1));
-  expect(f.budget.counts.bytes).toBe(RELEASE_LIMITS.bytes);
+  expect(f.budget.counts.bytes).toBe(64 * 1024 * 1024);
+  expect(() => next.accept(new Uint8Array(1))).not.toThrow();
+  expect(f.budget.counts.bytes).toBe(64 * 1024 * 1024 + 1);
+  expect(() => f.budget.charge({ work: RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
   expect(() => next.accept(new Uint8Array(1))).toThrow("MEMORY_CONTEXT_REVOKED");
   expect(f.stop).toHaveBeenCalledOnce();
 });
 // red-at-4df086541: staging limits apply before accumulation, including streams collected into JSON.
-it.each(["sse", "collection", "collected-sse"] as const)("refuses oversized %s staging", mode => {
+// "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, one SSE event over 1 MiB or a
+// (collected) body over 8 MiB refused the turn; now the same input is counted and not refused.
+it.each(["sse", "collection", "collected-sse"] as const)("counts former oversized %s staging without refusing it", mode => {
   const f = setup(mode === "collection" ? "collection" : "sse", mode === "collected-sse");
+  let total = 0;
   if (mode === "collected-sse") {
     const event = Buffer.from("data: {}\n\n");
-    expect(() => { for (let n = 0; n <= UPSTREAM_COLLECTION_MAX; n += event.length) f.accounting.accept(event); }).toThrow();
+    expect(() => { for (let n = 0; n <= UPSTREAM_COLLECTION_MAX; n += event.length) { f.accounting.accept(event); total += event.length; } }).not.toThrow();
   } else {
     const max = mode === "sse" ? UPSTREAM_EVENT_MAX : UPSTREAM_COLLECTION_MAX;
-    expect(() => f.accounting.accept(new Uint8Array(max + 1))).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(() => f.accounting.accept(new Uint8Array(max + 1))).not.toThrow();
+    total = max + 1;
   }
-  expect(f.stop).toHaveBeenCalledTimes(1);
+  expect(f.budget.counts.bytes).toBe(total);
+  expect(() => f.accounting.end()).not.toThrow();
+  expect(f.budget.refused).toBe(false); expect(f.stop).not.toHaveBeenCalled();
 });
 // control: CRLF split across network reads counts each complete event once.
 it("accounts for split delimiters before passing a valid event to the decoder", async () => {
@@ -65,7 +78,9 @@ it("accounts for split delimiters before passing a valid event to the decoder", 
   const chunks = ["data: {}\r", "\n\r", "\n"];
   const response = new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(Buffer.from(chunk)); controller.close(); } }));
   await readConsumingUpstream(response, f.accounting, chunk => parser.push(decoder.decode(chunk, { stream: true })));
-  expect(events).toHaveBeenCalledTimes(1); expect(f.budget.counts.work).toBe(4 + Buffer.byteLength(chunks.join(""))); expect(f.stop).not.toHaveBeenCalled();
+  // "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, work was 4 + one unit per raw byte
+  // (per-chunk, per-byte and per-event work); now transport work is not counted and only end() charges one unit in sse mode.
+  expect(events).toHaveBeenCalledTimes(1); expect(f.budget.counts.work).toBe(1); expect(f.stop).not.toHaveBeenCalled();
 });
 // red-at-4df086541: callback failure was swallowed by the parser and stream reader.
 it("propagates terminal release failure through SSE parsing and cancels upstream", async () => {
@@ -77,10 +92,15 @@ it("propagates terminal release failure through SSE parsing and cancels upstream
 });
 
 // red-at-4df086541: comments and incomplete events could consume unlimited work without output.
+// "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, the next byte past the 64 MiB byte
+// budget refused; now it is counted, and the refusal of the next read is reached by sealing the budget with a work crossing.
 it.each([": keepalive\n\n", "data: unfinished", ": unterminated"])("T-UPSTREAM-BUDGET charges non-emitting %s", text => {
-  const f = setup("sse"); f.budget.charge({ bytes: RELEASE_LIMITS.bytes - Buffer.byteLength(text) });
+  const f = setup("sse"); f.budget.charge({ bytes: 64 * 1024 * 1024 - Buffer.byteLength(text) });
   f.accounting.accept(Buffer.from(text));
-  expect(f.budget.counts.bytes).toBe(RELEASE_LIMITS.bytes);
+  expect(f.budget.counts.bytes).toBe(64 * 1024 * 1024);
+  expect(() => f.accounting.accept(Buffer.from("x"))).not.toThrow();
+  expect(f.budget.counts.bytes).toBe(64 * 1024 * 1024 + 1);
+  expect(() => f.budget.charge({ work: RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
   expect(() => f.accounting.accept(Buffer.from("x"))).toThrow("MEMORY_CONTEXT_REVOKED");
   expect(f.stop).toHaveBeenCalledTimes(1);
 });

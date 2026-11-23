@@ -14,7 +14,6 @@ import { runMcpBridge } from "../mcp-bridge.ts";
 import { proxyTransportLost } from "../proxy-turn-release.ts";
 
 const PATH = "/api/internal/vps-mcp/v1/stdio";
-const MAX_LINE_BYTES = 8 * 1_048_576;
 
 function fail(_message: string, code = 1): never {
   proxyTransportLost("vpsRelayMcp");
@@ -45,7 +44,8 @@ if (process.argv[2] !== "pipe") {
 } else {
   // Raw child transport only. The outer bridge owns raw-intake charging and
   // the final release gate; this child has neither release credentials nor IPC.
-  const upstream = new WebSocket(target, { headers: { authorization: `Bearer ${controlToken}` }, maxPayload: MAX_LINE_BYTES, handshakeTimeout: 15_000 });
+  // MAIN-RULING cause22-no-transport-caps: a reply or call of any size passes (maxPayload 0 = no limit, as the relay's own server side).
+  const upstream = new WebSocket(target, { headers: { authorization: `Bearer ${controlToken}` }, maxPayload: 0, handshakeTimeout: 15_000 });
   let opened = false;
   let finished = false;
   const finish = (code: number, message?: string) => {
@@ -88,7 +88,6 @@ if (process.argv[2] !== "pipe") {
         buffered = buffered.slice(at + 1);
         if (line) upstream.send(line);
       }
-      if (buffered.length > MAX_LINE_BYTES) finish(1, "own-server computer message too large");
     });
     process.stdin.on("end", () => { try { upstream.close(1000, "closed"); } catch { /* gone */ } });
   });

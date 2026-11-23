@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline build-host-only extractor. Never run this (or any repo code) on the Mac.
+"""Offline Hetzner-only extractor. Never run this (or any repo code) on the Mac.
 Only explicitly supplied, authorized copies are read. Raw content never reaches
 stdout/stderr. A grep-only census cannot prove chunk context or faithful calls.
 """

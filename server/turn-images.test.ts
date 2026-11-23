@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync, symlinkSync, truncateSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, truncateSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -85,7 +85,7 @@ it("refuses linked files and MIME masquerading, and leaves an oversized image ou
   // Over the per-image ceiling with no way to shrink it: left out, named, and
   // the turn goes on. The bytes are never read.
   const large = f.file(); truncateSync(large.path, 10 * 1024 * 1024 + 1); f.append("t", { attachments: [{ kind: "image", ...large }] });
-  expect(await f.images.collect("t", "a", f.text(large.path))).toEqual({ images: [], unbound: [], overCount: [], tooLarge: [large.path], removed: [] });
+  expect(await f.images.collect("t", "a", f.text(large.path))).toEqual({ images: [], imagePaths: [], unbound: [], overCount: [], tooLarge: [large.path], removed: [] });
   expect(await f.images.read("t", "a", f.text(large.path))).toEqual([]);
 });
 it("bounds pending metadata, releases durable grants and expires abandoned ones", () => {
@@ -111,7 +111,7 @@ it("collects a bound image and carries an unbound one as a path, reading nothing
   // The turn-refusing form still refuses the same text.
   await expect(f.images.read("t", "a", text)).rejects.toThrow("Reattach");
   // And a turn made only of unbound tags inlines nothing and refuses nothing.
-  expect(await f.images.collect("t", "a", f.text(unbound.path))).toEqual({ images: [], unbound: [unbound.path], overCount: [], tooLarge: [], removed: [] });
+  expect(await f.images.collect("t", "a", f.text(unbound.path))).toEqual({ images: [], imagePaths: [], unbound: [unbound.path], overCount: [], tooLarge: [], removed: [] });
 });
 it("still refuses a forged path that merely looks canonical, from collect as from read", async () => {
   const f = fixture(), real = f.file();
@@ -131,7 +131,7 @@ it("still refuses a forged path that merely looks canonical, from collect as fro
   // Another bot's own thread naming this thread's upload is the cross-thread
   // case: canonical, so not forged, but unbound THERE — carried as a path,
   // never inlined, and still a refusal on the turn-refusing form.
-  expect(await f.images.collect("u", "b", f.text(real.path))).toEqual({ images: [], unbound: [real.path], overCount: [], tooLarge: [], removed: [] });
+  expect(await f.images.collect("u", "b", f.text(real.path))).toEqual({ images: [], imagePaths: [], unbound: [real.path], overCount: [], tooLarge: [], removed: [] });
   await expect(f.images.read("u", "b", f.text(real.path))).rejects.toThrow("Reattach");
   // A thread that is nobody's is not an audience at all, bound or not.
   await expect(f.images.collect("missing", "a", f.text(real.path))).rejects.toThrow("Reattach");
@@ -282,8 +282,22 @@ it("catches a Remove made while the image is being read", async () => {
   f.append("t", { attachments: [{ kind: "image", ...saved }] });
   __setAttachmentReadHookForTests((stage) => { if (stage === "after-read") marker(f.root, saved.path); });
   try {
-    expect(await f.images.collect("t", "a", f.text(saved.path))).toEqual({ images: [], unbound: [], overCount: [], tooLarge: [], removed: [saved.path] });
+    expect(await f.images.collect("t", "a", f.text(saved.path))).toEqual({ images: [], imagePaths: [], unbound: [], overCount: [], tooLarge: [], removed: [saved.path] });
   } finally { __setAttachmentReadHookForTests(undefined); }
+});
+// Astra f212385 H2: a Remove made while a picture is being shrunk (after the
+// marker was asked following the read) still leaves it out, and the path of
+// every picture that is sent comes back beside it.
+it("catches a Remove made while the image is being shrunk, and names the path of each image it returns", async () => {
+  let f!: ReturnType<typeof fixture>, gone!: { path: string; mime: string }, kept!: { path: string; mime: string };
+  f = fixture(async () => { if (!existsSync(join(f.root, "attachments", ".removed", basename(gone.path)))) marker(f.root, gone.path); return "fits"; });
+  gone = f.file(); kept = f.file(Buffer.concat([png, Buffer.from([7])]));
+  f.append("t", { attachments: [{ kind: "image", ...gone }, { kind: "image", ...kept }] });
+  const collected = await f.images.collect("t", "a", `${f.text(gone.path)}\n\n${f.text(kept.path)}`);
+  expect(collected.removed).toEqual([gone.path]);
+  expect(collected.imagePaths).toEqual([kept.path]);
+  expect(collected.images).toHaveLength(1);
+  expect(collected.images[0]!.data).toBe(readFileSync(kept.path).toString("base64"));
 });
 it("SEAN-ASK-ATTACH-CAP: the upload cap is what a turn can deliver to the engine, never more than a turn reads", async () => {
   const { imageUploadMaxBytes, DEFAULT_TURN_IMAGE_FIT } = await import("./turn-images.ts");

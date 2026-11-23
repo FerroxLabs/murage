@@ -107,7 +107,8 @@ import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
 import { extractMcpImages } from "../mcp-tool-images.ts";
-import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { createBoundedLineSplitter } from "./bounded-lines.ts";
+import { LINE_FITTED_NOTICE } from "../owner-turn-caps.ts";
 import { registerIntake } from "../harness/intake.ts";
 import {
   codexNoAnswers,
@@ -197,7 +198,8 @@ interface Conn {
   baseline: Set<number> | null | undefined;
   /** Where the connection's stdout frames go now: the running turn, or the idle handler between turns. One splitter lives as long as the process, so a partial frame or a frame after completion is never lost to a switch. */
   onLine: (line: string) => void;
-  onOverflow: (overflow: any) => void;
+  /** 1.0.21 group B: where a FITTED frame (a line past the string limit, its long strings cut) goes now; unset: `onLine`. */
+  onFit?: (line: string) => void;
   /** Bytes of a frame the splitter has begun but not finished. Non-zero means a frame started under one owner would finish under the next. */
   buffered: () => number;
   /** Plan usage (server/plan-usage.ts): takes this process's account frames before any handler or log sees them. */
@@ -667,6 +669,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
      * that asks for a decision, and drop the process if it dies or errs. */
     const attachIdle = (threadId: string, r: Retained) => {
       // The connection's one splitter now feeds this handler.
+      r.conn.onFit = undefined;
       r.conn.onLine = (line) => {
         let msg: any;
         try { msg = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { return; }
@@ -675,7 +678,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // an automatic error answer could resume a retired context.
         void closeRetained(threadId, "permission ask while idle", r);
       };
-      r.conn.onOverflow = () => void closeRetained(threadId, "frame too large while idle", r);
       const onStderr = () => {};
       const onError = () => void closeRetained(threadId, "process error", r);
       const onClose = () => void closeRetained(threadId, "process exited", r);
@@ -1035,11 +1037,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.phoneJobs) {
           mount("phoneJobs", turn.integrations.phoneJobs, true, "own:phoneJobs");
         }
-        // native HighLevel (HL-S2): pre-approved (OWN_UNASKED); the host grant and Murage's own review card are the gate.
-        if (turn.integrations?.highlevel) {
-          // All family tools reach the host; only it may authorize an operation or send reviewed values.
-          mount("highlevel", turn.integrations.highlevel, true, "own:highlevel");
-        }
         // A custom server named like one in the owner's own config.toml would
         // be MERGED with it by the `-c` override, not replace it: a stdio
         // command over a remote `url` entry is "invalid configuration" and
@@ -1051,7 +1048,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // The servers that actually get mounted, chosen BEFORE any name is
         // allocated: a skipped server must not reserve its name, and a moved
         // server must not land on a sibling's.
-        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs") || (Boolean(turn.integrations?.highlevel) && name === "highlevel"))
+        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs"))
           .map((mount): [string, { command: string; args: string[]; env: Record<string, string> }] => [mount.name, { command: mount.command, args: mount.args, env: mount.env }])
           // Rule 11: a name holding `__` cannot be told apart from its tools,
           // so it is not mounted and no record is written for it.
@@ -1451,10 +1448,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (relay) unownedRelayChild = child;
         if (!reuse && hookGate) { const owned = hookGate; child.once("exit", () => owned.close()); }
         // One id counter, one baseline and one frame splitter per process,
-        // across the turns on it. Byte-bounded framing (A4): UTF-8 is decoded
-        // per complete line, so a multibyte character split across reads
-        // stays intact, and one frame never holds more than
-        // ENGINE_FRAME_MAX_BYTES of the shared process.
+        // across the turns on it. Line framing (A4): UTF-8 is decoded per
+        // complete line, so a multibyte character split across reads stays
+        // intact. No frame size limit (MAIN-RULING cause22-no-transport-caps).
         const conn: Conn = reuse?.conn ?? (() => {
           // Plan usage: a native reporter only on the account's own ChatGPT sign-in, off a Cloud home (its native
           // context is qualified by the Cloud owner first), on a Codex that reports every bucket. Otherwise the
@@ -1469,8 +1465,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           });
           child.once("exit", () => account.close());
           child.once("error", () => account.close());
-          const made: Conn = { used: false, nextId: 1, baseline: undefined, onLine: () => {}, onOverflow: () => {}, buffered: () => 0, account };
-          const lines = createBoundedLineSplitter({ onLine: (line) => { if (!account.intercept(line)) made.onLine(line); }, onOverflow: (overflow) => made.onOverflow(overflow) });
+          const made: Conn = { used: false, nextId: 1, baseline: undefined, onLine: () => {}, buffered: () => 0, account };
+          const lines = createBoundedLineSplitter({
+            onLine: (line) => { if (!account.intercept(line)) made.onLine(line); },
+            onFit: (line) => { if (!account.intercept(line)) (made.onFit ?? made.onLine)(line); },
+          });
           made.buffered = () => lines.bufferedBytes;
           child.stdout.on("data", (chunk: Buffer) => lines.push(chunk));
           registerIntake(threadId, child.stdout, child);
@@ -1545,7 +1544,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // thread/compact/start answers `{}`: its turn is named only by the
       // notifications that follow, so the first one on this thread names it.
       let adoptFirstTurn = false;
-      let earlyNotificationBytes = 0;
       const earlyNotifications: any[] = [];
       // A tool item Codex announced before its turn/start answer: if the turn then fails to start, that action may already
       // have run (adapted from OpenMausBot 7045f15a1). Kept apart from the buffer, which an invalid answer clears first.
@@ -1680,7 +1678,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (helpers.grace) clearTimeout(helpers.grace);
         for (const subtask of helpers.tracker.endAll(false)) emit({ ...base(threadId, turnId), type: "turn.subtask", subtask, subtasks: helpers.tracker.snapshot() });
         earlyNotifications.length = 0;
-        earlyNotificationBytes = 0;
         hookGate?.disarm(hookGeneration);
         narrowDenials.endTurn(turnId);
         const approvalsOpen = asks.size;
@@ -1706,6 +1703,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           active.delete(threadId);
           endPrewarm();
           if (state.total) settledTotals.set(threadId, state.total);
+          if (ok && !stopRequested) relay?.reportUnavailable(() => base(threadId, turnId), emit);
           // a refusal, a gate incident and a shutdown that did not confirm are the turn's own end under any Stop (Verdict.final)
           entry.finish({
             ok,
@@ -1841,7 +1839,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               codexTurnId = started.turn.id; awaitingTurnStart = false;
               appliedPolicy = next; switchingPosture = false;
               recordPostureAck('codex', instanceId, threadId, turnId, turn.permissionNow?.() ?? turn, 'turn/start');
-              const buffered = earlyNotifications.splice(0); earlyNotificationBytes = 0;
+              const buffered = earlyNotifications.splice(0);
               for (const notification of buffered) {
                 if (abandoned || state.settled) break;
                 handleNotification(notification);
@@ -2372,16 +2370,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           if (!codexTurnId) {
             if (!awaitingTurnStart) return;
-            // Ordering is not promised by the protocol. Retain only bounded,
-            // identified candidates until the ACK establishes the parent.
-            const bytes = Buffer.byteLength(JSON.stringify(msg));
-            if (earlyNotifications.length >= 256 || earlyNotificationBytes + bytes > 32 * 1024 * 1024) {
-              emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} sent more updates before the turn started than Murage can hold, so the turn was stopped.` });
-              void settle(false, "early_notification_overflow");
-              return;
-            }
+            // Ordering is not promised by the protocol. Retain the identified
+            // candidates until the ACK establishes the parent. MAIN-RULING
+            // cause22-no-transport-caps (1.0.21): no count or size cap on them.
             earlyNotifications.push(msg);
-            earlyNotificationBytes += bytes;
             if (CODEX_ACTING_ITEM_TYPES.has(p.item?.type)) earlyToolActivity = true;
             return;
           }
@@ -2602,14 +2594,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
       };
 
-      conn.onOverflow = (overflow) => {
-        if (abandoned) return;
-        appendNative(threadId, { dir: "in", source: "codex.app-server", msg: { frameOverflow: overflow } });
-        if (state.settled) return;
-        // CXP: a turn already fenced shows no engine error card; P1 ends it memory-refused
-        if (!turnOwner.fenced) emit({ ...base(threadId, turnId), type: "runtime.error", message: frameOverflowMessage("Codex", overflow) });
-        void settle(false, FRAME_TOO_LARGE);
-      };
       const handleStdoutLine = (line: string) => {
         // a completion earlier in the same read ends the turn: later lines
         // from that read are not this turn's output
@@ -2712,6 +2696,31 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
 
       conn.onLine = line => emissionSource.run(source, () => handleStdoutLine(line));
+      // 1.0.21 group B (cause22-eng-design3-fable B, AMEND X6): a frame past the string limit, fitted. R1 a server request (an
+      // approval, an elicitation) is never run or shown on cut text: it gets codex's own typed negative answer by its id. R2 any
+      // other frame (thread/start reply, items, turn/completed) goes to the same handler; the live turn is marked and told once
+      // BEFORE it, so a fitted turn/completed still carries the mark. A mark, never a stop.
+      let lineFitNoticed = false;
+      conn.onFit = line => emissionSource.run(source, () => {
+        let msg: any;
+        try { msg = JSON.parse(line); } catch { msg = null; }
+        if (msg && typeof msg === "object" && !Array.isArray(msg) && typeof msg.method === "string" && msg.id !== undefined && msg.id !== null) {
+          const frame = { jsonrpc: "2.0", id: msg.id, ...idleRefusal(msg.method) };
+          try { NotModelRequest("Codex permission reply; no turn/start", send(frame)); }
+          catch (error) { void onDispatchError(error, "codex.dispatch.fit", msg, nativeRequestCanceller(msg)); }
+          return;
+        }
+        if (!state.settled) {
+          markTurnOutside(threadId, "outside tool", undefined, undefined, "codex-line-fitted");
+          if (!lineFitNoticed) {
+            lineFitNoticed = true;
+            const itemId = `line-fit-${turnId}`;
+            emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId, title: LINE_FITTED_NOTICE, toolKind: "notice" });
+            emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
+          }
+        }
+        handleStdoutLine(line);
+      });
       // Stderr received after the last parsed protocol message. Older stderr
       // can name a long-past event (a websocket 426 logged at turn start,
       // echoed when something else later kills the process), so only this
@@ -3165,12 +3174,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           awaitingTurnStart = false;
           if (typeof result?.turn?.id !== "string" || !result.turn.id) {
             earlyNotifications.length = 0;
-            earlyNotificationBytes = 0;
             throw new Error(`${ENGINE} did not start the turn.`);
           }
           codexTurnId = result.turn.id;
           const buffered = earlyNotifications.splice(0);
-          earlyNotificationBytes = 0;
           for (const notification of buffered) {
             if (abandoned || state.settled) break;
             handleNotification(notification);

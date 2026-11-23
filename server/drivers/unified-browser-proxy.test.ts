@@ -4,7 +4,7 @@
 // holding control) and still never forward an arbitrary server error, which
 // could carry text from a page.
 import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
-import { spawnBoundProxy, boundProxyState } from "../testing/bound-proxy-fixture.ts";
+import { spawnBoundProxy, boundProxyState, boundTerminalReason } from "../testing/bound-proxy-fixture.ts";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -26,7 +26,7 @@ async function route(status: number, body: unknown): Promise<string> {
 }
 
 /** Run the proxy over stdio exactly as an engine does and collect replies. */
-async function exchange(base: string, requests: unknown[], terminal = false): Promise<any[]> {
+async function exchange(base: string, requests: unknown[], terminal = false, reasons: unknown[] = []): Promise<any[]> {
   const child = await spawnBoundProxy("unifiedBrowser", process.execPath, [PROXY], {
     env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "fixture-token", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread" },
     stdio: ["pipe", "pipe", "inherit"],
@@ -42,6 +42,7 @@ async function exchange(base: string, requests: unknown[], terminal = false): Pr
     await new Promise((resolve) => child.once("close", resolve));
     // MAIN RULING INT-CONFLICT-DEFAULT 6a9dfe7db8: require the authenticated terminal refusal as well as zero ordinary output.
     expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: { jsonrpc: "2.0", id: null, error: { code: -32099, message: LEDGER_REFUSAL_LINE, data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true } } } });
+    reasons.push(boundTerminalReason(child));
   } else {
     await delivered;
     expect(boundProxyState(child)).toEqual({ sealed: false, refusals: 0 });
@@ -72,4 +73,21 @@ it("never forwards a server error Murage did not write for the bot", async () =>
   const replies = await exchange(base, [{ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "agent_browser_snapshot" } }], true);
   expect(JSON.stringify(replies)).not.toContain("page secret");
   expect(replies).toEqual([]);
+});
+
+// MACMOUNTS-1020 (Mac 12:33Z: "type=turn-release-terminal keys=type,instanceId,frame", no cause): the terminal names its first refusing check.
+it("MACMOUNTS-REASON: a tool listing the server answered with an uncoded 500 seals with reason tools-list:http-500", async () => {
+  const base = await route(500, { error: "engine said <secret page text>" });
+  const reasons: unknown[] = [];
+  const replies = await exchange(base, [{ jsonrpc: "2.0", id: 4, method: "tools/list" }], true, reasons);
+  expect(replies).toEqual([]);
+  expect(reasons).toEqual(["tools-list:http-500"]);
+});
+
+it("MACMOUNTS-REASON: a server that is not listening seals with the connection code, before any server log could exist", async () => {
+  const base = await route(200, {});
+  await new Promise((resolve) => servers.pop()!.close(resolve));
+  const reasons: unknown[] = [];
+  await exchange(base, [{ jsonrpc: "2.0", id: 5, method: "tools/list" }], true, reasons);
+  expect(reasons).toEqual(["fetch:econnrefused"]);
 });

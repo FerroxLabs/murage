@@ -40,7 +40,9 @@ it('AF1: consecutive successful schema resets never exhaust recovery', { timeout
   let ready = 0;
   search.searchIndexTestHooks.event = event => { if (event.type === 'ready') ready++; };
   for (let i = 1; i <= search.SEARCH_RECOVERY_ATTEMPTS + 2; i++) {
-    db.exec(`CREATE TABLE invalidation_${i}(v)`);
+    // A bare schema-cookie move (an unrelated CREATE TABLE) no longer invalidates: start-up migrations move it on every
+    // start (W-SEARCH-RESTART). A rotated search owner is a genuine invalidation that must reset.
+    db.prepare("UPDATE transcript_index_state SET done=? WHERE name='search_owner'").run(`invalidation_${i}`);
     await until(() => ready === i && settled(db));
     expect(search.readMessageSearchCandidates(db, search.trigramQuery('quokka'), 10)).toEqual({ rowids: [1], partial: false });
   }

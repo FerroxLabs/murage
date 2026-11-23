@@ -814,7 +814,7 @@ export async function upgradeInvoiceOutcome(env: Env, lease: HomeLease, homeId: 
 
 // ---- Resize job (cron sweep) ----------------------------------------------------------------------------------------------------------
 
-/** The server resize that follows an upgrade (build host only). Injected in tests; default: the build host Cloud API with HCLOUD_TOKEN. Every
+/** The server resize that follows an upgrade (Hetzner only). Injected in tests; default: the Hetzner Cloud API with HCLOUD_TOKEN. Every
  *  mutating call returns the provider action id; failures throw ResizeHostError with the HTTP status. */
 export interface ResizeHost {
   findServer(homeId: string, generation: number): Promise<{ id: string } | null>;
@@ -826,7 +826,7 @@ export interface ResizeHost {
   shutdown(serverId: string): Promise<string>;
   forceOff(serverId: string): Promise<string>;
   powerOn(serverId: string): Promise<string>;
-  /** build host change_type with upgrade_disk=false (the root disk keeps its size, so a later downgrade stays possible). */
+  /** Hetzner change_type with upgrade_disk=false (the root disk keeps its size, so a later downgrade stays possible). */
   changeType(serverId: string, serverType: string): Promise<string>;
   action(actionId: string): Promise<"running" | "success" | "error">;
 }

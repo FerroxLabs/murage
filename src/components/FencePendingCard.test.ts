@@ -26,6 +26,8 @@ it("the refused-turn card retains the resolved engine name through rendering", (
   const markup = renderToStaticMarkup(createElement(RuntimeErrorCard, {
     message: turnRefusedLine(nameOf(resolved), "not-started"), botName: "Fixture", onOpenProviderSettings() {},
   })).split("<details")[0];
-  expect(markup).toContain("Claude could not start this reply. Send it again.");
+  // 1.0.20 A-2: a refusal at the send is Murage's own check: the line names Murage, never the engine that had started correctly
+  expect(markup).toContain("Murage couldn&#x27;t start this reply. Send it again.");
+  expect(markup).not.toContain("Claude");
   expect(markup).not.toContain("Grok");
 });

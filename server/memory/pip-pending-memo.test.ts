@@ -62,7 +62,14 @@ it("the sliced check hands the loop back between threads and agrees with the one
   expect(turns).toBeGreaterThan(100);
   resetPipPendingScans();
   expect(sliced).toBe(pipReflectPending(many));
-  // the memo is shared: a sliced check right after a full one reads the map
+  // 1.0.21 cause18c (row 1c): the sliced check no longer shares the one-hold check's memo. That memo's key is built from every thread
+  // of the bot (the admission vector and the thread list), which is the per-thread work the idle lane must not do on a pass with nothing
+  // changed; the sliced check keeps its own memory, fed by the change feed (pip-pending-dirty-1021.test.ts). What is asserted instead: its
+  // first check reads the threads, its second reads none.
+  await pipReflectPendingSliced(many, 0);
+  expect(pipPendingScanStats.memoHits).toBe(0);
+  const walks = pipPendingScanStats.threadWalks;
   await pipReflectPendingSliced(many, 0);
   expect(pipPendingScanStats.memoHits).toBe(1);
+  expect(pipPendingScanStats.threadWalks).toBe(walks);
 });

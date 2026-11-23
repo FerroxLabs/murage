@@ -51,7 +51,7 @@ Threat boundary: no claim is made about OS swap/hibernation, external clipboard 
 
 ## Verification and evidence
 
-All executions used `/workspace/tools/it-remote.sh`, with `IT_JOB=bld-hlpw`, `IT_W=/workspace/swarm-b/hlf6/wt`, `IT_ORIG=/workspace/tools/it-local-generic.sh`, and network disabled. At most two owned containers ran at once; mutations ran serially. The initial helper allowed one remote run while build host load was 80; this violates the requested wait rule and is recorded here. Subsequent invocations used a job-local load check waiting while the one-minute load exceeded 60. Final wrapper also explicitly sets `NETARG='--network none'`.
+All executions used `/workspace/tools/it-remote.sh`, with `IT_JOB=bld-hlpw`, `IT_W=/workspace/swarm-b/hlf6/wt`, `IT_ORIG=/workspace/tools/it-local-generic.sh`, and network disabled. At most two owned containers ran at once; mutations ran serially. The initial helper allowed one remote run while Hetzner load was 80; this violates the requested wait rule and is recorded here. Subsequent invocations used a job-local load check waiting while the one-minute load exceeded 60. Final wrapper also explicitly sets `NETARG='--network none'`.
 
 Evidence resides outside the commit at `/workspace/swarm-b/bld-hlpw/evidence/`. `commands.txt`, `runs.json`, and `SHA256SUMS` identify the exact runs and files. The initial RED batches preceded implementation of the corresponding modules and failed assertion checks for missing exports. New coverage was added during implementation, so this is not a claim of every final assertion having a separately recorded pre-implementation RED.
 

@@ -61,7 +61,11 @@ const indexedCases: Array<[string, (f: WritetimeFixture) => unknown, boolean]> =
   ["seeding", f => { f.reply("fresh", "parent", 150, { turnLsn: 60 }); f.db.prepare("UPDATE memory_revoke_jobs SET state='seeding'").run(); }, true],
   ["orphan line visibility", f => { f.reply("fresh", "parent", 150, { turnLsn: 60 }); f.db.prepare("DELETE FROM memory_revoke_jobs").run(); }, true],
   ["missing lineage", () => {}, true],
-  ["candidate overflow", f => { for (let i = 1; i <= 257; i++) f.reply("fresh", `old${i}`, 200 + i, { turnLsn: 40 }); f.reply("fresh", "parent", 150, { turnLsn: 60 }); }, true],
+  // MEMAUDIT F4: this case expected true. 257 generated lines of old turns elsewhere in the thread overflowed the turn-first read and
+  // held the child of a parent outside the window, while the read rule shows that parent. The carried run (one line) is now read by
+  // position, so the long thread no longer decides; the next case keeps the hold for a parent that is inside the window.
+  ["long thread, parent outside the window", f => { for (let i = 1; i <= 257; i++) f.reply("fresh", `old${i}`, 200 + i, { turnLsn: 40 }); f.reply("fresh", "parent", 150, { turnLsn: 60 }); }, false],
+  ["long thread, parent inside the window", f => { for (let i = 1; i <= 257; i++) f.reply("fresh", `old${i}`, 200 + i, { turnLsn: 40 }); f.reply("fresh", "parent", 150, { turnLsn: 40 }); }, true],
 ];
 it.each(indexedCases)("indexed range privacy: %s", (_name, setup, expected) => {
   const f = new WritetimeFixture(); fixtures.push(f); f.db.exec(LINEAGE_TURN.sql);

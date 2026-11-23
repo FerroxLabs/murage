@@ -23,6 +23,7 @@ import { CliMountRelay, mountedTurn, assertRelayAvailable, prepareCliMounts, rel
 import { freshMcpMountAdmission, assertConsumingMountAdmission } from "../mcp-mounts.ts";
 import { refuseConsumingTurn } from "../../consuming-turn-response.ts";
 import { LEDGER_REFUSAL_LINE } from "../../ledger-refusal.ts";
+import { fenceRefusalDiagnosis } from "../../memory/send-fence.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { recordOutsideInstallChange } from "../../outside-wire.ts";
 import { openAcpSession } from "./open-session.ts";
@@ -125,10 +126,12 @@ import { DIAGNOSTIC_RPC_METHODS, parseRuntimeErrorDiagnostic } from "../../../sh
 import { enginePathFromEnv, noteEnginePath } from "../../outside-scan.ts";
 import { CLI_CALLER_DEADLINE_MS, cliContainment, describeSpawnFailure, engineJob, engineProcessPid, engineWrapsHostPower, execCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused, killCliTree, spawnCli } from "../../procs.ts";
 import { cachedCliVersion } from "../../cli-version-cache.ts";
+import { runningAppVersion } from "../../memory/app-version.ts";
 import { claudeExecutableIdentity } from "../claude-guards.ts";
 import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, ChildTeardown, combine, type TeardownWait } from "../child-teardown.ts";
 import {
   createLifecycleRecorder,
+  lifecycleVersion,
   errnoCategory,
   type LifecycleFields,
   type LifecycleStopReason,
@@ -289,17 +292,11 @@ export interface AcpOutsideCall {
   toolIdentity?: { namespace: string; name: string; kind?: string };
   /** the title is the qualified tool a wrapper call names in its arguments (`tool_name`), not the engine's own title */
   wrapped?: boolean;
-  /** 1.0.19 4.5: the paths the call's `locations` name (at most ACP_LOCATIONS_MAX) */
+  /** 1.0.19 4.5: the paths the call's `locations` name (every one: cause22 C1, no count cap) */
   paths?: string[];
-  /** Astra r1 H3: the call named more locations than `paths` holds */
-  pathsOverflow?: boolean;
   /** 1.0.19 A3: the call's toolCallId, so its mark and its ask carry the same key */
   callKey?: string;
 }
-/** 1.0.19 4.5: the most `locations` a call's judging reads one by one; past it the call is judged closed (H3). Relay 6:
- *  half the call's 64-syscall budget (TEXT_SYSCALLS, a realpath and an lstat per location), so a call AT the cap is
- *  judged path by path; at 64 the budget ran out on the cap itself and every such call marked `downloaded file`. */
-export const ACP_LOCATIONS_MAX = 32;
 /** The server's ACP lane hooks (index.ts wires them, as setClaudeLaneHooks for Claude). `judge` reads one call and marks
  *  the running turn when it is outside (`register`: an update that changed the call, or one with no start, so the server
  *  also registers what it brings in, as at a start); `mark` marks the running turn. Unset (driver tests, no server):
@@ -312,6 +309,8 @@ export interface AcpOutsideHooks {
 }
 let acpOutsideHooks: AcpOutsideHooks | null = null;
 export function setAcpOutsideHooks(hooks: AcpOutsideHooks | null): void { acpOutsideHooks = hooks; }
+/** The turns (their hooks) already told that one engine line was fitted: once per turn. */
+const fittedNoticed = new WeakSet<object>();
 
 /** Astra r1 (4): a call's protocol fields, never its chip. The title is the qualified tool a wrapper names (MCP namespace
  *  kept) or else the engine's raw title; the input is rawInput; the stamp is the one item.started carries (`fuigo/tool`),
@@ -321,16 +320,16 @@ export function acpOutsideCall(fields: { title?: unknown; rawInput?: unknown; ki
   const stamp = acpStampedIdentity(fields);
   const input = fields.rawInput && typeof fields.rawInput === "object" && !Array.isArray(fields.rawInput) ? fields.rawInput as Record<string, unknown> : undefined;
   const inner = input?.tool_name ?? input?.toolName;
-  const paths = Array.isArray(fields.locations)
-    ? fields.locations.slice(0, ACP_LOCATIONS_MAX).map((l) => (l && typeof l === "object" ? (l as { path?: unknown }).path : undefined)).filter((p): p is string => typeof p === "string" && p !== "")
-    : [];
-  // Astra r1 H3: the locations past the cap are never dropped silently: the call says so and is judged closed (a read
-  // marks when anything is registered, a write on a marked turn spans it)
-  const overflow = Array.isArray(fields.locations) && fields.locations.length > ACP_LOCATIONS_MAX;
+  // cause22 C1 (design3 section 2): every location the call names is judged, each on a budget of its own (outside-wire
+  // TextBudget.alone()); no count cap and no overflow mark, so a call is never marked or spanned for how many paths it names
+  const paths: string[] = [];
+  if (Array.isArray(fields.locations)) for (const l of fields.locations) {
+    const p = l && typeof l === "object" ? (l as { path?: unknown }).path : undefined;
+    if (typeof p === "string" && p !== "") paths.push(p);
+  }
   return {
     origin: "engine",
     ...(paths.length ? { paths } : {}),
-    ...(overflow ? { pathsOverflow: true } : {}),
     ...(callKey ? { callKey } : {}),
     ...(title ? { title } : {}),
     ...(typeof inner === "string" && inner.trim() ? { wrapped: true } : {}),
@@ -383,7 +382,7 @@ export function mcpServerStatusReject(params: Record<string, unknown>, mounted: 
   if (!ownSessionId) return "session-unbound";
   if (sessionId !== ownSessionId) return "session-mismatch";
   if (tools !== undefined && tools !== null) {
-    if (!Array.isArray(tools) || tools.length > 256) return "tools";
+    if (!Array.isArray(tools)) return "tools";
     for (const tool of tools) {
       // a plain name, or an object holding NOTHING but a plain `name`: no description or other text passes
       const toolName = typeof tool === "string" ? tool : tool && typeof tool === "object" && !Array.isArray(tool) && Object.keys(tool).length === 1 ? (tool as { name?: unknown }).name : undefined;
@@ -435,12 +434,13 @@ function samePath(a: string, b: string): boolean {
 }
 function pinnedFieldIsPlain(field: string, value: unknown, ownCwd: string | null | undefined): boolean {
   switch (field) {
-    case "cwd": return typeof value === "string" && !!ownCwd && value.length <= 1024 && NO_CONTROL.test(value) && samePath(value, ownCwd);
+    case "cwd": return typeof value === "string" && !!ownCwd && NO_CONTROL.test(value) && samePath(value, ownCwd);
     case "isWorktree": case "resident": case "yolo": return typeof value === "boolean";
     case "lastChangeUnixMs": return typeof value === "number" && Number.isFinite(value);
-    case "modelId": return typeof value === "string" && value.length <= 128 && NO_CONTROL.test(value);
-    // real frame: origin is `{ "kind": "local" }`; a plain string up to 128 chars is also accepted. Any other key or value marks.
-    case "origin": return (typeof value === "string" && value.length <= 128 && NO_CONTROL.test(value))
+    case "modelId": return typeof value === "string" && NO_CONTROL.test(value);
+    // real frame: origin is `{ "kind": "local" }`; a plain string is also accepted. Any other key or value marks.
+    // No length bound on these values (MAIN-RULING cause22-no-transport-caps: a size never marks or stops a turn).
+    case "origin": return (typeof value === "string" && NO_CONTROL.test(value))
       || (!!value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 1 && typeof (value as { kind?: unknown }).kind === "string" && /^[A-Za-z0-9_.:-]{1,32}$/.test((value as { kind: string }).kind));
     case "activity": return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(value);
     default: return false;
@@ -448,7 +448,7 @@ function pinnedFieldIsPlain(field: string, value: unknown, ownCwd: string | null
 }
 function sessionEntryIsPlain(fields: Record<string, unknown>, ownSessionId: string | null | undefined, ownCwd?: string | null): boolean {
   const names = Object.keys(fields);
-  if (names.length === 0 || names.length > 16) return false;
+  if (names.length === 0) return false;
   const ids = SESSION_ID_FIELDS.filter((name) => fields[name] !== undefined).map((name) => fields[name]);
   if (ids.length === 0 || !ids.every((id) => typeof id === "string" && PLAIN_ID.test(id as string)) || new Set(ids).size !== 1) return false;
   const own = !!ownSessionId && ids[0] === ownSessionId;
@@ -460,7 +460,7 @@ function sessionEntryIsPlain(fields: Record<string, unknown>, ownSessionId: stri
     if (SESSION_PINNED_FIELDS.has(field)) { if (!pinnedFieldIsPlain(field, value, ownCwd)) return false; continue; }
     // title: null (real frame) or a string, for the own session only; another session's title, null included, marks
     if (own && field === "title" && value === null) continue;
-    if (own && SESSION_OWN_TEXT_FIELDS.has(field)) { if (!(typeof value === "string" && value.length <= 500)) return false; continue; }
+    if (own && SESSION_OWN_TEXT_FIELDS.has(field)) { if (typeof value !== "string") return false; continue; }
     return false;
   }
   return true;
@@ -473,7 +473,7 @@ function sessionsChangedIsConfig(params: Record<string, unknown>, ownSessionId: 
   if (meta !== undefined && !(meta && typeof meta === "object" && !Array.isArray(meta) && Object.keys(meta).every((k) => k === "isReplay" && typeof (meta as { isReplay?: unknown }).isReplay === "boolean"))) return false;
   for (const key of keys.filter((k) => k !== "_meta")) {
     const list = params[key];
-    if (!Array.isArray(list) || list.length > 256) return false;
+    if (!Array.isArray(list)) return false;
     for (const entry of list) {
       if (typeof entry === "string") { if (!PLAIN_ID.test(entry)) return false; continue; }
       // `removed` holds plain id strings only; an object there marks
@@ -517,19 +517,18 @@ export function helperRailRequestFrame(sid: unknown, update: unknown, envelope: 
     if (!start && !continuation) return false;
   }
   for (const key of ["name", "kind"]) if (u[key] !== undefined && !(typeof u[key] === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(u[key] as string))) return false;
-  for (const key of ["arguments_delta", "delta", "arguments"]) if (u[key] !== undefined && !(typeof u[key] === "string" && (u[key] as string).length <= 200_000)) return false;
+  for (const key of ["arguments_delta", "delta", "arguments"]) if (u[key] !== undefined && typeof u[key] !== "string") return false;
   for (const key of ["tool_index", "index"]) if (u[key] !== undefined && !(typeof u[key] === "number" && Number.isSafeInteger(u[key]) && (u[key] as number) >= 0)) return false;
   return true;
 }
-/** NL-WIN-1018 D3e: the held server_status decisions (ids the frames named while the driver's session id was unbound). At most 4 are held
- *  (more mark); once the id binds, only the same id is clean; a frame that is not itself lifecycle metadata arriving while a decision is held
+/** NL-WIN-1018 D3e: the held server_status decisions (ids the frames named while the driver's session id was unbound). Any number are
+ *  held (no count cap, MAIN-RULING cause22-no-transport-caps); once the id binds, only the same id is clean; a frame that is not itself lifecycle metadata arriving while a decision is held
  *  and the id is still unbound is fail-closed (the caller marks). */
 export function pendingStatusAction(held: readonly string[], bound: string | null): "wait" | "clean" | "mark" {
   if (held.length === 0) return "clean";
   if (!bound) return "wait";
   return held.every((sid) => sid === bound) ? "clean" : "mark";
 }
-export const PENDING_STATUS_MAX = 4;
 export function frameMarksWhileHeld(method: unknown): boolean {
   return typeof method !== "string" || !(ACP_NON_TOOL_NOTIFICATIONS.has(method) || ACP_CONFIG_NOTIFICATIONS.has(method));
 }
@@ -1287,6 +1286,9 @@ export function engineStderrLastWords(captured: string, truncated: boolean): str
   return acpEngineExitStderrText(acpEngineStderrCapture(captured, truncated));
 }
 
+/** The engine lines that explain nothing (the error card's own "generic" set, src/components/RuntimeErrorCard.tsx). */
+const GENERIC_ENGINE_LINE = /^(?:internal error|unknown error|ACP request failed|request failed)[.!]?$/i;
+
 /** Fuigo's typed failure kind, a snake_case token. Read only from
  * `error.data.error_kind`: it travels as its own field so nothing has to
  * recover it from text the engine wrote. */
@@ -1389,7 +1391,8 @@ import { appendNative } from "../native.ts";
 import { descendantIdentities, processParentsAndArgs, untrackedIdentified, type ProcessIdentities } from "../process-tree.ts";
 import { endTurnTrace, turnTrace } from "../../turn-trace.ts";
 import { notePromptSent } from "../../turn-hold.ts";
-import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage, type FrameOverflow } from "../bounded-lines.ts";
+import { appendTurnText, createBoundedLineSplitter, type LineFit } from "../bounded-lines.ts";
+import { LINE_FITTED_NOTICE, lineCutAnswer } from "../../owner-turn-caps.ts";
 import { registerIntake } from "../../harness/intake.ts";
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { normalizeEngineCommands } from "../../engine-commands.ts";
@@ -1867,6 +1870,8 @@ const mcpOwnReadyWaitMs = () => Math.min(mcpReadyWaitMs(), envOr("MURAGE_ACP_MCP
  *  so every turn keeps its wait until a notification, a settled list or the bound releases it. A new build has a
  *  new key and is asked afresh. */
 const acpMcpListUnsupported = new Set<string>();
+/** The engine version each driver's last `initialize` answer named in this process: lifecycle identity only. */
+const acpKnownEngineVersion = new Map<string, string>();
 const methodNotFound = (error: unknown): boolean => (error as { code?: unknown } | null)?.code === -32601;
 /** The direct readiness signal (mcp-listed.ts): Murage's own servers (agents,
  *  memory, connected apps) are its own processes, so each one writes a marker
@@ -1923,6 +1928,9 @@ export function acpBuildKey(driverKind: string, init: any, executable?: () => st
   const identity = name === null || version === null ? `|${executable?.() ?? "?"}` : "";
   return `${driverKind}|${name ?? "?"}@${version ?? "?"}${identity}`;
 }
+/** 1.0.20 ctxrev: the statuses by which an engine says a server settled without coming up. The mounted gate does not wait for
+ *  these; "ready" is the only ready word, and any other status (initializing, or a word this build does not know) is waited for. */
+const MCP_SETTLED_NOT_READY: ReadonlySet<string> = new Set(["unavailable", "setuprequired", "failed", "error", "disabled"]);
 /** Every mounted server has settled (none still initializing) per the list. */
 function mcpListSettled(states: Map<string, string>, names: string[]): boolean {
   return names.every((name) => states.has(name) && states.get(name) !== "initializing");
@@ -2317,7 +2325,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       /** nativecrash LLD-acp: a refusal this driver raises itself, with no engine request behind it. There is no driver target to close
        *  (target null), so the lease takes the close at once; the error is rethrown unchanged for the caller's own path. */
       const refuseDirect = (turn: Pick<SendTurnInput, "threadId" | "releaseBinding">, line: string): never => {
-        try { return refuseConsumingTurn(turn.releaseBinding!); }
+        // 1.0.20 busy: the verdict says the driver raised it. With the turn's context still current, the direct turn's lease ends the
+        // turn at once (admitLedgerLease "ledger"): a rebuild would start the same engine into the same refusal, behind the full wait.
+        try { return refuseConsumingTurn(turn.releaseBinding!, { state: "checking", reason: "not-built", driverRaised: true }); }
         catch (error) {
           refusalFor(error, `acp.direct.${line}`, { engine: DRIVER_KIND, threadId: turn.threadId, binding: turn.releaseBinding, target: null, kind: "turn" });
           throw error;
@@ -2454,11 +2464,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (phoneJobs) {
           servers.push({ name: "phoneJobs", command: phoneJobs.command, args: phoneJobs.args, env: own("phoneJobs", phoneJobs.env) });
         }
-        // native HighLevel (HL-S2, read only): the host checks the grant on every call and lists no change tool.
-        const highlevel = turn.integrations?.highlevel;
-        if (highlevel) {
-          servers.push({ name: "highlevel", command: highlevel.command, args: highlevel.args, env: acpEnv(highlevel.env) });
-        }
         // The bot's computer, mounted exactly like the Claude driver does.
         // Cloud boxes use the REST adapter; host and sandbox Cua connections
         // expose Cua Driver's official MCP server directly.
@@ -2501,7 +2506,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
         if (turn.integrations?.browser) own.set("browser", "own:browser");
         if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
-        if (turn.integrations?.highlevel) own.set("highlevel", "own:highlevel");
         if (turn.integrations?.computer || turn.integrations?.localComputer) own.set("computer", "own:computer");
         const records: McpMountRecord[] = [];
         for (const server of servers) {
@@ -2553,8 +2557,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       // background child that survived into an MCP re-establish. Not fixed.
       //
       // Only a turn that ends cleanly (`end_turn` with something to show)
-      // parks its process. A failure, a cancel, an interrupt, a crash or a
-      // frame overflow closes it exactly as before. An idle process closes
+      // parks its process. A failure, a cancel, an interrupt or a crash
+      // closes it exactly as before. An idle process closes
       // after `MURAGE_ACP_POOL_IDLE_MS`, on `interruptTurn` (every Stop, bot
       // delete, stall watchdog and settings change goes through it),
       // `resetSession`, a contract change, a request it sends while idle,
@@ -2562,7 +2566,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       // when more than `MURAGE_ACP_POOL_MAX` sit idle.
       interface AcpProcessHooks {
         line(line: string): void;
-        overflow(overflow: FrameOverflow): void;
         stderr(text: string): void;
         notice(text: string): void;
         error(error: Error): void;
@@ -2836,46 +2839,56 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           clearMcpListed(proc.catalogPaths);
           proc.catalogPaths.clear();
         });
-        // Byte-bounded framing (A4): the splitter decodes UTF-8 only for
-        // complete lines, so multibyte characters that straddle two reads
-        // stay intact, and one frame can never hold more than
-        // ENGINE_FRAME_MAX_BYTES of this shared process's memory. One per
+        // Line framing (A4): the splitter decodes UTF-8 only for complete
+        // lines, so multibyte characters that straddle two reads stay intact.
+        // No frame size limit (MAIN-RULING cause22-no-transport-caps). One per
         // process, so a line cut across two turns is not lost.
+        const onStdoutLine = (line: string) => {
+          if (!line.trim()) return;
+          let msg: any;
+          try { msg = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { msg = null; }
+          // Parked: retirement on any activity runs BEFORE the ownership filter, whichever
+          // session sent the frame (a retired owner's late update, a sessionless one).
+          // The fence only protects the handlers of a running turn.
+          if (msg && proc.owner.hooks && !fenceFrame(proc, msg)) return;
+          if (proc.owner.hooks) proc.owner.hooks.line(line); else idleLine(proc.owner.threadId, proc, line);
+        };
         const lines = createBoundedLineSplitter({
-          onLine: (line) => {
-            if (!line.trim()) return;
+          onLine: onStdoutLine,
+          // 1.0.21 group B (cause22-eng-design3-fable/DESIGN.md B): a line past the string limit, fitted. R1 a request to us
+          // (fs/*, terminal/*, session/request_permission) is never run or shown on cut text: its exact id gets the -32000
+          // line. R2 anything else goes to the same handler (session/prompt resolves with the engine's own stopReason), then
+          // the running turn is marked and the owner told once. A mark, never a stop.
+          onFit: (line: string, fit: LineFit) => {
             let msg: any;
-            try { msg = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { msg = null; }
-            // Parked: retirement on any activity runs BEFORE the ownership filter, whichever
-            // session sent the frame (a retired owner's late update, a sessionless one).
-            // The fence only protects the handlers of a running turn.
-            if (msg && proc.owner.hooks && !fenceFrame(proc, msg)) return;
-            if (proc.owner.hooks) proc.owner.hooks.line(line); else idleLine(proc.owner.threadId, proc, line);
-          },
-          onOverflow: (overflow) => {
-            if (proc.owner.hooks) return proc.owner.hooks.overflow(overflow);
-            appendNative(proc.owner.threadId, { dir: "in", source: SOURCE, msg: { frameOverflow: overflow } });
-            closeProcess(proc.owner.threadId, proc, "frame_overflow");
+            try { msg = JSON.parse(line); } catch { msg = null; }
+            if (msg && typeof msg === "object" && !Array.isArray(msg) && msg.method !== undefined && msg.id !== undefined && msg.id !== null) {
+              const answer = lineCutAnswer({ id: msg.id, call: true, limit: fit.limit, bytes: fit.units });
+              if (answer) writeTo(proc.owner.threadId, proc, JSON.parse(answer));
+              return;
+            }
+            onStdoutLine(line);
+            const hooks = proc.owner.hooks;
+            if (!hooks) return;
+            try { acpOutsideHooks?.mark(proc.owner.threadId, "outside tool", "acp-line-fitted"); } catch { /* the server's mark failed: it fails closed on its side */ }
+            if (!fittedNoticed.has(hooks)) { fittedNoticed.add(hooks); hooks.notice(LINE_FITTED_NOTICE); }
           },
         });
         child.stdout.on("data", (chunk: Buffer) => lines.push(chunk));
         registerIntake(proc.owner.threadId, child.stdout, child);
-        let noticeCount = 0;
+        // No size limit on a stderr line and no count limit on notices (MAIN-RULING cause22-no-transport-caps).
         const notices = createBoundedLineSplitter({
-          maxBytes: 64 * 1024,
           onLine: (line) => {
-            if (!proc.owner.hooks || proc.closing || proc.dead || noticeCount >= 3 || !line.startsWith("Fuigo: ")) return;
-            noticeCount++;
+            if (!proc.owner.hooks || proc.closing || proc.dead || !line.startsWith("Fuigo: ")) return;
             // Fuigo's one-time user notices are single lines starting exactly "Fuigo: "
             // (its log output never does). Redact the complete line before the display limit,
             // which keeps a whole memory-move notice including its folder paths.
             proc.owner.hooks.notice(redactSecretsInText(stripVTControlCharacters(line)).trim().slice(0, 1200));
           },
-          onOverflow: () => {},
         });
         child.stderr.on("data", (chunk: Buffer) => {
           proc.owner.hooks?.stderr(String(chunk));
-          if (SOURCE === "fuigo.acp" && noticeCount < 3) notices.push(chunk);
+          if (SOURCE === "fuigo.acp") notices.push(chunk);
         });
         // Exit or error: this exact process leaves the driver pool and the shared warm
         // pool, whichever thread it serves now.
@@ -3117,8 +3130,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           assertRelayAvailable(turn);
         }
         const boundMounted = mounted;
-        // Validate capacity before probes or an engine process can be started.
-        if (mounted && (support.ownTools || acpMcpServers(turn).length > 64)) refuseDirect(turn, "3105");
+        // Validate capacity before probes or an engine process can be started (an engine with its own tool rail cannot take a mount).
+        // No count of MCP servers refuses the turn (MAIN-RULING cause22-no-transport-caps).
+        if (mounted && support.ownTools) refuseDirect(turn, "3105");
         turn = { ...turn, cwd: botFolderOrThrow(turn) };
         const { threadId } = turn;
         let preparedMounts: ReturnType<typeof prepareCliMounts> | undefined;
@@ -3315,7 +3329,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          *  completed means the switch did not hold, so the turn is stopped at once, before anything else runs. */
         const noteAskStopTool = (u: { toolCallId?: unknown; kind?: unknown; status?: unknown }) => {
           const id = typeof u.toolCallId === "string" ? u.toolCallId : undefined;
-          if (id && typeof u.kind === "string" && askStopKinds.size < 512) askStopKinds.set(id, u.kind);
+          if (id && typeof u.kind === "string") askStopKinds.set(id, u.kind);
           const kind = typeof u.kind === "string" ? u.kind : id ? askStopKinds.get(id) : undefined;
           if (!askStopChangeKind(kind)) return;
           if (u.status === "failed") askStopRefused = true;
@@ -3385,7 +3399,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
 
         // R1-T8: one bounded, allowlisted lifecycle trace per child generation.
-        const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId });
+        // meetgreet 1.0.19: the identity fields were null on every event. The app's version is the build's; the engine's is
+        // the last `initialize` answer this driver had in this process (no probe per turn), updated when this one answers.
+        const lifecycle = createLifecycleRecorder({ threadId, driver: DRIVER_KIND, instanceId, turnId,
+          appVersion: lifecycleVersion(runningAppVersion()), engineVersion: acpKnownEngineVersion.get(DRIVER_KIND) ?? null });
+        const noteEngineVersion = (init: any) => {
+          const version = lifecycleVersion((init?.agentInfo ?? init?._meta?.agentInfo)?.version);
+          if (!version) return;
+          acpKnownEngineVersion.set(DRIVER_KIND, version);
+          lifecycle.setEngineVersion(version);
+        };
         // The child is spawned by `launch()` below — synchronously for most
         // turns, and only after the owner has answered a folder-trust card
         // when the folder needs one (FUIGOTRUST1). Until then there is no
@@ -3574,7 +3597,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const askRegistered = new Set<string>();
         const rememberCall = (id: string, facts: CallFacts) => {
           callFacts.delete(id);
-          if (callFacts.size >= 1024) callFacts.delete(callFacts.keys().next().value!);
           callFacts.set(id, facts);
         };
         // Astra r1 (5): this turn asked for a session/load, so frames before its prompt are that session's history; its
@@ -3907,6 +3929,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          *  rejection, an oversized frame, the child's error and close, `settleHalted`) asks this, never `cancelRequested` or `disposed`
          *  on its own; so does the reader, which drops late output only after an asked Stop (a dispose alone still reads the reply). */
         const stopWasAsked = () => state.cancelRequested || state.stopAsked || (state.stopRequested && !disposed) || (!state.promptSent && fence.retired());
+        /** 1.0.20 ctxrev: the mounted gate is waiting on a mount not yet proven ready. A Stop then (and the engine closing because of it) does
+         *  not end the turn as cancelled: the gate wakes within one bounded read and settles it itself, by its refusal when the mount is still
+         *  unproven, so the ledger decides between that refusal row and a confirmed Stop (JOINT RULING STOP-VS-REFUSAL). */
+        let mcpGateDeciding = false;
         /** The end of a turn `turnHalted` caught before its prompt: nothing was written, and it ends at once, read as `stopWasAsked` reads it. */
         const settleHalted = () => {
           if (state.settled) return;
@@ -3916,7 +3942,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (handedBack && !state.promptSent && turn.beforePrepare) {
             try { turn.beforePrepare(); } catch { settle(false, "submission_refused"); return; }
           }
-          if (stopWasAsked() || !disposed) { settle(true, "cancelled"); return; }
+          // The mounted gate is deciding (an oversized frame or the child's error after a Stop): it settles the turn itself, by its refusal
+          // when the mount is still unproven, as it does for the child's close.
+          if (stopWasAsked() || !disposed) { if (!mcpGateDeciding) settle(true, "cancelled"); return; }
           emit({ ...base(threadId, turnId), type: "runtime.error", message: engineClosedLine(ENGINE, null) });
           settle(false, "exit_before_result");
         };
@@ -4189,6 +4217,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               parkProcess(threadId, proc!, sessionId!, turn.prewarm === true);
             }
             flushAssistantText();
+            if (ok && !state.cancelRequested) mountRelay?.reportUnavailable(() => base(threadId, turnId), emit);
             // The Ask hard stop's one note, when something was refused and the reply does not already say it.
             if (askStopRefused && !replyCarriesAskStopNote(askStopReply)) {
               const itemId = `ask-stop-${turnId}`;
@@ -5453,7 +5482,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (!retryDiscard) return;
           const tag = typeof startMs === "number" ? startMs : undefined;
           const last = streamSegs[streamSegs.length - 1];
-          if (last && last.kind === kind && last.epoch === streamEpoch && last.startMs === tag && !last.cut) last.text += delta;
+          if (last && last.kind === kind && last.epoch === streamEpoch && last.startMs === tag && !last.cut) last.text = appendTurnText(last.text, delta);
           else streamSegs.push({ kind, epoch: streamEpoch, startMs: tag, text: delta, ...(kind === "text" ? { itemId: textItemId } : {}) });
         };
         const handleHelperUpdate = (sid: unknown, u: any, replay: boolean, envelope?: unknown) => {
@@ -5463,7 +5492,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // NL-WIN-1018 D3c (MurageMain ruling): Fuigo's `session_summary` frame for THIS turn's own session, with no other key, while the
           // turn is still clean, summarises clean content only. Any other session, key or an already marked turn marks as before.
           const cleanSummary = !!u && typeof u === "object" && (u.sessionUpdate === "session_summary" || u.sessionUpdate === "session_summary_generated") && typeof sid === "string" && sid === sessionId
-            && Object.keys(u).every((key) => key === "sessionUpdate" || key === "session_summary") && typeof u.session_summary === "string" && u.session_summary.length <= 8_000 && acpOutsideHooks?.marked?.(threadId) === false
+            && Object.keys(u).every((key) => key === "sessionUpdate" || key === "session_summary") && typeof u.session_summary === "string" && acpOutsideHooks?.marked?.(threadId) === false
             && helperEnvelopeIsPlain(envelope);
           if (!state.settled && u && typeof u === "object" && !ACP_HELPER_RAIL_NON_TOOL.has(u.sessionUpdate) && !cleanSummary && !helperRailRequestFrame(sid, u, envelope, sessionId)
             && ((!replay && state.promptSent) || !loadIssued)) {
@@ -5605,7 +5634,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // NL-WIN-1018 D3b (Astra r5 High): only Murage's OWN mounts (agents, memory, browser) are trusted for a status frame, never a user-configured server
             const ownMountNames = [mounts.agents, mounts.memory, mounts.browser].filter((name): name is string => typeof name === "string");
             if (msg.method === "_fuigo/mcp/server_status" && !state.settled && !sessionId && typeof msg.params?.sessionId === "string"
-              && acpConfigNotification(msg.method, msg.params, ownMountNames, msg.params.sessionId) && pendingStatus.length < PENDING_STATUS_MAX) { pendingStatus.push(msg.params.sessionId); return; }
+              && acpConfigNotification(msg.method, msg.params, ownMountNames, msg.params.sessionId)) { pendingStatus.push(msg.params.sessionId); return; }
             if (msg.method === "_fuigo/sessions/changed" && !state.settled && !acpConfigNotification(msg.method, msg.params, ownMountNames, sessionId, cwd)) console.info(`acp config-reject thread=${threadId} method=_fuigo/sessions/changed ${sessionsChangedWhy(msg.params, sessionId, cwd)}`);
             if (msg.method === "_fuigo/mcp/server_status" && !state.settled && !acpConfigNotification(msg.method, msg.params, ownMountNames, sessionId)) console.info(`acp config-reject thread=${threadId} method=_fuigo/mcp/server_status ${mcpServerStatusWhy(msg.params, ownMountNames, sessionId)}`);
             if (!state.settled && !ACP_NON_TOOL_NOTIFICATIONS.has(String(msg.method)) && !acpConfigNotification(msg.method, msg.params, ownMountNames, sessionId, cwd)) { markAcpTurn("outside tool", `acp-notify:${logMethodName(msg.method)}`, msg.params); tripTool(); }
@@ -5703,11 +5732,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 if (support.resendsReasoningReply && messageId !== null && messageId === state.textMessageId
                     && isReasoningReplay(delta, state.messageText)) break;
                 state.textMessageId = messageId;
-                if (support.resendsReasoningReply) state.messageText += delta;
+                if (support.resendsReasoningReply) state.messageText = appendTurnText(state.messageText, delta);
                 const startMs = p._meta?.streamStartMs ?? u._meta?.streamStartMs;
                 splitAtNewResponse(startMs);
                 if (liveBreak) { liveBreak = false; textItemId = randomUUID(); }
-                state.text += delta;
+                state.text = appendTurnText(state.text, delta, () => {
+                  try { acpOutsideHooks?.mark(threadId, "outside tool", "acp-reply-text-cut"); } catch { /* the server's mark failed: it fails closed on its side */ }
+                });
                 if (askStop() && askStopReply.length < 65_536) askStopReply += delta;
                 recordSeg("text", delta, startMs);
                 emit({ ...base(threadId, turnId), type: "content.delta", itemId: textItemId, streamKind: "assistant_text", delta });
@@ -5758,7 +5789,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // decide whether this tool is one of Murage's screen surfaces.
               // Keep the tool the engine actually named alongside it.
               const identity = resolveToolIdentity(u.title, u.rawInput);
-              if (typeof u.toolCallId === "string" && toolNames.size < 512) toolNames.set(u.toolCallId, { label: label.name, identity });
+              if (typeof u.toolCallId === "string") toolNames.set(u.toolCallId, { label: label.name, identity });
               // NOLIMITS v1 (Astra r1 2, 4): the call is judged on its protocol fields (raw title or the wrapped tool's
               // qualified name, rawInput, kind, stamp) before its chip, and those fields are kept for its updates
               {
@@ -5898,15 +5929,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           fuigoWatchTimer = timer;
         };
 
-        // A frame over ENGINE_FRAME_MAX_BYTES (A4); the byte-bounded splitter
-        // that detects it belongs to the process (`openProcess`).
-        const handleOverflow = (overflow: FrameOverflow) => {
-          appendNative(threadId, { dir: "in", source: SOURCE, msg: { frameOverflow: overflow } });
-          if (state.settled) return;
-          if (stopWasAsked()) { settleHalted(); return; } // G15: same for an oversized frame after a reset before the prompt, or after an asked Stop
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: frameOverflowMessage(support.displayName, overflow) });
-          settle(false, FRAME_TOO_LARGE);
-        };
         // Tool updates may await a native posture acknowledgement. Keep the
         // following text, retry boundaries and prompt result behind that work,
         // so a retry cannot discard text that preceded a tool still being read.
@@ -6037,7 +6059,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         untrackPendingCatalogs();
         target.owner.hooks = {
         line: handleStdoutLine,
-        overflow: handleOverflow,
         notice: emitNotice,
         stderr: (text) => {
           if (!state.settled && !state.cancelRequested && !state.stopRequested) quiet?.feed(text);
@@ -6082,7 +6103,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           });
           if (!state.settled) {
             if (stopWasAsked()) {
-              settle(true, "cancelled");
+              if (!mcpGateDeciding) settle(true, "cancelled");
               stderrDiagnostic = "";
               return;
             }
@@ -6475,7 +6496,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // the finished env), and every answer is checked before anything is prompted.
         const sessionParams = <T extends object>(params: T): T => {
           const requested = (params as { mcpServers?: typeof mcpServers }).mcpServers;
-          if (boundMounted && requested) params = { ...params, mcpServers: requested.map(server => {
+          if (boundMounted && requested) params = { ...params, mcpServers: requested.filter(server => !mountRelay?.mountUnavailable(server.name)).map(server => {
             const native = nativeMcpServers.find(entry => entry.name === server.name);
             if (!native) return refuseDirect(turn, "6364");
             const reconnect = server.env.filter(entry => entry.name === "MURAGE_MCP_RECONNECT");
@@ -6919,6 +6940,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               mountRelay = await CliMountRelay.create(turn, preparedMounts!, {}, null);
               mountRelay.attach(child!, error => {
                 if (state.settled) return;
+                if (error === undefined) console.warn("[memory] ledger refusal cause=acp-mount-relay-denied");
                 emit({ ...base(threadId, turnId), type: "runtime.error", message: error === undefined ? LEDGER_REFUSAL_LINE : "The mounted tool connection stopped." });
                 settle(false, error === undefined ? "memory-refused" : "error");
               });
@@ -6948,6 +6970,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let mcpWaitedMs = 0;
             /** The engine's own words on each server, kept with the statuses they came with: only the gate line reads them. */
             const listDetails = new WeakMap<Map<string, string>, Map<string, AcpMcpServerDetail>>();
+            /** The last list the engine answered this turn: a read that times out afterwards learns nothing, so it never erases
+             *  what that list said (1.0.20 ctxrev: a negative list followed by silence is still negative). */
+            let lastListed: Map<string, string> | null = null;
             /** Each server's status from the engine's list (`mcpListMethod`), or
              *  null when it has none or did not answer. */
             const readStates = async (timeoutMs = 3_000): Promise<Map<string, string> | null> => {
@@ -6967,6 +6992,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   if (entry && typeof entry.name === "string" && entry.session && typeof entry.session === "object") details.set(entry.name, acpMcpServerDetail(entry.session));
                 }
                 listDetails.set(states, details);
+                lastListed = states;
                 return states;
               } catch (error) {
                 if (buildKey && methodNotFound(error)) acpMcpListUnsupported.add(buildKey);
@@ -6982,7 +7008,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const waitStartedAt = Date.now();
               const mcpDone = turnTrace(threadId).span("mcp.ready.wait", { servers: mcpServers.length });
               const id = sessionId!;
-              const names = mcpServers.map(server => server.name);
+              const activeNames = () => mcpServers.map(server => server.name).filter(name => !mountRelay?.mountUnavailable(name));
               const buildKey = acpBuildKey(DRIVER_KIND, init ?? proc?.initResult, () => claudeExecutableIdentity(config.cli, env));
               if (proc) proc.mcpBuildKey = buildKey;
               // Each server's status first: when the list already shows every
@@ -6990,7 +7016,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               mcpListShowsSettled = false;
               const first = await readStates();
               let outcome: "ready" | "own_ready" | "timeout" | "aborted";
-              if (first && mcpListSettled(first, names)) outcome = "ready";
+              if (!activeNames().length || (first && mcpListSettled(first, activeNames()))) outcome = "ready";
               else {
                 // While waiting for the notification, keep reading the list: a
                 // build that never sends one is released as soon as it settles.
@@ -7000,7 +7026,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                     await new Promise(resolve => setTimeout(resolve, 500));
                     if (!polling) return;
                     const next = await readStates();
-                    if (next && mcpListSettled(next, names)) { mcpListShowsSettled = true; releaseMcpWait?.(); return; }
+                    if (!activeNames().length || (next && mcpListSettled(next, activeNames()))) { mcpListShowsSettled = true; releaseMcpWait?.(); return; }
                   }
                 })();
                 // Never shortened on silence alone: only a notification, a settled list, the direct
@@ -7053,6 +7079,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // fresh process instead, in this same turn.
               init = proc!.initResult;
               pinHermes(init?.agentInfo?.version);
+              noteEngineVersion(init);
               retryDiscard = acpRetryDiscard(init);
               if (!crossThread && proc!.sessionKey === sessionKey) {
                 mcpEstablished = false;
@@ -7135,6 +7162,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (externalHalt()) { settleHalted(); return; }
             proc!.initResult = init;
             pinHermes(init?.agentInfo?.version);
+            noteEngineVersion(init);
             seedLanded();
             recordProbedImages(imagesKey(), init);
             retryDiscard = acpRetryDiscard(init);
@@ -7377,7 +7405,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const capMs = (acpMcpQuiet.get(quietKey) ?? 0) >= MCP_LISTED_QUIET_AFTER ? Math.min(mcpListedWaitMs(), MCP_LISTED_QUIET_WAIT_MS) : mcpListedWaitMs();
               const mcpDone = turnTrace(threadId).span("mcp.listed.wait", { servers: mcpListedPaths.length });
               const startedAt = Date.now();
-              const missing = () => mcpListedPaths.filter((path) => !mcpMarkerReady(path));
+              const missing = () => mcpListedPaths.filter(path => !mountRelay?.mountUnavailable(mcpListedNames.get(path)!) && !mcpMarkerReady(path));
               while (missing().length && Date.now() - startedAt < capMs && !state.settled && !state.cancelRequested) {
                 await new Promise((resolve) => setTimeout(resolve, MCP_LISTED_POLL_MS));
               }
@@ -7406,7 +7434,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
             // Intent warm: the engine is up with its session established and its MCP
             // servers ready. Settle parks it (held for one window); no prompt is sent.
-            if (boundMounted && mcpOutcome === "timeout") {
+            const activeMount = (server: { name: string }) => !mountRelay?.mountUnavailable(server.name);
+            if (boundMounted && mcpOutcome === "timeout" && mcpServers.some(activeMount)) {
               state.mcpReadiness = "unknown";
               if (turn.releaseBinding) refuseDirect(turn, "7292");
               throw new Error("MEMORY_CONTEXT_REVOKED");
@@ -7424,7 +7453,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let requiredMissing: string[] | null = null;
             /** Required servers the engine's list did not name: their readiness is unknown. */
             let absentRequired: string[] = [];
-            const requiredNames = mcpServers.map(server => server.name).filter(name => requiredMountNames.has(name));
+            const requiredNames = mcpServers.filter(activeMount).map(server => server.name).filter(name => requiredMountNames.has(name));
             if (support.mcpListMethod && sessionId && (requiredNames.length || boundMounted)) {
               // Connected apps count as ready only once the engine holds the real tool list: the bridge files a
               // marker while it holds only a stand-in, and the engine's own status says "ready" either way.
@@ -7434,10 +7463,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               });
               const holdsStandIn = (name: string) => isConnectedAppsServer(name) && composioRefs.length > 0 && anyMountHoldsStandIn(composioRefs);
               const statusNotReady = (states: Map<string, string>) => requiredNames.filter(name => states.has(name) && states.get(name) !== "ready");
-              const checkedNames = boundMounted ? mcpServers.map(server => server.name) : requiredNames;
-              const notReady = (states: Map<string, string>) => checkedNames.filter(name => states.has(name) && (states.get(name) !== "ready" || holdsStandIn(name)));
+              const checkedNames = () => boundMounted ? mcpServers.filter(activeMount).map(server => server.name) : requiredNames;
+              const notReady = (states: Map<string, string>) => checkedNames().filter(name => states.has(name) && (states.get(name) !== "ready" || holdsStandIn(name)));
               // A required server the list does not name at all is unknown, not ready.
-              const absentFrom = (states: Map<string, string>) => checkedNames.filter(name => !states.has(name));
+              const absentFrom = (states: Map<string, string>) => checkedNames().filter(name => !states.has(name));
               const gateStartedAt = Date.now();
               let gateReconnected: string[] = [];
               let gateBackedOff: string[] = [];
@@ -7456,14 +7485,52 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 console.info(line);
                 appendNative(threadId, { dir: "out", source: SOURCE, msg: { mcpGate: line } });
               };
-              let states = await readStates();
+              // A mounted turn's gate never decides on silence after the engine answered once: the last list it gave stands.
+              let states = (await readStates()) ?? (boundMounted ? lastListed : null);
               if (state.settled) return;
-              if (state.cancelRequested) { settle(true, "cancelled"); return; }
+              // 1.0.21 selfheal-r2: an OPTIONAL bound mount (the browser, the computer, the phone...) the engine reports settled without
+              // coming up (a browser that cannot start) is retired for this turn: the relay closes its ingress for good and the bot is told
+              // (reportUnavailable). Left unproven it refused every turn as a memory refusal, for as long as that mount failed. A Murage-required
+              // mount, one the list does not name, one still starting and a silent engine are not retired: they still refuse (fail closed).
+              const retireSettledOptional = (now: Map<string, string> | null) => {
+                if (!boundMounted || !now || !mountRelay) return;
+                for (const server of mcpServers.filter(activeMount)) {
+                  const status = now.get(server.name) ?? "";
+                  if (!requiredMountNames.has(server.name) && MCP_SETTLED_NOT_READY.has(status)) mountRelay.retireSettledMount(server.name, status);
+                }
+              };
+              retireSettledOptional(states);
+              // 1.0.20 ctxrev: on a busy computer the engine still lists a mounted server as starting (or not yet at all) at the
+              // first read. Read the engine's own list again inside the turn's window before deciding; a bound mount is never
+              // reconnected and nothing is written meanwhile. A read that goes unanswered keeps the last list and the wait goes
+              // on; a server the engine reports failed is not waited for; no read runs past the window. What is still not ready
+              // when the wait ends is refused below, also when a Stop ended the wait: the ledger then decides between the
+              // refusal row and the confirmed Stop (JOINT RULING STOP-VS-REFUSAL), never this driver.
+              const boundUnproven = (now: Map<string, string>) => boundMounted && checkedNames().length > 0 && (notReady(now).length > 0 || absentFrom(now).length > 0);
+              const boundStarting = (now: Map<string, string>) => absentFrom(now).length > 0 || notReady(now).some(name => !MCP_SETTLED_NOT_READY.has(now.get(name)!));
+              if (states && boundUnproven(states)) {
+                mcpDeadline ??= Date.now() + mcpRecoveryMs();
+                const until = Math.min(Date.now() + mcpReconnectWaitMs(), mcpDeadline);
+                mcpGateDeciding = true;
+                while (boundUnproven(states) && boundStarting(states) && !state.settled && !stopWasAsked()) {
+                  if (until - Date.now() <= 0) break;
+                  await new Promise(resolve => setTimeout(resolve, Math.min(250, Math.max(0, until - Date.now()))));
+                  const left = until - Date.now();
+                  if (left <= 0 || state.settled || stopWasAsked()) break;
+                  const next = await readStates(Math.min(3_000, left));
+                  if (next) { states = next; retireSettledOptional(states); }
+                  else if (proc?.mcpBuildKey && acpMcpListUnsupported.has(proc.mcpBuildKey)) break; // no list to read: nothing more to learn
+                }
+                if (state.settled) { mcpGateDeciding = false; return; }
+              }
               // Some native builds announce readiness but do not implement
               // mcp/list. A positive all-mounted notification or every named
               // tools/list receipt is still proof. A partial/error list always
               // wins over that aggregate signal; silence never supplies proof.
-              if (boundMounted && (states ? notReady(states).length || absentFrom(states).length : mcpOutcome !== "ready")) {
+              const refusalDue = boundMounted && checkedNames().length > 0 && (states ? boundUnproven(states) : mcpOutcome !== "ready");
+              mcpGateDeciding = false;
+              if (state.cancelRequested && !refusalDue) { settle(true, "cancelled"); return; }
+              if (refusalDue) {
                 // Keep the native readiness facts on the terminal receipt even
                 // when the consuming gate refuses before any prompt is sent.
                 if (!states || absentFrom(states).length) state.mcpReadiness = "unknown";
@@ -7909,6 +7976,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   try { turn.beforePrepare(); } catch { boundaryRefused = true; }
                   if (boundaryRefused) { settle(false, "submission_refused"); return; }
                 }
+                console.warn(`[memory] ledger refusal cause=${fenceRefusalDiagnosis(e).refused} site=acp-prompt`);
                 emit({ ...base(threadId, turnId), type: "runtime.error", message: LEDGER_REFUSAL_LINE });
                 settle(false, "memory-refused");
                 return;
@@ -7950,10 +8018,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // inside the transcript's own length. Classification above still
               // reads the raw message, and a line that sanitises to nothing is
               // the generic failure text rather than the raw one.
+              // meetgreet 1.0.19: a rejection that explains nothing ("Internal error", "Request failed.", or no message at all)
+              // and carries no typed kind for the card to explain is still a reason the owner can act on: the engine's
+              // service failed. One plain line naming the engine and the next step, never the bare JSON-RPC word.
+              const engineLine = fluxRefusal ? message : engineText ?? acpEngineErrorText(message);
+              const unexplained = !fluxRefusal && !errorKind && (engineLine === undefined || GENERIC_ENGINE_LINE.test(engineLine.trim()));
               emit({
                 ...eventBase,
                 type: "runtime.error",
-                message: fluxRefusal ? message : engineText ?? acpEngineErrorText(message) ?? `${ENGINE} could not finish this turn.`,
+                message: unexplained ? `${ENGINE}'s service returned an error. Try again, or switch engine.` : engineLine ?? `${ENGINE} could not finish this turn.`,
                 ...(errorKind ? { errorKind } : {}),
                 ...(acpEngineErrorCode(e) ? { engineCode: acpEngineErrorCode(e) } : {}),
                 // Read from the raw error and its data, before the text above is sanitised (Flux's code sits in error.state,

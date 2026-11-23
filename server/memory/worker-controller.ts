@@ -1,7 +1,7 @@
 // Owed-capture idle admission producer and controller consumer owner: warm-capture.
 // Grant producer owner: scperf-p1. Helper and WM grant consumers owner: scperf-p1.
 import { checkpointCeiling, commitCeiling, ioMeterPageSize, ioMeterWallTime } from "../io-meter.ts";
-import { indexStepFrames, META_ENVELOPE_FRAMES } from "./index-wal.ts";
+import { exitSealCeiling, indexStepFrames, MEMW_TICK_TRUNCATE_BYTES, META_ENVELOPE_FRAMES } from "./index-wal.ts";
 import { isBgDeferred, type BgDeferred } from "../bg-admission.ts";
 import type { AdmissionTicket } from "../io-budget.ts";
 import { waitForMemoryInferenceIdle } from "./extract.ts";
@@ -9,17 +9,17 @@ import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 import { bundledModelDirectory, resolveMemoryModelDirectory } from "./model-location.ts";
 import { setScrubRewriteFinisher } from "./scrub-pass.ts";
 import "./model-adoption.ts";
-import { checkpointDebtCount } from "./checkpoint-debt.ts";
-import { refreshMemoryCheckpoint } from "./consolidate.ts";
+import { checkpointDebtCount, jobOwesCheckpoint, moveSourceDebt, threadDebtMarker } from "./checkpoint-debt.ts";
+import { CHECKPOINT_CHUNK_REASON, refreshMemoryCheckpoint } from "./consolidate.ts";
 import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync,existsSync,unlinkSync } from "node:fs";
+import { readFileSync,existsSync,statSync,unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { SPAWNED_PROXIES,SERVER_ROOT } from "../proxy-paths.ts";
 import { DATA_DIR } from "../config.ts";
 import { BACKGROUND_BUSY_MS, awaitWriterGate, database,isDatabaseBusy,transaction,withBusyBudget,writersHeldForIndexBuild } from "../database.ts";
 import { BLOCK_BYTES, IO_BUDGET_BYTES_PER_MINUTE, ioBudget, withStatementReuse } from "../io-budget.ts";
-import { claimMemoryJob, deferStaleMemoryWork, hasClaimableCaptureJob, hasClaimableMemoryJob, heartbeatMemoryJob, isStaleMemoryPublication, nextMemoryJobDelay, notifyMemoryWork, onMemoryWork, publishMemoryWork, redriveTransientFailedJobs, requeueStaleMemoryWork, STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
+import { claimMemoryJob, deferStaleMemoryWork, hasClaimableCaptureJob, hasClaimableMemoryJob, hasDueCaptureJob, heartbeatMemoryJob, isStaleMemoryPublication, nextMemoryJobDelay, notifyMemoryWork, onMemoryWork, publishMemoryWork, redriveTransientFailedJobs, releaseDeadProcessLeases, requeueStaleMemoryWork, STALE_MEMORY_REQUEUE_LIMIT } from "./jobs.ts";
 import { memoryState } from "./repository.ts";
 import { sendSearch } from "./scope-set.ts";
 import { resultSchema, type MemoryWork,type MemorySearchInput,type MemorySearchResult } from "./worker-protocol.ts";
@@ -30,13 +30,15 @@ import { claimSettleSweepPending, parkMaintenancePending, parkMaintenanceStep } 
 import { memoryTickGapMs, traceBacklog, traceIndexSlice, traceSlowStep } from "./claim-trace.ts";
 import { turnTraceEnabled } from "../turn-trace.ts";
 import { logSwallowed, makeStderrForwarder, type WorkerSubsystem } from "./worker-log.ts";
-import { flushMemoryCounters, stepHealthScan } from "./health.ts";
+import { onStatusAsked, pagedScanWaitMs } from "./status-scan.ts";
+import { flushMemoryCounters, memoryCounterFlushDelay, memoryCountersPending, onMemoryCounted, stepHealthScan } from "./health.ts";
 import { stepRetentionScan } from "./retention.ts";
 import { blockMemoryIndexReader, closeMemoryIndexReader, drainMemoryIndexReaders, indexScrubOwed, memoryIndexScansActive, RESET_DRAIN_MAX_MS, setIndexWriterDrain, setWalCheckpointRequester, unblockMemoryIndexReader } from "./index-reader.ts";
 import { ownerFirst } from "../owner-first.ts";
-import { scrubWalAfterDelete } from "../wal-maintenance.ts";
+import { registerWalReader, scrubWalAfterDelete } from "../wal-maintenance.ts";
 import { forgetTurnCaptureJob, turnCaptureJobId } from "./turn-capture-jobs.ts";
 import { CATCH_UP_WINDOW_MS } from "./recent.ts";
+import { probeWakes, setWakeProbe } from "./wake.ts";
 import { OVERRUN_K_UNKNOWN } from "./memw-steps.ts";
 import { heldStep } from "../observe.ts";
 import { removeIndexQuarantines, probeIndexFile, type IndexProbe } from "./index-quarantine.ts";
@@ -45,7 +47,10 @@ import { ensureIndexOverrun, INDEX_OVERRUN_TABLE } from "./schema.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { ChildIoReceipts } from "../io-child-receipts.ts";
 import { markIoMeterUnknown } from "../io-meter.ts";
-import { coverReceiptChanges } from "./recall-view-schema.ts";
+import { coverReceiptChanges, RECALL_CHANGE_SET } from "./recall-view-schema.ts";
+import { OWE_RECEIPTS_SQL, oweReceiptsPage, type ReceiptKey } from "./recall-producers.ts";
+import { recallJournalRoom, whenRecallJournalRoom } from "./recall-view.ts";
+import { raise as raiseWake } from "./wake.ts";
 
 /** MEMW 1.13: the index's durable stop and the reset that answers it, one row in the main database (schema.ts index_overrun). A stop the
  * helper reports is seen once per (file_id, seq); the k-th stop within INDEX_RESET_WINDOW_MS waits indexResetWaitMs(k) (the first at once,
@@ -111,19 +116,53 @@ export function indexResetPending():boolean{const state=overrunRow()?.state;retu
 /** When a waiting reset falls due (the tick wakes then), or null. */
 export function indexResetWakeAt():number|null{const row=overrunRow();return row?.state==="waiting"?Number(row.due_at):null;}
 /** Every receipt owed to a rebuilt index (the receipts stay the durable truth; the index holds no memory rows of its own). */
-const receiptResetCursors=new WeakMap<DatabaseSync,{tag:string;after:number;through:number}>();
+// memv2 lane A (MEMORY-V2-DESIGN 4.2 A10; owner of this producer: lane A, of the tick that calls it: lane E). The receipts are owed in
+// pages of at most 256, in key order, each page ONE transaction and ONE 'receipts' range row of the recall journal (recall-producers.ts
+// oweReceiptsPage through coverReceiptChanges), and before each page the producer waits until the recall applier and every view build in
+// flight are within RECALL_PRODUCER_ROOM journal rows (recallJournalRoom): it answers "still owed", and the applier's commit raises the
+// `projection` wake (no timer of its own; the caller's retry is the tick's).
+//   - Inside the caller's transaction (completeIndexReset on the foreground path: MEMW r3.2.8b rule 1, "ONE transaction") every page
+//     runs now, in that transaction: the reset turns 'complete' only with every receipt owed, as before, but the journal gets one range
+//     row per 256 receipts instead of one row per receipt.
+//   - Under a memory source: one page a call (it was 8 rows a call). A page the background allowance refuses is halved, down to 8.
+//   - Otherwise (the helper's rebuilt notice): pages until the slice is spent, then "still owed"; a store of one page is done at once.
+// The cursor is in memory: after a crash the reset is still 'requested' (or the helper says rebuilt again) and the pages run from the
+// first key, changing nothing they changed before.
+const RESET_SLICE_MS=8,RESET_PAGE_MIN=8;
+/** Receipts one index-result transaction writes at most. It stays the X3 slice (2,048, halved on a refusal: recall-prod-x3-slices,
+ * recall-prod-x3-r2-window W3 pins the drain at 480 bytes a row, and 256-receipt transactions measured 1,075). A10's bound on the
+ * JOURNAL holds inside it: the transaction is written in chunks of RECALL_CHANGE_SET (256) receipts, each one 'receipts' range row, so
+ * a full slice is at most 8 journal rows, and the room wait comes before every transaction. Named deviation from the design's
+ * "256 receipts per transaction" for this one producer. */
+const RECEIPT_PAGE_ROWS=2048;
+const receiptResetCursors=new WeakMap<DatabaseSync,{tag:string;after:ReceiptKey|null;through:number;rows:number;waiting:boolean}>();
 function oweReceiptsToNewIndex(db:DatabaseSync,tag="rebuilt"):boolean {
-  const sql="UPDATE memory_projection_receipts SET lexical_status=CASE WHEN (SELECT r.state FROM memory_records r WHERE r.id=record_id AND r.version=record_version)='active' THEN 'pending' ELSE 'pending-archive' END,embedding_status='pending' WHERE lexical_status!='delete-pending' AND lexical_status!='deleted'";
-  if(!ioBudget.currentSource()?.startsWith("memory-")){db.prepare(sql).run();return true;}
-  let cursor=receiptResetCursors.get(db);
-  if(!cursor||cursor.tag!==tag){cursor={tag,after:0,through:Number(db.prepare("SELECT max(rowid) n FROM memory_projection_receipts").get()?.n??0)};receiptResetCursors.set(db,cursor);}
-  const rows=db.prepare("SELECT rowid FROM memory_projection_receipts WHERE rowid>? AND rowid<=? ORDER BY rowid LIMIT 8").all(cursor.after,cursor.through);
-  if(rows.length){
-    transaction(()=>{const update=db.prepare(sql+" AND rowid=?");for(const row of rows)update.run(row.rowid!);});
-    cursor.after=Number(rows.at(-1)!.rowid);
+  if(db.isTransaction){
+    let after:ReceiptKey|null=null;
+    for(;;){
+      const page=oweReceiptsPage(db,after,Number.MAX_SAFE_INTEGER);
+      // (a store with no receipt at all still runs the one statement of old, which changes nothing: index-overrun.test.ts 8v counts it)
+      if(page.done){if(page.after===null)db.prepare(OWE_RECEIPTS_SQL).run();return true;}
+      after=page.after;
+    }
   }
-  if(!rows.length||cursor.after>=cursor.through){receiptResetCursors.delete(db);return true;}
-  return false;
+  const background=ioBudget.currentSource()?.startsWith("memory-")===true;
+  let cursor=receiptResetCursors.get(db);
+  if(!cursor||cursor.tag!==tag){cursor={tag,after:null,through:Number(db.prepare("SELECT max(rowid) n FROM memory_projection_receipts").get()?.n??0),rows:RECALL_CHANGE_SET,waiting:false};receiptResetCursors.set(db,cursor);}
+  const state=cursor,started=performance.now();
+  for(;;){
+    if(!recallJournalRoom(db)){
+      // The applier (or a build) is more than the room behind: still owed. Its commit settles the wait and wakes whoever serves receipts.
+      if(!state.waiting){state.waiting=true;void whenRecallJournalRoom(db).then(()=>{state.waiting=false;raiseWake("projection");});}
+      return false;
+    }
+    let page:{after:ReceiptKey|null;done:boolean};
+    try{page=transaction(()=>oweReceiptsPage(db,state.after,state.through,state.rows));}
+    catch(error){if(isBgDeferred(error)&&state.rows>RESET_PAGE_MIN){state.rows=Math.max(RESET_PAGE_MIN,Math.floor(state.rows/2));return false;}throw error;}
+    state.after=page.after;
+    if(page.done){receiptResetCursors.delete(db);return true;}
+    if(background||performance.now()-started>=RESET_SLICE_MS)return false;
+  }
 }
 /** (4) MEMW r3.2.8b rule 1: a helper whose start carried R said reset_done = R. ONE transaction: only a 'requested' row with reset_id = R
  * owes every receipt again and turns 'complete' ("done"); every other row (complete, waiting, another reset, none) is "none" and nothing
@@ -158,6 +197,17 @@ export const resetCompletionIo:{unlink?:(file:string)=>void;fsyncDir?:(dir:strin
 export const CHECKPOINT_ACK_MS=5_000;
 export const FINISH_REWRITE_ACK_MS=120_000;
 export const MEMORY_IDLE_SWEEP_MS=30_000;
+/** How long a drained idle-started helper has to leave when asked, before the controller asks it again. */
+export const MEMORY_IDLE_DRAIN_EXIT_MS=10_000;
+/** Lane E owns the jobs topic's open probe (design 3.1, Astra final #8): pending work, or a checkpoint a born-complete job still owes.
+ * A capture job is born complete, so its debt binding is the only row that says the roll is owed; both reads are O(1) seeks. */
+export const JOBS_WAKE_PROBE_SQL=[
+  "SELECT 1 FROM memory_jobs INDEXED BY memory_jobs_pending WHERE status IN ('pending','partial','deferred','leased') LIMIT 1",
+  "SELECT 1 FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type='system' AND subject_id='checkpoint-pending' LIMIT 1",
+] as const;
+const registerJobsWakeProbe=()=>setWakeProbe("jobs",db=>JOBS_WAKE_PROBE_SQL.some(sql=>db.prepare(sql).get()!==undefined));
+// at import, so the probes of the first open already read it; start() registers it again after a test reset of the bus
+registerJobsWakeProbe();
 /** Queued consolidation drains at most once a second, as before. */
 export const MEMORY_DRAIN_GAP_MS=1_000;
 /** A due idle learning pass waits this long for running extractions before it runs beside them. */
@@ -170,6 +220,10 @@ export const UPGRADE_RECHECK_MS=5_000;
 export const UPGRADE_YIELD_MAX_MS=60*60_000;
 /** A helper that has not initialised by then is killed and respawned with backoff. */
 export const MEMORY_WORKER_INIT_MS=120_000;
+/** MAIN-RULING 2026-11-22T19:35Z idle-relaunch (owner of this rule in the controller: cause-idlecap-fable; ledger side: scperf-p1). The boot
+ * grant of a helper the controller starts by itself while the owner is idle, for captures that are already owed. It is admitted as
+ * capture work, so it sits inside the idle allowance (1 MiB - 64 KiB) and leaves room in the same minute for the first capture. */
+export const MEMORY_IDLE_BOOT_BYTES=512*1024;
 /** After start(), when the helper is started for recall if nothing has started it yet. */
 export const MEMORY_BOOT_WARM_MS=5_000;
 /** While parking maintenance is still pending, an idle controller comes back this soon for its next bounded step. */
@@ -217,6 +271,26 @@ const CHECKPOINT_CHECK_RETRY_MS=500;
 const CAPTURE_CHECKPOINT_OWED_MS=5*60_000, CAPTURE_CHECKPOINT_OWED_MAX=16;
 
 const MEMORY_WORKER_STOP_GRACE_MS=5000, MEMORY_WORKER_KILL_WAIT_MS=500;
+const MEMORY_WORKER_EXIT_WAIT_MS=5000, MEMORY_WORKER_EXIT_DISK_MS=5000;
+interface IdleAsk {
+  child:ChildProcess;
+  nextAsk:number;
+  neededSince?:number;
+  timer?:ReturnType<typeof setTimeout>;
+}
+interface WorkerExit {
+  child:ChildProcess;
+  stopAt?:number;
+  quiet:number;
+  terminalAt?:number;
+  killAt?:number;
+  disk?:{at:number;files:string[];writes:bigint|undefined};
+  diskProgressAt?:number;
+  reset?:boolean;
+  timer?:ReturnType<typeof setTimeout>;
+  done:Promise<void>;
+  resolve:()=>void;
+}
 /** r3.2.2 D1 conservative start: for the first T11 window after the controller starts, no checkpoint charge is granted (the helper runs no
  * checkpoint and its admission refuses writes at the bound; nothing is lost and no OVERRUN fires). */
 export const CHARGE_START_HOLD_MS=60_000;
@@ -249,7 +323,10 @@ export class MemoryWorkerController {
   private life:{child:ChildProcess;opening:boolean;charged:boolean;initialised:boolean;own:boolean}|null=null;
   /** CPU-only capture needs the loaded helper, independently of index-open admission. */
   private captureReadyChild:ChildProcess|null=null;
-  private childIo:{child:ChildProcess;receipts:ChildIoReceipts}|null=null;
+  private childIo:{child:ChildProcess;receipts:ChildIoReceipts;last?:string}|null=null;
+  private workerExit:WorkerExit|null=null;
+  private releaseChild:((code?:number|null,signal?:string|null)=>void)|null=null;
+  private idleAsk:IdleAsk|null=null;
   private openExitStreak=0;
   private killOwn(child:ChildProcess|null){if(child&&this.life?.child===child)this.life.own=true;child?.kill("SIGKILL");}
   /** Reported growth, less the unexpired credit it uses up (oldest first): what is left is debited. */
@@ -287,7 +364,7 @@ export class MemoryWorkerController {
     }
     if(inHold&&!granted)this.holdRefusedChild=child;
     if(granted&&inHold)this.holdGranted+=bytes!;
-    if(granted){this.workerBytes+=bytes!;this.chargeCredit.push({at:performance.now(),bytes:bytes!});}
+    if(granted){this.progressAt=Date.now();this.workerBytes+=bytes!;this.chargeCredit.push({at:performance.now(),bytes:bytes!});}
     this.chargeRun.keys.set(key,granted);
     if(this.chargeRun.keys.size>CHARGE_KEYS_MAX)this.chargeRun.keys.delete(this.chargeRun.keys.keys().next().value!);
     return granted;
@@ -463,6 +540,40 @@ export class MemoryWorkerController {
     }
     return delay;
   }
+  /** The start's two recovery steps, each run once per start. Failed jobs whose cause says nothing about the conversation (the helper
+   * died, a timeout) get their attempts back; C6: leases a dead process held are claimable now, not after their lease_until (bounded
+   * pages; a live lease is never taken). A refused step (BgDeferred, C4) or a held write lock is retried by ONE timer at its named
+   * time, replaced by a later refusal, never left for lease_until (the W13 restart stall: the release refused at boot, logged
+   * next=later, and the dead lease held the thread's capture past the poll window). An arrival (wake) moves that one timer to now:
+   * a restarted server is idle until its first turn, and the idle rule refuses BG writes until the roll. A retry that ran wakes the queue. */
+  private bootSteps={redrive:true,release:true};
+  private bootRecoveryTimer:ReturnType<typeof setTimeout>|null=null;
+  private bootRecoveryNow=false;
+  private bootRecovery(retry=true){
+    if(this.bootRecoveryTimer)clearTimeout(this.bootRecoveryTimer);this.bootRecoveryTimer=null;this.bootRecoveryNow=false;
+    if(!this.started||this.stopping)return;
+    let retryMs:number|null=null,ran=0;
+    const step=(key:"redrive"|"release",what:string,run:()=>number)=>{
+      if(this.bootSteps[key])return;
+      // idle-relaunch: a capture the previous process held is owed capture work. While idle its release is admitted as such (inside
+      // the idle allowance); under the worker source the idle rule refuses it until the owner returns.
+      const source=key==="release"&&ioBudget.admissionIdle()?"memory-capture":"memory-worker";
+      try{ioBudget.withSource(source,()=>{const n=run();this.bootSteps[key]=true;ran+=n;if(n)console.log(`[memory-worker] subsystem=capture ${what}=${n}`);});}
+      catch(error){
+        // its own delay, not bgRetryMs: an idle refusal names the roll, and pacing every claim to it would hold the owner's next
+        // capture back after the owner's action has cleared idle (the arrival below retries this step at once instead)
+        // a lock miss (reservationWait) retries at its own short delay, never the minute (memv2-D B3)
+        if(isBgDeferred(error)){const delay=this.bgRetryDelay(error);logSwallowed("capture",error,delay);retryMs=Math.min(retryMs??delay,delay);}
+        else if(isDatabaseBusy(error)){logSwallowed("capture",error,BUSY_RETRY_MS);retryMs=Math.min(retryMs??BUSY_RETRY_MS,BUSY_RETRY_MS);}
+        else{logSwallowed("capture",error);this.bootSteps[key]=true;}
+      }
+    };
+    step("redrive","redriven",()=>redriveTransientFailedJobs());
+    step("release","released",()=>releaseDeadProcessLeases());
+    if(retryMs!==null){this.bootRecoveryTimer=setTimeout(()=>{this.bootRecoveryTimer=null;this.bootRecovery();},Math.max(1,retryMs));this.bootRecoveryTimer.unref?.();}
+    // a retry that ran wakes the queue; at start the start's own tail does (it wakes when a job is claimable)
+    if(ran&&retry)this.wake();
+  }
   private swallowed(log:WorkerSubsystem,subsystem:string,code:string,error:unknown){
     if(this.stopping)return;
     if(isBgDeferred(error)){const delay=this.bgRetryMs(error);logSwallowed(log,error,delay);this.schedule(delay);return;}
@@ -505,7 +616,7 @@ export class MemoryWorkerController {
     if(this.child){if(this.ready)this.requestWarm(this.child);else if(this.wasmHelper||this.idleExited)this.warmOwed=true;return;}
     // No helper at all counts too: one that never started (no job was owed at boot) is forked by the first search, and that cold
     // start outlasts the query deadline, so the first turn after a restart goes out with no recall (ALL.eld250 real legs).
-    const now=Date.now();
+    const now=Date.now(),failures=this.initFailures;
     if(now<this.respawnAt||(!this.idleExited&&now<this.nextWarmAt))return;
     // A helper that left on its planned idle exit comes back as it always has. One that never ran starts only with memory active.
     // This also runs at every turn's start, so a locked database means no warm this time: never a failed turn, and no back-off, which would refuse the next search.
@@ -519,7 +630,7 @@ export class MemoryWorkerController {
     }catch(error){
       logSwallowed("recall",error);this.warmOwed=false;
       // spawn() shuts the index reader before it forks: a fork that threw must not leave recall shut out.
-      if(!this.child){unblockMemoryIndexReader();this.waitBeforeNextStart();}
+      if(!this.child){unblockMemoryIndexReader();if(this.initFailures===failures)this.waitBeforeNextStart();}
     }
   }
   private warmAfterIdleExit(){this.warmForIntent();}
@@ -647,7 +758,10 @@ export class MemoryWorkerController {
     if(this.turnHeld()){setTimeout(()=>this.independentWork(startup),100).unref();return;}
     // Retrieval counters reach the database here, once a minute, never on the recall path.
     try{ioBudget.withSource("memory-idle",()=>flushMemoryCounters());}catch(error){logSwallowed("maintenance",error);}
-    this.scheduleStatusScan(startup?5_000:0);
+    // a refused or not yet due flush keeps its counts: with no riders' interval it is the cause of one more sweep, at the next allowed flush
+    if(memoryCountersPending())this.sweepSoon(Math.max(1_000,memoryCounterFlushDelay()));
+    // the figures are measured when Memory details asks for them (memv2 E6) and once at start-up, never because of a write alone
+    if(startup||this.statusDirty){this.statusDirty=false;this.scanAsked||=!startup;this.scheduleStatusScan(startup?5_000:0);}
     // Maintenance and continuity (PIP reflection) yield to the owner (owner-first.ts); a deferred pass comes back with the next sweep.
     if(this.options.onMaintenance&&!this.maintenanceTask&&(startup||(!ioBudget.shouldDefer("memory-idle")&&ownerFirst.admit("memory-maintenance").admitted))){
       this.maintenanceTask=Promise.resolve().then(()=>ioBudget.withSource("memory-idle",()=>this.options.onMaintenance!(startup,this.consolidationAbort.signal)))
@@ -677,15 +791,14 @@ export class MemoryWorkerController {
     if(this.started) return;
     this.started=true;
     this.stopping=false;
+    registerJobsWakeProbe();
     // Set-aside index copies go at start, before any wait: with nothing owed the first tick is a full idle sweep away (MEMINDEX-BUSY-109).
     this.quarantineSweepAt=0;this.sweepIndexQuarantines();
     // unknown (the index could not be read just now) is owed: the helper reads the marker itself and says (memdel r2 High #3)
     this.scrubOwed=indexScrubOwed()!==false;
     if(this.scrubOwed)this.openOwnerDeleteWindow();
     if(this.consolidationAbort.signal.aborted)this.consolidationAbort=new AbortController();
-    // Failed jobs whose cause says nothing about the conversation (the helper died, a timeout) get their attempts back, once.
-    try{ioBudget.withSource("memory-worker",()=>{const n=redriveTransientFailedJobs();if(n)console.log(`[memory-worker] subsystem=capture redriven=${n}`);});}
-    catch(error){logSwallowed("capture",error);}
+    this.bootSteps={redrive:false,release:false};this.bootRecovery(false);
     // Debt found at start lost its capture's in-process retry with the previous run: it keeps capture admission for the bounded wait.
     try{
       for(const row of database().prepare("SELECT id FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type='system' AND subject_id='checkpoint-pending' ORDER BY rowid LIMIT ?").all(CAPTURE_CHECKPOINT_OWED_MAX)){
@@ -693,8 +806,15 @@ export class MemoryWorkerController {
       }
     }catch(error){logSwallowed("capture",error);}
     this.independentWork(true);
-    this.maintenanceTimer=setInterval(()=>this.independentWork(),MEMORY_IDLE_SWEEP_MS);
-    this.maintenanceTimer.unref();
+    // The 30 s sweep is kept only for lane K's riders (time-driven passes). Without one, the sweep runs on a cause (memv2 E6): a count
+    // arms the counter flush (at most once a minute), an ask from Memory details the status figures (a write alone re-measures nothing).
+    if(this.options.onMaintenance||this.options.onContinuity){
+      this.maintenanceTimer=setInterval(()=>this.independentWork(),MEMORY_IDLE_SWEEP_MS);
+      this.maintenanceTimer.unref();
+    }
+    this.offCounted=onMemoryCounted(()=>this.sweepSoon(memoryCounterFlushDelay()));
+    // Details asked for the figures: their pass runs here, now or, inside the passes' interval, when it ends (E6)
+    this.offAsked=onStatusAsked(()=>{this.scanAsked=true;this.scheduleStatusScan(0);});
     if(this.options.onNotebookSync){
       this.notebookTimer=setInterval(()=>this.syncNotebooks(),10_000);
       this.notebookTimer.unref();
@@ -707,13 +827,21 @@ export class MemoryWorkerController {
     this.unsubscribe=onMemoryWork(()=>this.wake());
     try {
       if(checkpointDebtCount(database())||hasClaimableMemoryJob()||this.pendingProjection()||this.scrubOwed||this.resetDueNow())this.wake();
-      else this.schedule(Math.min(MEMORY_IDLE_SWEEP_MS,nextMemoryJobDelay()??MEMORY_IDLE_SWEEP_MS));
+      // nothing owed: a timer only for a row already due later (a retry_at, a lease_until); none at all for an empty queue (memv2 E6)
+      // (the idle-consolidation rider, lane K, keeps its first pass one sweep after start, as the idle tick does below)
+      else{const due=nextMemoryJobDelay();if(due!==undefined||this.options.onIdleConsolidation)this.schedule(Math.min(MEMORY_IDLE_SWEEP_MS,due??MEMORY_IDLE_SWEEP_MS));}
     }catch{this.schedule(MEMORY_IDLE_SWEEP_MS);}
   }
   /** Arrivals coalesce into the next macrotask. Capture can run beside an index
    * check, so indexing must not consume notifications for the capture queue. */
   wake() {
     if(!this.started||this.stopping)return;
+    if(this.idleAsk)this.updateIdleAsk(this.idleAsk);
+    // An owed start recovery was refused (the restarted server was idle, so the budget named the minute roll): an arrival is the
+    // server turning active, so its one timer is moved to now instead of waiting for the roll with the dead lease in the queue.
+    if(this.bootRecoveryTimer&&!this.bootRecoveryNow){clearTimeout(this.bootRecoveryTimer);this.bootRecoveryNow=true;this.bootRecoveryTimer=setTimeout(()=>{this.bootRecoveryTimer=null;this.bootRecovery();},0);this.bootRecoveryTimer.unref?.();}
+    // the same for a refused failWork deferral (D5): its one timer moves to now, it does not wait for the roll with the lease held
+    if(this.deferredFailureTimer&&!this.deferredFailureNow&&this.deferredFailure)this.armDeferredFailure(this.deferredFailure,0);
     if(this.ticking){this.wakeOwed=true;return;}
     if(this.work)return;
     this.requested=true;
@@ -724,7 +852,7 @@ export class MemoryWorkerController {
     this.schedule(Math.max(0,this.nextEligibleWorkAt-performance.now()));
   }
   private schedule(delay:number) {
-    if(!this.started||this.stopping)return;
+    if(!this.started||this.stopping||!Number.isFinite(delay))return;
     delay=Math.max(delay,this.bgRetryAt-performance.now());
     const at=performance.now()+delay;
     if(this.timer&&this.scheduledAt<=at)return;
@@ -774,8 +902,8 @@ export class MemoryWorkerController {
       if(visited++===2)return;
       try{
         const outcome=this.refreshCheckpoint(jobId,false,"memory-capture");
-        // null is a current gate (mode, writer hold, turn hold) unless the marker itself is gone
-        const owed=outcome===null?Boolean(database().prepare("SELECT 1 FROM memory_scope_bindings WHERE id=? AND subject_id='checkpoint-pending'").get('checkpoint-debt:'+jobId)):outcome.reason==="evidence-checking";
+        // null is a current gate (mode, writer hold, turn hold) unless the debt itself is gone: the job's own marker, or its thread's (E3)
+        const owed=outcome===null?jobOwesCheckpoint(database(),jobId):outcome.reason==="evidence-checking"||outcome.reason===CHECKPOINT_CHUNK_REASON;
         if(!owed)this.captureOwedCheckpoints.delete(jobId);
       }catch(error){
         if(isBgDeferred(error)||isDatabaseBusy(error)){logSwallowed("capture",error);return;}
@@ -784,23 +912,55 @@ export class MemoryWorkerController {
     }
   }
   /** Exact point revalidation: the marker is owed data, never permission to run it. */
-  private refreshCheckpoint(jobId:string,startingOnly=false,source:"memory-worker"|"memory-capture"="memory-worker"):ReturnType<typeof refreshMemoryCheckpoint>|null {
-    return ioBudget.withSource(source,()=>{
+  private refreshCheckpoint(jobId:string,startingOnly=false,ioSource:"memory-worker"|"memory-capture"="memory-worker"):ReturnType<typeof refreshMemoryCheckpoint>|null {
+    return ioBudget.withSource(ioSource,()=>{
       if(!["capture","active"].includes(memoryState().mode)||writersHeldForIndexBuild()||(!startingOnly&&this.turnHeld()))return null;
       const db=database();
-      const marker=db.prepare("SELECT scope_id,CASE WHEN octet_length(intent)<=4096 THEN intent END AS intent FROM memory_scope_bindings WHERE id=? AND subject_type='system' AND subject_id='checkpoint-pending' AND state='granted'").get('checkpoint-debt:'+jobId);
-      if(!marker)return null;
+      const markerOf=(id:string)=>db.prepare("SELECT scope_id,CASE WHEN octet_length(intent)<=4096 THEN intent END AS intent FROM memory_scope_bindings WHERE id=? AND subject_type='system' AND subject_id='checkpoint-pending' AND state='granted'").get('checkpoint-debt:'+id);
+      let marker=markerOf(jobId);
+      if(!marker){
+        // a job its thread already owed for has no marker of its own (memv2 E3): the thread's marker is rolled, which covers it
+        const own=db.prepare("SELECT s.scope_id,s.thread_id FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE j.id=?").get(jobId);
+        const thread=typeof own?.thread_id==="string"?threadDebtMarker(db,String(own.scope_id),own.thread_id):undefined;
+        if(!thread)return null;
+        jobId=thread.jobId;marker=markerOf(jobId);
+        if(!marker)return null;
+      }
       const intent=JSON.parse(String(marker.intent));
       if(!intent||intent.jobId!==jobId||typeof intent.sourceId!=="string"||!Number.isSafeInteger(intent.revision))throw new Error("MEMORY_CHECKPOINT_DEBT_INVALID");
       const source=db.prepare("SELECT j.source_id,j.source_revision,j.status,j.stage,s.revision,s.scope_id,s.state,s.thread_id FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE j.id=?").get(jobId);
-      if(!source||source.status!=="complete"||source.stage!=="capture"||source.source_id!==intent.sourceId||source.source_revision!==intent.revision||source.revision!==intent.revision||source.scope_id!==marker.scope_id||source.state!=="active")throw new Error("MEMORY_CHECKPOINT_SOURCE_UNAVAILABLE");
-      if(startingOnly&&!ownerFirst.startingThreads().includes(String(source.thread_id)))return null;
+      // A thread's marker (memv2 E3: it names its thread and start) whose own job can no longer roll (forgotten, moved on, off the
+      // branch) still owes the thread's other jobs: it is handed to the thread's next owed job (checkpoint-debt.ts moveSourceDebt) and
+      // that one is rolled. A per-job marker is refused as before.
+      const unrollable=(row:typeof source)=>!row||row.status!=="complete"||row.stage!=="capture"||row.source_id!==intent.sourceId||row.source_revision!==intent.revision||row.revision!==intent.revision||row.scope_id!==marker!.scope_id||row.state!=="active"
+        ||Boolean(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(row.source_id,row.source_revision));
+      if(unrollable(source)){
+        const threadMarker=typeof intent.threadId==="string"&&Number.isSafeInteger(intent.from);
+        if(!threadMarker||(source&&source.scope_id!==marker.scope_id))throw new Error("MEMORY_CHECKPOINT_SOURCE_UNAVAILABLE");
+        transaction(()=>moveSourceDebt(db,String(intent.sourceId)));
+        // a marker the hand-over cannot take (its job is not of the source it names) is refused, never left silent
+        if(markerOf(jobId))throw new Error("MEMORY_CHECKPOINT_DEBT_INVALID");
+        const next=threadDebtMarker(db,String(marker.scope_id),String(intent.threadId));
+        return next&&next.jobId!==jobId?this.refreshCheckpoint(next.jobId,startingOnly,ioSource):null;
+      }
+      if(startingOnly&&!ownerFirst.startingThreads().includes(String(source!.thread_id)))return null;
       // The shared refresh rechecks policy, deletion, branch and lineage; its writes acquire fresh checked BG admission.
       const outcome=refreshMemoryCheckpoint(jobId);
       if(outcome.status!=="deferred"){
         this.clearError("checkpoint");
-        if(startingOnly||this.turnHeld())this.heldCompletions.add(jobId);else this.completedSource(jobId);
-      }else if(outcome.reason!=="evidence-checking")this.clearError("checkpoint");
+        // the jobs this roll covered (consolidate.ts E3) are published too: each gets the same derived-work hook as the one asked for
+        for(const id of [jobId,...outcome.covered??[]]){
+          this.captureOwedCheckpoints.delete(id);
+          if(startingOnly||this.turnHeld())this.heldCompletions.add(id);else this.completedSource(id);
+        }
+      }else{
+        if(outcome.reason!=="evidence-checking")this.clearError("checkpoint");
+        // a chunk of a larger debt (consolidate.ts CHECKPOINT_CHUNK_REASON) published these: the same derived-work hook as a whole roll
+        for(const id of outcome.covered??[]){
+          if(id===jobId)this.captureOwedCheckpoints.delete(id);
+          if(startingOnly||this.turnHeld())this.heldCompletions.add(id);else this.completedSource(id);
+        }
+      }
       return outcome;
     });
   }
@@ -811,7 +971,12 @@ export class MemoryWorkerController {
       ? "SELECT rowid,id FROM memory_scope_bindings WHERE id IN (SELECT 'checkpoint-debt:'||value FROM json_each(?)) AND subject_type='system' AND subject_id='checkpoint-pending' LIMIT 2"
       : "SELECT rowid,id FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type='system' AND subject_id='checkpoint-pending' AND rowid>? ORDER BY rowid LIMIT 2");
     statement.setReadBigInts(true);
-    const starts=startingOnly?ownerFirst.startingThreads().flatMap(thread=>turnCaptureJobId(thread)??[]):[];
+    // a starting thread's debt: its prompt job's own marker, or the thread's one marker (memv2 E3) when an earlier job holds it
+    const starts=startingOnly?ownerFirst.startingThreads().flatMap(thread=>{
+      const jobId=turnCaptureJobId(thread);if(!jobId)return [];
+      const scope=database().prepare("SELECT s.scope_id FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE j.id=?").get(jobId)?.scope_id;
+      return [typeof scope==="string"?threadDebtMarker(database(),scope,thread)?.jobId??jobId:jobId];
+    }):[];
     const offset=this.startingCheckpointCursor%Math.max(1,starts.length);
     const page=starts.slice(offset).concat(starts.slice(0,offset)).slice(0,2);
     if(startingOnly)this.startingCheckpointCursor=(offset+page.length)%Math.max(1,starts.length);
@@ -826,8 +991,27 @@ export class MemoryWorkerController {
       }catch(error){this.swallowed("capture","checkpoint","MEMORY_CHECKPOINT_FAILED",error);if(isBgDeferred(error))return;}
     }
   }
+  /** The last tick found nothing to do (no job, no projection, no scrub, no reset): unless a row is due, no timer is armed for the next one
+   * (memv2 E6, I1/I2). A write that means work wakes the controller (io-budget's memory-work notice, later the wake bus). */
+  private tickFoundNothing=false;
+  /** Details asked for figures the interval still held off: the sweep at the interval's end measures them (E6). */
+  private statusDirty=true;
+  /** The status scan now scheduled is for an ask from Details (not the start-up measure). */
+  private scanAsked=false;
+  private sweepTimer:ReturnType<typeof setTimeout>|null=null;
+  private offCounted:(()=>void)|null=null;
+  private offAsked:(()=>void)|null=null;
+  /** One sweep for a cause (a count, a memory write), coalesced; the riders' interval, when there is one, already runs it. */
+  private sweepSoon(delay:number){
+    if(this.maintenanceTimer||this.sweepTimer||this.stopping)return;
+    this.sweepTimer=setTimeout(()=>{this.sweepTimer=null;this.independentWork();},Math.max(0,delay));
+    this.sweepTimer.unref();
+  }
+  /** An index acknowledgement was lost (memv2 E6): the helper's one rolled-checkpoint walk, in place of its 5-minute re-walk. */
+  private askRolledPass(){const child=this.child;if(!child||!this.ready)return;try{child.send({type:"purge-rolled"});}catch(error){logSwallowed("index",error);}}
   private tick(requested=false) {
     if(this.stopping) return;
+    this.tickFoundNothing=false;
     if(this.heldCompletions.size&&!this.turnHeld())this.flushHeldCompletions();
     // A turn on its way to the engine comes first: a held tick reads nothing at all and comes back when the hold
     // ends (its release wakes the worker) or at its cap. Work already handed to the helper keeps its own deadline.
@@ -849,6 +1033,7 @@ export class MemoryWorkerController {
     const paced=performance.now()<Math.max(this.nextEligibleWorkAt,this.bgRetryAt);
     const cycleStart=performance.now();
     const cycle={busy:0};
+    let cycleWork:MemoryWork|null=null;
     let clean=true,busy=false,ownerRetryMs:number|null=null,captureRetryMs:number|null=null,admissionRetryMs:number|null=null;
     try {
       this.sweepIndexQuarantines();
@@ -910,7 +1095,7 @@ export class MemoryWorkerController {
         this.consolidationWake=false;this.consolidationDue=false;this.idleBlockedSince=null;
         let worked=false;
         const task=Promise.resolve().then(()=>{
-          if(this.turnHeld())return;
+          if(this.turnHeld()||(this.work&&this.work!==cycleWork))return;
           if(this.stopping)return;
           // The pass's synchronous time is charged to the same pacing deadline as a cycle's.
           const started=performance.now();
@@ -927,24 +1112,27 @@ export class MemoryWorkerController {
           });
         this.idleTask=task;
       }
+      // idle-drained: an exit costs no idle allowance, so it is looked at before the room.
+      if(this.endDrainedIdleStart())return;
       if(ioBudget.backgroundRoom()<=0){this.schedule(ioBudget.claimRetryMs(hasClaimableCaptureJob()));return;}
       if(this.resetPending&&!this.applyIndexReset()){this.schedule(BUSY_RETRY_MS);return;}
       if(memoryOn)this.recoverCheckpoints();
       if(performance.now()<this.bgRetryAt)return;
       const projection=memoryOn?this.pendingProjection():hasPendingProjection(database(),true),job=memoryOn&&hasClaimableMemoryJob();
       // Nothing else to do: one bounded parking maintenance step (no helper is needed for it, unless the index owes a scrub).
-      if(!projection&&!job&&!this.scrubOwed&&!this.resetDueNow()){if(memoryOn)this.maintain(false);return;}
+      if(!projection&&!job&&!this.scrubOwed&&!this.resetDueNow()){if(memoryOn)this.maintain(false);this.tickFoundNothing=true;return;}
       // Owed work makes a helper failure visible in status.
       this.warmStart=null;
       if(!this.child) { if(Date.now()>=this.respawnAt)this.spawnWithReset();else if(this.exactRespawn)this.schedule(Math.max(50,this.respawnAt-Date.now()+5)); return; }
       if(!this.ready) {
-        if(Date.now()>this.initDeadline)this.failInit("MEMORY_WORKER_INIT_TIMEOUT");
+        // A helper the controller is ending has no start left to time out: it is never failed here (see endDrainedIdleStart).
+        if(!this.idleAsk&&this.workerExit?.child!==this.child&&Date.now()>this.initDeadline)this.failInit("MEMORY_WORKER_INIT_TIMEOUT");
         else if(job&&this.idleExit!==this.child&&this.captureReadyChild===this.child){
           // Opening the search index may wait for its age-gated copy reserve.
           // Capture is pure CPU over the leased text; its publication remains
           // fenced on this process's authority and native write admission.
           const work=ioBudget.withSource("memory-capture",()=>claimMemoryJob(this.owner));
-          if(work){this.work=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
+          if(work){this.work=cycleWork=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
         }
         return;
       }
@@ -966,6 +1154,7 @@ export class MemoryWorkerController {
       // Ordinary indexing cannot settle its copy checks during the startup hold; leave that pool free for captures.
       const records=performance.now()-this.chargeStartEntry.at<(this.options.startHoldMs??CHARGE_START_HOLD_MS)
         ?pendingRecords.filter(row=>row.state==="deleted"&&Number(row.rolled)!==1):pendingRecords;
+      let indexWaitMs:number|null=null;
       if(records.length){
         const page=ioMeterPageSize(),frames=indexStepFrames(4096,page),maximum=commitCeiling(frames,4096,page)+checkpointCeiling(frames,4096,page)+4*page;
         // Keep the parent's receipt/lease writes runnable while the helper
@@ -981,23 +1170,29 @@ export class MemoryWorkerController {
         // The helper retains a paid pool across batch acknowledgements and its owed copy-back.
         // Reuse that reservation; a second maximum reservation would strand the next batch.
         const pool=[...this.helperGrants.values()].some(ticket=>ticket.bytes>=minimum&&ticket.expiresAt>ioMeterWallTime());
-        if(!pool&&ceiling<minimum){this.schedule(ioBudget.nextAdmissionMs());return;}
-        const admitted=pool?null:ioBudget.admit(ownerDelete?"FGCOPY":"BG",ceiling,0,{ownerDeletion:exempt});
-        if(!pool&&!admitted){this.schedule(ioBudget.nextAdmissionMs());return;}
-        const grantId=admitted?randomUUID():null;if(admitted)this.helperGrants.set(grantId!,admitted);
-        this.indexing=true;this.indexDeadline=Date.now()+60000;
-        this.indexRequestId=randomUUID();
-        // What each record was projected as, so its acknowledgement can be fenced against what it is when the ack lands.
-        this.indexSent=new Map(records.map(r=>[`${String(r.id)}\u0000${Number(r.version)}`,String(r.state)]));
-        this.indexRolled=new Set(records.filter(r=>Number(r.rolled)===1).map(r=>`${r.id}\u0000${r.version}`));
-        this.child.send({type:"index",...(admitted?{grant:{...admitted,id:grantId,stepBytes:ceiling,purpose:ownerDelete?"owner-delete":"bg"}}:{}),requestId:this.indexRequestId,records:records.map(r=>({id:String(r.id),version:Number(r.version),scopeId:String(r.scopeId),text:r.state==="deleted"?"":String(r.text),deleted:r.state==="deleted",archived:r.state!=="active",...Number(r.rolled)===1?{rolled:true}:{},ageKey:r.ageKey===null||r.ageKey===undefined?null:Number(r.ageKey)}))});
-        // A queued capture predating this batch has no later arrival to wake
-        // it. Revisit it after this tick's normal pacing gap.
-        if(job)this.wakeOwed=true;
-        if(memoryOn)this.maintain(true);return;
+        const admitted=pool||ceiling<minimum?null:ioBudget.admit(ownerDelete?"FGCOPY":"BG",ceiling,0,{ownerDeletion:exempt});
+        if(!pool&&!admitted){
+          // No room for an index batch this minute. A claimable capture is a turn's durable debt and needs far less than a
+          // batch: it is claimed below under its own write admission, not parked behind the index until the next minute.
+          if(!job){this.schedule(ioBudget.nextAdmissionMs());return;}
+          indexWaitMs=ioBudget.nextAdmissionMs();
+        }else{
+          const grantId=admitted?randomUUID():null;if(admitted)this.helperGrants.set(grantId!,admitted);
+          this.indexing=true;this.indexDeadline=Date.now()+60000;
+          this.indexRequestId=randomUUID();
+          // What each record was projected as, so its acknowledgement can be fenced against what it is when the ack lands.
+          this.indexSent=new Map(records.map(r=>[`${String(r.id)}\u0000${Number(r.version)}`,String(r.state)]));
+          this.indexRolled=new Set(records.filter(r=>Number(r.rolled)===1).map(r=>`${r.id}\u0000${r.version}`));
+          this.child.send({type:"index",...(admitted?{grant:{...admitted,id:grantId,stepBytes:ceiling,purpose:ownerDelete?"owner-delete":"bg"}}:{}),requestId:this.indexRequestId,records:records.map(r=>({id:String(r.id),version:Number(r.version),scopeId:String(r.scopeId),text:r.state==="deleted"?"":String(r.text),deleted:r.state==="deleted",archived:r.state!=="active",...Number(r.rolled)===1?{rolled:true}:{},ageKey:r.ageKey===null||r.ageKey===undefined?null:Number(r.ageKey)}))});
+          // A queued capture predating this batch has no later arrival to wake
+          // it. Revisit it after this tick's normal pacing gap.
+          if(job)this.wakeOwed=true;
+          if(memoryOn)this.maintain(true);return;
+        }
       }
       const work=job?ioBudget.withSource("memory-capture",()=>claimMemoryJob(this.owner)):null;
-      if(work) {this.work=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
+      if(work) {this.work=cycleWork=work;this.deadline=Date.now()+60000;this.child.send(work);this.scheduleHeartbeat(this.child);}
+      else if(indexWaitMs!==null)admissionRetryMs=indexWaitMs;
       if(memoryOn)this.maintain(!!work);
     } catch(error) {
       clean=false;
@@ -1013,7 +1208,10 @@ export class MemoryWorkerController {
       // This cycle's own synchronous time, counted once: claim, projection selection,
       // consolidation start and maintenance are all inside it.
       if(!paced){cycle.busy=performance.now()-cycleStart;this.holdFor(cycle.busy);}
-      let delay=MEMORY_IDLE_SWEEP_MS;
+      // idle with nothing due: no timer (memv2 E6). Every due row below (a retry, a lease, owed debt, a park step, a reset, a
+      // consolidation deadline) still arms the one timer for its own time. The idle-consolidation rider (lane K: start-up migration and
+      // backfills, due skipped slices) still has time-driven steps, so while it is configured the idle tick keeps its sweep cadence.
+      let delay=this.tickFoundNothing&&!busy&&!this.options.onIdleConsolidation?Infinity:MEMORY_IDLE_SWEEP_MS;
       if(this.work||this.indexing){
         delay=Math.min(delay,Math.max(1,Math.min(this.work?this.deadline:Infinity,this.indexing&&this.indexDeadline>0?this.indexDeadline:Infinity)-Date.now()+1));
         if(captureRetryMs!==null)delay=Math.min(delay,Math.max(1,captureRetryMs));
@@ -1169,6 +1367,11 @@ export class MemoryWorkerController {
       // Idle-only (F22): the figures are for the Details line; they wait for the owner's turn, typing and load.
       const admission=ownerFirst.admit("memory-status");
       if(!admission.admitted){this.scheduleStatusScan(Math.max(500,admission.retryInMs));return;}
+      // An ask inside the passes' minimum interval: these steps measure nothing, so the ask stays owed and the figures are measured when
+      // the interval ends (memv2 E6: nothing else comes back for it). Read before the steps: a pass that ends now starts a new interval
+      // that no ask is waiting on.
+      const owedWait=this.scanAsked?pagedScanWaitMs():0;this.scanAsked=false;
+      if(owedWait>0){this.statusDirty=true;this.sweepSoon(owedWait+1);}
       let more=false;
       try{
         more=ioBudget.withSource("memory-idle",()=>{
@@ -1268,6 +1471,7 @@ export class MemoryWorkerController {
   }
   private clearInitWatch(){if(this.initWatch)clearTimeout(this.initWatch);this.initWatch=null;}
   private failInit(reason:string){
+    if(this.idleAsk||(this.workerExit&&this.workerExit.child===this.child))return;
     this.clearInitWatch();
     this.failedStart=this.child;this.backOffStart(reason);
     this.killOwn(this.child);
@@ -1291,13 +1495,14 @@ export class MemoryWorkerController {
     catch(error){logSwallowed("index",error,isDatabaseBusy(error)?BUSY_RETRY_MS:undefined);/* the streak stays at 2: the next open exit asks again */}
   }
   /** A helper that never became ready: the status shows why, and the next start waits (30 s, doubling to 30 min). */
-  private backOffStart(reason:string){
+  private backOffStart(reason:string,exit?:{code:number|null;signal:string|null}){
     if(!this.quietWarmFailure(this.child))this.setError("helper",reason);
-    logSwallowed("capture",reason);this.waitBeforeNextStart();
+    // The exit code and signal say why the helper died; its stderr stays out (an error message there can carry job content).
+    logSwallowed("capture",reason,undefined,Date.now(),exit);this.waitBeforeNextStart();
   }
   private waitBeforeNextStart(){
     // H.1 4: a start that was refused inside the hold failed for the hold's sake, not its own: no doubling, back at the hold's end.
-    if(this.child&&this.holdRefusedChild===this.child){
+    if(this.child&&this.holdRefusedChild===this.child&&this.workerExit?.child!==this.child&&!this.idleAsk&&this.idleExit!==this.child&&!this.stopping){
       const holdEnd=this.chargeStartEntry.at+(this.options.startHoldMs??CHARGE_START_HOLD_MS);
       this.respawnAt=Date.now()+Math.max(0,holdEnd-performance.now());this.exactRespawn=true;
       this.schedule(Math.max(50,this.respawnAt-Date.now()));
@@ -1334,17 +1539,30 @@ export class MemoryWorkerController {
   private workerBlocksChild:unknown=null;
   private workerWalBytes=0;
   private acceptChildIo(child:ChildProcess,message:Record<string,unknown>):void{
-    if(this.childIo?.child!==child)return;
+    if(this.childIo?.child!==child||this.childIo.last||message.generation!==this.childIo.receipts.generation)return;
+    if(message.final===true&&message.outcome!==undefined&&message.outcome!=="clean"&&message.outcome!=="sealed"){
+      markIoMeterUnknown();
+      return;
+    }
     const receipt=this.childIo.receipts.accept(message);
     if(!receipt)return;
-    this.noteWorkerIo(child,receipt.blocks,receipt.bytes);
-    if(receipt.final)try{child.send({type:"io-final-ack",generation:this.childIo.receipts.generation,sequence:message.sequence});}catch{markIoMeterUnknown();}
+    const last=receipt.final?String(message.outcome??"final"):typeof message.reason==="string"&&message.outcome===`unsealed:${message.reason}`?message.outcome:undefined;
+    if(last){
+      this.childIo.last=last;
+      const exit=this.exitState(child);
+      exit.terminalAt??=Date.now();
+      this.armExitWatch(exit);
+    }
+    try{this.noteWorkerIo(child,receipt.blocks,receipt.bytes);}
+    catch(error){markIoMeterUnknown();logSwallowed("index",error);}
+    if(receipt.final)try{child.send({type:"io-final-ack",generation:this.childIo.receipts.generation,sequence:message.sequence});}catch{/* receipt already accepted */}
   }
   /** MEMW r3.2.8 3.1.4: while the row is 'requested' the readers are drained before the helper that carries R starts (a scan of the old
    * set must not hold the file through trigger A's rename). */
   private spawnWithReset(){
     let requested=false;
-    try{requested=indexResetRequested()!==null;}catch(error){logSwallowed("index",error,isDatabaseBusy(error)?BUSY_RETRY_MS:undefined);this.schedule(BUSY_RETRY_MS);return;}
+    // The first read of the reset row writes it. An idle start is made for owed captures, so that write is capture work too.
+    try{requested=(ioBudget.admissionIdle()?ioBudget.withSource("memory-capture",indexResetRequested):indexResetRequested())!==null;}catch(error){logSwallowed("index",error,isDatabaseBusy(error)?BUSY_RETRY_MS:undefined);this.schedule(BUSY_RETRY_MS);return;}
     if(!requested||memoryIndexScansActive()===0){this.spawn();return;}
     this.runResetDrain(()=>{if(!this.child&&!this.stopping)this.spawn();});
   }
@@ -1356,12 +1574,179 @@ export class MemoryWorkerController {
     try{if(indexResetRequested()===null)return 0;}catch{return 0;}
     return OPEN_RESERVE_MIN_AGE_MS-age+1;
   }
+  /** MAIN-RULING 2026-11-22T19:35Z idle-relaunch: no capture waits on the owner returning. While the owner is idle the controller starts
+   * the helper by itself only when a capture is owed, on a capture-sourced boot grant inside the idle allowance. The queue is the durable
+   * memory_jobs table, so a restart before the drain loses nothing.
+   * MAIN-RULING 2026-11-22T20:47:34Z idle-retry (b): one LIVE helper per idle window, not one attempt. A start that fails while idle is
+   * tried again inside the same window on the existing start backoff (respawnAt: 30 s, doubling, capped at 30 min; the tick that finds
+   * no helper and the backoff passed makes the start, as it does with the owner present). Each retry counts
+   * against the idle write allowance: a retry's boot grant, and every grant of an idle start that died before it was ready, is taken out
+   * of the owed-capture term (ioBudget.countAgainstIdle), so a crash loop is bounded by the backoff and by the idle minute. The owner
+   * wins: an idle retry is made only while the server is idle (a start made with the owner present is the ordinary one, behind the turn
+   * hold and the owner-first gate), so the retries stop when the idle window ends. */
+  /** The helper started by the idle rule above, until it is ready: its index open is admitted as capture work. */
+  private idleStartChild:ChildProcess|null=null;
+  /** A capture this controller could claim now: memory is on, no roster hold is in force, and a capture-stage job is due (looked for with no row limit: a backlog of other due rows ahead of it hides nothing). A read
+   * that fails (a locked database) says no: the start waits for the next look, it is never made on a guess. */
+  private idleCaptureOwed():boolean{
+    try{return ["capture","active"].includes(memoryState().mode)&&hasClaimableMemoryJob()&&hasDueCaptureJob();}catch{return false;}
+  }
+  /** The helper the idle rule started, ended by the controller because the queue drained before it could initialise (its exit is planned, not a failed start). */
+  private idleDrainEnd:ChildProcess|null=null;
+  /** The helper whose index step the controller has refused: its index object exists (the refusal is what its open returns on), so its
+   * exit can seal and send a final receipt. Before that (init not sent yet, or the open still under way) an exit's receipt is not final. */
+  private indexStepRefused:ChildProcess|null=null;
+  private heardAt=0;
+  private progressAt=0;
+  private progressCounts:{seq?:number;blocks?:number;bytes?:number}={};
+  private beatWrite=false;
+  private lastGrantRequest:string|undefined;
+  private lastWalDrain:boolean|undefined;
+  /** While idle, no start is made before this (wall clock): one start-backoff step after a drained helper was ended. Idle starts only; a start made for the owner never reads it. */
+  private idleRestUntil=0;
+  /** MAIN-RULING 2026-11-22T22:47:40Z idle-drained: a drained idle helper (no owed capture, nothing in flight) exits; the controller
+   * ends it, and no index step is opened to reach an idle exit. A helper the idle rule started lands the owed captures without its
+   * index (the open needs more than an idle minute admits, and stays closed while idle). Once nothing is owed and nothing is in flight
+   * it has no more to do while the owner is away, so the controller ends it: no process stays up for the idle window, no index byte is
+   * written, the exit costs no idle allowance, and it does not count as a failed start (initFailures and respawnAt are untouched). The
+   * next owed capture gets a fresh helper on the start backoff: while idle, not before one backoff step (30 s) after its exit, so
+   * captures that arrive one by one cost at most two starts a minute. The owner's return starts a helper as it always has. */
+  private endDrainedIdleStart():boolean{
+    const child=this.child;
+    if(!child||this.ready||this.stopping||this.idleStartChild!==child||this.idleExit===child||this.captureReadyChild!==child)return false;
+    // Not before the helper has its index: asked earlier it would leave with a receipt that is not final (it seals only an index it has).
+    if(this.indexStepRefused!==child)return false;
+    if(this.work||this.indexing||this.queries.size||this.checkpoints.size||!ioBudget.admissionIdle()||this.idleCaptureOwed())return false;
+    this.idleDrainEnd=child;
+    this.askIdleExit(child);
+    return true;
+  }
+  private askIdleExit(child:ChildProcess){
+    this.idleExit=child;this.captureReadyChild=null;this.ready=false;this.modelReady=false;
+    this.clearInitWatch();
+    this.idleAsk={child,nextAsk:Date.now()};
+    this.updateIdleAsk(this.idleAsk);
+  }
+  private updateIdleAsk(ask:IdleAsk){
+    if(this.idleAsk!==ask)return;
+    clearTimeout(ask.timer);
+    const child=ask.child;
+    if(this.child!==child||this.stopping||this.workerExit?.child===child){this.idleAsk=null;return;}
+    const now=Date.now();
+    let needed=this.queries.size>0||this.idleCaptureOwed();
+    if(!needed)try{needed=!ioBudget.admissionIdle();}catch{/* wait for the next readable idle state */}
+    ask.neededSince=needed?ask.neededSince??now:undefined;
+    const stopAt=ask.neededSince===undefined?Infinity:ask.neededSince+MEMORY_WORKER_INIT_MS;
+    if(now>=stopAt){
+      this.idleAsk=null;
+      this.closeChild(child,MEMORY_IDLE_SWEEP_MS);
+      return;
+    }
+    if(now>=ask.nextAsk){
+      ask.nextAsk=now+MEMORY_IDLE_DRAIN_EXIT_MS;
+      try{child.send({type:"idle-exit"});}catch{/* the exit event releases the slot */}
+    }
+    ask.timer=setTimeout(()=>this.updateIdleAsk(ask),Math.min(ask.nextAsk,stopAt)-now);
+    ask.timer.unref?.();
+  }
+  private exitState(child:ChildProcess):WorkerExit{
+    if(this.workerExit?.child===child)return this.workerExit;
+    let resolve!:()=>void;
+    const done=new Promise<void>(finish=>{resolve=finish;});
+    return this.workerExit={child,quiet:MEMORY_IDLE_SWEEP_MS,done,resolve};
+  }
+  private closeChild(child:ChildProcess,quiet:number):Promise<void>{
+    const exit=this.exitState(child);
+    exit.quiet=Math.min(exit.quiet,quiet);
+    if(exit.stopAt===undefined&&exit.terminalAt===undefined){
+      exit.stopAt=Date.now();
+      exit.reset=this.idleExit===child&&!this.idleAsk&&quiet===MEMORY_WORKER_STOP_GRACE_MS;
+      this.sampleExitDisk(exit,exit.stopAt);
+      if(!exit.reset)try{
+        if(quiet!==MEMORY_WORKER_STOP_GRACE_MS||child.pid!==undefined||this.childIo?.receipts.negotiated)child.send({type:"io-stop",...this.stopping&&this.child===child&&this.indexing&&this.indexRequestId?{batch:this.indexRequestId}:{}});
+        else if(child.connected!==false)child.disconnect();
+      }catch{/* the watch also covers a lost channel */}
+    }
+    this.armExitWatch(exit);
+    return exit.done;
+  }
+  /** W5 (base c7831998e5 stop letGo): a kill not seen to land by the kill wait, on a helper no exit handler releases, is let go here:
+   * its WAL reader is released, its receipts end and it is dropped, so the close (and a stop waiting on it) always ends. */
+  private letGo(exit:WorkerExit){
+    const child=exit.child;
+    clearTimeout(exit.timer);this.workerExit=null;this.releaseWalReaderOf(child);
+    if(this.child===child){
+      if(this.childIo?.child===child){this.childIo.receipts.exit();this.childIo=null;}
+      clearTimeout(this.idleAsk?.timer);this.idleAsk=null;this.releaseChild=null;
+      this.clearHeartbeat();this.failWork(this.stopping?"MEMORY_WORKER_STOPPED":"MEMORY_WORKER_EXITED");this.child=null;this.ready=false;this.indexing=false;this.modelReady=false;this.idleExit=null;this.warmStart=null;this.clearInitWatch();
+    }
+    exit.resolve();
+  }
+  private sampleExitDisk(exit:WorkerExit,now:number){
+    const path=join(DATA_DIR,"memory-index.db");
+    const files=[path,path+"-wal"].map(path=>{
+      try{const stat=statSync(path,{bigint:true});return `${stat.size}:${stat.mtimeNs}`;}catch{return "";}
+    });
+    let writes:bigint|undefined;
+    if(process.platform==="linux"&&exit.child.pid)try{
+      const value=/^write_bytes:\s+(\d+)$/m.exec(readFileSync(`/proc/${exit.child.pid}/io`,"utf8"))?.[1];
+      if(value!==undefined)writes=BigInt(value);
+    }catch{/* file stats still cover visible index writes */}
+    const prev=exit.disk;
+    if(prev&&(files.some((file,i)=>file!==""&&file!==prev.files[i])
+      ||(writes!==undefined&&prev.writes!==undefined&&writes>prev.writes))){
+      this.progressAt=now;
+      exit.diskProgressAt=now;
+    }
+    exit.disk={at:now,files,writes};
+  }
+  private armExitWatch(exit=this.workerExit){
+    if(!exit)return;
+    // W5: a close whose helper is no longer the controller's (let go, or replaced) waits on nothing: its stop must not hang on it.
+    if(this.child!==exit.child){clearTimeout(exit.timer);if(this.workerExit===exit)this.workerExit=null;exit.resolve();return;}
+    clearTimeout(exit.timer);
+    const now=Date.now();
+    let deadline:number,wake=Infinity;
+    if(exit.killAt!==undefined)deadline=exit.killAt+MEMORY_WORKER_KILL_WAIT_MS;
+    else if(exit.terminalAt!==undefined)deadline=exit.terminalAt+MEMORY_WORKER_EXIT_WAIT_MS;
+    else if(exit.stopAt!==undefined&&exit.disk){
+      if(now-exit.disk.at>=MEMORY_WORKER_EXIT_DISK_MS)this.sampleExitDisk(exit,now);
+      const writing=this.helperGrants.size>0||this.beatWrite;
+      // A blocked synchronous writer can only signal liveness through disk progress.
+      const heard=Math.max(exit.stopAt,this.heardAt,writing?exit.diskProgressAt??0:0);
+      const quiet=writing?MEMORY_WORKER_INIT_MS:exit.quiet;
+      deadline=Math.min(heard+quiet,Math.max(exit.stopAt,this.progressAt)+MEMORY_WORKER_INIT_MS);
+      if(writing&&now>=deadline&&now>exit.disk.at){
+        this.sampleExitDisk(exit,now);
+        if(exit.diskProgressAt===now){this.armExitWatch(exit);return;}
+      }
+      wake=exit.disk.at+MEMORY_WORKER_EXIT_DISK_MS;
+    }else return;
+    if(now>=deadline){
+      // W5: a stop's helper whose kill is not seen to land is let go (base stop letGo): no exit happened, so no failed start is counted
+      // and the next start is not held back. Outside a stop the exit handler releases it as an unseen SIGKILL exit (idle).
+      if(exit.killAt!==undefined){if(!this.stopping)this.releaseChild?.(null,"SIGKILL");if(this.workerExit===exit)this.letGo(exit);return;}
+      exit.killAt=now;
+      try{this.killOwn(exit.child);}catch(error){logSwallowed("capture",error);}
+      this.armExitWatch(exit);
+      return;
+    }
+    exit.timer=setTimeout(()=>this.armExitWatch(exit),Math.min(deadline,wake)-now);
+    if(!this.stopping)exit.timer.unref?.();
+  }
+
   private spawn() {
-    const boot=ioBudget.admit("BG",1024*1024);
+    const idle=ioBudget.admissionIdle();
+    if(idle&&!this.idleCaptureOwed()){this.schedule(ioBudget.nextAdmissionMs());return;}
+    // A search waiting on a helper is the owner's: it never waits on the rest.
+    if(idle&&!this.queries.size&&Date.now()<this.idleRestUntil){this.schedule(Math.max(50,this.idleRestUntil-Date.now()+5));return;}
+    const boot=idle?ioBudget.withSource("memory-capture",()=>ioBudget.admit("BG",MEMORY_IDLE_BOOT_BYTES)):ioBudget.admit("BG",1024*1024);
     if(!boot){this.schedule(ioBudget.nextAdmissionMs());return;}
     const bootId=randomUUID();this.helperGrants.set(bootId,boot);
     const wait=this.resetSpawnWaitMs();
     if(wait>0){ioBudget.settle(boot,0);this.helperGrants.delete(bootId);this.schedule(wait);return;}
+    // idle-retry: a retry (a start after a failed one) counts against the idle write allowance, not as an owed capture's planned bytes.
+    if(idle&&this.initFailures>0)ioBudget.countAgainstIdle(boot);
     this.exactRespawn=false;
     this.registerWorkerBytes();
     this.initDeadline=Date.now()+MEMORY_WORKER_INIT_MS;this.captureReadyChild=null;this.idleExited=false;this.modelReady=false;this.wasmHelper=false;this.warmSent=false;
@@ -1369,7 +1754,7 @@ export class MemoryWorkerController {
     blockMemoryIndexReader();
     const generation=randomUUID();
     let child:ChildProcess;
-    try{child=fork(SPAWNED_PROXIES.memoryWorker,[],withHideInherit({execArgv:["--experimental-strip-types"],stdio:["ignore","ignore","pipe","ipc"],
+    try{child=fork(SPAWNED_PROXIES.memoryWorker,[],withHideInherit({execArgv:["--experimental-strip-types"],stdio:["ignore","pipe","pipe","ipc"],
       env:{ELECTRON_RUN_AS_NODE:"1",
         MURAGE_IO_GENERATION:generation,
         MURAGE_BG_BOOT:JSON.stringify({...boot,id:bootId}),
@@ -1380,8 +1765,16 @@ export class MemoryWorkerController {
         // The helper loads the server's config, which reads the home directory as it loads: it gets the server's own data
         // directory and home, or an account with no home entry cannot start a helper at all (RED2C).
         MURAGE_DATA_DIR:DATA_DIR,...(process.env.HOME?{HOME:process.env.HOME}:{}),...(process.env.USERPROFILE?{USERPROFILE:process.env.USERPROFILE}:{}),...(process.env.MURAGE_MEMORY_BACKEND==="wasm"?{MURAGE_MEMORY_BACKEND:"wasm"}:{}),...(process.env.SystemRoot?{SystemRoot:process.env.SystemRoot}:{}),...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})}}));
-    }catch(error){ioBudget.settle(boot,0);this.helperGrants.delete(bootId);throw error;}
-    this.child=child;this.life={child,opening:false,charged:false,initialised:false,own:false};
+    }catch(error){
+      ioBudget.settle(boot,0);this.helperGrants.delete(bootId);
+      // idle-retry: a fork that throws while idle is a failed idle start like any other: the next one waits on the start backoff
+      // (30 s, doubling), it is not made again at the next tick. Recall is not left shut out by the start that never was. A start a
+      // waiting search asked for is the owner's and keeps its own handling.
+      if(idle&&!this.queries.size){this.unblockUnlessResetRequested();this.waitBeforeNextStart();}
+      throw error;
+    }
+    this.heardAt=0;this.progressAt=0;this.progressCounts={};this.beatWrite=false;this.lastGrantRequest=undefined;this.lastWalDrain=undefined;
+    this.child=child;this.life={child,opening:false,charged:false,initialised:false,own:false};this.idleStartChild=idle?child:null;
     this.childIo={child,receipts:new ChildIoReceipts(generation,markIoMeterUnknown)};
     // The tick checks this deadline only when work is owed. With nothing owed (a warm at boot) a helper stuck starting would leave recall shut out for good.
     // One sweep later than the deadline, so when work is owed the tick still decides, on its own timing.
@@ -1389,26 +1782,48 @@ export class MemoryWorkerController {
     this.initWatch=setTimeout(()=>{this.initWatch=null;if(this.child===child&&!this.ready&&!this.stopping)this.failInit("MEMORY_WORKER_INIT_TIMEOUT");},MEMORY_WORKER_INIT_MS+MEMORY_IDLE_SWEEP_MS);
     this.initWatch.unref?.();
     // What the helper prints when it swallows a failure reaches the log (rate limited), not the void.
-    const forward=makeStderrForwarder();
-    child.stderr?.setEncoding("utf8");child.stderr?.on("data",chunk=>forward(String(chunk)));
+    for(const stream of [child.stderr,child.stdout]){
+      const forward=makeStderrForwarder();
+      stream?.setEncoding("utf8");
+      stream?.on("data",chunk=>{
+        if(this.child===child){this.heardAt=Date.now();this.armExitWatch();}
+        forward(String(chunk));
+      });
+    }
     child.on("message", (message: unknown)=>this.receiveWorkerMessage(child,message));
-    const gone=(code:number|null=null)=>{if(this.child===child){
+    const gone=(code:number|null=null,signal:string|null=null)=>{this.releaseWalReaderOf(child);if(this.child===child){
+      const exit=this.workerExit?.child===child?this.workerExit:null;
+      const last=this.childIo?.child===child?this.childIo.last:undefined;
+      const final=this.childIo?.child===child&&this.childIo.receipts.final;
+      const orderlyUnsealed=last?.startsWith("unsealed:")&&code===0&&signal===null;
+      const closing=Boolean(exit||this.idleAsk);
+      if(closing&&!exit?.reset&&!final&&!orderlyUnsealed&&this.failedStart!==child)this.backOffStart("MEMORY_WORKER_EXIT_NOT_FINAL",{code,signal});
+      clearTimeout(this.idleAsk?.timer);this.idleAsk=null;
+      if(exit){clearTimeout(exit.timer);this.workerExit=null;exit.resolve();}
+      this.releaseChild=null;
       if(this.childIo?.child===child){this.childIo.receipts.exit();this.childIo=null;}
       // An exit before "ready" that nothing asked for (failInit already counted its own kill) is a failed start, never a silent respawn.
-      if(!this.ready&&!this.stopping&&this.idleExit!==child&&this.failedStart!==child)this.backOffStart("MEMORY_WORKER_START_FAILED");
-      for(const ticket of this.helperGrants.values())ioBudget.settle(ticket,ticket.bytes);
+      if(!closing&&!this.ready&&!this.stopping&&this.idleExit!==child&&this.failedStart!==child)this.backOffStart("MEMORY_WORKER_START_FAILED",{code,signal});
+      // idle-retry: an idle start that died before it was ready captured nothing: what it was granted counts against the idle allowance.
+      const failedIdleStart=this.idleStartChild===child&&(closing?!final&&!orderlyUnsealed:!this.ready&&!this.stopping&&this.idleExit!==child);
+      for(const ticket of this.helperGrants.values()){if(failedIdleStart)ioBudget.countAgainstIdle(ticket);ioBudget.settle(ticket,ticket.bytes);}
       this.helperGrants.clear();
       this.failedStart=null;this.warmStart=null;this.clearInitWatch();
       this.noteHelperExit(child,code);
       this.unblockUnlessResetRequested();setIndexWriterDrain(false);setWalCheckpointRequester(null);setScrubRewriteFinisher(null);this.settleCheckpoints(false);
       if(this.startReset?.child===child)this.startReset=null;
       // A helper that goes away because Murage is quitting says nothing about the job it held: it reschedules without spending an attempt.
-      this.modelReady=false;const planned=this.idleExit===child;this.idleExit=null;if(planned&&!this.stopping)this.idleExited=true;
+      this.modelReady=false;const planned=this.idleExit===child;this.idleExit=null;if(planned&&!this.stopping&&this.idleDrainEnd!==child)this.idleExited=true;
+      // The rest before the next idle start is counted from the exit, not from the ask: a helper that leaves late does not use it up.
+      if(this.idleDrainEnd===child)this.idleDrainEnd=null;
+      if(closing&&(final||orderlyUnsealed))this.idleRestUntil=Date.now()+MEMORY_IDLE_SWEEP_MS;
       this.clearHeartbeat();this.failWork(this.stopping?"MEMORY_WORKER_STOPPED":"MEMORY_WORKER_EXITED");this.child=null;this.ready=false;this.indexing=false;
+      // Design 3.1: a helper that went away may have left work no trigger will announce again; the open-time probes run once more.
+      if(!this.stopping)probeWakes("helper-restart");
       // A planned exit (idle or reset-exit) loses no search that was never sent: it waits for the next helper. One already sent to this
       // helper is rejected now (r3.2.8c M3), so the search's own fallback answers inside its deadline.
       if(planned&&!this.stopping)for(const [requestId,pending] of this.queries)if(pending.sent){this.queries.delete(requestId);pending.cleanup();pending.reject(new Error("MEMORY_WORKER_EXITED"));}
-      if(planned&&!this.stopping&&this.queries.size)this.spawnWithReset();
+      if(planned&&!this.stopping&&this.queries.size&&Date.now()>=this.respawnAt)this.spawnWithReset();
       else{for(const pending of this.queries.values()){pending.cleanup();pending.reject(new Error("MEMORY_WORKER_EXITED"));}this.queries.clear();}
       let delay=MEMORY_IDLE_SWEEP_MS;
       if(!this.stopping)try{delay=Math.min(delay,nextMemoryJobDelay()??delay);}catch{/* the lease remains recoverable by the fallback */}
@@ -1416,6 +1831,7 @@ export class MemoryWorkerController {
       if(planned&&!this.stopping)delay=0;
       this.schedule(delay);
     }};
+    this.releaseChild=gone;
     child.on("exit",gone);
     // A process that never started has no exit to wait for.
     child.on("error",error=>{if(!this.quietWarmFailure(child))this.setError("helper","MEMORY_WORKER_START_FAILED");logSwallowed("capture",error);if(child.pid===undefined)gone();});
@@ -1431,22 +1847,49 @@ export class MemoryWorkerController {
   }
   private receiveWorkerMessage(child:ChildProcess,message:unknown){
     if(this.child!==child)return;
-    const type=(message as {type?:unknown}|null)?.type;
-    if(type==="bg-grant-settle"){this.settleHelperGrant(message);return;}
-    // A final byte receipt has no database writes. It must pass a writer hold
-    // and stop(), which is waiting for this exact child's final receipt/exit.
-    if((message as {ioProtocol?:unknown}|null)?.ioProtocol===1){
-      this.acceptChildIo(child,message as Record<string,unknown>);
-      if(type==="io")return;
-    }
-    if(this.stopping)return;
-    // (a write-bearing message also queues behind earlier queued ones, so their order is kept)
-    if(!HOLD_EXEMPT_MESSAGES.has(String(type))&&(this.heldMessages.length||writersHeldForIndexBuild())){
-      this.heldMessages.push({child,message});
-      if(this.heldMessages.length===1)this.deferForHold(this.drainHeldMessages);
+    const now=Date.now();
+    this.heardAt=now;
+    const event=message as Record<string,unknown>|null;
+    const type=event?.type;
+    if(type==="io-closing"){
+      this.beatWrite=event?.write===true||event?.inFlight===true;
+      this.noteExitProgress(event?.seq,event?.blocks,event?.walBytes,now);
+      this.armExitWatch();
       return;
     }
-    this.dispatchWorkerMessage(child,message);
+    this.noteExitProgress(undefined,event?.fsWriteBlocks,event?.ioBytes,now);
+    if(type==="bg-grant-request"){
+      const request=`${String(event?.purpose)}:${String(event?.ceiling)}:${event?.replan===true}`;
+      if(request!==this.lastGrantRequest){this.lastGrantRequest=request;this.progressAt=now;}
+    }else if(type==="wal-drain"){
+      const draining=event?.on===true;
+      if(draining!==this.lastWalDrain){this.lastWalDrain=draining;this.progressAt=now;}
+    }else if(type==="bg-grant-settle"){
+      if(typeof event?.used==="number"&&event.used>0)this.progressAt=now;
+    }else if(type!=="io"&&type!=="charge")this.progressAt=now;
+    try{
+      if(type==="bg-grant-settle"){this.settleHelperGrant(message);return;}
+      if(event?.ioProtocol===1){
+        this.acceptChildIo(child,event);
+        if(type==="io")return;
+      }
+      const request=type==="bg-grant-request"||type==="charge"||type==="wal-drain";
+      if(this.stopping&&!request)return;
+      if(!HOLD_EXEMPT_MESSAGES.has(String(type))&&(this.heldMessages.length||writersHeldForIndexBuild())){
+        this.heldMessages.push({child,message});
+        if(this.heldMessages.length===1)this.deferForHold(this.drainHeldMessages);
+        return;
+      }
+      this.dispatchWorkerMessage(child,message);
+    }finally{this.armExitWatch();}
+  }
+  private noteExitProgress(seq:unknown,blocks:unknown,bytes:unknown,now:number){
+    for(const [key,value] of [["seq",seq],["blocks",blocks],["bytes",bytes]] as const){
+      if(typeof value==="number"&&Number.isSafeInteger(value)&&value>=0&&this.progressCounts[key]!==value){
+        this.progressCounts[key]=value;
+        this.progressAt=now;
+      }
+    }
   }
   private readonly drainHeldMessages=()=>{
     if(writersHeldForIndexBuild()){this.deferForHold(this.drainHeldMessages);return;}
@@ -1455,7 +1898,7 @@ export class MemoryWorkerController {
   };
   private dispatchWorkerMessage(child:ChildProcess,message:unknown){
     ioBudget.withSource("memory-worker",()=>{
-      if(this.stopping||this.child!==child)return;
+      if(this.child!==child)return;
       const handlerStart=performance.now();
       // A message handler that cannot finish (the database stayed locked past its wait) is logged and retried by the next tick; it must never
       // reach the process as an uncaught exception, which ended a whole server.
@@ -1465,44 +1908,85 @@ export class MemoryWorkerController {
     });
   }
   private helperGrants=new Map<string,AdmissionTicket>();
+  /** idle W1a: the index batch (sent before the stop, not yet answered) whose one named write ask a stopping helper has been granted. */
+  private stopBatchGranted:string|null=null;
+  /** B5 hook (E-owned; memv2-D): unregisters the running helper's WAL reader entry. */
+  private walReader:(()=>void)|null=null;
+  /** gone() order (E-owned; memv2-D, MAIN-RULING 21:16:33Z): the child whose entry walReader removes; an older child's late exit leaves a
+   * newer helper's entry registered. */
+  private walReaderOf:ChildProcess|null=null;
+  private releaseWalReaderOf(child:ChildProcess){if(this.walReaderOf===child)this.walReader?.();}
   private onWorkerMessage(child:ChildProcess,message:unknown){
     const handlerStart=performance.now();
     {
       if(!message||typeof message!=="object")return;
       const event=message as {type?:string;result?:unknown;requestId?:string;reset?:boolean;records?:Array<{id:string;version:number;deleted:boolean}>;embeddingStatus?:string;scrubOwed?:boolean;fsWriteBlocks?:unknown;ioBytes?:unknown};
       const versioned=(message as {ioProtocol?:unknown}).ioProtocol===1;
-      if(versioned)this.acceptChildIo(child,message as Record<string,unknown>);
       // the helper's own write counts ride on its index acknowledgements and its maintenance reports (worker.ts reportIo)
       if(!versioned&&("fsWriteBlocks" in event||"ioBytes" in event))this.noteWorkerIo(child,event.fsWriteBlocks,event.ioBytes);
       if(event.type==="bg-grant-request"){
         const ceiling=Number((message as {ceiling?:unknown}).ceiling);
-        const valid=Number.isSafeInteger(ceiling)&&ceiling>=0;
+        const purpose=(message as {purpose?:unknown}).purpose;
+        const exitSeal=purpose==="exit-seal";
+        const leaving=this.stopping||this.idleAsk?.child===child||this.workerExit?.child===child;
+        // idle W1a (owners: io-stop batch id + this answer = here; the write and its ask = worker.ts stopBatchWrite): an orderly stop's FINAL
+        // write includes the index batch sent before the stop and not yet answered; io-stop named it. The helper's ask for that write carries
+        // the batch id and is granted, once per batch. An ask that names no batch (one already in transit at the stop, a vector or maintenance
+        // step), an idle or planned exit, a second ask and any other purpose are refused as before.
+        const stopBatch=(purpose==="bg"||purpose==="owner-delete")&&this.stopping&&this.child===child&&this.indexing&&this.indexRequestId!==null
+          &&(message as {batch?:unknown}).batch===this.indexRequestId&&this.stopBatchGranted!==this.indexRequestId
+          // (workerExit is set by every close, stop()'s too; the name is the fence: only stop()'s own io-stop carries it)
+          &&this.idleAsk?.child!==child;
+        const valid=Number.isSafeInteger(ceiling)&&ceiling>=0&&(exitSeal?leaving:!leaving||stopBatch);
         let ticket:ReturnType<typeof ioBudget.admit>=null;
         let stepBytes:number|undefined;
         // Replanning producer/consumer owner: c3-memory; native caps owner: scperf-p1.
         // An adaptive write may resize to the available pool. Fixed copies
         // still require their full ceiling, and no operation runs on an offer
         // until the helper has rebuilt its step for that pool.
-        if(valid){
-          const adaptive=(message as {replan?:unknown}).replan===true;
-          const ownerDelete=(message as {purpose?:unknown}).purpose==="owner-delete";
+        // W5 (memv2-D io-budget admitIndexDebt): the helper's open-check copy of a log larger than any background ticket
+        const indexDebt=purpose==="index-debt";
+        // idle-drained x W5 (integrator spec-cand-1021-r8): no index-debt copy is granted to a helper the controller is ending either.
+        if(valid&&indexDebt)ticket=this.idleDrainEnd===child?null:ioBudget.admitIndexDebt(ceiling);
+        else if(valid){
+          const adaptive=!exitSeal&&(message as {replan?:unknown}).replan===true;
+          const ownerDelete=purpose==="owner-delete";
           const page=ioMeterPageSize(),exempt=ownerDelete&&this.ownerDeleteWindowOpen();
           const minimum=commitCeiling(META_ENVELOPE_FRAMES+32,4096,page)+checkpointCeiling(META_ENVELOPE_FRAMES+32,4096,page)+4*page;
-          let room=adaptive?Math.min(ceiling,ownerDelete?ioBudget.copyRoom(exempt):Math.max(0,ioBudget.backgroundRoom()-HELPER_PARENT_WRITE_ROOM)):ceiling;
-          // Startup maintenance cannot finish its copy yet; offer one checked metadata step instead of retaining the minute's pool.
-          if(adaptive&&!ownerDelete&&performance.now()-this.chargeStartEntry.at<(this.options.startHoldMs??CHARGE_START_HOLD_MS))room=Math.min(room,minimum);
-          if(room===ceiling||room>=minimum){ticket=ioBudget.admit(ownerDelete?"FGCOPY":"BG",room,0,{ownerDeletion:exempt});if(ticket&&room<ceiling)stepBytes=room;}
+          // idle-relaunch: until the helper the idle rule started is ready, its index open is capture work inside the idle allowance
+          // (the parent's writes share that allowance, so no separate parent room is held back). Once ready, idle index work stays closed.
+          const idleOpen=!ownerDelete&&this.idleStartChild===child&&(exitSeal||(!this.ready&&ioBudget.admissionIdle()));
+          const grant=():{ticket:AdmissionTicket|null;stepBytes?:number}=>{
+            if(exitSeal&&ceiling>exitSealCeiling(MEMW_TICK_TRUNCATE_BYTES,4096,page))return {ticket:null};
+            let room=adaptive?Math.min(ceiling,ownerDelete?ioBudget.copyRoom(exempt):Math.max(0,ioBudget.backgroundRoom()-(idleOpen?0:HELPER_PARENT_WRITE_ROOM))):ceiling;
+            // Startup maintenance cannot finish its copy yet; offer one checked metadata step instead of retaining the minute's pool.
+            if(adaptive&&!ownerDelete&&performance.now()-this.chargeStartEntry.at<(this.options.startHoldMs??CHARGE_START_HOLD_MS))room=Math.min(room,minimum);
+            if(room!==ceiling&&room<minimum)return {ticket:null};
+            const admitted=ioBudget.admit(ownerDelete?"FGCOPY":"BG",room,0,{ownerDeletion:exempt});
+            return admitted&&room<ceiling?{ticket:admitted,stepBytes:room}:{ticket:admitted};
+          };
+          try{({ticket,stepBytes}=idleOpen?ioBudget.withSource("memory-capture",grant):grant());}
+          catch(error){logSwallowed("index",error);/* reply with the refusal */}
         }
+        if(ticket&&stopBatch)this.stopBatchGranted=this.indexRequestId;
         // A helper explicitly waiting for a refused byte permit is alive.
         // Keep its CPU capture queue available through the next admission window.
-        if(!ticket&&this.indexing)this.indexDeadline=Date.now()+ioBudget.nextAdmissionMs()+60000;
-        if(!ticket&&!this.ready){
-          const delay=ioBudget.nextAdmissionMs()+MEMORY_WORKER_INIT_MS;
+        let retryInMs=MEMORY_IDLE_SWEEP_MS;
+        try{retryInMs=ioBudget.nextAdmissionMs();}catch(error){logSwallowed("index",error);}
+        if(!ticket&&this.indexing)this.indexDeadline=Date.now()+retryInMs+60000;
+        // The refused step is the helper's index open returning with its index object in hand: from here a drained idle helper can be ended.
+        // (a refused index-debt copy is the open check still under way, not the open returning: it does not mark the helper drainable)
+        if(!ticket&&!leaving&&!indexDebt&&!this.ready&&this.indexStepRefused!==child){this.indexStepRefused=child;this.schedule(MEMORY_DRAIN_GAP_MS);}
+        // A helper the controller is ending is refused every step: the refusal starts no start watch for it (the watch would kill it before its last receipt).
+        if(!ticket&&!leaving&&!this.ready){
+          // W5 init watch (E-owned; memv2-D): a helper waiting on a refused index-debt ask is alive until the door's own retry time
+          const delay=Math.max(retryInMs,indexDebt?ioBudget.indexDebtRetryMs():0)+MEMORY_WORKER_INIT_MS;
           this.initDeadline=Date.now()+delay;this.clearInitWatch();
           this.initWatch=setTimeout(()=>{this.initWatch=null;if(this.child===child&&!this.ready&&!this.stopping)this.failInit("MEMORY_WORKER_INIT_TIMEOUT");},delay+MEMORY_IDLE_SWEEP_MS);this.initWatch.unref();
         }
-        const id=randomUUID();if(ticket)this.helperGrants.set(id,ticket);
-        child.send({type:"bg-grant",ticket:ticket?{...ticket,id,purpose:(message as {purpose?:unknown}).purpose==="owner-delete"?"owner-delete":"bg",...stepBytes!==undefined?{stepBytes}:{}}:null,retryInMs:ioBudget.nextAdmissionMs()});return;
+        const id=randomUUID();
+        if(ticket)this.helperGrants.set(id,ticket);
+        child.send({type:"bg-grant",ticket:ticket?{...ticket,id,purpose:exitSeal?"exit-seal":purpose==="owner-delete"?"owner-delete":indexDebt?"index-debt":"bg",...stepBytes!==undefined?{stepBytes}:{}}:null,retryInMs:indexDebt&&!ticket?ioBudget.indexDebtRetryMs():retryInMs});return;
       }
       if(event.type==="bg-grant-settle"){this.settleHelperGrant(message);return;}
       if(event.type==="io")return;
@@ -1511,7 +1995,8 @@ export class MemoryWorkerController {
       if(event.type==="charge"){
         const charge=event as {fileId?:unknown;attempt?:unknown;bytes?:unknown;helperRunId?:unknown;opening?:unknown;purpose?:unknown};
         if(this.life?.child===child)this.life.charged=true;
-        const granted=this.answerCharge(child,charge);
+        let granted=false;
+        try{granted=this.answerCharge(child,charge);}catch(error){logSwallowed("index",error);}
         try{child.send({type:"charge-ack",fileId:charge.fileId,attempt:charge.attempt,granted,helperRunId:charge.helperRunId});}catch{/* the helper is gone; a grant stays debited */}
         return;
       }
@@ -1523,7 +2008,7 @@ export class MemoryWorkerController {
         this.wake();
         const manifestFile=join(SERVER_ROOT,"memory-model-manifest.json");
         const manifest=this.options.manifest??JSON.parse(readFileSync(existsSync(manifestFile)?manifestFile:join(SERVER_ROOT,"..","shared","memory-model-manifest.json"),"utf8"));
-        const init=(modelDirectory:string,extra:{fallbackModelDirectory?:string;strictModelRoot?:boolean}={})=>{if(child.connected===false)return;
+        const init=(modelDirectory:string,extra:{fallbackModelDirectory?:string;strictModelRoot?:boolean}={})=>{if(child.connected===false||this.child!==child||this.stopping||this.idleExit===child)return;
           // r3.2.8 3.1.4: R is read from the durable row before the helper's first open; a row that cannot be read is a failed start.
           let reset:IndexResetRequest|null;
           try{reset=indexResetRequested();}catch(error){logSwallowed("index",error);this.failInit("MEMORY_WORKER_START_FAILED");return;}
@@ -1543,6 +2028,13 @@ export class MemoryWorkerController {
       if(event.type==="scrub-done"){this.scrubOwed=false;this.closeOwnerDeleteWindow();return;}
       if(event.type==="initialised"){
         if(this.life?.child===child)this.life.initialised=true;
+        // B5 hook (E-owned; added by memv2-D per MAIN-RULING 18:59Z): the helper is a WAL reader memory owns. At the half gate it is told
+        // to end its read snapshot ("wal-release", answered "wal-release-ack"); one that has not within 5 s is ended (its exit respawns it).
+        this.walReader?.();
+        {let released:(()=>void)|null=null;const ack=(m:unknown)=>{if((m as {type?:unknown}|null)?.type==="wal-release-ack"){const done=released;released=null;done?.();}};
+        child.on("message",ack);
+        const off=registerWalReader({name:"memory helper",memory:true,release:done=>{released=done;try{child.send({type:"wal-release"});}catch{released=null;done();}},restart:()=>this.killOwn(child)});
+        this.walReaderOf=child;this.walReader=()=>{off();child.off("message",ack);this.walReader=null;this.walReaderOf=null;};}
         this.openExitStreak=0;
         this.wasmHelper=(event as {wasm?:boolean}).wasm===true;
         // MEMW: every initialised carries the helper's stop and the reset it finished (R10 fields)
@@ -1573,9 +2065,9 @@ export class MemoryWorkerController {
       }
       if(event.type==="idle-exit-request"){
         // Granted only when nothing is owed to or by this helper; from then on the controller treats it as gone (searches wait, nothing is sent).
-        if(this.child===child&&this.ready&&!this.queries.size&&!this.indexing&&!this.work&&!this.checkpoints.size){
-          this.idleExit=child;this.captureReadyChild=null;this.ready=false;this.modelReady=false;this.initDeadline=Date.now()+MEMORY_WORKER_INIT_MS;
-          try{child.send({type:"idle-exit"});}catch{this.killOwn(child);}
+        // idle-relaunch: while idle with a capture still owed it stays, so the queue drains before the helper idles again (a start made later would be one more boot inside the idle allowance).
+        if(this.child===child&&this.ready&&!this.queries.size&&!this.indexing&&!this.work&&!this.checkpoints.size&&!(ioBudget.admissionIdle()&&this.idleCaptureOwed())){
+          this.askIdleExit(child);
         }
         return;
       }
@@ -1595,16 +2087,24 @@ export class MemoryWorkerController {
         // fenced on its own), with a turn of the event loop between slices, so a large batch never holds the loop.
         // Receipt updates commute; key order keeps the pending index pages together and avoids repeated dirtying.
         const records=[...(event.records??[])].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:a.version-b.version),embeddingStatus=event.embeddingStatus,requestId=event.requestId,sent=this.indexSent,rolled=this.indexRolled;
-        let next=0,receiptRows=2048;const points:Array<{rows:number;bytes:number}>=[];
+        // memv2 lane A (A10): before each transaction the writer waits until the recall applier and every view build in flight are
+        // within RECALL_PRODUCER_ROOM journal rows; the applier's own commit settles that wait (no timer). A transaction journals one
+        // 'receipts' range row per 256 receipts (at most 8 for a full slice).
+        let next=0,receiptRows=RECEIPT_PAGE_ROWS,roomWaiting=false;const points:Array<{rows:number;bytes:number}>=[];
         const writeReceipts=()=>{
           if(this.indexRequestId!==requestId)return;
+          if(roomWaiting)return;
+          if(!recallJournalRoom(database())){roomWaiting=true;void whenRecallJournalRoom(database()).then(()=>{roomWaiting=false;this.later(writeReceipts);});return;}
           const started=performance.now(),from=next;
           // This fixed-size transaction can need the full statement allowance and its copy reserve.
           // The checked transaction sizes its grant to the room that remains
           // and rolls back/shrinks a refused slice. A fixed 2 MiB floor can
           // strand a small final slice despite enough admitted byte room.
+          // The owner thread never waits for the admission ledger lock: a reading taken while the checkpointer thread holds it
+          // comes back closed (no room). That is contention, not a spent minute: the same checked write is asked again a moment later.
+          const lockMisses=ioBudget.admissionHealth().lockTimeouts;
           const room=ioBudget.backgroundRoom();
-          if(room<=0){this.later(writeReceipts,ioBudget.nextAdmissionMs());return;}
+          if(room<=0){this.later(writeReceipts,ioBudget.admissionHealth().lockTimeouts>lockMisses?BUSY_RETRY_MS:ioBudget.nextAdmissionMs());return;}
           // Once a slice has committed, its measured all-in bytes per row (copy debt included) size the next one to the grant
           // the checked transaction will offer (half the room, at most 1 MiB), so a slice that cannot fit is never attempted.
           if(points.length){
@@ -1658,18 +2158,22 @@ export class MemoryWorkerController {
             traceIndexSlice(performance.now()-started,rowsDoneAt-started,next-from);
             const spentAfter=ioBudget.admissionState(),spent=spentAfter.bg+spentAfter.debt-spentBefore.bg-spentBefore.debt;
             if(next>from&&spent>0){points.push({rows:next-from,bytes:spent});if(points.length>8)points.shift();}
-            receiptRows=2048;
+            receiptRows=RECEIPT_PAGE_ROWS;
             this.clearError("index");
           }catch(error){
             const attempted=next-from;
             next=from; // the slice rolled back
             // Row work exceeded this transaction's allowance: a smaller slice can still fit the current minute.
             if(isBgDeferred(error)&&attempted>1&&ioBudget.backgroundRoom()>0){receiptRows=Math.max(1,Math.floor(attempted/2));this.later(writeReceipts);return;}
+            // The grant was refused while the ledger lock was held (nothing was admitted without it): asked again a moment later, not at the next minute.
+            if(isBgDeferred(error)&&ioBudget.admissionHealth().lockTimeouts>lockMisses){logSwallowed("index",error,BUSY_RETRY_MS);this.later(writeReceipts,BUSY_RETRY_MS);return;}
             // The write lock is held elsewhere: the receipts are written a moment later, the job is not failed and nothing is shown.
             if(isBgDeferred(error)){const delay=this.bgRetryMs(error);logSwallowed("index",error,delay);this.later(writeReceipts,delay);return;}
             if(isDatabaseBusy(error)){logSwallowed("index",error,BUSY_RETRY_MS);this.later(writeReceipts,BUSY_RETRY_MS);return;}
             this.swallowed("index","index","MEMORY_INDEX_FAILED",error);
             next=records.length;
+            // the helper's answer is lost: whatever it removed has no receipt, so it walks for left-behind versions once (memv2 E6)
+            this.askRolledPass();
           }
           if(next<records.length){this.later(writeReceipts);return;}
           // Revocation erased these records' text in the main database after the chat's own log scrub: its log cleanup is owed again,
@@ -1683,7 +2187,7 @@ export class MemoryWorkerController {
       // The helper's word-table age fill (worker.ts fillAgeIndex, 1.0.3 lane 2): a note for the status line, and the cutover. Neither is a work result.
       if(event.type==="index-note"){const note=(event as {note?:unknown}).note;this.indexNote=typeof note==="string"?note.slice(0,120):"";return;}
       if(event.type==="index-aged"){this.indexNote="";console.log("[memory] search index is in age order");return;}
-      if(event.type==="index-error"){this.setError("index","MEMORY_INDEX_FAILED");logSwallowed("index","MEMORY_INDEX_FAILED",MEMORY_IDLE_SWEEP_MS);this.indexing=false;this.indexRequestId=null;this.schedule(MEMORY_IDLE_SWEEP_MS);return;}
+      if(event.type==="index-error"){this.setError("index","MEMORY_INDEX_FAILED");logSwallowed("index","MEMORY_INDEX_FAILED",MEMORY_IDLE_SWEEP_MS);this.askRolledPass();this.indexing=false;this.indexRequestId=null;this.schedule(MEMORY_IDLE_SWEEP_MS);return;}
       // Work is only sent once the helper is ready, so an error before then is its initialisation failing.
       // A refused search names its request: that search fails and is logged as recall. It is not a capture result.
       // A refusal for a search that already ended (timed out, cancelled) is logged and dropped; it is never a result of the capture work.
@@ -1693,7 +2197,7 @@ export class MemoryWorkerController {
         if(pending){this.queries.delete(event.requestId);pending.cleanup();pending.reject(new Error("MEMORY_QUERY_REFUSED"));}
         return;
       }
-      if(event.type==="error"&&!this.ready){this.failInit("MEMORY_WORKER_START_FAILED");return;}
+      if(event.type==="error"&&!this.ready){if(this.idleDrainEnd!==child)this.failInit("MEMORY_WORKER_START_FAILED");/* a helper being ended is leaving: an error it reports on the way is not a failed start to kill it for, before its last receipt */return;}
       if(!this.work)return;
       const work=this.work;
       // Publication runs after the handler returns, with the lease held until its durable debt commits.
@@ -1765,10 +2269,38 @@ export class MemoryWorkerController {
       // the job must not sit leased with nobody working it: release the
       // holder's own lease so the next claim picks it up at once.
       if(isStaleMemoryPublication(error))this.settleStale(error,reason);
+      // C4: a refused deferral is retried by ONE timer at the budget's named time (a later refusal replaces it), never left for
+      // lease_until; the retry is fenced by the lease generation, so a lease that moved on in between is left alone.
+      // Its own delay, not bgRetryMs (D5, as the start steps): an idle refusal names the roll, and pacing every claim to it would hold
+      // the idle capture drain and the owner's next message to the roll (re-armed each minute while idle). An arrival (wake) moves
+      // this one timer to now, as it does the start steps'.
+      else if(isBgDeferred(error)&&!this.stopping){
+        const failing=this.work,delay=this.bgRetryDelay(error);logSwallowed("capture",error,delay);
+        const retry=()=>{
+          if(this.deferredFailure!==retry)return;
+          // a second refusal re-arms this one timer at its own named time (never later()'s bgRetryMs catch); anything else ends it
+          try{withBusyBudget(BACKGROUND_BUSY_MS,"fail-work",()=>publishMemoryWork(failing,this.owner,{id:failing.id,leaseGeneration:failing.leaseGeneration,status:"deferred",nextCursor:failing.cursor,chunks:[],reason}));}
+          catch(again){
+            if(isBgDeferred(again)&&!this.stopping){const next=this.bgRetryDelay(again);logSwallowed("capture",again,next);this.armDeferredFailure(retry,next);return;}
+            this.deferredFailure=null;if(isStaleMemoryPublication(again))return;throw again;
+          }
+          this.deferredFailure=null;this.staleRequeues.delete(this.staleKey(failing));this.wake();
+        };
+        this.deferredFailure=retry;this.armDeferredFailure(retry,delay);
+      }
       // A held write lock: the lease runs out by itself and the job is claimed again with its attempts untouched.
       else logSwallowed("capture",error);
     }
     this.work=null;
+  }
+  private deferredFailure:(()=>void)|null=null;
+  private deferredFailureTimer:ReturnType<typeof setTimeout>|null=null;
+  private deferredFailureNow=false;
+  /** The one timer of a refused failWork deferral (replaced, never added to); it runs the retry through later() (turn and writer holds). */
+  private armDeferredFailure(retry:()=>void,delayMs:number){
+    if(this.deferredFailureTimer)clearTimeout(this.deferredFailureTimer);this.deferredFailureNow=delayMs<=0;
+    this.deferredFailureTimer=setTimeout(()=>{this.deferredFailureTimer=null;this.deferredFailureNow=false;if(this.deferredFailure===retry)this.later(retry);},Math.max(1,delayMs));
+    this.deferredFailureTimer.unref?.();
   }
   private staleKey(work: MemoryWork) { return `${work.id}:${work.revision}`; }
   /** A publication refused as stale: requeue the holder's own live lease with
@@ -1806,30 +2338,22 @@ export class MemoryWorkerController {
   }
   async stop() {
     this.stopping=true;this.started=false;if(this.timer)clearTimeout(this.timer);this.timer=null;this.scheduledAt=Infinity;
+    this.deferredFailure=null;if(this.deferredFailureTimer)clearTimeout(this.deferredFailureTimer);this.deferredFailureTimer=null;this.deferredFailureNow=false;
     this.requested=false;this.consolidationWake=false;this.captureOwedCheckpoints.clear();
     if(this.captureOwedTimer)clearTimeout(this.captureOwedTimer);this.captureOwedTimer=null;
     if(this.maintenanceTimer)clearInterval(this.maintenanceTimer);this.maintenanceTimer=null;
+    if(this.sweepTimer)clearTimeout(this.sweepTimer);this.sweepTimer=null;this.offCounted?.();this.offCounted=null;this.offAsked?.();this.offAsked=null;
     if(this.notebookTimer)clearInterval(this.notebookTimer);this.notebookTimer=null;
     if(this.bootWarmTimer)clearTimeout(this.bootWarmTimer);this.bootWarmTimer=null;
+    if(this.bootRecoveryTimer)clearTimeout(this.bootRecoveryTimer);this.bootRecoveryTimer=null;
     this.clearInitWatch();
     this.clearHeartbeat();
     this.unsubscribe?.();this.unsubscribe=null;
     for(const pending of this.queries.values()){pending.cleanup();pending.reject(new Error("MEMORY_WORKER_NOT_READY"));}this.queries.clear();
     this.consolidationAbort.abort();
-    await Promise.allSettled([...this.consolidationTasks,...this.admissionWaiters,this.idleTask,this.maintenanceTask,this.continuityTask]);
     const child=this.child;
-    // Past the grace the helper is ended: what it owes is durable, its index survives a kill (SQLite WAL), and every caller goes on
-    // to work that must not depend on one busy helper (the rest of this stop, a change of memory mode, a Cloud home's drain).
-    if(child)await new Promise<void>(resolve=>{
-      let killed:ReturnType<typeof setTimeout>|undefined;
-      // A kill not seen to land by the wait: the helper is let go, so the next start gets a new one and its late exit changes nothing.
-      const letGo=()=>{if(this.child===child){if(this.childIo?.child===child){this.childIo.receipts.exit();this.childIo=null;}this.clearHeartbeat();this.failWork("MEMORY_WORKER_STOPPED");this.child=null;this.ready=false;this.indexing=false;this.modelReady=false;this.idleExit=null;this.warmStart=null;this.clearInitWatch();}resolve();};
-      const grace=setTimeout(()=>{child.kill("SIGKILL");killed=setTimeout(letGo,MEMORY_WORKER_KILL_WAIT_MS);},MEMORY_WORKER_STOP_GRACE_MS);
-      child.once("exit",()=>{clearTimeout(grace);if(killed)clearTimeout(killed);resolve();});
-      if(this.childIo?.child===child&&this.childIo.receipts.negotiated){
-        try{child.send({type:"io-stop"});}catch{markIoMeterUnknown();child.disconnect();}
-      }else child.disconnect();
-    });
+    const closing=child?this.closeChild(child,MEMORY_WORKER_STOP_GRACE_MS):undefined;
+    await Promise.allSettled([...this.consolidationTasks,...this.admissionWaiters,this.idleTask,this.maintenanceTask,this.continuityTask,closing]);
     for(const ticket of this.helperGrants.values())ioBudget.settle(ticket,ticket.bytes);this.helperGrants.clear();
     ioBudget.sampleByteSource("memory-worker");this.unregisterBytes?.();this.unregisterBytes=null;
     if(this.statusScanTimer)clearTimeout(this.statusScanTimer);this.statusScanTimer=null;
@@ -1859,13 +2383,14 @@ export class MemoryWorkerController {
     if(signal.aborted)return Promise.reject(new Error("MEMORY_QUERY_CANCELLED"));
     const requestId=randomUUID();
     return new Promise((resolve,reject)=>{
-      const abort=()=>{const pending=this.queries.get(requestId);this.queries.delete(requestId);pending?.cleanup();if(pending?.sent)this.child?.send({type:"cancel",requestId});reject(new Error("MEMORY_QUERY_DEADLINE"));};
+      const abort=()=>{const pending=this.queries.get(requestId);this.queries.delete(requestId);if(this.idleAsk)this.updateIdleAsk(this.idleAsk);pending?.cleanup();if(pending?.sent)this.child?.send({type:"cancel",requestId});reject(new Error("MEMORY_QUERY_DEADLINE"));};
       signal.addEventListener("abort",abort,{once:true});
       const pending={input,sent:false,resolve,reject,cleanup:()=>signal.removeEventListener("abort",abort)};
       this.queries.set(requestId,pending);
+      if(this.idleAsk)this.updateIdleAsk(this.idleAsk);
       try{
         if(!this.child){if(Date.now()<this.respawnAt)throw new Error("MEMORY_WORKER_START_BACKOFF");this.spawnWithReset();}
-        if(this.ready){pending.sent=true;sendSearch(m=>this.child!.send(m),requestId,input);}
+        if(this.ready&&this.idleExit!==this.child){pending.sent=true;sendSearch(m=>this.child!.send(m),requestId,input);}
       }catch{this.queries.delete(requestId);pending.cleanup();this.setError("helper","MEMORY_WORKER_START_FAILED");logSwallowed("recall","MEMORY_WORKER_START_FAILED");reject(new Error("MEMORY_WORKER_START_FAILED"));}
     });
   }

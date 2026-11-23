@@ -13,7 +13,7 @@ Key retrieval now reads one byte beyond the 2,000,000-byte limit and aborts on o
 
 The mutation runner exit files contain 0 when their expected rejection assertions pass. The nested tests under mutation intentionally fail. Baseline RED was captured before changing the retriever or the contract checks. Raw logs, original source snapshots, mutant sources and fixture directories remain in `/workspace/swarm-b/afix-signal-gradle-verify/evidence/`; prior evidence folders remain in place.
 
-All execution used one isolated, network-none container on build-host, pinned to `node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4`, with two CPUs and 4 GiB memory. Load was below 60 at launch. Existing local test dependencies were mounted read-only. No app server or user data was involved. `container-provenance.json` records its identity and results. The container and the empty worktree dependency mount directory were removed afterward.
+All execution used one isolated, network-none container on hetzner-dsm, pinned to `node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4`, with two CPUs and 4 GiB memory. Load was below 60 at launch. Existing local test dependencies were mounted read-only. No app server or user data was involved. `container-provenance.json` records its identity and results. The container and the empty worktree dependency mount directory were removed afterward.
 
 To reproduce, mount the checkout at `/repo`, local test dependencies at `/repo/node_modules` read-only (give Vite temporary cache mounts), and a fresh job evidence directory at `/evidence` in that pinned network-none image. Run:
 

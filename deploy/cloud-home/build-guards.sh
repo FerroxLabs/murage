@@ -11,12 +11,12 @@ MURAGE_MIN_BUILD_RAM_MB=7400
 require_builder_ram() {
     local ram_mb=${1:?RAM in MB}
     [[ $ram_mb =~ ^[0-9]+$ && $ram_mb -ge $MURAGE_MIN_BUILD_RAM_MB ]] || {
-        echo "build-image: only ${ram_mb} MB of RAM; the build needs at least ${MURAGE_MIN_BUILD_RAM_MB} MB. Use a build host cx33 (x86_64) or cax21 (arm64) builder or larger; cx23 and cax11 are OOM-killed by tsc." >&2
+        echo "build-image: only ${ram_mb} MB of RAM; the build needs at least ${MURAGE_MIN_BUILD_RAM_MB} MB. Use a Hetzner cx33 (x86_64) or cax21 (arm64) builder or larger; cx23 and cax11 are OOM-killed by tsc." >&2
         return 1
     }
 }
 
-# wait_for_package_manager: a fresh build host builder is still running cloud-init and unattended-upgrades for a while after ssh comes
+# wait_for_package_manager: a fresh Hetzner builder is still running cloud-init and unattended-upgrades for a while after ssh comes
 # up, and either one holds the dpkg frontend lock ("Unable to acquire the dpkg frontend lock" failed an x86 build on 2026-10-27).
 # Wait for cloud-init, then for every package lock to be free, for at most MURAGE_PKG_WAIT_SECONDS (default 600) in total.
 wait_for_package_manager() {
