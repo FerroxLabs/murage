@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Thin command line over ./image-sig.mjs (the Worker's own module, copied verbatim) for sign-image.sh.
 // It builds the payload with the Worker's buildPayload, converts the signature with the Worker's derToP1363 and
-// b64urlEncode, and validates the build host image the same way the Worker does. No network, no secrets, no key files.
+// b64urlEncode, and validates the Hetzner image the same way the Worker does. No network, no secrets, no key files.
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -30,7 +30,7 @@ function trust(opts = {}) {
   return { spkiB64, trustedFps, fp: fpOf(spkiB64) };
 }
 
-/** Eligibility of the build host image (response of GET /images/N) for env. Returns the fields the signer needs. */
+/** Eligibility of the Hetzner image (response of GET /images/N) for env. Returns the fields the signer needs. */
 export function checkImage(json, imageId, env) {
   if (env !== "staging" && env !== "prod") throw new Error("env");
   if (!validImageId(imageId)) throw new Error("image id");

@@ -15,6 +15,7 @@
 // entry's fields, stems, prefixes, one typo on 5+ letter tokens, a fixed rank order, 12 results and the rest under
 // "More results". The word matcher itself is lib/palette-rank.ts, shared with the palette's name lists.
 import { cloudCardBlocked, cloudCardHidden } from "./cloud-settings";
+const OWN_TRANSCRIPTION_KEY_ANCHOR = "voice-key-heading";
 import { isCloudOrigin } from "./cloud-workspace";
 import { SECTION_ALIASES, SECTION_PAGES } from "./settings-pages";
 import { cardsForSurface, type SettingsCard } from "./settings-cards";
@@ -334,6 +335,8 @@ function searchTokens(queried: readonly string[], context: SettingsFindContext, 
     if (entry.scope === "app") {
       // A Cloud window leaves out a card on a page it cannot use, and keeps a computer-only card: it renders a stub there.
       if (cloudCardBlocked(entry.card, cloud) && !cloudCardHidden(entry.anchor, cloud)) continue;
+      // The own transcription key renders only while an old key is in use (Sean 11-06), so search never offers it.
+      if (entry.anchor === OWN_TRANSCRIPTION_KEY_ANCHOR) continue;
       const page = settingsPageLabel(entry.section);
       const score = findScore(tokens, tokenFields({ label, nameWords: cardNameWords(entry.id), words, synonyms, section: page, page: "", group: gate }));
       if (score) {

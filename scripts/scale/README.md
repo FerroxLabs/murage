@@ -6,7 +6,7 @@ budget, a growing per-turn cost or a regression. Nothing here touches production
 the tree under test as it ships, against fake engines that answer at once, so every millisecond
 measured is Murage's own.
 
-Everything runs on build-host in a container. Never on a laptop: the generator writes tens of GB and
+Everything runs on hetzner-dsm in a container. Never on a laptop: the generator writes tens of GB and
 it refuses any data dir outside `/scale/` (never `~/.murage`).
 
 ## Files
@@ -24,7 +24,7 @@ it refuses any data dir outside `/scale/` (never `~/.murage`).
 | `gate.mjs` | Judges a results file. Exit 1 on any failure. `--baseline` adds the regression check; `--compare` prints a side-by-side table. |
 | `gate.test.mjs` | Unit tests of the gate (part of the normal vitest run). |
 | `run-container.sh` | Container entry: install, build the UI, generate (or reuse the cache), prime, run, gate. |
-| `hz-scale.sh` | Launcher from a checkout: exports a commit with `git archive`, syncs these scripts, starts the container on build-host. |
+| `hz-scale.sh` | Launcher from a checkout: exports a commit with `git archive`, syncs these scripts, starts the container on hetzner-dsm. |
 
 ## Scenarios (each reports p50, p90 and max)
 
@@ -61,7 +61,7 @@ Lower-level:
 # from a checkout of this branch (the commit can be any commit, e.g. a PR head)
 scripts/scale/hz-scale.sh pr-1234 <commit> pr -e LOAD=1                               # per PR (see runtime below)
 scripts/scale/hz-scale.sh nightly <commit> extreme -e LOAD=1 -e LOAD_BALLOON_GB=16 -e SLOW_DISK=1
-ssh build-host 'tail -f /work/mb-0161-hz/scale-<label>/gate.log'                    # ends with REALEXIT=<gate>
+ssh hetzner-dsm 'tail -f /root/mb-0161-hz/scale-<label>/gate.log'                    # ends with REALEXIT=<gate>
 ```
 
 Runtime. Generating `pr` takes about a minute and the scenarios a few minutes once turns cost what the
@@ -70,7 +70,7 @@ takes up to an hour (capped by `SCALE_SLOPE_CAP_MS`, default 60 min for pr, 90 m
 `extreme` takes about 1.5 to 2 hours per tree (3M messages through capture, 500k receipts with real lineage
 writes, and the tree's own message search index build on first open) and writes about 35 GB.
 
-The generated data is cached under `/work/mb-0161-hz/scale-data/cache/<shape>-s<seed>-<commit>-<generator hash>`,
+The generated data is cached under `/root/mb-0161-hz/scale-data/cache/<shape>-s<seed>-<commit>-<generator hash>`,
 so a second run of the same commit skips generation. Delete old cache entries by literal path when a
 lane is done.
 
@@ -80,7 +80,7 @@ Workflow changes get their own CI first, and MurageMain decides that, so nothing
 `.github/workflows` or `release.yml`. The intended wiring:
 
 1. **Per PR** that touches `server/memory/**`, `server/index.ts`, `server/store.ts`, `server/drivers/**`,
-   `src/state/**` or `src/components/Sidebar.tsx`: a job with the build host deploy key runs
+   `src/state/**` or `src/components/Sidebar.tsx`: a job with the Hetzner deploy key runs
    `scripts/scale/hz-scale.sh pr-<number> <head sha> pr -e LOAD=1 -e BASELINE=baseline-pr.json`, waits on the
    log's `REALEXIT=` line with one blocking command, and fails the check on a non-zero exit. The baseline is
    the last green `pr` results file from main, copied into the label's `out/`.
@@ -92,9 +92,9 @@ At most two rig containers run at once on the host (`hz-scale.sh` refuses a thir
 
 ### Other hosts
 
-`RIG_HOST=<ssh host>` (default `build-host`) points `hz-scale.sh`, `baseline.sh` and `ci-check.sh` at another
+`RIG_HOST=<ssh host>` (default `hetzner-dsm`) points `hz-scale.sh`, `baseline.sh` and `ci-check.sh` at another
 host; `RIG_MAX` (default 2) is how many rig containers that host may run at once. The host needs docker,
-`cc`, rsync, the `mcr.microsoft.com/playwright:v1.57.0-noble` image, and under `/work/mb-0161-hz`: `tools/`
+`cc`, rsync, the `mcr.microsoft.com/playwright:v1.57.0-noble` image, and under `/root/mb-0161-hz`: `tools/`
 (pnpm), `store/`, `passwd`, `group` and `perf102-rig/secrets/` (may be empty; the key is read only with
 `SCALE_FLUX=1`). An extreme run takes 6 cores and 24 GB per container and about 100 GB of disk per commit.
 

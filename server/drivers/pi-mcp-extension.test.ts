@@ -310,6 +310,150 @@ describe("Pi MCP extension registration", () => {
     await handlers.get("session_shutdown")?.();
   });
 
+  // MAIN-RULING cause22-no-transport-caps: the 100-page bound on tools/list threw, and the mount then registered none of the server's tools.
+  it("registers every tool of a tools/list that takes 150 pages (over the old 100-page bound)", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: {} } } });
+          else if (msg.method === "tools/list") {
+            const page = msg.params?.cursor ? Number(String(msg.params.cursor).slice(5)) : 1;
+            send({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "tool_" + page, inputSchema: { type: "object", properties: {} } }], ...(page < 150 ? { nextCursor: "page-" + (page + 1) } : {}) } });
+          }
+        }
+      });
+    `);
+    const dir = tempDir();
+    const config = join(dir, "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script] } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({ registerTool(tool) { tools.push(tool); }, on(event, handler) { handlers.set(event, handler); } });
+    expect(tools.length, "every tool of the 150-page list is registered").toBe(150);
+    await handlers.get("session_shutdown")?.();
+  });
+
+  // ASTRA 54e7551f8c (pi-mcp-extension.ts:289): with no page bound, each page past the list deadline got a fresh 1 ms timer, so a peer that
+  // answers every page at once with a new cursor kept discovery running. Timers are frozen here (a 1 ms timer never wins a race), the clock
+  // moves past the deadline, and discovery must still end.
+  it("ends tools/list discovery at its deadline when the peer answers every page at once with a new cursor", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "";
+      let page = 0;
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: {} } } });
+          else if (msg.method === "tools/list") { page += 1; send({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "t" + page, inputSchema: { type: "object", properties: {} } }], nextCursor: "c" + page } }); }
+        }
+      });
+    `);
+    const dir = tempDir();
+    const config = join(dir, "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script] } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const realSetTimeout = globalThis.setTimeout;
+    const realSetInterval = globalThis.setInterval;
+    const realClearInterval = globalThis.clearInterval;
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const clock = realSetInterval(() => vi.setSystemTime(Date.now() + 5_000), 50);
+    try {
+      const handlers = new Map<string, ShutdownHandler>();
+      const discovery = extension({ registerTool() {}, on(event, handler) { handlers.set(event, handler); } }).then(() => "ended", () => "ended");
+      const outcome = await Promise.race([discovery, new Promise((resolve) => realSetTimeout(() => resolve("still asking for pages"), 4_000))]);
+      expect(outcome, "discovery ends once the list deadline has passed").toBe("ended");
+      await handlers.get("session_shutdown")?.();
+    } finally {
+      realClearInterval(clock);
+      vi.useRealTimers();
+    }
+  }, 30_000);
+
+  // ASTRA d3062bd0d5 (pi-mcp-extension.ts:298): one page's tools were pushed by a spread, which throws past the engine's argument limit
+  it("registers every tool of a single tools/list page of 300,000 tools", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: {} } } });
+          else if (msg.method === "tools/list") send({ jsonrpc: "2.0", id: msg.id, result: { tools: Array.from({ length: 300000 }, (_, i) => ({ name: "t" + i, inputSchema: { type: "object", properties: {} } })) } });
+        }
+      });
+    `);
+    const dir = tempDir();
+    const config = join(dir, "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script] } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({ registerTool(tool) { tools.push(tool); }, on(event, handler) { handlers.set(event, handler); } });
+    expect(tools.length, "every tool of the one long page is registered").toBe(300_000);
+    await handlers.get("session_shutdown")?.();
+  }, 120_000);
+
+  // MAIN-RULING cause22-no-transport-caps: the 32 MiB MCP frame cap that closed the connection is deleted.
+  it("reads a 40 MiB tool result whole (over the old 32 MiB frame cap), trims only what the model sees, and the next call on the connection is answered", async () => {
+    const script = fakeMcpScript(`
+      let buffer = "";
+      process.stdin.setEncoding("utf8");
+      const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+      process.stdin.on("data", (chunk) => {
+        buffer += chunk;
+        let newline;
+        while ((newline = buffer.indexOf("\\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { tools: {} } } });
+          else if (msg.method === "tools/list") send({ jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "big", inputSchema: { type: "object", properties: {} } }] } });
+          else if (msg.method === "tools/call" && msg.params?.arguments?.large) send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "L".repeat(40 * 1024 * 1024) }] } });
+          else if (msg.method === "tools/call") send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "still alive" }] } });
+        }
+      });
+    `);
+    const dir = tempDir();
+    const config = join(dir, "mcp.json");
+    writeFileSync(config, JSON.stringify({ mcpServers: { test: { command: process.execPath, args: [script] } } }));
+    process.env.MURAGE_MCP_CONFIG = config;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const tools: RegisteredTool[] = [];
+    const handlers = new Map<string, ShutdownHandler>();
+    await extension({ registerTool(tool) { tools.push(tool); }, on(event, handler) { handlers.set(event, handler); } });
+    const ui = { ui: { confirm: async () => true } };
+    // A cut or closed connection rejects; it is caught so that case fails at the assertion below, not as a thrown error.
+    const large = await tools[0]!.execute("call-1", { large: true }, undefined, undefined, ui).catch((error: unknown) => ({ rejected: String(error) }));
+    expect(large, "the 40 MiB result reaches the tool call").toMatchObject({ content: [{ type: "text", text: expect.stringContaining("50KB limit") }] });
+    expect((large as { content: Array<{ text: string }> }).content[0]!.text.startsWith("L".repeat(1024))).toBe(true);
+    const next = await tools[0]!.execute("call-2", {}, undefined, undefined, ui).catch((error: unknown) => ({ rejected: String(error) }));
+    expect(next, "the connection stays and answers the next call").toMatchObject({ content: [{ type: "text", text: "still alive" }] });
+    await handlers.get("session_shutdown")?.();
+  }, 60_000);
+
   it("throws when an MCP tool result declares isError", async () => {
     const script = fakeMcpScript(`
       let buffer = "";

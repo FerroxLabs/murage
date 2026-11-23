@@ -16,7 +16,7 @@ import { scratchFrames, stepPrice } from "./postings-steps.ts";
 import { runtimeMergePages, OVERRUN_K_UNKNOWN, frameBytes, MergePredictor, mergeRoute, gateHoldMayMerge, MEMW_CALL_MS, MEMW_STEP_MAX_ROWS, WAL_HEADER_BYTES, formGroup, GroupClock, MEMW_R_W, MEMW_F_INS_FRAMES, MEMW_SEGMENT_GATE, memwLines, MEMW_KEYS_MAX_ROWS, MEMW_MERGE_PAGES, MEMW_OPEN_RESERVE, MEMW_R_D, MEMW_F_DEL_FRAMES, MEMW_ROW_BYTES, overrunK, rowX, segmentGateOpen, StepSizer, structureMergePages, structureSegments, unitCost, writesOf, type AdmitKind, type GroupUnit, type IndexWriter } from "./memw-steps.ts";
 export * from "./memw-steps.ts";
 import { checkpointCeiling, commitCeiling, ioMeterPageSize } from "../io-meter.ts";
-import { META_ENVELOPE_FRAMES, metaPutter, openIndexWal, walTestHooks, WalStop, type ChargeTransport, type IndexWalWriter, type OpenedIndexWal, type StopKind, type WalKind } from "./index-wal.ts";
+import { META_ENVELOPE_FRAMES, metaPutter, openIndexWal, walTestHooks, WalStop, type ChargeTransport, type ExitSealOutcome, type IndexWalWriter, type OpenedIndexWal, type StopKind, type WalKind } from "./index-wal.ts";
 export type { ChargeTransport } from "./index-wal.ts";
 /** The stop a helper reports in `initialised` and live (spec 4). */
 export interface IndexStopInfo{fileId:string;seq:number;kind:StopKind;reason:string}
@@ -25,6 +25,7 @@ export interface IndexStopInfo{fileId:string;seq:number;kind:StopKind;reason:str
 export const WAL_DRAIN_BYTES = 24 * 1024 * 1024; // r20 D9(a)
 /** How long opening the index waits for another connection's lock or WAL recovery before the start fails (and is retried). */
 export const INDEX_OPEN_BUSY_MS = 5_000;
+const WALK_CHUNK = 64; // rolled-checkpoint purge: rows read per select, so a step pays for the rows it consumes
 /** One FTS command per scrub turn, including when the age table is present. */
 export const DELETE_SCRUB_MERGE_PAGES = MEMW_MERGE_PAGES; // N 64 for MEMW merges (1.1)
 export function walBytes(path: string): number { try { return statSync(`${path}-wal`).size; } catch { return 0; } }
@@ -70,6 +71,7 @@ const ALL_WAL_KINDS:readonly WalKind[]=["group","fill","keys","stage_drop","dele
 export class MemoryIndex {
   private db!: DatabaseSync;
   private readonly path: string;
+  private readonly keepGoing:()=>boolean;
   private allowedKeys=new WeakMap<object,string>();
   private matrix:{model:string;coverage:Set<string>|null;rows:Map<string,{id:string;version:number;key:string;values:Float32Array}>}|null=null;
   /** True when this file was made new by this open (absent, damaged and set aside, or replaced by a reset). */
@@ -81,7 +83,7 @@ export class MemoryIndex {
   /** The helper's open (spec 4): open rule steps 0-2 (openIndexWal), then init(): the rule's charged check, the `open` txn(s), the seal.
    * Nothing is written to the file before the rule returns writable; a refused or unanswered charge leaves the open pending and
    * maintenanceStep() tries again (T14e(i)). */
-  static async create(path:string,opts:{charge:ChargeTransport;reset?:{resetId:number;resets:number;kind:WalKind|"unknown"}}):Promise<MemoryIndex>{
+  static async create(path:string,opts:{charge:ChargeTransport;reset?:{resetId:number;resets:number;kind:WalKind|"unknown"};keepGoing?:()=>boolean}):Promise<MemoryIndex>{
     // r3.2.8 3.2 step 2, trigger A, before any SQLite open: a start that carries R finds the stop marker beside a main file: the whole set
     // goes aside under the default `.corrupt-<now>` name (the marker stays at its live name). A move that fails exits(1) with no open.
     // r3.2.8-H.1 7 (A') and H.2 1: both triggers first run the read-only probe (synchronous, no await, nothing is opened for writing).
@@ -112,13 +114,14 @@ export class MemoryIndex {
       // r3.2.8d D4: an R start does not report `initialised` while a refused or unanswered open charge leaves the open pending; init() is
       // the idempotent resume (each attempt waits for the charge answer or its own timeout). A persistent refusal returns pending and
       // r3.2.8 3.1.6's failed start applies.
-      if(opts.reset)for(let attempt=0;attempt<OPEN_RESUME_ATTEMPTS&&index.openState==="pending";attempt++)await index.init();
+      if(opts.reset)for(let attempt=0;attempt<OPEN_RESUME_ATTEMPTS&&index.openState==="pending"&&index.keepGoing();attempt++)await index.init();
     }
     catch (error) { if(isBgDeferred(error))return index;index.close(); throw error; }
     return index;
   }
-  constructor(path: string, opts:{charge:ChargeTransport;reset?:{resetId:number;resets:number;kind:WalKind|"unknown"};holdsR?:boolean}) {
+  constructor(path: string, opts:{charge:ChargeTransport;reset?:{resetId:number;resets:number;kind:WalKind|"unknown"};holdsR?:boolean;keepGoing?:()=>boolean}) {
     this.path=path;
+    this.keepGoing=opts.keepGoing??(()=>true);
     // holdsR (H.2 1): the main file is this reset's own fresh file, kept as is; every record stays owed, as for a new file.
     const rebuilt=!existsSync(path)||opts.holdsR===true;
     // `this.reset` is set before any open: the open txn writes reset_done = R and overrun_k (writeReset).
@@ -154,7 +157,7 @@ export class MemoryIndex {
   async init():Promise<void>{
     if(this.openState!=="pending")return;
     for(;;){
-      if(!(await this.settle()))return;
+      if(!(await this.settle())||!this.keepGoing())return;
       if(this.openComplete)break;
       try{this.openComplete=this.openStep();}catch(error){if(isBgDeferred(error))return;throw error;}
       if(!this.firstOpenTxnDone){this.firstOpenTxnDone=true;(walTestHooks as {afterFirstOpenTxn?:()=>void}).afterFirstOpenTxn?.();}
@@ -164,14 +167,14 @@ export class MemoryIndex {
     if(this.writer.stopped){this.openState="stopped";return;}
     this.afterOpen();
     this.openState="open";
-    if(this.scrubResumeOwed()){
+    if(this.keepGoing()&&this.scrubResumeOwed()){
       try{await this.scrubDeleted();}catch{/* the durable debt and pending receipts remain */}
       if(this.writer.stopped){this.openState="stopped";return;}
     }
     removeIndexQuarantines(this.path);
   }
-  /** Best effort before an exit (worker idle-exit/disconnect): seal and TRUNCATE bounded by the charge ack, never a close (I3). */
-  async prepareExit():Promise<void>{await this.writer.prepareExit();}
+  /** Seal and TRUNCATE before the worker sends its last receipt. */
+  prepareExit():Promise<ExitSealOutcome>{return this.writer.prepareExit();}
   private charge:ChargeTransport|null=null;
   /** Files attached so far (a reset or a local reset attaches a new one). */
   private attachCount=0;
@@ -184,7 +187,7 @@ export class MemoryIndex {
     this.groupClock=new GroupClock();
     this.tierSealOwed=false;this.tierWait=false;
     this.matrix=null;this.allowedKeys=new WeakMap();
-    this.purge={cursor:null,live:null,since:0,merging:false};this.mergeStarted=false;this.deletionGen=0;this.mergeGen=0;
+    this.purge={cursor:null,live:null,since:0,merging:false,mergeAt:1000,oldest:null};this.mergeStarted=false;this.deletionGen=0;this.mergeGen=0;
     this.aged=false;this.ageTables=false;this.openComplete=false;this.scrubBlocked=false;
     const reader=walFrameReader(this.path);this.wal=reader;this.attachCount++;
     // The permitted close (tests, quarantine, reset): guard first, then writable (A16 / OPEN-8), then the frame reader.
@@ -244,6 +247,8 @@ export class MemoryIndex {
     this.ageTables=!this.aged&&ageTablesPresent(this.db);
     // A merge owed when the app last stopped is still owed: the obligation lives in this file, not in memory.
     this.purge.merging=Boolean(this.db.prepare("SELECT 1 FROM index_meta WHERE key='merge_owed' AND value='1'").get());
+    // An inherited merge debt cannot prove that the checkpoint walk reached its end.
+    if(this.purge.merging)this.purge.cursor={id:"checkpoint:",version:-1};
   }
   /** Resume a completed scrub's checkpoint. A legacy marker without a generation takes at most one merge step here; all remaining
    * work stays owed to the worker. */
@@ -596,6 +601,7 @@ export class MemoryIndex {
     const units=this.units(records),file=this.attachCount;
     let holdStart:number|undefined;
     while(committed<records.length){
+      if(!this.keepGoing())return {status:"failed",reason:"check-owed",committed};
       if(this.writer.stopped)return {status:"failed",reason:"wal-over",committed};
       if(this.writer.checkOwed())return {status:"failed",reason:"check-owed",committed};
       while(committed<records.length&&this.alreadyProjected(records[committed]!))committed++;
@@ -718,6 +724,7 @@ export class MemoryIndex {
    * pred over the tier ceiling answers merge-floor at once. */
   private async holdAtGate(start:number):Promise<"clear"|"segment-gate"|"merge-floor"|"wal-over"|"check-owed">{
     for(;;){
+      if(!this.keepGoing())return "check-owed";
       const table=this.gatedTable();
       if(table===null)return "clear";
       const plan=this.mergePlan(table);
@@ -741,7 +748,7 @@ export class MemoryIndex {
       if(this.now()-this.slowMergeAt>=60_000){this.slowMergeAt=this.now();console.warn(`MEMORY_INDEX_SLOW_MERGE table=${table} ms=${Math.round(step.ms)}`);}
     }
     this.tierSealOwed=true;
-    if((await this.sealAndTruncate()).truncated)this.tierSealOwed=false;
+    if(this.keepGoing()&&(await this.sealAndTruncate()).truncated)this.tierSealOwed=false;
     return {ran:"tier",...this.tierSealOwed?{drain:true}:{},gateClear:segmentGateOpen(this.writtenSegments())};
   }
   /** One tick-driven maintenance step (spec 4). Order: the owed check (nothing else while one is owed), the reset write, the tier's seal,
@@ -857,11 +864,11 @@ export class MemoryIndex {
   /** The end of a one-time rewrite of the stored text (the 1.0.4 number scrub, scrub-pass.ts settle). R3: the whole-index optimize is
    * replaced by durable merge debt the bounded passes pay; then sealAndTruncate. True when the log was truncated (false: ask again). */
   async finishRewrite():Promise<boolean>{
-    if(!(await this.settle()))return false;
+    if(!(await this.settle())||!this.keepGoing())return false;
     this.writer.write("merge",runtimeMergeWalBytes(),()=>this.setMergeOwed(true));
     this.purge.merging=true;
     if(!(await this.settle()))return false;
-    return (await this.sealAndTruncate()).truncated;
+    return this.keepGoing()&&(await this.sealAndTruncate()).truncated;
   }
   /** Durable physical deletion debt, separate from ordinary stepped merges. No schema or FTS format change. */
   deletionScrubPending():boolean{return Boolean(this.db.prepare("SELECT 1 FROM index_meta WHERE key='delete_scrub_owed'").get())||this.postingDropOwed();}
@@ -939,7 +946,7 @@ export class MemoryIndex {
     if(!this.deletionScrubPending())return true;
     // Capture before settle() copies the outstanding frames and changes the debt estimate.
     const sealNeed=this.core!.sealCeiling();
-    if(!(await this.settle())){this.scrubBlocked=true;return false;}
+    if(!(await this.settle())||!this.keepGoing()){this.scrubBlocked=true;return false;}
     // r4.1: the debt parts of oversize removals go first, one one-row transaction a call (the merge scrub follows once none is left).
     this.scrubDrain=false;
     if(this.postingDropOwed()){
@@ -964,6 +971,7 @@ export class MemoryIndex {
       this.truncatedSalt=truncated?.mxFrame===0?truncated.salt:undefined;
     }
     // Never let write() replace a cleanup-sized request with another seal-and-cleanup request.
+    if(!this.keepGoing())return false;
     if(!helperHasGrant(cleanupNeed,true))throw new BgDeferred();
     // Only metadata is written after the TRUNCATE; every page with retired text has already been drained.
     const generation=Number((JSON.parse(this.meta("delete_scrub_merge")!) as {generation:number}).generation);
@@ -1054,6 +1062,7 @@ export class MemoryIndex {
     for(let start=0;start<ids.length;start+=200){
       const chunk=JSON.stringify(ids.slice(start,start+200));
       if(!(await this.settle()))throw new Error("MEMORY_INDEX_CHECK_OWED");
+      if(!this.keepGoing())break;
       this.writer.write("delete",runtimeStepWalBytes(),()=>{
         const before=removed;
         const rowids=this.db.prepare("SELECT fts_rowid FROM lexical_keys WHERE id IN (SELECT value FROM json_each(?))").all(chunk);
@@ -1092,6 +1101,7 @@ export class MemoryIndex {
    * The walk then starts again from the beginning on the next pass. */
   async purgeRolledCheckpoints(options: {maxExamined?: number; maxMs?: number; mergePages?: number; mergeFraction?: number} = {}): Promise<{removed: number; examined: number; merged: boolean; done: boolean}> {
     if(!(await this.settle()))return {removed:0,examined:0,merged:false,done:false};
+    if(!this.keepGoing())return {removed:0,examined:0,merged:false,done:false};
     // The deletion scrub owns both word tables until its generation is checkpointed: one scrub step, never a completed pass.
     if(this.deletionScrubPending())return {removed:0,examined:0,merged:false,done:(await this.scrubDeleted())&&this.purge.cursor===null};
     const step=this.rolledWrite(options);
@@ -1136,46 +1146,86 @@ export class MemoryIndex {
       if(done)this.purge.live=null;
       return {removed:0,examined:0,merged:false,done};
     }
-    const started=performance.now(),cursor=this.purge.cursor??{id:"checkpoint:",version:-1};
+    // Price the retained posting's emptied gap with R_d, leaving half this delete reservation for its refresh.
+    const started=performance.now(),cursor=this.purge.cursor??{id:"checkpoint:",version:-1},reserve=runtimeStepWalBytes(),gapBytes=reserve/(2*MEMW_R_D);
+    if(this.purge.live===null)this.purge.mergeAt=1000;
     this.purge.live??=this.entriesLive();
-    // 'checkpoint;' is the first key past every 'checkpoint:*' id (';' follows ':').
-    const rows=this.db.prepare(`SELECT e.id,e.version,k.fts_rowid FROM entries e LEFT JOIN lexical_keys k ON k.id=e.id AND k.version=e.version
-      WHERE (e.id,e.version)>(?,?) AND e.id<'checkpoint;' ORDER BY e.id,e.version LIMIT ?`).all(cursor.id,cursor.version,maxExamined+1);
+    const live=this.purge.live;
+    // 'checkpoint;' is the first key past every 'checkpoint:*' id (';' follows ':'). Rows are read in small chunks as the walk consumes
+    // them: a step whose time budget covers a handful of removals must not first read and build all `maxExamined` rows.
+    const select=this.db.prepare(`SELECT e.id,e.version,k.fts_rowid FROM entries e LEFT JOIN lexical_keys k ON k.id=e.id AND k.version=e.version
+      WHERE (e.id,e.version)>(?,?) AND e.id<'checkpoint;' ORDER BY e.id,e.version LIMIT ?`);
     const removedKeys:string[]=[];
-    let examined=0,last:{id:string;version:number}|null=null;
-    this.writer.write("delete",runtimeStepWalBytes(),()=>{
+    let examined=0,last:{id:string;version:number}|null=null,ended=false,bulk=false;
+    const heldBefore=this.purge.oldest?{...this.purge.oldest}:null;
+    try{this.writer.write("delete",reserve,()=>{
       const deleteLexical=this.db.prepare("DELETE FROM lexical WHERE rowid=?"),deleteKey=this.db.prepare("DELETE FROM lexical_keys WHERE id=? AND version=?");
       const deleteEntry=this.db.prepare("DELETE FROM entries WHERE id=? AND version=? RETURNING rowid AS r,length(CAST(text AS BLOB)) AS n"),deleteVectors=this.db.prepare("DELETE FROM vectors WHERE id=? AND version=?");
-      for(let n=0;n<rows.length&&n<maxExamined;n++){
-        if(examined&&performance.now()-started>=maxMs/2)break;
-        const row=rows[n],next=rows[n+1];
-        examined++;last={id:String(row.id),version:Number(row.version)};
-        if(!next||next.id!==row.id)continue;
-        ageDeleteRecord(this.db,String(row.id),Number(row.version)); // WP2b D5/D8
-        if(row.fts_rowid!==null)deleteLexical.run(row.fts_rowid);
-        deleteKey.run(row.id,row.version);const gone=deleteEntry.get(row.id,row.version);if(gone)this.countEntry(-1,Number(gone.r));deleteVectors.run(row.id,row.version);
-        if(gone&&row.fts_rowid!==null)this.moveToDebt("lexical",Number(gone.n));
-        removedKeys.push(`${row.id}:${row.version}`);
+      const recount=this.recountCursor();
+      let counted=0,lexicalBytes=0;
+      const remove=(id:string,version:number,ftsRowid:unknown)=>{
+        ageDeleteRecord(this.db,id,version); // WP2b D5/D8
+        if(ftsRowid!==null)deleteLexical.run(ftsRowid as number);
+        deleteKey.run(id,version);const gone=deleteEntry.get(id,version);if(gone&&(recount===null||Number(gone.r)<=recount))counted++;deleteVectors.run(id,version);
+        if(gone&&ftsRowid!==null)lexicalBytes+=Number(gone.n);
+        if(gone&&this.purge.oldest?.id===id)this.purge.oldest.bytes+=Number(gone.n);
+        removedKeys.push(`${id}:${version}`);
+      };
+      // Keep a full chunk's first posting until the id ends: deleting its front repeatedly makes SQLite's scratch FTS work grow.
+      const newer=this.db.prepare(`SELECT k.fts_rowid FROM entries e LEFT JOIN lexical_keys k ON k.id=e.id AND k.version=e.version
+        WHERE e.id=? AND e.version=? AND EXISTS (SELECT 1 FROM entries n WHERE n.id=e.id AND n.version>e.version)`);
+      const flushOldest=()=>{const held=this.purge.oldest;this.purge.oldest=null;if(!held)return;const row=newer.get(held.id,held.version);if(row)remove(held.id,held.version,row.fts_rowid);};
+      let from=cursor,timedOut=false;
+      while(examined<maxExamined&&!timedOut&&!ended){
+        const want=Math.min(WALK_CHUNK,maxExamined-examined),rows=select.all(from.id,from.version,want+1);
+        const take=Math.min(rows.length,want);
+        for(let n=0;n<take;n++){
+          if(examined&&performance.now()-started>=maxMs/2){timedOut=true;break;}
+          const row=rows[n],next=rows[n+1],id=String(row.id),version=Number(row.version);
+          examined++;last={id,version};
+          if(this.purge.oldest&&this.purge.oldest.id!==id)flushOldest();
+          if(!next||next.id!==row.id){flushOldest();continue;}
+          if(!this.purge.oldest&&rows.length>WALK_CHUNK&&rows[WALK_CHUNK].id===id){this.purge.oldest={id,version,bytes:0};continue;}
+          remove(id,version,row.fts_rowid);
+          if(this.purge.oldest&&this.purge.oldest.bytes>=gapBytes){timedOut=true;break;}
+        }
+        if(!timedOut&&rows.length<=want)ended=true;
+        else if(last)from=last;
       }
-      // The obligation to merge what this walk deleted is written in the transaction that deleted it, whether or not the
-      // walk has yet removed enough to start merging: a stop below the threshold must not forget the debt.
-      if(removedKeys.length){this.setMergeOwed(true,true);this.bumpDeletionGeneration();}
-    });
+      if(ended)flushOldest();
+      if(counted)metaPutter(this.db)(ENTRIES_LIVE,String(Math.max(0,this.entriesLive()-counted)));
+      if(lexicalBytes)this.moveToDebt("lexical",lexicalBytes);
+      bulk=this.purge.since+removedKeys.length>=Math.max(this.purge.mergeAt,mergeFraction*Math.max(0,live-removedKeys.length))||(this.purge.oldest?.bytes??0)>=gapBytes;
+      if(bulk&&this.purge.oldest){
+        // A genuine posting refresh gives FTS5 a second segment, so its bounded merge can retire this segment's emptied pages.
+        this.db.prepare("UPDATE lexical SET text=text WHERE rowid=(SELECT fts_rowid FROM lexical_keys WHERE id=? AND version=?)").run(this.purge.oldest.id,this.purge.oldest.version);
+        this.purge.oldest.bytes=0;
+      }
+      // Keep the merge obligation in the transaction that deleted the rows, including walks interrupted below the threshold.
+      if(removedKeys.length||(this.purge.since&&(ended||bulk)))this.setMergeOwed(true,!bulk);
+      if(removedKeys.length)this.bumpDeletionGeneration();
+    });}catch(error){this.purge.oldest=heldBefore;throw error;}
     if(removedKeys.length&&this.matrix){const gone=new Set(removedKeys);for(const [key,entry] of this.matrix.rows)if(gone.has(entry.key))this.matrix.rows.delete(key);}
     this.purge.live=Math.max(0,this.purge.live-removedKeys.length);this.purge.since+=removedKeys.length;
-    const ended=examined===rows.length;
     this.purge.cursor=ended?null:last;
-    if(this.purge.since&&(ended||this.purge.since>=Math.max(1000,mergeFraction*this.purge.live))){this.purge.since=0;this.purge.merging=true;this.setMergeOwed(true,true);}
+    // A bulk removal (a pass that has taken a mergeFraction of what is left, at least `mergeAt` entries) leaves emptied pages that only a
+    // merge returns; its merge work follows the volume removed, in short steps. `mergeAt` starts at 1,000 and doubles with each merge of a
+    // pass, so a count of live entries that is stale (rows loaded outside the writer) costs a handful of merges, not one per 1,000 entries.
+    // A trickle (one rollover per turn) stays direct: FTS secure-delete erased it in place and a forced merge would read every
+    // historical segment (bd9960b116).
+    if(this.purge.since&&(ended||bulk)){if(bulk)this.purge.mergeAt*=2;this.purge.since=0;this.purge.merging=true;}
     const done=ended&&!this.purge.merging;
     if(done)this.purge.live=null;
     return {removed:removedKeys.length,examined,merged:false,done};
   }
   /** Where the rolled-checkpoint purge is: the walk's position (null: at the start), entries left in the index (counted
-   * when a pass starts), entries removed since the last merge, and whether merge steps are running. */
-  private purge:{cursor:{id:string;version:number}|null;live:number|null;since:number;merging:boolean}={cursor:null,live:null,since:0,merging:false};
+   * when a pass starts), entries removed since the last merge, whether merge steps are running, and the oldest rolled version of
+   * the checkpoint the walk is in, held until the walk leaves it. */
+  private purge:{cursor:{id:string;version:number}|null;live:number|null;since:number;merging:boolean;mergeAt:number;oldest:{id:string;version:number;bytes:number}|null}={cursor:null,live:null,since:0,merging:false,mergeAt:1000,oldest:null};
   async vector(record: IndexedMemory, model: string, part: number, values: number[]) {
     const array=new Float32Array(values);
     if(!(await this.settle()))throw new Error("MEMORY_INDEX_CHECK_OWED");
+    if(!this.keepGoing())return;
     // One checked txn (I1/I2): the row's bytes x R_w plus the insert frames.
     this.writer.write("group",array.byteLength*MEMW_R_W+MEMW_F_INS_FRAMES*(this.writer.pageSize+24),()=>{
       this.db.prepare("INSERT OR REPLACE INTO vectors VALUES(?,?,?,?,?)").run(record.id,record.version,model,part,Buffer.from(array.buffer));

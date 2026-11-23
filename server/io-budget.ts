@@ -25,6 +25,7 @@ import { checkpointLedger, isAdmissionLockTimeout } from "./admission-shared.ts"
 import { BgDeferred } from "./bg-admission.ts";
 import { isReadOnly } from "./read-only-state.ts";
 import { ownerFirst } from "./owner-first.ts";
+import { framesOfCeiling, indexDebtFrames, indexDebtPage, INDEX_SQLITE_PAGE } from "./index-debt-frames.ts";
 export { BgDeferred, isBgDeferred } from "./bg-admission.ts";
 
 export const IO_BUDGET_INTERVAL_MS = 60_000;
@@ -36,6 +37,61 @@ const PERIODIC_SOURCES: ReadonlySet<string> = new Set([
   "memory-worker", "memory-capture", "memory-idle", "memory-notebook", "memory-upgrade", "memory-boot-recovery", "memory-continuity",
   "search-index", "transcript-backfill", "record-keys-backfill", "push-delivery",
 ]);
+/** recalldesign-1020-n1 section 4: the recall reclaimer's own admission class. Its token bucket is shared by the reclaim slices and the demanded
+ *  build that follows; it is excluded from foreground admission and refusal, and is not behind the BG ticket or the idle deferral. */
+export const RECALL_RECLAIM_SOURCE = "recall-reclaim";
+export const RECALL_RECLAIM_BYTES_PER_MINUTE = 700_000_000;
+export const RECALL_RECLAIM_YIELD_MS = 500;
+export const RECALL_RECLAIM_OPEN_HOLD_MS = 5_000;
+/** cause18e-overbudget (PERF-SPEC 0edba926a6): NAMED ONE-TIME SEED BUDGETS. Work a store does once over history it already holds (the
+ *  first build of its recall views; the first index of its messages for search) is not background drift, and judging it against the idle
+ *  minute (1 MB) printed `writing 24 MB/min (budget 1)` and `writing 65 MB/min` on every first start after an import, then halved every
+ *  background poll for it. Each such writer charges its bytes to its own source here. A minute's seed bytes are taken out of the judged
+ *  bytes up to the source's per-minute room AND its per-process total; whatever is over either counts as before. Nothing is hidden: every
+ *  minute that uses a seed budget prints one `[io-budget] seed:` line with the source, the bytes, and what is left of the total, and the
+ *  io-minute sample carries them as planned bytes. No admission, deferral or pacing reads these: they change what the watchdog says about
+ *  a minute, never what a turn or a writer may do. */
+export const RECALL_SEED_SOURCE = "recall-seed";
+export const SEARCH_SEED_SOURCE = "search-seed";
+export interface IoSeedBudget { perMinute: number; total: number; what: string }
+export const IO_SEED_BUDGETS: Readonly<Record<string, IoSeedBudget>> = {
+  // 128 views (the cap) at the ~100-200 KB a small view's rows cost; a store of large views runs past it and is reported as usual
+  [RECALL_SEED_SOURCE]: { perMinute: 32 * 1024 * 1024, total: 32 * 1024 * 1024, what: "first build of recall views" },
+  // the search index's own designed pace (message-search-index.ts SEARCH_WRITE_BYTES_PER_MIN), while the worker reports it is still building
+  [SEARCH_SEED_SOURCE]: { perMinute: 256 * 1024 * 1024, total: 4 * 1024 * 1024 * 1024, what: "first search index of existing messages" },
+};
+/** MAIN-RULING 2026-11-22 idle-capture: THE definition of planned writes, shared by the minute tick (what the watchdog judges) and by idle
+ *  admission (what a capture or a copy may still write while idle), so the two cannot drift. A source is planned when it writes under a
+ *  budget of its own: the recall reclaimer's bucket (every recall build slice is charged there, recall-view.ts reclaimCharge) and the named
+ *  one-time seed budgets. Everything else is unplanned and stays under the minute's ceiling. */
+export function isPlannedSource(source: string): boolean { return source === RECALL_RECLAIM_SOURCE || Object.hasOwn(IO_SEED_BUDGETS, source); }
+export interface PlannedSeedUse { name: string; seed: IoSeedBudget; wrote: number; allowed: number; spent: number }
+/** The planned share of `minutes` of writing. `wrote` gives the bytes each planned source wrote in the window, `owedCapture` the bytes
+ *  that captures owed by a message settled in it, `reader` the bytes of a writer that reports its own (setPlannedBytes; believed up to
+ *  `readerCap` a minute), `seedSpent` what a seed source has already used of its per-process total. Pure: the caller commits the seed
+ *  use it accepts. Only sources isPlannedSource names are ever read.
+ *  MAIN-RULING 2026-11-22T18:25:43Z idle-owed-capture: a capture owed by a message writes under a budget of its own, the BG minute
+ *  ceiling (admit's hard cap), so its settled bytes are planned up to that ceiling, here, for the tick and for admission alike. */
+export function plannedWrites(minutes: number, wrote: (source: string) => number, owedCapture: number, reader: (() => number) | null, readerCap: number, seedSpent: (source: string) => number): { planned: number; owed: number; seeds: PlannedSeedUse[] } {
+  const of = (source: string) => isPlannedSource(source) ? Math.max(0, Number(wrote(source)) || 0) : 0;
+  const owed = Math.min(BG_MINUTE_BYTES * minutes, Math.max(0, Number(owedCapture) || 0));
+  let planned = owed;
+  if (reader) { try { planned += Math.min(readerCap * minutes, Math.max(0, Number(reader()) || 0)); } catch { /* an unreadable reader plans nothing */ } }
+  // recall-reclaim keeps to its own bucket (RECALL_RECLAIM_BYTES_PER_MINUTE): metered and in the io-minute facts, never counted against a foreground minute.
+  planned += Math.min(RECALL_RECLAIM_BYTES_PER_MINUTE * minutes, of(RECALL_RECLAIM_SOURCE));
+  // named one-time seed budgets (IO_SEED_BUDGETS): allowed up to the per-minute room and what is left of the per-process total
+  const seeds: PlannedSeedUse[] = [];
+  for (const [name, seed] of Object.entries(IO_SEED_BUDGETS)) {
+    const bytes = of(name);
+    if (bytes <= 0) continue;
+    const spent = seedSpent(name), allowed = Math.max(0, Math.min(bytes, seed.perMinute * minutes, seed.total - spent));
+    seeds.push({ name, seed, wrote: bytes, allowed, spent });
+    planned += allowed;
+  }
+  return { planned, owed, seeds };
+}
+/** Ledger slot 32 (admission-shared.ts): the planned bytes inside this admission minute's observed total, published at every owner reading. */
+const PLANNED_SLOT = 32;
 export const IO_BUDGET_CPU_FRACTION = 0.8;
 export const IO_BUDGET_CPU_MINUTES = 3;
 export const IO_BUDGET_MAX_SCALE = 8;
@@ -95,6 +151,22 @@ export function readProcess(platform: string = process.platform, disk: () => num
 // Ledger owner: scperf-p1. VFS and checkpoint consumers: scperf-p1.
 export const BG_MINUTE_BYTES = 12 * 1024 * 1024;
 const CAPTURE_RESERVATION_RETRY_MS = 1000;
+/** 1.0.21 B3 (MEMORY-V2-DESIGN 4.8, F16): a refusal caused by a missed ledger lock (lock() has already spun to its bounded deadline) is retried
+ * after this short step, never deferred to the next minute: the lock is held for microseconds by a checkpointer, not by spent bytes. */
+export const LOCK_MISS_RETRY_MS = 250;
+/** 1.0.21 B4/B5 (MEMORY-V2-DESIGN 4.8): background memory writes stop first, at half the 512 MiB hard gate of un-copied WAL
+ * (wal-maintenance.ts WAL_ADMISSION_BYTES), so owner sends are the last thing refused. A refusal at the half gate retries after
+ * WAL_HALF_RETRY_MS (the off-thread copy, not the minute, reopens it). */
+export const WAL_HALF_GATE_BYTES = 256 * 1024 * 1024;
+export const WAL_HALF_RETRY_MS = 1000;
+/** 1.0.21 B4 (MEMORY-V2-DESIGN 4.8): the one background bucket for work nobody waits on (prune, dead-term clean-up, the migration runner
+ * of section 5, retention). Its bytes are declared to the watchdog as planned (never a fault), and it is stopped first at the WAL half gate.
+ * Consumers (lane I: migration runner and retention) ask backgroundBucketWait() before a slice and chargeBackgroundBucket() after it; a
+ * slice stays at or under the bucket's minute (only that much is planned per minute: a larger one is debt for the bucket and a fault for the
+ * watchdog). */
+export const BACKGROUND_BUCKET_BYTES_PER_MINUTE = 8 * 1024 * 1024;
+/** W5 (D-R4 1.5): the free-disk floor an index-debt copy leaves untouched (wal-maintenance's low-disk floor, 64 MiB). */
+export const INDEX_DEBT_DISK_FLOOR_BYTES = 64 * 1024 * 1024;
 /** SEAN 1114-MEM-DELETE-IDLE-WINDOW: settled owner-deletion bytes a minute while the idle exemption is in use. Equal to
  * REVOKE_WRITE_BUDGET.bytesPerMinute (memory/revoke-budget.ts; a test holds the two together). */
 export const OWNER_DELETE_IDLE_BYTES_PER_MINUTE = 20 * 1024 * 1024;
@@ -130,6 +202,8 @@ export class IoBudget {
   private readonly cpuFraction: number;
   private readonly cpuMinutes: number;
   private last: IoReading | null = null;
+  /** Bytes each seed source has already been allowed in this process (IO_SEED_BUDGETS total). */
+  private readonly seedSpent = new Map<string, number>();
   private hotCpuMinutes = 0;
   private calmMinutes = 0;
   private scale = 1;
@@ -156,6 +230,12 @@ export class IoBudget {
   private plannedBytes: (() => number) | null = null;
   /** The most the planned reader is believed for in one minute: its own budget plus a margin. A reader that claims more hides nothing. */
   private plannedCap = Number.POSITIVE_INFINITY;
+  /** Planned sources' bytes (isPlannedSource) noted since the last admission section, and their sum inside the current admission minute.
+   *  They are folded in at each section, on the same boundary as the observed total (slot 11), so the planned share that idle admission
+   *  takes off is the planned part of exactly the bytes it counted. */
+  private plannedPending = new Map<string, number>();
+  private plannedMinute = new Map<string, number>();
+  private plannedMinuteOf = -1;
   /** Totals at the last statement-trace line, so each line is one minute's cost. */
   private traced = new Map<string, { calls: number; ms: number }>();
   private traceTimer: ReturnType<typeof setInterval> | null = null;
@@ -164,15 +244,46 @@ export class IoBudget {
 
   private readonly admissionShared:ReturnType<typeof checkpointLedger>;
   /** AdmissionLockTimeout health: counted, logged loudly (rate limited) and reported by GET /api/health (admissionHealth). */
+  /** B3: the latest critical section missed the ledger lock (true) or took it (false). */
+  private lastSectionMissed=false;
+  /** B4: the reader of the un-copied WAL bytes (wal-maintenance). */
+  private walBacklogOf:(()=>number|null)|null=null;
+  /** wal-maintenance.ts hands in its un-copied log reading (walBacklog) at start and null at stop. */
+  setWalBacklog(read:(()=>number|null)|null):void {this.walBacklogOf=read;}
+  /** B4: at or past the half gate. An unreadable log reads as past it (background work waits; the owner path never asks). */
+  walHalfGate():boolean {
+    const read=this.walBacklogOf;if(!read)return false;
+    try{const bytes=read();return bytes!==null&&!(bytes<WAL_HALF_GATE_BYTES);}catch{return true;}
+  }
   private lockTimeouts=0;private lastLockTimeout:{site:string;at:number}|null=null;private lockTimeoutLoggedAt=0;private lockTimeoutSuppressed=0;
   private admissionMinute=-1;
   private admissionTimer:ReturnType<typeof setInterval>|null=null;
+  private admissionArms=0;private admissionFires=0;
+  /** B4 diagnostics: BG admissions refused at the WAL half gate. */
+  halfGateRefusals=0;
   /** Open main-thread tickets. Reservations are live work: a minute flip never clears them; settle or expiry releases each exactly once. */
   private reserved=new Map<AdmissionTicket,{write:number;debt:number;end:number}>();
   /** Running sums over `reserved` (O(1) rebuild, no walk). */
   private sumWrite=0;private sumBg=0;
   /** Owner-deletion copies admitted through the idle exemption this minute: settled bytes plus what is still reserved. */
   private ownerIdle={minute:-1,settled:0,reserved:0,tickets:new Map<AdmissionTicket,number>()};
+  /** MAIN-RULING 2026-11-22 idle-owed-capture: what captures owed by a message settled, in this admission minute (captureIdle: their
+   * charge, as slot 3 counts them) and since the last tick (owedTick: the bytes they wrote, as the tick's total counts them). The two
+   * windows feed the ONE definition (plannedWrites' owed term, capped at the BG minute ceiling): admission takes the term off what the
+   * idle allowance has used (slot 32), the tick takes it off the minute it judges; each takes off exactly what its own total holds. An owed capture is admitted
+   * under the BG minute ceiling (slot 2), which stays its hard cap; every unplanned write still closes the idle allowance. */
+  private captureIdle={minute:-1,settled:0};
+  private captureTickets=new Set<AdmissionTicket>();
+  private pendingCapture=0;
+  private owedTick=0;
+  /** MAIN-RULING 2026-11-22T20:47:34Z idle-retry: "each retry counts against the idle write allowance". The grant of a helper start that
+   * is a retry, or of an idle start that died before it was ready, is no owed capture's write: it leaves the owed term here, for
+   * admission (captureIdle, slot 32) and for the tick (owedTick) alike, so its charge stays in what the idle allowance has used. */
+  countAgainstIdle(ticket:AdmissionTicket):void {this.captureTickets.delete(ticket);}
+  private captureSettled():number {
+    if(this.captureIdle.minute!==this.admissionMinute){this.captureIdle.minute=this.admissionMinute;this.captureIdle.settled=0;}
+    return this.captureIdle.settled;
+  }
   private ownerIdleBytes():number {
     if(this.ownerIdle.minute!==this.admissionMinute){this.ownerIdle.minute=this.admissionMinute;this.ownerIdle.settled=0;this.ownerIdle.reserved=0;this.ownerIdle.tickets.clear();}
     return this.ownerIdle.settled+this.ownerIdle.reserved;
@@ -230,8 +341,8 @@ export class IoBudget {
     const r=this.sectionReading;if(!r)return false;
     if(!(minute<Math.floor(r.at/IO_BUDGET_INTERVAL_MS)))return false;
     const start=minute*IO_BUDGET_INTERVAL_MS;
-    for(const which of ["meter","os"] as const){if(IoBudget.valid(this.sourceOf(r,which))&&this.brk[which].last<start)return true;}
-    return false;
+    // B1/I8: only the meter can prove coverage; the OS counter is no admission input on any OS.
+    return IoBudget.valid(this.sourceOf(r,"meter"))&&this.brk.meter.last<start;
   }
   private readonly isLiveOwner=(o:bigint)=>this.liveOwners.has(o);
   private readonly coveredFor=(_o:bigint,minute:number)=>this.covered(minute);
@@ -247,17 +358,21 @@ export class IoBudget {
     try{a.lock();}catch(error){
       // A miss never leaves a looser verdict than the one just computed: an idle verdict is stored even where the caller asked not to fail closed,
       // so a stale "active" mark from before the server turned idle cannot admit a copy past the idle allowance (only an active verdict is skipped).
-      if(isAdmissionLockTimeout(error)){this.noteLockTimeout(site);if(failClosedIdle||idle!==0n)Atomics.store(a.slots,7,1n);return closed;}
+      if(isAdmissionLockTimeout(error)){this.lastSectionMissed=true;this.noteLockTimeout(site);if(failClosedIdle||idle!==0n)Atomics.store(a.slots,7,1n);this.armAdmission();return closed;}
       throw error;
     }
+    this.lastSectionMissed=false;
     try{
       a.rotate(reading.at);
       this.admissionMinute=Math.floor(reading.at/IO_BUDGET_INTERVAL_MS);
       const os=reading.fsWriteBlocks*BLOCK_BYTES,meter=reading.meterBytes??0;
-      const observed=Math.max(0,os-Number(a.slots[9]),meter-Number(a.slots[10]));
+      // 1.0.21 B1/I8 (MEMORY-V2-DESIGN 4.8): admission sees only the application's own counted bytes (the meter, the same on every OS).
+      // The OS counter (darwin diskWritten: the whole process; Linux fsWrite) is kept in slot 12 for the watchdog line, never an input.
+      const observed=Math.max(0,meter-Number(a.slots[10]));
       Atomics.store(a.slots,11,BigInt(Math.max(Number(a.slots[11]),observed)));
       Atomics.store(a.slots,3,a.slots[11]+a.slots[8]);
       Atomics.store(a.slots,12,BigInt(os));Atomics.store(a.slots,13,BigInt(meter));
+      this.publishPlanned();
       Atomics.store(a.slots,7,idle);
       this.sectionReading=reading;
       const age=this.pendingSince===null?0:reading.at-this.pendingSince;
@@ -266,8 +381,44 @@ export class IoBudget {
       if(this.pendingSince!==null&&age>SETTLEMENT_LOUD_MS)this.loud("pending",10_000,`admission settlement pending for ${Math.round(age/1000)} s (the ledger lock was busy at every attempt); it is kept and retried${stuck?"; background admission is refused until it drains":""}`);
       this.drain(reading);
       return op(reading,stuck);
-    }finally{this.sectionReading=null;a.unlock();}
+    }finally{this.sectionReading=null;a.unlock();this.armAdmission();}
   }
+  /** Inside a critical section, after rotate and the observed total: the planned bytes noted since the last section join this admission
+   *  minute, and slot 32 takes the minute's planned share (plannedWrites, the tick's own definition), never more than was observed. Called again
+   *  whenever an owed capture settles, so the next admission in the same section already sees it. */
+  private publishPlanned():void {
+    const s=this.admissionShared.slots;
+    if(this.plannedMinuteOf!==this.admissionMinute){this.plannedMinute.clear();this.plannedMinuteOf=this.admissionMinute;}
+    if(this.plannedPending.size){for(const [name,bytes] of this.plannedPending)this.plannedMinute.set(name,(this.plannedMinute.get(name)??0)+bytes);this.plannedPending.clear();}
+    const share=plannedWrites(1,name=>this.plannedMinute.get(name)??0,this.captureSettled(),this.plannedBytes,this.plannedCap,name=>this.seedSpent.get(name)??0);
+    // (upkeep is inside the observed total, slot 11; an owed capture's settled bytes are inside the whole total, slot 3)
+    const upkeep=Math.max(0,Math.min(Number(s[11]),Math.floor(share.planned-share.owed)));
+    if(s.length>PLANNED_SLOT)Atomics.store(s,PLANNED_SLOT,BigInt(upkeep+Math.max(0,Math.min(Number(s[3])-upkeep,Math.floor(share.owed)))));
+  }
+  /** What an idle minute has used of the idle allowance: the minute's total (slot 3) without its planned share (slot 32: recall upkeep,
+   *  seed budgets and the owed captures' settled bytes). The 49 MiB and BG ceilings keep reading the whole total. */
+  private idleUsed():number {const s=this.admissionShared.slots;return Math.max(0,Number(s[3])-(s.length>PLANNED_SLOT?Number(s[PLANNED_SLOT]):0));}
+  /** 1.0.21 B2 (MEMORY-V2-DESIGN 4.8, no idle timer): the 25 ms admission refresh is needed only while something is open that it settles or
+   * expires (a reservation, a pending settlement or delta, a copy debt or backfill mark not yet published, a section that missed the lock), or
+   * while the published verdict
+   * is ACTIVE, so the turn to idle is published within 25 ms. A published IDLE verdict is the strict one (copies at the idle allowance), so
+   * leaving it unrefreshed fails closed; the next critical section (any admit, settle, owner action or watchdog tick) re-arms the refresh. */
+  private admissionNeeded():boolean {
+    return this.lastSectionMissed||this.reserved.size>0||this.pendingSince!==null||this.pendingDelta!==null||this.retryMarks.size>0
+      ||this.copyDebt.some(e=>e.pending>0||e.pendingMoved>0)||Atomics.load(this.admissionShared.slots,7)===0n;
+  }
+  private armAdmission():void {
+    if(this.admissionTimer||!this.timer||!this.admissionNeeded())return;
+    this.admissionArms++;
+    this.admissionTimer=setInterval(()=>{
+      this.admissionFires++;
+      try{this.readingOrNull("timer");}catch{/* admission stays conservative */}
+      if(!this.admissionNeeded()&&this.admissionTimer){clearInterval(this.admissionTimer);this.admissionTimer=null;}
+    },25);
+    this.admissionTimer.unref?.();
+  }
+  /** B2 diagnostics: whether the admission refresh is armed now, how often it was armed and how often it fired. */
+  admissionRefresh():{armed:boolean;arms:number;fires:number} {return {armed:this.admissionTimer!==null,arms:this.admissionArms,fires:this.admissionFires};}
   /** Inside a critical section, after rotate and the reading: everything deferred lands in the current minute. */
   private drain(reading:IoReading):void {
     const a=this.admissionShared,s=a.slots;
@@ -288,6 +439,7 @@ export class IoBudget {
       Atomics.add(s,2,BigInt(p.d2));sub(5,p.d5);sub(6,p.d6);Atomics.add(s,8,BigInt(p.d8));Atomics.store(s,3,s[11]+s[8]);
       this.pendingDelta=null;
     }
+    if(this.pendingCapture){this.captureSettled();this.captureIdle.settled+=this.pendingCapture;this.pendingCapture=0;this.publishPlanned();}
     this.pendingSince=null;
     let toFour=0,toTwo=0,dirty=false;
     for(const e of this.copyDebt){if(e.pending||e.pendingMoved){toFour+=e.pending;toTwo+=e.pendingMoved;e.published+=e.pending;e.pending=0;e.pendingMoved=0;dirty=true;}}
@@ -310,9 +462,12 @@ export class IoBudget {
   private applySettle(ticket:AdmissionTicket,rec:{write:number;debt:number},used:number,included:number,debtUsed:number|undefined,mark:BackfillMark|undefined,field:"published"|"pending"):void {
     const s=this.admissionShared.slots;
     const sub=(slot:number,n:number)=>{if(n>0){const cur=Number(s[slot]);Atomics.sub(s,slot,BigInt(Math.min(cur,n)));}};
+    const owed=this.captureTickets.delete(ticket);
+    if(owed){this.captureSettled();this.captureIdle.settled+=used;}
     if(ticket.cls!=="FGCOPY"){sub(5,rec.write+rec.debt);Atomics.add(s,2,BigInt(used));}
     sub(6,rec.write);
     Atomics.add(s,8,BigInt(Math.max(0,used-included)));Atomics.store(s,3,s[11]+s[8]);
+    if(owed)this.publishPlanned();
     if(ticket.debtBytes&&used){const bytes=debtUsed??Math.min(used,ticket.debtBytes);this.insertDebt(mark!,bytes,field);}
   }
   /** D6.1 section 2. Never stores zero bytes. Rule 2: a same-salt entry with frame >= the new frame takes it (the smallest such frame;
@@ -444,11 +599,11 @@ export class IoBudget {
    * follows it. Only an active verdict is skipped: an idle verdict computed for this call is stored on a miss too (critical), so a miss never admits a
    * copy past the idle allowance. The 25 ms timer and every other owner reading still fail closed. */
   checkpointAdmissionBuffer(failClosedIdle=true):SharedArrayBuffer {this.readingOrNull("checkpointAdmissionBuffer",failClosedIdle);return this.admissionShared.slots.buffer as SharedArrayBuffer;}
-  admissionState():{bg:number;debt:number;total:number;reserved:number} {
+  admissionState():{bg:number;debt:number;total:number;reserved:number;idleUsed:number} {
     const a=this.admissionShared;
     // Closed on timeout: a full minute and a full total, so every room is zero.
-    const closed={bg:BG_MINUTE_BYTES,debt:0,total:49*1024*1024,reserved:0};
-    return this.critical("admissionState",()=>({bg:Number(a.slots[2]),debt:Number(a.slots[4]),total:Number(a.slots[3]),reserved:Number(a.slots[5])}),closed);
+    const closed={bg:BG_MINUTE_BYTES,debt:0,total:49*1024*1024,reserved:0,idleUsed:49*1024*1024};
+    return this.critical("admissionState",()=>({bg:Number(a.slots[2]),debt:Number(a.slots[4]),total:Number(a.slots[3]),reserved:Number(a.slots[5]),idleUsed:this.idleUsed()}),closed);
   }
   private bootRecoveryClaimed=false;
   private bootRecoveryAllowed:(()=>boolean)|undefined;
@@ -472,6 +627,8 @@ export class IoBudget {
    * window is open, skips ONLY the idle clause and is paced at OWNER_DELETE_IDLE_BYTES_PER_MINUTE instead. BG never qualifies. */
   admit(cls:"BG"|"BOOT_RECOVERY"|"FGCOPY",ceiling:number,debtBytes=0,options?:{ownerDeletion?:boolean}):AdmissionTicket|null {
     if(!Number.isSafeInteger(ceiling)||ceiling<0||!Number.isSafeInteger(debtBytes)||debtBytes<0)throw new Error("BG_CEILING_INVALID");
+    // B4: background work stops first at the WAL half gate; FGCOPY (a copy returns log space) is never stopped by it
+    if(cls!=="FGCOPY"&&this.walHalfGate()){this.lastSectionMissed=false;this.halfGateRefusals++;return null;}
     const a=this.admissionShared;
     // Fail closed on a timeout (null, nothing reserved). While the ledger is poisoned the strict idle rule applies and the owner-deletion exemption does not.
     return this.critical<AdmissionTicket|null>("admit",(reading,stuck)=>{
@@ -491,25 +648,100 @@ export class IoBudget {
         // (the strict idle rule applies then). Active turns keep the same BG ceiling. Idle writes reserve their
         // copy as well, under the existing idle ceiling and closing guard.
         const capture=!poisoned&&this.currentSource()==="memory-capture";
-        if((idle&&(!capture||total+writes+debt+reserved+ceiling+debtBytes>IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536))||reading.at>end-5000||bg+debt+reserved+ceiling+debtBytes>BG_MINUTE_BYTES||total+writes+ceiling>49*1024*1024)return null;
+        // MAIN 2026-11-22 idle-capture + idle-owed-capture: an idle owed capture is judged on the minute's unplanned writes (idleUsed: the
+        // captures' own settled bytes are planned, by the tick's definition), and copy debt carried from earlier commits does not shrink its ceiling: that copy is judged against the
+        // idle allowance when it is made (admission-shared.ts beginCopy). The capture still reserves its own copy (debtBytes) and stays
+        // under the BG minute ceiling; every other background source is refused while idle, as before.
+        const carried=idle&&capture?0:debt;
+        if((idle&&(!capture||this.idleUsed()+writes+reserved+ceiling+debtBytes>IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536))||reading.at>end-5000||bg+carried+reserved+ceiling+debtBytes>BG_MINUTE_BYTES||total+writes+ceiling>49*1024*1024)return null;
       }else if(exempt){
         if(this.ownerIdleBytes()+ceiling>OWNER_DELETE_IDLE_BYTES_PER_MINUTE)return null;
-      }else if(idle&&(reading.at>end-5000||total+writes+ceiling>IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536))return null;
+      }else if(idle&&(reading.at>end-5000||this.idleUsed()+writes+ceiling>IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536))return null;
       const ticket:AdmissionTicket=Object.freeze({bytes:ceiling,debtBytes,expiresAt:ioMeterWallTime()+end-reading.at,minute:this.admissionMinute,cls,observed:Number(a.slots[11])});
       this.reserved.set(ticket,{write:ceiling,debt:debtBytes,end});this.sumWrite+=ceiling;if(cls!=="FGCOPY")this.sumBg+=ceiling+debtBytes;
       if(exempt){this.ownerIdle.tickets.set(ticket,ceiling);this.ownerIdle.reserved+=ceiling;}
+      if(cls==="BG"&&this.currentSource()==="memory-capture")this.captureTickets.add(ticket);
       if(cls!=="FGCOPY")Atomics.add(a.slots,5,BigInt(ceiling+debtBytes));
       Atomics.add(a.slots,6,BigInt(ceiling));return ticket;
     },null);
   }
+  /** 1.0.21 W5 (MEMORY-V2-DESIGN 4.9 W5, R1; owner memv2-D; the helper's call = index-wal.ts, its transport = worker-controller.ts): the one
+   * grant outside the minute ledger. An unclean stop can leave a helper index log whose copy is larger than any background ticket (the
+   * ledger never admits more than BG_MINUTE_BYTES a minute) and SQLite has no partial checkpoint, so before W5 an undamaged log was set
+   * aside and rebuilt from every receipt (far more I/O than its copy). Its one copy is granted here instead, as debt on the background
+   * bucket (B4): settling a copy of N bytes puts the bucket N / BACKGROUND_BUCKET_BYTES_PER_MINUTE minutes behind, so every bucket slice
+   * waits it out and the average stays at the bucket's rate. Fail closed (null; the helper asks again at its next open check) while the
+   * bucket is behind or the main log is at the half gate, while the owner is active (any owner-first reason), on a read-only start, and
+   * while another such grant is open. The grant is counted as planned writes of this minute like a foreground copy. */
+  admitIndexDebt(ceiling:number,now:number=Date.now()):AdmissionTicket|null {
+    if(!Number.isSafeInteger(ceiling)||ceiling<=0)throw new Error("BG_CEILING_INVALID");
+    // D-R4 1.5: the ledger reads F back from the ceiling at its own page: only an exact K(F, p) with F_B(p) < F <= F_C is one bounded copy
+    // (a stray or forged purpose cannot ask more, Opus r3 L8); the cap K_MAX(p) scales with the page (ASTRA be394275a5 H1).
+    const page=indexDebtPage(),frames=framesOfCeiling(ceiling,page);
+    if(frames===null||!indexDebtFrames(frames,page))return this.refuseIndexDebt("shape");
+    const open=this.indexDebtTicket;
+    if(open&&this.reserved.has(open)&&ioMeterWallTime()<=open.expiresAt)return this.refuseIndexDebt("open");
+    // an expired or dropped grant nobody settled (a helper that died with it) is charged its whole copy first, never 0 (Opus r3 L7)
+    if(open)this.closeIndexDebt(open,1,now);
+    const door=isReadOnly()?"readOnly":this.backgroundBucketWait(now)>0?(this.walHalfGate()?"half":"bucket"):ownerFirst.pressure()!==null?"owner":this.indexDebtDiskLow(frames)?"disk":null;
+    if(door)return this.refuseIndexDebt(door);
+    const a=this.admissionShared;
+    // The idle allowance does not apply (an unclean stop is usually followed by a quiet machine, where it would never be granted and the
+    // index would stay unusable); the bucket debt bounds the average instead. Every other closed door of admit() does.
+    const ticket=this.critical<AdmissionTicket|null>("admitIndexDebt",(reading,stuck)=>{
+      const end=(this.admissionMinute+1)*IO_BUDGET_INTERVAL_MS;
+      if(stuck||a.poisoned()||this.counters.debtFull>this.debtFullHandled||this.reserved.size>=RESERVED_MAX)return this.refuseIndexDebt("ledger");
+      if(reading.at>end-5000)return this.refuseIndexDebt("minuteEnd"); // as every other ticket: none in the minute's last 5 s
+      const t:AdmissionTicket=Object.freeze({bytes:ceiling,debtBytes:0,expiresAt:ioMeterWallTime()+end-reading.at,minute:this.admissionMinute,cls:"FGCOPY",observed:Number(a.slots[11])});
+      this.reserved.set(t,{write:ceiling,debt:0,end});this.sumWrite+=ceiling;
+      Atomics.add(a.slots,6,BigInt(ceiling));return t;
+    },null);
+    if(ticket){this.indexDebtTicket=ticket;this.indexDebtFramesOpen=frames;this.indexDebtGrants++;this.lastIndexDebtDoor=null;}
+    return ticket;
+  }
+  /** W5: the open index-debt grant (at most one), its frames, how many were issued and the refusals by door. */
+  private indexDebtTicket:AdmissionTicket|null=null;
+  private indexDebtFramesOpen=0;
+  indexDebtGrants=0;
+  readonly indexDebtRefusals={shape:0,open:0,readOnly:0,bucket:0,half:0,owner:0,disk:0,ledger:0,minuteEnd:0};
+  private lastIndexDebtDoor:keyof IoBudget["indexDebtRefusals"]|null=null;
+  private refuseIndexDebt(door:keyof IoBudget["indexDebtRefusals"]):null {this.indexDebtRefusals[door]++;this.lastIndexDebtDoor=door;return null;}
+  /** W5 (D-R4 1.5, R8): the bucket is charged in SQLite currency, the same on every OS: F x 4,096 for a copy that ran (`used` > 0) or a grant
+   * nobody settled, 0 for one that never ran. A partial copy is charged as whole (fail closed: its rest is asked and charged again). */
+  private closeIndexDebt(ticket:AdmissionTicket,used:number,now:number=Date.now()):void {
+    if(ticket!==this.indexDebtTicket)return;
+    const frames=this.indexDebtFramesOpen;this.indexDebtTicket=null;this.indexDebtFramesOpen=0;
+    if(Number.isFinite(used)&&used>0){this.chargeBackgroundBucket(frames*INDEX_SQLITE_PAGE,now);this.indexDebtCharged+=frames*INDEX_SQLITE_PAGE;}
+  }
+  /** W5 diagnostics: bytes charged to the bucket by index-debt copies (SQLite currency). */
+  indexDebtCharged=0;
+  /** W5 disk door (D-R4 1.5, R10): the W4 low-disk verdict, or free space under the copy's bytes plus the floor. Unknown free space is no
+   * verdict (the W4 verdict covers the main log's volume; the index sits beside it). */
+  private diskOf:(()=>{refusing:boolean;free:number|null})|null=null;
+  setIndexDebtDisk(read:(()=>{refusing:boolean;free:number|null})|null):void {this.diskOf=read;}
+  private indexDebtDiskLow(frames:number):boolean {
+    const read=this.diskOf;if(!read)return false;
+    try{const d=read();return d.refusing||(d.free!==null&&d.free<frames*INDEX_SQLITE_PAGE+INDEX_DEBT_DISK_FLOOR_BYTES);}catch{return true;}
+  }
+  /** W5 (R11): when a refused index-debt ask is retried: at the door's own time and never sooner than 1 s (no re-ask loop). */
+  indexDebtRetryMs(now:number=Date.now()):number {
+    const minute=this.lastIndexDebtDoor==="minuteEnd"||this.lastIndexDebtDoor==="ledger"?this.nextAdmissionMs():0;
+    return Math.max(WAL_HALF_RETRY_MS,this.backgroundBucketWait(now),minute);
+  }
   settle(ticket:AdmissionTicket,used:number,mark?:BackfillMark,debtUsed?:number,rawUsed=0):void {
     const rec=this.reserved.get(ticket);if(!rec)return;
+    // W5: the index-debt copy is charged to the background bucket as debt, by the bytes it measured
+    if(ticket===this.indexDebtTicket)this.closeIndexDebt(ticket,used);
     if(!Number.isSafeInteger(used)||used<0||(ticket.cls!=="FGCOPY"&&used>ticket.bytes))throw new Error("BG_CEILING_MISS");
     if(ticket.debtBytes&&used&&!mark)throw new Error("BG_DEBT_MARK_REQUIRED");
     if(debtUsed!==undefined&&(!Number.isSafeInteger(debtUsed)||debtUsed<0||debtUsed>ticket.debtBytes))throw new Error("BG_DEBT_CEILING_MISS");
     const a=this.admissionShared;
     const exemptBytes=this.ownerIdle.tickets.get(ticket);
     if(exemptBytes!==undefined){this.ownerIdleBytes();this.ownerIdle.settled+=used;}
+    // idle-owed-capture: the tick's window takes the bytes this owed capture WROTE (rawUsed, what the meter counted and so what the
+    // tick's total holds), never more than its charge; the ledger's minute takes the charge (applySettle), which is what slot 3 holds.
+    // A ticket that expires unsettled wrote nothing known: the tick excuses nothing for it.
+    if(this.captureTickets.has(ticket))this.owedTick+=Math.max(0,Math.min(used,Number(rawUsed)||0));
     // The ticket leaves `reserved` here and can never be lost: it is applied in this call's one critical section, or kept pending.
     this.unreserve(ticket,rec);
     let applied=false;
@@ -526,6 +758,7 @@ export class IoBudget {
         const p=this.pendingDelta??={d2:0,d5:0,d6:0,d8:0};
         if(bg){p.d2+=used;p.d5+=rec.write+rec.debt;}
         p.d6+=rec.write;p.d8+=used;
+        if(this.captureTickets.delete(ticket))this.pendingCapture+=used;
         if(ticket.debtBytes&&used)this.insertDebt(mark!,debtUsed??Math.min(used,ticket.debtBytes),"pending");
         if(this.pendingSince===null)this.pendingSince=this.lastReadingAt;
       }
@@ -561,19 +794,26 @@ export class IoBudget {
     return this.critical("copyRoom",()=>{
       if(a.poisoned())return 0;
       if(ownerDeletion&&a.slots[7]!==0n)return Math.max(0,Math.min(11*1024*1024,OWNER_DELETE_IDLE_BYTES_PER_MINUTE-this.ownerIdleBytes()));
-      return a.slots[7]!==0n?Math.max(0,IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536-Number(a.slots[3])-Number(a.slots[6])):11*1024*1024;
+      return a.slots[7]!==0n?Math.max(0,IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536-this.idleUsed()-Number(a.slots[6])):11*1024*1024;
     },0);
   }
   /** Idle verdict for the capture drain. A missed ledger lock or a poisoned ledger reads as idle (the strict rule). */
   admissionIdle():boolean {this.readingOrNull("admissionIdle");return this.admissionShared.poisoned()||Atomics.load(this.admissionShared.slots,7)!==0n;}
   backgroundRoom():number {
     const s=this.admissionState();
+    // (the same terms as admit's BG clause: an idle owed capture is not charged the carried copy debt or the captures' own settled bytes)
+    const idleCapture=this.currentSource()==="memory-capture"&&Atomics.load(this.admissionShared.slots,7)!==0n&&!this.admissionShared.poisoned();
     const idleRoom=this.currentSource()==="memory-capture"&&Atomics.load(this.admissionShared.slots,7)!==0n
-      ? IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536-s.total-s.debt-s.reserved-Number(Atomics.load(this.admissionShared.slots,6)) : Infinity;
-    return Math.max(0,Math.min(idleRoom,BG_MINUTE_BYTES-s.bg-s.debt-s.reserved,49*1024*1024-s.total-s.reserved));
+      ? IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536-s.idleUsed-s.reserved-Number(Atomics.load(this.admissionShared.slots,6)) : Infinity;
+    return Math.max(0,Math.min(idleRoom,BG_MINUTE_BYTES-s.bg-(idleCapture?0:s.debt)-s.reserved,49*1024*1024-s.total-s.reserved));
   }
   /** A capture write refused only because other holders' live reservations fill the minute retries at a short step; spent bytes wait for the minute. */
   refusalRetry():BgDeferred {
+    // B3: a refusal that was a lock miss (the admit's own section) retries at a short step; it is marked reservationWait so every consumer
+    // takes the short delay (worker-controller bgRetryDelay). Read before nextAdmissionMs, which takes its own section.
+    if(this.lastSectionMissed)return new BgDeferred(LOCK_MISS_RETRY_MS,true);
+    // B4: read live, never from a flag an earlier refusal left (a refusal for spent bytes while under the gate waits for the minute)
+    if(this.walHalfGate())return new BgDeferred(WAL_HALF_RETRY_MS,true);
     const minute=this.nextAdmissionMs();
     if(this.currentSource()!=="memory-capture")return new BgDeferred(minute);
     return this.reservationOnlyRefusal()?new BgDeferred(Math.min(minute,CAPTURE_RESERVATION_RETRY_MS),true):new BgDeferred(minute);
@@ -582,8 +822,9 @@ export class IoBudget {
    * and, on an idle minute, under the idle allowance (a poisoned ledger admits no capture at all while idle). */
   private reservationOnlyRefusal():boolean {
     const idle=this.admissionIdle(),s=this.admissionState();
-    if(s.reserved<=0||s.bg+s.debt>=BG_MINUTE_BYTES||s.total>=49*1024*1024)return false;
-    return !idle||!this.admissionShared.poisoned()&&s.total+s.debt<IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536;
+    const carried=idle&&!this.admissionShared.poisoned()?0:s.debt;
+    if(s.reserved<=0||s.bg+carried>=BG_MINUTE_BYTES||s.total>=49*1024*1024)return false;
+    return !idle||!this.admissionShared.poisoned()&&s.idleUsed<IO_BUDGET_IDLE_BYTES_PER_MINUTE-65536;
   }
   /** The work loop's wait when no background room is left: a capture-stage claim blocked only by another holder's live reservation retries at a short step (the reservation settles within the minute); spent bytes and every other work wait for the minute. */
   claimRetryMs(capture:boolean):number {
@@ -596,7 +837,7 @@ export class IoBudget {
   constructor(options: IoBudgetOptions = {}) {
     this.read = options.read ?? readProcess;
     this.admissionRead = options.read ?? (()=>readAdmissionProcess());
-    this.admissionShared=checkpointLedger(new SharedArrayBuffer(32*BigInt64Array.BYTES_PER_ELEMENT),0);
+    this.admissionShared=checkpointLedger(new SharedArrayBuffer(33*BigInt64Array.BYTES_PER_ELEMENT),0);
     this.log = options.log ?? ((line) => console.warn(line));
     this.onScale = options.onScale ?? (() => {});
     this.bytesPerMinute = options.bytesPerMinute ?? IO_BUDGET_BYTES_PER_MINUTE;
@@ -624,12 +865,51 @@ export class IoBudget {
   setOnSample(listener: ((sample: IoSample) => void) | undefined): void { this.onSample = listener; }
   /** A reader of the bytes a writer with its own budget wrote in the last minute (null: none), and the most it is believed for (its budget
    *  plus a margin): the exemption is for a writer that keeps to its plan, never a blank cheque. */
+  /** B4: the background bucket's finish time (a leaky bucket: one oversized slice is debt, constant state) and its bytes since the last minute. */
+  private bucketAt = 0;
+  private bucketBytes = 0;
+  /** B4: 0 when a background slice may run now; else how long to wait. The WAL half gate stops it first (an unreadable log reads as past it). */
+  backgroundBucketWait(now: number = Date.now()): number {
+    const wait = Math.max(0, this.bucketAt - now);
+    return this.walHalfGate() ? Math.max(wait, WAL_HALF_RETRY_MS) : wait;
+  }
+  /** B4: charge a finished background slice its own bytes (rows x W or its own frames, as the caller measures). */
+  chargeBackgroundBucket(bytes: number, now: number = Date.now()): void {
+    if (!Number.isFinite(bytes) || bytes <= 0) return;
+    this.bucketAt = Math.max(this.bucketAt, now) + bytes / BACKGROUND_BUCKET_BYTES_PER_MINUTE * IO_BUDGET_INTERVAL_MS;
+    this.bucketBytes += bytes;
+  }
   setPlannedBytes(read: (() => number) | null, capBytesPerMinute = Number.POSITIVE_INFINITY): void { this.plannedBytes = read; this.plannedCap = capBytesPerMinute > 0 ? capBytesPerMinute : Number.POSITIVE_INFINITY; }
   notifyMemoryWork(): void { try { this.onMemoryWork?.(); } catch { /* notifications do not change a write's result */ } }
 
+  /** recalldesign-1020-n1 section 4 (owner: the recallcap racer): owner write requests in flight and when the last one ended. The recall reclaimer
+   *  starts no slice while one is open or for RECALL_RECLAIM_YIELD_MS after it closes. The engine's own /api/internal calls are not owner sends, and a
+   *  request still open after RECALL_RECLAIM_OPEN_HOLD_MS is waiting on something else (a reply, a card), never on its write transaction. */
+  private ownerWrites = new Map<symbol, number>();
+  private ownerWriteEndedAt = 0;
+  beginOwnerWrite(method: string | undefined, rawUrl: string | undefined): (() => void) | null {
+    if (!countsAsOwnerAction(method, rawUrl) || (rawUrl ?? "").startsWith("/api/internal/")) return null;
+    const token = Symbol("owner-write");
+    this.ownerWrites.set(token, Date.now());
+    return () => { if (!this.ownerWrites.delete(token)) return; this.ownerWriteEndedAt = Date.now(); };
+  }
+  /** Milliseconds since the last owner write request closed; 0 while one opened in the last RECALL_RECLAIM_OPEN_HOLD_MS is still open. */
+  ownerWriteQuietMs(now = Date.now()): number {
+    for (const started of this.ownerWrites.values()) if (now - started < RECALL_RECLAIM_OPEN_HOLD_MS) return 0;
+    return now - this.ownerWriteEndedAt;
+  }
+
+  /** True while any owner write request is open (recallcap-1020-n4a: a paced build slice measured then also counts the turn's writes). */
+  ownerWriteOpen(): boolean { return this.ownerWrites.size > 0; }
+
+  /** Fable BLOCK bb30fb1d03 (owner: the recallcap racer): the reclaimer, held at the log gate, asks for one log copy under its own bucket
+   *  (admission-shared rule 5); its slices charge that same bucket. */
+  requestReclaimCopy(now = Date.now()): void { this.admissionShared.requestReclaimCopy(now); }
+  chargeReclaimBucket(bytes: number, now = Date.now()): void { this.admissionShared.chargeReclaim(bytes, now); }
   noteBytes(source: string, bytes: number): void {
     if (!Number.isFinite(bytes) || bytes <= 0) return;
     this.bytes.set(source, (this.bytes.get(source) ?? 0) + bytes);
+    if (isPlannedSource(source)) this.plannedPending.set(source, (this.plannedPending.get(source) ?? 0) + bytes);
     if (this.timer && PERIODIC_SOURCES.has(source)) {
       this.backgroundDebtAt = Math.max(Date.now(), this.backgroundDebtAt)
         + bytes / IO_BUDGET_BACKGROUND_BYTES_PER_MINUTE * IO_BUDGET_INTERVAL_MS;
@@ -644,6 +924,8 @@ export class IoBudget {
     if (countsAsOwnerAction(method, rawUrl)) this.noteForegroundActivity();
   }
 
+  /** What a seed source has used of its per-process total (IO_SEED_BUDGETS; tests and diagnostics). */
+  seedSpentBytes(source: string): number { return this.seedSpent.get(source) ?? 0; }
   /** Bytes charged to `source` in the current minute so far (tests and diagnostics; the tick reads and clears them). */
   pendingBytes(source: string): number { return this.bytes.get(source) ?? 0; }
 
@@ -779,7 +1061,7 @@ export class IoBudget {
     const applicationBytes=Math.max(meterBytes,Math.max(0,attributedBytes-childBytes))+childBytes;
     let net: NetMinute | null = null;
     try { net = this.netMinute?.() ?? null; } catch { /* traffic counts are diagnostics */ }
-    if (!previous) { this.bytes.clear(); this.childBytes=0; this.foregroundActivity = false; return null; }
+    if (!previous) { this.bytes.clear(); this.childBytes=0; this.owedTick=0; this.bucketBytes = 0; this.foregroundActivity = false; return null; }
     if (reading.at <= previous.at) return null;
     const minutes = (reading.at - previous.at) / 60_000;
     // fail closed (IO-IDLE r3.6): a minute either end of which could not read the OS count is UNKNOWN, not 0: it is never calm (the poll
@@ -787,8 +1069,19 @@ export class IoBudget {
     const osUnavailable = reading.osKnown === false || previous.osKnown === false;
     const osUnknown = osUnavailable || reading.coverageKnown===false || previous.coverageKnown===false || reading.sentinelGeneration!==previous.sentinelGeneration;
     const osBytes = osUnavailable ? 0 : Math.max(0, (reading.fsWriteBlocks - previous.fsWriteBlocks) * BLOCK_BYTES);
-    let planned = 0;
-    if (this.plannedBytes) { try { planned = Math.min(this.plannedCap * minutes, Math.max(0, Number(this.plannedBytes()) || 0)); } catch { planned = 0; } }
+    // ONE definition of planned (plannedWrites), shared with idle admission (publishPlanned): the reader's budgeted bytes, the recall
+    // reclaimer's bucket, the named seed budgets and the owed captures' settled bytes up to the BG minute ceiling (idle-owed-capture).
+    // The tick commits the seed use and says so on its own line.
+    const share = plannedWrites(minutes, name => this.bytes.get(name) ?? 0, this.owedTick, this.plannedBytes, this.plannedCap, name => this.seedSpent.get(name) ?? 0);
+    let planned = share.planned;
+    // B4: the background bucket's bytes are planned (at most its rate for the interval; beyond that it hides nothing)
+    planned += Math.min(BACKGROUND_BUCKET_BYTES_PER_MINUTE * minutes, this.bucketBytes);
+    const seeds: string[] = [], seedAllowed = new Map<string, number>();
+    for (const { name, seed, wrote, allowed, spent } of share.seeds) {
+      this.seedSpent.set(name, spent + allowed);
+      seedAllowed.set(name, allowed);
+      seeds.push(`${name} wrote ${(wrote / 1048576).toFixed(1)} MB (${seed.what}): ${(allowed / 1048576).toFixed(1)} MB under its one-time seed budget, ${((seed.total - spent - allowed) / 1048576).toFixed(1)} of ${(seed.total / 1048576).toFixed(0)} MB left`);
+    }
     const totalWriteBytes=Math.max(osBytes,meterBytes,Math.max(0,attributedBytes-childBytes))+childBytes;
     const writeBytesPerMinute = Math.max(0, totalWriteBytes - planned) / minutes;
     const cpu = (reading.cpuMicros - previous.cpuMicros) / 1000 / (reading.at - previous.at);
@@ -799,6 +1092,7 @@ export class IoBudget {
     let idle = false;
     try { idle = this.isIdle() && !this.foregroundActivity; } catch { /* startup uses the active budget */ }
     this.foregroundActivity = false;
+    this.armAdmission(); // B2: a stale ACTIVE verdict is refreshed (and the refresh disarms once idle is published)
     const budget = idle ? IO_BUDGET_IDLE_BYTES_PER_MINUTE : this.bytesPerMinute;
     const writing = writeBytesPerMinute > budget;
     const spinning = this.hotCpuMinutes >= this.cpuMinutes;
@@ -807,7 +1101,10 @@ export class IoBudget {
     if (tripped) {
       this.calmMinutes = 0;
       const next = Math.min(IO_BUDGET_MAX_SCALE, this.scale * 2);
-      this.deferredSource = [...this.bytes].sort((a,b) => b[1]-a[1])[0]?.[0] ?? this.topStatements(1)[0]?.sql ?? "process";
+      // the minute is blamed on what was judged: a seed source's excused bytes are not what tripped it (its bytes past the budget still are)
+      // (the reclaimer's own bucket is planned too: its bytes never tripped the minute)
+      const judged = (entry: [string, number]) => entry[0] === RECALL_RECLAIM_SOURCE ? Math.max(0, entry[1] - RECALL_RECLAIM_BYTES_PER_MINUTE * minutes) : entry[1] - (seedAllowed.get(entry[0]) ?? 0);
+      this.deferredSource = [...this.bytes].sort((a,b) => judged(b)-judged(a))[0]?.[0] ?? this.topStatements(1)[0]?.sql ?? "process";
       this.deferUntil = reading.at + next * IO_BUDGET_INTERVAL_MS;
       const category = writing ? (spinning ? "both" : "writing") : "cpu";
       const lastLog = this.diagnosticLogs.get(category);
@@ -829,13 +1126,20 @@ export class IoBudget {
       if (this.scale < 2) this.setScale(2);
       const lastLog = this.diagnosticLogs.get("unknown");
       if (!lastLog || reading.at - lastLog.at >= 60 * 60_000) {
-        try { this.log(`[io-budget] os writes unknown (the engine-exclusion helper's diskWritten could not be read): background work runs at half rate; applicationBytes=${Math.round(applicationBytes)}; suppressed=${lastLog?.suppressed ?? 0}`); } catch { /* a line never changes the minute */ }
+        // osUnavailable: the OS count itself could not be read (macOS without the addon's diskWritten). Otherwise the count was read and
+        // what is unknown is COVERAGE (io-meter.ts ioMeterCoverageKnown, or a new sentinel generation): the line names the real cause.
+        const why = osUnavailable ? "os writes unknown (the engine-exclusion helper's diskWritten could not be read)" : "write coverage unknown (the file-write coverage of this minute could not be confirmed; the os write count was read)";
+        try { this.log(`[io-budget] ${why}: background work runs at half rate; applicationBytes=${Math.round(applicationBytes)}; suppressed=${lastLog?.suppressed ?? 0}`); } catch { /* a line never changes the minute */ }
         this.diagnosticLogs.set("unknown", { at: reading.at, suppressed: 0 });
       } else lastLog.suppressed++;
     } else if (this.scale > 1 && ++this.calmMinutes >= IO_BUDGET_CALM_MINUTES) {
       this.calmMinutes = 0;
       this.setScale(Math.max(1, this.scale / 2));
       if (this.scale === 1) this.deferredSource = null;
+    }
+    // Every minute that used a seed budget says so, tripped or not (never hidden; at most one line a minute, the tick's own pace).
+    if (seeds.length) {
+      try { this.log(`[io-budget] seed: ${seeds.join("; ")}; judged ${(writeBytesPerMinute / 1048576).toFixed(1)} MB/min against the budget of ${(budget / 1048576).toFixed(0)} without them`); } catch { /* a line never changes the minute */ }
     }
     // A storm on the port that neither watchdog trips on still says what it was. Diagnostic only: it changes no scale and defers nothing.
     if (!tripped && net && net.outBytes > NET_LINE_BYTES_PER_MINUTE * minutes) {
@@ -858,7 +1162,7 @@ export class IoBudget {
       };
       try { this.onSample(sample); } catch { /* telemetry never changes the watchdog */ }
     }
-    this.bytes.clear();this.childBytes=0;
+    this.bytes.clear();this.childBytes=0;this.owedTick=0;this.bucketBytes=0;
     return { writeBytesPerMinute, cpu, tripped, source: this.deferredSource };
   }
 
@@ -876,8 +1180,7 @@ export class IoBudget {
     this.tick();
     this.timer = setInterval(() => { try { this.tick(); } catch { /* a watchdog never throws into the app */ } }, IO_BUDGET_INTERVAL_MS);
     this.timer.unref?.();
-    this.admissionTimer=setInterval(()=>{try{this.readingOrNull("timer");}catch{/* admission stays conservative */}},25);
-    this.admissionTimer.unref?.();
+    this.armAdmission(); // B2: armed only while needed (admissionNeeded), never as a standing timer
     if (turnTraceEnabled() && !this.traceTimer) {
       this.traceTimer = setInterval(() => { try { this.traceTopStatements(); } catch { /* tracing never throws into the app */ } }, IO_BUDGET_INTERVAL_MS);
       this.traceTimer.unref?.();
@@ -1106,6 +1409,28 @@ export const inStatementReusePass = () => reuseDepth > 0;
 /** Identifies the open pass (0 when none), so a memo made inside one is never read in another. */
 export const statementReusePassId = () => reuseDepth > 0 ? reuseGeneration : 0;
 
+/** What a connection reports to the one observer it may have (the memory wake bus, server/memory/wake.ts; owner: lane W of MEMORY V2).
+ *  `ended`: a transaction has just ended or an autocommit write has just run. It is detected from the connection's own state
+ *  (`isTransaction` true before the call and false after it), never from statement text, so a multi-statement exec that ends in COMMIT, a
+ *  RELEASE of the outermost SAVEPOINT, a prepared COMMIT and SQLite ending the transaction itself are all seen. A rollback is reported the
+ *  same way (it wrote nothing, so the observer finds nothing).
+ *  `undone`: a ROLLBACK, a ROLLBACK TO, a failed statement, or one of the wrapper's own raw rollbacks: something a reader may have seen
+ *  inside the transaction is gone. */
+export interface ConnectionObserver { ended(): void; undone(): void }
+const observerSlots = new WeakMap<object, { set(observer: ConnectionObserver | null): void; raw: { exec(sql: string): void; prepare(sql: string): StatementSync } }>();
+/** Attach (or with null, remove) the observer of an instrumented handle. False when the handle is not instrumented. */
+export function observeConnection(db: object, observer: ConnectionObserver | null): boolean {
+  const slot = observerSlots.get(db);
+  if (!slot) return false;
+  slot.set(observer); return true;
+}
+/** The handle's un-instrumented exec and prepare, for connection setup that must stay outside the budget and the statement meter (TEMP
+ *  installs and the wake drain). Undefined for a handle that is not instrumented. */
+export function rawConnection(db: object): { exec(sql: string): void; prepare(sql: string): StatementSync } | undefined { return observerSlots.get(db)?.raw; }
+/** A prepared statement that can end a transaction without writing (its iterate() is wrapped too, so the end is still seen). */
+const LONE_PRAGMA = /^\s*PRAGMA\b[^;]*;?\s*$/i;
+const ENDS_TRANSACTION_STATEMENT = /^\s*(?:COMMIT|END|RELEASE)\b/i;
+
 /** Time every statement run through this handle, so a trip can name the culprits. `bytes: false` for a handle that never writes
  * (the memory index reader): its file's log is another process's writing, charged by that process's own report, not read here twice. */
 export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget, options: { bytes?: boolean } = {}): () => void {
@@ -1118,6 +1443,17 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
   let transactionSource = source;
   const sample = (name: string) => { if (source) budget.sampleByteSource(source, name); };
   const exec = db.exec.bind(db);
+  let observer: ConnectionObserver | null = null;
+  observerSlots.set(db, { set: next => { observer = next; }, raw: { exec, prepare } });
+  // After every statement: `wasIn` is whether a transaction was open before it, `wrote` whether it could write.
+  const observed = (wasIn: boolean, wrote: boolean, failed: unknown, undoes: boolean) => {
+    const watching = observer;
+    if (!watching) return;
+    let inNow: boolean;
+    try { inNow = db.isTransaction; } catch { return; } // closed under us
+    if (undoes || failed !== undefined) watching.undone();
+    if (!inNow && (wasIn || wrote)) watching.ended();
+  };
   const wal=source&&options.bytes!==false?walIndexReader(String(file)):null;
   let auto:AdmissionTicket|null=null;
   let sqlDeadline=false;
@@ -1130,7 +1466,11 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
     const state=endBgGrant(), mark=wal?.();
     const frames=mark?Math.max(0,mark.mxFrame-(beforeMark?.salt===mark.salt?beforeMark.mxFrame:0)):null;
     const debt=frames===null?undefined:frames*Math.ceil(sqlitePage/state.pageSize)*state.pageSize;
-    budget.settle(ticket,state.usedBytes,{salt:mark?.salt??"unreadable",frame:mark?.mxFrame??Number.MAX_SAFE_INTEGER},debt,state.rawBytes);
+    // MAIN 2026-11-22 idle-capture (b): a write the native grant refused was rolled back, and a rolled-back write charges nothing. It is
+    // proven by the log: refused, and no frame committed under this grant. The bytes it did put on disk stay in the observed total
+    // (measured, slot 11); only the ticket's charge and copy debt are dropped. Unprovable (no log reader, or frames landed): charged as before.
+    const rolledBack=state.refusedWrites>autoRefused&&frames===0;
+    budget.settle(ticket,rolledBack?0:state.usedBytes,{salt:mark?.salt??"unreadable",frame:mark?.mxFrame??Number.MAX_SAFE_INTEGER},rolledBack?0:debt,rolledBack?0:state.rawBytes);
     if(sqlDeadline){sqlDeadline=false;prepare('SELECT murage_grant_deadline(0)').get();}
     if(state.refusedWrites>autoRefused)throw new BgDeferred(budget.nextAdmissionMs());
   };
@@ -1161,12 +1501,12 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
     // A shared connection must never keep a native grant or a transaction across an await.
     queueMicrotask(()=>{
       if(!auto||gen!==sliceGeneration)return;
-      try{if(db.isTransaction){exec("ROLLBACK");budget.deferCurrentSlice();}}finally{finishGrant();}
+      try{if(db.isTransaction){try{exec("ROLLBACK");}finally{observed(true,false,undefined,true);}budget.deferCurrentSlice();}}finally{finishGrant();}
     });
   };
   const afterWrite=(failed?:unknown)=>{
     if(!auto)return;
-    if(failed!==undefined&&db.isTransaction)try{exec("ROLLBACK");}catch{/* preserve failure */}
+    if(failed!==undefined&&db.isTransaction)try{exec("ROLLBACK");}catch{/* preserve failure */}finally{observer?.undone();}
     if(!db.isTransaction){
       finishGrant();
     }
@@ -1200,7 +1540,8 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
       if (!lowered && ms > SLOW_SQL_MS) witnessWait(db, sql, ms, failed, budget);
       // the end of a transaction: database.ts puts back what a background slice relaxed for its commit (synchronous)
       if (inTransaction && END_TRANSACTION.test(sql)) { try { if (!db.isTransaction) busyWitness?.transactionEnded(db); } catch { /* closed */ } }
-      afterWrite(failed);
+      // (a lone PRAGMA assignment is a setting, not a row: it is no autocommit write to the observer)
+      try { afterWrite(failed); } finally { observed(inTransaction, writing && !LONE_PRAGMA.test(sql), failed, UNDO_EXEC.test(sql)); }
     }
     if (!db.isTransaction) sample(budget.currentSource() ?? (inTransaction ? transactionSource : statementKey(sql)));
   };
@@ -1258,14 +1599,14 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
           budget.note(key, ms, true);
           if (lowered) restoreAfterHold(db, exec, sql, ms, failed);
           else if (failed !== undefined && writes && ms > SLOW_SQL_MS) witnessWait(db, sql, ms, failed, budget);
-          afterWrite(failed);
+          try { afterWrite(failed); } finally { observed(inTransactionBefore, writes, failed, undoes); }
         }
       };
       (statement as unknown as Record<string, unknown>)[method] = instrumentedStatement;
     }
     // iterate() runs the statement as its rows are pulled (an UPDATE ... RETURNING writes there): every pull and the end of the iteration
     // move the stamps the statement could move, whether it changed rows or failed
-    if (writes || undoes) {
+    if (writes || undoes || ENDS_TRANSACTION_STATEMENT.test(tokens)) {
       const iterate = statement.iterate.bind(statement) as (...args: unknown[]) => IterableIterator<unknown>;
       const touched = () => { if (writes && !deferredBegin) { wrote(db); if (sharedTable) wroteSharedRows(db); if (bindingTable) wroteBindingRows(db); } if (undoes) undid(db); };
       // a pull that made SQLite abort the whole transaction (a schema-level ON CONFLICT ROLLBACK on a row it inserted into another table)
@@ -1273,7 +1614,11 @@ export function instrumentDatabase(db: DatabaseSync, budget: IoBudget = ioBudget
       const pulled = <R>(pull: () => R): R => {
         const inTransactionBefore = db.isTransaction;
         beforeWrite(writes);
-        try { return pull(); } finally { afterWrite(); touched(); try { if (inTransactionBefore && !db.isTransaction) undid(db); } catch { undid(db); } }
+        let failed: unknown;
+        // a statement wrapped only because it can end a transaction (COMMIT, END, RELEASE) keeps its old path: it is observed, nothing more
+        if (!writes && !undoes) { try { return pull(); } catch (error) { failed = error ?? new Error("iterate failed"); throw error; } finally { observed(inTransactionBefore, false, failed, false); } }
+        try { return pull(); } catch (error) { failed = error ?? new Error("iterate failed"); throw error; }
+        finally { try { afterWrite(); touched(); try { if (inTransactionBefore && !db.isTransaction) undid(db); } catch { undid(db); } } finally { observed(inTransactionBefore, writes, failed, undoes); } }
       };
       (statement as unknown as Record<string, unknown>).iterate = (...args: unknown[]) => {
         const inner = iterate(...args);

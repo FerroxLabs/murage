@@ -9,7 +9,7 @@ export const CLOUD_BROWSER_PINS = {
   chromeVersion: "154.0.8037.92", chromeBytes: 120477194,
   chromeSha256: "636aa5c79f2693632e9921b8bbb050038ba11672e02346c06c20f991aed096f9",
   chromeExecutableSha256: "7c141b276aacc74fe51f06986345fb0dbce0e3756413746fb18541b878c17706",
-  // linux-arm64 homes (build host CAX). Same agent-browser and Chrome for Testing
+  // linux-arm64 homes (Hetzner CAX). Same agent-browser and Chrome for Testing
   // versions as x64. agent-browser sha256 equals the GitHub release asset
   // digest; the Chrome zip md5 equals the object md5Hash that Google Cloud
   // Storage publishes for it (Chrome for Testing ships no checksum file), and

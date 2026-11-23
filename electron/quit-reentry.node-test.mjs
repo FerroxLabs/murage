@@ -1,13 +1,17 @@
 import {createReturnAuthority,revokeReturn,joinExplicitQuit} from "./backup-offline-return.mjs";
+import {quitAnnouncement} from "./quit-notice.mjs";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import test from "node:test";
 
 const source=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
-const handler=source.slice(source.indexOf('app.on("before-quit", (e) => {'));
+// The handler calls announceQuit (meetgreet, declared just above it), so the slice starts at that declaration.
+const handler=source.slice(source.indexOf("let quitAnnounced = false;"));
 function fixture(cleanup,overrides={}){
   let trigger;const events=[],queue=[],causes=[],reasons=[];
-  const scope={internalBackupQuit:false,backupScheduleHost:null,noteShutdownCause:()=>{},shutdownCause:"owner",startupFailureExit:false,recordStartupRefusal:()=>{},startupDecisionPending:false,updateRecoveryDescriptor:null,updateRequester:false,returnAuthority:createReturnAuthority(),revokeReturn,joinExplicitQuit:options=>joinExplicitQuit({...options,scheduleExit:callback=>queue.push(callback),setTimer:()=>{}}),finishUpdateWait:()=>{},takeBackupProgress:()=>null,cleanupFailed:()=>events.push("incomplete"),app:{on:(_event,callback)=>{trigger=callback;},quit:()=>events.push("quit")},backgroundLifecycle:null,cuaCleanedUp:false,desktopCleanup:null,cleanupDesktopForExit:cleanup,setImmediate:callback=>queue.push(callback),slog:()=>{},desktopCleanupStage:"owned harness",dialog:{showErrorBox:()=>events.push("incomplete")}};
+  // announceQuit (meetgreet quit notice) is the real declaration in the slice above; the default profile only logs.
+  const scope={internalBackupQuit:false,backupScheduleHost:null,noteShutdownCause:()=>{},shutdownCause:"owner",startupFailureExit:false,recordStartupRefusal:()=>{},startupDecisionPending:false,updateRecoveryDescriptor:null,updateRequester:false,returnAuthority:createReturnAuthority(),revokeReturn,joinExplicitQuit:options=>joinExplicitQuit({...options,scheduleExit:callback=>queue.push(callback),setTimer:()=>{}}),finishUpdateWait:()=>{},takeBackupProgress:()=>null,cleanupFailed:()=>events.push("incomplete"),app:{on:(_event,callback)=>{trigger=callback;},quit:()=>events.push("quit")},backgroundLifecycle:null,cuaCleanedUp:false,desktopCleanup:null,cleanupDesktopForExit:cleanup,setImmediate:callback=>queue.push(callback),slog:()=>{},desktopCleanupStage:"owned harness",dialog:{showErrorBox:()=>events.push("incomplete")},
+    quitAnnouncement,hasCustomUpdaterProfile:()=>false,Notification:{isSupported:()=>false}};
   Object.assign(scope,{noteShutdownCause:cause=>causes.push(cause),quitAfterBackup:()=>events.push("internal quit"),
     cleanupDesktopForExit:(reason,token)=>{reasons.push(reason);return cleanup(reason,token);}},overrides);
   new Function(...Object.keys(scope),handler)(...Object.values(scope));

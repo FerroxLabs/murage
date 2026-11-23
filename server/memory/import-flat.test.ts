@@ -82,7 +82,9 @@ it("a new and a changed notebook import read the same statements and rows at 10 
   expect(runs[1].map(item => [item.sql, item.rows])).toEqual(runs[0].map(item => [item.sql, item.rows]));
   // the first import reads no evidence for a source that has no row; the change reads it by source
   const first = runs[1].filter(item => /memory_evidence/.test(item.sql));
-  expect(first.every(item => /memory_evidence_by_source/.test(item.sql))).toBe(true);
+  // 1.0.20 T5: a changed notebook now ends only the receipts citing its chunks (revocation.ts revokeRecordDisclosures, revoke-commit.ts), whose
+  // statements read the chunks' evidence keyed by record id (an index seek; the no-SCAN check above still covers each) rather than by source
+  expect(first.filter(item => !/memory_evidence_by_source/.test(item.sql) && !/record_id ?(?:=|IN\b)/.test(item.sql)).map(item => item.sql)).toEqual([]);
 });
 
 it("revoking the live disclosures seeks the live receipts by state, with or without the late live-receipts index", async () => {

@@ -60,6 +60,7 @@ import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 //   FAKE_CODEX_TURNSTART_LATE  "1": turn/start is not answered; the SIGTERM is ignored, and the ACK plus one turn notification are
 //                     written only then (a late answer while the process holds its shutdown; the kill escalates)
 //   FAKE_CODEX_SPAWN_LOG  file: one line (the pid) per app-server process started
+//   FAKE_CODEX_NO_WEB_SEARCH  "1": the scripted turn reports no web search (outside input), so a resumed thread can be kept
 //   FAKE_CODEX_WARM    "1": each turn gets its own turn id and the reported thread
 //                     total accumulates (7/4/3 more per turn), as a retained
 //                     app-server reports it; the dump also carries the credential
@@ -326,7 +327,7 @@ if (mode === "late-output") {
 
 const finishTurn = () => {
   notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed", exitCode: 0, aggregatedOutput: "" } });
-  notify("item/completed", { item: { id: "w1", type: "webSearch", status: "completed" } });
+  if (process.env.FAKE_CODEX_NO_WEB_SEARCH !== "1") notify("item/completed", { item: { id: "w1", type: "webSearch", status: "completed" } });
   if (mode === "stream") {
     // token deltas, then the whole message — the driver must not double-emit
     notify("item/agentMessage/delta", { itemId: "m1", delta: "done from " });
@@ -776,7 +777,10 @@ process.stdin.on("data", (chunk) => {
           ];
           let frames: unknown[];
           if (mode === "parent-early") frames = [...parent, ack];
-          else if (mode === "parent-overflow") frames = [...Array.from({ length: 257 }, () => parent[0]), ack];
+          // 300 distinct replies (over the old hold of 256 early updates), the usage and the completion, all ahead of the ack
+          else if (mode === "parent-overflow") frames = [...Array.from({ length: 300 }, (_, n) => notification("item/completed", { item: { id: `parent-${n}`, type: "agentMessage", text: `parent reply ${n}` } })), parent[1], parent[2], ack];
+          // two 20 MiB reply items (40 MiB, over the old 32 MiB hold, under its 256 count), the usage and the completion, all ahead of the ack
+          else if (mode === "parent-early-large") frames = [...[0, 1].map((n) => notification("item/agentMessage/delta", { itemId: "parent-large", delta: String.fromCharCode(97 + n).repeat(20 * 1024 * 1024) })), ...parent, ack];
           else if (mode === "parent-invalid-ack") frames = [ack, ...parent];
           // a tool item announced ahead of a turn/start that then fails (OpenMausBot 7045f15a1, adapted)
           else if (mode === "parent-early-tool-fail" || mode === "parent-early-text-fail") {
@@ -1033,13 +1037,13 @@ process.stdin.on("data", (chunk) => {
             }
             await fakeSessionStart();
             await playFakeCall({ kind: "shell", id: "i1", command: approvalMode && mode !== "windows-command" ? "rm -rf scratch" : command, escalate: approvalMode && escalationAsks() });
-            notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
+            if (process.env.FAKE_CODEX_NO_WEB_SEARCH !== "1") notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
             finishTurn();
           })();
           break;
         }
         notify("item/started", { item: { id: "i1", type: "commandExecution", command } });
-        notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
+        if (process.env.FAKE_CODEX_NO_WEB_SEARCH !== "1") notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
         if (mode === "mcp-elicitation") {
           out({
             jsonrpc: "2.0",

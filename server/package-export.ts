@@ -43,7 +43,29 @@ export interface BotPackageExportInput {
   selection?: BotPackageExportSelection;
 }
 
-function buildBotPackageExport(input: BotPackageExportInput) {
+const FIELD_WORDS: Record<string, string> = {
+  name: "name", title: "title", description: "description (its instructions)", team: "team name", mascotExpression: "mascot expression",
+  mascotBody: "mascot body", prompt: "instructions", bulletin: "bulletin", summary: "summary", instructions: "instructions", triggers: "triggers",
+};
+
+/** A package check names a schema path ("package.agents.2.description is too
+ * long"); nobody exporting a bot can act on that. Say which bot, routine, room
+ * or playbook, which field, and what to do, in plain words. */
+export function plainExportProblem(message: string, definition: BotPackageDefinition): string {
+  const match = /^package\.(agents|routines|rooms|playbooks)\.(\d+)\.(?:appearance\.)?([A-Za-z]+)(?:\.\d+)? (.+)$/.exec(message);
+  if (!match) return `This export can't be packaged: ${message.replace(/^package\./, "")}. Nothing was exported.`;
+  const [, list, index, field, problem] = match;
+  const item = (definition[list as "agents"] as Array<{ name?: string }> | undefined)?.[Number(index)];
+  const kind = list === "agents" ? "Bot" : list === "routines" ? "Routine" : list === "rooms" ? "Room" : "Playbook";
+  const named = item?.name ? `${kind} "${item.name}"` : `A ${kind.toLowerCase()}`;
+  const words = FIELD_WORDS[field] ?? field;
+  const fix = problem === "is too long"
+    ? `Shorten the ${words} and export again, or leave this ${kind.toLowerCase()} out of the selection.`
+    : `Fix the ${words} and export again, or leave this ${kind.toLowerCase()} out of the selection.`;
+  return `${named} can't be exported: its ${words} ${problem}. ${fix} Nothing was exported.`;
+}
+
+function buildBotPackageExport(input: BotPackageExportInput, validate = true) {
   const bots = input.bots.filter((bot) => bot.hidden !== true && !inertBot(bot));
   if (!bots.length) throw new Error("Create a bot before exporting your package");
   const selection = input.selection;
@@ -202,11 +224,17 @@ function buildBotPackageExport(input: BotPackageExportInput) {
   if (routines.length) definition.routines = routines;
   const exportedPlaybooks = playbooks.filter(playbook => availablePlaybooks.has(playbook.key) && (!selectedPlaybooks || selectedPlaybooks.has(playbook.key)));
   if (exportedPlaybooks.length) definition.playbooks = exportedPlaybooks;
-  const parsed = parseBotPackage({
-    format: "murage.package",
-    version: 1,
-    package: definition,
-  });
+  // Listing the choices validates nothing: one long field on a bot nobody
+  // selected must never block exporting the bot that was (1.0.20, Sean: one
+  // selected bot failed on "package.agents.2.description").
+  let parsed: ParsedBotPackage | undefined;
+  if (validate) {
+    try {
+      parsed = parseBotPackage({ format: "murage.package", version: 1, package: definition });
+    } catch (error) {
+      throw new Error(plainExportProblem(error instanceof Error ? error.message : String(error), definition));
+    }
+  }
   return { parsed, candidates: {
     bots: bots.map(bot => ({ id: bot.id, key: idToKey.get(bot.id)!, name: bot.name, title: bot.title,
       description: scrubOptional(bot.description, boundEmailAddress(bot.id)), role: botExportRole(bot), team: bot.section?.trim() || "General",
@@ -220,10 +248,10 @@ function buildBotPackageExport(input: BotPackageExportInput) {
 }
 
 export function createBotPackageExport(input: BotPackageExportInput): ParsedBotPackage {
-  return buildBotPackageExport(input).parsed;
+  return buildBotPackageExport(input).parsed!;
 }
 
 /** Keys come from the exact default-export mapping, before any selection. */
 export function getBotPackageExportSelectionCandidates(input: BotPackageExportInput) {
-  return buildBotPackageExport({ ...input, selection: undefined }).candidates;
+  return buildBotPackageExport({ ...input, selection: undefined }, false).candidates;
 }

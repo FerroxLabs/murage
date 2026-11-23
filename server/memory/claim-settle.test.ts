@@ -497,12 +497,14 @@ describe("T10: write paths", () => {
     // a second restart redrives nothing
     expect(jobs.redriveTransientFailedJobs(1000, NOW)).toBe(0);
   });
-  it("a working capture is born cancelled and settling the turn creates a pending job", () => {
+  // mem-f6 (1.0.21): the settled turn row has nothing for the capture stage to write, so its job is written complete (was "pending",
+  // then claimed and published with no chunks). The working revision's job is born cancelled exactly as before.
+  it("a working capture is born cancelled and settling the turn creates a job that is complete at once", () => {
     recordMemorySettlement("thread", "t1", "working");
     const id = "turn:thread:t1";
     expect(database().prepare("SELECT status,error FROM memory_jobs WHERE source_id=?").all(id)).toEqual([{ status: "cancelled", error: "settled:working" }]);
     recordMemorySettlement("thread", "t1", "completed");
-    expect(database().prepare("SELECT source_revision AS r,status FROM memory_jobs WHERE source_id=? ORDER BY source_revision").all(id)).toEqual([{ r: 1, status: "cancelled" }, { r: 2, status: "pending" }]);
+    expect(database().prepare("SELECT source_revision AS r,status FROM memory_jobs WHERE source_id=? ORDER BY source_revision").all(id)).toEqual([{ r: 1, status: "cancelled" }, { r: 2, status: "complete" }]);
   });
 });
 

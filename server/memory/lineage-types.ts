@@ -1,6 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
+// Producer owner: recall-s3 (revalidated ceilings); consumer owner: recall-s1s2g (live lineage and continuation fences).
+//
 // Write-time privacy (DESIGN-WRITETIME.md, Murage 1.0.2): the shared types of the lane, fixed by S0. Every slice (S1 to S5) imports its
 // lineage vocabulary from here and calls only the functions exported by lineage-write.ts, deny-read.ts, revoke-commit.ts, prompt-parts.ts
 // and lineage-backfill.ts. The table names are in schema.ts (WRITETIME_TABLES). WRITETIME-API.md at the repository root lists every name.
@@ -194,7 +196,7 @@ export type RevokeRoot =
       readonly cause: "forget" | "hide" | "edit" | "delete" | "branch-switch" | "regenerate" }
   | { readonly kind: "thread"; readonly threadId: string; readonly cause: "delete-conversation" }
   | { readonly kind: "bot"; readonly botId: string; readonly threadIds: readonly string[]; readonly cause: "delete-bot" }
-  | { readonly kind: "memory"; readonly ref: MemoryRef; readonly cause: "archive" | "correct" | "forget" | "revise" | "retire" | "delete" | "unprovable" }
+  | { readonly kind: "memory"; readonly ref: MemoryRef; readonly cause: "archive" | "correct" | "forget" | "revise" | "retire" | "delete" | "unprovable" | "hide" }
   | { readonly kind: "scope"; readonly scopeId: string; readonly cause: "scope-deny" }
   /** "receipt-revoked": the receipt's state turned 'revoked' (a roster, settings, branch or restore revoke, or a single receipt): the RC
    * withheld what rests on it from AUDIENCE readers only (replay-lineage.ts: `audience !== null && row.state === "revoked"`), never from the
@@ -207,7 +209,7 @@ export type RevokeRoot =
 
 /** The reader a lookup judges for. audience null: content checks only (direct facts and marks; no watermark, no footprint). An owner
  * audience skips the footprint check (as copyOriginRevoked does today). */
-export interface LineageAudience { readonly recallOnly?: boolean; readonly personOnly?: boolean; readonly view?: import('./recall-view.ts').RecallViewHandle; readonly owner: boolean; readonly scopeIds: readonly string[] }
+export interface LineageAudience { readonly scopeCeiling?: readonly string[]; readonly recallOnly?: boolean; readonly personOnly?: boolean; readonly view?: import('./recall-view.ts').RecallViewHandle; readonly owner: boolean; readonly scopeIds: readonly string[] }
 /** ownFlag (LINEAGE-DESIGN-S6 15b, default true): whether the stored owner's note (withheldFromBots) and the caller's flag withhold a line
  * ("own-flag"). The reader door (bot-read.ts) sets it false and reads the committed verdicts the note mirrors. */
 export interface LineageReader { readonly audience: LineageAudience | null; readonly ownFlag?: boolean }
@@ -220,7 +222,9 @@ export type CheckingReason = "no-lineage" | "thread-not-ready" | "pending" | "fo
 export type LineageVerdict =
   | { readonly state: "shown" }
   | { readonly state: "withheld"; readonly reason: DenyReason }
-  | { readonly state: "checking"; readonly reason: CheckingReason };
+  /** `driverRaised`: an engine driver refused the turn itself, with no ledger verdict behind it (the engine did not list or ready Murage's
+   * servers, a capacity or session rule): the engine state, not the context, refused, so it is never proof that a rebuild can succeed. */
+  | { readonly state: "checking"; readonly reason: CheckingReason; readonly driverRaised?: true };
 /** True only for "shown": withheld and checking both keep the text from the engine. */
 export const verdictShows = (verdict: LineageVerdict): boolean => verdict.state === "shown";
 /** The stricter of two verdicts (withheld > checking > shown). */

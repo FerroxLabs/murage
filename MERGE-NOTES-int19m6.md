@@ -23,7 +23,7 @@ The original remerge diffs are `../evidence/conflict-checkahead.diff` and `../ev
 
 ## Verification in progress
 
-New merge checks use `/work/fuigo-builds/tools/it-remote.sh` with `IT_JOB=int19m6`, the job worktree as `IT_W`, `IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`, and network none. At most two owned containers run concurrently, with launches waiting while host load is greater than 60. Tests use only fakes and isolated homes/data. No live app, billable provider or Mac is used.
+New merge checks use `/root/fuigo-builds/tools/it-remote.sh` with `IT_JOB=int19m6`, the job worktree as `IT_W`, `IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`, and network none. At most two owned containers run concurrently, with launches waiting while host load is greater than 60. Tests use only fakes and isolated homes/data. No live app, billable provider or Mac is used.
 
 The final report will record each requested merge/ancestor, every additional conflict hunk, full typecheck results, the complete test coverage inventory, NEW versus base failure identities, isolated fixture evidence, leak guard v2 results, cleanup, and the fast-forward-only push.
 

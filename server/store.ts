@@ -145,6 +145,8 @@ export interface OptionCardData {
   options: string[];
   answered?: string;
   dismissed?: boolean;
+  /** 1021 Retry: the owner's answer did not reach the engine, which still holds the ask ('offered': Send again; 'sending'). */
+  deliveryRetry?: "offered" | "sending";
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
   /** 1.0.4 SL-I I5: the harness's own limit offer (engines that can answer now, with their billing). */
@@ -961,7 +963,9 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       take(copy, fields);
     }
   }
-  const safe = sanitizeDisplayTextUnit(textFields.map(field => field.text));
+  // A reply holding one inline «redacted …» span (the turn policy's own
+  // redaction) is stored with that span, not as a bare marker for the whole row.
+  const safe = sanitizeDisplayTextUnit(textFields.map(field => field.text), undefined, { markerStays: true });
   textFields.forEach((field, i) => { field.target[field.key] = safe[i]; });
   // The unit has already crossed the shared mask on its original bytes.
   // Re-masking a generated marker can turn a scalar label into a wrapped
@@ -1363,9 +1367,9 @@ export interface BotRecord {
   browser?: boolean;
   /** 1.0.9 phone tools: what this bot may ask the owner's phone to do. Absent key = off. Owner-only PATCH (S7). */
   phoneApps?: import("../shared/phone-apps.ts").PhoneApps;
-  /** Native HighLevel grants (HL-S2): which confirmed locations and tools this bot may use, read or propose. Owner-only PUT
-   * /api/highlevel/bots/:botId/access; bound to the bot's role (server/highlevel/access.ts nativeAccessFor). */
-  highlevelAccess?: import("../shared/highlevel.ts").HighLevelBotAccess;
+  /** Stored grants of Murage's own HighLevel (removed in 1.0.20). Kept as stored so a bot save never rewrites them; nothing
+   *  reads them except the one-time moved line (highlevel-moved-notice.ts). Cleanup is a 1.0.21 row. */
+  highlevelAccess?: unknown;
   /** Id of a named browser profile from config.browserProfiles; absent = the
    * bot's own private session. */
   browserProfile?: string;
@@ -2501,6 +2505,7 @@ export class Store {
    * (banked in the same write, so they stay consistent). Messages live in
    * SQLite and are never in this file. */
   private saveBots(bots: BotPermissionWrite<BotRecord[]> = this.bots, options: { defer?: boolean } = {}) {
+    this.observeChiefOffice(bots);
     this.botRosterCounter++; this.memoryRosterCounter++;
     this.recordRevision++;
     if (options.defer && bots === this.bots) { scheduleCoalesced(BOTS_FILE, () => this.saveBotsNow()); return; }
@@ -2617,6 +2622,7 @@ export class Store {
         this.botRosterCounter++; this.memoryRosterCounter++;
         for (const bot of bots) this.indexTaskAssignments(bot);
         this.bots = nextBots; this.groups = nextGroups;
+        this.observeChiefOffice();
         this.turnState.checkpoint(nextBots, turnStateBase);
         // a package's records come with whatever they hold: the pending set looks at their threads once
         try{this.refreshPendingThreads([...bots.flatMap(bot => [bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)]), ...groups.flatMap(group => [group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])]);
@@ -5058,9 +5064,12 @@ export class Store {
     catch (error) {
       if (!(error instanceof RosterPostCommitError)) { this.recordRevision = revision; throw error; }
       for (const live of staged.keys()) { this.publishCommitted(live, error.normalized); this.emit({ type: "bot", botId: live.id }); }
+      // propose-500: the roster as published after a post-commit error is observed too
+      this.observeChiefOffice();
       throw error;
     }
     for (const [live, record] of staged) publishBotRecord(live, record);
+    this.observeChiefOffice();
   }
 
   /** 1.0.13 UX-TRUST-L1B: a level change. The next file is written first and the live record moves only once that returned, so a failed
@@ -5392,6 +5401,22 @@ export class Store {
 
   workspaceChief(): BotRecord | null {
     return this.bots.find((bot) => bot.hidden !== true && !inertBot(bot) && isWorkspaceChief(bot)) ?? null;
+  }
+
+  /** propose-500 (MAIN-RULING 2026-11-22): who holds the owner's Chief office (the visible, not staged workspace Chief)
+   * and how many times the holder has changed in this process. Runtime only. A grant taken under one epoch is void under any
+   * other, so a bot that lost the office and got it back (A -> B -> A, or A -> nobody -> A) does not get its old grant back. The
+   * holder is observed on every roster write (saveBots, with the roster BEING WRITTEN, which a staged change publishes only after
+   * the write returns), again where a roster is published (staged records, the import) and again on every read. A write that
+   * fails after it was observed can raise the epoch with no lasting change: that only voids a grant. */
+  private chiefOfficeSeen: { holder: string | null; epoch: number } = { holder: null, epoch: 0 };
+  private observeChiefOffice(bots: readonly BotRecord[] = this.bots): void {
+    const holder = bots.find((bot) => bot.hidden !== true && !inertBot(bot) && isWorkspaceChief(bot))?.id ?? null;
+    if (holder !== this.chiefOfficeSeen.holder) this.chiefOfficeSeen = { holder, epoch: this.chiefOfficeSeen.epoch + 1 };
+  }
+  chiefOffice(): { holder: string | null; epoch: number } {
+    this.observeChiefOffice();
+    return { ...this.chiefOfficeSeen };
   }
 
   setChiefOfStaff(

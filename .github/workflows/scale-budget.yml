@@ -1,0 +1,35 @@
+# Copyright 2026 Ferrox Labs
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Scale budget check. Manual and nightly only: it is NOT part of the default CI path because the
+# rig takes longer than 15 minutes (see scripts/scale/ci-check.sh). Needs the HETZNER_SSH_KEY secret.
+name: scale-budget
+on:
+  workflow_dispatch:
+    inputs:
+      shape: { description: "pr or extreme", default: "pr" }
+  schedule:
+    - cron: "17 3 * * *"
+permissions:
+  contents: read
+jobs:
+  # 2026-10-25: Linux runners are pinned to ubuntu-24.04. ubuntu-latest moved to 26.04, which stays pinned out until
+  # Playwright supports chromium there and the electron no-desktop-session backup test passes on it (1.0.7 follow-up).
+  budget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 600
+    steps:
+      # pinned to commits like every other workflow: this job writes the Hetzner root key (upstream 3a5935956)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ssh key
+        run: |
+          mkdir -p ~/.ssh && umask 077 && printf '%s\n' "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf 'Host hetzner-dsm\n  HostName ${{ secrets.HETZNER_HOST }}\n  User root\n  StrictHostKeyChecking accept-new\n' > ~/.ssh/config
+      - name: run the rig and judge the budgets
+        run: |
+          sudo apt-get install -y zsh >/dev/null
+          label="ci-${GITHUB_RUN_ID}"
+          if [ "${{ inputs.shape || 'pr' }}" = extreme ]; then zsh scripts/scale/baseline.sh "$label" "$GITHUB_SHA" extreme
+          else zsh scripts/scale/ci-check.sh "$label" "$GITHUB_SHA"; fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with: { name: scale-budget, path: scale-out }

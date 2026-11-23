@@ -556,7 +556,7 @@ export function murageOwnsWorkingFolder(cwd: string): boolean {
  * env they do not know, so there is no version floor; an unreadable config
  * leaves its servers alone (fail open). An explicit value already in the
  * environment wins.
- * Rig (build host, opencode 1.15.11, fake model): before = 109 tools (40 the
+ * Rig (Hetzner, opencode 1.15.11, fake model): before = 109 tools (40 the
  * owner's), personal skill, plugin loaded, 20.6k tokens; after = Murage's 69
  * tools, no skill or plugin, 15.3k tokens.
  * The global ~/.config/opencode/AGENTS.md: isolateOpenCodeGlobalInstructions.

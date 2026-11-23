@@ -61,4 +61,14 @@ describe("resourceWaitLabel", () => {
     expect(resourceWaitLabel({ resource: "thread-slot", position: 2 }))
       .toBe("Waiting for a free slot: this bot is already working on three threads");
   });
+
+  // BROWSERQ-1020 (customer-seen on 1.0.19): "1st in line for the browser profile. ... About 252 min."
+  it("never puts a wait of over an hour in minutes", () => {
+    expect(resourceWaitLabel({ resource: "browser", position: 1, estimateMs: 252 * 60_000 }))
+      .toBe("1st in line for the browser profile. Starts by itself when the turns ahead finish.");
+    expect(resourceWaitLabel({ resource: "browser", position: 1, estimateMs: 60 * 60_000 + 1 }))
+      .not.toContain("About");
+    expect(resourceWaitLabel({ resource: "browser", position: 2, estimateMs: 60 * 60_000 }))
+      .toBe("2nd in line for the browser profile. Starts by itself when the turns ahead finish. About 60 min.");
+  });
 });

@@ -30,7 +30,7 @@ while read -r line; do
   # shellcheck disable=SC2086
   systemctl enable $line 2>&1 | grep -v '^Created symlink' || true
 done < /tmp/enables
-# cloud-init's generator does this at boot when a datasource is found (build host, Vultr).
+# cloud-init's generator does this at boot when a datasource is found (Hetzner, Vultr).
 ln -sf /usr/lib/systemd/system/cloud-init.target /etc/systemd/system/multi-user.target.wants/cloud-init.target
 systemctl set-default multi-user.target >/dev/null 2>&1
 

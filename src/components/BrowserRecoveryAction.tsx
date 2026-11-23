@@ -23,5 +23,5 @@ export function BrowserRecoveryAction({botId,code}:{botId:string;code:string}){
  };
  if(!botId)return <span>{t(failure.actionKey)}</span>;
  if(code==='builtin_missing')return <a href="https://github.com/FerroxLabs/murage-releases/releases/latest" target="_blank" rel="noopener noreferrer">{t(failure.actionKey)}</a>;
- return <><button disabled={pending} onClick={()=>void run()}>{t(failure.actionKey)}</button>{error&&<p role="alert">{error}</p>}</>;
+ return <><button className="underline" disabled={pending} onClick={()=>void run()}>{t(failure.actionKey)}</button>{error&&<p role="alert">{error}</p>}</>;
 }

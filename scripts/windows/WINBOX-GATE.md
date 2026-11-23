@@ -161,10 +161,10 @@ successful negative control as part of the release decision.
 From the worktree, with host load at most 60 (one container used):
 
 ```sh
-IT_JOB=afix-winbox-gate IT_W=/work/build/winbox-gate/wt \
-IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh IT_CAP=2 \
+IT_JOB=afix-winbox-gate IT_W=/root/fuigo-builds/swarm-b/winbox-gate/wt \
+IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh IT_CAP=2 \
 IT_BOXES='murage-vt1 murage-vt2' NETARG='--network none' \
-/work/fuigo-builds/tools/it-remote.sh \
+/root/fuigo-builds/tools/it-remote.sh \
   'set -eu; while awk '\''{exit !($1>60)}'\'' /proc/loadavg; do sleep 5; done; node --test scripts/windows/winbox-driver.node-test.mjs scripts/windows/winbox-proof-audit.node-test.mjs'
 ```
 

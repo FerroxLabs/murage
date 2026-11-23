@@ -1,7 +1,6 @@
 import { deliverWipeGuardTerminal, wipeGuardTurnEnvironment } from './murage-exec-wipe.ts';
 import { wipeContextFor, wipeEnvironment } from '../wipe/context.ts';
 import { withHideInherit, stripNodeOptionsExceptHide } from "../../shared/win-hide-child-process.mjs";
-import { highlevelHandlerTools } from "../highlevel/engine-policy.ts";
 import { CLAUDE_NATIVE_SHELL_TOOLS } from './claude-tool-names.ts';
 import { HelperReadEvidence } from './helper-read-evidence.ts';
 import { complete_flag } from '../turn-settle.ts';
@@ -11,8 +10,8 @@ import { markTurnOutside } from '../email/external-marks.ts';
 import { registerBusyloopPayloadSite, fluxRouteFor, registerBusyloopRequestSite } from "../../shared/flux-route.ts";
 import { isTerminal, type Decision } from "../../shared/flux-busyloop.ts";
 import { gatewayBusyLine } from "../limit-continuation.ts";
-import { permissionReplyFits, PERMISSION_REPLY_TOO_LARGE } from '../permission-reply.ts';
-import { holdEnginePermissionReply, guardEngineRelease } from '../decision/provider-release.ts';
+import { permissionReplyFits, PERMISSION_REPLY_TOO_LARGE, OWNER_PERMISSION_REPLY_TOO_LARGE } from '../permission-reply.ts';
+import { settleOversizePermissionReply, guardEngineRelease } from '../decision/provider-release.ts';
 import { deliverNative, type NativeAskSlot } from './native-ask.ts';
 import { recordPostureAck } from './posture-tap.ts';
 import { RequestTransport } from './request-transport.ts';
@@ -176,13 +175,14 @@ import {
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 import { assertFinalEngineEnv, scrubFluxFromSignInEnv } from "../cloud-home/engine-flux-guard.ts";
-import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { createBoundedLineSplitter } from "./bounded-lines.ts";
+import { LINE_FITTED_NOTICE, OVERSIZE_FITTED_ASK_LINE } from "../owner-turn-caps.ts";
 import { registerIntake } from "../harness/intake.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "../permission-pipe.ts";
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
-import { engineClosedLine, mountNeverConnectedLine } from "./stop-copy.ts";
+import { engineClosedLine, mountStopCause, mountStoppedDetails, mountStoppedLine } from "./stop-copy.ts";
 import { createStopGate, GateStopped, type GateEntry, type Verdict } from "./stop-gate.ts";
 import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
@@ -751,7 +751,6 @@ export function claudeMountRecords(keys: readonly string[], connectorKey: string
  * (phone, browser, computer) gets none, and every one of its calls asks through the broker. */
 export function claudeOwnUnaskedTools(builtin: OwnBuiltin, emailMode?: string): string[] {
   const server = OWN_BUILTINS[builtin];
-  if (builtin === "highlevel") return highlevelHandlerTools.map(tool => `mcp__${server}__${tool}`);
   // the email tools only on a turn whose email mount listed them (dark launch: with no mode the list is the build without email)
   return OWN_UNASKED.filter((row) => row.mount === `own:${builtin}`)
     .flatMap((row) => row.tools.filter((tool) => ownToolListedOnTurn(tool, emailMode)).map((tool) => `mcp__${server}__${tool}`));
@@ -966,13 +965,21 @@ export async function createPermissionBroker(opts: {
     // A native socket error (including a proxy exiting during Stop) is not
     // a retained-context lookup failure. The owning transport handles closure.
     conn.on("error", () => {});
-    // The ask proxy runs in the engine's process tree, so its socket is
-    // engine-controlled ingress too (A4). An oversized ask is never parsed:
-    // dropping the connection makes permission-proxy answer every ask on it
-    // with a deny.
+    // The ask proxy runs in the engine's process tree; its asks are framed
+    // by line with no size limit (MAIN-RULING cause22-no-transport-caps).
     const askLines = createBoundedLineSplitter({
       onLine: (line) => handleAskLine(line),
-      onOverflow: () => conn.destroy(),
+      // 1.0.21 group B (design3-fable B R1): an ask past the string limit is never shown on cut text: that one ask gets the
+      // oversize deny on this socket by its id (the proxy resolves only on an answer); never broker-unavailable.
+      onFit: (line) => {
+        if (connectionGeneration !== generation) return;
+        let msg: any;
+        try { msg = JSON.parse(line); } catch { return; }
+        if (!msg || typeof msg !== "object" || msg.t !== "ask" || msg.id === undefined || msg.id === null) return;
+        const kind = msg.kind === "question" ? "answer" : "deny";
+        try { answer(conn, { t: "answer", id: String(msg.id), behavior: kind, message: OVERSIZE_FITTED_ASK_LINE }); }
+        catch (error) { refusedReply(error, "claude.broker.fit"); }
+      },
     });
     conn.on("data", (chunk: Buffer) => askLines.push(chunk));
     const handleAskLine = (line: string) => {
@@ -1712,7 +1719,7 @@ function syncedSkillNames(root: string): string[] {
  *   conflict it can see (managed-mcp.json refusing --strict-mcp-config) is reported to the owner
  *   as CLAUDE_MANAGED_MCP_CONFLICT (claudeLaunchRefusal).
  *
- * Rig evidence (build host stub API, CLI 2.1.280, 2.1.281 and 2.1.295, each case with and without the flags so
+ * Rig evidence (Hetzner stub API, CLI 2.1.280, 2.1.281 and 2.1.295, each case with and without the flags so
  * the baseline proves the marker loads; logs in /root/mb-0161-hz/m102-rig4/logs, rig6 and rig7):
  * user plugin with hooks and a skill, plugins enabled only in personal or project-local
  * settings.local.json, a user hook, a user MCP server, `~/.claude/CLAUDE.md` and `rules/*.md`, a
@@ -2322,7 +2329,7 @@ const CLAUDE_OWNER_ROUTING_2_1_305: ReadonlyArray<{ name: string; prefix?: true;
     { name: "CLAUDE_CODE_PROXY_AUTH_HELPER_TTL_MS", why: "proxy login helper (Nl)" },
 ];
 
-/** 2.1.307 (measured against @anthropic-ai/claude-code-linux-x64@2.1.307 on the build host, diffed with 2.1.305): every set this table was
+/** 2.1.307 (measured against @anthropic-ai/claude-code-linux-x64@2.1.307 on Hetzner, diffed with 2.1.305): every set this table was
  * read from is the same except the untrusted-source refusal list (Ro in 2.1.305, Io in 2.1.307), whose last member NODE_TLS_REJECT_UNAUTHORIZED
  * became the pair NODE_TLS_REJECT_UNAUTHORIZED + BUN_TLS_REFUSE_DISTRUSTED_KEYS. NO_PROXY, no_proxy and the other proxy names
  * stay in that list and out of the project/local settings-env allowlist, exactly as in 2.1.305, so they stay routing names here.
@@ -3018,7 +3025,6 @@ class StartedToolKeys {
   }
   note(threadId: string, turn: string | undefined, key: string): void {
     const slot = this.slot(threadId, turn);
-    if (slot.keys.size >= 512 && !slot.keys.has(key)) slot.keys.delete(slot.keys.keys().next().value!);
     slot.keys.set(key, (slot.keys.get(key) ?? 0) + 1);
     for (const waiter of [...slot.waiters]) if (waiter.key === key) { slot.waiters.delete(waiter); waiter.done(true); }
   }
@@ -3419,6 +3425,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       helperReads?: HelperReadEvidence;
       steerEverWaited?: true;
       bgEverHeld?: true;
+      /** 1.0.21 group B: the owner was told once this turn that one engine line was fitted (cut to the string limit). */
+      lineFitNoticed?: true;
       /** A continuation of an EARLIER turn (a background task's notice, then
        * the model's follow-up) is playing out on this process. Its frames
        * belong to that turn and are dropped until its own result closes it. */
@@ -4660,12 +4668,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.phoneJobs = { ...turn.integrations.phoneJobs };
         allowed.push(...claudeOwnUnaskedTools("phoneJobs"));
       }
-      // native HighLevel (HL-S2, read only): its read tools are pre-allowed; the host checks the grant on every call and
-      // lists no change tool.
-      if (turn.integrations?.highlevel) {
-        mcpServers.highlevel = { ...turn.integrations.highlevel };
-        allowed.push(...claudeOwnUnaskedTools("highlevel"));
-      }
       if (turn.integrations?.browser) {
         mcpServers.browser = claudeBrowserMount(turn);
         allowed.push(...claudeOwnUnaskedTools("browser"));
@@ -4833,7 +4835,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (execShell) {
         // X3 r2 section 2 / r4.5 B6: PROVEN for this spawn (thread flag, refusal memory, managed hooks read at every spawn,
         // shell, C2), and the immediate PROVEN=0 rewrite on the thread's first flag
-        const execCli = await knownClaudeCliVersion(config.cli);
+        let execCli: string | null;
+        try {
+          execCli = await stopGate.step(e, knownClaudeCliVersion(config.cli));
+        } catch (error) {
+          removePrivateTempDir(mcpConfigPath);
+          throw error;
+        }
         const spawnProven = claudeExecSpawnProven({ threadId, cli: execCli, shell: execShell, map: childEnv, cwd, envs: [isolationEnv, handed.env], noLimits: shellNoLimits });
         if (spawnProven.reason) console.info(`claude exec floor thread=${threadId} reason=${spawnProven.reason}`);
         const envFile = writeExecEnvFile(threadId, childEnv, cwd, execShell, spawnProven.proven);
@@ -5715,7 +5723,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         queueMicrotask(() => {
           if (sessions.get(threadId) !== session || !session.turn || session.turn.stopRequested || session.turn.settled) return;
           if (session.turn.submission === null) {
-            turnError({ message: mountNeverConnectedLine(ENGINE) });
+            // 1.0.20 item 5: the card names the real cause; only an app's own native failure blames a connected app.
+            const live = session.turn;
+            const cause = mountStopCause(_nativeError, refusal, live.fenced ?? fencedRefusalRegistry.byGeneration((live.releaseBinding as { identity?: { dispatchGeneration?: string | number } } | null | undefined)?.identity?.dispatchGeneration));
+            turnError({ message: mountStoppedLine(ENGINE, cause), details: mountStoppedDetails(ENGINE, cause) });
             void settle(false, "mcp_unavailable");
           } else closeSession(threadId, "mount-relay-sealed");
         });
@@ -5910,6 +5921,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }
         }
         rememberCompletionProof(threadId, t.turnId, session, session.settleCheck, retireSingleUse);
+        if (ok && !t.stopRequested) session.relay?.reportUnavailable(() => base(threadId, t.turnId), emit);
         endTurn(t.turnId, { ok, stopReason: stopReason as string, ...opts, ...(refusedTurn ? { final: true as const, ...(fenced.lease ? { leaseMode: true as const } : {}) } : {}), extra: { cost, ...(usage ? { usage } : {}), ...(t.toolsUnavailable?.length ? { toolsUnavailable: t.toolsUnavailable } : {}), ...(t.mcpReadiness ? { mcpReadiness: t.mcpReadiness } : {}) } });
         // Teardown also runs when an earlier Stop already installed its proof,
         // or when the bounded proof cache cannot retain another entry.
@@ -6000,6 +6012,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         } catch {
           return;
         }
+        // 1.0.21 group B (ASTRA 1b652749de): a frame is a JSON object; any other value (a fitted line of padding around `null`)
+        // is skipped like a malformed line, never dereferenced, so nothing throws out of the live stdout listener.
+        if (!o || typeof o !== "object" || Array.isArray(o)) return;
         // Startup is confirmed only by a validated signal: the `system`/`init` event, or the
         // control_response that carries OUR initialize request id and succeeded. A banner,
         // keep_alive, any other system frame and an unmatched control_response never count,
@@ -6118,7 +6133,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 const owner = owners.get(taskId);
                 if (owner === t.turnId) return true;
                 if (owner !== undefined || !mayStart) return false;
-                if (owners.size >= 1024) owners.delete(owners.keys().next().value!);
                 owners.set(taskId, t.turnId);
                 return true;
               };
@@ -6214,7 +6228,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }
             for (const b of Array.isArray(msg.content) ? msg.content : []) {
               if (b.type === "tool_use") {
-                if (typeof b.id === "string" && typeof b.name === "string" && toolNameByUse.size < 512) toolNameByUse.set(b.id, b.name);
+                if (typeof b.id === "string" && typeof b.name === "string") toolNameByUse.set(b.id, b.name);
                 const callKey = claudeToolKey(b.name, b.input);
                 emit({ ...base(threadId, currentTurnId()), type: "item.started", itemType: "tool", origin: "engine", itemId: b.id, title: b.name, input: b.input, callKey, ...(startedToolKeys.late(threadId, currentTurnId(), callKey) ? { lateFrame: true } : {}) });
                 // V5: after the item is emitted (its mark is set in that handler), release an ask waiting for it
@@ -6492,9 +6506,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
       };
 
-      // Byte-bounded framing (A4): UTF-8 is decoded per complete line, so a
-      // multibyte character split across reads stays intact, and one frame
-      // never holds more than ENGINE_FRAME_MAX_BYTES of the shared process.
+      // Line framing (A4): UTF-8 is decoded per complete line, so a
+      // multibyte character split across reads stays intact. No frame size
+      // limit (MAIN-RULING cause22-no-transport-caps).
       const stdoutLines = createBoundedLineSplitter({
         onLine: (line) => {
           if (!line.trim()) return;
@@ -6503,17 +6517,37 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // exact context after that operation ends or the process is reused.
           emissionSource.run(session.turn?.sourceContext, () => handleLine(line));
         },
-        onOverflow: (overflow) => {
-          appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: { frameOverflow: overflow } });
-          // The stream is unrecoverable: fail the turn it belongs to (never a
-          // replay — settle() clears the retry budget and the turn), then end
-          // this retained process so no later frame is read out of context.
-          if (session.turn && !session.turn.settled) {
-            turnError({ message: frameOverflowMessage("Claude", overflow) });
-            settle(false, FRAME_TOO_LARGE);
+        // 1.0.21 group B (cause22-eng-design3-fable B, AMEND X6): a line past the string limit, fitted. R1 a control_request is
+        // never run or shown on cut text: a Bash wipe hook is denied, anything else fails by its request_id. R2 any other line
+        // (assistant, result) goes to the same handler; the live turn is marked and told once BEFORE it, so a fitted `result`
+        // that settles the turn still carries the mark. A mark, never a stop.
+        onFit: (line) => {
+          let o: any;
+          try { o = JSON.parse(line); } catch { o = null; }
+          if (o && typeof o === "object" && !Array.isArray(o) && o.type === "control_request") {
+            const requestId = typeof o.request_id === "string" ? o.request_id : null;
+            if (!requestId) return;
+            const binding = session.turn?.releaseBinding ?? null;
+            if (o.request && typeof o.request === "object" && o.request.subtype === "hook_callback") {
+              writeControlResponse(session, threadId, { subtype: "success", request_id: requestId, response: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: OVERSIZE_FITTED_ASK_LINE } } }, binding, "claude.control.fit");
+            } else writeControlResponse(session, threadId, { subtype: "error", request_id: requestId, error: OVERSIZE_FITTED_ASK_LINE }, binding, "claude.control.fit");
+            return;
           }
-          if (sessions.get(threadId) === session) closeSession(threadId, FRAME_TOO_LARGE);
-          if (child.exitCode === null) killCliTree(child);
+          const live = session.turn;
+          if (live && !live.settled) {
+            markTurnOutside(threadId, "outside tool", undefined, undefined, "claude-line-fitted");
+            if (!live.lineFitNoticed) {
+              live.lineFitNoticed = true;
+              const itemId = `line-fit-${live.turnId}`;
+              emit({ ...base(threadId, live.turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: LINE_FITTED_NOTICE, toolKind: "notice" }, live.sourceContext);
+              emit({ ...base(threadId, live.turnId), type: "item.completed", itemId, itemType: "tool", ok: true }, live.sourceContext);
+            }
+          }
+          // ASTRA 629eae4816: a fitted frame can hold values the handler never sees on a whole line (a `null` block in
+          // message.content); whatever it throws is that one fitted frame skipped like a malformed line, never thrown out of this
+          // live listener. A fenced memory refusal is never swallowed: it goes on exactly as from `onLine`.
+          try { if (line.trim()) emissionSource.run(session.turn?.sourceContext, () => handleLine(line)); }
+          catch (error) { if (isMemoryRefusal(error)) throw error; }
         },
       });
       child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
@@ -7385,9 +7419,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const updated = extra.updatedInput && typeof extra.updatedInput === "object" && !Array.isArray(extra.updatedInput) ? (extra.updatedInput as Record<string, unknown>) : undefined;
           if (behavior === "allow" && !broker.allowFits(requestId, updated)) {
             const live = sessions.get(threadId)?.turn;
-            const held = live && holdEnginePermissionReply({ threadId, requestId, turnId: live.turnId, providerInstanceId: instanceId }, PERMISSION_REPLY_TOO_LARGE);
+            const how = live ? settleOversizePermissionReply({ threadId, requestId, turnId: live.turnId, providerInstanceId: instanceId }, PERMISSION_REPLY_TOO_LARGE) : "none";
+            // cause22 caps r3: on the owner's turn the reply cap denies this ONE ask with a fixed note; the engine reads it and the turn goes on
+            if (how === "deny" && broker.answer(requestId, "deny", OWNER_PERMISSION_REPLY_TOO_LARGE)) { askCalls.delete(key); return "rejected"; }
             answerTransport.guardRelease(threadId, requestId, () => false);
-            return held ? "card" : "unavailable";
+            return how === "card" ? "card" : "unavailable";
           }
           if (!broker.answer(requestId, behavior, decision.message, decision.answers, updated)) return "unavailable";
           askCalls.delete(key);

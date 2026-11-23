@@ -8,7 +8,7 @@
 //  2. a backup whose output_publications is the 1.0.2 table restores through 1.0.3's own encrypted backup and restore;
 //  3. the REAL 1.0.2 server writes a data folder, the REAL 1.0.2 backup code encrypts it, 1.0.3 restores it and the real 1.0.3
 //     server starts on it (git archive afbf549ba extracted into the gitignored .v102-ref; skipped without it, like .v101-ref).
-// Test data only (fake engine, throwaway folders). Run in the build host container (hz-test.sh), never on a Mac.
+// Test data only (fake engine, throwaway folders). Run in the Hetzner container (hz-test.sh), never on a Mac.
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";

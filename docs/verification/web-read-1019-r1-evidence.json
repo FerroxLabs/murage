@@ -1,0 +1,412 @@
+{
+  "job": "fix-webread-r1",
+  "base": "406cb286ae22e9cb2b8802d514088cd59b0839aa",
+  "node": "v24.21.0",
+  "testEvidence": {
+    "red": "red.log: 7 behavioral failures",
+    "routingRed": "red-routing-corrected.log: 3 behavioral failures; red-more-routing.log: 2 behavioral failures",
+    "regression": "regression.log: 182 passed; one obsolete exact Qwen argv expectation failed, then corrected",
+    "release": "green-release.log: 20 passed, including all 12 Gemini/Qwen isolation cases",
+    "typecheck": "types-final.log: clean; wrapper exited 0",
+    "initialSetupFailuresAreNotRed": true
+  },
+  "mutants": [
+    {
+      "id": "P1-1-host",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P1-1-control",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P1-2-origin",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P1-2-invalidate",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P1-3-droid",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P1-3-qwen",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P1-3-copilot",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P1-3-opencode",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P1-3-grok",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P1-3-hermes",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P2-timer",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P2-cap",
+      "status": 1,
+      "killed": true
+    },
+    {
+      "id": "P2-source",
+      "status": 1,
+      "killed": true,
+      "evidence": "mutants-source/P2-source.log"
+    },
+    {
+      "id": "P1-4-replay",
+      "status": 1,
+      "killed": true
+    }
+  ],
+  "replay": {
+    "verdict": "FAIL",
+    "sourceLength": 13342,
+    "sourceHash": "3ce3ebf9e317e045ed4f2a380810426c63a5a1e2e67c700606ae41e1ca3523b4",
+    "sourceHashes": {
+      "server/web-documents.ts": "3352078b82999ffd8fb2461a57daa755930b6dc12bf32351e7c6bba73043444f",
+      "server/web-document-budget.ts": "a1e95488bccfb10a512c0c49199002d253901f3546d51e8068c55cd63e9233bc",
+      "server/browser-extension-engine-read.ts": "27e143d9089057bdbc04a311aa70653a8cc74581d762f3eb17150c0ef472ae9e",
+      "server/drivers/browser-proxy.ts": "9dae901bffebc1ee734516b8e577c90ca1512524a7419fcb0ed5746b20ca6250",
+      "server/drivers/acp/droid.ts": "c221d8004ccb950f64a32e9b4a144ecc9fbb40d893156886bd56a22a57aed859",
+      "server/drivers/acp/fuigo.ts": "2aa4ef028f34ba05183289449772cc193e43459298f384f3f47522feaa762bc7",
+      "server/drivers/claude.ts": "756e6d2d810b3fc8726d2a6516a7cc3c5f03e54243d7dce4450b808258144caf",
+      "server/drivers/codex.ts": "bbc3441b995f90e4de26136c8419a38b556fe93419b979d4d37503d181ba40d6",
+      "server/index.ts": "1d65f14b5ebf5b4ff900a907419f9fbd80211cb900a1f793ce9ad2918a6d45ed",
+      "server/testing/fake-web-read.ts": "b09abc2dae7de24ec1e181a6f0d72002a2b9cf3d35f75f9926f0f1dbd3f701cd",
+      "scripts/web-read-replay/run.mjs": "5c3b990d20254c6cf4d92de3b3429a0d85b08034d8fc739368ca7bc35c64ac90"
+    },
+    "engines": [
+      {
+        "id": "verification",
+        "driver": "claudeAgent",
+        "model": "claude-sonnet-5-5",
+        "cli": "fake-claude-cli.ts",
+        "status": "FAIL",
+        "snapshot": {
+          "state": "available",
+          "version": "2.1.295 (Claude Code)",
+          "authenticated": true,
+          "billing": "subscription"
+        },
+        "binarySha256": "5eab45acb7a6fcc36b07522cccba652cf2b27c60779ddcb84633e75017655fb8"
+      },
+      {
+        "id": "fake-codex",
+        "driver": "codex",
+        "model": "gpt-5.6-sol",
+        "cli": "fake-codex-app-server.ts",
+        "status": "FAIL",
+        "snapshot": {
+          "state": "available",
+          "version": "codex-cli 0.147.0",
+          "authenticated": true,
+          "billing": "subscription"
+        },
+        "binarySha256": "533e16060d0e5419de81933c6bc07abf571ee4ec9aca5f1a59d4ee0f17d3cf7a"
+      },
+      {
+        "id": "fake-droid-sol",
+        "driver": "droidAgent",
+        "model": "gpt-5.6-sol",
+        "cli": "fake-acp-cli.ts",
+        "status": "FAIL",
+        "snapshot": {
+          "state": "available",
+          "version": "droid 0.245.0",
+          "authenticated": true
+        },
+        "binarySha256": "643a640a04e58fd2fbbcdf69a0261e28e68f890d5fedebd034b95523a2f67e17"
+      },
+      {
+        "id": "fake-gemini",
+        "driver": "geminiAgent",
+        "model": "gemini-3.1-pro",
+        "cli": "fake-acp-cli.ts",
+        "status": "FAIL",
+        "snapshot": {
+          "state": "available",
+          "version": "gemini 1.0.62",
+          "authenticated": true
+        },
+        "binarySha256": "643a640a04e58fd2fbbcdf69a0261e28e68f890d5fedebd034b95523a2f67e17"
+      },
+      {
+        "id": "fake-fuigo",
+        "driver": "fuigoAgent",
+        "model": "flux-auto",
+        "cli": "fake-acp-cli.ts",
+        "status": "FAIL",
+        "snapshot": {
+          "state": "available",
+          "version": "fuigo 1.0.62",
+          "authenticated": true
+        },
+        "binarySha256": "643a640a04e58fd2fbbcdf69a0261e28e68f890d5fedebd034b95523a2f67e17"
+      }
+    ],
+    "rows": [
+      {
+        "engine": "verification",
+        "verdict": "FAIL",
+        "fetches": 1,
+        "readComplete": true,
+        "textHash": "3ce3ebf9e317e045ed4f2a380810426c63a5a1e2e67c700606ae41e1ca3523b4",
+        "ranges": [
+          {
+            "handle": "w-014db968-479e-486f-a9cc-02a9490ef8a1",
+            "offset": 0,
+            "next_offset": 4000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-014db968-479e-486f-a9cc-02a9490ef8a1",
+            "offset": 4000,
+            "next_offset": 8000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-014db968-479e-486f-a9cc-02a9490ef8a1",
+            "offset": 8000,
+            "next_offset": 12000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-014db968-479e-486f-a9cc-02a9490ef8a1",
+            "offset": 12000,
+            "next_offset": null,
+            "total_length": 13342,
+            "eof": true
+          }
+        ],
+        "commands": {
+          "cd": false,
+          "ls": false,
+          "curl": false,
+          "python": false
+        },
+        "errors": [
+          "engine turn did not complete"
+        ],
+        "cards": 0
+      },
+      {
+        "engine": "fake-codex",
+        "verdict": "FAIL",
+        "fetches": 1,
+        "readComplete": true,
+        "textHash": "3ce3ebf9e317e045ed4f2a380810426c63a5a1e2e67c700606ae41e1ca3523b4",
+        "ranges": [
+          {
+            "handle": "w-d4709f76-5b34-409c-8976-c5064e1bc3b4",
+            "offset": 0,
+            "next_offset": 4000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-d4709f76-5b34-409c-8976-c5064e1bc3b4",
+            "offset": 4000,
+            "next_offset": 8000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-d4709f76-5b34-409c-8976-c5064e1bc3b4",
+            "offset": 8000,
+            "next_offset": 12000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-d4709f76-5b34-409c-8976-c5064e1bc3b4",
+            "offset": 12000,
+            "next_offset": null,
+            "total_length": 13342,
+            "eof": true
+          }
+        ],
+        "commands": {
+          "cd": false,
+          "ls": false,
+          "curl": false,
+          "python": false
+        },
+        "errors": [
+          "missing completed tool events"
+        ],
+        "cards": 0
+      },
+      {
+        "engine": "fake-droid-sol",
+        "verdict": "FAIL",
+        "fetches": 1,
+        "readComplete": true,
+        "textHash": "3ce3ebf9e317e045ed4f2a380810426c63a5a1e2e67c700606ae41e1ca3523b4",
+        "ranges": [
+          {
+            "handle": "w-20854559-2f56-44ce-ad22-591cccd3280d",
+            "offset": 0,
+            "next_offset": 4000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-20854559-2f56-44ce-ad22-591cccd3280d",
+            "offset": 4000,
+            "next_offset": 8000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-20854559-2f56-44ce-ad22-591cccd3280d",
+            "offset": 8000,
+            "next_offset": 12000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-20854559-2f56-44ce-ad22-591cccd3280d",
+            "offset": 12000,
+            "next_offset": null,
+            "total_length": 13342,
+            "eof": true
+          }
+        ],
+        "commands": {
+          "cd": false,
+          "ls": false,
+          "curl": false,
+          "python": false
+        },
+        "errors": [
+          "missing completed tool events"
+        ],
+        "cards": 0
+      },
+      {
+        "engine": "fake-gemini",
+        "verdict": "FAIL",
+        "fetches": 1,
+        "readComplete": true,
+        "textHash": "3ce3ebf9e317e045ed4f2a380810426c63a5a1e2e67c700606ae41e1ca3523b4",
+        "ranges": [
+          {
+            "handle": "w-4abd683d-469e-4676-a2ff-1a4222b556be",
+            "offset": 0,
+            "next_offset": 4000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-4abd683d-469e-4676-a2ff-1a4222b556be",
+            "offset": 4000,
+            "next_offset": 8000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-4abd683d-469e-4676-a2ff-1a4222b556be",
+            "offset": 8000,
+            "next_offset": 12000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-4abd683d-469e-4676-a2ff-1a4222b556be",
+            "offset": 12000,
+            "next_offset": null,
+            "total_length": 13342,
+            "eof": true
+          }
+        ],
+        "commands": {
+          "cd": false,
+          "ls": false,
+          "curl": false,
+          "python": false
+        },
+        "errors": [
+          "missing completed tool events"
+        ],
+        "cards": 0
+      },
+      {
+        "engine": "fake-fuigo",
+        "verdict": "FAIL",
+        "fetches": 1,
+        "readComplete": true,
+        "textHash": "3ce3ebf9e317e045ed4f2a380810426c63a5a1e2e67c700606ae41e1ca3523b4",
+        "ranges": [
+          {
+            "handle": "w-bd879b48-699e-4e04-8782-0fc60d1c3d41",
+            "offset": 0,
+            "next_offset": 4000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-bd879b48-699e-4e04-8782-0fc60d1c3d41",
+            "offset": 4000,
+            "next_offset": 8000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-bd879b48-699e-4e04-8782-0fc60d1c3d41",
+            "offset": 8000,
+            "next_offset": 12000,
+            "total_length": 13342,
+            "eof": false
+          },
+          {
+            "handle": "w-bd879b48-699e-4e04-8782-0fc60d1c3d41",
+            "offset": 12000,
+            "next_offset": null,
+            "total_length": 13342,
+            "eof": true
+          }
+        ],
+        "commands": {
+          "cd": false,
+          "ls": false,
+          "curl": false,
+          "python": false
+        },
+        "errors": [
+          "missing completed tool events"
+        ],
+        "cards": 0
+      }
+    ],
+    "limitation": "Full page reconstruction passes in five offline real-driver launch paths. The first follow-on command is refused by existing policy. No limits acceptance remains OPEN for MAIN after bld8 integration; no policy source changed."
+  },
+  "artifactRoot": "/root/fuigo-builds/swarm-b/bld-webread/wt/.webread-evidence/r1"
+}

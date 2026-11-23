@@ -11,7 +11,11 @@ import {
 import { redactSecretsInText } from "./redact.ts";
 
 export const HIDDEN = "[hidden]";
-const MAX_TEXT = 4 * 1024 * 1024;
+// cause22-E (b) (MAIN-RULING 2026-11-22T17:58:19Z Q4 + 18:02:24Z): page output is not cut at 4 MiB before it is cleaned. The cut
+// dropped the rest of a long page silently, and a page with nothing to remove in its first 4 MiB came back whole with its tail unchecked.
+// NEVER-UNREDACTED floor (MAIN 2026-11-22, ASTRA 0489638c7a): no walk here stops early and returns the rest as it came. The tree walk
+// has no node or depth cutoff, a long attribute is cleaned like a short one, a long URL is cleaned whole; when the walk cannot finish
+// (it throws), the whole output is withheld as HIDDEN by the callers' catch, never passed through.
 
 // ---- values ---------------------------------------------------------------------------------------------------------------------------------
 
@@ -63,7 +67,7 @@ export function redactUrlForOutput(raw: string): string {
   return `${u.protocol}//${u.host}${cleanSegments(u.pathname)}${query}${hash}`;
 }
 
-const URL_IN_TEXT = /\bhttps?:\/\/[^\s<>"'`]{1,4096}/gi;
+const URL_IN_TEXT = /\bhttps?:\/\/[^\s<>"'`]+/gi;
 const TRAILING = /[.,;:!?)\]}]+$/;
 function redactUrls(text: string): string {
   return text.replace(URL_IN_TEXT, match => {
@@ -150,8 +154,7 @@ function redactNumbers(text: string): string {
 
 function redactText(text: string): string {
   if (!text) return text;
-  const t = text.length > MAX_TEXT ? text.slice(0, MAX_TEXT) : text;
-  return redactNumbers(redactLabelled(redactUrls(redactSecretsInText(t))));
+  return redactNumbers(redactLabelled(redactUrls(redactSecretsInText(text))));
 }
 
 // ---- markup ---------------------------------------------------------------------------------------------------------------------------------
@@ -162,10 +165,18 @@ const FIELD_TAGS = new Set(["input", "textarea", "select"]);
 const MARKUP = /<[a-zA-Z!/]/;
 const EXEMPT_ATTRS = new Set(["class", "id", "for", "type", "name", "rel", "lang", "dir", "role", "tabindex", "autocomplete"]);
 
-function textOf(node: HtmlNode): string {
-  if (node.nodeName === "#text") return node.value ?? "";
-  if (["script", "style"].includes(node.tagName ?? "")) return "";
-  return [...(node.childNodes ?? []), ...(node.content ? [node.content] : [])].map(textOf).join(" ");
+/** The text under a node, without script and style. Iterative: a deep tree is read whole, never cut by the call stack. */
+function textOf(root: HtmlNode): string {
+  const parts: string[] = [], pending: HtmlNode[] = [root];
+  while (pending.length) {
+    const node = pending.pop()!;
+    if (node.nodeName === "#text") { parts.push(node.value ?? ""); continue; }
+    if (["script", "style"].includes(node.tagName ?? "")) continue;
+    if (node.content) pending.push(node.content);
+    const children = node.childNodes ?? [];
+    for (let i = children.length - 1; i >= 0; i--) pending.push(children[i]);
+  }
+  return parts.join(" ");
 }
 const attrMap = (node: HtmlNode): Record<string, string> => Object.fromEntries((node.attrs ?? []).map(a => [a.name.toLowerCase(), a.value]));
 
@@ -174,17 +185,17 @@ function cleanTree(root: HtmlNode): boolean {
   let changed = false;
   const byId = new Map<string, HtmlNode>(), labelFor = new Map<string, string[]>();
   const order: { node: HtmlNode; above: string }[] = [];
-  const pending: { node: HtmlNode; above: string; depth: number }[] = [{ node: root, above: "", depth: 0 }];
+  const pending: { node: HtmlNode; above: string }[] = [{ node: root, above: "" }];
+  // Every node is visited: there is no node count or depth at which the walk stops and leaves the rest of the tree as it came.
   while (pending.length) {
-    const { node, above, depth } = pending.pop()!;
-    if (order.length > 400000 || depth > 1024) break;
+    const { node, above } = pending.pop()!;
     order.push({ node, above });
     const tag = (node.tagName ?? "").toLowerCase(), attrs = attrMap(node);
     if (attrs.id && !byId.has(attrs.id)) byId.set(attrs.id, node);
     let inside = above;
     if (tag === "label") { const own = textOf(node); inside = `${above} ${own}`; if (attrs.for) labelFor.set(attrs.for, [...(labelFor.get(attrs.for) ?? []), own]); }
-    for (const child of node.childNodes ?? []) pending.push({ node: child, above: inside, depth: depth + 1 });
-    if (node.content) pending.push({ node: node.content, above: inside, depth: depth + 1 });
+    for (const child of node.childNodes ?? []) pending.push({ node: child, above: inside });
+    if (node.content) pending.push({ node: node.content, above: inside });
   }
   for (const { node, above } of order) {
     const tag = (node.tagName ?? "").toLowerCase();
@@ -230,29 +241,52 @@ function cleanTree(root: HtmlNode): boolean {
       else if (name === "value" && FIELD_TAGS.has(tag)) continue;
       else if (name.startsWith("data-") && (looksLikeSecretName(name) || secretShaped(a.value))) set(a, HIDDEN);
       else if (URL_ATTRS.has(name) && /^https?:\/\//i.test(a.value.trim())) set(a, redactUrlForOutput(a.value.trim()));
-      else if (!EXEMPT_ATTRS.has(name) && a.value.length <= 4000) set(a, redactText(a.value));
+      else if (!EXEMPT_ATTRS.has(name)) set(a, redactText(a.value));
     }
   }
   return changed;
 }
 
+/** Parses and cleans markup. `whole` is false when the parser reported an error: it may then have dropped part of the source
+ * (a duplicate attribute, a stray end tag), so the source string no longer equals what was walked and must not be returned.
+ * MAIN-RULING 2026-11-22T20:41:56Z redact-cutoff: redaction is total or the text is withheld. */
+function cleaned(source: string, run: typeof parse | typeof parseFragment): { tree: HtmlNode; changed: boolean; whole: boolean } {
+  let errors = 0;
+  // A missing doctype drops nothing from the source (the parser only notes it), so a plain page without one is still whole.
+  const tree = (run as (html: string, options: object) => unknown)(source, { onParseError: (error: { code?: string }) => { if (error?.code !== "missing-doctype") errors++; } }) as HtmlNode;
+  return { tree, changed: cleanTree(tree), whole: errors === 0 };
+}
+
 // ---- the exports ----------------------------------------------------------------------------------------------------------------------------
 
-/** The one call for page-derived text. Idempotent, never throws, keeps the shape of the text. Markup is parsed (entities decoded) and cleaned. */
-export function redactPageOutput(content: string, noLimits = false): string {
+/** Page-derived text, cleaned, with its provenance: `withheld` is true only when the PLATFORM replaced the whole text with the
+ * placeholder because it could not be cleaned in full (a parse error, a walk or a cleaner that could not finish). A page that
+ * merely spells the placeholder comes back as text with `withheld` false. MAIN-RULING 2026-11-22T21:44:35Z redact-parse-error (a):
+ * on a parse error the placeholder is returned, never text that only went through the text cleaner (the parser may have dropped
+ * a duplicate attribute or a stray tag from the tree that was walked, so the source no longer equals what was cleaned). */
+export function redactPageOutputChecked(content: string, noLimits = false): { text: string; withheld: boolean } {
   // Only authorized model payloads opt out; diagnostics keep the default redaction.
-  if (noLimits === true) return content;
-  if (typeof content !== "string") return "";
-  if (!content) return content;
+  if (noLimits === true) return { text: content, withheld: false };
+  if (typeof content !== "string") return { text: "", withheld: false };
+  if (!content) return { text: content, withheld: false };
   try {
     if (MARKUP.test(content)) {
-      const fragment = parseFragment(content.length > MAX_TEXT ? content.slice(0, MAX_TEXT) : content) as unknown as HtmlNode;
-      return redactText(cleanTree(fragment) ? serialize(fragment as never) : content);
+      // Page TEXT that only looks like markup keeps its shape (a name, a line of prose with "<b>"): when the tree needed no change
+      // and the parser reported no error, the text itself is returned, and all of it goes through the text cleaner below.
+      const { tree, changed, whole } = cleaned(content, parseFragment);
+      if (!whole) return { text: HIDDEN, withheld: true };
+      return { text: redactText(changed ? serialize(tree as never) : content), withheld: false };
     }
-    return redactText(content);
+    return { text: redactText(content), withheld: false };
   } catch {
-    return HIDDEN;
+    return { text: HIDDEN, withheld: true };
   }
+}
+
+/** The one call for page-derived text. Idempotent, never throws, keeps the shape of the text. Markup is parsed (entities decoded) and cleaned;
+ * text that could not be cleaned in full is the placeholder alone (redactPageOutputChecked). */
+export function redactPageOutput(content: string, noLimits = false): string {
+  return redactPageOutputChecked(content, noLimits).text;
 }
 
 /** Deep copy of a diagnostic record with every string (and every key) run through redactPageOutput; a secret-named field loses its value. */
@@ -277,10 +311,14 @@ export function redactPageOutputDeep(value: unknown, depth = 0, seen = new WeakS
 }
 
 /** Raw HTML as the bot may see it: hidden and secret field values, hidden elements, inline script data, comments, data: URLs and srcdoc removed,
- * and the decoded text and attributes cleaned. Returns the original string untouched when there was nothing to remove. */
+ * and the decoded text and attributes cleaned. Returns the original string untouched when there was nothing to remove. Markup the
+ * parser could not keep (a parse error) is left out and the output ends with the withheld marker. */
 export function sanitizeRawHtml(html: string): string {
   try {
-    const document = parse(html.length > MAX_TEXT ? html.slice(0, MAX_TEXT) : html) as unknown as HtmlNode;
-    return cleanTree(document) ? serialize(document as never) : html;
-  } catch { return redactPageOutput(html); }
+    const { tree, changed, whole } = cleaned(html, parse);
+    if (!changed && whole) return html;
+    // MAIN-RULING 2026-11-22T20:41:56Z redact-cutoff: source the parser dropped is never returned, and the reader says so: the
+    // cleaned tree (all of it was walked) is followed by the plain withheld marker on a line of its own.
+    return whole ? serialize(tree as never) : `${serialize(tree as never)}\n${HIDDEN}`;
+  } catch { return HIDDEN; } // the walk or the serializer could not finish: nothing of the page is returned unchecked
 }

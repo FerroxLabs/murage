@@ -13,6 +13,8 @@ export function decide(_handle: RequestHandle, _base: BaseVerdictFn): Outcome { 
 export function presentApproval(_ref: ApprovalRef, _view: ApprovalView): Promise<void> { return implementation.presentApproval(_ref, _view); }
 export function attachQueue(_ref: ApprovalRef, _queue: QueueAttachment): void { return implementation.attachQueue(_ref, _queue); }
 export function answerApproval(_ref: ApprovalRef, _answer: ApprovalAnswer): Promise<void> { return implementation.answerApproval(_ref, _answer); }
+/** 1021 Retry (RETRY-DESIGN-r2): re-send the stored answer of a delivery-failed engine card through the release gate. */
+export function retryDelivery(_ref: ApprovalRef): Promise<Awaited<ReturnType<typeof implementation.retryDelivery>>> { return implementation.retryDelivery(_ref); }
 export function onLevelChange(_botId: string): Promise<void> { return implementation.onLevelChange(_botId); }
 export function installProvenanceReader(_reader: ProvenanceReader): void { return implementation.installProvenanceReader(_reader); }
 export function installDenySources(_sources: DenySources): void { return implementation.installDenySources(_sources); }

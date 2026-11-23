@@ -580,10 +580,6 @@ export interface SendTurnInput {
     /** The owner's own phone (calendar, reminders, ...) through the harness, only for a turn that holds a live phone authority (1.0.9).
      * Mounted under the server name "phoneJobs"; never the ADB "phone" server above. */
     phoneJobs?: { command: string; args: string[]; env: Record<string, string> };
-    /** Native HighLevel CRM (HL-S2, GAP-HIGHLEVEL-109): a stdio proxy (server/drivers/highlevel-proxy.ts) to the
-     * harness's /api/internal/highlevel/mcp with a per-turn internal token. Mounted under the server name "highlevel"
-     * only for a direct owner turn whose bot holds a native grant on a confirmed location. */
-    highlevel?: { command: string; args: string[]; env: Record<string, string> };
     /** The app's built-in browser: an MCP proxy (server/drivers/browser-proxy)
      * that forwards to the Electron-owned WebContentsView the Browser tab
      * shows. One tab per bot, in its own persistent session partition. */
@@ -723,7 +719,12 @@ export type GateTapEvent =
 
 /** Strict S3 capability carried through the live ProviderInstance registry. */
 export type DecisionProviderAdapter = Pick<ProviderAdapter<RequestDelivery>,
-  'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'>;
+  'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'> & {
+  /** 1021 Retry: this exact ask is still open in its live generation, unresolved and undelivered. */
+  canRedeliver?(threadId: ThreadId, requestId: string): boolean;
+  /** 1021 Retry: close the failed answer slot and open a fresh one for the next respond (same tick). */
+  rearmRetry?(threadId: ThreadId, requestId: string): boolean;
+};
 
 /** Existing adapters retain their BASE return type until S3 migrates them.
  * S3 implements ProviderAdapter<RequestDelivery>; its fourth argument is
@@ -1132,7 +1133,8 @@ export type ScanResult = Readonly<{ text: string; detected: boolean; exhausted: 
 export type TextCarrier = Readonly<{ path: ManifestPath; stream: HostStreamKey; mode: 'delta' | 'whole' | 'snapshot'; text: string }>;
 export type ManifestBatch = Readonly<{ envelope: HostEnvelope; variant: ManifestVariant; carriers: readonly TextCarrier[]; controls: TrustedControlFacts; terminal?: 'complete' | 'cancel' | 'exit' }>;
 export type SafeTextOperation = Readonly<{ path: ManifestPath; stream: HostStreamKey; regionId: HostRegionId; revision: number; op: 'append' | 'replace' | 'omit'; text: string; speech: 'append' | 'none' }>;
-export type PolicyDecision = Readonly<{ masked: boolean; exhausted: boolean; operations: readonly SafeTextOperation[] }>;
+/** withheld: some text of this turn was withheld UNSCANNED (BLIND chain or unredactable field): not masked, yet its raw text is not proven clean. */
+export type PolicyDecision = Readonly<{ masked: boolean; exhausted: boolean; operations: readonly SafeTextOperation[]; withheld?: boolean }>;
 export interface TurnTextPolicy {
   admit(cap: TurnAdmission): void;
   consume(cap: TurnAdmission | undefined, batch: ManifestBatch): PolicyDecision;

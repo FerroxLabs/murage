@@ -2,7 +2,6 @@ import { t } from "@/lib/i18n";
 import { SEND_KEYS, chooseSendKey, currentSendKey, isMacPlatform, sendKeyName, subscribeSendKey } from "@/lib/send-key";
 import { useEffect, useRef, useState, useSyncExternalStore, } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
-import { ANALYTICS_NOT_SAVED, analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { localeChoices } from "@/locales";
 import { Card, Switch } from "../../SettingsPrimitives";
 import { cn } from "@/lib/cn";
@@ -79,33 +78,6 @@ export function ProfileFields() {
       {(status === "saving" || status === "saved") && <p role="status" className="text-[12px] text-ink-secondary">{status === "saving" ? "Saving…" : "Saved"}</p>}
       {status === "error" && <div role="alert" className="text-[12px] text-danger">{error} <button type="button" onClick={() => void save()} className="rounded px-1 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Retry save</button></div>}
     </div>
-  );
-}
-
-/** Usage analytics, on by default and switchable here. Naming what is sent
- * matters more than the switch: people who cannot see the scope assume the
- * worst, and the worst — conversation text — is exactly what this never
- * sends (autocapture is off; see lib/analytics.ts). */
-export function AnalyticsRow() {
-  const [on, setOn] = useState(analyticsEnabled);
-  // A choice that could not be saved shows as such, never as a switch that stuck.
-  const [unsaved, setUnsaved] = useState(false);
-  const choose = (next: boolean) => {
-    setUnsaved(!setAnalyticsEnabled(next));
-    setOn(next);
-  };
-  return (
-    <Card
-      title="Usage analytics"
-      subtitle="Product events and counts use a stored anonymous identifier. PostHog also sees your IP address. Never conversations, prompts, file contents, file paths, or bot output, and never your name or email."
-    >
-      <Switch
-        checked={on}
-        data-setting-control="analytics-heading" aria-label="Send usage analytics"
-        onClick={() => choose(!on)}
-      />
-      {unsaved && <div role="alert" className="mt-2 text-[12px] text-danger">{ANALYTICS_NOT_SAVED} <button type="button" onClick={() => choose(on)} className="rounded px-1 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Try again</button></div>}
-    </Card>
   );
 }
 

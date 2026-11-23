@@ -11,6 +11,7 @@ import fs, { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boundaryStore } from "./boundary-ports.ts";
 import { botRows, botViewer, doorEgress } from "./bot-read.ts";
@@ -25,16 +26,18 @@ import { handoffReplyId, owedReplyOf, replayOwedReply } from "./handoff-reply.ts
 import { closeMessageDb } from "./message-db.ts";
 import { ownerDeletedThread, recordOwnerDeletion } from "./owner-deletions.ts";
 import { denyLookup } from "./memory/deny-read.ts";
+import { COPY_ORIGINS } from "./memory/lineage-types.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import { addTurnParents, closeTurnLineage, openTurnLineage } from "./memory/lineage-write.ts";
 import { drainRevokeMarker, INLINE_REVOCATION } from "./memory/memory-revocation.ts";
 import { capturedMessageVerdict, copyOriginVerdict } from "./memory/replay-lineage.ts";
 import { commitRevoke } from "./memory/revoke-commit.ts";
 import { configureStatusRoster, outboundWords, status, type Outbound } from "./murage-status.ts";
-import { configureResultEgress, writetimeLinesShown, type ResultEgressDeps } from "./result-egress.ts";
+import { configureResultEgress, writetimeLinesShown, type ReleasedResult, type ResultEgressDeps } from "./result-egress.ts";
 import { WorkerText } from "./released-text.ts";
 import { ROOM_REPLY_CHECKING, ROOM_REPLY_WITHHELD } from "./room-context.ts";
 import { Store, type BotRecord, type Message } from "./store.ts";
+import { handoffLinkGroups, handoffReplyCopyOf, releaseHandoffLink, turnReplyCopyOf } from "./turn-reply-copy.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const WORDS_A = "RBA cash rate 3.60 percent, last changed 2026-02-18, rba.gov.au (RESEARCHER_A_WORDS)";
@@ -159,7 +162,7 @@ function world(options: { waitMs?: number } = {}) {
   const botReads = (message: Message) => botRows(database(), botViewer(leader.id), leader.threadId, [message], { audience: { owner: true, scopeIds: [] }, ownerOwnChat: true }).map(r => r.text).join("\n");
   const verdictOf = (bot: BotRecord, messageId: string) => denyLookup(database(), { threadId: bot.threadId, lines: [{ messageId, author: "generated" }] }, { audience: { owner: true, scopeIds: [] } }, { ownerOwnChat: true }).get(messageId);
   const mirrored = () => (comms.reply.mock.calls as unknown[][]).map(call => outboundWords(call[1] as Outbound));
-  return { store, leader, a, ports, marked, comms, time, checks, hurried, fault, reply, heldReply, startedRow, finish, row, botReads, verdictOf, wakeCalls, asked, saved, check, mirrored };
+  return { store, leader, a, ports, deps, marked, comms, time, checks, hurried, fault, reply, heldReply, startedRow, finish, row, botReads, verdictOf, wakeCalls, asked, saved, check, mirrored };
 }
 
 /** An install-wide pending window: a revoke with a root marks every generated line written after it "checking" until the marker has walked it. */
@@ -333,6 +336,50 @@ it("a reply the gate is still checking is waited for: nothing is written or woke
   expect(w.mirrored().join("\n")).not.toContain(CHECKING);
 });
 
+/** The server's own finalizeDelegationWatch (index.ts), run over this world's ports: the wiring the shipped build uses, not a hand-built port set. */
+function shippedFinalizer(w: ReturnType<typeof world>) {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+  let node: ts.FunctionDeclaration | undefined;
+  const visit = (n: ts.Node) => { if (ts.isFunctionDeclaration(n) && n.name?.text === "finalizeDelegationWatch") node = n; else ts.forEachChild(n, visit); };
+  visit(ast);
+  expect(node, "index must define finalizeDelegationWatch").toBeDefined();
+  const p = w.ports;
+  const env: Record<string, unknown> = {
+    runFinalizeDelegationWatch, WorkerText, rows: p.rows, askerWakePort: p.askerWake, boundaryCommsPort: p.comms, delegationSource: p.delegationSource,
+    delegationWatch: p.delegationWatch, finalizingDelegations: p.finalizingDelegations, handoffRequestId: p.handoffRequestId,
+    markTaskContextExternallyUpdated: p.markTaskContextExternallyUpdated, completeRoomAsk: p.completeRoomAsk, afterRoomCompletion: p.afterRoomCompletion,
+    boundaryOwedReply: p.owedReply, boundaryStoreView: p.store, hurryDelegatedReplyCheck: p.hurryReplyCheck, delegatedReplyChecks: w.checks,
+    ownerDeletedThread, database,
+  };
+  const code = ts.transpileModule(`${node!.getText(ast)}; return finalizeDelegationWatch;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  return new Function(...Object.keys(env), code)(...Object.values(env)) as (threadId: string, succeeded: boolean, recordedReply?: string, failure?: unknown, stopped?: boolean, recordedCopyOf?: Message["copyOf"]) => boolean;
+}
+
+it("1.0.20: through the server's own finalizer, a delegated reply held while memory is checked never posts the no-answer placeholder to the asker; it waits and is delivered when checking clears", () => {
+  const w = world();
+  const finalize = shippedFinalizer(w);
+  w.asked("task-s");
+  const replyA = w.heldReply(w.a, WORDS_A);
+  expect(w.verdictOf(w.a, replyA.id)).toEqual({ state: "checking", reason: "pending" });
+  w.ports.delegationWatch.set(w.a.threadId, { toBotId: w.a.id, toBotName: w.a.name, taskId: "task-s", sourceThreadId: w.leader.threadId });
+  expect(finalize(w.a.threadId, true, replyA.text ?? "", undefined, false, { threadId: w.a.threadId, messageIds: [replyA.id] })).toBe(true);
+  // the asker's conversation shows no bubble at all while the check runs: never the internal placeholder
+  const leaderText = () => w.store.messagesFor(w.leader.threadId).map(m => m.text ?? "").join("\n");
+  expect(leaderText()).not.toContain(NO_ANSWER);
+  expect(w.row("task-s")).toBeUndefined();
+  expect(findDelegationReceipt("task-s")).toBeFalsy();
+  expect(w.wakeCalls).toEqual([]);
+  expect(w.checks.has("task-s")).toBe(true);
+  // checking clears: the next re-check delivers the real reply once
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  w.time.advance(DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  const row = w.row("task-s")!;
+  expect(row.text).toContain(WORDS_A);
+  expect(w.wakeCalls).toEqual([`task-s:${row.id}`]);
+  expect(leaderText()).not.toContain(NO_ANSWER);
+});
+
 it("a reply still checking when the wait runs out ends with a line that names the worker and where the words are: final, one wake, read by bots, the words in no store, the room told the same", async () => {
   const w = world();
   const pair = w.store.createGroup("Pair room", [w.leader.id, w.a.id]);
@@ -394,6 +441,311 @@ it("a clean reply is delivered at the turn's end as before: no wait, no hurry", 
   expect(w.hurried).not.toHaveBeenCalled();
   expect(w.botReads(w.row("task-c")!)).toContain("RESEARCHER_A_WORDS");
   expect(w.wakeCalls).toEqual([`task-c:${handoffReplyId("task-c")}`]);
+});
+
+// 1.0.21 cause15 (rig-realsize RED item 2): a long delegated turn writes a text line at every step, and the hand-off's result named every
+// one of them as its originals. A copy may name at most COPY_ORIGINS (64) anywhere in the lineage, so a turn with more read "checking" for
+// good in the result gate (its walk gave up): no memory check was owed, the 180 s wait could not clear it, and the asker got the no-answer
+// line. The finalizer now judges every line of the turn in groups the gate can walk and the delivered copy names the newest lines up to
+// the bound (turn-reply-copy.ts releaseHandoffLink).
+// r2 (Astra BLOCK on 582d6c8b11 + this lane's own review): the first fix shortened the link BEFORE the gate saw it, choosing the lines
+// with a lookup of its own; the tests below that pinned the shortened link's shape now pin the whole link handed over and the outcome.
+/** One worker turn that writes `count` text lines (a step line each, then the final words): every line carries the turn's id and lineage. */
+function longTurn(w: ReturnType<typeof world>, count: number, options: { parents?: Parameters<typeof addTurnParents>[1]; midTurn?: () => void } = {}) {
+  const turnId = `turn-long-${count}-${Math.random().toString(36).slice(2)}`;
+  const turn = openTurnLineage(database(), { threadId: w.a.threadId, turnId });
+  if (options.parents?.length) addTurnParents(turn, options.parents);
+  options.midTurn?.();
+  const lines = Array.from({ length: count }, (_, i) => w.store.appendMessage(w.a.threadId, { role: "bot", kind: "text", turnId, text: i === count - 1 ? WORDS_A : `Step ${i + 1} of ${count - 1} done.` }));
+  closeTurnLineage(turn);
+  return { turnId, lines };
+}
+/** The finalizer at the long turn's end, as the turn engine calls it (index.ts): the last line's words, and the hand-off's link (the same
+ * handoffReplyCopyOf call index.ts makes; the finalizer keeps what it is handed for every re-check). */
+const finishLong = (w: ReturnType<typeof world>, turn: ReturnType<typeof longTurn>, taskId: string) => {
+  w.ports.delegationWatch.set(w.a.threadId, { toBotId: w.a.id, toBotName: w.a.name, taskId, sourceThreadId: w.leader.threadId });
+  const copyOf = handoffReplyCopyOf(w.store, w.a.threadId, turn.turnId);
+  return { copyOf, done: runFinalizeDelegationWatch(w.ports, w.a.threadId, true, { text: new WorkerText(turn.lines.at(-1)!.text ?? ""), present: true }, undefined, false, copyOf) };
+};
+
+it("cause15: the reply of a long delegated turn (121 text lines, the rig's 120 steps) is delivered at the turn's end: no wait, no no-answer line, and the asking bot can read it", () => {
+  const w = world();
+  w.asked("task-long");
+  const turn = longTurn(w, 121);
+  const { copyOf, done } = finishLong(w, turn, "task-long");
+  expect(done).toBe(true);
+  // the finalizer is handed every line of the turn (r2: was the newest 64 only); the delivered copy names the newest 64, the reply last
+  expect(copyOf?.messageIds).toEqual(turn.lines.map(line => line.id));
+  expect(w.row("task-long")!.copyOf?.messageIds).toEqual(turn.lines.slice(-COPY_ORIGINS).map(line => line.id));
+  expect(w.checks.has("task-long")).toBe(false);
+  expect(w.hurried).not.toHaveBeenCalled();
+  const row = w.row("task-long")!;
+  expect(row.text).toContain("RESEARCHER_A_WORDS");
+  expect(row.copyOf?.messageIds.at(-1)).toBe(turn.lines.at(-1)!.id);
+  // the delivered row has its own lineage row (a copy past the bound gets none and reads withheld to every bot)
+  expect(w.verdictOf(w.leader, row.id)).toEqual({ state: "shown" });
+  expect(w.botReads(row)).toContain("RESEARCHER_A_WORDS");
+  expect(w.store.messagesFor(w.leader.threadId).map(m => m.text ?? "").join("\n")).not.toMatch(/no answer|withheld/i);
+  expect(w.wakeCalls).toEqual([`task-long:${handoffReplyId("task-long")}`]);
+});
+
+it("cause15: nothing is left waiting after a long turn's reply: the whole bound passes and no no-answer line is ever written", () => {
+  const w = world();
+  w.asked("task-long2");
+  finishLong(w, longTurn(w, 121), "task-long2");
+  expect(w.time.pending()).toBe(0);
+  w.time.advance(DELEGATED_REPLY_CHECK_WAIT_MS + DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  expect(findDelegationReceipt("task-long2")?.result ?? "").toContain("RESEARCHER_A_WORDS");
+  expect(storesText(w)).not.toContain("still being checked");
+});
+
+it("cause15 privacy: a long turn that read a line the owner then forgot is withheld at once with the withheld line: never delivered, never the no-answer line", () => {
+  const w = world();
+  w.asked("task-long-w");
+  const plan = w.store.appendMessage(w.leader.threadId, { role: "user", kind: "text", text: "the owner's private plan" });
+  const turn = longTurn(w, 121, { parents: [{ kind: "line", threadId: w.leader.threadId, messageId: plan.id }] });
+  commitRevoke(database(), { kind: "line", threadId: w.leader.threadId, messageIds: [plan.id], cause: "forget" });
+  drainRevokeMarker(database());
+  finishLong(w, turn, "task-long-w");
+  expect(w.checks.has("task-long-w")).toBe(false);
+  expect(findDelegationReceipt("task-long-w")).toMatchObject({ result: WITHHELD });
+  expect(w.botReads(w.row("task-long-w")!)).not.toContain("RESEARCHER_A_WORDS");
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+  expect(storesText(w)).not.toContain("still being checked");
+  expect(w.wakeCalls).toEqual([`task-long-w:${handoffReplyId("task-long-w")}`]);
+});
+
+it("cause15 privacy: every named line is judged, not only the reply: the owner's flag on a step line among the named ones withholds the reply", () => {
+  const w = world();
+  w.asked("task-long-m");
+  const turn = longTurn(w, 121);
+  w.store.patchMessage(w.a.threadId, turn.lines[99]!.id, { withheldFromBots: "forgotten" });
+  finishLong(w, turn, "task-long-m");
+  expect(w.checks.has("task-long-m")).toBe(false);
+  expect(findDelegationReceipt("task-long-m")).toMatchObject({ result: WITHHELD });
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+});
+
+it("cause15: a long turn's reply inside a real pending window still waits, and is delivered when the window closes (the wait is for memory, never for size)", () => {
+  const w = world();
+  w.asked("task-long-p");
+  const turn = longTurn(w, 121, { midTurn: openPendingWindow });
+  finishLong(w, turn, "task-long-p");
+  expect(w.checks.has("task-long-p")).toBe(true);
+  expect(w.row("task-long-p")).toBeUndefined();
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  w.time.advance(DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  expect(w.row("task-long-p")!.text).toContain("RESEARCHER_A_WORDS");
+});
+
+it("cause15 privacy: a mark on an OLDER line of the turn, one the newest 64 leave out, still withholds the reply: that line is kept in the link and judged", () => {
+  const w = world();
+  w.asked("task-long-o");
+  const turn = longTurn(w, 121);
+  // line 10 of 121 carries the owner's flag: a real mark the newest 64 lines do not carry
+  w.store.patchMessage(w.a.threadId, turn.lines[9]!.id, { withheldFromBots: "forgotten" });
+  // (r2: this pinned the shortened link's shape, the flagged line moved to its front; the link is whole now and the gate judges line 10 in its group)
+  const { copyOf } = finishLong(w, turn, "task-long-o");
+  expect(copyOf?.messageIds).toHaveLength(121);
+  expect(w.checks.has("task-long-o")).toBe(false);
+  expect(findDelegationReceipt("task-long-o")).toMatchObject({ result: WITHHELD });
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+  expect(storesText(w)).not.toContain("still being checked");
+});
+
+it("cause15: the hand-off's link and an ask's link both name every line of the turn; the fallback without the turn's rows names every reply since the hand-off began", () => {
+  const w = world();
+  const short = longTurn(w, COPY_ORIGINS);
+  expect(handoffReplyCopyOf(w.store, w.a.threadId, short.turnId)?.messageIds).toEqual(short.lines.map(line => line.id));
+  const long = longTurn(w, 121);
+  // an ask's answer joins every line of the turn: every one stays named (the gate judges all the words it delivers)
+  expect(turnReplyCopyOf(w.store, w.a.threadId, long.turnId)?.messageIds).toEqual(long.lines.map(line => line.id));
+  // (r2: the hand-off's link was shortened here, by a lookup; it is whole now and the finalizer judges it in groups)
+  expect(handoffReplyCopyOf(w.store, w.a.threadId, long.turnId)?.messageIds).toEqual(long.lines.map(line => line.id));
+  const since = longTurn(w, 70);
+  const copy = handoffReplyCopyOf(w.store, w.a.threadId, "no-such-turn", since.lines[0]!.at);
+  expect(copy?.messageIds).toEqual(since.lines.map(line => line.id));
+});
+
+// 1.0.21 cause15 r2 (Astra BLOCK on 582d6c8b11, turn-reply-copy.ts:47): keeping an older still-checking line took a place from the newest
+// 64, so a flagged line among them fell out of the link; the re-check reused that shortened link, and once the older check cleared the
+// reply was released though the omitted flag should withhold it. Now the gate judges every line of the turn, in groups, at every run.
+it("cause15 r2: the groups a link is judged in hold every line exactly once, the newest 64 last, none larger than the gate can walk", () => {
+  for (const count of [0, 1, 63, 64, 65, 121, 128, 129, 200, 1000]) {
+    const ids = Array.from({ length: count }, (_, i) => `m${i}`);
+    const groups = handoffLinkGroups(ids);
+    expect(groups.flat()).toEqual(ids);
+    for (const group of groups) expect(group.length).toBeLessThanOrEqual(COPY_ORIGINS);
+    expect(groups.at(-1)).toEqual(ids.slice(-COPY_ORIGINS));
+    if (count > COPY_ORIGINS) expect(groups.at(-1)).toHaveLength(COPY_ORIGINS);
+  }
+  // 65 lines, the oldest still being checked and the next flagged (the blocked case): both are judged, in their groups
+  expect(handoffLinkGroups(Array.from({ length: 65 }, (_, i) => `m${i}`)).map(group => group[0])).toEqual(["m0", "m1"]);
+});
+
+it("cause15 r2: a long link releases only when every group reads text; one withheld, gone, refused or checking group decides, and a held group's words are not carried", () => {
+  const ids = Array.from({ length: 200 }, (_, i) => `m${i}`);
+  const line = status("withheld");
+  const text = (messageIds: string[]): ReleasedResult => ({ kind: "text", text: "T" as never, copyOf: { threadId: "t", messageIds } });
+  const withAnswers = (answer: (group: string[]) => ReleasedResult) => { const asked: string[][] = []; return { asked, result: releaseHandoffLink(ids, group => { asked.push(group); return answer(group); }) }; };
+  // every group text: the newest group's answer, and every line was put to the gate
+  const clean = withAnswers(text);
+  expect(clean.asked.flat()).toEqual(ids);
+  expect(clean.result).toEqual(text(ids.slice(-COPY_ORIGINS)));
+  // one group, any group, not text: never text
+  for (const bad of ["m0", "m70", "m135", "m136", "m199"]) for (const kind of ["withheld", "checking", "gone", "refused", "status"] as const) {
+    const answer = (group: string[]): ReleasedResult => !group.includes(bad) ? text(group)
+      : kind === "withheld" ? { kind, line } : kind === "checking" ? { kind, line, held: { text: "HELD" as never, copyOf: { threadId: "t", messageIds: group } } }
+      : kind === "refused" ? { kind, line, code: "no" } : { kind };
+    const { asked, result } = withAnswers(answer);
+    expect(asked.flat()).toEqual(ids);
+    expect(result.kind).toBe(kind);
+    expect("held" in result).toBe(false);
+  }
+  // withheld in one group wins over checking in another, whichever comes first
+  for (const [held, marked] of [["m0", "m199"], ["m199", "m0"]] as const) {
+    expect(releaseHandoffLink(ids, group => group.includes(marked) ? { kind: "withheld", line } : group.includes(held) ? { kind: "checking", line } : text(group)).kind).toBe("withheld");
+  }
+  // a link the gate can walk in one go is asked about once, whole, and its answer is the answer
+  const once: string[][] = [];
+  const held: ReleasedResult = { kind: "checking", line, held: { text: "HELD" as never, copyOf: { threadId: "t", messageIds: [] } } };
+  expect(releaseHandoffLink(ids.slice(0, COPY_ORIGINS), group => { once.push(group); return held; })).toBe(held);
+  expect(once).toEqual([ids.slice(0, COPY_ORIGINS)]);
+});
+
+/** Every line the gate read (its `message` reader) since the last `take()`, for one world. */
+function gateReads(w: ReturnType<typeof world>) {
+  const read = w.deps.message;
+  let seen = new Set<string>();
+  w.deps.message = (thread, id) => { seen.add(id); return read(thread, id); };
+  return { take: () => { const out = seen; seen = new Set(); return out; } };
+}
+/** 100 lines, then an install-wide pending window opens, then 21 more: only the last 21 are being checked at the turn's end. */
+function turnWithLateWindow(w: ReturnType<typeof world>, turnId: string) {
+  const lineage = openTurnLineage(database(), { threadId: w.a.threadId, turnId });
+  const write = (i: number) => w.store.appendMessage(w.a.threadId, { role: "bot", kind: "text", turnId, text: i === 120 ? WORDS_A : `Step ${i + 1} of 120 done.` });
+  const lines = Array.from({ length: 100 }, (_, i) => write(i));
+  openPendingWindow();
+  for (let i = 100; i < 121; i++) lines.push(write(i));
+  closeTurnLineage(lineage);
+  return { turnId, lines };
+}
+
+it("cause15 r2 privacy: 65 lines inside a pending window (the oldest still being checked), the second one flagged: the reply is withheld, and the window closing never releases it", () => {
+  const w = world();
+  w.asked("task-r2-65");
+  const turn = longTurn(w, COPY_ORIGINS + 1, { midTurn: openPendingWindow });
+  w.store.patchMessage(w.a.threadId, turn.lines[1]!.id, { withheldFromBots: "forgotten" });
+  const reads = gateReads(w);
+  finishLong(w, turn, "task-r2-65");
+  // the gate read every line of the turn, the flagged one included
+  expect(reads.take()).toEqual(new Set(turn.lines.map(line => line.id)));
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+  // the window closes (the older check clears) and any re-check owed runs; then the whole bound passes
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  w.time.advance(DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+  w.time.advance(DELEGATED_REPLY_CHECK_WAIT_MS + DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  expect(w.checks.has("task-r2-65")).toBe(false);
+  expect(findDelegationReceipt("task-r2-65")).toMatchObject({ result: WITHHELD });
+  expect(w.botReads(w.row("task-r2-65")!)).not.toContain("RESEARCHER_A_WORDS");
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+});
+
+it("cause15 r2 privacy: 121 lines inside a pending window, a flagged line among the newest 64: withheld, never released when the window closes", () => {
+  const w = world();
+  w.asked("task-r2-121");
+  const turn = longTurn(w, 121, { midTurn: openPendingWindow });
+  w.store.patchMessage(w.a.threadId, turn.lines[80]!.id, { withheldFromBots: "forgotten" });
+  finishLong(w, turn, "task-r2-121");
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  w.time.advance(DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  w.time.advance(DELEGATED_REPLY_CHECK_WAIT_MS + DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  expect(w.checks.has("task-r2-121")).toBe(false);
+  expect(findDelegationReceipt("task-r2-121")).toMatchObject({ result: WITHHELD });
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+});
+
+it("cause15 r2 privacy: a flagged line among the newest 64 with older lines of the turn still to judge and newer ones being checked: withheld", () => {
+  const w = world();
+  w.asked("task-r2-fit");
+  const turn = turnWithLateWindow(w, "turn-r2-fit");
+  w.store.patchMessage(w.a.threadId, turn.lines[59]!.id, { withheldFromBots: "forgotten" });
+  finishLong(w, turn, "task-r2-fit");
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  w.time.advance(DELEGATED_REPLY_CHECK_WAIT_MS + DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  expect(findDelegationReceipt("task-r2-fit")).toMatchObject({ result: WITHHELD });
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+});
+
+it("cause15 r2 privacy: every re-check judges the whole link again: an older line that read shown at the turn's end, flagged while the hand-off waited, withholds the reply", () => {
+  const w = world();
+  w.asked("task-r2-late");
+  const turn = turnWithLateWindow(w, "turn-r2-late");
+  const reads = gateReads(w);
+  finishLong(w, turn, "task-r2-late");
+  expect(reads.take()).toEqual(new Set(turn.lines.map(line => line.id)));
+  // the newest lines are being checked: the hand-off waits, nothing is written
+  expect(w.checks.has("task-r2-late")).toBe(true);
+  expect(w.row("task-r2-late")).toBeUndefined();
+  // while it waits, the owner flags line 11 (older than the newest 64); then the window closes
+  w.store.patchMessage(w.a.threadId, turn.lines[10]!.id, { withheldFromBots: "forgotten" });
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  w.time.advance(DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  // the re-check read every line again, line 11 included
+  expect(reads.take()).toEqual(new Set(turn.lines.map(line => line.id)));
+  expect(w.checks.has("task-r2-late")).toBe(false);
+  expect(findDelegationReceipt("task-r2-late")).toMatchObject({ result: WITHHELD });
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+});
+
+it("cause15 r2: the same turn with nothing flagged is delivered once the window closes, the copy naming the newest 64 lines", () => {
+  const w = world();
+  w.asked("task-r2-clean");
+  const turn = turnWithLateWindow(w, "turn-r2-clean");
+  finishLong(w, turn, "task-r2-clean");
+  expect(w.checks.has("task-r2-clean")).toBe(true);
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  w.time.advance(DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  const row = w.row("task-r2-clean")!;
+  expect(row.text).toContain("RESEARCHER_A_WORDS");
+  expect(row.copyOf?.messageIds).toEqual(turn.lines.slice(-COPY_ORIGINS).map(line => line.id));
+  expect(w.verdictOf(w.leader, row.id)).toEqual({ state: "shown" });
+});
+
+it("cause15 r2 privacy: an older line only one of the gate's own rules marks (no lookup beside the gate reads it) withholds the reply at once", () => {
+  const w = world();
+  w.asked("task-r2-rule");
+  const turn = longTurn(w, 121);
+  // line 6 of 121, older than the newest 64, rests on a source the owner forgot: a rule of the gate (result-egress.ts step 3), not a line mark
+  w.deps.messageSourceForgotten = (_thread, id) => id === turn.lines[5]!.id;
+  finishLong(w, turn, "task-r2-rule");
+  expect(w.checks.has("task-r2-rule")).toBe(false);
+  expect(findDelegationReceipt("task-r2-rule")).toMatchObject({ result: WITHHELD });
+  expect(w.botReads(w.row("task-r2-rule")!)).not.toContain("RESEARCHER_A_WORDS");
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+});
+
+it("cause15 r2: a long turn whose check never clears is judged whole at every re-check and ends in the no-answer line, never the worker's words", () => {
+  const w = world();
+  w.asked("task-r2-full");
+  const turn = longTurn(w, 121, { midTurn: openPendingWindow });
+  const reads = gateReads(w);
+  finishLong(w, turn, "task-r2-full");
+  let runs = 0;
+  for (let waited = 0; waited < DELEGATED_REPLY_CHECK_WAIT_MS + DELEGATED_REPLY_RECHECK_MS && w.checks.has("task-r2-full"); waited += DELEGATED_REPLY_RECHECK_MS) {
+    expect(reads.take()).toEqual(new Set(turn.lines.map(line => line.id)));
+    runs++;
+    w.time.advance(DELEGATED_REPLY_RECHECK_MS); w.time.fire();
+  }
+  expect(runs).toBeGreaterThan(2);
+  expect(w.checks.has("task-r2-full")).toBe(false);
+  const row = w.row("task-r2-full")!;
+  expect(row.text).toBe(outboundWords(status("no_answer_check_timed_out", { name: w.ports.store.nameOf(w.a.id) })));
+  expect(row.copyOf).toBeUndefined();
+  expect(findDelegationReceipt("task-r2-full")?.resultStatus?.key).toBe("no_answer_check_timed_out");
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
 });
 
 it("a stopped turn whose reply reads checking finalizes at once as before (it restarts nobody)", () => {

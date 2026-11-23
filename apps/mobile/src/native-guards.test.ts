@@ -87,8 +87,8 @@ describe("P3: the Android manifest", () => {
     expect(manifest()).toContain('android:usesCleartextTraffic="false"');
   });
 
-  it("builds on the build host only", () => {
-    const script = read("scripts/android-remote.sh");
+  it("builds on Hetzner only", () => {
+    const script = read("scripts/android-hetzner.sh");
     expect(script).toContain("ssh \"$HOST\"");
     expect(script).toContain("ghcr.io/cirruslabs/android-sdk:35");
     expect(script).not.toMatch(/^\s*\.\/gradlew/m); // gradle only ever runs inside the remote docker command
@@ -1063,7 +1063,7 @@ describe("P21 fix round 1: renderer death, scanner module, config, Back", () => 
   });
 
   it("refuses to build when the synced config leaves CapacitorCookies on (optional 9)", () => {
-    const script = read("scripts/android-remote.sh");
+    const script = read("scripts/android-hetzner.sh");
     expect(script).toContain("android/app/src/main/assets/capacitor.config.json");
     expect(script).toMatch(/CapacitorCookies\.enabled === false[\s\S]{0,400}exit 1/);
   });
@@ -1307,7 +1307,7 @@ describe("Plan 3b A1: Android push project", () => {
     const tracked = [...files("android"), ...files("ios"), ...files("contract"), ...files("scripts")];
     expect(tracked.filter((p) => /google-services\.json$|AuthKey_.*\.p8$|service-account.*\.json$|push-relay\.token$/.test(p))).toEqual([]);
     expect(read(".gitignore")).toContain("android/app/google-services.json");
-    expect(read("scripts/android-remote.sh")).toContain('GS="$HOME/.config/murage-mobile/google-services.json"');
+    expect(read("scripts/android-hetzner.sh")).toContain('GS="$HOME/.config/murage-mobile/google-services.json"');
   });
 });
 

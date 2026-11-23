@@ -31,6 +31,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { execStartExecutable, execStartWord, environmentLine } from "../installer/lib/systemd.mjs";
+import { macBundlePath } from "./mac-install-guard.mjs";
 import { SENTINEL_TRAMPOLINE_FLAG } from "./sentinel-trampoline.mjs";
 
 export const SENTINEL_INTERVAL_SECONDS = 120;
@@ -51,6 +52,11 @@ const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
 const refuse = (code = "SENTINEL_SCHEDULE_REFUSED") => { throw Object.assign(new Error("Sentinel scheduling refused."), { code }); };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const pathFor = platform => (platform === "win32" ? path.win32 : path.posix);
+export const MAC_SENTINEL_PAUSED = "mac-sentinel-paused";
+
+export function usesMacAppBinary(platform, executable) {
+  return platform === "darwin" && (!!process.versions.electron || macBundlePath(executable) !== null);
+}
 
 /** The per-installation OS names. Nothing else is ever created, read or removed. Shipped code reads no gate context
  *  (no environment variable, no helper path): the Windows gate wraps its own copies of this task instead
@@ -397,7 +403,7 @@ function readOwned(file, uid, platform) {
   } finally { if (fd !== undefined) closeSync(fd); }
 }
 
-function ensurePrivateDirs(base, leaf, uid, platform) {
+function ensurePrivateDirs(base, leaf, uid, platform, create = true) {
   // Every directory from `base` down to `leaf` must be real (no link), ours and not writable by others.
   const p = pathFor(platform);
   const rel = p.relative(base, leaf);
@@ -410,7 +416,7 @@ function ensurePrivateDirs(base, leaf, uid, platform) {
   check(current);
   for (const part of rel ? rel.split(p.sep) : []) {
     current = p.join(current, part);
-    try { check(current); } catch (error) { if (error?.code !== "ENOENT") throw error; mkdirSync(current, { mode: 0o700 }); check(current); }
+    try { check(current); } catch (error) { if (!create || error?.code !== "ENOENT") throw error; mkdirSync(current, { mode: 0o700 }); check(current); }
   }
 }
 
@@ -526,6 +532,7 @@ export function createSentinelScheduleProvider({ platform = process.platform, ru
     /** Replaces this installation's registration with `descriptor`'s and starts it. Throws on any refusal. */
     async install(descriptor, descriptorPath) {
       if (!uidOk()) refuse("SENTINEL_OWNER_UNKNOWN");
+      if (usesMacAppBinary(platform, descriptor?.executable?.path)) refuse("SENTINEL_MAC_APP_BINARY_PAUSED");
       const reg = build(descriptor, descriptorPath);
       if (platform === "darwin") {
         const file = reg.files[0];
@@ -557,6 +564,68 @@ export function createSentinelScheduleProvider({ platform = process.platform, ru
       const enable = await command("/usr/bin/systemctl", ["--user", "enable", "--now", `${reg.name}.timer`]);
       if (enable.code !== 0) refuse("SENTINEL_SCHEDULER_REFUSED");
       return reg;
+    },
+    /** Retire the shipped launch agents and fence surviving --watch processes before they can start another scan. */
+    async suspendMac({ boundary, installationId, outputRoot }) {
+      if (platform !== "darwin" || !uidOk()) return false;
+      const agents = path.posix.join(home, "Library", "LaunchAgents");
+      const labels = new Map();
+      const descriptors = new Map();
+      let complete = true;
+      const names = dir => {
+        try {
+          const stat = lstatSync(dir);
+          if (!stat.isDirectory() || stat.uid !== uid || (stat.mode & 0o022)) { complete = false; return []; }
+          return readdirSync(dir);
+        } catch (error) { if (error?.code !== "ENOENT") complete = false; return []; }
+      };
+      const standard = boundary.defaultOutputRoot(installationId, { platform, env: {}, home });
+      for (const parent of new Set([standard, outputRoot].filter(Boolean).map(root => path.posix.dirname(root)))) {
+        for (const id of names(parent)) if (ID.test(id)) descriptors.set(path.posix.join(parent, id, boundary.DESCRIPTOR_FILE), id);
+      }
+      let agentNames = [];
+      try { ensurePrivateDirs(home, agents, uid, platform, false); agentNames = readdirSync(agents); }
+      catch (error) { if (error?.code !== "ENOENT") complete = false; }
+      for (const name of agentNames) {
+        const match = /^com\.ferroxlabs\.murage\.sentinel\.([0-9a-f]{16,64})\.plist$/.exec(name);
+        if (!match) continue;
+        const [, id] = match;
+        const file = path.posix.join(agents, name);
+        let disk;
+        try { disk = parseLaunchdPlist(readOwned(file, uid, platform)); } catch { complete = false; continue; }
+        if (disk?.installationId !== id || !macBundlePath(disk.executable) || disk.args.length !== 3 || disk.args[2] !== "--once") continue;
+        labels.set(id, file);
+        descriptors.set(disk.args[1], id);
+      }
+      for (const [file, id] of descriptors) {
+        const loaded = boundary.loadDescriptor(file, { platform, requireInstallationRoot: false });
+        const saved = `${file}.suspended`;
+        let descriptor = loaded.value;
+        if (!loaded.ok && loaded.reason === "descriptor-missing") {
+          try { descriptor = boundary.validateDescriptor(JSON.parse(readOwned(saved, uid, platform)), platform).value; }
+          catch { /* no readable saved descriptor */ }
+        }
+        if (descriptor?.installationId !== id || descriptor.outputRoot !== path.posix.dirname(file) || !macBundlePath(descriptor.executable.path)) continue;
+        if (!labels.has(id)) labels.set(id, null);
+        // Old watchers re-read this exact filename before each scan. Preserve its contents for recovery.
+        if (loaded.ok) {
+          if (!boundary.ensureOutputRoot(descriptor.outputRoot, { platform, create: false }).ok) { complete = false; continue; }
+          try { renameSync(file, saved); } catch (error) { if (error?.code !== "ENOENT") complete = false; }
+        }
+      }
+      for (const [id, file] of labels) {
+        try {
+          const label = sentinelNames(id).label;
+          const boot = await command("/bin/launchctl", ["bootout", `gui/${uid}/${label}`]);
+          if (boot.code !== 0) {
+            const query = await command("/usr/bin/osascript", ["-l", "JavaScript", "-e", SENTINEL_MAC_QUERY, "--", label]);
+            const job = JSON.parse(query.stdout);
+            if (query.code !== 0 || job?.version !== 1 || job.status !== "absent") { complete = false; continue; }
+          }
+          if (file) unlinkSync(file);
+        } catch (error) { if (error?.code !== "ENOENT") complete = false; }
+      }
+      return complete;
     },
     /** Linux without a user manager: writes the owning-user autostart entry (the host starts this session's supervisor). */
     async installFallback(descriptor, descriptorPath) {
@@ -704,6 +773,7 @@ const sameIdentity = (a, b) => !!a && !!b && a.path === b.path && a.entry === b.
  */
 export async function reconcileSentinelRegistration(deps) {
   const { platform = process.platform, uid = process.getuid?.() ?? -1, installationId, installationRoot, outputRoot, executable, entrySource, provider, boundary, probe } = deps;
+  if (usesMacAppBinary(platform, executable)) return { state: "registration-needed", mechanism: null, revision: null, reason: MAC_SENTINEL_PAUSED };
   const now = deps.now ?? Date.now;
   const p = pathFor(platform);
   const descriptorPath = p.join(outputRoot, boundary.DESCRIPTOR_FILE);

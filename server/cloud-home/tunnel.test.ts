@@ -21,7 +21,7 @@ describe("no inbound service port", () => {
     expect(input).toContain("policy drop");
     expect(input).toContain('iifname "lo" counter accept');
   });
-  it("opens no 80/443 in the build host firewall of a managed-endpoint home", () => {
+  it("opens no 80/443 in the Hetzner firewall of a managed-endpoint home", () => {
     const driver = read("qualify/hz-live.py");
     expect(driver).toContain("rules = [] if managed_endpoint else [");
     expect(driver).toContain('--managed-endpoint');

@@ -6,7 +6,7 @@
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "./counted-fs.ts";
-import { chmodSync, closeSync, fsyncSync, lstatSync, openSync, renameSync, unlinkSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { registerTestHandle } from "./test-handle-registry.ts";
 import { assertFileWriteAdmission } from "./read-only-start.ts";
@@ -108,6 +108,30 @@ export function writeFileAtomic(path: string, data: string | Uint8Array, options
   assertFileWriteAdmission(path);
   writeFileAtomicInner(path, data, options);
   atomicWriteCounts.set(path, (atomicWriteCounts.get(path) ?? 0) + 1);
+}
+
+/** Whether `path` is a plain file (not a link) holding exactly `bytes`, with `mode` where POSIX modes are real. */
+function holdsExactBytes(path: string, bytes: Buffer, mode: number | undefined, platform: NodeJS.Platform): boolean {
+  try {
+    const st = lstatSync(path);
+    if (!st.isFile() || st.size !== bytes.length) return false;
+    if (mode !== undefined && platform !== "win32" && (st.mode & 0o777) !== mode) return false;
+    return readFileSync(path).equals(bytes);
+  } catch { return false; }
+}
+
+/** FUIGO2BOT (1.0.20) r2: `writeFileAtomic` for a file that several bots' children share and may hold open (one
+ *  engine home's config). Windows refuses a rename onto a file another process holds open, so a second bot's launch
+ *  that rewrote the same bytes failed its turn with EPERM. A plain file that already holds exactly `data` is left
+ *  alone (no temp, no rename), and a refused replace is accepted only when the file then holds exactly `data` (two
+ *  first launches racing). Missing or different content is still written, or the refusal thrown. Returns whether it wrote. */
+export function writeFileAtomicUnlessSame(path: string, data: string | Uint8Array, options: WriteFileAtomicOptions = {}): boolean {
+  const bytes = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
+  const platform = options.platform ?? process.platform;
+  if (holdsExactBytes(path, bytes, options.mode, platform)) return false;
+  try { writeFileAtomic(path, bytes, options); }
+  catch (error) { if (holdsExactBytes(path, bytes, options.mode, platform)) return false; throw error; }
+  return true;
 }
 
 function writeFileAtomicInner(path: string, data: string | Uint8Array, options: WriteFileAtomicOptions = {}): void {

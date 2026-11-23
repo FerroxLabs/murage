@@ -161,3 +161,12 @@ it('R3 deleting Antigravity or Pi route decisions makes their sinks RED', async 
     expect(result.errors.some(e => e.startsWith('UNROUTED SINK ' + file + ':')), file).toBe(true);
   }
 }, 120000);
+
+it("R12 no non-model exemption covers the model gateway, the Cloud box agent or any file that registers busy-loop sites", () => {
+  const exempt = JSON.parse(readFileSync("scripts/busyloop-nonmodel.json", "utf8")) as Record<string, unknown>;
+  // The Cloud box agent sends routed Flux prompts and decodes the answer. The gateway translator's SSE decodes are inventoried by the
+  // salvrow-r12 busyloop lane (94164c89a9), which dev/1019-final does not carry yet; its exemption is that lane's to remove.
+  for (const file of ["server/model-gateway.ts", "server/drivers/boxagent.ts"]) expect(Object.keys(exempt), file).not.toContain(file);
+  const marked = Object.keys(exempt).filter(file => /registerBusyloop(?:Request|Payload)Site\(/.test(readFileSync(file, "utf8")));
+  expect(marked, "an exemption suppresses payload-read and classification checks for these files").toEqual([]);
+}, 30000);

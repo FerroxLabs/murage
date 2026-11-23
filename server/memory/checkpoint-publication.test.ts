@@ -266,9 +266,12 @@ function completedTurnJob() {
  const db=database();
  storeAnchorMessage(db,'thread','completed-turn','Completed.');
  captureSource(db,{id:'completed-turn',threadId:'thread',messageId:'completed-turn',turnId:'completed-turn',origin:{kind:'attended'},kind:'turn',speaker:'assistant',outcome:'completed',text:'Completed.'});
- const work=claimMemoryJob('checkpoint-fixture')!;
- expect(work).toBeTruthy();publishMemoryWork(work,'checkpoint-fixture',captureWork(work));
- return work.id;
+ // mem-f6 (1.0.21): a turn's settlement row has nothing for the capture stage to write, so its job is written complete by the capture
+ // itself (no claim, no publish). The fixture reads that job instead of claiming it; it is the same completed job the tests below roll.
+ expect(claimMemoryJob('checkpoint-fixture')).toBeNull();
+ const job=db.prepare("SELECT id,status FROM memory_jobs WHERE source_id='completed-turn' ORDER BY rowid DESC LIMIT 1").get()!;
+ expect(job.status).toBe('complete');
+ return String(job.id);
 }
 it('K-CP-empty: no current evidence clears selection without mutating the old citation or manufacturing a replacement',()=>{
  const db=database(),a=published(captured('message-a','First observation.'));

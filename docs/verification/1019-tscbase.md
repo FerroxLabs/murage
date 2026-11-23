@@ -8,9 +8,9 @@ base returned exit code **0**, with **no diagnostics**:
 
 ```sh
 IT_JOB=tscbase \
-IT_W=/work/build/tscbase/wt \
-IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh \
-/work/fuigo-builds/tools/it-remote.sh \
+IT_W=/root/fuigo-builds/swarm-b/tscbase/wt \
+IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh \
+/root/fuigo-builds/tools/it-remote.sh \
   'node node_modules/typescript/bin/tsc -p tsconfig.server.json --pretty false'
 ```
 
@@ -37,4 +37,4 @@ the server compiler result.
 
 Container logs, the repeat compiler result, targeted test results, and the full
 gate comparison are recorded by the job in
-`/work/build/tscbase/evidence/` and its sibling `DONE` file.
+`/root/fuigo-builds/swarm-b/tscbase/evidence/` and its sibling `DONE` file.

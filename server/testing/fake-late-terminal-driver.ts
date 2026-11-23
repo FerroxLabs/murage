@@ -76,7 +76,7 @@
 //                            then the prompt's own second fence runs. The driver settles the launch attempt (attemptSettled) BEFORE that fence and
 //                            attemptNotWritten after it, in claude.ts's order. Refused there, the turn is entirely unwritten and must rebuild.
 // An uninterrupted turn replies "Hello from late" and completes on its own.
-import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type {
   AnyProviderDriver,
   DriverCreateInput,
@@ -130,6 +130,32 @@ export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {
         if (full.type === "turn.completed") sources.delete(full.turnId ?? "");
       };
       const active = new Map<string, { turnId: string; interrupted: boolean }>();
+      // FAKE_LATE_ASK_GATE: a held turn raises one native ask (request.opened) each time the file's text changes (a round name).
+      // (The test that sets it records the answers itself, by wrapping this adapter's respondToRequest: other tests rewrite that line
+      // of this file by its exact text.) The ask's input is nested deeper than the decision core's bounded projection
+      // reads (32 levels) and ends in a passive probe (a Proxy that only records). The bus's own input accounting
+      // (harness/event-charge.ts) stops at a Proxy with types.isProxy and never enumerates it; a raw copy of the whole input
+      // (decision/wipe-input.ts, Object.keys to depth 128) does. Each enumeration is appended to `<path>.rawread` with the module
+      // that did it (`by`, from the call stack).
+      const askGate = input.environment.FAKE_LATE_ASK_GATE;
+      const asking = new Map<string, string>();
+      const watchAsk = (threadId: string, turnId: string) => {
+        if (!askGate) return;
+        asking.set(threadId, turnId);
+        let last = "";
+        const timer = setInterval(() => {
+          if (asking.get(threadId) !== turnId) { clearInterval(timer); return; }
+          let round = "";
+          try { round = readFileSync(askGate, "utf8"); } catch { return; }
+          if (!round || round === last) return;
+          last = round;
+          const enumeratedBy = () => (new Error().stack ?? "").split("\n").map(frame => /([\w.-]+\.ts):\d+:\d+/.exec(frame)?.[1]).find(file => file && file !== "fake-late-terminal-driver.ts") ?? "unknown";
+          let deep: unknown = new Proxy({}, { ownKeys: () => { appendFileSync(`${askGate}.rawread`, `${JSON.stringify({ round, threadId, by: enumeratedBy() })}\n`); return []; } });
+          for (let level = 0; level < 40; level++) deep = { next: deep };
+          emit({ type: "request.opened", requestType: "permission", requestId: `ask-${round}-${turnId}`, tool: "Bash", summary: "Run a command", toolCall: { name: "Bash", input: { command: "echo fixture-native-ask", deep } }, threadId, turnId } as EmittedEvent);
+        }, 25);
+        timer.unref();
+      };
       return {
         instanceId: input.instanceId,
         driverKind: LATE_TERMINAL_DRIVER_KIND,
@@ -227,6 +253,7 @@ export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {
               // the launch attempt is settled, not withdrawn: the prompt's own fence follows on the same binding (antigravity.ts, attemptSettled)
               turn.attemptSettled?.(attempt);
             }
+            watchAsk(turn.threadId, turnId);
             if (sessionGate && !existsSync(sessionGate)) {
               writeFileSync(`${sessionGate}.waiting`, turnId);
               await waitForFile(sessionGate, 25);
@@ -272,6 +299,7 @@ export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {
             return { turnId };
           },
           interruptTurn: async (threadId) => {
+            asking.delete(threadId);
             const entry = active.get(threadId);
             if (!entry || entry.interrupted) return;
             entry.interrupted = true;

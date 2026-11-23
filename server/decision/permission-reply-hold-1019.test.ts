@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, it } from 'vitest';
 import { fixture, d, baseRun, baseCard, card } from './fixture.ts';
+import * as release from './provider-release.ts';
 import { holdEnginePermissionReply } from './provider-release.ts';
-import { PERMISSION_REPLY_TOO_LARGE } from '../permission-reply.ts';
+import { OWNER_PERMISSION_REPLY_TOO_LARGE, PERMISSION_REPLY_TOO_LARGE } from '../permission-reply.ts';
 const identity={threadId:'t',requestId:'r',turnId:'turn',providerInstanceId:'p'};
 for(const priorCard of [false,true])it(`No limits oversized permission reply keeps a deny-only card: priorCard=${priorCard}`,async()=>{
  const f=fixture(priorCard?'ask':'unlimited');const h=f.open();
@@ -20,4 +21,27 @@ for(const priorCard of [false,true])it(`No limits oversized permission reply kee
  await d.answerApproval(row.ref,{behavior:'allow'});expect(f.respond).not.toHaveBeenCalled();
  await d.answerApproval(row.ref,{behavior:'deny'});expect(f.respond).toHaveBeenCalledOnce();expect(f.respond.mock.calls[0]![1].behavior).toBe('deny');
  expect(d.openApprovals('t')).toEqual([]);expect(f.interrupt).not.toHaveBeenCalled();
+});
+// cause22 caps r3: an owner No limits card (a wipe check) whose changed allow is over the engine's reply cap. The transport below stands
+// in for the Claude driver's three lines (drivers/claude.ts respondToRequest; the real ones run in cause22-owner-caps-reply-1021.test.ts):
+// it asks this layer what the oversize reply becomes; `deny` = it denied that one ask at the broker and the deny landed (accepted),
+// anything else = unavailable (failed). The layer must not interrupt the owner's turn, and the card's record must say deny, not allow.
+it('No limits owner card: a changed allow over the reply cap is recorded as a deny for that one request and the turn is not interrupted',async()=>{
+ const f=fixture('unlimited');const h=f.open('r',{command:'rm -rf ~'});
+ const ref=card(d.decide(h,baseRun));
+ await d.presentApproval(ref,{title:'Wipe check',subtitle:'Before transport'});
+ f.respond.mockImplementation(async(_target,answer)=>{
+  if(answer.behavior!=='allow')return {state:'accepted' as const};
+  const settle=(release as {settleOversizePermissionReply?:(i:typeof identity,line:string)=>string}).settleOversizePermissionReply;
+  const how=settle?settle(identity,PERMISSION_REPLY_TOO_LARGE):holdEnginePermissionReply(identity,PERMISSION_REPLY_TOO_LARGE)?'card':'none';
+  return {state:how==='deny'?'accepted' as const:'failed' as const};
+ });
+ await d.answerApproval(ref,{behavior:'allow'});
+ expect(f.respond.mock.calls.filter(call=>call[1].behavior==='allow'),'the owner allow reached the driver once').toHaveLength(1);
+ expect(f.interrupt,"an allow over the reply cap does not interrupt the owner's turn").not.toHaveBeenCalled();
+ const receipt=d.readApprovalExecution(ref);
+ expect({delivery:receipt.delivery,answer:receipt.answer},'the record says what the engine got: a delivered deny, never an allow').toEqual({delivery:'accepted',answer:{behavior:'deny',message:OWNER_PERMISSION_REPLY_TOO_LARGE}});
+ const texts=f.store.messagesFor('t').filter(m=>m.role==='bot'&&m.kind==='text').map(m=>m.text);
+ expect(texts.filter(text=>text===OWNER_PERMISSION_REPLY_TOO_LARGE),'the owner reads the fixed too-large line once').toHaveLength(1);
+ f.dispose();
 });

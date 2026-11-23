@@ -48,11 +48,14 @@ it('pending debt is owed in runtime, health and existing backlog even with a com
 it('a refused marker does not starve newer debt and each page visits at most two markers with bigint rowids',()=>{
  const first=captured('fixture-first'),second=captured('fixture-second'),third=captured('fixture-third');
  const db=database();db.prepare("UPDATE memory_sources SET state='retired' WHERE id IN (?,?)").run(first.sourceId,second.sourceId);
+ // memv2 E3: one thread's jobs share one marker; the per-job rows this paging is about are an older build's (no thread fields)
+ for(const job of [first,second,third])db.prepare("INSERT OR REPLACE INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) SELECT ?,scope_id,'system','checkpoint-pending',0,'granted',json_object('jobId',j.id,'sourceId',j.source_id,'revision',j.source_revision) FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE j.id=?").run('checkpoint-debt:'+job.jobId,job.jobId);
  const high=9007199254741000n;
  for(const [n,job] of [first,second,third].entries())db.prepare('UPDATE memory_scope_bindings SET rowid=? WHERE id=?').run(high+BigInt(n),'checkpoint-debt:'+job.jobId);
  const sqls:string[]=[];const prepare=db.prepare.bind(db);vi.spyOn(db,'prepare').mockImplementation(sql=>{sqls.push(sql);return prepare(sql);});
  tick();expect(receipts()).toHaveLength(0);expect(state().checkpointCursor).toBe(high+1n);
- tick();expect(receipts()).toHaveLength(1);expect(marker(third.jobId)).toBeUndefined();expect(marker(first.jobId)).toBeTruthy();
+ // the third's roll covers its thread (E3) and drains the thread's refused rows with it (r4: the first stayed, refused at every pass)
+ tick();expect(receipts()).toHaveLength(1);expect(marker(third.jobId)).toBeUndefined();expect(marker(first.jobId)).toBeUndefined();
  tick();expect(state().checkpointCursor).toBe(0n);
  expect(sqls.filter(sql=>sql.includes('ORDER BY rowid LIMIT 2'))).toHaveLength(3);
  expect(sqls.filter(sql=>sql.includes('ORDER BY rowid LIMIT 2')).every(sql=>sql.includes('INDEXED BY memory_bindings_subject'))).toBe(true);

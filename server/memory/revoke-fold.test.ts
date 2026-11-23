@@ -4,7 +4,8 @@
 // 1.0.3 revoke fold (REVOKE-FOLD-DESIGN r3 + r4): the 1.0.2 backlog of audience-only per-receipt jobs is folded into one bulk walk per cohort.
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { commitRevoke, inheritMarks, undoRevoke } from "./revoke-commit.ts";
+import { commitRevoke, INHERIT_CLOSE, inheritMarks, undoRevoke } from "./revoke-commit.ts";
+import { INLINE_REVOCATION } from "./memory-revocation.ts";
 import { holdRevoke, MARKER_STEP_RESERVE, markerSlice, markerWorkPending, setScopeFlowEdgesRecorded } from "./revoke-marker.ts";
 import { foldCohorts, REVOKE_FOLD } from "./revoke-fold.ts";
 import * as foldModule from "./revoke-fold.ts";
@@ -181,12 +182,33 @@ describe("T3 undo", () => {
       expect(n(db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE revoke_id=?", B)).toBe(0);
       refused(B); refused(jobs[1]!);
       // late inheritance onto a pruned B recreates it under B's id; it is still refused, and a later listen never folds it
-      tx(db, () => inheritMarks(db, { kind: "line", threadId: "late", lsn: 4000 }, [], [{ threadId: THREADS[0]!, from: 10, to: 10 }]));
+      // MEMORY V2 V3 (MEMORY-V2-DESIGN 4.3): "An inherit job closes in the write that creates it. ... A walk that does not fit stays queued
+      // exactly as today, window open." First the queued form (INHERIT_CLOSE.inline off: the recreated row stands, as before 1.0.21 and as
+      // a walk that does not fit leaves it), with every assertion this stage made before:
+      INHERIT_CLOSE.inline = false;
+      try { tx(db, () => inheritMarks(db, { kind: "line", threadId: "late", lsn: 4000 }, [], [{ threadId: THREADS[0]!, from: 10, to: 10 }])); } finally { INHERIT_CLOSE.inline = true; }
       expect(db.prepare("SELECT kind FROM memory_revoke_jobs WHERE revoke_id=?").get(B)).toMatchObject({ kind: "inherit" });
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='late' AND lsn=4000 AND revoke_id=?", B)).toBe(1);
       refused(B);
       const other = new DatabaseSync(pathOf(db));
       try { slice(other); expect(n(other, "SELECT count(*) AS n FROM memory_revoke_fold WHERE old_id=?", B)).toBe(0); } finally { other.close(); }
       drainAll(db);
+      refused(B);
+      // then the closed form (V3, the default): the recreated B is walked and finished inside the inheriting write, and its finished row
+      // is pruned again (it is older than the newest job), so no row of B stands after the write. The child's mark is under B all the
+      // same, nothing is left active, and the undo of B is refused exactly as at every other stage.
+      const inlineMs = INLINE_REVOCATION.ms;
+      INLINE_REVOCATION.ms = 1000; // the close is under test, not this machine's clock
+      try { tx(db, () => inheritMarks(db, { kind: "line", threadId: "late", lsn: 4001 }, [], [{ threadId: THREADS[0]!, from: 10, to: 10 }])); } finally { INLINE_REVOCATION.ms = inlineMs; }
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='late' AND lsn=4001 AND revoke_id=?", B)).toBe(1);
+      expect(n(db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE state IN ('active','undoing','seeding')")).toBe(0);
+      expect(n(db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE revoke_id=? AND state<>'done'", B)).toBe(0);
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_pending WHERE revoke_id=?", B)).toBe(0);
+      refused(B);
+      const third = new DatabaseSync(pathOf(db));
+      try { slice(third); expect(n(third, "SELECT count(*) AS n FROM memory_revoke_fold WHERE old_id=?", B)).toBe(0); } finally { third.close(); }
+      drainAll(db);
+      refused(B);
     } finally { fx.close(); }
     const s = storm(4);
     try {

@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { runBrowserExtensionMcp } from "./browser-extension-mcp.ts";
+// MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; RELEASE_LIMITS has no
+// byte budget any more. The exact-cap control below keeps its old value as a plain
+// large count (counted, not refused); the crossing cases seal the budget instead (inherited failures on e1767b8540, proxyOwnerTurn mock gap).
+const OLD_BYTE_BUDGET = 64 * 1024 * 1024;
 const released: any[] = [];
 let refused = false;
 let reserveInput: (bytes: number) => void = () => {};
@@ -72,10 +76,15 @@ it.each(["input", "upstream"] as const)("T-UPSTREAM-BUDGET browser-extension %s 
   const { runBrowserExtensionMcp } = await import("./browser-extension-mcp.ts");
   const cancel = vi.fn(), sourceClosed = vi.fn();
   const request = vi.fn(async () => {
-    f.counter.charge({ bytes: f.budgets.RELEASE_LIMITS.bytes - f.counter.counts.bytes });
+    // MAIN-RULING cause22-no-transport-caps: filling the old byte budget no longer refuses; the upstream row seals the budget here (a
+    // work-limit crossing with no accepted release) so the upstream body's charge is the refused one, as before.
+    try { f.counter.charge({ work: f.budgets.RELEASE_LIMITS.work + 1 }); } catch { /* sealed: the next charge is refused */ }
     return new Response(new ReadableStream({ pull(c) { c.enqueue(Buffer.from('{"tools":[]}')); }, cancel }, { highWaterMark: 0 }));
   });
-  if (row === "input") f.counter.charge({ bytes: f.budgets.RELEASE_LIMITS.bytes });
+  // MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn. Before: the input row filled
+  // the 64 MiB byte cap so the input frame's reservation crossed it. Now: it seals the budget first (a work-limit crossing, stop once) so
+  // the input frame's reservation is the refused charge, still before any parse, fetch or fallback.
+  if (row === "input") expect(() => f.counter.charge({ work: f.budgets.RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
   const input = Readable.from((async function* () {
     try { yield Buffer.from(rpc(1, "tools/list") + "\n"); }
     finally { sourceClosed(); }
@@ -92,13 +101,13 @@ it("T-UPSTREAM-BUDGET browser-extension input and upstream split UTF-8 exact cap
   const f = await upstreamFixture();
   const { runBrowserExtensionMcp } = await import("./browser-extension-mcp.ts");
   const input = Buffer.from(rpc("🙂", "tools/list") + "\n"), body = Buffer.from('{"tools":[],"fixture":"🙂"}');
-  f.counter.charge({ bytes: f.budgets.RELEASE_LIMITS.bytes - input.length - body.length });
+  f.counter.charge({ bytes: OLD_BYTE_BUDGET - input.length - body.length });
   const request = vi.fn(async () => new Response(new ReadableStream({ start(c) {
     for (const byte of body) c.enqueue(Uint8Array.of(byte)); c.close();
   } })));
   await runBrowserExtensionMcp({ config, input: Readable.from([...input].map(byte => Buffer.from([byte]))), fetch: request as typeof fetch });
   expect(released).toEqual([{ jsonrpc: "2.0", id: "🙂", result: { tools: [] } }]);
-  expect(f.counter.counts.bytes).toBe(f.budgets.RELEASE_LIMITS.bytes);
+  expect(f.counter.counts.bytes).toBe(OLD_BYTE_BUDGET);
   expect(f.stop).not.toHaveBeenCalled(); expect(request).toHaveBeenCalledTimes(1);
 });
 
@@ -118,7 +127,9 @@ it("T-UPSTREAM-BUDGET browser-extension input crossing cancels in-flight work", 
     try {
       yield Buffer.from(rpc(1, "tools/list") + "\n");
       await opening;
-      f.counter.charge({ bytes: f.budgets.RELEASE_LIMITS.bytes - f.counter.counts.bytes });
+      // MAIN-RULING cause22-no-transport-caps: the old byte budget no longer refuses; sealing the budget makes the next input frame's
+      // reservation the refused charge, as filling it did before.
+      try { f.counter.charge({ work: f.budgets.RELEASE_LIMITS.work + 1 }); } catch { /* sealed */ }
       yield Buffer.from(rpc(2, "ping") + "\n");
     } finally { closed(); }
   })());
