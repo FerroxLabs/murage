@@ -8,7 +8,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { api, useStore, type Bot, type Message } from "@/state/store";
 import { t } from "@/lib/i18n";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
-import { orderedModelMetadata, modelMetadataReady, subscribeModelMetadata, preloadModelMetadata, type FillableModelRow } from "@/lib/model-metadata";
+import { orderedModelMetadata, modelMetadataRevision, subscribeModelMetadata, preloadModelMetadata, type FillableModelRow } from "@/lib/model-metadata";
 import { OrderedModelOptions } from "./OrderedModelOptions";
 import { pickerModels } from "@/lib/provider-model-picker";
 import { cn } from "@/lib/cn";
@@ -56,7 +56,7 @@ export function backupModelOptions(instance: { models: { options: ReadonlyArray<
 
 /** Bot model section: the engine, and its model, that takes over when this bot's engine hits its limit. */
 export function LimitBackupRow({ bot }: { bot: Bot }) {
-  useSyncExternalStore(subscribeModelMetadata, modelMetadataReady, modelMetadataReady);
+  useSyncExternalStore(subscribeModelMetadata, modelMetadataRevision, modelMetadataRevision);
   useEffect(() => { void preloadModelMetadata(); }, []);
   const { state } = useStore();
   const [error, setError] = useState("");

@@ -6,7 +6,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { RoutineSchedulerNotice, watchRoutineScheduler, SCHEDULER_CHECK_MS } = await import("./RoutineSchedulerNotice");
 
 const flush = () => vi.advanceTimersByTimeAsync(0);

@@ -13,7 +13,7 @@ The resolved binding service retains both intents: reconnect commits `step: null
 
 ## Execution
 
-Artifacts and launch scripts: `/work/fuigo-builds/ks-on-int2/final-r32p/`. Every container launch waits for the integer one-minute load to fall below 60. At most two containers run for this lane. All use `--rm --network none --user 1000:1000`, image `murage-tt-t2-node24`, and labels `owner=mc63`, `purpose=ks-int2`, `expires_at=2026-11-14`. Dependencies are mounted read-only with temporary Vitest caches.
+Artifacts and launch scripts: `/root/fuigo-builds/ks-on-int2/final-r32p/`. Every container launch waits for the integer one-minute load to fall below 60. At most two containers run for this lane. All use `--rm --network none --user 1000:1000`, image `murage-tt-t2-node24`, and labels `owner=mc63`, `purpose=ks-int2`, `expires_at=2026-11-14`. Dependencies are mounted read-only with temporary Vitest caches.
 
 Required commands run against the merged code:
 
@@ -22,9 +22,9 @@ npx tsc -p tsconfig.json --noEmit
 npx tsc -p tsconfig.server.json --noEmit
 npx vitest run server/email/exec-spec/keystore --exclude "**/iter.test.ts" --reporter=json --outputFile=/out/ks.json
 npx vitest run server/email --exclude "**/exec-spec/**" --reporter=json --outputFile=/out/email.json
-GATE_LANE=/work/fuigo-builds/ks-on-int2/final-r32p bash server/email/exec-spec/keystore/gate-rc-d6.sh final
-MUTK_LANE=/work/fuigo-builds/ks-on-int2/final-r32p/mut python3 -u server/email/exec-spec/keystore/mutk.py --selftest
-MUTK_LANE=/work/fuigo-builds/ks-on-int2/final-r32p/mut python3 -u server/email/exec-spec/keystore/mutk.py
+GATE_LANE=/root/fuigo-builds/ks-on-int2/final-r32p bash server/email/exec-spec/keystore/gate-rc-d6.sh final
+MUTK_LANE=/root/fuigo-builds/ks-on-int2/final-r32p/mut python3 -u server/email/exec-spec/keystore/mutk.py --selftest
+MUTK_LANE=/root/fuigo-builds/ks-on-int2/final-r32p/mut python3 -u server/email/exec-spec/keystore/mutk.py
 ```
 
 The d6 gate invokes `GATE_NONCE=<run nonce> DEPTH=6 STATE_CAP=0 PROFILES=<profile> npx vitest run server/email/exec-spec/keystore/iter.test.ts` once each for `ci` and `ci-276`. The mutant runner uses a separate archive of the tested head, restores each mutation, and checks baseline totals before scoring a kill.

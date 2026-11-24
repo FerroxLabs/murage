@@ -6,7 +6,7 @@ import { forgetAllEmailTurns, forgetEmailTurn } from "./email/email-turns.ts";
 import { forgetAllPhoneTurns, forgetPhoneTurn } from "./phone-calls/phone-turns.ts";
 import { assertConsumingBinding, type ConsumingTurnBinding } from "./consuming-turn-response.ts";
 
-export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp" | "device" | "highlevel" | "turn-release";
+export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp" | "device" | "turn-release";
 export type InternalCapability = Readonly<{
   botId: string;
   threadId: string;
@@ -41,8 +41,6 @@ export function requiredInternalKind(path: string): InternalCapabilityKind {
   if (path.startsWith("/api/internal/mcp-remote/")) return "mcp";
   if (path.startsWith("/api/internal/box/v1/")) return "computer";
   if (path.startsWith("/api/internal/device/")) return "device";
-  // the native HighLevel CRM host (GAP-HIGHLEVEL-109 section 5.2)
-  if (path.startsWith("/api/internal/highlevel/")) return "highlevel";
   if (["/api/internal/computer-control", "/api/internal/computer-activity", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path)) return "computer";
   return "agents";
 }
@@ -96,7 +94,7 @@ export class InternalCapabilities {
     if (!owner || owner.id !== input.generation || owner.botId !== input.botId
       || JSON.stringify(owner.humanPrincipal) !== JSON.stringify(input.humanPrincipal)
       || !Number.isInteger(input.depth) || input.depth < 0
-      || !["agents", "connectors", "computer", "memory", "mcp", "device", "highlevel"].includes(input.kind)
+      || !["agents", "connectors", "computer", "memory", "mcp", "device"].includes(input.kind)
       || typeof input.skillAuthoring !== "boolean") throw new Error("invalid internal capability owner");
     const claim: InternalCapability = Object.freeze({ ...input, expiresAt: this.#now() + this.#orphanMs });
     const token = randomBytes(24).toString("hex");
@@ -162,6 +160,16 @@ export class InternalCapabilities {
       views.delete(oldest);
       release();
     }
+  }
+
+  /** Q2 (int-1020q-n1 DECISIONS): a re-validation that replaced an intermediate view releases that one lease, so a live reader holds
+   * its issued view and its latest view, never one lease per past epoch move. */
+  releaseMemoryView(claim: InternalCapability, key: string): void {
+    const views = this.#memoryViews.get(claim);
+    const release = views?.get(key);
+    if (!views || !release) return;
+    views.delete(key);
+    release();
   }
 
   #releaseMemoryViews(claim: InternalCapability): void {

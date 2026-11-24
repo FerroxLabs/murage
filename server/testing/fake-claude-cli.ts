@@ -110,7 +110,7 @@ import { fixtureDumpEnvironment } from "./fixture-dump.ts";
 import { serveToolMailbox } from "../memory/testing/field-tool-mailbox.ts";
 import { fixtureRequested } from "./fixture-request.ts";
 import { fakeReviewReply } from "./fake-review.ts";
-import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv } from "./fake-custom-tool.ts";
+import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv, type CustomToolOutcome } from "./fake-custom-tool.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { replayWebRead } from "./fake-web-read.ts";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
@@ -710,13 +710,23 @@ const playCustomTool = async (name: string, prompt: JsonValue): Promise<void> =>
   } catch {
     server = undefined;
   }
-  const toolUseId = `toolu_fake_custom_${process.pid}_${Date.now()}`;
-  const outcome = server
-    ? await callFirstCustomTool("claude", name, { command: server.command, args: server.args ?? [], env: server.env ?? {} }, promptText(prompt),
-      claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} }), mcpSession(name) ?? undefined)
-    : { tools: [], text: `no ${name} server was mounted`, isError: true };
-  out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: `mcp__${name}__${outcome.tool ?? "unknown"}`, input: {} }] } });
-  out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: outcome.isError, content: outcome.text }] } });
+  // FAKE_CUSTOM_TOOL_REPEAT=N (real-size rig, scripts/rig-realsize): one long multi-step turn, N sequential calls on the
+  // same mounted session, FAKE_CUSTOM_TOOL_STEP_MS apart, each its own tool_use/tool_result as a long No limits turn emits.
+  const steps = Math.min(Math.max(Number(process.env.FAKE_CUSTOM_TOOL_REPEAT) || 1, 1), 500);
+  const stepMs = Math.max(Number(process.env.FAKE_CUSTOM_TOOL_STEP_MS) || 0, 0);
+  let outcome: CustomToolOutcome = { tools: [], text: `no ${name} server was mounted`, isError: true };
+  for (let step = 0; step < steps; step++) {
+    if (step > 0 && stepMs) await new Promise((resolve) => setTimeout(resolve, stepMs));
+    if (step > 0 && !turnRunning) return; // interrupted mid-turn: no more steps
+    const toolUseId = `toolu_fake_custom_${process.pid}_${Date.now()}_${step}`;
+    outcome = server
+      ? await callFirstCustomTool("claude", name, { command: server.command, args: server.args ?? [], env: server.env ?? {} }, promptText(prompt),
+        claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} }), mcpSession(name) ?? undefined)
+      : outcome;
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: `mcp__${name}__${outcome.tool ?? "unknown"}`, input: {} }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: outcome.isError, content: outcome.text }] } });
+    if (steps > 1) out({ type: "assistant", message: { content: [{ type: "text", text: `Step ${step + 1} of ${steps} done.` }] } });
+  }
   out({ type: "assistant", message: { content: [{ type: "text", text: customToolReply(outcome) }] } });
   out({ type: "result", is_error: process.env.FAKE_CUSTOM_TOOL_FAIL_TURN === "1" && outcome.isError, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
   turnRunning = false;
@@ -1045,6 +1055,38 @@ const playTurn = (prompt: JsonValue) => {
     finishIfDone();
     return;
   }
+  // cause22 counts: 513 tool uses still open at once (one over the old 512-entry name table), then the
+  // last one answers with an image; its name is what the driver routes the image by.
+  if (fixtureRequested(promptText(prompt), "__fixture_many_open_tools__")) {
+    out({ type: "system", subtype: "init", session_id: sessionId, model });
+    out({ type: "assistant", message: { content: Array.from({ length: 513 }, (_, i) => ({ type: "tool_use", id: `tu-open-${i + 1}`, name: i === 512 ? "mcp__omarchy__screenshot" : "mcp__omarchy__read", input: { n: i + 1 } })) } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-open-513", is_error: false, content: [
+      { type: "text", text: "captured" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: FIXTURE_TOOL_IMAGE } },
+    ] }] } });
+    out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+    turnRunning = false;
+    finishIfDone();
+    return;
+  }
+  // cause22 counts: 1,025 background helpers open at once (one over the old 1,024-entry owner table); the
+  // first one then completes, then the rest, then the closing follow-up.
+  if (fixtureRequested(promptText(prompt), "__fixture_many_bg_tasks__")) {
+    const ids = Array.from({ length: 1025 }, (_, i) => `bgmany${i + 1}`);
+    const frames: unknown[] = [{ type: "assistant", message: { content: [{ type: "text", text: "Many helpers are reading." }] } }];
+    for (const id of ids) frames.push({ type: "system", subtype: "task_started", task_id: id, tool_use_id: `toolu_${id}`, description: `Helper ${id}`, subagent_type: "Explore", is_backgrounded: true, spawn_depth: 1, task_type: "local_agent" });
+    frames.push({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", terminal_reason: "completed", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 },
+      subagent_stats: { spawned: ids.length, started_in_background: ids.length, completed: 0, failed: 0 } });
+    for (const id of ids) frames.push({ type: "system", subtype: "task_notification", task_id: id, tool_use_id: `toolu_${id}`, status: "completed", output_file: "", summary: `Helper ${id} done` });
+    frames.push({ type: "system", subtype: "init", session_id: "fake-bg-session", cwd: process.cwd(), tools: [], model: "fake" });
+    frames.push({ type: "assistant", message: { content: [{ type: "text", text: "All 1,025 helpers reported." }] } });
+    frames.push({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", terminal_reason: "completed", total_cost_usd: 0, origin: { kind: "task-notification", producer: "session-task" },
+      usage: { input_tokens: 1, output_tokens: 1 }, subagent_stats: { spawned: ids.length, started_in_background: ids.length, completed: ids.length, failed: 0 } });
+    process.stdout.write(frames.map((frame) => JSON.stringify(frame) + "\n").join(""));
+    turnRunning = false;
+    finishIfDone();
+    return;
+  }
   if (fixtureRequested(promptText(prompt), "__fixture_large_frame__")) {
     out({ type: "system", subtype: "init", session_id: sessionId, model });
     out({ type: "assistant", message: { content: [{ type: "text", text: fixtureLargeText() }] } });
@@ -1211,6 +1253,9 @@ const playTurn = (prompt: JsonValue) => {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
     // V5 stall test: write this call's tool_use to stdout once the test touches the file, then note when it was written.
+    // cause22 counts: FAKE_CLAUDE_STARTED_ITEMS=N: N Bash calls (`echo 1` .. `echo N`) are started on stdout, then the turn stays open
+    const startedItems = Number(process.env.FAKE_CLAUDE_STARTED_ITEMS ?? 0);
+    if (startedItems > 0) out({ type: "assistant", message: { content: Array.from({ length: startedItems }, (_, i) => ({ type: "tool_use", id: `toolu_started_${i + 1}`, name: "Bash", input: { command: `echo ${i + 1}` } })) } });
     const itemWhen = process.env.FAKE_CLAUDE_ITEM_WHEN_FILE;
     if (itemWhen) {
       const poll = setInterval(() => {

@@ -107,13 +107,14 @@ it("bounds waiting queries by cancellation and the query cap",async()=>{
   expect(helper.send.mock.calls.some(([message])=>message.type==="query")).toBe(false);
 });
 
-it("lease recovery sweep kept",async()=>{
+// C6 (releaseDeadProcessLeases in jobs.ts): a lease a previous process held is released at start, not after its lease_until.
+it("lease recovery: a previous process's lease is released at start and the job is claimed at once",async()=>{
   enqueue();
   database().prepare("UPDATE memory_jobs SET status='leased',lease_owner='previous',lease_until=?").run(Date.now()+30_000);
   controller.start();
-  await vi.advanceTimersByTimeAsync(29_000);expect(fork).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(2000);
-  expect(database().prepare("SELECT status,lease_owner,lease_generation FROM memory_jobs").get()).toMatchObject({status:"leased",lease_generation:1});
+  // released (generation 1) and claimed again by this process (generation 2), 28 s before the dead lease would have expired
+  expect(database().prepare("SELECT status,lease_owner,lease_generation FROM memory_jobs").get()).toMatchObject({status:"leased",lease_generation:2});
   expect(database().prepare("SELECT lease_owner FROM memory_jobs").get()?.lease_owner).not.toBe("previous");
   expect(fork).toHaveBeenCalledTimes(1);
 });

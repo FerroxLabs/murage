@@ -3,7 +3,6 @@ import { C1_DEFAULT, HERMES_C2, HERMES_VERSION_PIN } from "../../../shared/tool-
 import { HOOK_LOADER, type CanonSet } from "../../hook-canon.ts";
 import { shellArg } from "../../hook-shell-arg.ts";
 import { canonFile, prepareHookCanon } from "../../hook-safety.ts";
-import { highlevelHandlerTools } from "../../highlevel/engine-policy.ts";
 import { NotModelRequest } from "../../../shared/engine-transport.ts";
 import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 import { probeFolder } from "../../probe-folder.ts";
@@ -23,7 +22,7 @@ import { join, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import type { ModelCatalog } from "../../contracts.ts";
-import { writeFileAtomic } from "../../atomic.ts";
+import { writeFileAtomicUnlessSame } from "../../atomic.ts";
 import { quietChildPipes } from "../../child-pipe-quiet.mjs";
 import { killCliTree, spawnCli } from "../../procs.ts";
 import { DATA_DIR } from "../../config.ts";
@@ -109,7 +108,6 @@ export const HERMES_ASK_FREE_TOOLS = C1_DEFAULT;
  *  names Hermes gives them: `mcp__<server, - as _>__<tool>`. Each is one whole name, so a third-party server
  *  whose name only starts like an own one (`murage_memory_evil`) still asks, and so does every OWN_ALWAYS_ASK tool. */
 export const HERMES_OWN_UNASKED_TOOLS: readonly string[] = OWN_UNASKED.flatMap((row) => {
-  if (row.mount === "own:highlevel") return highlevelHandlerTools.map(tool => `mcp__highlevel__${tool}`);
   const server = OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin].replace(/-/g, "_");
   return row.tools.map((tool) => `mcp__${server}__${tool}`);
 });
@@ -326,9 +324,10 @@ export function fluxHermesHome(env: Record<string, string | undefined>): string 
 /**
  * Write the scoped `config.yaml` and return the directory to set as HERMES_HOME.
  *
- * Regenerated on EVERY flux-routed spawn (Wayland hermesConfig.ts:47 does the
+ * Checked on EVERY flux-routed spawn (Wayland hermesConfig.ts:47 does the
  * same) so a rotated key can never be served from a stale file, and so a
- * half-written home from a crashed run cannot survive.
+ * half-written home from a crashed run cannot survive: anything but the exact
+ * bytes is rewritten.
  *
  * It holds NO tier. Every Flux Hermes bot shares this one file and Hermes
  * re-reads it through an mtime cache, so a `model.default` here was last
@@ -389,7 +388,9 @@ export function materializeFluxHermesHome(
   ].join("\n");
   // Hermes is not in a Cloud home's engine manifest, and the launcher renders no Hermes config.
   if (process.env.MURAGE_CLOUD_ROLE === "home") throw new Error(cloudHomeCopy.hermesOnHome);
-  writeFileAtomic(join(dir, "config.yaml"), text, { mode: 0o600 });
+  // FUIGO2BOT r2: every Flux Hermes bot's child reads this one file and may hold it open; Windows refuses a rename onto
+  // it then. The same bytes are left in place, so a second bot's launch never fails on a rewrite that changes nothing.
+  writeFileAtomicUnlessSame(join(dir, "config.yaml"), text, { mode: 0o600 });
   return dir;
 }
 
@@ -481,13 +482,10 @@ function writeHermesTurnOverlay(
   const overlay = stringifyYaml({ ...base, model: { ...asRecord(base.model), ...patch.model } }, { version: "1.1" });
   const dir = join(hermesOverlayRoot(env), `hermes-${createHash("sha256").update(overlay).digest("hex").slice(0, 16)}`);
   const file = join(dir, "config.yaml");
-  let current: string | null = null;
-  try { current = readFileSync(file, "utf8"); } catch { current = null; }
-  if (current !== overlay) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    try { chmodSync(dir, 0o700); } catch { /* Windows ignores POSIX modes */ }
-    writeFileAtomic(file, overlay, { mode: 0o600 });
-  }
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { chmodSync(dir, 0o700); } catch { /* Windows ignores POSIX modes */ }
+  // Content addressed and shared by every turn with the same overlay: a child of another turn may hold it open.
+  writeFileAtomicUnlessSame(file, overlay, { mode: 0o600 });
   env.HERMES_MANAGED_DIR = dir;
 }
 
@@ -1060,11 +1058,11 @@ const support: AcpSupport = {
     return build && (build[1] === pin || build[1] === pin.slice(0, 8)) ? { hermesInstallSha: pin } : {};
   },
   toolCorrelationContext: (turn) => ({
-    c3: hermesOwnUnasked(Boolean(turn.integrations?.phoneJobs), turn.integrations?.agents?.env?.[EMAIL_TOOLS_ENV], Boolean(turn.integrations?.highlevel)),
+    c3: hermesOwnUnasked(Boolean(turn.integrations?.phoneJobs), turn.integrations?.agents?.env?.[EMAIL_TOOLS_ENV]),
     host_computer: turn.integrations?.localComputer?.scope === "local-computer",
     d5_policy: HERMES_D5_POLICY,
   }),
-  toolTripwireMatcher: (turn) => hermesAskMatcher(turn.integrations?.localComputer?.scope === "local-computer", Boolean(turn.integrations?.phoneJobs), turn.integrations?.agents?.env?.[EMAIL_TOOLS_ENV], Boolean(turn.integrations?.highlevel)),
+  toolTripwireMatcher: (turn) => hermesAskMatcher(turn.integrations?.localComputer?.scope === "local-computer", Boolean(turn.integrations?.phoneJobs), turn.integrations?.agents?.env?.[EMAIL_TOOLS_ENV]),
   // An ask the ask hook escalated is read from the hook's message: the real command, whole (normalizeHermesAsk).
   normalizeAsk: (rawInput) => {
     const normal = normalizeHermesAsk(rawInput);
@@ -1077,7 +1075,7 @@ const support: AcpSupport = {
   spawnArgs: (config, turn, ctx) => {
     // held pending addendum, MurageMain
     try {
-      if (ctx?.env) ctx.hookCanon = applyHermesAskHook(ctx.env, { webRead: Boolean(turn?.integrations?.agents), bound: (turn?.releaseBinding ?? null) !== null, hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), highlevel: Boolean(turn?.integrations?.highlevel), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
+      if (ctx?.env) ctx.hookCanon = applyHermesAskHook(ctx.env, { webRead: Boolean(turn?.integrations?.agents), bound: (turn?.releaseBinding ?? null) !== null, hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
     } catch (error) {
       if ((error as Error)?.message === HERMES_ADMIN_HOOK_REFUSAL) turn?.admissionNotLaunched?.("toolTurnRefused");
       throw error;

@@ -47,6 +47,10 @@ export declare function currentDataDirLeaseEpoch(dataDir: string): string | null
 export declare function validProcessStart(value: unknown, platform?: NodeJS.Platform): boolean;
 export declare function localHost(): string;
 export declare function sameMachine(record: {host:string;boot?:string|null}, host?:string, boot?:string|null): boolean;
+export declare function darwinProcessStart(pid: number): string | null;
+export declare function pathsOnLocalVolume(targets: readonly string[], platform?: NodeJS.Platform): boolean;
+export declare function foreignDataDirLeaseSetAsideAvailable(dataDir: string, options?: { localVolume?: (targets: readonly string[]) => boolean }): boolean;
+export declare function setAsideForeignDataDirLease(dataDir: string, options?: { localVolume?: (targets: readonly string[]) => boolean; now?: () => number }): number;
 export declare function validBoot(value:unknown): boolean;
 export declare function validUptime(value:unknown): boolean;
 export declare function provedOwnerReboot(owner: {boot?:string|null;uptime?:number|null}, boot?:string|null, uptimeValue?:number|null): boolean;

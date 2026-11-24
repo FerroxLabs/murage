@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// B5 backups (lane 3's design, docs/cloud/b5/BACKUPS.md): one build host Storage Box sub-account per home, restic over SFTP.
+// B5 backups (lane 3's design, docs/cloud/b5/BACKUPS.md): one Hetzner Storage Box sub-account per home, restic over SFTP.
 // This file creates and destroys the sub-account and produces the four files the home needs; it never stores a secret.
 import { generateOpenSshEd25519 } from "./b5-sshkey";
 import type { HostFetch } from "./b5-provisioner";
@@ -40,7 +40,7 @@ export async function pickBox(slots: BoxSlot[]): Promise<BoxSlot | null> {
   return null;
 }
 
-/** build host Storage Box: sub-accounts through api.hetzner.com, data deletion through WebDAV on the main account
+/** Hetzner Storage Box: sub-accounts through api.hetzner.com, data deletion through WebDAV on the main account
  *  (WebDAV DELETE on a collection is recursive; deleting a sub-account alone leaves its files behind). */
 export function hetznerStorageBox(token: string, box: StorageBoxConfig, mainPassword: string, fetcher: HostFetch = fetch): StorageBoxAdapter {
   const api = async (method: string, path: string, body?: unknown, ok404 = false, signal?: AbortSignal) => {

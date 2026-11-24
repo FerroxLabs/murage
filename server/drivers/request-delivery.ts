@@ -88,6 +88,19 @@ export function withRequestDelivery<T extends ProviderInstance>(instance: T, tra
  };
  if(transport)transport.onReopenReady=async(t,r)=>{const pending=open.get(key(t,r))?.delivery;if(pending)await pending;return transport.onReopen?.(t,r)===true;};
  if(transport)transport.onDeliverySettled=(t,r)=>open.get(key(t,r))?.delivery?.then(()=>{})??Promise.resolve();
+ // 1021 Retry (RETRY-DESIGN-r2 D3/step 5): the ask is still open in its live generation, unresolved and undelivered.
+ const canRedeliver=(t:string,r:string)=>{const entry=open.get(key(t,r));
+  // MUTANT:retry-generation-compare
+  return !!entry&&!entry.resolved&&!entry.delivery&&entry.generation===generation.get(t);};
+ // Synchronous, same tick as the respond it precedes: close the failed slot (a new answerId is refused on it) and open a fresh one.
+ let retryEpoch=0;
+ const rearmRetry=(t:string,r:string)=>{
+  if(!canRedeliver(t,r))return false;
+  const k=key(t,r),prior=open.get(k)!;
+  answers.close(prior.deliveryGeneration??prior.generation,r);
+  open.set(k,{generation:prior.generation,deliveryGeneration:`${prior.generation}:retry:${++retryEpoch}`,explicit:false});
+  return true;
+ };
  const original = adapter.respondToRequest.bind(adapter);
  function respond(t: string, r: string, decision: Parameters<ProviderAdapter['respondToRequest']>[2]): Promise<RequestOutcome>;
  function respond(t: string, r: string, decision: Parameters<ProviderAdapter['respondToRequest']>[2], options: RequestAnswerOptions): Promise<RequestDelivery>;
@@ -119,6 +132,8 @@ export function withRequestDelivery<T extends ProviderInstance>(instance: T, tra
  const decisionAdapter:DecisionProviderAdapter={
   respondToRequest:(t,r,decision,options)=>respond(t,r,decision,options),
   interruptTurn:(threadId,turnId)=>adapter.interruptTurn(threadId,turnId),
+  canRedeliver,
+  rearmRetry,
   ...(adapter.onPostureChange?{onPostureChange:adapter.onPostureChange.bind(adapter)}:{}),
   ...(adapter.gateTap?{gateTap:adapter.gateTap.bind(adapter)}:{}),
  };

@@ -45,7 +45,7 @@ describe("r3.1 target-model baseline REDs", () => {
 import { readFileSync } from "node:fs";
 import {
   itemSep, joinItems, PROBES, decide, openAfter,
-  lfDecision, ScanMeter, ScanLimit, A2_STREAM, checkTurnUnit,
+  lfDecision, ScanMeter, ScanLimit, A2_STREAM, SCAN_RATE, checkTurnUnit,
 } from "./redact-stream-release.ts";
 import { SECRET_SCAN_BUDGET } from "../shared/md-secret-label.mjs";
 
@@ -97,9 +97,16 @@ describe("A2b pure decisions", () => {
     m.check("token:" + " ".repeat(100) + "token\n");
     expect(m.work).toBe(sum); expect(m.work).toBeGreaterThan(7 * 112);
     const deferred = new ScanMeter(10);
+    // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z (design 5.3): a scan is never cut short for work it is owed per character, so the unit that meets a small
+    // remaining allowance is finished (and charged) and the NEXT unit is deferred. Deferral is a delay, never a cut.
+    expect(deferred.check("ordinary prose").exhausted).toBe(false); expect(deferred.work).toBeGreaterThan(10);
     expect(() => deferred.check("ordinary prose")).toThrow(new ScanLimit("DEFER"));
-    expect(deferred.work).toBe(10); expect(deferred.scanExhausted).toBe(0);
-    const exhausted = new ScanMeter();
+    expect(deferred.scanExhausted).toBe(0);
+    // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z (design S5): one scan's work is per character, so 200,000 characters are scanned, not refused at 1 MiB of work.
+    const long = new ScanMeter();
+    expect(long.check("z".repeat(200_000)).exhausted).toBe(false); expect(long.scanExhausted).toBe(0);
+    // FC-SCAN is now only a scanner that reports it could not finish; its reported work is still charged.
+    const exhausted = new ScanMeter(A2_STREAM, () => ({ text: "«redacted»", detected: true, exhausted: true, workUnits: SECRET_SCAN_BUDGET, candidates: [] }));
     expect(() => exhausted.check("z".repeat(200_000))).toThrow(new ScanLimit("FC-SCAN"));
     expect(exhausted.work).toBe(SECRET_SCAN_BUDGET); expect(exhausted.scanExhausted).toBe(1);
   });
@@ -136,14 +143,17 @@ describe("B3 aggregate checker and row chain", () => {
     expect(meter.work).toBe(sum);
     // The primary pass fits; the compatibility pass binds the aggregate cap.
     const input = "z".repeat(65_500), primary = scanSecretText(input, { mode: "turn" });
-    expect(checkTurnUnit(input, primary.workUnits + 1)).toMatchObject({ exhausted: true, workUnits: primary.workUnits + 1 });
-    expect(checkTurnUnit(input).exhausted).toBe(false);
+    // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z (design X2/S5): checkTurnUnit adds work per character, so the fixed cap is pinned on the scanner it wraps.
+    expect(scanTurnText(input, { budget: primary.workUnits + 1 })).toMatchObject({ exhausted: true, workUnits: primary.workUnits + 1 });
+    expect(checkTurnUnit(input)).toMatchObject({ exhausted: false }); expect(checkTurnUnit(input).workUnits).toBeGreaterThan(primary.workUnits);
   });
-  it("T41-METER worst-case aggregate remains at or below SSB", () => {
+  // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z (design 5.3): the bound on one scan is SSB plus SCAN_RATE units per character (linear), no longer SSB alone.
+  it("T41-METER worst-case aggregate remains at or below SSB plus the per-character rate", () => {
     const seeds = ["token:" + " ".repeat(100) + "token\n", "-----BEGIN PRIVATE KEY-----", "Authorization%20Basic%20", "token\n", "SG.", "1234 "];
     for (const seed of seeds) for (const n of [1, 100, 65_536, 262_144]) {
       const s = seed.repeat(Math.ceil(n / seed.length)).slice(0, n), r = checkTurnUnit(s);
-      expect(r.workUnits).toBeLessThanOrEqual(SECRET_SCAN_BUDGET);
+      expect(r.workUnits).toBeLessThanOrEqual(SECRET_SCAN_BUDGET + SCAN_RATE * s.length);
+      if (n === 262_144) expect(r.exhausted, seed.slice(0, 12)).toBe(false);
       if (r.exhausted) expect(r.text).toBe("«redacted»");
     }
   });

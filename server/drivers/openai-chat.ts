@@ -54,7 +54,7 @@ import { phoneAskLine } from "./phone-tool-schemas.ts";
 import { boundedToolInput } from "../approval-text.ts";
 import {
   announcesAction, capUtf8, chatToolCatalog, FENCE_AFTER_TOOLS, isLocalModelUrl, MAX_ANNOUNCEMENT_NUDGES, MAX_CHAT_ROUNDS,
-  MAX_TURN_TOOL_CALLS, McpTurnTeardowns, NATIVE_TOOL_RESULT_MAX_BYTES, NUDGE_ANNOUNCED_ACTION, PERMISSION_DENIED,
+  McpTurnTeardowns, NATIVE_TOOL_RESULT_MAX_BYTES, NUDGE_ANNOUNCED_ACTION, PERMISSION_DENIED,
   providerArguments, refusedToolCall, rejectsReasoningReplay, rejectsToolsParameter, SCREENSHOT_NOT_SHOWN, scrubKnown, scrubKnownLeaves,
   SecretStreamFilter, secretList,
   STEPS_ALREADY_RAN, stoppedAfter, TEXT_ONLY_NOTICE, CLOUD_HOME_TOOLS_NOTICE, TextOnlyModels, TOOL_CALLS_TO_HELPER, TOOL_INTERRUPTED, TOOL_RESULT_MAX_BYTES,
@@ -408,9 +408,6 @@ const wholeToolCalls = (message: NonNullable<CompletionJson["choices"]>[number][
 
 /** Maximum diagnostic prefix retained when judging a stream's body. */
 const RAW_BODY_MAX = 64_000;
-export const MAX_SSE_LINE_BYTES = 1024 * 1024;
-export const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
-const REPLY_TOO_LARGE = "The model server sent a reply too large to read, so Murage kept what arrived before it.";
 
 /** Keep only a bounded prefix, including when text contains multibyte letters. */
 export function appendBounded(body: string, chunk: string, max: number): string {
@@ -573,11 +570,6 @@ async function readBoundedBody(
       if (result.done) return clipBytes(body + decoder.decode(), max, truncate);
       onChunk?.();
       const remaining = max - bytes;
-      if (result.value.byteLength > remaining && !truncate) {
-        const error: Error & { details?: string } = new Error(REPLY_TOO_LARGE);
-        error.details = `Response body exceeded ${max} bytes`;
-        throw error;
-      }
       const accepted = result.value.subarray(0, remaining);
       body += decoder.decode(accepted, { stream: true });
       bytes += accepted.byteLength;
@@ -903,7 +895,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     if (secret && keyTicket) reportFluxKeyEvidence(keyTicket, secret, "accepted", { flux: false, scope: providerRoute?.baseUrl ?? options.apiUrl });
 
     if (!stream) {
-      const json = (registerBusyloopPayloadSite("read", JSON.parse(fluxResponse.rawBody ?? await readBoundedBody(response, requestSignal, MAX_RESPONSE_BYTES, false, idle.renew))) ?? {}) as CompletionJson;
+      const json = (registerBusyloopPayloadSite("read", JSON.parse(fluxResponse.rawBody ?? await readBoundedBody(response, requestSignal, Number.POSITIVE_INFINITY, false, idle.renew))) ?? {}) as CompletionJson;
       const decision = fluxResponse.decision ? fluxResponseDecision(registerBusyloopPayloadSite("classify", {status: response.status, headers: response.headers, body: json})) : undefined;
       if (decision && decision.action !== "PASS") {
         if (secret && keyTicket && keyRejectedMark(decision)) reportFluxKeyEvidence(keyTicket, secret, "refused", { flux: false, scope: providerRoute?.baseUrl ?? options.apiUrl });
@@ -1028,8 +1020,6 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let lineBytes = 0;
-    let responseBytes = 0;
     try {
       readLoop: for (;;) {
         let result: Awaited<ReturnType<typeof reader.read>>;
@@ -1062,36 +1052,26 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           // A final frame can arrive without its trailing newline. Flush the
           // decoder and fold what is left before judging the stream.
           const tail = decoder.decode();
-          body = appendBounded(body, tail, RAW_BODY_MAX);
+          body = dataFrames === 0 ? body + tail : appendBounded(body, tail, RAW_BODY_MAX);
           buffer += tail;
           if (buffer) consumeLine(buffer, true);
           buffer = "";
           break;
         }
-        responseBytes += result.value.byteLength;
-        if (responseBytes > MAX_RESPONSE_BYTES) {
-          throw failure(REPLY_TOO_LARGE, `response exceeded ${MAX_RESPONSE_BYTES} bytes`, "incomplete");
-        }
-        // Check each line before decoding or appending it. A chunk may hold
-        // many short lines, so its total size is not the line size.
+        // MAIN-RULING cause22-no-transport-caps: no reply or line size limit; a large tool call is read whole.
         let offset = 0;
         while (offset < result.value.byteLength) {
           const newline = result.value.indexOf(10, offset);
           const end = newline === -1 ? result.value.byteLength : newline;
-          const nextLineBytes = lineBytes + end - offset;
-          if (nextLineBytes > MAX_SSE_LINE_BYTES) {
-            throw failure(REPLY_TOO_LARGE, `stream line exceeded ${MAX_SSE_LINE_BYTES} bytes`, "incomplete");
-          }
           const next = newline === -1 ? end : end + 1;
           const chunk = decoder.decode(result.value.subarray(offset, next), { stream: true });
-          body = appendBounded(body, chunk, dataFrames === 0 && fluxResponse.decision ? MAX_RESPONSE_BYTES : RAW_BODY_MAX);
+          // Before any data frame the body may be one whole completion, kept whole; after one it is a diagnostic prefix.
+          body = dataFrames === 0 ? body + chunk : appendBounded(body, chunk, RAW_BODY_MAX);
           buffer += newline === -1 ? chunk : chunk.slice(0, -1);
-          lineBytes = nextLineBytes;
           offset = next;
           if (newline !== -1) {
             const line = buffer;
             buffer = "";
-            lineBytes = 0;
             if (consumeLine(line)) break readLoop;
           }
         }
@@ -1122,7 +1102,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         const decision = fluxResponse.decision ? fluxResponseDecision(registerBusyloopPayloadSite("classify", {status:response.status, headers:response.headers, body:parsed})) : undefined;
         if (decision && decision.action !== "PASS") throw new ProviderHttpError(response.status, redact(body), label, { flux: true, decision, headers: response.headers, fromRouter: isFluxUrl(endpoint), key: secret });
         let whole: Completion | null;
-        try { whole = wholeCompletionFrom(clipBytes(body, RAW_BODY_MAX, true), options.reasoning); } catch (error) {
+        try { whole = wholeCompletionFrom(body, options.reasoning); } catch (error) {
           throw failure("The model server sent a tool call Murage could not read, so nothing ran.", `tool call refused: ${asError(error).message}`, "invalid_body", error);
         }
         if (whole) return whole;
@@ -1567,7 +1547,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           // s5: tool calls. The whole batch is checked before any of it runs.
           if (!toolsOn) { fail("The model asked for a tool on a turn that offered none, so nothing ran.", `${label} returned ${calls.length} tool call(s) without tools`); return; }
           if (calls.some((call) => seenCalls.has(call.id))) { fail("The model repeated a tool call this turn already handled, so nothing more ran.", `${label} reused a tool call id`); return; }
-          if (seenCalls.size + calls.length > MAX_TURN_TOOL_CALLS) { fail(stoppedAfter(`${MAX_TURN_TOOL_CALLS} tool calls`)); return; }
+          // MAIN-RULING cause22-E-remainder (2026-11-22): no per-turn tool-call count; every call the model asks for runs.
           if (answer.text.trim()) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text: answer.text });
           for (const call of calls) seenCalls.add(call.id);
           const replayCalls = calls.map((call) => ({ ...call, function: { ...call.function, arguments: providerArguments(call.function.arguments, secrets) } }));

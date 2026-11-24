@@ -4,13 +4,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import { launchVerificationServer, runControlMurage } from '../scripts/control-murage.ts';
-for(const venue of ['bot','channel'] as const)for(const race of ['pin','stop','index'] as const)it(`held ${venue}: ${race} before submission never reaches the provider`,async()=>{
+for(const venue of ['bot','channel'] as const)for(const race of ['pin','stop','index'] as const)it(race==='index'?`held ${venue}: unknown pins run the verified owner held, without recall, and say so`:`held ${venue}: ${race} before submission never reaches the provider`,async()=>{
  const instrumentationSource=`
   const {registerHooks}=await import('node:module');
   registerHooks({load(url,context,next){
    const result=next(url,context);let text=String(result.source);
    if(url.endsWith('/server/memory/recall-view.ts')){
-    const needle='export function resolveRecallView(binding: RecallViewBinding, roster: MemoryRoster): Held {';
+    const needle="export function resolveRecallView(binding: RecallViewBinding, roster: MemoryRoster, issued = false): Held {";
+    if(!text.includes(needle))throw new Error("fixture anchor missing: resolveRecallView");
     text=text.replace(needle,needle+${JSON.stringify(race==='stop'?"if(!globalThis.fixtureLatePublished)throw new RecallPreparationPending();":"throw new RecallPreparationPending();")});
    }
    if(url.endsWith('/server/memory/recall-readiness.ts')){
@@ -43,9 +44,23 @@ for(const venue of ['bot','channel'] as const)for(const race of ['pin','stop','i
   const log=readFileSync(fixture.info.logPath,'utf8');
   expect(log).toContain(race==='pin'?'fixture pin created before write':'fixture readiness wait');
   expect(log).not.toContain('starting turn without recalled memory');
-  expect(existsSync(fixture.fixtureTurnLogPath)?readFileSync(fixture.fixtureTurnLogPath,'utf8').trim():'').toBe('');
-  expect((log.match(/turn dispatch recall=/g)??[])).toHaveLength(0);
+  const turns=existsSync(fixture.fixtureTurnLogPath)?readFileSync(fixture.fixtureTurnLogPath,'utf8').trim():'';
   const rows=JSON.stringify(await run(['messages',...destination,'--limit','30']));
+  if(race==='index'){
+   // OWNERFB 1020 (MAIN 07:24Z): a missing pin index means the pins are unknown. The verified owner's turn is no longer refused:
+   // it runs held, exactly once, with no memory mount and nothing recalled, and the owner is told that pinned rules were not used.
+   // Non-owners keep the unchanged pins-present-or-unknown refusal branch (OWNERFB-W3 witnesses it with pins present).
+   const sent=turns.split('\n').filter(Boolean).map(line=>JSON.parse(line) as {servers?:string[]});
+   expect(sent,log.slice(-8000)).toHaveLength(1);
+   expect(sent[0].servers).toContain('agents');expect(sent[0].servers).not.toContain('memory');
+   expect((log.match(/turn dispatch recall=held/g)??[])).toHaveLength(1);
+   expect((log.match(/turn dispatch recall=(?!held)/g)??[])).toHaveLength(0);
+   expect(rows).toContain("didn't use what I remember or my pinned rules");
+   expect(rows).not.toContain('pinned memory is still being prepared');
+   return;
+  }
+  expect(turns).toBe('');
+  expect((log.match(/turn dispatch recall=/g)??[])).toHaveLength(0);
   if(race==='stop'){expect(log).toContain('fixture published after Stop');expect(rows).not.toContain('pinned memory is still being prepared');expect(rows).not.toContain('This reply is still being prepared');}
   else expect(rows).toContain('pinned memory is still being prepared');
  }finally{await fixture.close();}

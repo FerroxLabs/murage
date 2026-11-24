@@ -3,19 +3,22 @@ import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 import {expect,it,vi} from 'vitest';
 import {steerWithQuoteLineage} from './steer-lineage.ts';
+import {steerProofState,steerStateHolds} from './memory/steer-door.ts';
 
 it('G-D6 behavior: an unknown task and undefined cursor never steer a no-receipt session',async()=>{
  // Exercise the actual route predicate, including its missing-task branch,
  // then the production steer gate with a write-observing adapter.
  const source=readFileSync(new URL('./index.ts',import.meta.url),'utf8');
- const at=source.indexOf('const steerSessionHolds = (): boolean => {');
+ // cause23: the predicate is now the state (holds/pending/refused) and the hold over it; both are taken from the route.
+ const at=source.indexOf('const steerSessionState = (): SteerSessionState => {');
  expect(at).toBeGreaterThan(0);
  const end=source.indexOf('// Only an engine',at);
  const code=ts.transpileModule(source.slice(at,end)+'\nreturn steerSessionHolds;', {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
  const proof=vi.fn(()=>({kind:'fresh',reason:'no-session-lineage'}));
  const deps={steerSessionTainted:()=>false,answer:undefined,answerTurnLive:()=>true,directRuns:new Map(),threadId:'fixture-unknown',memoryDispatches:new Map(),
   currentAtStart:{id:'fixture-bot',modelSelection:{instanceId:'fixture-engine'}},store:{taskByThread:()=>undefined},proveRetainedSession:proof,
-  LineageAllowance:{steer:()=>({})},sessionKeyOf:()=>({}),preparationLineageAudience:()=>({}),threadHumanPrincipal:()=>({}),turnAudienceIsOwner:()=>true,sessionHadFrame:()=>undefined,database:()=>({}),retainedSessionInvalid:()=>false};
+  LineageAllowance:{steer:()=>({})},sessionKeyOf:()=>({}),preparationLineageAudience:()=>({}),threadHumanPrincipal:()=>({}),turnAudienceIsOwner:()=>true,sessionHadFrame:()=>undefined,database:()=>({}),retainedSessionInvalid:()=>false,
+  replyTo:undefined,turnOutputRoots:new Map(),steerProofState,steerStateHolds};
  const holds=new Function(...Object.keys(deps),code)(...Object.values(deps)) as ()=>boolean;
  expect(holds()).toBe(false);
  const write=vi.fn(()=>true);

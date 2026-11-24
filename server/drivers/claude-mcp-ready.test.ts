@@ -20,6 +20,7 @@ import { removeTempDir } from "../testing/cleanup.ts";
 import { ClaudeDriver, claudeMcpStartupEnv, resetClaudeMcpReadinessForTests } from "./claude.ts";
 import { resetClaudeVersionGate } from "./claude-guards.ts";
 import { mountNeverConnectedLine } from "./stop-copy.ts";
+import { CliMountRelay } from "./cli-mount-relay.ts";
 import { MCP_OPTIONAL_WAIT_MS, toolsMayBeLoadingNotice } from "./mcp-readiness.ts";
 import { windowsPerfBudget } from "../testing/windows-hosted.ts";
 import { bindFixtureAdapter } from "../testing/mcp-admission-fixture.ts";
@@ -213,10 +214,8 @@ describe("Claude turns wait for their required MCP servers", () => {
     expect(dumped.env).toMatchObject(claudeMcpStartupEnv());
   }, 60_000);
 
-  it("a required connected app that never connects ends the turn within one deadline with a plain notice, and nothing is sent", async () => {
-    // REPLACES "reconnects connected apps that failed, within one deadline, then runs the turn with a plain notice" (ruling 2:
-    // fail closed is accepted because the owner is told). The CLI gives up on the server at its MCP_TIMEOUT: failed. The one
-    // reconnect fails too; the relay seals (the required mount's connection closed) and the process ends before any prompt.
+  it("finishes the reply with one plain notice when connected apps cannot connect within the recovery deadline", async () => {
+    // MAIN 11:08Z permits retiring a tool transport for either audience. The same single reconnect and recovery deadline still apply.
     process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: -1 });
     process.env.FAKE_CLAUDE_MCP_RECONNECT_MS = JSON.stringify({ murage_connectors: -1 });
     process.env.MURAGE_MCP_REQUIRED_WAIT_MS = "1500";
@@ -228,20 +227,66 @@ describe("Claude turns wait for their required MCP servers", () => {
     try {
       const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-never-apps", text: "Founders sweep", integrations: { composio } });
       const done = await completed(turnId);
-      expect(done).toMatchObject({ ok: false });
-      // The owner reads why, in plain words: the notice event, not an exit code.
-      const errors = recorder.events.filter((e) => e.turnId === turnId && e.type === "runtime.error") as Array<Extract<RuntimeEvent, { type: "runtime.error" }>>;
-      expect(errors.map((e) => e.message)).toEqual([mountNeverConnectedLine("Claude")]);
-      expect(errors[0]!.message).toBe("Claude stopped because a connected app this bot needs did not connect. Nothing was sent. Send your message again in a moment.");
-      expect(errors[0]!.message).not.toMatch(/exit code|composio|\bsafe/i);
-      // Nothing reached the engine: no prompt, and the close is the relay's seal.
-      expect(existsSync(dump)).toBe(false);
-      await vi.waitFor(() => expect(logged.some((l) => l.includes("claude close thread=t-never-apps reason=mount-relay-sealed"))).toBe(true));
+      expect(done).toMatchObject({ ok: true });
+      expect(recorder.events.filter(e => e.turnId === turnId && e.type === "runtime.error")).toEqual([]);
+      expect(recorder.events.filter(e => e.turnId === turnId && e.type === "item.started" && e.itemType === "tool" && e.toolKind === "notice"))
+        .toEqual([expect.objectContaining({ title: "Murage couldn't use the connected apps for this reply." })]);
+      const dumped = seen();
+      expect(dumped.prompt.message.content).toContain("Founders sweep");
+      expect(dumped.mcpAtPrompt.murage_connectors).toBe("failed");
+      expect(logged).toContainEqual(expect.stringMatching(/^claude mcp gate thread=t-never-apps .* reconnected=murage_connectors /));
     } finally { spy.mockRestore(); }
     const reconnects = controls().filter((c) => c.request.subtype === "mcp_reconnect");
     expect(reconnects.map((c) => c.request.serverName)).toEqual(["murage_connectors"]);
     // Never longer than the one recovery deadline (plus process start and slack).
     expect(Date.now() - started).toBeLessThan(3_000 + 6_000);
+  }, 60_000);
+
+  // 1.0.20 item 5 (owner's card, 11-19): a relay that the memory fence sealed (no app failed) read "a connected app this bot needs
+  // did not connect". The real relay is sealed the way the fence seals it, right after the CLI starts and before any prompt.
+  const sealAtAttach = (sealArgs: () => [unknown?, unknown?]) => {
+    const attach = CliMountRelay.prototype.attach;
+    return vi.spyOn(CliMountRelay.prototype, "attach").mockImplementationOnce(function (this: CliMountRelay, ...args: Parameters<typeof attach>) {
+      attach.apply(this, args); this.seal(...sealArgs());
+    });
+  };
+  const errorsOf = (turnId: string) => recorder.events.filter((e) => e.turnId === turnId && e.type === "runtime.error") as Array<Extract<RuntimeEvent, { type: "runtime.error" }> & { details?: string }>;
+  it("a terminal native mount failure still includes the cause code in Technical details", async () => {
+    const error = Object.assign(new Error("closed"), { code: "MCP_TRANSPORT_CLOSED" });
+    const spy = sealAtAttach(() => [error]);
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-native-mount-failed", text: "Founders sweep", integrations: { composio } });
+      expect(await completed(turnId)).toMatchObject({ ok: false });
+      const errors = errorsOf(turnId);
+      expect(errors.map(e => e.message)).toEqual([mountNeverConnectedLine("Claude")]);
+      expect(errors[0]!.details).toBe(`${mountNeverConnectedLine("Claude")}\nCause code: MCP_TRANSPORT_CLOSED`);
+      expect(existsSync(dump)).toBe(false);
+    } finally { spy.mockRestore(); }
+  }, 60_000);
+  it("a relay sealed by the memory fence says memory, never a connected app, and Technical details carries the fence code", async () => {
+    const refusal = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: { state: "checking", reason: "not-built" } });
+    const spy = sealAtAttach(() => [undefined, refusal]);
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence-apps", text: "Founders sweep", integrations: { composio } });
+      expect(await completed(turnId)).toMatchObject({ ok: false });
+      const errors = errorsOf(turnId);
+      expect(errors.map((e) => e.message)).toEqual(["Claude stopped because this conversation's memory was not ready yet, so Murage held your message back. Nothing was sent. Send your message again in a moment."]);
+      expect(errors[0]!.message).not.toMatch(/connected app|did not connect/i);
+      expect(errors[0]!.details).toBe(`${errors[0]!.message}\nCause code: memory-fence:not-built`);
+      expect(existsSync(dump)).toBe(false);
+    } finally { spy.mockRestore(); }
+  }, 60_000);
+  it("a bare relay seal with no app failure never blames a connected app", async () => {
+    const spy = sealAtAttach(() => []);
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bare-seal", text: "Founders sweep", integrations: { composio } });
+      expect(await completed(turnId)).toMatchObject({ ok: false });
+      const errors = errorsOf(turnId);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.message).not.toMatch(/connected app|did not connect/i);
+      expect(errors[0]!.details).toMatch(/\nCause code: mount-relay-sealed$/);
+      expect(existsSync(dump)).toBe(false);
+    } finally { spy.mockRestore(); }
   }, 60_000);
 
   it("does not hold a turn past the short budget for a slow optional server", async () => {

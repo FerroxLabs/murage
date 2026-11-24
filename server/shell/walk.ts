@@ -2471,7 +2471,7 @@ function readLua(text: string): string {
 /** What a scan of opaque code is given besides the code: its interpreter,
  * the words after the code, what is piped in, and whether this text wrote
  * the file the code came from (`strict`). */
-type OpaqueInput = { key?: string; rest?: Word[]; stdin?: Provenance; strict?: boolean };
+type OpaqueInput = { key?: string; rest?: Word[]; stdin?: Provenance; strict?: boolean; unfollowed?: boolean };
 
 /** Inspect literal inline argv identically in every outer shell. */
 export function scanInterpreterInline<H>(name: string, args: Word[], ctx: WalkContext, visitor: Visitor<H>, stdin?: Provenance): void {
@@ -2517,7 +2517,15 @@ function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx
     // M-R10-monotonic: inline code the grammar cannot finish is read by the family scan below at every level, as on Full
     // access (No limits is never stricter than Full access without a deny rule); code the text wrote to a file still doubts
     if (input.strict) doubt("tokenizer");
-    if (input.strict) throw new Unreadable("opaque", "runs code the reader cannot follow");
+    // The scans below read the calls of a language they model. A written script whose interpreter is not one of those
+    // (no key), or is not verifiably the one its first line names (`unfollowed`), is in a language nothing below can
+    // judge: it keeps the 1.0.20 hold, at the same place, so no level is stricter or looser for it than 1.0.20 was.
+    if (input.strict && (input.key === undefined || input.unfollowed)) throw new Unreadable("opaque", "runs code the reader cannot follow");
+    // The closed grammar is the strict (doubt) read's alone. Every other read judges code this text wrote to a file
+    // as 1.0.17 did (`scanWrittenFamilies`: a home lookup, a call that deletes or runs, a quoted catastrophe ask) and
+    // then by the family scan below, exactly as the same code handed inline (`node <<'EOF'`) is judged. Holding all
+    // of it here made every real script a builder writes and runs in one command an unreadable card at Auto and Full.
+    if (input.strict) scanWrittenFamilies(text, visitor);
   }
   // (2) the code, its strings, its strings blanked
   const key = input.key;
@@ -2849,6 +2857,28 @@ function namesWritten(named: string[], ctx: WalkContext): boolean {
   return false;
 }
 
+/** What a file this text wrote and then runs may not hold outside the strict read (the 1.0.17 scan, kept whole): any
+ * quoted catastrophe or disk, any home lookup, any call that deletes or runs. Names, not call shapes: it asks on a
+ * mention, so code that only reads, computes, prints, serves or writes its own files passes on to the family scan. */
+const WRITTEN_HOME = /\b(HOME|USERPROFILE|expanduser|homedir|GetFolderPath|SpecialFolder|UserProfile)\b/;
+const WRITTEN_EXIT = /\b(os\.execute|execute|system|popen|subprocess|child_process|execSync|execFileSync|execFile|exec|spawnSync|spawn|Start-Process|Invoke-Expression|iex|os\.remove|os\.unlink|unlink|rmtree|rmSync|rimraf|unlinkSync|rmdirSync|Remove-Item)\b|`|%x/;
+function scanWrittenFamilies<H>(text: string, visitor: Visitor<H>): void {
+  for (let i = 0; i < text.length; i++) {
+    const quote = text[i]!;
+    if (quote !== "'" && quote !== '"' && quote !== "`") continue;
+    let s = "";
+    let j = i + 1;
+    for (; j < text.length && text[j] !== quote; j++) {
+      if (text[j] === "\\" && (text[j + 1] === "\\" || text[j + 1] === "'" || text[j + 1] === '"')) { s += text[j + 1]; j++; continue; }
+      s += text[j];
+    }
+    if (visitor.catastrophic?.(s) || deviceInWord(s) !== undefined) throw new Unreadable("opaque", "names a catastrophe");
+    i = j;
+  }
+  if (WRITTEN_HOME.test(text)) throw new Unreadable("opaque", "looks up the home folder");
+  if (WRITTEN_EXIT.test(text)) throw new Unreadable("opaque", "deletes or runs something the reader cannot see");
+}
+
 /** The strict scan, for code this text wrote to a file and then runs. */
 function scanWritten(text: string, ctx: WalkContext, key?: string): "complete" | "incomplete" {
   if (text.length > SCAN_GATE_CHARS) doubt("scan-gate");
@@ -2891,6 +2921,20 @@ function shebangInterpreter(text: string): string | undefined {
   if (!first) return undefined;
   const program = (first[1]!.replace(/^.*\//, "") === "env" ? first[2] ?? "" : first[1]!).replace(/^.*\//, "").toLowerCase();
   return SHELLS.has(program) ? undefined : program;
+}
+
+/** The interpreter a first line names in a way the reader can follow: a language the scan models, by its own name in
+ * a system folder or found by `env`, with nothing after it. Undefined for anything else: `env -S` (the rest of the
+ * line builds the command), a switch or a second word (`node -r ./hook.js`, `python3 -m x`, `env A=b node`), a
+ * program by a relative or unusual path, which may be a file this text wrote under a modelled name, and a line
+ * ending in a carriage return, which the system reads as part of the name. */
+const SHEBANG_FOLDERS = "(?:/bin|/usr/bin|/usr/local/bin|/opt/homebrew/bin|/opt/local/bin)";
+const SHEBANG_PLAIN = new RegExp(`^#![ \\t]*(?:${SHEBANG_FOLDERS}/([A-Za-z0-9._+-]+)|(?:/usr/bin|/bin)/env[ \\t]+([A-Za-z0-9._+][A-Za-z0-9._+-]*))[ \\t]*(?:\\n|$)`);
+function shebangFollowed(text: string): string | undefined {
+  const plain = SHEBANG_PLAIN.exec(text);
+  const name = plain?.[1] ?? plain?.[2];
+  // `#!/usr/bin/env` alone leaves the name to the kernel's own argument, the script path
+  return name === undefined || name === "env" ? undefined : interpreterKey(name);
 }
 
 /** `$0`, `$1`…, `$@`, `$*` and `$#` for a script or function body walked
@@ -3650,7 +3694,14 @@ function runWritten<H>(written: Provenance, positionals: Word[], ctx: WalkContex
   if (hops > MAX_DEPTH) throw new Unreadable("depth");
   switch (written.kind) {
     case "literal":
-      if (direct && shebangInterpreter(written.text)) { const key = interpreterKey(shebangInterpreter(written.text)!); scanOpaque(written.text, elevated, visitor, ctx, { strict: true, ...(key ? { key } : {}) }); return null; }
+      if (direct && shebangInterpreter(written.text)) {
+        const named = shebangInterpreter(written.text)!;
+        const key = interpreterKey(named);
+        // followed: a plain first line, and no file this text wrote carries the interpreter's name (it could be found first)
+        const followed = key !== undefined && shebangFollowed(written.text) === key && !namesWritten([named], ctx);
+        scanOpaque(written.text, elevated, visitor, ctx, { strict: true, ...(key ? { key } : {}), ...(followed ? {} : { unfollowed: true }) });
+        return null;
+      }
       return walkWithPositionals(written.text, undefined, positionals, ctx, visitor, elevated, stdin);
     case "file": {
       const again = ctx.written.get(executionWrittenKey(ctx, written.path));

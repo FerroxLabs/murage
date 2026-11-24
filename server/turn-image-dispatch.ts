@@ -5,6 +5,39 @@
  * in front of a model or left as an `<attached-image path=…>` reference the
  * bot must open with a read tool. */
 
+import { splitTranscriptAttachments } from "../src/lib/composer-attachments.ts";
+
+/** The pictures of a turn that is sent WITHOUT remembered context (a memory
+ * rebuild that dropped its context, the last rebuild, or an owner turn kept
+ * on its session while a memory check is still pending).
+ *
+ * Such a turn sends the person's own message and nothing remembered. The
+ * pictures attached to that message are part of it: they were uploaded into
+ * this conversation, bound to it and collected for this turn, and nothing
+ * about them comes from memory. Leaving them out while the message's
+ * `<attached-image path=…>` tags stayed in the text gave the bot a path and
+ * no picture (1.0.20 field report: a chat with a pending memory check could
+ * not see any screenshot).
+ *
+ * Only the owner's message carries them (a room line nobody proved was the
+ * owner's sends none), and only the pictures that message itself names: a
+ * drained queue collects from every queued line but the memory-free turn
+ * sends the last one, so the pictures of the earlier lines stay out and the
+ * last line's own picture rides (Astra f212385: queued batch). A turn that carries a
+ * server frame instead (a routine, a card continuation, a delegation) sends
+ * none. */
+export function memoryFreeTurnImages<T>(
+  collected: { images: readonly T[]; imagePaths: readonly string[] } | undefined,
+  rawHumanText: string | undefined,
+  ownerAudience: boolean,
+): T[] | undefined {
+  if (!collected?.images.length || rawHumanText === undefined || !ownerAudience) return undefined;
+  const named = new Set(splitTranscriptAttachments(rawHumanText).images);
+  // MUTANT:memory-free-images-dropped
+  const images = collected.images.filter((_, i) => named.has(collected.imagePaths[i]!));
+  return images.length ? images : undefined;
+}
+
 /** @param imagesInline the DRIVER's `capabilities.imagesInline` — true only
  *  when that driver actually consumes `SendTurnInput.images`. Deliberately
  *  not the looser `capabilities.images`, which answers the composer's

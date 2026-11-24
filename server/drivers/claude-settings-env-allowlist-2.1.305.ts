@@ -11,7 +11,7 @@
 // gcpAuthRefresh, otelHeadersHelper). Hence the 14.6 rule (claudeOverlayEnv): the overlay pins NO name to "". This list now
 // only documents the scope of the sign-in hold (isClaudeHeldEnvName) and which owner-file names carry the owner's settings value.
 //
-// How to re-derive it for the next CLI version (on the build host, never the Mac):
+// How to re-derive it for the next CLI version (on Hetzner, never the Mac):
 //   npm pack @anthropic-ai/claude-code-linux-x64@<version> && tar xzf *.tgz && strings -n 8 package/claude > bundle.txt
 //   find the function whose body reads `.toUpperCase();return <X>.has(r)||` (the safe-env predicate called from
 //   applySafeConfigEnvironmentVariables, next to the strings "ANTHROPIC_CUSTOM_HEADERS" and `process.env[i]=s`);

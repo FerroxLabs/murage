@@ -4,7 +4,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { BgDeferred } from "../bg-admission.ts";
 import { beginBgGrant, endBgGrant, ioGrantSnapshot, registerBgProcess, withBgGrant, type BgTicket } from "../io-meter.ts";
 export interface HelperTicket extends BgTicket { id:string; stepBytes?:number; purpose?:AdmissionPurpose }
-export type AdmissionPurpose="bg"|"owner-delete";
+// W5 (memv2-D index-debt.ts): "index-debt" is the open check's one copy of a log larger than a background ticket (io-budget admitIndexDebt)
+// idle-receipt-design: "exit-seal" is the exit path's one sealing checkpoint
+export type AdmissionPurpose="bg"|"owner-delete"|"index-debt"|"exit-seal";
 interface Carrier { request(ceiling:number,replan:boolean,purpose:AdmissionPurpose):void; settle(ticket:HelperTicket,used:number):void }
 let carrier:Carrier|undefined;
 let available:HelperTicket|undefined;
@@ -13,7 +15,8 @@ let purpose:AdmissionPurpose="bg",availablePurpose:AdmissionPurpose="bg",pending
 export function admissionPurpose():AdmissionPurpose{return purpose;}
 export function setAdmissionPurpose(next:AdmissionPurpose):()=>void {
  const previous=purpose;
- if(next!==purpose&&available&&availablePurpose!==next){carrier?.settle(available,availableUsed);available=undefined;availableUsed=0;}
+ if(next!==purpose&&available&&!purposeMatches(availablePurpose,next)){carrier?.settle(available,availableUsed);available=undefined;availableUsed=0;}
+ if(next==="exit-seal"&&next!==purpose)retryAt=0;
  purpose=next;
  return ()=>{setAdmissionPurpose(previous);};
 }
@@ -44,7 +47,8 @@ export function acceptHelperTicket(ticket:HelperTicket|null,retryInMs=0):void {
  notifyReplies();
 }
 export function helperEnforced():boolean{return carrier!==undefined;}
-function ticketFits(ceiling:number):boolean{return Boolean(available&&availablePurpose===purpose&&available.expiresAt>Date.now()&&available.bytes-availableUsed>=ceiling);}
+function purposeMatches(held:AdmissionPurpose,wanted:AdmissionPurpose):boolean{return held===wanted||(wanted==="exit-seal"&&held==="bg");}
+function ticketFits(ceiling:number):boolean{return Boolean(available&&purposeMatches(availablePurpose,purpose)&&available.expiresAt>Date.now()&&available.bytes-availableUsed>=ceiling);}
 export function helperHasGrant(ceiling:number,replan=false):boolean {
  if(!carrier)return true;
  if(ticketFits(ceiling))return true;
@@ -57,11 +61,12 @@ export function helperHasGrant(ceiling:number,replan=false):boolean {
  // Inline delivery needs no retry unless its step plan changed: the caller must first resize work to that plan.
  return plannedStep===stepBudget&&ticketFits(ceiling);
 }
-export function withHelperGrant<T>(ceiling:number,fn:()=>T,db?:DatabaseSync,reserve=ceiling,replan=false):T {
+export function withHelperGrant<T>(ceiling:number,fn:()=>T,db?:DatabaseSync,reserve=ceiling,replan=false,finishCheckpoint=false):T {
  if(!carrier||ioGrantSnapshot().live)return fn();
  if(!helperHasGrant(reserve,replan))throw new BgDeferred(Math.max(1,retryAt-Date.now()));
  const ticket=available!;
- try{return withBgGrant({...ticket,bytes:helperAdmissionTestHooks.capBytes??ceiling},fn,db);}
+ // A checkpoint already inside SQLite keeps its byte cap if a slow disk carries it across the minute.
+ try{return withBgGrant({...ticket,bytes:helperAdmissionTestHooks.capBytes??ceiling,...finishCheckpoint?{expiresAt:Number.MAX_SAFE_INTEGER}:{}},fn,db);}
  finally{availableUsed+=ioGrantSnapshot().usedBytes;}
 }
 export function withHelperBoot<T>(fn:()=>T):T {
@@ -76,9 +81,18 @@ export function stopHelperAdmission():void {
  requested=0;
 }
 /** A request already sent owns a parent reservation, even before its ticket arrives here. Return it before acknowledging work. */
-export async function settleHelperAdmission():Promise<void>{
- if(pendingReplies)await new Promise<void>(resolve=>replyWaiters.add(resolve));
- stopHelperAdmission();
+export async function waitForHelperReply():Promise<boolean>{
+ if(!pendingReplies)return false;
+ await new Promise<void>(resolve=>replyWaiters.add(resolve));
+ return true;
+}
+export function helperHasReservedGrant():boolean{return Boolean(available);}
+/** idle W1a: a stopping helper asks once more for the batch it was sent before the stop; an earlier refusal's retry time does not hold that ask back. */
+export function clearHelperRetry():void{retryAt=0;}
+export function helperAdmissionRetryMs():number{return Math.max(0,retryAt-Date.now());}
+export async function settleHelperAdmission(release=()=>true):Promise<void>{
+ await waitForHelperReply();
+ if(release())stopHelperAdmission();
 }
 
 export function helperStepBudget():number{return stepBudget;}

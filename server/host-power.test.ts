@@ -481,6 +481,39 @@ describe("spawnCli with the block (sections 2 and 8)", () => {
     expect(refusals()).toHaveLength(2);
   });
 
+  it.skipIf(process.platform === "win32")("a --version launch that passes does not re-arm the diagnostic for a refused serve launch (minute poll)", async () => {
+    // A shell stand-in only: never execute sandbox-exec on Linux. Its argv is -p <profile> <engine> <engine args>: it lets
+    // `--version` through and refuses `serve` the way a Mac did for Muse, until the fixture's marker file says otherwise.
+    const wrapper = join(scratch(), "fake-seatbelt");
+    const allowServe = join(scratch(), "allow-serve");
+    writeFileSync(wrapper, `#!/bin/sh\nif [ "$4" = serve ] && [ ! -e '${allowServe}' ]; then echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2; exit 71; fi\nexit 0\n`);
+    chmodSync(wrapper, 0o755);
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec: wrapper });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cli = join(scratch(), "muse-poll-fixture");
+    writeFileSync(cli, "#!/bin/sh\nexit 0\n"); chmodSync(cli, 0o755);
+    const launch = async (args: string[]) => {
+      const child = spawnCli(cli, args, { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+      const result = await collect(child); return { child, code: result.code };
+    };
+    const refusals = () => warn.mock.calls.filter(([line]) => String(line).includes(`engine launch refused for ${cli}`));
+    // Each status poll: the version probe succeeds, then the catalog host is refused again. Polling is not a new incident.
+    for (let n = 0; n < 3; n++) {
+      const version = await launch(["--version"]);
+      expect(version.code).toBe(0);
+      expect(hostPowerRefused(version.child)).toBe(false);
+      expect(hostPowerRefused((await launch(["serve", "--disable-shell"])).child)).toBe(true);
+    }
+    expect(refusals()).toHaveLength(1);
+    expect(refusals()[0][0]).toContain("sandbox_apply: Operation not permitted");
+    // A serve launch that does get through is the recovery; a later serve refusal is reported again.
+    writeFileSync(allowServe, "");
+    expect(hostPowerRefused((await launch(["serve"])).child)).toBe(false);
+    unlinkSync(allowServe);
+    expect(hostPowerRefused((await launch(["serve"])).child)).toBe(true);
+    expect(refusals()).toHaveLength(2);
+  });
+
   it.skipIf(process.platform !== "linux")("a refused Linux launch has no pid, EPOWER and the sentence, and is not ECONTAIN", async () => {
     Object.assign(hostPowerDeps, { helperDir: () => null });
     const child = spawnCli("/bin/true", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });

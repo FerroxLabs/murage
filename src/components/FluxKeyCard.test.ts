@@ -3,7 +3,6 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { FluxKeyCardBody } = await import("./FluxKeyCard");
 const { FluxRouterConnection } = await import("./FluxRouterConnection");
 const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");

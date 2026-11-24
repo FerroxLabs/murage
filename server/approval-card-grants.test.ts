@@ -11,7 +11,7 @@ import { autoVerdict } from "./auto-approve.ts";
 import type { StopHit } from "./stop-line.ts";
 import { exactCommandKey } from "../shared/exact-command.ts";
 
-const stopHit: StopHit = { kind: "delete", what: "Delete files outside its folder", place: "/Users/alex" };
+const stopHit: StopHit = { kind: "delete", what: "Delete files outside its folder", place: "/Users/exampleuser" };
 const LEVELS = [
   ["Ask", {}],
   ["Auto", { autoApprove: true }],
@@ -63,7 +63,7 @@ describe("the grants an approval card offers", () => {
     expect(routine).toMatchObject({ routineAllowKey: exact, routineId: "routine-1" });
     expect(routine.allowKey).toBeUndefined();
     expect(routine.exactAllowKey).toBeUndefined();
-    const stopped = approvalCardGrants(owner("rm -rf /Users/alex/old", true));
+    const stopped = approvalCardGrants(owner("rm -rf /Users/exampleuser/old", true));
     expect(stopped.allowKey).toBe(stopped.taskAllowKey);
     expect(stopped.taskAllowKey).toBeDefined();
   });

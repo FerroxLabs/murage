@@ -13,7 +13,7 @@
 
 import { useId, useState } from "react";
 
-import { setEmailGateDone } from "@/lib/analytics";
+import { setEmailGateDone } from "@/lib/first-run-gate";
 import { FIRST_RUN_COPY, greetingLine, probeLine } from "@/lib/first-run-copy";
 import { afterPaint, startFirstRunTiming } from "@/lib/first-run-timing";
 import { t } from "@/lib/i18n";

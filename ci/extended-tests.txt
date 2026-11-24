@@ -150,7 +150,9 @@ server/browser-extension-round5.test.ts	delete (pending review; runs here until 
 server/browser-extension-snapshot.test.ts	extended
 server/browser-floor-recipients.test.ts	extended
 server/browser-is-the-place.test.ts	extended
+server/browser-macos-pinned-assets.test.ts	nightly (real pinned browser assets: needs network or the MURAGE_PIN_FIXTURE_DIR fixture cache; network-free gate lanes leave it out)
 server/browser-native-relay.test.ts	extended
+server/browser-native-relay.respawn.test.ts	extended
 server/browser-preview-capture.test.ts	extended
 server/browser-profile-precondition-api.test.ts	extended
 server/browser-profile-precondition.test.ts	extended
@@ -238,6 +240,7 @@ server/decision-log-wiring.test.ts	extended
 server/default-engine-boot.test.ts	extended
 server/delegation-failure-detail.test.ts	extended
 server/delegation-receipt-reload.test.ts	extended
+server/demo-replay-1118-api.test.ts	extended
 server/direct-screen-settlement-api.test.ts	extended
 server/dm-title.test.ts	extended
 server/drivers/acp/build-key.test.ts	extended
@@ -256,6 +259,10 @@ server/drivers/acp/subagents.test.ts	extended
 server/drivers/acp/version-probe.test.ts	extended
 server/drivers/agents-project-tools.test.ts	extended
 server/drivers/bounded-lines.test.ts	extended
+server/drivers/bounded-lines-fit-1021.test.ts	extended
+server/drivers/bounded-lines-fit-unit-1021.test.ts	extended
+server/drivers/acp/cause22-fit-acp-1021.test.ts	extended
+server/drivers/cause22-fit-drivers-1021.test.ts	extended
 server/drivers/boxagent.test.ts	extended
 server/drivers/browser-proxy.test.ts	extended
 server/drivers/claude-accounts.test.ts	extended
@@ -294,6 +301,7 @@ server/drivers/process-tree-hook-identity.test.ts	extended
 server/drivers/provider-error-body.test.ts	extended
 server/drivers/provider-idle-cut.test.ts	extended
 server/drivers/remote-mcp-proxy-core.test.ts	extended
+server/drivers/remote-mcp-proxy.interleave-long.test.ts	nightly (whole file: 19500 seeded schedules; nightly.yml runs it, the extended job does not)
 server/drivers/remote-mcp-proxy.test.ts	extended
 server/drivers/scope-version-fail-closed.test.ts	extended
 server/drivers/stop-line-copy.test.ts	extended
@@ -446,6 +454,7 @@ server/memory/gepa-ledger.test.ts	extended
 server/memory/handle-guard.test.ts	extended
 server/memory/health.test.ts	extended
 server/memory/identity-epoch.test.ts	extended
+server/memory/idle-final-receipt-real.test.ts	extended
 server/memory/idle-trace.test.ts	extended
 server/memory/idle-wake.test.ts	extended
 server/memory/import-flat.test.ts	extended
@@ -560,6 +569,9 @@ server/memory/scope-id.test.ts	extended
 server/memory/search-budget.test.ts	extended
 server/memory/search-recall.test.ts	extended
 server/memory/second-connection.test.ts	extended
+server/memory/session-collector-matrix-absent.test.ts	nightly (whole file: scale; the generated kill/fail matrix of the session-proof collector, guard state absent; nightly.yml runs it, the extended job does not)
+server/memory/session-collector-matrix-present.test.ts	nightly (whole file: scale; the generated kill/fail matrix of the session-proof collector, guard state present; nightly.yml runs it, the extended job does not)
+server/memory/session-collector-matrix-retry.test.ts	nightly (whole file: scale; the generated kill/fail matrix of the session-proof collector, guard state retry; nightly.yml runs it, the extended job does not)
 server/memory/session-append-only.test.ts	extended
 server/memory/session-incarnation.test.ts	extended
 server/memory/session-prefix-flat.test.ts	extended
@@ -1534,6 +1546,7 @@ server/low-disk-classify.test.ts	extended
 server/low-disk-repro.test.ts	extended
 server/low-disk-start.test.ts	extended
 server/low-disk-strict.test.ts	extended
+server/wal-disk-recovery-1021.test.ts	extended
 server/read-only-authority.test.ts	extended
 server/read-only-index-gate.test.ts	extended
 server/read-only-missing-tables.test.ts	extended
@@ -1552,3 +1565,20 @@ server/low-disk-channels.test.ts	extended
 server/approval-attention-race.test.ts	extended
 server/testing/fake-acp-mcp-timeout.test.ts	extended
 server/approval-attention-boot.test.ts	extended
+server/browser-fresh-tab-1020.real-chrome.test.ts	extended
+server/browser-tab-gone-1021.test.ts	extended
+src/components/backup-switch.test.ts	extended
+server/drivers/browserroot-1020-packaged.test.ts
+server/ctxrev-fresh-chat-1020.test.ts
+server/drivers/acp/mcpgate-op-1021.test.ts
+scripts/rig-realsize/verdict.test.mjs	extended
+scripts/rig-realsize/completion.test.mjs	extended
+scripts/rig-realsize/load.test.mjs	extended
+scripts/rig-realsize/replay.test.mjs	extended
+scripts/rig-realsize/rerun.test.mjs	extended
+scripts/rig-realsize/remote.test.mjs	extended
+server/memory/migration-v2-kill.test.ts	extended
+server/memory/migration-v2-kill-forced.test.ts	extended
+server/memory/memv2-c-pace-backlog-1021.test.ts	extended
+server/memory/revoke-own-frames-1021.test.ts	extended
+server/memory/compat-v2-oldbuild.test.ts	extended

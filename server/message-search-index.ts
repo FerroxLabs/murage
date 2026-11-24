@@ -9,7 +9,7 @@ import { windowsHidePrelude } from "../shared/win-hide-child-process.mjs";
 import { settleLegacySearchMerge } from "./legacy-search-merge.ts";
 import { MESSAGE_SEARCH_DDL } from "./message-tables.ts";
 import { SEARCH_INDEX_WORKER_SOURCE } from "./search-index-worker.ts";
-import { ioBudget } from "./io-budget.ts";
+import { ioBudget, SEARCH_SEED_SOURCE } from "./io-budget.ts";
 import { ownerFirst } from "./owner-first.ts";
 import { isDatabaseBusy, writersHeldForIndexBuild } from "./db-busy.ts";
 import { assertWalWriteAdmission, walMaintenanceCounters, scrubWalAfterDelete } from "./wal-maintenance.ts";
@@ -36,6 +36,13 @@ export function scrubDelay(n: number): number {
 }
 export const SCRUB_BACKOFF_BASE_MS = scrubDelay(1);
 export const SCRUB_BACKOFF_CAP_MS = scrubDelay(50);
+/** Background write rate of the search index (rebuild, merges, catch-up): a step that wrote N bytes waits N / rate before the next.
+ * Owner start-up on a reset index re-indexed every message at 4-11 GB/min; the bar is under 1 GB/min for the whole process. */
+export const SEARCH_WRITE_BYTES_PER_MIN = 256 * 1048576;
+export function searchPacedDelay(bytes: unknown): number {
+  const n = Number(bytes);
+  return Number.isFinite(n) && n > 0 ? Math.max(10, Math.ceil(n * 60_000 / SEARCH_WRITE_BYTES_PER_MIN)) : 10;
+}
 export function searchRetryDelay(n: number): number { return Math.max(10, Math.min(SCRUB_BACKOFF_CAP_MS, n)); }
 export { MESSAGE_SEARCH_DDL };
 export function intentCount(db: DatabaseSync): number {
@@ -383,7 +390,7 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
   const run: SearchRun = { db, file, token, worker, reader: null, indexId: null, cache: null, stopped: false, inflight: true, recovery: { state: "HEALTHY", consecutive: 0, cycleStarts: [] },
     exited: new Promise<void>(resolve => { exited = resolve; }) };
   runs.set(db, run); live.add(run); sessions.add(run);
-  worker.on("message", (event: { type: string; token: string; index_id?: string; worked?: boolean; rebuilding?: boolean; applied?: number; retryInMs?: number; operation?: string; message?: string }) => {
+  worker.on("message", (event: { type: string; token: string; index_id?: string; worked?: boolean; rebuilding?: boolean; applied?: number; retryInMs?: number; bytes?: number; operation?: string; message?: string }) => {
     if (event.token !== token || run.stopped || runs.get(db) !== run) return;
     searchIndexTestHooks.event?.(event);
     if ((event.type === "ready" || event.type === "stepped") && run.ioState) {
@@ -406,6 +413,11 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
       openSearchReader(run, String(event.index_id));
     } else if (event.type === "stepped") {
       run.inflight = false;
+      // cause18e: the first index of the messages a store already holds is charged to its own named seed source (io-budget.ts
+      // IO_SEED_BUDGETS). The worker writes search.db on its own connection, so until now these bytes had no name and the watchdog's line
+      // blamed whatever statement the main thread ran most (`writing 65.0 MB/min ... source: INSERT INTO messages`). Only while the worker
+      // says the index is still building; a built index's own steps (one message at a time) are judged as before.
+      if (event.rebuilding === true && event.worked && Number(event.bytes) > 0) ioBudget.noteBytes(SEARCH_SEED_SOURCE, Number(event.bytes));
       // The same worker's token-bound reply follows its committed step. Keep
       // that conservative watermark until its next acknowledgement or reset;
       // owner writes must not query search.db when a wall-clock cache expires.
@@ -439,7 +451,8 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
           });
         }
       } catch (error) { recoveryWarning(error); }
-      schedule(run, event.worked || run.nudged ? 10 : searchRetryDelay(event.retryInMs ?? 250),
+      // A step that wrote waits out its measured bytes at the search write rate; an owner append (nudge) never waits behind a rebuild's pacing.
+      schedule(run, run.nudged ? 10 : event.worked ? searchPacedDelay(event.bytes) : searchRetryDelay(event.retryInMs ?? 250),
         !event.worked && !run.nudged && event.retryInMs !== undefined);
     }
   });

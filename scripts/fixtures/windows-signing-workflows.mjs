@@ -50,7 +50,10 @@ export function assertSigningWorkflowIsolation(workflows) {
         } else {
           for (const key of azureSigningKeys) assert.equal(step.env?.[key], `\${{ secrets.${key} }}`, `${file}: ${key} secret source`);
           const others = Object.keys(step.env).filter(key => !azureSigningKeys.includes(key));
-          assert.ok(others.every(key => key === "NODE_OPTIONS" && /^--max-old-space-size=\d+$/.test(step.env[key])), `${file}: exact protected env`);
+          assert.ok(others.every(key =>
+            (key === "NODE_OPTIONS" && /^--max-old-space-size=\d+$/.test(step.env[key])) ||
+            (file === "release.yml" && key === "MURAGE_TYPECHECK_CAP_MIB" && step.env[key] === "8192")
+          ), `${file}: exact protected env`);
           const outsideEnv = { ...step }; delete outsideEnv.env;
           assert.ok(!references(outsideEnv), `${file}: Azure reference outside step env`);
           assert.ok(typeof step.run === "string" && step.run.includes("pnpm package:win"), `${file}: credentials outside the package step`);
@@ -74,6 +77,7 @@ export function signingWorkflowFixture() {
       "azure-client-id": "${{ secrets.AZURE_CLIENT_ID }}", "azure-client-secret": "${{ secrets.AZURE_CLIENT_SECRET }}", "files-folder": "fixture" } },
     { run: "pnpm package:win", env: { NODE_OPTIONS: "--max-old-space-size=6144", ...Object.fromEntries(azureSigningKeys.map(key => [key, `\${{ secrets.${key} }}`])) } },
   ] } } };
+  workflows["release.yml"].jobs.windows.steps[1].env.MURAGE_TYPECHECK_CAP_MIB = "8192";
   return workflows;
 }
 
@@ -97,6 +101,8 @@ export const signingWorkflowViolations = [
     [`${file} extra env`, workflows => job(workflows, file).steps[1].env.FIXTURE = "1"],
     [`${file} preload NODE_OPTIONS`, workflows => job(workflows, file).steps[1].env.NODE_OPTIONS = "--require=fixture.cjs"],
   ]),
+  ["unexpected release compiler cap", workflows => job(workflows, "release.yml").steps[1].env.MURAGE_TYPECHECK_CAP_MIB = "8193"],
+  ["release compiler cap in package-win.yml", workflows => job(workflows, "package-win.yml").steps[1].env.MURAGE_TYPECHECK_CAP_MIB = "8192"],
   ...["gepa-intel-qualification.yml", "other.yml"].flatMap(file => [
     [`${file} credentialed package step`, workflows => workflows[file].jobs.fixture = { steps: [structuredClone(job(workflows, "package-win.yml").steps[1])] }],
     [`${file} signing action`, workflows => workflows[file].jobs.fixture = { steps: [structuredClone(job(workflows, "package-win.yml").steps[0])] }],

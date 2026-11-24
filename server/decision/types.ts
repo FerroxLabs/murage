@@ -165,7 +165,12 @@ export interface DecisionEngineTarget {
 }
 export interface DecisionTransport {
   respond(target: DecisionEngineTarget, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>): Promise<RequestDelivery>;
-  interrupt(target: DecisionEngineTarget): Promise<void>;
+  /** `hostStopReason`: Murage stops the turn itself; the thread says why, never "Stopped by you". */
+  interrupt(target: DecisionEngineTarget, hostStopReason?: string): Promise<void>;
+  /** 1021 Retry (RETRY-DESIGN-r2 D3): the driver still holds this exact ask, unresolved, undelivered, in its live generation. */
+  canRedeliver?(target: DecisionEngineTarget): boolean;
+  /** 1021 Retry step 5: re-check canRedeliver, close the failed answer slot and open a fresh one, same tick as respond. */
+  rearmRetry?(target: DecisionEngineTarget): boolean;
 }
 /** S4 supplies the actual S1 Store instance before ingress/recovery. S1 owns
  * transactions, record/cache updates, row writes, text refusals and FIFO text.
@@ -182,6 +187,8 @@ export interface DecisionHost {
   featureOff?(threadId: string, botId: string, tool: string): string | undefined;
   executionContext?(threadId:string,botId:string): {cwd?:string;project?:string;home?:string;projects?:readonly string[];dataDir?:string};
   view(registration: Readonly<Registration>): ApprovalView;
+  /** 1021 Retry: a failed engine card was ended (endFailed); the host settles its attention. */
+  deliveryEnded?(ref: ApprovalRef): void;
 }
 /** S2 durable queue metadata. proof is an opaque server-issued provenance
  * reference, NOT a serialized ExecutionClaim. Never store caller authority.

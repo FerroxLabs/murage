@@ -135,7 +135,7 @@ No owner-facing strings. The marker stays `«redacted N chars»`.
 | G1 | guard | md-secret-label.test.ts rows 1-23 and 21 exact through `redactSecretsForSink` unchanged after MD_LABEL is added |
 | G2 | guard | electron/diagnostics.test.mjs rows 12, 13, 19 unchanged; electron does not import `maskSecretLabelsInBlocks` |
 | G3 | guard | native-md-stream rows 14-18 byte-identical before and after (`maskWithTail` on the sink rule) |
-| C | clock | U at 64 and 256 KiB: `**password**: alpha1234 ` x n on one line; `**token**:\n` x n; `**password**: "` + `a` x n (no closer); `- **x**: y\n` x n; `«` x n; `a_` x n; backtick x n; 1-char and 20-char stream deltas; ratio under 6, 256 KiB under 250 ms (build host, best of 3) |
+| C | clock | U at 64 and 256 KiB: `**password**: alpha1234 ` x n on one line; `**token**:\n` x n; `**password**: "` + `a` x n (no closer); `- **x**: y\n` x n; `«` x n; `a_` x n; backtick x n; 1-char and 20-char stream deltas; ratio under 6, 256 KiB under 250 ms (Hetzner, best of 3) |
 | I | idempotence | every U, K and T row: f(f(x)) = f(x) through `redactSecretsInText`, `redactSecretsForSink`, `redactBotAuthored` and `redactSecretsForCard` |
 
 ## 8. Out of scope (unchanged rows)

@@ -31,7 +31,12 @@ export class ChildIoReceipts {
 
 
 import type {ChildProcess} from "node:child_process";
-const observedGenerations=new WeakMap<ChildProcess,string>();
+// 1.0.20 winrelay2: the launch preload (io-child-bootstrap.js) and a packaged entry (job-launcher.js, index.js) each
+// inline their own copy of this leaf. The hop's forward/seal check must consult the observer that actually launched
+// the child, so the map is process-global; exact child identity and per-launch generation checks are unchanged.
+const observedKey=Symbol.for("murage.io.observed-child-generations");
+const observedGlobal=globalThis as typeof globalThis&{[observedKey]:WeakMap<ChildProcess,string>|undefined};
+const observedGenerations=observedGlobal[observedKey]??=new WeakMap<ChildProcess,string>();
 /** Only the launch observer can reserve this private metering message family. */
 export function isObservedChildIoMessage(child:ChildProcess,raw:unknown):boolean {
  if(!raw||typeof raw!=="object")return false;
