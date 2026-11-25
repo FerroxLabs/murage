@@ -2681,7 +2681,7 @@ async function resumeHome(env: Env, h: Home, now: number): Promise<Response> {
   return json({ resumed: true, state: "checking" });
 }
 
-/** The hosting provider for this mode: injected (tests), live (build host/Vultr) or the inert fake. */
+/** The hosting provider for this mode: injected (tests), live (Hetzner/Vultr) or the inert fake. */
 export function providerFor(env: Env, dependencies: B3Dependencies = {}): ProviderAdapter {
   const provider = dependencies.provider?.(env.DB) ?? (env.CLOUD_B3_MODE === "live" ? createLiveProvider(env) : fakeProvider(env.DB));
   if (dependencies.callBoundMs) callBounds.set(provider, dependencies.callBoundMs);

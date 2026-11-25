@@ -26,6 +26,7 @@ export function RuntimeErrorCard({ message: rawMessage, details, errorKind, loca
   const local = setup ? undefined : classifyLocalSetupFailure(message, details, localFailure);
   if (local) return <LocalSetupFailureCard failure={local} engine={localFailureEngine} message={message} details={details} diagnostic={tracking} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} />;
   const safetyBlocked = !setup && (isProviderSafetyBlock(message) || isProviderSafetyBlock(details ?? ""));
+  // meetgreet 1.0.19: such a line still gets a plain reason and the next step (below), never "no explanation".
   const generic = /^(?:internal error|unknown error|ACP request failed|request failed)[.!]?$/i.test(message.trim());
   // Fixed copy for the kind the driver reported (Fuigo's error_kind), led
   // before the engine's own message; an unknown kind keeps the plain card.
@@ -43,6 +44,9 @@ export function RuntimeErrorCard({ message: rawMessage, details, errorKind, loca
   const coded = setup ? undefined : describeTurnError(message, botName, { canRetry });
   const plain = recallNoticeText(message) ?? toolBudgetLabel(message) ?? (!setup && botName ? plainEngineError(message, botName) : undefined) ?? coded?.text;
   const diagnostic = plain && details && !details.includes(message) ? `${message}\n${details}` : details || message;
+  // 1.0.20 T1/B2: a reply Murage itself could not start (server/index.ts MURAGE_NOT_STARTED_LINE) is not the engine's or the model's
+  // doing: the line says what to do, and the card offers Retry only, never Models or "pick another model".
+  const murageOwn = !setup && /^Murage couldn't start this reply\./.test(message.trim());
   return <div className="flex justify-start">
     <section role="alert" aria-labelledby={titleId} className="w-full max-w-[42rem] rounded-xl border border-danger/30 bg-card p-4 text-ink shadow-sm sm:p-5">
       <div className="flex items-start gap-3">
@@ -50,18 +54,18 @@ export function RuntimeErrorCard({ message: rawMessage, details, errorKind, loca
         <div className="min-w-0 flex-1">
           <h3 id={titleId} className="break-words text-[16px] font-semibold leading-snug">{setup ? "This engine needs setup" : safetyBlocked ? t("ux.lcopyb.runtimeError.blockedTitle") : "This request hit a problem"}</h3>
           <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{explanation ?? (generic
-            ? "The engine reported an error without explaining what went wrong. Any available diagnostic information is below."
+            ? `${botName ? `${botName}'s AI service` : "The AI service"} returned an error. Try again, or switch engine.`
             : plain ?? message)}</p>
           {explanation && !generic && <p className="mt-1.5 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{plain ?? message}</p>}
         </div>
       </div>
-      {setup || <p className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[13px] leading-relaxed text-ink-secondary">{safetyBlocked
+      {setup || murageOwn || <p className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[13px] leading-relaxed text-ink-secondary">{safetyBlocked
         ? t("ux.lcopyb.runtimeError.blockedBody")
         : coded?.recovery === "retry" || coded?.recovery === "contact" ? "If it keeps happening, open Technical details and send them to support."
         : coded ? "Once that is done, your next message will go through. Technical details has what support needs if it does not."
         : t("ux.lcopyb.runtimeError.recovery", { page: t("settings.page.models") })}</p>}
       {!safetyBlocked && <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" onClick={onOpenProviderSettings} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink " + focus}><Settings2 size={15} aria-hidden="true" /> {t("settings.page.models")}</button>
+        {!murageOwn && <button type="button" onClick={onOpenProviderSettings} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink " + focus}><Settings2 size={15} aria-hidden="true" /> {t("settings.page.models")}</button>}
         {onRetry && !setup && <button type="button" onClick={onRetry} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-medium text-ink-secondary hover:bg-raised " + focus}><RefreshCw size={14} aria-hidden="true" /> {retryLabel ?? "Retry"}</button>}
       </div>}
       <details className="mt-3 text-[11px] text-ink-secondary">

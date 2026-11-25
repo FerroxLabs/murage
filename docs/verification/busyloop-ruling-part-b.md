@@ -29,7 +29,7 @@ the recipe's slim variant does not. No retry-count override was set.
 Frames, exact terminal S1/S2 quotes, script/body hashes and run provenance are in
 [`__fixtures__/CAPTURE-FINDINGS.md`](../../server/drivers/acp/__fixtures__/CAPTURE-FINDINGS.md)
 and [`PROVENANCE.json`](../../server/drivers/acp/__fixtures__/PROVENANCE.json).
-The capture workspace is `/work/build/busyloop-capture/`.
+The capture workspace is `/root/fuigo-builds/swarm-b/busyloop-capture/`.
 The replay process writes the captured stdout lines unchanged except for
 rebinding the terminal JSON-RPC routing id. Its session handshake acknowledges
 the fixture's permission policy and MCP readiness; no refusal payload is built
@@ -74,7 +74,7 @@ card reasons and retained user messages. It is not a packaged desktop smoke.
 
 Logs and HTTP transcripts live in `evidence/ruling/`. All test commands used
 `it-remote.sh` with `IT_JOB=bfix-busyloop*`, this worktree and
-`IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`. The shared remote lock
+`IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`. The shared remote lock
 was occupied, so `NETARG=--network=none` selected the helper's local-container
 fallback while keeping networking disabled. No more than two job containers
 ran at once; observed host load stayed below 60. No local whole-suite run,
@@ -131,7 +131,7 @@ missing-vitest setup failure is not counted as RED.
 The remaining handoffs are precise:
 
 - **P1 production provenance OPEN:**
-  `/work/build/busyloop-capture/flux-prod-429/` was absent.
+  `/root/fuigo-builds/swarm-b/busyloop-capture/flux-prod-429/` was absent.
   `server/drivers/acp/__fixtures__/PROVENANCE.json` still awaits a verified
   `body_sources.status`, the missing `body_sources.S1.commit` (live FluxRouter
   source commit), and a verified `body_sources.S2.wrapper` with the sanitized

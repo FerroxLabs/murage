@@ -7,16 +7,37 @@ import { DatabaseSync } from "node:sqlite";
 import { expect, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { database } from "../database.ts";
-import { messageSearchIndexReady, rebuildMessageSearchIndex, startSearchIndex, stopSearchIndex } from "../message-search-index.ts";
+import { messageSearchIndexReady, rebuildMessageSearchIndex, searchIndexTestHooks, startSearchIndex, stopSearchIndex } from "../message-search-index.ts";
+
+/** The worker spaces rebuild steps at SEARCH_WRITE_BYTES_PER_MIN (256 MiB/min), so a 120k-row fixture that waits for a WHOLE
+ * rebuild would need minutes. While a fixture waits, its steps are paced as if they wrote 1/SEARCH_PACE_LIFT of their bytes,
+ * i.e. at SEARCH_PACE_LIFT times the rate. Test-only: the product constant and searchPacedDelay are unchanged, observers
+ * chained before the lift still see the worker's honest bytes, and the hook is restored when the wait ends. */
+export const SEARCH_PACE_LIFT = 4096;
+export async function liftSearchPace<T>(run: () => Promise<T>): Promise<T> {
+  const previous = searchIndexTestHooks.event;
+  const lifted: NonNullable<typeof previous> = event => {
+    previous?.(event);
+    if (event.type === "stepped" && typeof event.bytes === "number") event.bytes = event.bytes / SEARCH_PACE_LIFT;
+  };
+  searchIndexTestHooks.event = lifted;
+  try { return await run(); } finally { if (searchIndexTestHooks.event === lifted) searchIndexTestHooks.event = previous; }
+}
 
 export async function rebuildSearchFixture(db = database()): Promise<void> {
-  await stopSearchIndex();
-  rebuildMessageSearchIndex(db);
-  startSearchIndex(db, join(DATA_DIR, "messages.db"));
-  await waitSearchFixture(db);
+  await liftSearchPace(async () => {
+    await stopSearchIndex();
+    rebuildMessageSearchIndex(db);
+    startSearchIndex(db, join(DATA_DIR, "messages.db"));
+    await waitSearchFixtureUnlifted(db);
+  });
 }
 
 export async function waitSearchFixture(db = database()): Promise<void> {
+  await liftSearchPace(() => waitSearchFixtureUnlifted(db));
+}
+
+async function waitSearchFixtureUnlifted(db: DatabaseSync): Promise<void> {
   await vi.waitFor(() => {
     expect(messageSearchIndexReady(db), "search worker reader opened").toBe(true);
     const reader = new DatabaseSync(join(DATA_DIR, "search.db"), { readOnly: true });

@@ -153,7 +153,7 @@ export const ACTIVE_STATES: readonly string[] = ["ready", "checking", "payment_p
 export interface SelfServiceDependencies {
   b3?: B3Dependencies;
   billing?: BillingDependencies;
-  /** The Storage Box holding a home's backups (and its export archives), by box id. Default: the live build host box from config. */
+  /** The Storage Box holding a home's backups (and its export archives), by box id. Default: the live Hetzner box from config. */
   storageBox?: (boxId: number) => StorageBoxAdapter | null;
   /** The request's (or cron run's) ctx.waitUntil: keeps a bounded background continuation alive after the response. */
   waitUntil?: (work: Promise<unknown>) => void;

@@ -92,6 +92,33 @@ it("a background turn releases its engine as soon as it finishes", async () => {
   await expect.poll(() => alive(a.pid), { timeout: 10_000 }).toBe(false);
 });
 
+// fix/1020-warm-pool-fable (Sean's 1.0.19 log: `warm pool evict ... reason=background turn` on a thread he was chatting in).
+it("two owner turns on one thread: the second is process=reused, and a background turn in between does not close the engine", async () => {
+  vi.stubEnv("MURAGE_WARM_POOL_BUDGET_MB", "100000"); vi.stubEnv("MURAGE_WARM_POOL_MIN_FREE_MB", "0");
+  const lines: string[] = [];
+  const info = vi.spyOn(console, "info").mockImplementation((line: unknown) => { if (typeof line === "string") lines.push(line); });
+  try {
+    const owner = await create();
+    const dispatches = () => lines.filter(l => l.startsWith("claude dispatch thread=drv-hot "));
+    const a = await turn(owner, "drv-hot");
+    expect(dispatches().at(-1)).toContain("process=spawned reason=no-process");
+    const b = await turn(owner, "drv-hot", { resumeCursor: a.sessionId });
+    expect(dispatches().at(-1)).toContain("process=reused");
+    expect(b.pid).toBe(a.pid);
+    // a routine's turn lands on the same thread and runs on the owner's hot engine
+    const bg = await turn(owner, "drv-hot", { resumeCursor: a.sessionId, background: true });
+    expect(dispatches().at(-1)).toContain("process=reused");
+    expect(bg.pid).toBe(a.pid);
+    await new Promise(resolve => setTimeout(resolve, 1_500)); // the settle probe and the pool check have both answered
+    expect(alive(a.pid)).toBe(true);
+    expect(lines.filter(l => l.includes("thread=drv-hot") && (l.startsWith("warm pool evict") || l.startsWith("claude close")))).toEqual([]);
+    const c = await turn(owner, "drv-hot", { resumeCursor: a.sessionId });
+    expect(dispatches().at(-1)).toContain("process=reused");
+    expect(c.pid).toBe(a.pid);
+    expect(dispatches()).toHaveLength(4);
+  } finally { info.mockRestore(); }
+}, 40_000);
+
 it("over budget retires idle children but never an active one", async () => {
   vi.stubEnv("MURAGE_WARM_POOL_BUDGET_MB", "100000"); vi.stubEnv("MURAGE_WARM_POOL_MIN_FREE_MB", "0");
   const owner = await create();

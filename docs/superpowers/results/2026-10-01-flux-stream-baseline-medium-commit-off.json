@@ -1,0 +1,122 @@
+{
+  "mode": "dev",
+  "base": "ws://127.0.0.1:8787/v1",
+  "sim": true,
+  "results": [
+    {
+      "id": "E-latency",
+      "status": "pass",
+      "ms": 42654
+    },
+    {
+      "id": "E-murage",
+      "status": "pass",
+      "ms": 96354
+    }
+  ],
+  "metrics": {
+    "rtt": {
+      "p50": 0,
+      "p90": 0,
+      "n": 5
+    },
+    "text_client": {
+      "p50": 840,
+      "p90": 883,
+      "n": 5
+    },
+    "eot_client": {
+      "p50": 841,
+      "p90": 1692,
+      "n": 5
+    },
+    "server_lag": {
+      "p50": 346,
+      "p90": 347,
+      "n": 5
+    },
+    "start": {
+      "p50": 1300,
+      "p90": 1321,
+      "n": 5
+    },
+    "eot_murage": {
+      "p50": 861,
+      "p90": 1727,
+      "n": 5
+    },
+    "audible_restarts": {
+      "p50": 0,
+      "p90": 0,
+      "n": 6
+    },
+    "superseded": {
+      "p50": 0,
+      "p90": 1,
+      "n": 5
+    }
+  },
+  "gates": [
+    {
+      "id": "T-text-p50",
+      "value": 840,
+      "limit": 800,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-text-p90",
+      "value": 883,
+      "limit": 1000,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-eot-p50",
+      "value": 841,
+      "limit": 900,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-eot-p90",
+      "value": 1692,
+      "limit": 2000,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-eot-murage-p90",
+      "value": 1727,
+      "limit": 1300,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-superseded",
+      "value": 2,
+      "limit": 2,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-audible-restarts",
+      "value": 0,
+      "limit": 0,
+      "samples": 6,
+      "needed": 6,
+      "pass": true
+    }
+  ],
+  "owner": [],
+  "failures": [
+    "gate T-text-p50",
+    "gate T-eot-murage-p90"
+  ]
+}

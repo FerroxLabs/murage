@@ -1,0 +1,10 @@
+
+ RUN  v4.1.10 /Volumes/Fixture/workspace/cx-swapfix
+
+······································································
+
+ Test Files  3 passed (3)
+      Tests  70 passed (70)
+   Start at  08:28:15
+   Duration  2.25s (transform 736ms, setup 1.06s, import 110ms, tests 874ms, environment 0ms)
+

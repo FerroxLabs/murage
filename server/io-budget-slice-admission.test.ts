@@ -14,15 +14,19 @@ function watching() {
   budget.start(); budgets.push(budget); return budget;
 }
 it("a fresh fixture uses the admission reader's physical floor and still counts later writes", () => {
-  let blocks = 200_000;
+  // 1.0.21 B1/I8 (memv2-D): the admission ledger counts the application meter only (no OS counter is an input), so the fixture's floor and
+  // its later writes are meter bytes; the OS counter moving alone is asserted to count nothing.
+  let blocks = 200_000, meter = 200_000 * 512;
   const budget = new IoBudget({ read: () => ({ at: 30_000, fsWriteBlocks: 0, cpuMicros: 0 }), isIdle: () => false });
   budgets.push(budget);
-  Reflect.set(budget, "admissionRead", () => ({ at: 30_000, fsWriteBlocks: blocks, cpuMicros: 0 }));
+  Reflect.set(budget, "admissionRead", () => ({ at: 30_000, fsWriteBlocks: blocks, meterBytes: meter, cpuMicros: 0 }));
   budget.resetAdmissionForFixture();
   const ticket = budget.admit("BG", 64 * 1024);
   expect(ticket).not.toBeNull();
   budget.settle(ticket!, 0);
   blocks += 2048;
+  expect(budget.admissionState().total, "the OS counter alone counts nothing").toBe(0);
+  meter += 2048 * 512;
   expect(budget.admissionState().total).toBeGreaterThanOrEqual(1024 * 1024);
 });
 it("one measured backfill slice is repaid before another periodic writer starts", () => {

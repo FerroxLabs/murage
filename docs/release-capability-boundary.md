@@ -82,7 +82,7 @@ Omitted scopes are `none`. Job scopes below replace the workflow map.
 
 39 occurrences. Step indexes are zero-based parsed YAML paths. The release PAT
 appears only in guard step environments. Mac/Apple, Azure and GPG credentials
-sign packages; Flux and build host credentials reach test infrastructure. No live
+sign packages; Flux and Hetzner credentials reach test infrastructure. No live
 secret value is read by the audit. The built-in token uses `github.token` and
 the permission map above. Local composite actions contain no secret references.
 
@@ -92,8 +92,8 @@ the permission map above. Local composite actions contain no secret references.
 | flux-contract-daily.yml | `jobs.contract.steps.6.env.FLUX_CONTRACT_KEY` | `FLUX_CONTRACT_KEY` |
 | gepa-intel-qualification.yml | `jobs.intel-helper.steps.6.env.MAC_CERT_P12_BASE64` | `MAC_CERT_P12_BASE64` |
 | gepa-intel-qualification.yml | `jobs.intel-helper.steps.6.env.MAC_CERT_PASSWORD` | `MAC_CERT_PASSWORD` |
-| nightly-perf.yml | `jobs.perf-budget.steps.4.env.BUILD_HOST_SSH_KEY` | `BUILD_HOST_SSH_KEY` |
-| nightly-perf.yml | `jobs.perf-budget.steps.4.env.BUILD_HOST_NAME` | `BUILD_HOST_NAME` |
+| nightly-perf.yml | `jobs.perf-budget.steps.4.env.HETZNER_SSH_KEY` | `HETZNER_SSH_KEY` |
+| nightly-perf.yml | `jobs.perf-budget.steps.4.env.HETZNER_HOST` | `HETZNER_HOST` |
 | package-mac-qualification.yml | `jobs.mac.steps.11.env.MAC_CERT_P12_BASE64` | `MAC_CERT_P12_BASE64` |
 | package-mac-qualification.yml | `jobs.mac.steps.11.env.MAC_CERT_PASSWORD` | `MAC_CERT_PASSWORD` |
 | package-mac-qualification.yml | `jobs.mac.steps.18.env.APPLE_API_KEY_P8_BASE64` | `APPLE_API_KEY_P8_BASE64` |
@@ -125,5 +125,5 @@ the permission map above. Local composite actions contain no secret references.
 | release.yml | `jobs.assemble.steps.7.env.GH_TOKEN` | `RELEASES_PAT` |
 | release.yml | `jobs.assemble.steps.8.env.GH_TOKEN` | `RELEASES_PAT` |
 | release.yml | `jobs.assemble.steps.9.env.GH_TOKEN` | `RELEASES_PAT` |
-| scale-budget.yml | `jobs.budget.steps.1.run` | `BUILD_HOST_SSH_KEY` |
-| scale-budget.yml | `jobs.budget.steps.1.run` | `BUILD_HOST_NAME` |
+| scale-budget.yml | `jobs.budget.steps.1.run` | `HETZNER_SSH_KEY` |
+| scale-budget.yml | `jobs.budget.steps.1.run` | `HETZNER_HOST` |

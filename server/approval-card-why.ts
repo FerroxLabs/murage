@@ -86,6 +86,8 @@ export function cardWhy(input: WhyInput): CardWhy | undefined {
     if (input.origin === "channel") return input.channel ? { key: "ux.l1.why.channel", params: { bot, channel: input.channel } } : { key: "ux.l1.why.channelUnnamed", params: { bot } };
     return { key: "ux.l1.why.unattended", params: { bot } };
   }
+  // a call the stop line could only hold as unread names no delete, payment or recipient: it says it could not read it
+  if (cardClass.reason === "stop-line" && stopHit?.unread) return { key: "ux.l1.why.unreadCall", params: {} };
   if (cardClass.reason === "stop-line" && stopHit) {
     if (stopHit.kind === "pay") return cardClass.routine || cardClass.automated ? { key: "ux.l1.why.payRoutine", params: {} } : { key: "ux.l1.why.pay", params: { bot } };
     if (stopHit.kind === "delete") {

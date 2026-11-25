@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// B5 provisioner: build host and Vultr REST shapes against an in-memory fake cloud. No network, no credentials.
+// B5 provisioner: Hetzner and Vultr REST shapes against an in-memory fake cloud. No network, no credentials.
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isStagingEnv, provisionerConfig, provisionerSchema, ladderFor, DEFAULT_LADDERS } from "../src/b5-config";
@@ -20,7 +20,7 @@ const chooseRung = (c: Parameters<typeof chooseRungRaw>[0], plan: string, a: Par
 const cfgJson = (extra: Record<string, unknown> = {}) => JSON.stringify({ images: IMAGES, imageKinds: IMAGE_KINDS, quarantineFirewallId: 77, vultr: { ...VULTR, sshKeyIds: [] }, ...extra });
 const e = (extra?: Record<string, unknown>): Env => ({ ...env, MURAGE_ENV: "staging", B5_PROVISIONER_CONFIG: cfgJson(extra), HCLOUD_TOKEN: "hz-test-token", VULTR_API_KEY: "vu-test-key", B5_IMAGE_VERIFY_PUBKEY: PUBKEY } as Env);
 
-/** A tiny in-memory build host + Vultr. `stock` lists "provider:type:location" combos that are in stock. */
+/** A tiny in-memory Hetzner + Vultr. `stock` lists "provider:type:location" combos that are in stock. */
 function fakeCloud(stock: string[], disks: { image?: Record<string, number>; type?: Record<string, number>; tooBigAtCreate?: string[] } = {}) {
   const calls: { method: string; url: string; body: any }[] = [];
   const servers = new Map<string, any>(); const volumes = new Map<string, any>(); const snaps = new Map<string, any>();
@@ -93,7 +93,7 @@ function fakeCloud(stock: string[], disks: { image?: Record<string, number>; typ
 }
 const adapters = (f: HostFetch) => ({ hetzner: hetznerAdapter("t", { sshKeyIds: [], firewallIds: [] }, f), vultr: vultrAdapter("k", {}, f) });
 const cfg = (extra?: Record<string, unknown>) => provisionerSchema.parse(JSON.parse(cfgJson(extra)));
-/** Ladders with a Vultr last rung, and the flag that lets them be walked (default off: customer homes are build host only). */
+/** Ladders with a Vultr last rung, and the flag that lets them be walked (default off: customer homes are Hetzner only). */
 const vultrLadders = { allowVultrCustomerHomes: true, ladders: {
   starter: [{ provider: "hetzner", serverType: "cx23", arch: "x86" }, { provider: "hetzner", serverType: "cax11", arch: "arm" }, { provider: "vultr", serverType: "vc2-2c-4gb", arch: "x86" }],
   pro: [{ provider: "hetzner", serverType: "cax21", arch: "arm" }, { provider: "hetzner", serverType: "cx33", arch: "x86" }, { provider: "vultr", serverType: "vc2-4c-8gb", arch: "x86" }],
@@ -141,13 +141,13 @@ describe("ladder", () => {
     expect(r.tried[0]).toMatchObject({ serverType: "cax21", result: "no_image" });
     await expect(chooseRung(cfg(), "starter", adapters(fakeCloud([]).fetcher))).rejects.toThrow("no_capacity");
   });
-  it("only ever offers EU locations: build host fsn1/nbg1/hel1 and Vultr EU regions; ash/hil/sin and US/Asia regions are impossible", async () => {
+  it("only ever offers EU locations: Hetzner fsn1/nbg1/hel1 and Vultr EU regions; ash/hil/sin and US/Asia regions are impossible", async () => {
     expect(() => cfg({ hetznerLocations: ["ash"] })).toThrow();
     expect(() => cfg({ hetznerLocations: ["sin"] })).toThrow();
     expect(() => cfg({ vultrRegions: ["ewr"] })).toThrow();
     expect(() => cfg({ vultrRegions: ["lhr"] })).toThrow(); // UK is not the EU
     expect(cfg().vultrRegions).toEqual(["fra", "ams", "cdg", "sto", "waw", "mad"]);
-    // build host reports ash/hil/sin in stock: they are never chosen.
+    // Hetzner reports ash/hil/sin in stock: they are never chosen.
     const cloud = fakeCloud(["hetzner:cx23:ash", "hetzner:cx23:hil", "hetzner:cx23:sin", "vultr:vc2-2c-4gb:ewr", "vultr:vc2-2c-4gb:mad"]);
     const r = await chooseRung(cfg(vultrLadders), "starter", adapters(cloud.fetcher));
     expect(r.choice).toMatchObject({ provider: "vultr", location: "mad" }); // ewr (New Jersey) is in stock but never considered
@@ -193,14 +193,14 @@ describe("ladder", () => {
     expect(isStagingEnv({ CLOUD_CP0_STAGING: "1" })).toBe(true);
     for (const v of [undefined, "0", "true", ""]) expect(isStagingEnv({ CLOUD_CP0_STAGING: v })).toBe(false);
   });
-  it("a Vultr create is refused before anything is sent: no Vultr image can be verified (customer homes are build host only)", async () => {
+  it("a Vultr create is refused before anything is sent: no Vultr image can be verified (customer homes are Hetzner only)", async () => {
     const cloud = fakeCloud(["vultr:vc2-2c-4gb:fra"]);
     const a = vultrAdapter("k", cfg({ vultr: { firewallGroupId: "fwg-home", quarantineFirewallGroupId: "fwg-quar" } }), cloud.fetcher);
     const err = await a.createServer({ name: "h1", serverType: "vc2-2c-4gb", location: "fra", image: "snap-vultr-1", userData: "", volumeId: null, labels: { homeId: "h", generation: 1, role: "home" } } as never).catch((x: unknown) => x);
     expect((err as Error).message).toBe("image_unverified_call");
     expect(isNotSent(err)).toBe(true);
     expect(cloud.calls.some((c) => c.method === "POST")).toBe(false);
-    // even a capability the gate minted for build host is refused by the Vultr adapter
+    // even a capability the gate minted for Hetzner is refused by the Vultr adapter
     const hzImage = await verifiedImage("452016490", "x86");
     const err2 = await a.createServer({ name: "h1", serverType: "vc2-2c-4gb", location: "fra", image: hzImage, userData: "", volumeId: null, labels: { homeId: "h", generation: 1, role: "home" } } as never).catch((x: unknown) => x);
     expect((err2 as Error).message).toBe("image_unverified_call");
@@ -220,7 +220,7 @@ describe("ladder", () => {
     const bad = hetznerAdapter("t", { sshKeyIds: [], firewallIds: [], quarantineFirewallId: 9 }, async () => new Response(JSON.stringify({ error: { code: "locked" } }), { status: 423 }));
     await expect(bad.quarantine("5")).rejects.toThrow("locked");
   });
-  it("a build host stock-out gives no_capacity: the Vultr rung is never reached unless the config flag allows it", async () => {
+  it("a Hetzner stock-out gives no_capacity: the Vultr rung is never reached unless the config flag allows it", async () => {
     const cloud = fakeCloud(["vultr:vc2-2c-4gb:fra"]);
     await expect(chooseRung(cfg(), "starter", adapters(cloud.fetcher))).rejects.toThrow("no_capacity");
     // Even an explicit Vultr rung in the configured ladder is skipped while the flag is off, and no Vultr call is made.
@@ -231,13 +231,13 @@ describe("ladder", () => {
     const on = await chooseRung(cfg(vultrLadders), "starter", adapters(cloud.fetcher));
     expect(on.choice.provider).toBe("vultr");
   });
-  it("a build host stock-out in the first locations and sizes falls through every other build host location and rung before no_capacity", async () => {
+  it("a Hetzner stock-out in the first locations and sizes falls through every other Hetzner location and rung before no_capacity", async () => {
     // Pro: the first rung (cax21) is out everywhere; the second (cx33) has stock only in the last location.
     const last = cfg().hetznerLocations.at(-1)!;
     const r = await chooseRung(cfg(), "pro", adapters(fakeCloud([`hetzner:cx33:${last}`]).fetcher));
     expect(r.choice).toMatchObject({ provider: "hetzner", serverType: "cx33", location: last });
     expect(r.tried.map((t) => t.result)).toEqual(["no_stock", "chosen"]);
-    // Nothing anywhere on the build host: every build host rung was tried, then no_capacity.
+    // Nothing anywhere on Hetzner: every Hetzner rung was tried, then no_capacity.
     const cloud = fakeCloud([]);
     await expect(chooseRung(cfg(), "pro", adapters(cloud.fetcher))).rejects.toThrow("no_capacity");
     expect(cloud.calls.filter((c) => c.url.includes("/server_types")).length).toBe(2);
@@ -301,7 +301,7 @@ describe("live ProviderAdapter on the B3 interface", () => {
         volume: { provider: v.provider, id: v.id, device: v.device, new: v.new, generation: 1, homeId: "home-1" } } });
     return { p, v, s };
   }
-  it("build host: records the choice, creates the volume in the chosen EU location, attaches it at create, adopts instead of duplicating", async () => {
+  it("Hetzner: records the choice, creates the volume in the chosen EU location, attaches it at create, adopts instead of duplicating", async () => {
     const cloud = fakeCloud(["hetzner:cax21:hel1"]);
     const { p, v, s } = await create(cloud);
     const choice = await env.DB.prepare("SELECT * FROM provision_choices").first<Record<string, string>>();
@@ -391,7 +391,7 @@ describe("live ProviderAdapter on the B3 interface", () => {
     expect(alerts.results[0].detail).toContain("cax21");
     expect(alerts.results[0].detail).not.toContain("cx33");
   });
-  it("build host's 422 image-too-big at create closes the rung and walks on, never retrying the same rung, with one alert", async () => {
+  it("Hetzner's 422 image-too-big at create closes the rung and walks on, never retrying the same rung, with one alert", async () => {
     await env.DB.prepare("DELETE FROM cloud_alerts WHERE kind='image.too_big_for_server_type'").run();
     const cloud = fakeCloud(["hetzner:cax21:hel1", "hetzner:cx33:hel1"], { tooBigAtCreate: ["cax21"] });
     const p = createLiveProvider(e(), { fetch: cloud.fetcher, now: () => 5 });
@@ -833,7 +833,7 @@ describe("backups: Storage Box sub-account per home", () => {
       expect(a.log).toEqual([]);
     });
   });
-  it("the real build host Storage Box adapter speaks the sub-account API and recursive WebDAV delete (mocked fetch)", async () => {
+  it("the real Hetzner Storage Box adapter speaks the sub-account API and recursive WebDAV delete (mocked fetch)", async () => {
     const { hetznerStorageBox } = await import("../src/b5-backup");
     const calls: { method: string; url: string; auth: string | null; body: any }[] = [];
     let gone = false;
@@ -866,7 +866,7 @@ describe("backups: Storage Box sub-account per home", () => {
 });
 
 describe("power action receipts (Astra SELFSERVICE5 #2)", () => {
-  it("build host: only the call's own action id is asked about; Vultr has none, and reports up only when running and ok", async () => {
+  it("Hetzner: only the call's own action id is asked about; Vultr has none, and reports up only when running and ok", async () => {
     const seen: string[] = [];
     const fetcher = (async (input: RequestInfo | URL) => {
       const u = String(input); seen.push(u);

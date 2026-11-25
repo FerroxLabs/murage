@@ -33,7 +33,8 @@ it("progress refresh: a changed heartbeat restarts the stall deadline before a b
   const m = { failed: false, shared, lastBeat: 0, beatAt: 1000, walFile: "fixture.db-wal", lastResult: null, lastSize: 0, inflight: null };
   let now = 5000, replacements = 0;
   const context = { active: m, Atomics, HEARTBEAT_SLOT: slot, stallMs: STALL_MS, Date: { now: () => now }, writesPaused: true,
-    replaceStalled: () => { replacements++; return true; }, ioBudget: { admissionTick() {} }, statSync: () => ({ size: 0 }), checkpointPassive() {} };
+    replaceStalled: () => { replacements++; return true; }, ioBudget: { admissionTick() {} }, statSync: () => ({ size: 0 }), checkpointPassive() {},
+    releaseWalReaders() {} }; // 1.0.21 B5 (memv2-D): the watch also runs the half-gate release (no SQL); this test is about the stall deadline
   const tick = runInNewContext(ts.transpile(supervisor + "\ntick"), context) as (maintenance: typeof m) => void;
   Atomics.store(shared, slot, 1); tick(m);
   expect(m.beatAt, "progress refreshes the deadline even after a long healthy lifetime").toBe(now);
@@ -153,6 +154,7 @@ it("stall: a worker stuck in a busy loop is detected and replaced, the ceiling r
   expect(walMaintenanceTestHooks.heartbeat(), "the healthy worker clock advanced before the stall").toBeGreaterThan(beat);
   const gen = walMaintenanceCounters()!.gen;
   barrier.arm(3);
+  log.push(write(1024)); // 1.0.21 W4 (memv2-D): the worker polls on a commit, not on a 25 ms clock, so one write brings it to the barrier
   await vi.waitFor(() => expect(barrier.parkedAt()).toBe(3), { timeout: 5000, interval: 10 });
   barrier.disarm(); // the replacement must not park too; the parked thread stays parked
   const stalledAt = performance.now();
@@ -187,6 +189,7 @@ it("stalls again: one replacement, then writes paused (named state), no loop; pr
   await steady(40, log);
   const gen = walMaintenanceCounters()!.gen;
   barrier.arm(3); // stays armed: the replacement parks too
+  log.push(write(1024)); // 1.0.21 W4 (memv2-D): the worker polls on a commit, not on a 25 ms clock, so one write brings it to the barrier
   await vi.waitFor(() => expect(barrier.parkedAt()).toBe(3), { timeout: 5000, interval: 10 });
   burstUntilRefused(log);
   expectHonestRefusals(log);

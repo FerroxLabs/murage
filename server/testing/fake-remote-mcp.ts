@@ -68,6 +68,16 @@ export interface FakeRemoteMcpOptions {
   /** Every access token expires right after a tools/list is answered: the
    * next call in the same session (a tool call mid-turn) answers 401. */
   expireOnToolsList: boolean;
+  /** How a notification is accepted: the spec's "202", or the shapes real servers also send
+   * (Settings Test takes any status below 400): "200-text" (200, text/plain "OK") or "204".
+   * "500": the notification's handler failed (a JSON-RPC error body), as a servlet transport answers. */
+  notificationAnswer: "202" | "200-text" | "204" | "500";
+  /** The content type a JSON answer to a request is labelled with (the body stays one JSON-RPC object). */
+  answerContentType: string;
+  /** Bytes of "x" appended to the text of every tools/call answer (cause22 caps witnesses: one very large tool result). */
+  toolResultPadBytes: number;
+  /** Bytes of body the legacy /messages POST answers with its 202 (cause22: a server whose acknowledgement is large). 0 = "Accepted". */
+  messageAckBytes: number;
 }
 
 export interface RecordedRequest {
@@ -151,6 +161,10 @@ const DEFAULT_OPTIONS: FakeRemoteMcpOptions = {
   toolCount: undefined,
   sseSilent: false,
   expireOnToolsList: false,
+  notificationAnswer: "202",
+  answerContentType: "application/json",
+  toolResultPadBytes: 0,
+  messageAckBytes: 0,
 };
 
 const DEFAULT_SCOPE = "tools:call";
@@ -293,7 +307,7 @@ export async function startFakeRemoteMcp(overrides: Partial<FakeRemoteMcpOptions
           }
         }
         state.toolCalls.push({ name, arguments: args });
-        const text = name === "sum" ? String(Number(args.a ?? 0) + Number(args.b ?? 0)) : String(args.text ?? "");
+        const text = (name === "sum" ? String(Number(args.a ?? 0) + Number(args.b ?? 0)) : String(args.text ?? "")) + (options.toolResultPadBytes > 0 ? "x".repeat(options.toolResultPadBytes) : "");
         return { status: 200, message: { jsonrpc: "2.0", id, result: { content: [{ type: "text", text }] } } };
       }
       default:
@@ -512,7 +526,7 @@ export async function startFakeRemoteMcp(overrides: Partial<FakeRemoteMcpOptions
         return;
       }
       res.writeHead(202);
-      res.end("Accepted");
+      res.end(options.messageAckBytes > 0 ? "A".repeat(options.messageAckBytes) : "Accepted");
       if (result.message !== undefined) stream.write(frame(result.message));
       return;
     }
@@ -533,7 +547,17 @@ export async function startFakeRemoteMcp(overrides: Partial<FakeRemoteMcpOptions
       return;
     }
     if (result.message === undefined) {
-      res.writeHead(result.status, result.headers);
+      if (result.status === 202 && options.notificationAnswer === "500") {
+        res.writeHead(500, { "content-type": "application/json", ...result.headers });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32603, message: "Failed to handle notification: UPSTREAM-ERROR-TEXT" } }));
+        return;
+      }
+      if (result.status === 202 && options.notificationAnswer === "200-text") {
+        res.writeHead(200, { "content-type": "text/plain", ...result.headers });
+        res.end("OK");
+        return;
+      }
+      res.writeHead(result.status === 202 && options.notificationAnswer === "204" ? 204 : result.status, result.headers);
       res.end();
       return;
     }
@@ -542,7 +566,7 @@ export async function startFakeRemoteMcp(overrides: Partial<FakeRemoteMcpOptions
       res.end(frame(result.message));
       return;
     }
-    sendJson(res, result.status, result.message, result.headers);
+    sendJson(res, result.status, result.message, { "content-type": options.answerContentType, ...result.headers });
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

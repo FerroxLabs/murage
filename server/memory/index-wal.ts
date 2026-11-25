@@ -15,9 +15,11 @@
 import { BgDeferred } from "../bg-admission.ts";
 import { BgRefused, commitCeiling, checkpointCeiling, ioGrantSnapshot, registerBg } from "../io-meter.ts";
 import { helperEnforced, helperHasGrant, helperStepBudget, withHelperGrant } from "./helper-admission.ts";
+import { withIndexDebtPurpose } from "./index-debt.ts";
+import { bgFrames, classifyIndexLog, copyCeiling, indexDebtPage, type QuarantineCause } from "./index-debt-ceiling.ts";
 import { writeSync } from "../counted-fs.ts";
-import { closeSync, constants, existsSync, fsyncSync, lstatSync, openSync, readFileSync, readSync, unlinkSync } from "node:fs";
-import { dirname } from "node:path";
+import { closeSync, constants, existsSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, readSync, unlinkSync } from "node:fs";
+import { basename, dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import { crc32 } from "node:zlib";
 import { DatabaseSync } from "../sqlite-open.ts";
@@ -65,7 +67,7 @@ export const ALL_WAL_KINDS: ReadonlySet<string> = new Set<WalKind>(["group", "fi
 // META_VALUE_MAX_BYTES, enforced by the one put helper below and, for a file written by any other build, at open by checkGeometry.
 // Depth: SQLite's BTCURSOR_MAX_DEPTH is 20 (btreeInt.h, unchanged since 3.7.x); moveToChild returns SQLITE_CORRUPT past it, so a write on
 // a deeper tree rolls back with 0 frames and is never committed. node:sqlite in the packaged app (Electron 43.8.1 runs the server as Node 24.22.0 via ELECTRON_RUN_AS_NODE) bundles SQLite 3.53.4, the
-// same as the build host test image (node:24); the memory index suite prints sqlite_version() so a reviewer can confirm it. The design text
+// same as the Hetzner test image (node:24); the memory index suite prints sqlite_version() so a reviewer can confirm it. The design text
 // said 3.50.4; BTCURSOR_MAX_DEPTH is 20 in both.
 const LITERAL_META_KEYS: readonly string[] = [
   // the checked write path (this file)
@@ -241,6 +243,13 @@ function encodeSidecar(value: object): Buffer {
   return out;
 }
 /** Writes a sidecar whole and fsyncs it (and its directory when `dirSync` or when the file is new). Throws on any fault. */
+export function exitSealCeiling(debtBytes:number,pageSize:number,nativePage:number):number{
+  const debtFrames=Math.ceil(debtBytes/pageSize);
+  return commitCeiling(MEMW_SEAL_FRAMES,pageSize,nativePage)
+    +checkpointCeiling(debtFrames+MEMW_SEAL_FRAMES,pageSize,nativePage)
+    +2*Math.ceil(SIDECAR_BYTES/nativePage)*nativePage+4*nativePage;
+}
+
 export function writeSidecar(indexPath: string, suffix: string, value: object, dirSync: boolean): void {
   if(helperEnforced()&&!ioGrantSnapshot().live)return withHelperGrant(ioGrantSnapshot().pageSize,()=>writeSidecar(indexPath,suffix,value,dirSync));
   const path = `${indexPath}${suffix}`, created = !existsSync(path), data = encodeSidecar(value);
@@ -275,10 +284,14 @@ export interface IndexWal {
   openCheck(): Promise<OpenVerdict>;
   sealAndTruncate(): Promise<{ truncated: boolean }>;
   stop(reason: string, kind: WalKind, seq: number): never;
-  prepareExit(): Promise<void>;
+  prepareExit(): Promise<ExitSealOutcome>;
 }
+type CheckpointRefusal = "grant" | "charge" | "stopped";
+type SealFailure = CheckpointRefusal | "check-owed" | "walok" | "busy" | "log" | "checkpoint" | "write";
+export type ExitSealOutcome = "clean" | "sealed" | `unsealed:${SealFailure}`;
+
 interface Check { L: number; id: string | null; log: number }
-interface WalCheckRow { seq: number; Lb: number; idb: string | null; reserve: number; kind: WalKind }
+interface WalCheckRow { seq: number; Lb: number; idb: string | null; reserve: number; kind: WalKind; q?: QuarantineCause }
 type Owed = { type: "commit"; Lb: number; idb: string | null; reserve: number; kind: WalKind; seq: number; tries: number }
   | { type: "live"; kind: WalKind; reserve: number; seq: number }
   | { type: "open"; tries: number };
@@ -304,6 +317,9 @@ export class IndexWalWriter implements IndexWal {
   /** A commit restarted the log and SQLite's journal_size_limit truncate did not shorten the file (walLimitSize ignores the failure). */
   private truncateFailed = false;
   private running: Promise<unknown> | null = null;
+  private wroteFrames = false;
+  /** The seq of the seal frames written and checked since the last TRUNCATE; null when the log holds no seal. */
+  private sealedSeq: number | null = null;
   private readonly shm: ReturnType<typeof walIndexReader>;
   private readonly charge: ChargeTransport;
   readonly counters: WalCounters = { live_breach: 0, open_tail: 0, restart_window: 0, truncate_failed: 0, false_bound_stops: 0, charge_refused: 0 };
@@ -313,12 +329,14 @@ export class IndexWalWriter implements IndexWal {
   readonly guard: DatabaseSync;
   readonly indexPath: string;
   constructor(db: DatabaseSync, guard: DatabaseSync, indexPath: string,
-    init: { fileId: bigint; fileIdStored: boolean; pageSize: number; seq: number; metaReady: boolean; charge?: ChargeTransport; open: OpenState | null }) {
-    this.db = db; this.guard = guard; this.indexPath = indexPath;
+    init: { fileId: bigint; fileIdStored: boolean; pageSize: number; seq: number; metaReady: boolean; charge?: ChargeTransport; open: OpenState | null; q?: QuarantineCause }) {
+    this.db = db; this.guard = guard; this.indexPath = indexPath; this.firstQ = init.q ?? null;
     this.fileId = init.fileId; this.fileIdStored = init.fileIdStored; this.pageSize = init.pageSize; this.seq = init.seq; this.metaReady = init.metaReady;
     this.charge = init.charge ?? grantAll; this.shm = walIndexReader(indexPath); this.openState = init.open;
   }
   private readonly openState: OpenState | null;
+  /** W5 (D-R4 1.3): why the file this one replaces was set aside, written once in this fresh file's first wal_check row. */
+  private firstQ: QuarantineCause | null;
   get stopped(): boolean { return this.stoppedFlag; }
   stopInfo(): { kind: StopKind; seq: number; reason: string } | null { return this.stopRecord; }
   markStopped(kind: StopKind, seq: number, reason: string): void { this.stoppedFlag = true; this.stopRecord = { kind, seq, reason }; this.owedCheck = null; }
@@ -335,7 +353,7 @@ export class IndexWalWriter implements IndexWal {
     if(helperEnforced()){
       const h=this.shm(),debt=h?(h.mxFrame-h.nBackfill)*this.pageSize:this.chargeBytes();
       const pages=Math.ceil(reserve/this.frameBytes);
-      if(debt+pages*this.pageSize>MEMW_TICK_TRUNCATE_BYTES)return false;
+      if(debt+pages*this.pageSize>this.liveBound())return false;
       if(!helperHasGrant(commitCeiling(pages,this.pageSize)+checkpointCeiling(pages,this.pageSize)+4*ioGrantSnapshot().pageSize,true))throw new BgDeferred();
     }
     if (L + reserve + this.sealRoom > MEMW_C_BYTES) return false;
@@ -344,18 +362,17 @@ export class IndexWalWriter implements IndexWal {
     return true;
   }
 
+  /** W5-LIVE (D-R4 1.6, CONTRACT-REQ A): the live write bound in frames is min(8 MiB / S, F_B(p)), so the copy a live log owes always fits
+   * one background ticket on 16 and 64 KiB OS pages too (8 MiB = 2,048 frames would cost 32 / 128 MiB of meter bytes there, more than any
+   * ticket, and live writes would stop for good); a live log never reaches HO. Unchanged on 4 KiB pages (2,048 < 3,070). */
+  liveBound(): number { return Math.min(MEMW_TICK_TRUNCATE_BYTES, bgFrames(indexDebtPage()) * this.pageSize); }
   // -- charge-first --
   /** (log_p - confirmed) x page_size from the -shm header (mxFrame - nBackfill); the full (Lw - 32)/Fz bound when it cannot be read. */
   indexDebtBytes():number{return this.chargeBytes();}
   /** Use this handle's existing reader; a second shm descriptor could drop SQLite locks when closed. */
   walMark():ReturnType<ReturnType<typeof walIndexReader>>{return this.shm();}
   /** Entire seal: commit, existing debt plus seal copy, two rounded sidecars and native bookkeeping. */
-  sealCeiling():number{
-    const nativePage=ioGrantSnapshotIfEnforced(),debtFrames=Math.ceil(this.chargeBytes()/this.pageSize);
-    return commitCeiling(MEMW_SEAL_FRAMES,this.pageSize,nativePage)
-      +checkpointCeiling(debtFrames+MEMW_SEAL_FRAMES,this.pageSize,nativePage)
-      +2*Math.ceil(SIDECAR_BYTES/nativePage)*nativePage+4*nativePage;
-  }
+  sealCeiling():number{return exitSealCeiling(this.chargeBytes(),this.pageSize,ioGrantSnapshotIfEnforced());}
   private chargeBytes(): number {
     const h = this.shm();
     if (h && h.mxFrame >= h.nBackfill) return (h.mxFrame - h.nBackfill) * this.pageSize;
@@ -375,16 +392,20 @@ export class IndexWalWriter implements IndexWal {
       return granted;
     } finally { clearTimeout(timer); }
   }
-  /** Charge, ack, then the attempt. null: refused / no ack (nothing ran). */
-  private async chargedCheckpoint(mode: "PASSIVE" | "TRUNCATE"): Promise<WalCheckpointResult | null> {
-    const frames=Math.ceil(this.chargeBytes()/this.pageSize);
-    const ceiling=checkpointCeiling(frames,this.pageSize,ioGrantSnapshotIfEnforced());
-    if(helperEnforced()&&!helperHasGrant(ceiling))return null;
-    if (!(await this.chargeBeforeAttempt(this.chargeBytes()))) return null;
-    if (this.stoppedFlag) return null;
+  /** Charge, ack, then the attempt. A refusal runs no checkpoint. */
+  private async chargedCheckpoint(mode: "PASSIVE" | "TRUNCATE"): Promise<WalCheckpointResult | CheckpointRefusal> {
+    const bytes=this.chargeBytes(),frames=Math.ceil(bytes/this.pageSize);
+    // W5 (D-R4 1.1): the one ceiling formula at the page every W5 decision uses, so the ask and the ledger's door agree
+    const ceiling=helperEnforced()?copyCeiling(frames,indexDebtPage()):checkpointCeiling(frames,this.pageSize,ioGrantSnapshotIfEnforced());
+    // W5 (memv2-D index-debt.ts): the open check's copy of a log larger than any background ticket asks for the one index-debt grant
+    return withIndexDebtPurpose(this.owedCheck?.type==="open",ceiling,async():Promise<WalCheckpointResult | CheckpointRefusal>=>{
+    if(helperEnforced()&&!helperHasGrant(ceiling))return "grant";
+    if (!(await this.chargeBeforeAttempt(bytes))) return "charge";
+    if (this.stoppedFlag) return "stopped";
     try{return withHelperGrant(ceiling,()=>{
       return walCheckpoint(this.db, mode, 0);
-    },this.db);}catch(error){if(error instanceof BgRefused||error instanceof BgDeferred)return null;throw error;}
+    },this.db,ceiling,false,true);}catch(error){if(error instanceof BgRefused||error instanceof BgDeferred)return "grant";throw error;}
+    });
   }
   private serial<T>(work: () => Promise<T>): Promise<T> {
     const previous = this.running ?? Promise.resolve();
@@ -401,7 +422,7 @@ export class IndexWalWriter implements IndexWal {
 
   write<T>(kind: WalKind, reserve: number, body: (meta: (key: string, value: string) => void) => T): T {
     const frames=Math.ceil(reserve/this.frameBytes);
-    if(helperEnforced()&&this.chargeBytes()+frames*this.pageSize>MEMW_TICK_TRUNCATE_BYTES)throw new BgDeferred();
+    if(helperEnforced()&&this.chargeBytes()+frames*this.pageSize>this.liveBound())throw new BgDeferred();
     const ceiling=commitCeiling(frames,this.pageSize,ioGrantSnapshotIfEnforced())+2*ioGrantSnapshotIfEnforced();
     try{return withHelperGrant(ceiling,()=>this.writeGranted(kind,reserve,body),this.db,ceiling+checkpointCeiling(frames,this.pageSize,ioGrantSnapshotIfEnforced())+2*ioGrantSnapshotIfEnforced(),true);}
     catch(error){
@@ -424,18 +445,20 @@ export class IndexWalWriter implements IndexWal {
       if (!this.metaReady) db.exec("CREATE TABLE IF NOT EXISTS index_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID");
       const put = metaPutter(db);
       result = body(put);
-      const row: WalCheckRow = { seq: s, Lb, idb, reserve, kind };
+      const row: WalCheckRow = { seq: s, Lb, idb, reserve, kind, ...this.firstQ ? { q: this.firstQ } : {} };
       put("wal_check", JSON.stringify(row));
       if (kind !== "seal") {
         put("verified_through", String(s - 1));
         if (!this.fileIdStored) put("file_id", this.fileId.toString());
       }
       db.exec("COMMIT");
+      this.firstQ = null;
     } catch (error) {
       if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* the live check reads what is left */ } }
       this.owedCheck = { type: "live", kind, reserve, seq: s };
       throw error;
     }
+    this.wroteFrames = true;
     this.seq = s; this.metaReady = true;
     if (kind !== "seal") this.fileIdStored = true;
     this.owedCheck = { type: "commit", Lb, idb, reserve, kind, seq: s, tries: 0 };
@@ -448,7 +471,7 @@ export class IndexWalWriter implements IndexWal {
     try { this.stepZero(); } catch (error) { return Promise.reject(error); }
     // One charged check in flight: a tick that comes while it waits for its ack ran step 0 above and shares it (no queue growth).
     if (this.inflight) return this.inflight;
-    const run = this.serial(() => this.checkUnserial()), clear = () => { if (this.inflight === run) this.inflight = null; };
+    const run = this.serial(async () => { await this.checkUnserial(); }), clear = () => { if (this.inflight === run) this.inflight = null; };
     this.inflight = run; run.then(clear, clear);
     return run;
   }
@@ -484,9 +507,9 @@ export class IndexWalWriter implements IndexWal {
 
 
   /** I5 after a commit: charged PASSIVE, header, base rule, rise and C. */
-  private async commitCheck(owed: Extract<Owed, { type: "commit" }>): Promise<void> {
+  private async commitCheck(owed: Extract<Owed, { type: "commit" }>): Promise<CheckpointRefusal | void> {
     const result = await this.chargedCheckpoint("PASSIVE");
-    if (result === null) return; // refused or unanswered: still owed (the stall)
+    if (typeof result === "string") return result; // still owed
     const header = readWalHeader(this.indexPath);
     if (!result.ok || result.busy !== 0 || (result.log > 0 && (!header || !header.valid))) {
       owed.tries++;
@@ -506,9 +529,9 @@ export class IndexWalWriter implements IndexWal {
   }
 
   /** The live check after a failed attempt (spec 1.6): charged PASSIVE, Lw, E. Unusable or over -> OVERRUN; else the marker is resolved. */
-  private async liveCheck(owed: Extract<Owed, { type: "live" }>): Promise<void> {
+  private async liveCheck(owed: Extract<Owed, { type: "live" }>): Promise<CheckpointRefusal | void> {
     const result = await this.chargedCheckpoint("PASSIVE");
-    if (result === null) return; // still owed
+    if (typeof result === "string") return result; // still owed
     if (!result.ok || result.busy !== 0) { this.counters.live_breach++; this.stop("live_check_unusable", owed.kind, owed.seq); }
     const Lw = walSize(this.indexPath), E = WAL_HEADER_BYTES + result.log * this.frameBytes;
     if (Lw === null) { this.counters.live_breach++; this.stop("live_wal_unreadable", owed.kind, owed.seq); }
@@ -526,34 +549,55 @@ export class IndexWalWriter implements IndexWal {
     this.last = { L: E, id: result.log > 0 ? header!.id : null, log: result.log };
   }
 
-  /** Seal (an in-place wal_check update, 4 frames), its check, -walok, charge, TRUNCATE busy 0. A reset counts only for busy 0 and log 0. */
-  sealAndTruncate(): Promise<{ truncated: boolean }> {
-    return this.serial(async () => {
-      if (this.stoppedFlag) return { truncated: false };
-      if (this.owedCheck) { await this.checkUnserial(); if (this.owedCheck || this.stoppedFlag) return { truncated: false }; }
-      if(helperEnforced()&&this.chargeBytes()+MEMW_SEAL_FRAMES*this.pageSize>MEMW_TICK_TRUNCATE_BYTES){
+  /** Seal an in-place wal_check update, check it, write -walok and TRUNCATE. */
+  async sealAndTruncate(): Promise<{ truncated: boolean }> {
+    return { truncated: (await this.serial(() => this.seal())) === "sealed" };
+  }
+  private async seal(exit = false): Promise<"sealed" | `unsealed:${SealFailure}`> {
+    if (this.stoppedFlag) return "unsealed:stopped";
+    if (exit && helperEnforced() && !helperHasGrant(this.sealCeiling())) return "unsealed:grant";
+    const checked=await this.checkUnserial();
+    if (this.stoppedFlag) return "unsealed:stopped";
+    if (checked) return `unsealed:${checked}`;
+    if (this.owedCheck) return "unsealed:check-owed";
+    // Seal once: a checked seal with no write after it is still the log's last commit, so a retry after a refused -walok or TRUNCATE
+    // goes straight back to those steps instead of writing the seal frames again.
+    if (this.sealedSeq !== this.seq) {
+      if(helperEnforced()&&this.chargeBytes()+MEMW_SEAL_FRAMES*this.pageSize>this.liveBound()){
         const copied=await this.chargedCheckpoint("PASSIVE");
-        if(!copied||!copied.ok||copied.busy||this.chargeBytes()>0)return {truncated:false};
+        if(typeof copied==="string")return `unsealed:${copied}`;
+        if(!copied.ok)return "unsealed:checkpoint";
+        if(copied.busy)return "unsealed:busy";
+        if(this.chargeBytes()>0)return "unsealed:log";
       }
       this.write("seal", this.sealRoom, () => { walTestHooks.sealBody?.(this.db); });
-      await this.checkUnserial();
-      if (this.owedCheck || this.stoppedFlag) return { truncated: false };
-      try { writeSidecar(this.indexPath, "-walok", { fileId: this.fileId.toString(), seq: this.seq }, true); } catch { return { truncated: false }; }
-      point("after-walok");
-      const result = await this.chargedCheckpoint("TRUNCATE");
-      point("before-truncate-result");
-      if (result === null || !result.ok || result.busy !== 0 || result.log !== 0) return { truncated: false };
-      this.last = { L: WAL_HEADER_BYTES, id: null, log: 0 };
-      return { truncated: true };
-    });
+      // Committed: a retry's first check above is this seal's own commit check.
+      this.sealedSeq = this.seq;
+      const sealedCheck=await this.checkUnserial();
+      if (this.stoppedFlag) return "unsealed:stopped";
+      if (sealedCheck) return `unsealed:${sealedCheck}`;
+      if (this.owedCheck) return "unsealed:check-owed";
+    }
+    try { writeSidecar(this.indexPath, "-walok", { fileId: this.fileId.toString(), seq: this.seq }, true); }
+    catch (error) { return error instanceof BgRefused || error instanceof BgDeferred ? "unsealed:grant" : "unsealed:walok"; }
+    point("after-walok");
+    const result = await this.chargedCheckpoint("TRUNCATE");
+    point("before-truncate-result");
+    if (typeof result === "string") return `unsealed:${result}`;
+    if (!result.ok) return "unsealed:checkpoint";
+    if (result.busy !== 0) return "unsealed:busy";
+    if (result.log !== 0) return "unsealed:log";
+    this.last = { L: WAL_HEADER_BYTES, id: null, log: 0 };
+    this.wroteFrames = false; this.sealedSeq = null;
+    return "sealed";
   }
-  private async checkUnserial(): Promise<void> {
+  private async checkUnserial(): Promise<CheckpointRefusal | void> {
     this.stepZero();
     const owed = this.owedCheck;
     if (!owed || this.stoppedFlag) return;
-    if (owed.type === "open") await this.runOpen();
-    else if (owed.type === "live") await this.liveCheck(owed);
-    else await this.commitCheck(owed);
+    if (owed.type === "open") return this.runOpen();
+    if (owed.type === "live") return this.liveCheck(owed);
+    return this.commitCheck(owed);
   }
 
   /** The durable stop (spec 1.7): -walstop + fsync file + dir FIRST, then index_meta wal_over_stop as the only write. Sidecar fault:
@@ -577,18 +621,26 @@ export class IndexWalWriter implements IndexWal {
   /** Stop with a counted cause. */
   stopFor(cause: StopCause, reason: string, kind: WalKind, seq: number): never { this.counters[cause]++; return this.stop(reason, kind, seq); }
 
-  /** Best-effort seal and TRUNCATE before an exit, bounded; never a close. */
-  async prepareExit(): Promise<void> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try { await Promise.race([this.sealAndTruncate(), new Promise(resolve => { timer = setTimeout(resolve, 2 * (walTestHooks.chargeAckMs ?? CHARGE_ACK_MS) + 500); })]); }
-    catch { /* the log keeps every frame */ }
-    finally { clearTimeout(timer); }
+  /** The exit receipt covers the full seal. A clean writer costs no admission. */
+  prepareExit(): Promise<ExitSealOutcome> {
+    return this.serial(async () => {
+      if (this.stoppedFlag) return "unsealed:stopped";
+      if (!this.wroteFrames && !this.owedCheck) return "clean";
+      try { return await this.seal(true); }
+      catch (error) {
+        if (error instanceof BgDeferred || error instanceof BgRefused) return "unsealed:grant";
+        if (error instanceof WalStop) return "unsealed:stopped";
+        return "unsealed:write";
+      }
+    });
   }
 
   /** S18 only (runOpenRuleForDowngrade): the charged TRUNCATE after the downgrade's own txn. */
   async chargedTruncateForDowngrade(): Promise<boolean> {
     const result = await this.chargedCheckpoint("TRUNCATE");
-    return result !== null && result.ok && result.busy === 0 && result.log === 0;
+    const truncated=typeof result !== "string" && result.ok && result.busy === 0 && result.log === 0;
+    if(truncated){this.wroteFrames=false;this.sealedSeq=null;}
+    return truncated;
   }
 
   /** The permitted close before quarantine/downgrade/tests (r3.2.6 A1'c): the writable connection first (it cannot take EXCLUSIVE while
@@ -613,12 +665,12 @@ export class IndexWalWriter implements IndexWal {
     const newest = this.openState?.newest ?? null;
     try { this.stopFor(cause, reason, newest?.kind ?? "open", this.seq); } catch (error) { if (!(error instanceof WalStop)) throw error; }
   }
-  private async runOpen(): Promise<void> {
+  private async runOpen(): Promise<CheckpointRefusal | void> {
     const owed = this.owedCheck as Extract<Owed, { type: "open" }>, state = this.openState!;
     const { storedId, newest, attemptSide } = state;
     // 3. the charged PASSIVE, header, Lw, marker.
     const cp = await this.chargedCheckpoint("PASSIVE");
-    if (cp === null) return; // refused: the verdict stays unresolved, retried next tick
+    if (typeof cp === "string") return cp; // the verdict stays unresolved, retried next tick
     const H = readWalHeader(this.indexPath);
     if (!cp.ok || cp.busy !== 0 || (cp.log > 0 && (!H || !H.valid) && newest !== null)) {
       owed.tries++;
@@ -736,7 +788,15 @@ export function checkGeometry(db: DatabaseSync): void {
   for (const row of keys) if (!META_KEYS.has(String(row.key))) throw new IndexDamagedError(`geometry:index_meta_key=${String(row.key).slice(0, 64)}`);
 }
 
-function openRule(indexPath: string, opts: OpenRuleOptions, rebuilt: boolean): OpenedIndexWal {
+/** W5 (D-R4 1.3): one line and one counter per quarantine, the cause a code from the closed set. */
+export const quarantineCounts: Record<QuarantineCause, number> = { quick_check: 0, geometry: 0, open_rise: 0, unrecorded: 0 };
+function noteQuarantine(cause: QuarantineCause): void { quarantineCounts[cause]++; console.error(`MEMORY_INDEX_QUARANTINE cause=${cause}`); }
+/** W5 (R6): a fresh file with no row beside a `<index>.corrupt-<digits>` set: the reason of that quarantine was never written. */
+function asideSibling(indexPath: string): boolean {
+  const prefix = `${basename(indexPath)}.corrupt-`;
+  try { return readdirSync(dirname(indexPath)).some(entry => entry.startsWith(prefix) && /^\d+$/.test(entry.slice(prefix.length))); } catch { return false; }
+}
+function openRule(indexPath: string, opts: OpenRuleOptions, rebuilt: boolean, q?: QuarantineCause): OpenedIndexWal {
   // 0. the whole set; a stray member without its index file is removed.
   try { prepareIndexOpen(indexPath); } catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
   if (existsSync(indexPath) && (!lstatSync(indexPath).isFile() || lstatSync(indexPath).isSymbolicLink())) return exitNow(1);
@@ -771,7 +831,10 @@ function openRule(indexPath: string, opts: OpenRuleOptions, rebuilt: boolean): O
     // r3.2.6 A1'c: writable first, the read-only guard last (no close checkpoint), then the whole set aside (the stop marker stays at
     // its live name), then a fresh file.
     try { writable.close(); guard.close(); quarantineIndex(indexPath); } catch (error) { if(error instanceof BgDeferred||error instanceof BgRefused)throw error; return exitNow(1); }
-    return openRule(indexPath, opts, true);
+    // W5 (D-R4 1.3, R6): the cause is a code from the closed set, written in the fresh file's first wal_check row
+    const cause: QuarantineCause = /^MEMORY_INDEX_DAMAGED:geometry:/.test(String((error as Error)?.message)) ? "geometry" : "quick_check";
+    noteQuarantine(cause);
+    return openRule(indexPath, opts, true, cause);
   }
   try {
     writable.exec("PRAGMA busy_timeout=0; PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON; PRAGMA synchronous=FULL; PRAGMA journal_size_limit=0; PRAGMA cache_spill=OFF; PRAGMA wal_autocheckpoint=0;");
@@ -787,12 +850,24 @@ function openRule(indexPath: string, opts: OpenRuleOptions, rebuilt: boolean): O
   if (storedId === "bad") return unresolvedExit("file_id_unreadable");
   if (newest === "bad") return unresolvedExit("wal_check_unreadable");
   const fileId = storedId ?? randomFileId();
+  // (a reset's own set-aside, opts.reset / ignoreMarker, is not a quarantine: Opus r4 review M2)
+  if(!rebuilt&&!opts.reset&&!opts.ignoreMarker&&q===undefined&&newest===null&&storedId===null&&asideSibling(indexPath))q="unrecorded";
   const wal = new IndexWalWriter(writable, guard, indexPath, { fileId, fileIdStored: storedId !== null, pageSize, seq: newest?.seq ?? 0, metaReady, charge: opts.charge,
-    open: { storedId, newest, attemptSide: readSidecar(indexPath, "-walattempt") } });
+    open: { storedId, newest, attemptSide: readSidecar(indexPath, "-walattempt") }, q });
+  // W5 (D-R4 1.2-1.3, memv2-D index-debt-ceiling.ts): quick_check and the geometry passed above. The log is classified once, before any
+  // copy: no wal_check row is never damage (HU/HO by size: the open check copies it, under the one index-debt grant when it is more than a
+  // background ticket copies). Only a rise past the newest row's reserve (or past C) that the -shm proves, too large for one background
+  // copy, is set aside (the T18 shape), with its cause written in the fresh file's first row. A log over C (D4/U3) is left to the open
+  // check's stepZero, which stops it in place before any copy (a stop is not a quarantine); everything else to steps 3-10.
   // Q9: controller oweReceiptsToNewIndex replays memory_records via durable projection receipts after rebuilt=true.
-  if(helperEnforced()&&!rebuilt&&wal.indexDebtBytes()>12*MiB){
-    try{wal.closeForQuarantine();quarantineIndex(indexPath);}catch(error){if(error instanceof BgDeferred||error instanceof BgRefused)throw error;return exitNow(1);}
-    return openRule(indexPath,opts,true);
+  if(helperEnforced()&&!rebuilt){
+    const H=readWalHeader(indexPath),shm=wal.walMark();
+    const c=classifyIndexLog({shm:shm&&shm.mxFrame>=shm.nBackfill?shm:null,header:H?{valid:H.valid,id:H.valid?H.id:null}:null,walBytes:walSize(indexPath),row:newest,cBytes:MEMW_C_BYTES,page:indexDebtPage(),sameGeneration});
+    if(c.state==="DM"&&c.why==="open_rise_over"){
+      try{wal.closeForQuarantine();quarantineIndex(indexPath);}catch(error){if(error instanceof BgDeferred||error instanceof BgRefused)throw error;return exitNow(1);}
+      noteQuarantine("open_rise");
+      return openRule(indexPath,opts,true,"open_rise");
+    }
   }
   const out = (verdict: OpenVerdict): OpenedIndexWal => ({ writable, guard, verdict, wal, rebuilt });
   // The marker binds whoever wrote it (r3.2.8 point 1): no identity check, no unlink, no repair. Only the reset's fresh open ignores it.

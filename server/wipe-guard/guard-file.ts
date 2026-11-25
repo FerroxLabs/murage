@@ -17,7 +17,9 @@ export interface GuardFile {
   realTools: Readonly<Record<string, string>>;
   off: boolean;
 }
-export const MAX_GUARD_FILE_BYTES = 256 * 1024;
+// 1 MiB: room for GUARD_LIMITS.roots (8192) work folders at their real length (about 110 bytes each). client.mjs MAX_GUARD and the
+// shim reader (shim/guard-lib.sh) carry the same number; routine-workfolders-1020.test.ts holds the three together.
+export const MAX_GUARD_FILE_BYTES = 1024 * 1024;
 const absolute = (value: string) => isAbsolute(value) || win32.isAbsolute(value);
 
 /** Create only in the random private turn directory; never overwrite a stale file. */

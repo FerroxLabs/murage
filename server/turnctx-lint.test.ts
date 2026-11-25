@@ -63,7 +63,7 @@ it("only the UI load and the exports read or walk a whole thread", () => {
     // only the rows the load already holds (a row's number by key, the thread's newest by the index), never the thread again
     "...wireThread(store, bot.threadId, { messages: store.messagesFor(bot.threadId) }, { slim: false }),",
     "...wireThread(store, group.threadId, { messages: store.messagesFor(group.threadId) }, { slim: false }),",
-    "if (limit === undefined) return wireThread(store, threadId, { messages: store.messagesFor(threadId) }, { slim: false });",
+    "if (limit === undefined) return wireThread(store, threadId, { messages: store.messagesFor(threadId) }, { slim: false, ownerOnly });",
     "activePath: threadId => store.activePath(threadId),",
   ];
   const lines = code(join(root, "index.ts")).map((line) => line.trim()).filter((line) => /\b(?:messagesFor|activePath|walkActivePath)\(/.test(line));

@@ -298,13 +298,15 @@ describe("ACP turns (fake CLI)", () => {
     await removeTempDir(scratch);
   });
 
-  it("forwards bounded, redacted Fuigo stderr notices while the engine is live", async () => {
+  // cause22 (MAIN-RULING cause22-no-transport-caps): the fixture writes a 100 KiB stderr line first (over the old 64 KiB notice-line
+  // bound, which closed the notice reader) and four notices (the old count bound showed three). Every notice is shown.
+  it("forwards every redacted Fuigo stderr notice while the engine is live, after a stderr line over the old 64 KiB bound and past the old three-notice bound", async () => {
     await create(FuigoDiagnosticDriver, "fuigo-live-notices");
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-live-notices", text: "hello" });
-    await recorder.until((e) => e.type === "item.started" && e.title?.startsWith("Fuigo: xxx") === true);
     await recorder.until((e) => e.type === "content.delta" && e.delta === "notices written");
+    await recorder.until((e) => e.type === "item.started" && e.title === "Fuigo: fourth shown", 5_000).catch(() => undefined);
     const notices = recorder.events.filter((e) => e.type === "item.started");
-    expect(notices).toHaveLength(3);
+    expect(notices.map((e) => String(e.title).slice(0, 12)), "all four notices are shown, in order").toEqual(["Fuigo: found", "Fuigo: the f", "Fuigo: xxxxx", "Fuigo: fourt"]);
     expect(notices[0]).toMatchObject({ title: "Fuigo: found memory from an older version at /home/u/.fuigo/memory/old. It belongs to another repository. Memory for this repository now lives at /home/u/.fuigo/memory/new. Nothing was deleted." });
     expect(JSON.stringify(notices)).not.toContain("lowercase log line");
     expect(JSON.stringify(notices)).not.toContain("fixture-secret-canary");
@@ -2548,6 +2550,33 @@ createInterface({ input: process.stdin }).on("line", line => {
       .filter((row) => row.dir === "lifecycle")
       .map((row) => row.msg);
 
+  // meetgreet 1.0.19 (item 2): every engine_lifecycle event carried appVersion:null and engineVersion:null.
+  it("lifecycle diagnostics name the app build and the engine's initialize version", async () => {
+    vi.stubEnv("MURAGE_APP_VERSION", "1.0.19");
+    vi.stubEnv("FAKE_ACP_AGENT_VERSION", "9.8.7");
+    try {
+      await create();
+      const first = `t-lifecycle-versions-a-${Date.now()}`;
+      const one = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: first, text: "fixture only" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === one.turnId);
+      await expect(instance.adapter.awaitTurnTeardown!(first, one.turnId)).resolves.toEqual({ closeConfirmed: true });
+      const rows = lifecycleRows(first);
+      expect(rows.length).toBeGreaterThan(3);
+      expect(rows.every((row) => row.appVersion === "1.0.19")).toBe(true);
+      // from the initialize answer on, the engine's own version
+      const answered = rows.findIndex((row) => row.event === "rpc_requested" && row.method !== "initialize");
+      expect(answered).toBeGreaterThan(0);
+      expect(rows.slice(answered).every((row) => row.engineVersion === "9.8.7")).toBe(true);
+      // a later engine of the same driver carries it from its first event (no probe per turn)
+      const second = `t-lifecycle-versions-b-${Date.now()}`;
+      const two = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: second, text: "fixture only" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === two.turnId);
+      await expect(instance.adapter.awaitTurnTeardown!(second, two.turnId)).resolves.toEqual({ closeConfirmed: true });
+      const later = lifecycleRows(second);
+      expect(later[0]).toMatchObject({ event: "spawn_requested", appVersion: "1.0.19", engineVersion: "9.8.7" });
+    } finally { vi.unstubAllEnvs(); vi.stubEnv("FAKE_ACP_MCP_READY", "1"); vi.stubEnv("FAKE_ACP_MCP_LIST", "all:ready"); }
+  });
+
   it("lifecycle diagnostics: a completed turn traces one generation from spawn to close", async () => {
     await create();
     const threadId = `t-lifecycle-complete-${Date.now()}`;
@@ -2893,6 +2922,29 @@ createInterface({ input: process.stdin }).on("line", line => {
     }
     await new Promise(resolve => setTimeout(resolve, 30));
     expect(JSON.parse(readFileSync(dump, "utf8")).promptRequests).toBe(1);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
+  });
+
+  // meetgreet 1.0.19 (item 1): Fuigo's service failed (retry_state failed, kind api), session/prompt came back -32603 with no
+  // message or data, and the card said only that the engine gave no explanation. Every ACP engine shares this path: the
+  // owner reads one plain line naming the engine, with the next step, and the turn ends as a failure exactly once.
+  it.each([
+    ["Fuigo", "observed"], ["Fuigo", "bare"], ["Fuigo", "blank"], ["Grok", "observed"], ["Grok", "bare"], ["Grok", "blank"],
+  ] as const)("%s session/prompt rejected with no reason (%s) still tells the owner why, once", async (engine, variant) => {
+    await create(engine === "Fuigo" ? FuigoDiagnosticDriver : GrokAgentDriver, `no-reason:${variant}`);
+    const threadId = `t-no-reason-${engine}-${variant}`;
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
+    expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === turnId)).toMatchObject({ ok: false, stopReason: "rpc_error" });
+    await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
+    const errors = recorder.events.filter(event => event.type === "runtime.error");
+    expect(errors).toHaveLength(1);
+    // the engine as the owner named it (the instance's display name, "ACP Test" in this fixture)
+    expect(errors[0].message).toBe("ACP Test's service returned an error. Try again, or switch engine.");
+    // never the bare JSON-RPC word the card reads as "no explanation"
+    expect(errors[0].message).not.toMatch(/^(?:internal error|request failed)\.?$/i);
+    expect(errors[0]).not.toHaveProperty("setup");
+    expect(errors[0].details).toContain("Engine error code: -32603");
+    if (engine === "Fuigo" && variant === "observed") expect(errors[0].diagnostic?.observedKind).toBe("api");
     expect(recorder.events.filter(event => event.type === "turn.completed")).toHaveLength(1);
   });
 
@@ -4412,9 +4464,11 @@ describe("ACP snapshot", () => {
   });
 });
 
-// A4: engine stdout is framed with a byte bound before any parse. One engine
-// that sends an oversized frame fails its own turn and loses its child; a
-// turn on another thread of the same instance completes normally.
+// A4: engine stdout is framed by line before any parse. MAIN-RULING
+// cause22-no-transport-caps (1.0.21) deleted the 32 MiB frame cap: a frame
+// over it is read whole and its turn completes (this row asserted
+// frame_too_large before; an unterminated frame no longer fails early, it is
+// held until its newline or the process end, as upstream).
 describe("ACP bounded ingress (A4)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
@@ -4430,10 +4484,6 @@ describe("ACP bounded ingress (A4)", () => {
     });
     recorder = recordEvents(instance.adapter);
   };
-  /** No event on the thread may carry the dropped frame's content. */
-  const noLargePayload = (threadId: string) =>
-    recorder.events.filter((e) => e.threadId === threadId).every((e) => JSON.stringify(e).length < 1024 * 1024);
-
   beforeEach(() => {
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
@@ -4446,37 +4496,22 @@ describe("ACP bounded ingress (A4)", () => {
     await removeTempDir(scratch);
   });
 
-  it("fails only the turn whose frame is over the limit, even when a clean result follows it", async () => {
+  it("reads a frame over the old 32 MiB cap whole and its turn completes, beside an ordinary turn", async () => {
     await create();
     const oversized = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oversize", text: "__fixture_oversize_frame__" });
     const ordinary = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ordinary", text: "hi" });
-    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
-    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
+    // A lost or cut frame leaves the turn open: the wait ends quietly so that case fails at the completion assertion below.
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId, 60_000).catch(() => undefined);
+    const other = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId, 20_000).catch(() => undefined);
 
-    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
-    expect(done).toMatchObject({ ok: true });
-    expect(recorder.events).toContainEqual(expect.objectContaining({
-      type: "runtime.error",
-      threadId: "t-oversize",
-      message: expect.stringMatching(/larger than 32 MiB/),
-    }));
-    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "content.delta", threadId: "t-ordinary" }));
-    expect(noLargePayload("t-oversize")).toBe(true);
+    expect(done, "the turn whose frame is over 32 MiB completes").toMatchObject({ ok: true });
+    expect(other).toMatchObject({ ok: true });
+    // The frame's own text reached the turn whole, as streamed text.
+    const streamed = recorder.events.filter((e) => e.turnId === oversized.turnId && e.type === "content.delta").map((e) => (e as { delta?: string }).delta ?? "");
+    expect(Math.max(0, ...streamed.map((delta) => Buffer.byteLength(delta))), "the whole frame reached the turn").toBe(32 * 1024 * 1024 + 1024);
+    expect(recorder.events.some((e) => e.type === "runtime.error" && e.threadId === "t-oversize")).toBe(false);
     expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === oversized.turnId)).toHaveLength(1);
-  });
-
-  it("fails an unterminated oversized frame without waiting for a newline, and stops that child", async () => {
-    const pidFile = join(scratch, "pid");
-    process.env.FAKE_ACP_PID_FILE = pidFile;
-    await create();
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-open", text: "__fixture_oversize_open_frame__" });
-    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
-
-    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
-    expect(noLargePayload("t-open")).toBe(true);
-    const pid = Number(readFileSync(pidFile, "utf8"));
-    await expect.poll(() => processAlive(pid), { timeout: 5_000 }).toBe(false);
-  });
+  }, 120_000);
 
   it("still carries a valid image frame at the 10 MiB image cap", async () => {
     await create();

@@ -9,7 +9,7 @@ import { windowsHidePrelude } from "../shared/win-hide-child-process.mjs";
 import { settleLegacySearchMerge } from "./legacy-search-merge.ts";
 import { MESSAGE_SEARCH_DDL } from "./message-tables.ts";
 import { SEARCH_INDEX_WORKER_SOURCE } from "./search-index-worker.ts";
-import { ioBudget } from "./io-budget.ts";
+import { ioBudget, SEARCH_SEED_SOURCE } from "./io-budget.ts";
 import { ownerFirst } from "./owner-first.ts";
 import { isDatabaseBusy, writersHeldForIndexBuild } from "./db-busy.ts";
 import { assertWalWriteAdmission, walMaintenanceCounters, scrubWalAfterDelete } from "./wal-maintenance.ts";
@@ -26,6 +26,7 @@ export const IDLE_PRUNE_ROWS = 64;
 export const RETIRE_CHUNK_BYTES = 256 * 1024;
 export const PENDING_MAX = 2_000;
 export const SEARCH_RECOVERY_CONSECUTIVE = 8;
+export const SEARCH_ADMISSION_BACKOFF_CAP_MS = 30_000;
 export const SEARCH_RECOVERY_ATTEMPTS = SEARCH_RECOVERY_CONSECUTIVE;
 export const SEARCH_RECOVERY_WINDOW_MS = 24 * 3600_000;
 export const SEARCH_RECOVERY_WINDOW_MAX = 12;
@@ -36,6 +37,13 @@ export function scrubDelay(n: number): number {
 }
 export const SCRUB_BACKOFF_BASE_MS = scrubDelay(1);
 export const SCRUB_BACKOFF_CAP_MS = scrubDelay(50);
+/** Background write rate of the search index (rebuild, merges, catch-up): a step that wrote N bytes waits N / rate before the next.
+ * Owner start-up on a reset index re-indexed every message at 4-11 GB/min; the bar is under 1 GB/min for the whole process. */
+export const SEARCH_WRITE_BYTES_PER_MIN = 256 * 1048576;
+export function searchPacedDelay(bytes: unknown): number {
+  const n = Number(bytes);
+  return Number.isFinite(n) && n > 0 ? Math.max(10, Math.ceil(n * 60_000 / SEARCH_WRITE_BYTES_PER_MIN)) : 10;
+}
 export function searchRetryDelay(n: number): number { return Math.max(10, Math.min(SCRUB_BACKOFF_CAP_MS, n)); }
 export { MESSAGE_SEARCH_DDL };
 export function intentCount(db: DatabaseSync): number {
@@ -45,7 +53,7 @@ export function intentCount(db: DatabaseSync): number {
 export function searchDbPath(dir: string): string { return join(dir, SEARCH_FILES[0]); }
 export function openSearchIndex(dir: string): DatabaseSync { return new DatabaseSync(searchDbPath(dir), { readOnly: true }); }
 type RecoveryState = "HEALTHY" | "RECOVERING" | "DEFERRED" | "THROTTLED" | "PARKED";
-interface Recovery { state: RecoveryState; consecutive: number; cycleStarts: number[]; markerSeq?: number }
+interface Recovery { state: RecoveryState; consecutive: number; cycleStarts: number[]; markerSeq?: number; refusals?: number }
 export function recovery(db: DatabaseSync): { state: RecoveryState; consecutive: number; windowCount: number } {
   const current = runs.get(db)?.recovery;
   return { state: current?.state ?? "HEALTHY", consecutive: current?.consecutive ?? 0,
@@ -261,6 +269,18 @@ function retryRecovery(run: SearchRun, retry: () => void): void {
   run.timer = setTimeout(() => { run.timer = undefined; if (!run.stopped) retry(); }, delay);
   run.timer.unref();
 }
+/** A busy writer lock (or a refused WAL gate, which is also busy) backs off 100 ms x 2^refusals (cap, +0..25% jitter) and never gives up. An owner-turn yield stays on retryRecovery (silent, spends no cycle).
+ * It warns on the first and each doubling (one summary line per backoff window), not once per attempt. No reset cycle is spent. */
+function admissionRefused(run: SearchRun, error: unknown): void {
+  const n = run.recovery.refusals ?? 0;
+  run.recovery.refusals = n + 1;
+  if ((n & (n - 1)) === 0) recoveryWarning(error);
+  run.recovery.state = "DEFERRED";
+  if (run.stopped || run.timer) return;
+  const base = Math.min(100 * 2 ** Math.min(n, 20), SEARCH_ADMISSION_BACKOFF_CAP_MS);
+  run.timer = setTimeout(() => { run.timer = undefined; if (!run.stopped) acknowledgeSearchReset(run); }, Math.round(base * (1 + Math.random() * 0.25)));
+  run.timer.unref();
+}
 function acknowledgeSearchReset(run: SearchRun): void {
   if (run.stopped || (!run.ioState && !recoveryBudget(run))) return;
   const { db } = run;
@@ -283,6 +303,7 @@ function acknowledgeSearchReset(run: SearchRun): void {
       db.exec("COMMIT"); began = false;
       run.resetMarker = { seq: Number(inserted.lastInsertRowid), nonce: String(n) };
     }
+    run.recovery.refusals = 0;
     if (run.ioState) { run.recovery.state = run.ioState; run.ioState = undefined; }
     run.recovery.consecutive++;
     run.recovery.cycleStarts.push(searchIndexTestHooks.now());
@@ -292,6 +313,7 @@ function acknowledgeSearchReset(run: SearchRun): void {
     run.worker.postMessage({ type: "reset", token: run.token, marker: run.resetMarker });
   } catch (error) {
     if (began) try { db.exec("ROLLBACK"); } catch { /* keep the original failure */ }
+    if (isDatabaseBusy(error)) { admissionRefused(run, error); return; }
     recoveryWarning(error);
     if (storageFull(error)) {
       throttleStorage(run, () => acknowledgeSearchReset(run), 1000); return;
@@ -383,7 +405,7 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
   const run: SearchRun = { db, file, token, worker, reader: null, indexId: null, cache: null, stopped: false, inflight: true, recovery: { state: "HEALTHY", consecutive: 0, cycleStarts: [] },
     exited: new Promise<void>(resolve => { exited = resolve; }) };
   runs.set(db, run); live.add(run); sessions.add(run);
-  worker.on("message", (event: { type: string; token: string; index_id?: string; worked?: boolean; rebuilding?: boolean; applied?: number; retryInMs?: number; operation?: string; message?: string }) => {
+  worker.on("message", (event: { type: string; token: string; index_id?: string; worked?: boolean; rebuilding?: boolean; applied?: number; retryInMs?: number; bytes?: number; operation?: string; message?: string }) => {
     if (event.token !== token || run.stopped || runs.get(db) !== run) return;
     searchIndexTestHooks.event?.(event);
     if ((event.type === "ready" || event.type === "stepped") && run.ioState) {
@@ -406,6 +428,11 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
       openSearchReader(run, String(event.index_id));
     } else if (event.type === "stepped") {
       run.inflight = false;
+      // cause18e: the first index of the messages a store already holds is charged to its own named seed source (io-budget.ts
+      // IO_SEED_BUDGETS). The worker writes search.db on its own connection, so until now these bytes had no name and the watchdog's line
+      // blamed whatever statement the main thread ran most (`writing 65.0 MB/min ... source: INSERT INTO messages`). Only while the worker
+      // says the index is still building; a built index's own steps (one message at a time) are judged as before.
+      if (event.rebuilding === true && event.worked && Number(event.bytes) > 0) ioBudget.noteBytes(SEARCH_SEED_SOURCE, Number(event.bytes));
       // The same worker's token-bound reply follows its committed step. Keep
       // that conservative watermark until its next acknowledgement or reset;
       // owner writes must not query search.db when a wall-clock cache expires.
@@ -439,7 +466,8 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
           });
         }
       } catch (error) { recoveryWarning(error); }
-      schedule(run, event.worked || run.nudged ? 10 : searchRetryDelay(event.retryInMs ?? 250),
+      // A step that wrote waits out its measured bytes at the search write rate; an owner append (nudge) never waits behind a rebuild's pacing.
+      schedule(run, run.nudged ? 10 : event.worked ? searchPacedDelay(event.bytes) : searchRetryDelay(event.retryInMs ?? 250),
         !event.worked && !run.nudged && event.retryInMs !== undefined);
     }
   });

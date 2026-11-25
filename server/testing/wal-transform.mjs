@@ -14,6 +14,8 @@ export { TRANSFORM_MARKER };
 /** The repo-relative target path of a module id (file path, file URL or Vite id with a query), or null when the module is not a target. */
 export function walTarget(id) {
   const clean = String(id).replace(/^file:\/\//, "").split("?")[0].replace(/\\/g, "/");
+  // an older build's tree (W-COMPAT (4), compat-v2-oldbuild.test.ts) runs as it shipped: its anchors are not this build's
+  if (clean.includes("/.memv2-compat-old")) return null;
   for (const key of Object.keys(EDITS)) if (clean.endsWith("/" + key)) return key;
   return null;
 }

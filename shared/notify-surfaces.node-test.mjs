@@ -13,7 +13,7 @@ test("new defaults per OS", () => {
 test("upgrade is exactly yesterday", () => {
   const u = notifySurfaceDefaults("upgrade", "darwin");
   assert.deepEqual(Object.entries(u.surfaces).filter(([, on]) => on).map(([id]) => id), ["notify", "receipt", "badge"]);
-  assert.equal(u.notifyActions, false); assert.equal(u.quietSummary, false); assert.equal(u.badgeCount, "unread"); assert.equal(u.badgeMenu, false);
+  assert.equal(u.notifyActions, false); assert.equal(u.quietSummary, false); assert.equal(u.badgeCount, "unread"); assert.equal(u.surfaces.badge, true);
   assert.equal(u.receiptMinMinutes, 0); assert.equal(u.nudgeMinutes, 0); assert.equal(u.hideFullscreen, false); assert.equal(u.respectFocus, false);
   assert.equal(u.chooser, "done"); assert.deepEqual(u.asks, { backgroundApproval: true, longJob: true });
 });

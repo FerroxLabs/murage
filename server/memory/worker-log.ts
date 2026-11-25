@@ -27,8 +27,16 @@ export function causeOf(error: unknown): string {
   return "unnamed";
 }
 
+/** How a child ended: its exit code and signal name, nothing it printed. */
+export interface WorkerDetail { code: number | null; signal: string | null }
+function detailWords({ code, signal }: WorkerDetail): string {
+  const c = typeof code === "number" && Number.isInteger(code) ? String(code) : "none";
+  const s = typeof signal === "string" && /^SIG[A-Z0-9]{1,12}$/.test(signal) ? signal : "none";
+  return `code=${c} signal=${s}`;
+}
+
 /** Log one swallowed failure. Returns true when a line was written (the first of a cause, then at most one per ten minutes with the count since). */
-export function logSwallowed(subsystem: WorkerSubsystem, error: unknown, nextInMs?: number, now = Date.now()): boolean {
+export function logSwallowed(subsystem: WorkerSubsystem, error: unknown, nextInMs?: number, now = Date.now(), detail?: WorkerDetail): boolean {
   const cause = causeOf(error), key = `${subsystem}\u0000${cause}`;
   let entry = entries.get(key);
   if (!entry) {
@@ -39,7 +47,7 @@ export function logSwallowed(subsystem: WorkerSubsystem, error: unknown, nextInM
   entry.count++;
   if (now - entry.reportedAt < WINDOW_MS) return false;
   entry.reportedAt = now;
-  observeLine(`[memory-worker] subsystem=${subsystem} cause=${cause} count=${entry.count} since=${new Date(entry.since).toISOString()} next=${nextInMs === undefined ? "later" : new Date(now + nextInMs).toISOString()}`);
+  observeLine(`[memory-worker] subsystem=${subsystem} cause=${cause} count=${entry.count} since=${new Date(entry.since).toISOString()} next=${nextInMs === undefined ? "later" : new Date(now + nextInMs).toISOString()}${detail ? ` ${detailWords(detail)}` : ""}`);
   return true;
 }
 export function resetWorkerLog(): void { entries.clear(); }

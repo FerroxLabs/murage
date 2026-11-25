@@ -4,7 +4,7 @@
 // The REAL native addon (native/engine-exclusion/exclusion.c), against REAL second processes: a flock held by another process, a
 // running process that IS an engine (a copy of `sleep` named claude or codex), the list of processes, and the executor's refusal to
 // change a file while either is true. The addon is built by
-// scripts/build-engine-exclusion.mjs (Linux, gcc, in the build host container); where it is not built these tests are skipped, and the
+// scripts/build-engine-exclusion.mjs (Linux, gcc, in the Hetzner container); where it is not built these tests are skipped, and the
 // executor is covered against a model of the same behaviour (engine-exclusion-r17.test.ts).
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, realpathSync, writeFileSync } from "node:fs";

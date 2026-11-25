@@ -345,7 +345,7 @@ the full idle/load release gate still requires both complete legs.
 
 `nightly.yml` builds a packaged Linux app from its exact checkout, with
 `murageSourceSha` in the package metadata, then runs Claude, Codex, Gemini,
-Fuigo and OpenCode in the build host job containers (at most two engine legs at once).
+Fuigo and OpenCode in Hetzner job containers (at most two engine legs at once).
 Dispatch Nightly on the RC branch before release. The release gate requires the
 newest run for that **exact SHA**, all five named engine jobs and their explicit
 verdict steps green, each completed within 72 hours. A newer incomplete or red

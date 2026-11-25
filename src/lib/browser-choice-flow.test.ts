@@ -75,3 +75,11 @@ it('only missing browser files offer the fixed reinstall link',async()=>{
  await act(async()=>root!.render(createElement(BrowserUnavailableRow,{botId:'a',reason:'browser-cause:builtin_check_failed:0|unfinished check'})));
  expect(document.querySelector('a')).toBeNull();
 });
+// Live UI report (1.0.20): the coded check failure read "Try checking the browser again.Try again", with no space before its button.
+it('a coded check failure keeps a space between its sentence and its one Try again button',async()=>{
+ const {BrowserUnavailableRow}=await import('../components/BrowserUnavailableRow');
+ const node=document.createElement('div');document.body.append(node);root=createRoot(node);await act(async()=>root!.render(createElement(BrowserUnavailableRow,{botId:'a',reason:'browser-cause:builtin_check_failed:0|unfinished check'})));
+ const row=document.querySelector('[data-testid="browser-unavailable-row"]')!.textContent!;
+ expect(row.startsWith('Try checking the browser again. Try again')).toBe(true);
+ expect(row.match(/Try again/g)).toEqual(['Try again']);
+});

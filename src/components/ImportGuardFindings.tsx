@@ -11,6 +11,8 @@ import type { LocaleKey } from "@/locales";
 export interface GuardFinding {
   path: string; rule: string; severity?: "block" | "review"; line?: number;
   field?: string; message?: string; evidence?: string; category?: string;
+  /** Same rule in the same file this many times; one row stands for all. */
+  count?: number;
 }
 export interface GuardScan { blocked: boolean; reviewRequired: boolean; findings: GuardFinding[]; state?: "too-large" | "unavailable" }
 export interface OfficialStatus { official: boolean; keyId?: string }
@@ -47,7 +49,8 @@ export function ImportGuardFindings({ scan }: { scan: GuardScan | null | undefin
   if (!scan || scan.findings.length === 0) return null;
   return <ul aria-label={t("importGuard.listLabel")} className="mt-3 space-y-2 text-[12px] text-ink-secondary">
     {scan.findings.map((finding, index) => {
-      if (!finding.message) return <li key={index} className="break-words">{finding.path}: {finding.rule}{finding.line ? " (" + t("importGuard.line", { line: finding.line }) + ")" : ""}</li>;
+      if (!finding.message) return <li key={index} className="break-words">{finding.path}: {finding.rule}{finding.line ? " (" + t("importGuard.line", { line: finding.line }) + ")" : ""}{finding.count && finding.count > 1 ? ` ×${finding.count}` : ""}
+        {finding.evidence && <code className="mt-0.5 block whitespace-pre-wrap rounded bg-inset px-1.5 py-1 text-[11px] text-ink">{finding.evidence}</code>}</li>;
       const where = finding.field ?? finding.path;
       return <li key={index} className="break-words">
         <span className="font-medium text-ink">{finding.severity === "block" ? t("importGuard.blocked") : t("importGuard.review")}</span>

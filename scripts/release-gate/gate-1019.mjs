@@ -14,7 +14,7 @@ import { trulyLiveVerdict } from './truly-verdict.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../..');
 const argv = process.argv.slice(2), ref = argv.shift();
-let baseRef = '1a899c675', outParent = '/work/build/bld-gatekit-1019/runs', dry = false, nolimConfig, smoothFrom;
+let baseRef = '1a899c675', outParent = '/root/fuigo-builds/swarm-b/bld-gatekit-1019/runs', dry = false, nolimConfig, smoothFrom;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--base' && argv[i + 1]) baseRef = argv[++i];
   else if (argv[i] === '--out' && argv[i + 1]) outParent = resolve(argv[++i]);
@@ -24,7 +24,7 @@ for (let i = 0; i < argv.length; i++) {
   else throw Error(`Unknown option: ${argv[i]}`);
 }
 if (!ref) throw Error('Usage: gate-1019.sh <sha> [--base sha] [--out evidence-parent] [--dry-run]');
-if (process.platform !== 'linux') throw Error('Run on build-host; never the Mac');
+if (process.platform !== 'linux') throw Error('Run on hetzner-dsm; never the Mac');
 const safe = p => p !== '/dev' && !p.startsWith('/dev/') && p !== '/';
 if (!safe(outParent)) throw Error('Evidence must be outside /dev and /');
 function git(...args) {
@@ -175,7 +175,7 @@ async function tests(gate, files, pattern) {
 async function fullSuite() {
   const tool = '/root/fuigo-builds/tools/vt-shard.sh';
   const manual = `VT_WIDEN=0 MAXC=5 LOADMAX=60 bash ${tool} ${shellQuote(repo)} ${sha} --hosts hz`;
-  if (!existsSync(tool)) return record('FULL', 'UNVERIFIED', { manual, reason: 'build host vt-shard tool missing' });
+  if (!existsSync(tool)) return record('FULL', 'UNVERIFIED', { manual, reason: 'Hetzner vt-shard tool missing' });
   const cageKey = createHash('sha256').update(readFileSync(join(snapshot, 'scripts/build-murage-cage.mjs')))
     .update(readFileSync(join(snapshot, 'scripts/prepare-source-cage.mjs'))).digest('hex').slice(0, 16);
   if (!available || !existsSync(`/root/fuigo-builds/tools/cage/${cageKey}/linux-x64/bwrap`)) {
@@ -238,7 +238,7 @@ async function smoothness() {
   const unpack = spawnSync('tar', ['-xf', archive, '-C', rigDir], { env });
   if (unpack.status !== 0) throw Error('Cannot unpack pinned rig');
   const launcher = join(rigDir, 'scripts/smoothness/g8-smooth.sh');
-  const sshArgs = ['-i', '/root/.ssh/build_runner', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'root@build-host.invalid'];
+  const sshArgs = ['-i', '/root/.ssh/mb105_runner', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', 'root@178.104.176.107'];
   // Idle and load share CPUs 0-5: sequential even when idle fails.
   for (const mode of ['idle', 'load']) await leg(`SMOOTH-${mode}`, async () => {
     const state = join(out, `smooth-${mode}`);
@@ -271,7 +271,7 @@ async function smoothness() {
         const remote = readFileSync(remoteFile, 'utf8').trim();
         if (!/^root@178\.104\.176\.107:\/root\/mb-0161-hz\/smooth-v7-[a-f0-9]{12}-(idle|load)-[0-9-]+$/.test(remote)) throw Error('Unsafe worker evidence path');
         evidence = join(out, `smooth-${mode}-evidence`); mkdirSync(evidence);
-        await run('rsync', ['-a', '-e', 'ssh -i /root/.ssh/build_runner -o BatchMode=yes -o ConnectTimeout=15',
+        await run('rsync', ['-a', '-e', 'ssh -i /root/.ssh/mb105_runner -o BatchMode=yes -o ConnectTimeout=15',
           '--exclude=src', '--exclude=data', remote + '/', evidence + '/'], join(out, `smooth-${mode}-collect.log`), { timeout: 120_000 });
         const gateLog = join(evidence, 'gate.log');
         if (existsSync(gateLog)) verdictText = readFileSync(gateLog, 'utf8');

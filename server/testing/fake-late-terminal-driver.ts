@@ -57,6 +57,9 @@
 //   FAKE_LATE_DUMP_CONTEXT   "1": each dump line also says whether the turn carried a memory frame (`memoryContext`), the memory mount
 //                            (`memory`), a session reset (`sessionReset`) and a resume cursor (`resumed`).
 //   FAKE_LATE_TEARDOWN       "1": the adapter has awaitTurnTeardown, confirming the close 50 ms after the terminal event.
+//   FAKE_LATE_TEXT_FIRST     text (with FAKE_LATE_HANDBACK): on the first send of a thread one assistant message with this text is
+//                            completed before the late write (1.0.22 cause B: what a refused attempt printed).
+//   FAKE_LATE_REPLIES        JSON string list (with FAKE_LATE_HANDBACK): the messages a written turn completes (default one reply).
 //   FAKE_LATE_TOOL_FIRST     "1" (with FAKE_LATE_HANDBACK): a tool starts and completes before the late write (a later round's
 //                            submission, as openai-chat runs one per round), so a refusal there must card the turn, never rebuild it.
 //   FAKE_LATE_PRE_HANDBACK_GATE path (with FAKE_LATE_HANDBACK): sendTurn hands the id back only once this file exists (writes
@@ -75,8 +78,14 @@
 //                            the engine relaunches: the launch fence passes (a fenced attempt, no prompt bytes), the session gate holds the turn,
 //                            then the prompt's own second fence runs. The driver settles the launch attempt (attemptSettled) BEFORE that fence and
 //                            attemptNotWritten after it, in claude.ts's order. Refused there, the turn is entirely unwritten and must rebuild.
+//   FAKE_LATE_AUTH_REQUIRED  "1" (with FAKE_LATE_HANDBACK): the engine says it needs signing in (runtime.error, setup + authRequired, as
+//                            claude.ts does for an expired login) before a refusal of FAKE_LATE_REFUSE_AFTER_FENCE or FAKE_LATE_RESEND_GATE.
+//   FAKE_LATE_RESEND_GATE    path (with FAKE_LATE_HANDBACK): the Claude relaunch shape on a turn whose prompt was already written: after the
+//                            first write the engine stops, waits for this file (writes `<path>.waiting`), then sends the same turn again
+//                            through the fence. Refused there (the harness never sends one message twice once its checks fail), the
+//                            turn ends "submission_refused"; passed, the usual reply follows.
 // An uninterrupted turn replies "Hello from late" and completes on its own.
-import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type {
   AnyProviderDriver,
   DriverCreateInput,
@@ -116,6 +125,7 @@ export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {
     decodeConfig: (raw: unknown) => (raw ?? {}) as Record<string, unknown>,
     defaultConfig: () => ({}),
     async create(input: DriverCreateInput<Record<string, unknown>>): Promise<ProviderInstance> {
+      const textFirstSent = new Set<string>();
       const sessionGate = input.environment.FAKE_LATE_SESSION_GATE;
       const terminalGate = input.environment.FAKE_LATE_TERMINAL_GATE;
       const dump = input.environment.FAKE_LATE_DUMP;
@@ -130,6 +140,32 @@ export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {
         if (full.type === "turn.completed") sources.delete(full.turnId ?? "");
       };
       const active = new Map<string, { turnId: string; interrupted: boolean }>();
+      // FAKE_LATE_ASK_GATE: a held turn raises one native ask (request.opened) each time the file's text changes (a round name).
+      // (The test that sets it records the answers itself, by wrapping this adapter's respondToRequest: other tests rewrite that line
+      // of this file by its exact text.) The ask's input is nested deeper than the decision core's bounded projection
+      // reads (32 levels) and ends in a passive probe (a Proxy that only records). The bus's own input accounting
+      // (harness/event-charge.ts) stops at a Proxy with types.isProxy and never enumerates it; a raw copy of the whole input
+      // (decision/wipe-input.ts, Object.keys to depth 128) does. Each enumeration is appended to `<path>.rawread` with the module
+      // that did it (`by`, from the call stack).
+      const askGate = input.environment.FAKE_LATE_ASK_GATE;
+      const asking = new Map<string, string>();
+      const watchAsk = (threadId: string, turnId: string) => {
+        if (!askGate) return;
+        asking.set(threadId, turnId);
+        let last = "";
+        const timer = setInterval(() => {
+          if (asking.get(threadId) !== turnId) { clearInterval(timer); return; }
+          let round = "";
+          try { round = readFileSync(askGate, "utf8"); } catch { return; }
+          if (!round || round === last) return;
+          last = round;
+          const enumeratedBy = () => (new Error().stack ?? "").split("\n").map(frame => /([\w.-]+\.ts):\d+:\d+/.exec(frame)?.[1]).find(file => file && file !== "fake-late-terminal-driver.ts") ?? "unknown";
+          let deep: unknown = new Proxy({}, { ownKeys: () => { appendFileSync(`${askGate}.rawread`, `${JSON.stringify({ round, threadId, by: enumeratedBy() })}\n`); return []; } });
+          for (let level = 0; level < 40; level++) deep = { next: deep };
+          emit({ type: "request.opened", requestType: "permission", requestId: `ask-${round}-${turnId}`, tool: "Bash", summary: "Run a command", toolCall: { name: "Bash", input: { command: "echo fixture-native-ask", deep } }, threadId, turnId } as EmittedEvent);
+        }, 25);
+        timer.unref();
+      };
       return {
         instanceId: input.instanceId,
         driverKind: LATE_TERMINAL_DRIVER_KIND,
@@ -187,6 +223,13 @@ export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {
                   emit({ type: "item.started", itemType: "tool", origin: "engine", itemId: `tool-${turnId}`, title: "write_file", threadId: turn.threadId, turnId });
                   emit({ type: "item.completed", itemType: "tool", itemId: `tool-${turnId}`, ok: true, result: "written", threadId: turn.threadId, turnId });
                 }
+                // FAKE_LATE_TEXT_FIRST: on the FIRST send of a thread the engine completes one message before its late write (a
+                // resumed session replaying what it holds); later sends of the thread do not repeat it
+                const textFirst = input.environment.FAKE_LATE_TEXT_FIRST;
+                if (textFirst && !textFirstSent.has(turn.threadId)) {
+                  textFirstSent.add(turn.threadId);
+                  emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: textFirst, threadId: turn.threadId, turnId });
+                }
                 if (relaunch) turn.attemptSettled?.(launchAttempt);
                 let writing = false;
                 try {
@@ -204,14 +247,30 @@ export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {
                   emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
                   return;
                 }
+                const signInError = () => { if (input.environment.FAKE_LATE_AUTH_REQUIRED === "1") emit({ type: "runtime.error", message: "The fixture engine needs you to sign in. Open engine setup to continue.", setup: true, authRequired: true, threadId: turn.threadId, turnId }); };
                 // A released attempt without a confirmed write stays uncertain.
                 if (input.environment.FAKE_LATE_REFUSE_AFTER_FENCE === "1") {
+                  signInError();
                   active.delete(turn.threadId);
                   emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
                   return;
                 }
                 turn.onEngineWrite?.();
-                emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: "Hello from late", threadId: turn.threadId, turnId });
+                const resendGate = input.environment.FAKE_LATE_RESEND_GATE;
+                if (resendGate) {
+                  signInError();
+                  if (!existsSync(resendGate)) { writeFileSync(`${resendGate}.waiting`, turnId); await waitForFile(resendGate, 25); }
+                  if (entry.interrupted || active.get(turn.threadId) !== entry) return;
+                  try { turn.beforeSubmit?.(); }
+                  catch {
+                    if (active.get(turn.threadId) === entry) active.delete(turn.threadId);
+                    emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
+                    return;
+                  }
+                }
+                // FAKE_LATE_REPLIES: a JSON list of the messages the written turn completes, in place of the one default reply
+                for (const text of input.environment.FAKE_LATE_REPLIES ? JSON.parse(input.environment.FAKE_LATE_REPLIES) as string[] : ["Hello from late"])
+                  emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text, threadId: turn.threadId, turnId });
                 active.delete(turn.threadId);
                 emit({ type: "turn.completed", ok: true, threadId: turn.threadId, turnId });
               })();
@@ -227,6 +286,7 @@ export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {
               // the launch attempt is settled, not withdrawn: the prompt's own fence follows on the same binding (antigravity.ts, attemptSettled)
               turn.attemptSettled?.(attempt);
             }
+            watchAsk(turn.threadId, turnId);
             if (sessionGate && !existsSync(sessionGate)) {
               writeFileSync(`${sessionGate}.waiting`, turnId);
               await waitForFile(sessionGate, 25);
@@ -272,6 +332,7 @@ export function makeLateTerminalDriver(options: { fencedDefaults?: boolean } = {
             return { turnId };
           },
           interruptTurn: async (threadId) => {
+            asking.delete(threadId);
             const entry = active.get(threadId);
             if (!entry || entry.interrupted) return;
             entry.interrupted = true;

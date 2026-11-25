@@ -68,7 +68,7 @@ Forty warmed alternating real/shim samples measure median added overhead,
 with a strict <5 ms assertion and no callback. The fast backend is inert sh,
 so Node startup does not dominate this measurement.
 
-Windows exercises pipeline/work/location/wildcard removal, aliases, lists,
+Windows exercises pipeline/root/location/wildcard removal, aliases, lists,
 movement, ordinary deletion, allow/deny/unreachable and the fail directions.
 Native filesystem mutators are removed before loading the guard. Compiled
 fixture Remove-Item and Move-Item cmdlets provide the proxy metadata and enforce

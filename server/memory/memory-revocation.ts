@@ -30,16 +30,21 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { lockedError } from "./revocation-index.ts";
 import { beginBackground } from "../database.ts";
+import { ioBudget } from "../io-budget.ts";
 import { scrubWalAfterDelete } from "../wal-maintenance.ts";
 import { noteRevocation, revocationIndexReady, RECORD_REVOCATION_SCAN_SQL, RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL } from "./revocation.ts";
 import { newLearningPurgeCursor, purgeLearningStep, purgeEvolutionBinding, EVOLUTION_BINDING_SUBJECTS, type LearningPurgeCursor, type LearningLookup } from "./evolution-forgetting.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
-import { beginRevokeMeasure, budgetedMarkerSlice, chargeRevokeRows, endRevokeMeasure, revokePaceNeed, revokePaceRows, revokePaceWaitMs, revokeSliceNeed, revokeWriteWaitMs } from "./revoke-budget.ts";
+import { armDeadline, bumpMemoVersion, memoVersion, onWake, wakeProbe } from "./revoke-wake.ts";
+import { onWake as onCommitWake, WAKE_PRIORITY } from "./wake.ts";
+import { revokeBackoffDueMs, revokeJobFailures, WINDOW_WAKE } from "./revoke-marker.ts";
+import { beginRevokeMeasure, budgetedMarkerSlice, chargeRevokeRows, endRevokeMeasure, floorMarkerSlice, noteRevokeClosing, revokeFloorRows, revokeFloorWaitMs, revokePaceNeed, revokePaceRows, revokePaceWaitMs, revokeSliceNeed, revokeWriteWaitMs } from "./revoke-budget.ts";
 import { enqueueReceipts, markerSlice, markerWorkPending, releaseHold, totalChanges } from "./revoke-marker.ts";
 import { coverReceiptChanges } from "./recall-view-schema.ts";
 import { setFlipWake } from "./receipt-outputs.ts";
 import { setSendFenceDeps } from "./send-fence-deps.ts";
-import { MARKER_SLICE_ROWS } from "./lineage-types.ts";
+import { MARKER_SLICE_ROWS, PENDING_ALL_SCOPES, PENDING_ALL_THREADS } from "./lineage-types.ts";
+import { bumpDenyGeneration } from "./revoke-marker.ts";
 import { recordCounter } from "../health/counters.ts";
 import { noteRevocationJobCreated, noteRevocationJobEnded, noteRevocationQueueEmpty } from "../health/pending-revocations.ts";
 
@@ -100,11 +105,19 @@ export type RevocationJob = {
   /** the deletion epoch its commit set (all: only receipts made before it) */
   epoch?: number;
   /** forget of a record: the record, its revision filter, whether it is a room's notes (no supporting tombstones) */
-  record?: { id: string; rev: number | null; notes: boolean; after?: [number, string, number, number] | null } | null;
+  record?: { id: string; rev: number | null; notes: boolean; after?: [number, string, number, number] | null;
+    /** cause10 r2: where forget.ts stopped in the record's kept spans (keptSpanPairs); the supporting phase walks the rest */
+    span?: KeptSpanCursor | null;
+    /** cause10 v2: the Forget wrote the record's whole deny key set in its commit (forgetRecordKeys); nothing the job does gates a reader;
+     * on a Forget an older build queued, set when an open of this build wrote them (legacy-forget-keys.ts) */
+    keys?: true } | null;
   /** forget of a source: its import tombstones below this revision are the imports phase's; `mark` is memory_sources' largest rowid at
    * the commit, so a copy imported while the older hashes were not yet tombstoned is found and ended when they are (revbound r3 A6);
    * `scope` is the forgotten source's scope */
-  imports?: { id: string; below: number; mark?: number; scope?: string } | null;
+  imports?: { id: string; below: number; mark?: number; scope?: string;
+    /** cause10 v2: every revision's import key is written: by the Forget's own commit (forget.ts, this build), or for a source Forget
+     * an older build queued, by an open of this build (legacy-forget-keys.ts) */
+    keys?: true } | null;
   /** the write-time revoke (revoke-commit.ts) this job's commit made: receipts it flips enter that revoke's marker, and its imports
    * phase releases that revoke's hold */
   revokeId?: number;
@@ -297,6 +310,9 @@ export function advanceRevocationJob(db: DatabaseSync, job: RevocationJob, rows:
 function supportingStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boolean {
   const record = job.record!;
   const c = (job.c ??= { after: null as unknown[] | null });
+  if (c.span) return keptSpanStep(db, job, c, budget);
+  // forget.ts took every evidence row itself and left only a span: nothing for the row walk below to read again
+  if (record.span && !record.after && !c.after) { job.c = { span: record.span }; return false; }
   const n = heavy(budget);
   const keys = "(record_version,source_id,source_revision,start_byte)";
   const where = ["record_id=?"], args: unknown[] = [record.id];
@@ -307,14 +323,91 @@ function supportingStep(db: DatabaseSync, job: RevocationJob, budget: Budget): b
     ORDER BY record_version,source_id,source_revision,start_byte LIMIT ?`).all(...args as never[], n) as Array<{ v: number; s: string; r: number; b: number }>;
   spend(budget, rows.length);
   supportingTombstones(db, job, rows.map(row => ({ id: String(row.s), revision: Number(row.r) })), record.notes);
-  if (rows.length < n) return true;
+  if (rows.length < n) {
+    // cause10 r2: then the rest of the record's kept spans (forget.ts did the newest revisions)
+    if (record.span) { job.c = { span: record.span }; return false; }
+    return true;
+  }
   const last = rows[rows.length - 1]!;
   c.after = [Number(last.v), String(last.s), Number(last.r), Number(last.b)];
   return false;
 }
+/** An evidence row's key (record version, source, source revision, start byte) and, for that row, the revision its span is done down to. */
+export type KeptSpanCursor = [number, string, number, number, number];
+/** 1.0.21 cause10 r2 (review High): the notebook revisions a forgotten import chunk rested on that its evidence no longer names. The
+ * chunk-diff import (import.ts) keeps an unchanged chunk's version and MOVES its one evidence handle to each new notebook revision, where
+ * 1.0.20 wrote a version with its own handle at every revision. A chunk version `v` (written at revision v, import.ts) whose handle now
+ * cites revision r > v therefore rested, with these words, on every revision v..r; forget reads only the handle (r), so without this the
+ * contents of revisions v..r-1 kept no import tombstone and the same words under another topic of the scope could be imported again.
+ * Returns up to `max` such (notebook, revision) pairs, newest first, reading at most `max` evidence rows from `cursor` (null: the newest
+ * row) down, and where to go on; `next` null: every row is done. Only a notebook's own chunk (`<source>:chunk:<n>`) has a span. */
+export function keptSpanPairs(db: DatabaseSync, record: { id: string; rev: number | null }, cursor: KeptSpanCursor | null, max: number): { pairs: Array<{ id: string; revision: number }>; next: KeptSpanCursor | null } {
+  const keys = "(record_version,source_id,source_revision,start_byte)";
+  const where = ["record_id=?"], args: unknown[] = [record.id];
+  if (record.rev !== null) { where.push("record_version=?"); args.push(record.rev); }
+  // a cursor row whose span is done (down to its version) is not read again: the walk moves on even one row at a time
+  if (cursor) { where.push(`${keys}${cursor[4] <= cursor[0] ? "<" : "<="}(?,?,?,?)`); args.push(cursor[0], cursor[1], cursor[2], cursor[3]); }
+  const rows = st(db, `SELECT record_version AS v,source_id AS s,source_revision AS r,start_byte AS b FROM memory_evidence WHERE ${where.join(" AND ")}
+    ORDER BY record_version DESC,source_id DESC,source_revision DESC,start_byte DESC LIMIT ?`).all(...args as never[], max) as Array<{ v: number; s: string; r: number; b: number }>;
+  const pairs: Array<{ id: string; revision: number }> = [];
+  for (const row of rows) {
+    const v = Number(row.v), s = String(row.s), r = Number(row.r), b = Number(row.b);
+    const resumed = Boolean(cursor && cursor[0] === v && cursor[1] === s && cursor[2] === r && cursor[3] === b);
+    let below = resumed ? Math.min(r, Number(cursor![4])) : r;
+    if (record.id.startsWith(`${s}:chunk:`) && Number.isSafeInteger(v) && Number.isSafeInteger(below) && v >= 1) {
+      while (below > v) {
+        if (pairs.length >= max) return { pairs, next: [v, s, r, b, below] };
+        pairs.push({ id: s, revision: --below });
+      }
+    }
+    // this row is done: a walk that goes on from it starts at the next row down
+    if (row === rows[rows.length - 1]) return { pairs, next: rows.length < max ? null : [v, s, r, b, v] };
+  }
+  return { pairs, next: null };
+}
+function keptSpanStep(db: DatabaseSync, job: RevocationJob, c: Record<string, any>, budget: Budget): boolean {
+  const record = job.record!, n = heavy(budget);
+  const { pairs, next } = keptSpanPairs(db, record, c.span as KeptSpanCursor, n);
+  spend(budget, n);
+  supportingTombstones(db, job, pairs, record.notes);
+  if (!next) return true;
+  c.span = next;
+  return false;
+}
+// 1.0.21 cause10 v2 r3: the import asks no queued Forget. r3 (pendingForgetOfImport) refused an import while a Forget's job still owed
+// the keys of the older revisions, and v2 r2 kept that as an index of the keys older-build Forgets owed, read once per open database.
+// Since the legacy pass (legacy-forget-keys.ts, database.ts) every such Forget is keyed whole before a writable open returns, so that
+// index was empty on every open that can admit an import (an open that cannot write admits none), and nothing could show it refusing:
+// it is removed. A forgotten revision is refused by its import key alone (import.ts), written by the Forget's commit or by the open.
+/** 1.0.21 cause10 v2 (FORGET-ATOMIC.md): every (notebook or message source, revision) a forgotten record rested on, as set SQL: each
+ * evidence row's own revision and, for a notebook's own chunk (`<source>:chunk:<n>`, version v >= 1), every revision from v up to its
+ * handle, the span keptSpanPairs walks. `?1` record id, `?2` its version or NULL for every version. */
+const FORGOTTEN_PAIRS = `SELECT DISTINCT e.source_id AS s,v.revision AS r,v.content_hash AS h FROM memory_evidence e
+  JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision<=e.source_revision
+    AND v.revision>=CASE WHEN e.record_version>=1 AND substr(e.record_id,1,length(e.source_id)+7)=e.source_id||':chunk:' THEN min(e.record_version,e.source_revision) ELSE e.source_revision END
+  WHERE e.record_id=?1 AND (?2 IS NULL OR e.record_version=?2)`;
+const TOMBSTONE_ID = "lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(2))||'-'||hex(randomblob(6)))";
+/** The whole deny key set of a record Forget, written in the Forget's own commit whatever the number of versions, evidence rows or kept
+ * revisions (FORGET-ATOMIC.md): the import key (scope, content hash) of every revision the record rested on, read by import.ts and by
+ * deny-read.ts for a copy imported before the Forget, and unless the record is a room's notes the supporting-source key (source,
+ * revision) of each, read by every source verdict. Three set statements, linear in what is forgotten: an import key another Forget
+ * already wrote may be written again (harmless, as 1.0.20 did; a per-row "already there" probe reads the scope's keys and is quadratic in
+ * one statement), a source key is written once (its unique index). The job's supporting
+ * phase then only ends what rested on those sources (endSource) and reclaims space: no reader waits on it. Returns the distinct sources. */
+export function forgetRecordKeys(db: DatabaseSync, record: { id: string; rev: number | null }, notes: boolean, epoch: number, now: number): string[] {
+  st(db, `INSERT INTO memory_tombstones SELECT ${TOMBSTONE_ID},'import',k.scope_id,NULL,k.h,?3,'forgotten-original',?4 FROM
+    (SELECT DISTINCT s.scope_id,p.h FROM (${FORGOTTEN_PAIRS}) p JOIN memory_sources s ON s.id=p.s) k`).run(record.id, record.rev, epoch, now);
+  if (!notes) st(db, `INSERT OR IGNORE INTO memory_tombstones SELECT ${TOMBSTONE_ID},'source',p.s,p.r,NULL,?3,'forgotten-supporting-source',?4 FROM (${FORGOTTEN_PAIRS}) p`).run(record.id, record.rev, epoch, now);
+  return st(db, `SELECT DISTINCT source_id AS s FROM memory_evidence WHERE record_id=?1 AND (?2 IS NULL OR record_version=?2)`).all(record.id, record.rev).map(row => String(row.s));
+}
+/** The import key of every revision of a forgotten source (or the one named), in the Forget's own commit (FORGET-ATOMIC.md). */
+export function forgetSourceKeys(db: DatabaseSync, source: { id: string; rev: number | null }, epoch: number, now: number): void {
+  st(db, `INSERT INTO memory_tombstones SELECT ${TOMBSTONE_ID},'import',k.scope_id,NULL,k.h,?3,'forgotten-original',?4 FROM
+    (SELECT DISTINCT s.scope_id,v.content_hash AS h FROM memory_source_versions v JOIN memory_sources s ON s.id=v.source_id WHERE v.source_id=?1 AND (?2 IS NULL OR v.revision=?2)) k`).run(source.id, source.rev, epoch, now);
+}
 /** The import tombstone of each (source, revision) and, unless the record is a room's notes, its supporting-source tombstone and
  * end (shared by forget.ts for the inline rows and the supporting phase for the rest). */
-export function supportingTombstones(db: DatabaseSync, job: RevocationJob | null, pairs: ReadonlyArray<{ id: string; revision: number }>, notes: boolean): Array<{ id: string; revision: number }> {
+export function supportingTombstones(db: DatabaseSync, job: RevocationJob | null, pairs: ReadonlyArray<{ id: string; revision: number }>, notes: boolean, keyed: boolean = Boolean(job?.record?.keys)): Array<{ id: string; revision: number }> {
   const read = st(db, "SELECT s.scope_id,v.content_hash FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=? WHERE s.id=?");
   const epoch = Number(st(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch), now = Date.now();
   const seen = new Set<string>(), ended: Array<{ id: string; revision: number }> = [];
@@ -324,7 +417,9 @@ export function supportingTombstones(db: DatabaseSync, job: RevocationJob | null
     seen.add(key);
     const row = read.get(pair.revision, pair.id);
     if (!row) continue;
-    st(db, "INSERT INTO memory_tombstones VALUES(?,'import',?,NULL,?,?,'forgotten-original',?)").run(randomUUID(), String(row.scope_id), String(row.content_hash), epoch, now);
+    // a Forget from cause10 v2 on wrote this key in its commit (forgetRecordKeys): neither probed nor written again (the probe read
+    // the scope's import keys per pair). An older build's job (no `keys`) writes it here, as 1.0.20 did.
+    if (!keyed) st(db, "INSERT INTO memory_tombstones VALUES(?,'import',?,NULL,?,?,'forgotten-original',?)").run(randomUUID(), String(row.scope_id), String(row.content_hash), epoch, now);
     if (notes) continue;
     // Source expansion must not reveal a forgotten record through its original span.
     st(db, "INSERT OR IGNORE INTO memory_tombstones VALUES(?,'source',?,?,NULL,?,'forgotten-supporting-source',?)").run(randomUUID(), pair.id, pair.revision, epoch, now);
@@ -978,8 +1073,22 @@ const START_ROWS = 64, MIN_ROWS = 8, MAX_ROWS = 4096, LOCK_RETRY_MS = 1000, RETR
 export type RevocationRunnerOptions = { admit?: () => Promise<void>; busy?: () => boolean; sliceMs?: number; pauseMs?: number; busyPauseMs?: number; retryMs?: number };
 /** maxSliceMs is the whole slice, its COMMIT included (on a file database that can carry SQLite's WAL auto-checkpoint, a disk cost
  * every writer shares); maxWorkMs is this module's own work in a slice, before the COMMIT. */
-export const memoryRevocationStats = { slices: 0, maxSliceMs: 0, maxWorkMs: 0, busyPauses: 0, errorRetries: 0, lockedRetries: 0, workMs: 0, pauseMs: 0, maxJobBytes: 0, lateSlices: 0, markerSlices: 0, budgetWaits: 0, markerYields: 0 };
-let getDbRef: (() => DatabaseSync) | null = null, options: RevocationRunnerOptions = {}, timer: ReturnType<typeof setTimeout> | null = null;
+export const memoryRevocationStats = { slices: 0, maxSliceMs: 0, maxWorkMs: 0, busyPauses: 0, errorRetries: 0, lockedRetries: 0, workMs: 0, pauseMs: 0, maxJobBytes: 0, lateSlices: 0, markerSlices: 0, budgetWaits: 0, markerYields: 0, floorSlices: 0, jobBackoffs: 0, storageParks: 0, storageResets: 0, parkedNow: 0 };
+// 1.0.22 fix1022-revoke-ioerr: a storage failure (SQLITE_IOERR, _CORRUPT, _NOTADB: "disk I/O error") is not a lock: a retry on the same
+// connection meets it again. 1.0.21 retried it forever (70+ "trying again" lines in the field), and the job row it could not end held every
+// chat's memory at checking:pending. After REVOKE_STORAGE_PARK_AFTER failures in a row the runner parks: the job row stays (its holds stay,
+// fail closed; no owner data is touched) and it is reset at most REVOKE_STORAGE_SELF_RESETS times a process, REVOKE_STORAGE_RESET_MS apart,
+// or by the start at listen / the owner's Forget (wakeMemoryRevocation resume). Any other wake (a turn's fence wait, wakeIfStarted, the bus) never unparks it.
+export const REVOKE_STORAGE_PARK_AFTER = 5, REVOKE_STORAGE_SELF_RESETS = 3, REVOKE_STORAGE_RESET_MS = 5 * 60_000;
+const STORAGE_CODES = new Set([10, 11, 26]);
+export function revokeStorageError(error: unknown): boolean {
+  const code = (error as { errcode?: unknown } | null)?.errcode;
+  if (typeof code === "number" && STORAGE_CODES.has(code & 0xff)) return true;
+  return /disk I\/O error|file is not a database|database disk image is malformed/.test(error instanceof Error ? error.message : String(error));
+}
+let storageFailures = 0, parked = false, parkResetAt = Number.POSITIVE_INFINITY, selfResets = 0;
+function unpark(): void { if (!parked) return; parked = false; parkResetAt = Number.POSITIVE_INFINITY; storageFailures = 0; memoryRevocationStats.parkedNow = 0; memoryRevocationStats.storageResets++; }
+let getDbRef: (() => DatabaseSync) | null = null, options: RevocationRunnerOptions = {};
 let running = false, stopped = false, rowsPerSlice = START_ROWS, backoff = LOCK_RETRY_MS, idleWaiters: Array<() => void> = [];
 
 /** Next slice size: grow while well inside the budget, halve at once when a slice came near it. */
@@ -998,7 +1107,43 @@ const ranOut = () => {
   void scrubWalAfterDelete().catch(() => {});
   try { idleHook?.(); } catch (error) { console.warn(`[memory] revocation idle hook: ${error instanceof Error ? error.message : String(error)}`); }
 };
-const schedule = (delay: number) => { memoryRevocationStats.pauseMs += delay; timer = setTimeout(() => { void tick(); }, delay); timer.unref?.(); };
+// ---- MEMORY V2 (lane C, slice pace): the runner has no timer of its own and never polls. It runs on the `revoke` wake (revoke-wake.ts, the
+// shim of lane W's bus) and, when it stops with work left (the pace is spent, a turn is live, a slice is over, a job sits out a backoff),
+// arms ONE deadline for when that gate reopens. With nothing queued it holds no deadline at all.
+export const RUNNER_WAKE = "revoke";
+/** Bumped by every in-process site that queues revoke work (wakeIfStarted: revoke-commit.ts, the receipt flip wake). An empty queue is
+ * remembered against it, so a bus wake that follows no such write costs 0 statements. */
+export const QUEUE_VERSION = "revoke-queue";
+let offRunnerWake: (() => void) | null = null;
+/** `gateWait`: the armed deadline waits for a ledger, not for a pause: new closing work or a waiter may bring it forward. */
+let ticking = false, gateWait = false, firstTick = true;
+/** The queue found empty by the runner's own read, on this handle, at this queue version (null: not known). */
+let emptyAt: { db: DatabaseSync; version: number } | null = null;
+/** V8, in memory: whether a pending row stands (closing work). Read by one O(1) probe when a wake fires and again every
+ * CLOSING_REPROBE_SLICES slices or after a slice that moved nothing; never a count, never per tick. */
+let closing = false, closingStale = true, sinceClosingProbe = 0;
+const CLOSING_REPROBE_SLICES = 64;
+function pendingRowStands(db: DatabaseSync): boolean {
+  try { return Boolean(st(db, "SELECT 1 FROM memory_deny_pending LIMIT 1").get()) || Boolean(st(db, "SELECT 1 FROM memory_deny_pending_scope LIMIT 1").get()); }
+  catch { return false; }
+}
+function onRunnerWake(): void {
+  if (stopped || !getDbRef) return;
+  // parked on a storage failure: only its own reset deadline (bounded) unparks it here; a commit's bus wake does not
+  if (parked) { if (Date.now() < parkResetAt) return; unpark(); startRun(); return; }
+  // a running runner ticks at its own deadline (its pause is the main thread's 75%); a wake while one is armed changes nothing
+  if (running) { if (!ticking && !wakeProbe.armed(RUNNER_WAKE)) void tick(); return; }
+  try { if (emptyAt && emptyAt.version === memoVersion(QUEUE_VERSION) && emptyAt.db === getDbRef()) return; } catch { return; }
+  startRun();
+}
+function startRun(): void {
+  running = true; firstTick = true; closingStale = true; rowsPerSlice = START_ROWS; backoff = options.retryMs ?? LOCK_RETRY_MS; storageFailures = 0; schedule(0);
+}
+const schedule = (delay: number, gate = false) => {
+  memoryRevocationStats.pauseMs += delay; gateWait = gate;
+  offRunnerWake ??= onWake(RUNNER_WAKE, onRunnerWake);
+  armDeadline(RUNNER_WAKE, Date.now() + delay);
+};
 /** Granted rows, and rows an earlier build parked as 'revoked' (they finish here like any other: MEMDEL-SIMPLIFY-109). */
 const NEXT_JOB = `SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='${REVOCATION_JOB_SUBJECT}' AND state IN ('granted','revoked') ORDER BY rowid LIMIT 1`;
 /** One step of one job row (caller's transaction); `done` when the row is finished and gone. A row in a format this build cannot read
@@ -1028,28 +1173,68 @@ function stepJobRow(db: DatabaseSync, row: Record<string, unknown>, rows: number
   return { done: true, job };
 }
 
+// 1.0.22 deep1022: the runner is nobody's background slice. Its wake is a microtask of the committing writer (wakeIfStarted) and its
+// deadline a timer armed from there (revoke-wake.ts), so Node ran every later tick inside that writer's io-budget store: woken by a memory
+// worker's commit the runner WAS "memory-worker" from then on, its writes met the background byte gate, and after one refused write of that
+// slice (the store's sticky `deferred`) every tick threw BG_DEFERRED ("revocation job: BG_DEFERRED; trying again", 105 times in the field)
+// while its '*' windows held every chat at checking:pending. A tick, and every deadline it arms, runs under no source: the runner is paced
+// by its own ledger alone (revoke-budget.ts), whoever woke it.
 async function tick(): Promise<void> {
-  timer = null;
+  if (ticking) return;
+  ticking = true;
+  try { await ioBudget.withoutSource(tickOnce); } finally { ticking = false; }
+}
+async function tickOnce(): Promise<void> {
   if (stopped || !getDbRef) { running = false; wakeAll(); return; }
+  const failuresBefore = revokeJobFailures();
   try {
     if (options.admit) await options.admit();
     if (stopped) { running = false; wakeAll(); return; }
     const db = getDbRef();
+    // the first tick after a wake: a queue with nothing in it is found by a few point reads, with no write lock taken, and remembered
+    if (firstTick) {
+      firstTick = false;
+      let none = false;
+      // strict reads: one that throws proves nothing, and the tick below goes on as it always did
+      try {
+        none = !db.isTransaction && !markerWorkPending(db) && !st(db, NEXT_JOB).get();
+        if (none) { try { none = !st(db, "SELECT 1 FROM memory_late_build WHERE ready=0 LIMIT 1").get(); } catch { /* a file with no late builds */ } }
+      } catch { none = false; }
+      if (none) {
+        emptyAt = { db, version: memoVersion(QUEUE_VERSION) };
+        running = false; noteRevokeClosing(false); noteRevocationQueueEmpty(); wakeAll(); ranOut(); return;
+      }
+    }
     // the marker walks inside its write budget (revoke-budget.ts); under a live foreground turn it trickles (a half slice every busy pause)
     // rather than stopping: a window the walk holds open reads "checking" to every turn until the walk is done (SELF-OVERLOAD-105 item 1c)
-    const live = options.busy?.() === true;
+    // 1.0.20 checkfix-n4: a turn waiting on a checking:pending fence (fence-pending.ts) waits for exactly this walk, so the walk is not
+    // slowed for that turn (it slowed itself: every owner turn met a window the trickle had not closed, recall withheld). The pace still holds.
+    const turnLive = options.busy?.() === true; // read once a tick
+    const live = turnLive && fenceWaiters === 0;
     let marker = false;
-    // the pace (revoke-budget.ts r3.5) holds every transaction of the runner, job steps and late builds too: none starts while its minute is full
+    // MEMORY V2 V8: closing work (a pending row stands: a reader is held under it) is not paced per minute; its minute is the write budget,
+    // turn or no turn. V14: while a turn waits on a window the runner has the full ledger too. Only tidy and prune keep the idle pace.
+    if (closingStale || sinceClosingProbe >= CLOSING_REPROBE_SLICES) { closing = pendingRowStands(db); closingStale = false; sinceClosingProbe = 0; }
+    const closingNow = closing || fenceWaiters > 0;
+    noteRevokeClosing(closingNow);
+    // the pace (revoke-budget.ts r3.5) holds every transaction of the runner, job steps and late builds too: none starts while its minute is
+    // full. V8, the floor: closing work still moves REVOKE_CLOSING_FLOOR rows a minute through a shut ledger (floorMarkerSlice).
     const paceWait = revokePaceWaitMs(revokePaceNeed(db));
-    if (paceWait > 0) { memoryRevocationStats.budgetWaits++; schedule(paceWait); return; }
-    if (markerWorkPending(db)) {
-      const wait = revokeWriteWaitMs(revokeSliceNeed(db));
-      if (wait > 0) { memoryRevocationStats.budgetWaits++; schedule(wait); return; }
+    const markerPending = markerWorkPending(db);
+    let floor = false;
+    const floorOwed = () => closingNow && markerPending && revokeFloorRows() > 0;
+    const gate = (wait: number) => { memoryRevocationStats.budgetWaits++; schedule(Math.max(1, closingNow && markerPending ? Math.min(wait, revokeFloorWaitMs()) : wait), true); };
+    if (paceWait > 0) { if (floorOwed()) floor = true; else { gate(paceWait); return; } }
+    if (markerPending) {
+      if (!floor) {
+        const wait = revokeWriteWaitMs(revokeSliceNeed(db));
+        if (wait > 0) { if (floorOwed()) floor = true; else { gate(wait); return; } }
+      }
       marker = true;
       if (live) memoryRevocationStats.markerYields++;
     }
     const budget = (options.sliceMs ?? REVOCATION_SLICE_MS) * (live && marker ? REVOCATION_LIVE_SLICE_FRACTION : 1), t0 = performance.now();
-    let more = false, budgetWait = false, workMs = 0;
+    let more = false, budgetWait = false, workMs = 0, floorStuck = false;
     // a background runner: the write lock is taken within the background budget, never the handle's 1 s wait (a busy start retries)
     beginBackground(db, "revocation-job");
     // the runner's own transaction: what its commit writes to the WAL is measured into the budget's cost estimate (revoke-budget.ts S2)
@@ -1059,7 +1244,10 @@ async function tick(): Promise<void> {
     let jobEnded = false, queueEmpty = false;
     try {
       // the write-time marker first: its pending rows hold lines and memory "checking" until it is done (revoke-marker.ts)
-      moved = budgetedMarkerSlice(db, rowsPerSlice, budget, lateBuildStep);
+      moved = floor ? floorMarkerSlice(db, rowsPerSlice, budget, lateBuildStep) : budgetedMarkerSlice(db, rowsPerSlice, budget, lateBuildStep);
+      // a ledger that shut inside the admission (the pace's own look) leaves the floor its rows, in this same transaction
+      if (moved === "budget" && !floor && floorOwed()) { floor = true; moved = floorMarkerSlice(db, rowsPerSlice, budget, lateBuildStep); }
+      if (floor) { memoryRevocationStats.floorSlices++; if (moved !== true) floorStuck = true; }
       const row = moved === true ? null : st(db, NEXT_JOB).get();
       queueEmpty = row === undefined;
       // the minute had no room for the marker (a waiting receipt flip's whole commit, revoke-budget.ts): with no job row to run either,
@@ -1084,14 +1272,35 @@ async function tick(): Promise<void> {
       workMs = performance.now() - t0;
       memoryRevocationStats.maxWorkMs = Math.max(memoryRevocationStats.maxWorkMs, workMs);
       db.exec("COMMIT");
+      storageFailures = 0;
       // measured right after its COMMIT, before anything else runs on this thread: for the pace always (whatever it held), and into C and
       // admission only when it held the marker's slice and nothing else (a job step or a late build ran otherwise)
       endRevokeMeasure(db, measure, moved === true);
       if (queueEmpty) noteRevocationQueueEmpty(); else if (jobEnded) noteRevocationJobEnded();
     } catch (error) { if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } } endRevokeMeasure(db, measure, false, false); throw error; }
     const ms = performance.now() - t0;
-    if (!more) { running = false; wakeAll(); ranOut(); return; }
-    if (budgetWait) { memoryRevocationStats.budgetWaits++; schedule(Math.max(1, revokeWriteWaitMs(revokeSliceNeed(db)))); return; }
+    sinceClosingProbe++;
+    if (moved !== true) closingStale = true;
+    // V14: the turns waiting now have their own threads' and scopes' rows closed as soon as the revoke has written every mark (the existing
+    // closeWaitedPending site and its allowance; the waiter itself no longer polls for it)
+    if (waiterTargets.size && !db.isTransaction) {
+      const threads = new Set<string>(), scopes = new Set<string>();
+      for (const target of waiterTargets) { for (const id of target.threads) threads.add(id); for (const id of target.scopes) scopes.add(id); }
+      closeWaitedPending(db, [...threads], [...scopes]);
+    }
+    if (!more) {
+      // V10: every job left is sitting out a failure: the deadline is the earliest backoff, never a stop with work left
+      const due = revokeBackoffDueMs(db);
+      const left = markerWorkPending(db);
+      if (left && Number.isFinite(due)) { schedule(Math.max(1, due - Date.now()), true); return; }
+      emptyAt = left ? null : { db, version: memoVersion(QUEUE_VERSION) };
+      running = false; noteRevokeClosing(false); wakeAll(); ranOut(); return;
+    }
+    if (budgetWait) {
+      memoryRevocationStats.budgetWaits++;
+      const wait = Math.max(1, revokeWriteWaitMs(revokeSliceNeed(db)));
+      schedule(closingNow && !floorStuck && markerWorkPending(db) ? Math.max(1, Math.min(wait, revokeFloorWaitMs())) : wait, true); return;
+    }
     memoryRevocationStats.slices++; memoryRevocationStats.workMs += ms;
     memoryRevocationStats.maxSliceMs = Math.max(memoryRevocationStats.maxSliceMs, ms);
     // Size row work against its deadline. Shrinking rows cannot reduce fixed
@@ -1104,17 +1313,38 @@ async function tick(): Promise<void> {
     // the job stays in its row: a lock is tried again shortly, anything else with a doubling delay, until it completes
     if (lockedError(error)) { memoryRevocationStats.lockedRetries++; schedule(options.retryMs ?? LOCK_RETRY_MS); return; }
     memoryRevocationStats.errorRetries++;
-    console.warn(`[memory] revocation job: ${error instanceof Error ? error.message : String(error)}; trying again`);
+    const message = error instanceof Error ? error.message : String(error);
+    if (revokeStorageError(error) && ++storageFailures >= REVOKE_STORAGE_PARK_AFTER) {
+      parked = true; running = false; memoryRevocationStats.storageParks++; memoryRevocationStats.parkedNow = 1;
+      const reset = selfResets < REVOKE_STORAGE_SELF_RESETS;
+      if (reset) { selfResets++; parkResetAt = Date.now() + REVOKE_STORAGE_RESET_MS; armDeadline(RUNNER_WAKE, parkResetAt); }
+      else { parkResetAt = Number.POSITIVE_INFINITY; armDeadline(RUNNER_WAKE, Number.POSITIVE_INFINITY); }
+      console.warn(`[memory] revocation job: storage failure ${storageFailures} times in a row (${message}); parked: the job stays queued and its holds stay (fail closed), ${reset ? `tried again in ${Math.round(REVOKE_STORAGE_RESET_MS / 60_000)} min or at` : "tried again at"} the next start`);
+      noteRevokeClosing(false); wakeAll(); return;
+    }
+    console.warn(`[memory] revocation job: ${message}; trying again`);
+    // V10: a step that threw was charged to its own job (revoke-marker.ts backoff: 1 s doubling to 60 s on the deadline registry) and the
+    // selectors now pass over it, so the queue behind it goes on after an ordinary pause; only a failure no job owns backs the runner off
+    if (revokeJobFailures() !== failuresBefore) { memoryRevocationStats.jobBackoffs++; schedule(Math.max(options.pauseMs ?? REVOCATION_MIN_PAUSE_MS, REVOCATION_SLICE_MS * REVOCATION_PAUSE_FACTOR)); return; }
     schedule(backoff); backoff = Math.min(RETRY_CAP_MS, backoff * 2);
   }
 }
 
 /** Starts (or wakes) the runner over every job row and late build: at listen (resuming what a stopped process left), and after each
  * commit that wrote one. Options given here stay for the process. */
-export function wakeMemoryRevocation(getDb: () => DatabaseSync, next?: RevocationRunnerOptions): void {
+export function wakeMemoryRevocation(getDb: () => DatabaseSync, next?: RevocationRunnerOptions, resume = next !== undefined): void {
+  // parked on a storage failure: only the start at listen (it passes options), the owner's Forget (resume) or the park's own reset deadline
+  // unpark it. A turn's fence wait, a delegated reply's recheck or any other wake is a no-op until then (Astra 73cbd5d493: each turn's wake
+  // unparked it, so the bounded resets never bounded anything)
+  if (parked && !resume && !stopped && Date.now() < parkResetAt) return;
   getDbRef = getDb; stopped = false;
   if (next) options = { ...options, ...next };
-  if (!running) { running = true; rowsPerSlice = START_ROWS; backoff = options.retryMs ?? LOCK_RETRY_MS; schedule(0); }
+  unpark();
+  // a direct wake says work may have been queued: what the runner remembered of an empty queue is dropped and its first tick looks again
+  emptyAt = null; closingStale = true;
+  if (!running) startRun();
+  // waiting on a ledger: the gate may have moved (closing work or a waiter arrived), so the wait is looked at again now
+  else if (gateWait && !ticking) { gateWait = false; armDeadline(RUNNER_WAKE, Date.now()); }
 }
 /** Runs every job row of `db` to completion now, in the caller's transaction (offline helpers and tests). Returns the receipts revoked. */
 export function runRevocationJobsNow(db: DatabaseSync): number {
@@ -1156,6 +1386,52 @@ export function drainRevokeMarker(db: DatabaseSync, maxSlices = 50_000_000): { s
     if (!moved) return { slices, pending: markerWorkPending(db) };
   }
 }
+/** 1.0.20 closer-n1 (option B, Fable pick): a turn waiting on a checking:pending fence closes ITS threads' and scopes' pending rows (and the
+ * revoke's '*' rows) ahead of the paced tidy pages, and only those of a revoke whose walk has written every mark: active, phase 'tidy', no
+ * frontier row (revoke-marker.ts tidyStep's own precondition; an inherit hold pushes a frontier row and sends the revoke back to 'mark').
+ * Before that nothing goes early: a mark into a thread can come from any frontier node. Its own background transaction (bounded lock wait,
+ * re-checked inside), measured into the revoke pace like any runner commit, at most WAITED_PENDING_ROWS rows a call and
+ * WAITED_PENDING_ROWS_PER_MIN a minute for the whole process (every waiter shares it). Busy or any error deletes nothing (the wait goes on).
+ * True when it deleted a row. */
+export const WAITED_PENDING_ROWS = 32;
+export const WAITED_PENDING_ROWS_PER_MIN = 256;
+const WAITED_WINDOW_MS = 60_000;
+let waitedFrom = 0, waitedRows = 0;
+export function resetWaitedPendingAllowance(): void { waitedFrom = 0; waitedRows = 0; }
+const READY_REVOKE = "SELECT 1 FROM memory_revoke_jobs j WHERE j.revoke_id=p.revoke_id AND j.state='active' AND j.phase='tidy' AND NOT EXISTS (SELECT 1 FROM memory_revoke_frontier f WHERE f.revoke_id=j.revoke_id)";
+export function closeWaitedPending(db: DatabaseSync, threads: readonly string[], scopes: readonly string[]): boolean {
+  if (db.isTransaction || (!threads.length && !scopes.length)) return false;
+  const now = performance.now();
+  if (now - waitedFrom >= WAITED_WINDOW_MS) { waitedFrom = now; waitedRows = 0; }
+  const room = Math.min(WAITED_PENDING_ROWS, WAITED_PENDING_ROWS_PER_MIN - waitedRows);
+  if (room <= 0) return false;
+  const pick = (table: "memory_deny_pending" | "memory_deny_pending_scope", column: string, all: string, keys: readonly string[], n: number) => keys.length && n > 0
+    ? st(db, `SELECT p.${column} AS k,p.since_lsn AS s,p.revoke_id AS r FROM ${table} p WHERE p.${column} IN (SELECT value FROM json_each(?1) UNION SELECT ?2) AND EXISTS (${READY_REVOKE}) LIMIT ?3`)
+      .all(JSON.stringify(keys), all, n) : [];
+  try {
+    const rows = pick("memory_deny_pending", "thread_id", PENDING_ALL_THREADS, threads, room);
+    const scoped = pick("memory_deny_pending_scope", "scope_id", PENDING_ALL_SCOPES, scopes, room - rows.length);
+    if (!rows.length && !scoped.length) return false;
+    waitedRows += rows.length + scoped.length; // charged before the write: a failed attempt still spends its share
+    beginBackground(db, "waited-pending");
+    let measure: ReturnType<typeof beginRevokeMeasure> | null = null, gone = 0;
+    try {
+      measure = beginRevokeMeasure(db);
+      // re-read inside the writer: the revoke may have moved back to 'mark' between the read above and this transaction
+      for (const [table, column, list] of [["memory_deny_pending", "thread_id", rows], ["memory_deny_pending_scope", "scope_id", scoped]] as const)
+        for (const row of list) gone += Number(st(db, `DELETE FROM ${table} AS p WHERE p.${column}=? AND p.since_lsn=? AND p.revoke_id=? AND EXISTS (${READY_REVOKE})`).run(row.k, row.s, row.r).changes);
+      if (gone) bumpDenyGeneration(db);
+      db.exec("COMMIT");
+    } catch (error) {
+      if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } }
+      if (measure) endRevokeMeasure(db, measure, false, false);
+      throw error;
+    }
+    // after the COMMIT: the pace accounting cannot turn a committed close into a failed attempt
+    try { endRevokeMeasure(db, measure!, false); } catch { /* the delete is committed; accounting is best effort here */ }
+    return gone > 0;
+  } catch { return false; }
+}
 /** The send fence's inline drain (send-fence.ts): rows and wall time one send may spend walking a revoke's marker. */
 export const SEND_FENCE_DRAIN = { rows: 2048, ms: 40 };
 /** Walks the revoke marker inline within `budget` (each slice its own transaction), for a send whose prompt reads "checking: pending": the
@@ -1164,6 +1440,7 @@ export const SEND_FENCE_DRAIN = { rows: 2048, ms: 40 };
 export function drainRevokeMarkerBounded(db: DatabaseSync, budget: { rows: number; ms: number } = SEND_FENCE_DRAIN, options: { background?: boolean } = {}): boolean {
   chargeReleaseWork();
   if (db.isTransaction) return markerWorkPending(db);
+  // (MEMORY V2 V8: a turn's own drain no longer ends the closing budget; closing work keeps its minute while a pending row stands)
   const deadline = performance.now() + budget.ms;
   let rows = budget.rows;
   while (rows > 0 && performance.now() < deadline) {
@@ -1199,45 +1476,136 @@ export const REDISPATCH_SETTLE_MS = 5_000;
 /** Before a refused turn rebuilds its prompt: walks the revoke marker in bounded slices, yielding between them, until nothing is pending or
  * `maxMs` passed (the runner yields to the owner's live turn, so without this the rebuilt prompt would meet the same window). True when
  * the marker is done. Each slice is SEND_FENCE_DRAIN-bounded: the event loop keeps serving. */
-export async function settleRevokesForTurn(db: DatabaseSync, maxMs = REDISPATCH_SETTLE_MS): Promise<boolean> {
+export async function settleRevokesForTurn(db: DatabaseSync, maxMs = REDISPATCH_SETTLE_MS, targets?: WaiterTargets): Promise<boolean> {
   const started = performance.now();
-  const deadline = started + maxMs;
-  // Count bounded drain attempts, including a throwing attempt, excluding transaction-only loop iterations.
-  // Cleared/budget/error describe their existing exits; in-tx refines only a deadline reached inside a caller's transaction.
-  let slices = 0;
-  let outcome: "cleared" | "deadline" | "budget" | "error" | "in-tx" = "error";
+  let outcome: "cleared" | "deadline" | "error" | "stopped" | "in-tx" = "error";
+  // MEMORY V2 V14: the settle no longer walks the marker itself and no longer waits for the global queue. It is a waiter: the runner has
+  // the full ledger while it waits (noteFenceWaiter), and it looks again only when the `window` wake says a pending row went or the deny
+  // generation moved. `targets`: only the windows covering this turn are looked at (their keys and the `*` rows). Without targets the
+  // caller named no turn, so today's answer is kept: done when no marker work is left.
+  const waiting = noteFenceWaiter(targets);
   try {
-    for (;;) {
-      let pending: boolean;
-      let inTx = false;
-      try {
-        inTx = db.isTransaction;
-        pending = inTx ? true : (slices++, drainRevokeMarkerBounded(db));
-      } catch { return false; }
-      if (!pending) { outcome = "cleared"; return true; }
-      if (performance.now() >= deadline) { outcome = inTx ? "in-tx" : "deadline"; return false; }
-      // a minute whose write budget is spent walks nothing until it has room: wait for that (or the deadline) instead of spinning
-      const wait = revokeWriteWaitMs(revokeSliceNeed(db));
-      // room that comes only after the deadline is not waited for: the refused turn rebuilds now, as before
-      if (wait > deadline - performance.now()) { outcome = "budget"; return false; }
-      if (wait > 0) await new Promise<void>(resolve => { setTimeout(resolve, Math.max(1, wait)).unref?.(); });
-      else await new Promise<void>(resolve => setImmediate(resolve));
-    }
-  } finally {
+    const look = (): WindowLook => (targets ? windowsStand(db, targets) : markerWorkPending(db)) ? "wait" : "done";
+    if (!db.isTransaction && look() === "done") { outcome = "cleared"; return true; }
+    try { wakeMemoryRevocation(getDbRef && !stopped ? getDbRef : () => db); } catch { /* the wait is still bounded */ }
+    const result = await awaitWindowWake(db, maxMs, look);
+    // "in-tx" refines only a bound reached inside a caller's transaction, as before V14 (the diagnostic line's reader tells the two apart)
+    let inTx = false;
+    if (result === "deadline") { try { inTx = db.isTransaction; } catch { /* diagnostic only */ } }
+    outcome = result === "done" ? "cleared" : result === "fail" ? "error" : inTx ? "in-tx" : result;
+    return result === "done";
+  } catch { return false; }
+  finally {
+    waiting();
     // Diagnostics must never alter a return or mask an exception. -1 means the count could not be read; activeJobs does not count flips/folds.
     try {
       const ms = Math.max(0, Math.round(performance.now() - started));
       let activeJobs = -1;
       try { activeJobs = (db.prepare("SELECT count(*) AS activeJobs FROM (SELECT 1 FROM memory_revoke_jobs WHERE state IN ('active','undoing') LIMIT 1001)").get() as { activeJobs: number }).activeJobs; } catch { /* diagnostic only */ }
-      console.warn(`[memory] settle outcome=${outcome} ms=${ms} slices=${slices} activeJobs=${activeJobs > 1000 ? ">1000" : activeJobs}`);
+      console.warn(`[memory] settle outcome=${outcome} ms=${ms} slices=0 activeJobs=${activeJobs > 1000 ? ">1000" : activeJobs}`);
     } catch { /* diagnostic only */ }
   }
 }
+/** Whether a pending row stands on one of the turn's own keys or on the `*` keys (two seeks; unreadable: yes, fail closed). */
+function windowsStand(db: DatabaseSync, targets: WaiterTargets): boolean {
+  try {
+    return Boolean(st(db, "SELECT 1 FROM memory_deny_pending WHERE thread_id IN (SELECT value FROM json_each(?1) UNION SELECT ?2) LIMIT 1").get(JSON.stringify(targets.threads), PENDING_ALL_THREADS))
+      || Boolean(st(db, "SELECT 1 FROM memory_deny_pending_scope WHERE scope_id IN (SELECT value FROM json_each(?1) UNION SELECT ?2) LIMIT 1").get(JSON.stringify(targets.scopes), PENDING_ALL_SCOPES));
+  } catch { return true; }
+}
+/** MEMORY V2 V14, the one wait of every turn held under a pending window (fence-pending.ts, the turn-start settle). `look` is the waiter's
+ * own exact question; it runs when the `window` wake is raised (a pending row was deleted or the deny generation moved, revoke-marker.ts)
+ * and once at the bound, never on a timer in between and never inside a transaction. "deadline": the bound passed with the question still
+ * open: the caller refuses (a timeout never authorises a resend). The waiter issues NO statement while it waits: the only timer work in
+ * between is `cancelled()`, read in memory once every WINDOW_CANCEL_LOOK_MS (a Stop must not sit out the 65 s bound; lane W's bus can
+ * replace it with a raise from the Stop sites). */
+export type WindowLook = "done" | "fail" | "wait";
+export const WINDOW_CANCEL_LOOK_MS = 1_000;
+const WINDOW_IN_TX_RECHECK_MS = 5;
+/** Test seam (mutants): `timeoutAllows` resolves a waiter "done" at its bound. Never set outside a test. */
+export const windowWaitTestHooks = { timeoutAllows: false };
+let windowWaiters = 0;
+export function awaitWindowWake(db: DatabaseSync, maxMs: number, look: () => WindowLook, cancelled: () => boolean = () => false): Promise<"done" | "fail" | "deadline" | "stopped"> {
+  return new Promise(resolve => {
+    const topic = `window-wait:${++windowWaiters}`, due = Date.now() + maxMs;
+    let over = false, recheck = false;
+    const finish = (result: "done" | "fail" | "deadline" | "stopped") => {
+      if (over) return;
+      over = true; offWindow(); offOwn(); armDeadline(topic, Number.POSITIVE_INFINITY); resolve(result);
+    };
+    // a handle that cannot say (closed under the waiter): null, and the wait refuses instead of throwing in the bus on every wake
+    const inTransaction = (): boolean | null => { try { return db.isTransaction; } catch { return null; } };
+    // the waiter's one deadline: the in-memory Stop look, or the short look after a caller's transaction; never later than the bound
+    const arm = () => armDeadline(topic, Math.min(due, Date.now() + (recheck ? WINDOW_IN_TX_RECHECK_MS : WINDOW_CANCEL_LOOK_MS)));
+    const exact = () => {
+      if (over) return;
+      if (cancelled()) return finish("stopped");
+      const late = Date.now() >= due;
+      const inTx = inTransaction();
+      if (inTx === null) return finish("fail");
+      if (inTx) {
+        // never a read inside someone's transaction (its uncommitted rows are not a verdict): look again right after, or refuse at the bound
+        if (late) return finish(windowWaitTestHooks.timeoutAllows ? "done" : "deadline");
+        recheck = true; arm(); return;
+      }
+      recheck = false;
+      let result: WindowLook;
+      try { result = look(); } catch { return finish("fail"); }
+      if (result !== "wait") return finish(result);
+      if (late) return finish(windowWaitTestHooks.timeoutAllows ? "done" : "deadline");
+    };
+    const offWindow = onWake(WINDOW_WAKE, exact);
+    const offOwn = onWake(topic, () => {
+      if (over) return;
+      if (cancelled()) return finish("stopped");
+      if (recheck || Date.now() >= due) exact();
+      // still waiting (a look after a transaction that answered "wait" included): the Stop look and the bound stay armed
+      if (!over) arm();
+    });
+    if (cancelled()) return finish("stopped");
+    // entered inside a caller's transaction (the caller's entry look was skipped): the first look comes right after it ends
+    recheck = inTransaction() === true;
+    arm();
+  });
+}
 /** Wakes the runner if this process started it, once the caller's synchronous transaction is over (a microtask runs after it):
  * a wake is never issued inside a transaction, and one after a rollback finds no row and stops. */
+/** Turns now waiting on a checking:pending fence. While any waits, a live turn does not slow the marker: the waiting turn is that turn. */
+let fenceWaiters = 0;
+export type WaiterTargets = { threads: readonly string[]; scopes: readonly string[] };
+const waiterTargets = new Set<WaiterTargets>();
+/** `targets`: the threads and scopes the waiting turn is held under; the runner closes their rows first (closeWaitedPending, V14). */
+export function noteFenceWaiter(targets?: WaiterTargets): () => void {
+  fenceWaiters++;
+  if (targets) waiterTargets.add(targets);
+  let done = false;
+  return () => { if (!done) { done = true; fenceWaiters--; if (targets) waiterTargets.delete(targets); } };
+}
+/** How many turns wait on a checking:pending fence now (tests, diagnostics). */
+export const fenceWaitersNow = (): number => fenceWaiters;
 export function wakeIfStarted(): void {
+  bumpMemoVersion(QUEUE_VERSION); // a write queued work: an empty queue the runner remembered is no longer known
+  // a parked runner stays parked: wakeMemoryRevocation without resume is a no-op before the park's reset deadline (the bound lives there)
   if (!getDbRef || stopped) return;
   queueMicrotask(() => { if (getDbRef && !stopped) wakeMemoryRevocation(getDbRef); });
+}
+// Lane W's wake bus (wake.ts) sees every COMMIT of the main connection: a job row inserted or put back to an unfinished state, or a
+// receipt flip queued, by ANY writer (one that never calls wakeIfStarted included, and the open-time probe after a crash) raises
+// `revoke` there. It is taken as the same in-process wake: the remembered empty queue is dropped and the runner looks once. A wake
+// with nothing behind it costs that one look and arms nothing. Owner of the bus and its triggers: lane W; of this subscriber: lane C.
+onCommitWake(RUNNER_WAKE, () => { wakeIfStarted(); }, { priority: WAKE_PRIORITY.closing, name: "revoke-runner" });
+
+/** MEMORY V2 section 5, M2: the standing revoke queue's migration step. Owner of this body: lane C. Owner of the runner that registers
+ * and calls it (migration-v2.ts `registerMigrationStep("M2", revokeDrainMigrationStep)`), of its order and of its cursor row: lane I.
+ * The queue is drained "as it is" by the revoke runner itself, as closing work on its own wake (V8), in its own measured transactions:
+ * every job's phase and cursor are already durable, and a walk run inside the migration runner's transaction would escape the pace's
+ * measure and be budgeted twice. So one batch here is one O(1) read: whether any revoke still has work. When one has, the runner is
+ * woken (a no-op if it is already running) and the step is not done; when none has, it is. No row is written here, so the step is
+ * idempotent from any cursor, and it never deletes a pending row or touches a job (P4). */
+export function revokeDrainMigrationStep(db: DatabaseSync, _cursor: unknown, _now: number): { cursor: { pending: boolean }; done: boolean } {
+  const pending = markerWorkPending(db);
+  if (pending) wakeIfStarted();
+  return { cursor: { pending }, done: !pending };
 }
 /** Resolves when the runner has no job or late build left (or was stopped). */
 export function memoryRevocationIdle(): Promise<void> {
@@ -1246,8 +1614,10 @@ export function memoryRevocationIdle(): Promise<void> {
 /** Ends the runner (shutdown, tests). The rows stay; the next start resumes them. */
 export function stopMemoryRevocation(): void {
   stopped = true;
-  if (timer) { clearTimeout(timer); timer = null; }
-  running = false; options = {}; wakeAll();
+  armDeadline(RUNNER_WAKE, Number.POSITIVE_INFINITY);
+  offRunnerWake?.(); offRunnerWake = null;
+  running = false; gateWait = false; emptyAt = null; closing = false; closingStale = true; options = {}; noteRevokeClosing(false); wakeAll();
+  parked = false; parkResetAt = Number.POSITIVE_INFINITY; storageFailures = 0; selfResets = 0; memoryRevocationStats.parkedNow = 0;
 }
 /** Test hook: back to the starting counters. */
 export function resetMemoryRevocationStats(): void { for (const key of Object.keys(memoryRevocationStats) as Array<keyof typeof memoryRevocationStats>) memoryRevocationStats[key] = 0; }

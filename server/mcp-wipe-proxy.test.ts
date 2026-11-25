@@ -70,3 +70,56 @@ it('W6 stdio tools/list annotations reach the registered decision before the cat
   child.stdin.end();const closed=new Promise<void>(resolve=>child.once('close',()=>resolve()));const timer=setTimeout(()=>child.kill('SIGKILL'),1000);await closed;clearTimeout(timer);lines.close();await relay.finish();admission.dispose();credentials.dispose();ledger.close();await new Promise<void>(resolve=>server.close(()=>resolve()));f.dispose();await removeTempDir(root);
  }
 },45000);
+
+// 1.0.21 cause6: a failed record of the effect hints sealed the owner's whole command server for the turn (transport-lost).
+it('cause6 stdio: hints that cannot be recorded fail that tools/list alone, with no tool listed; the mount stays and the next list succeeds',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'murage-wipe-mcp-')),fake=join(root,'fake.mjs');
+ writeFileSync(fake,`import {createInterface} from 'node:readline';createInterface({input:process.stdin}).on('line',line=>{const q=JSON.parse(line);if(q.id===undefined)return;const result=q.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:q.method==='tools/list'?{tools:[{name:'delete_all_records',inputSchema:{type:'object',properties:{}}}]}:{};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:q.id,result})+'\\n');});`);
+ const publications:unknown[]=[];let refuse=2; // both attempts of the first list
+ const ledger=consumingFixture(),caps=new InternalCapabilities(),credentials=createTurnCredentialStore();
+ caps.begin(ledger.binding.identity.botId,ledger.turn.threadId,ledger.binding.identity.dispatchGeneration);
+ const authority=createProxyReleaseAuthority(caps);
+ const server=createServer(async(req,res)=>{
+  const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+  const body=JSON.parse(Buffer.concat(chunks).toString());
+  if(req.url==='/api/internal/turn-release/v1/verdict'){
+   const claim=caps.resolve(req.headers.authorization)!;
+   if(body.operation==='upstream'){authority.reserveUpstream(claim,body);res.end('{}');}
+   else if(body.operation==='seal'){authority.seal(claim);res.end('{}');}
+   else res.end(JSON.stringify(authority.verdict(claim,body)));
+   return;
+  }
+  publications.push(body);
+  if(refuse>0){refuse--;res.writeHead(503,{'content-type':'application/json'});res.end('{}');return;}
+  res.writeHead(200,{'content-type':'application/json'});res.end('{"ok":true}');
+ });
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const port=(server.address() as {port:number}).port,proxy=fileURLToPath(new URL('./mcp-wipe-proxy.ts',import.meta.url));
+ const mounts=customIntegrations({mcpServers:{fixture:{command:process.execPath,args:[fake],env:{},enabled:true}}} as unknown as AppConfig,{execPath:process.execPath,proxyPath:'unused',wipeProxyPath:proxy,harnessUrl:`http://127.0.0.1:${port}`,token:()=> 'fixture-token'})!;
+ const mount=mounts.fixture!,url=`http://127.0.0.1:${port}`;
+ const admission=createMcpMountAdmission(ledger.binding,authority,url);
+ const relay=await CliMountRelay.create({threadId:ledger.turn.threadId,text:'Fixture',cwd:fixtureBotFolder(),
+  warmIdentity:{botId:ledger.binding.identity.botId,audience:'owner'},releaseBinding:ledger.binding,mountAdmission:admission,
+  integrations:{custom:{fixture:mount}}},
+  {fixture:{...mount,env:{...mount.env,...mount.harnessEnv}}},{},credentials);
+ const stanza=relay.servers.fixture as {command:string;args:string[];env:Record<string,string>};
+ const child=spawn(stanza.command,stanza.args,{env:{...process.env,...stanza.env},stdio:['pipe','pipe','pipe']});let stderr='';child.stderr.on('data',chunk=>{stderr+=chunk;});
+ const pending=new Map<number,(value:any)=>void>(),lines=createInterface({input:child.stdout});lines.on('line',line=>{const reply=JSON.parse(line);pending.get(reply.id)?.(reply);pending.delete(reply.id);});
+ let seq=0;const call=(method:string,params:object={})=>new Promise<any>((resolve,reject)=>{const id=++seq,timer=setTimeout(()=>reject(Error(stderr||'MCP response timeout')),15000);pending.set(id,value=>{clearTimeout(timer);resolve(value);});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+ try{
+  await call('initialize');
+  const refused=await call('tools/list');
+  expect(refused).toEqual({jsonrpc:'2.0',id:2,error:{code:-32000,message:"Murage could not record this server's tools. Try again in a moment."}});
+  expect(JSON.stringify(refused)).not.toContain('delete_all_records');
+  expect(publications).toHaveLength(2);
+  // the mount was not dropped for the turn: the same child answers the next list, with its hints recorded first
+  expect(relay.mountUnavailable('fixture')).toBe(false);
+  const listed=await call('tools/list');
+  expect(listed.result.tools.map((tool:{name:string})=>tool.name)).toEqual(['delete_all_records']);
+  expect(publications).toHaveLength(3);
+  expect(publications[2]).toEqual({tools:[{tool:'delete_all_records',destructive:true,bulk:true}],replace:true});
+  expect(relay.mountUnavailable('fixture')).toBe(false);
+ }finally{
+  child.stdin.end();const closed=new Promise<void>(resolve=>child.once('close',()=>resolve()));const timer=setTimeout(()=>child.kill('SIGKILL'),1000);await closed;clearTimeout(timer);lines.close();await relay.finish();admission.dispose();credentials.dispose();ledger.close();await new Promise<void>(resolve=>server.close(()=>resolve()));await removeTempDir(root);
+ }
+},45000);

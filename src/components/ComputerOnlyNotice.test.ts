@@ -25,8 +25,7 @@ describe("the two places a phone allows a card use it", () => {
     // and in the phone's Details sheet; every place Run goes sits behind the guard.
     expect(source).toContain('onClick={() => { decide("deny", "deny"); after?.(); }}');
     expect(source).toContain('onClick={() => { decide("allow", "allow"); after?.(); }}');
-    // de0e1d65ee adds the refused HighLevel review to the same deny-only guard.
-    expect(source).toContain('const allowHidden = computerOnly || highlevelReview?.phase === "refused";');
+    expect(source).toContain("const allowHidden = computerOnly;");
     const guard = source.indexOf("{!allowHidden && (");
     expect(guard).toBeGreaterThan(-1);
     const deny = source.indexOf("{denyButton()}");

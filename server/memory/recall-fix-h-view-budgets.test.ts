@@ -6,7 +6,8 @@ import { closeDatabase, database, databaseGeneration } from '../database.ts';
 import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS } from '../db-busy.ts';
 import { threadHumanPrincipal } from '../human-principals.ts';
 import { removeTempDirSync } from '../testing/cleanup.ts';
-import { reconcileMemoryRoster, type MemoryRoster } from './policy.ts';
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from './policy.ts';
+import { insertMemoryRecord } from './record-write.ts';
 import * as views from './recall-view.ts';
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
@@ -37,7 +38,20 @@ it('each view writer uses the background lock budget, including certified hydrat
   let result; do { result = hydration.next(); } while (!result.done);
   expect(result.value, 'certified hydration must reach publication').toBe(true);
   expect(views.resolveRecallView(binding, certified).handle).toEqual(live);
-  views.maintainRecallViewSlice(live);
+  // cause8-memload (1.0.21): a view already at the newest change row is done with no write transaction, so a caught-up call proves nothing
+  // about the lock budget. The budget rule is for the write: journal one record after the hydration, then the page that projects it must
+  // open its transaction under the background budget and move the watermark to that row.
+  const mark = () => Number(db.prepare('SELECT watermark FROM memory_recall_views WHERE view_id=? AND generation=?').get(live.viewId, live.generation)!.watermark);
+  const newest = () => Number(db.prepare('SELECT coalesce(max(sequence),0) AS n FROM memory_recall_changes').get()!.n);
+  expect(mark(), 'the hydrated view is at the newest change row').toBe(newest());
+  expect(views.maintainRecallViewSlice(live), 'a caught-up view is done').toBe(true);
+  expect(waits.get('maintainRecallViewSlice') ?? [], 'a caught-up view takes no write transaction').toEqual([]);
+  insertMemoryRecord(db, { id: 'budget-record', version: 1, scopeId: ensureScope('bot', 'reader'), kind: 'fact', text: 'a change after hydration', assertion: 'owner-stated', state: 'active', validFrom: Date.now(), createdAt: Date.now() });
+  const journaled = newest();
+  expect(journaled, 'the record write logged a change row').toBeGreaterThan(mark());
+  expect(views.maintainRecallViewSlice(live)).toBe(true);
+  expect(mark(), 'the page projected the journaled row').toBe(journaled);
+  expect(waits.get('maintainRecallViewSlice'), 'one page, one write transaction').toEqual([BACKGROUND_BUSY_MS]);
 
   db.prepare("INSERT INTO memory_recall_views VALUES('obsolete','generation',?,1,'building',300,'digest',0,0)").run(certificate.epoch);
   db.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<300) INSERT INTO memory_recall_view_scopes SELECT 'obsolete','generation',printf('scope-%03d',i),0,0 FROM n");

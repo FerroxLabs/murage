@@ -57,7 +57,7 @@ executes ten behavioral boundary mutations, including nested CLI envelopes,
 Codex retry guards and headless frame observation. Mutations run in a disposable
 source copy and cannot alter the concurrently validating checkout.
 
-All verification runs use `/work/fuigo-builds/tools/it-remote.sh`,
+All verification runs use `/root/fuigo-builds/tools/it-remote.sh`,
 `IT_JOB=cfix-busyA22`, the supplied worktree and local-wrapper fallback, with at
 most two offline containers. Reproduction commands are in
 `scripts/busyloop-review-validate.sh`, `scripts/busyloop-review-red.py` and
