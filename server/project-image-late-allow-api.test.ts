@@ -72,9 +72,10 @@ it("a late Allow on a project-held image card whose call ended closes the card a
   // gone within a second of the card, so the card may close before the
   // answer); either way a late Allow never reads as allowed and makes nothing
   const answered = await api("POST", `/api/bots/${bot.id}/respond`, { threadId: desk, requestId, behavior: "allow" });
-  // the answer route's own contract for an answer that could not be delivered: 503, ok false, nothing confirmed
+  // the answer route's own contract for an answer that could not be delivered: 503, ok false, nothing confirmed; the card is
+  // closed, so the code is the terminal one (undelivered-card-1021: the card shows its line and no buttons)
   expect(answered.status, JSON.stringify(answered.body)).toBe(503);
-  expect(answered.body).toEqual({ ok: false, error: "The tool permission could not be delivered. Nothing was confirmed.", outcome: "unavailable" });
+  expect(answered.body).toEqual({ ok: false, code: "delivery_failed_terminal", error: "The tool permission could not be delivered. Nothing was confirmed.", outcome: "unavailable" });
   const closed = await approval();
   expect(closed.card.answered).not.toBe("allow");
   const messages = (await api("GET", `/api/threads/${desk}/messages`)).body.messages;

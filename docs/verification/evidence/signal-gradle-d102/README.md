@@ -1,7 +1,7 @@
 # D102 native Gradle proof — 2026-11-11
 
 Signal source: `48a0a5e90cb0c36153f0276c0affff090e588290`.
-Builder: `node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4` on build-host.
+Builder: `node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4` on hetzner-dsm.
 Gradle: pinned D061 9.8.2 distribution, local verified ZIP. Java: authenticated pinned Temurin 25.0.5+8.
 
 Result: **192 components / 342 artifacts**, each with SHA-256: **142 JARs, 107 POMs, 93 module files**. **334 artifacts** also have artifact-scoped PGP trust using **37 signing fingerprints**. `closure.json` is the complete inventory; the XML/keyring are committed under root `gradle/`. No trusted-artifact bypass, global trusted-key pattern, or network key lookup is allowed in strict builds. Eight artifacts use checksum verification alone, as detailed in the release plan. A key retrieval command returning success can still leave a key unusable by GnuPG; the inventory records the verified result.

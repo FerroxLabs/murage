@@ -3,7 +3,7 @@ import { BACKGROUND_BUSY_MS, database, isDatabaseBusy, transaction } from "../da
 import { ensureScope } from "./policy.ts";
 import { memoryState } from "./repository.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
-import { contentStampOf, PagedScan, storeAtMost } from "./status-scan.ts";
+import { contentStampOf, noteStatusAsked, PagedScan, storeAtMost } from "./status-scan.ts";
 
 const ID="memory-observability";
 type Metrics={queries:number;hits:number;lastAt:number|null;processedAt:number|null};
@@ -25,10 +25,17 @@ function metrics():Metrics|null{
 const pending={queries:0,hits:0,lastAt:null as number|null,processedAt:null as number|null};
 let lastFlushAt=0;
 export const COUNTER_FLUSH_MS=60_000;
+/** The capture controller's flush on change (memv2 E6): told once something is counted, so no sweep has to look on a clock. */
+let onCounted:(()=>void)|null=null;
+export function onMemoryCounted(listener:()=>void):()=>void{onCounted=listener;return ()=>{if(onCounted===listener)onCounted=null;};}
+/** Something counted is not in the database yet (a flush was refused, or not yet due). */
+export function memoryCountersPending():boolean{return pending.queries>0||pending.processedAt!==null;}
+/** How long until a flush of what is counted now may write (at most once per COUNTER_FLUSH_MS). */
+export function memoryCounterFlushDelay(now=Date.now()):number{return Math.max(0,lastFlushAt+COUNTER_FLUSH_MS-now);}
 /** Count one search. Memory only: no database write on the recall path. */
-export function recordMemoryRetrieval(hits:number){if(Number.isSafeInteger(hits)&&hits>=0){pending.queries++;pending.hits+=hits;pending.lastAt=Date.now();}}
-export function recordMemoryProcessing(at:number){if(Number.isSafeInteger(at)&&at>=0)pending.processedAt=Math.max(pending.processedAt??0,at);}
-/** Write what was counted since the last flush. Called from the worker's idle sweep (at most once a minute) and at quit. */
+export function recordMemoryRetrieval(hits:number){if(Number.isSafeInteger(hits)&&hits>=0){pending.queries++;pending.hits+=hits;pending.lastAt=Date.now();onCounted?.();}}
+export function recordMemoryProcessing(at:number){if(Number.isSafeInteger(at)&&at>=0){pending.processedAt=Math.max(pending.processedAt??0,at);onCounted?.();}}
+/** Write what was counted since the last flush. Called from the worker's sweep (at most once a minute, armed by a count) and at quit. */
 export function flushMemoryCounters(now=Date.now(),force=false):boolean{
   if(!pending.queries&&pending.processedAt===null)return false;
   if(!force&&now-lastFlushAt<COUNTER_FLUSH_MS)return false;
@@ -135,6 +142,9 @@ export function memoryHealth(extractorInstanceId:string|null){
   const {counts:supplied,asOf:suppliedAsOf}=suppliedCounts(db);
   // the older of the two figures is the one the line is as of
   const asOf=capturedAsOf===null||suppliedAsOf===null?null:Math.min(capturedAsOf,suppliedAsOf);
+  // asked (memv2 E6): the controller runs the pass this ask is the cause of, with its own idle checks (owner first, turn, upgrade, writer
+  // hold); the serving thread reads only the stored figures. The content stamp keeps an unchanged store free.
+  noteStatusAsked();
   const state: "not-configured"|"disabled"|"configured"|"budget-limited" = !learning.automaticFacts&&!learning.automaticProcedures ? "disabled"
     : !extractorInstanceId ? "not-configured" : learning.ceiling.input===0||learning.ceiling.output===0||learning.callsPerMinute===0 ? "budget-limited" : "configured";
   return {

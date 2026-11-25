@@ -186,6 +186,9 @@ export class SignalService implements ServiceContract {
   private ticking?: Promise<void>;
   private revocation?: Promise<ChannelState>;
   private lastSweep = 0;
+  /** Keys whose family this ledger already redacted and whose runs were cancelled: later passes skip them until the key leaves the deleted set. */
+  private redactedKeys = new Set<string>();
+  private redactedFor?: DurableDelivery;
   private loaded = false;
   private readonly options: SignalServiceOptions;
   constructor(options: SignalServiceOptions) {
@@ -452,10 +455,16 @@ export class SignalService implements ServiceContract {
     const cancellations: Promise<void>[] = [];
     const deleted = new Set([...this.tombstones.map(t => t.key), ...ledger.expiredSourceIds(), ...ledger.unknownExpirySourceIds()]);
     for (const row of this.rows) if (row.expiresAt !== undefined && row.expiresAt <= now) deleted.add(row.key);
+    if (this.redactedFor !== ledger) { this.redactedKeys.clear(); this.redactedFor = ledger; }
+    for (const key of this.redactedKeys) if (!deleted.has(key)) this.redactedKeys.delete(key);
     for (const key of deleted) {
+      if (this.redactedKeys.has(key)) continue;
       const result = ledger.redact(key);
       const runIds = [...(result?.runId ? [result.runId] : []), ...(result?.descendantRunIds ?? [])];
-      if (runIds.length) cancellations.push(this.options.revokeRuns(this.connection.connectionId, runIds));
+      // Remembered only once the redaction committed and its runs' cancellation succeeded; a failed cancellation is retried next pass.
+      const remember = () => { if (this.redactedFor === ledger) this.redactedKeys.add(key); };
+      if (runIds.length) cancellations.push(this.options.revokeRuns(this.connection.connectionId, runIds).then(remember));
+      else if (result) remember();
       if (!this.current(token)) break;
     }
     return { deleted, cancellations };

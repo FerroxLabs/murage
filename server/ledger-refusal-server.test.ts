@@ -202,6 +202,43 @@ it.each(["direct", "room"].flatMap(route => ["turn.completed", "session.exited",
   }
 });
 
+// 1.0.21 cause1 (MAIN ruling (a), ASTRA cc23a2e93e): a malformed held receipt fails closed whatever else it reads as. "revoked": the receipt
+// is revoked AND malformed, so a revoked check ahead of validation read it as a proven refusal the owner keep rule dropped (200). "withheld":
+// the first cited record is gone (withheld deny-memory) and a later entry is malformed (version 0), so it was dropped the same way.
+it.each(["revoked", "withheld"])("T-LEDGER-STOP-MALFORMED server direct %s malformed receipt refuses", async shape => {
+  const eventFile = join(fixture.info.dataDir, "ledger-events");
+  writeFileSync(eventFile, "turn.completed");
+  const bot = (await desktopApi("POST", "/api/bots", { name: "Ledger fixture", modelSelection: { instanceId: "ledger", model: "ledger-1" } })).body.bot;
+  const threadId = bot.threadId;
+  try {
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "Ledger fixture", threadId })).status).toBe(202);
+    await expect.poll(() => rows(threadId).filter(row => row.turnId).length, { timeout: 20_000 }).toBe(1);
+    const first = rows(threadId).find(row => row.turnId)!;
+    expect(first.token).toMatch(/^[a-f0-9]{48}$/);
+    const url = `${fixture.info.url}/api/internal/agents?self=${bot.id}`, auth = { authorization: `Bearer ${first.token}` };
+    expect((await fetch(url, { headers: auth })).status).toBe(200);
+    const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"));
+    db.exec("PRAGMA busy_timeout=5000");
+    try {
+      const row = db.prepare("SELECT bundle_id FROM memory_disclosures WHERE thread_id=? ORDER BY rowid DESC LIMIT 1").get(threadId);
+      expect(row, "ordinary dispatch must have joined an actual receipt").toBeDefined();
+      const changed = shape === "revoked"
+        ? db.prepare("UPDATE memory_disclosures SET state='revoked',source_versions='{}' WHERE bundle_id=?").run(String(row!.bundle_id))
+        : db.prepare(`UPDATE memory_disclosures SET record_versions='[{"id":"fixture-gone","version":1},{"id":"fixture-bad","version":0}]' WHERE bundle_id=?`).run(String(row!.bundle_id));
+      expect(Number(changed.changes)).toBe(1);
+    } finally { db.close(); }
+    const refused = await fetch(url, { headers: auth });
+    expect(refused.status, "a malformed held receipt must refuse, never be dropped while the turn continues").toBe(409);
+    expect(await refused.text()).toBe("I stopped this turn because some of its context is no longer available.");
+    await expect.poll(() => turnMemoryOutcomes(threadId).filter(value => value === "memory-refused").length, { timeout: 5_000 }).toBe(1);
+    await expect.poll(() => rows(threadId).filter(row => row.stopped === first.turnId).length, { timeout: 5_000 }).toBe(1);
+  } finally {
+    rmSync(eventFile, { force: true });
+    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+    await desktopApi("DELETE", `/api/bots/${bot.id}`);
+  }
+});
+
 // red-at-4df086541: a busy exception bypassed the original consuming writer.
 // The live row is the 503/Retry-After control. This is a real second SQLite
 // connection holding a write lock, not a closed handle or injected busy error.

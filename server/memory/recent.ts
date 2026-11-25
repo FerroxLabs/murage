@@ -28,7 +28,7 @@ export function materializeRecentMemory(access: MemoryAccess, signal?: AbortSign
     if(result.status==="complete"){
       const id=work.id;
       const checkpoint=refreshMemoryCheckpoint(id);
-      if(checkpoint.status!=="deferred"&&onCompleted)setImmediate(()=>onCompleted(id));
+      if(checkpoint.status!=="deferred"&&onCompleted)for(const done of [id,...checkpoint.covered??[]])setImmediate(()=>onCompleted(done));
     }
   }
   return completed;

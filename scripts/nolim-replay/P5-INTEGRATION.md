@@ -13,7 +13,7 @@ OPEN — no private replay PASS, release attestation or MERGE-READY claim.
 This is the builder's handoff on the required c12aaad93 base, not a replacement
 for MAIN's status/checklist lane. No Mac source or live application data was
 accessed. MAIN's binding ruling supersedes the original Mac Python invocation:
-Mac grep only; extract.py and sealing run offline on the build host; raw diagnostic
+Mac grep only; extract.py and sealing run offline on Hetzner; raw diagnostic
 copies are deleted immediately after successful sealing with a receipt.
 
 The final focused baseline comparison reran identical four ordinary allow

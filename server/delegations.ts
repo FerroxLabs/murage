@@ -49,6 +49,7 @@ import { ROUTINE_PERMISSION_MODES, type RoutinePeerSource } from "./routine-perm
 import type { BotRecord, Store } from "./store.ts";
 import { owedReplyOf, type OwedReply } from "./handoff-reply.ts";
 import { murageLine } from "./murage-line.ts";
+import { threadAutomationAncestry } from "./automation-ancestry.ts";
 
 /** Every row a handoff leaves in its source conversation names who handed
  * off when that conversation is a room. Several bots delegate in a room, and
@@ -99,6 +100,9 @@ export interface DelegationItem {
   sourceMessageId?: string;
   /** The effective parent routine ceiling, captured before its turn ends. */
   routineAuthority?: RoutinePeerSource;
+  /** Queued by a turn whose chain had a routine, wake or unattended hop (automation-ancestry.ts), read from the server's own record when
+   *  queued: the peer's turn mounts none of the owner-only tools that exclude automation, after a restart too. */
+  automationAncestry?: boolean;
   /** Trusted originating event identity. Survives handoff/retry/restart so
    * the harness can retain the event's budget and provenance boundary. */
   eventId?: string;
@@ -1052,6 +1056,8 @@ export function parsePendingItem(value: unknown): PendingDelegationItem | null {
   if (Object.hasOwn(item, "notOwnerAudience")) loaded.notOwnerAudience = item.notOwnerAudience !== false;
   if (Object.hasOwn(item, "unattended")) loaded.unattended = item.unattended !== false;
   if (item.routineAuthority) loaded.routineAuthority = { ...item.routineAuthority };
+  // PHONEAUD, fails closed: only an explicit false is an owner chain. A row written before this field (or damaged) counts as automation.
+  loaded.automationAncestry = !Object.hasOwn(item, "automationAncestry") || item.automationAncestry !== false;
   if (item.waitingOnBusy === true) {
     loaded.waitingOnBusy = true;
     // A queue written before this field existed restarts its clock.
@@ -1236,6 +1242,10 @@ export function queueDelegation(
   const { doneWhen: _unchecked, ...rest } = item;
   const queued: PendingDelegationItem = { ...rest, ...(doneWhen ? { doneWhen } : {}), ...(executionAudience ? { executionAudience } : {}), id, attempts: 0, fromBotId: from.id };
   queued.senderTurnId = senderTurnId;
+  // PHONEAUD: never lowered. A mark the item already carries (a held row sent again: resendHeldDelegation) stays; otherwise the source turn's
+  // own record decides, and a source with no record counts as automation. A caller can only add the mark, never clear it. Always written
+  // explicitly, so a loaded row can tell an owner chain from one written before this field (parsePendingItem).
+  queued.automationAncestry = item.automationAncestry === true || threadAutomationAncestry(sourceThreadId) !== false;
   // The room request that tracks this handoff and the queue row are accepted together or not at all.
   let inserting = false;
   try {

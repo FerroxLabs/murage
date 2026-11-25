@@ -395,6 +395,8 @@ export function runNowError(cause: unknown, options: { folderName?: string } = {
   if (code.includes("BACKUP_WORK_ACTIVE")) return "Finish or stop current work first.";
   if (code.includes("BACKUP_WAITING_ON_YOU")) return "A bot is waiting for your answer. Answer it, or end that run, then back up again.";
   if (code.includes("BACKUP_BUSY")) return "A backup is already running.";
+  // 1.0.20 (Mac): a start that never settled used to show nothing at all.
+  if (code.includes("BACKUP_START_STALLED")) return "Back up now didn't start within 2 minutes, so nothing has been backed up yet. If Murage closes by itself, the backup is going ahead. If not, quit Murage, open it again and choose Back up now.";
   // Never phrase this as something the person does. The old wording — "Turn on
   // daily backups once to allow Murage to close and reopen the window" — was
   // read as an instruction and Murage was quit during a live recovery.
@@ -515,19 +517,33 @@ export async function ensureFirstRunBackup(
   return "unverified";
 }
 
-/** The sentence under "Backups on" / "Backups off" on the Backups page. */
-export function backupHeadline(status: BackupScheduleStatus | null, now: number = Date.now(), formatTime: (ms: number) => string = (ms) => new Date(ms).toLocaleString()): { title: string; lines: string[]; verified: boolean } {
-  if (!status) return { title: "Checking backups", lines: [], verified: false };
-  if (!status.supported) return { title: "Backups need the desktop app", lines: [], verified: false };
+/** A checked backup older than this is not "all good" any more, even with
+ * daily backups on: the computer has missed at least one day. */
+export const BACKUP_STALE_MS = 2 * 24 * 60 * 60_000;
+
+/** The sentence under "Backups on" / "Backups off" on the Backups page.
+ *
+ * `tone` paints the dot: "ok" (green) only while daily backups are on AND the
+ * last checked backup is at most two days old. Off, or older than that, is a
+ * warning, whatever the last receipt says (1.0.20 owner walk: "Backups off"
+ * beside a green dot and a fifteen-day-old backup). While backups are off the
+ * one next step is the Set up card's "Turn on daily backups" button, directly
+ * below this card; the headline does not draw a second one. */
+export function backupHeadline(status: BackupScheduleStatus | null, now: number = Date.now(), formatTime: (ms: number) => string = (ms) => new Date(ms).toLocaleString()): { title: string; lines: string[]; verified: boolean; tone: "ok" | "warning" | "neutral" } {
+  if (!status) return { title: "Checking backups", lines: [], verified: false, tone: "neutral" };
+  if (!status.supported) return { title: "Backups need the desktop app", lines: [], verified: false, tone: "neutral" };
   const title = status.enabled ? "Backups on" : "Backups off";
   const lines: string[] = [];
   const last = status.lastVerified;
+  const stale = Boolean(last && now - last.verifiedAt > BACKUP_STALE_MS);
+  if (!status.enabled) lines.push("Daily backups are off, so nothing new is being backed up.");
+  else if (stale) lines.push("The last backup is more than 2 days old. Check that this computer is on at the backup time, or use Back up now.");
   if (last) {
     const minutes = Math.max(0, Math.round((now - last.verifiedAt) / 60_000));
     const ago = minutes < 1 ? "just now" : minutes < 60 ? `${minutes} minute${minutes === 1 ? "" : "s"} ago` : minutes < 24 * 60 ? `${Math.round(minutes / 60)} hour${Math.round(minutes / 60) === 1 ? "" : "s"} ago` : formatTime(last.verifiedAt);
     lines.push(`Last backup ${ago}, checked and complete.`);
   } else if (status.enabled) lines.push("Waiting for the first backup to finish and be checked.");
-  else lines.push("Turn backups on to take one and check it.");
   if (status.enabled) lines.push(`Every day at ${status.schedule.time ?? "?"}, on this computer.`);
-  return { title, lines, verified: Boolean(last) };
+  const ok = Boolean(status.enabled && last && !stale);
+  return { title, lines, verified: ok, tone: ok ? "ok" : !status.enabled || stale ? "warning" : "neutral" };
 }

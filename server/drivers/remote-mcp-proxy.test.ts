@@ -38,7 +38,7 @@ afterEach(stop);
 type Posted = { url: string; headers: IncomingHttpHeaders; body: Record<string, any> };
 type Answer = { status?: number; contentType?: string; body?: string; headers?: Record<string, string>; custom?: (res: ServerResponse) => void };
 
-async function start(answer: (posted: Posted) => Answer, argvName = "comfy", marker?: string, publication?: { path: string; threadId: string }) {
+async function start(answer: (posted: Posted) => Answer, argvName = "comfy", marker?: string, publication?: { path: string; threadId: string }, extraEnv: Record<string, string> = {}) {
   const posted: Posted[] = [];
   server = createServer(async (req, res) => {
     let raw = "";
@@ -59,7 +59,7 @@ async function start(answer: (posted: Posted) => Answer, argvName = "comfy", mar
   const port = (server.address() as { port: number }).port;
   child = await spawnBoundProxy("remoteMcp", process.execPath, ["--experimental-strip-types", ENTRY, "--server", argvName], {
     windowsHide: true,
-    env: { PATH: process.env.PATH ?? "", ...(marker ? { MURAGE_MCP_LISTED_FILE: marker } : {}), ...(publication ? { MURAGE_MCP_LISTED_URL: registerCloudMcpCatalog(publication.path, publication.threadId, `http://127.0.0.1:${port}`) } : {}), MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_MCP_TOKEN: "turn-token-0123" },
+    env: { PATH: process.env.PATH ?? "", ...(marker ? { MURAGE_MCP_LISTED_FILE: marker } : {}), ...(publication ? { MURAGE_MCP_LISTED_URL: registerCloudMcpCatalog(publication.path, publication.threadId, `http://127.0.0.1:${port}`) } : {}), MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_MCP_TOKEN: "turn-token-0123", ...extraEnv },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines = readline.createInterface({ input: child.stdout });
@@ -109,6 +109,8 @@ describe("the stdio proxy for one link server", () => {
         live = `sess-${opened}`;
         return { headers: { "mcp-session-id": live }, body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: { protocolVersion: "2025-06-18", capabilities: {} } }) };
       }
+      // cause6-v2: the relay answers every call on a session it does not hold the same way, the proxy's ping included
+      if (entry.body.method === "ping" && entry.headers["mcp-session-id"] !== live) return { status: 502, body: JSON.stringify({ code: "session-gone", error: "no such session" }) };
       if (entry.body.method === "tools/call") {
         if (entry.headers["mcp-session-id"] !== live) return { status: 502, body: JSON.stringify({ code: "session-gone", error: "no such session" }) };
         return { body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: { content: [{ type: "text", text: `ok ${live}` }] } }) };
@@ -129,7 +131,7 @@ describe("the stdio proxy for one link server", () => {
     it(`does not retry ${label}: the call may already have run`, async () => {
       const { posted, next, write, accepted } = await start((entry) => {
         if (entry.body.method === "initialize") return { headers: { "mcp-session-id": "s" }, body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: {} }) };
-        if (entry.body.method === "tools/call") return { status, body: label === "a bare 404" ? "" : JSON.stringify({ code }) };
+        if (entry.body.method === "tools/call") return { status, body: label === "a bare 404" ? "" : JSON.stringify({ code, error: "This link is not an MCP server." }) }; // the relay's real body
         return { status: 202 };
       });
       write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: {} } });
@@ -153,7 +155,8 @@ describe("the stdio proxy for one link server", () => {
   it("retries a lost session only once", async () => {
     const { posted, next, write, accepted } = await start((entry) => {
       if (entry.body.method === "initialize") return { headers: { "mcp-session-id": "s" }, body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: {} }) };
-      if (entry.body.method === "tools/call") return { status: 502, body: JSON.stringify({ code: "session-gone" }) };
+      // cause6-v2: no session is held, so the proxy's ping gets the same answer as the call
+      if (entry.body.method === "tools/call" || entry.body.method === "ping") return { status: 502, body: JSON.stringify({ code: "session-gone", error: "The connection to this server was closed. Try again in a moment." }) }; // the relay's real body
       return { status: 202 };
     });
     write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: {} } });
@@ -549,3 +552,1030 @@ it("P-1c an elicitation during a refused publication reaches the engine, its rep
   expect(posted.find((entry) => entry.body.method === undefined && entry.body.id === "srv-1")?.body).toMatchObject({ result: { action: "accept" } });
   expect(child!.exitCode).toBeNull();
 }, 20_000);
+
+// 1.0.21 cause6 (the signed 1.0.21 on an owner's own computer): every turn logged "mount unavailable ... cause=ipc
+// reason=transport-lost" and "stderr=proxy.refuse/error/-" for the owner's own server. One call the relay failed, or one
+// failed record of the tool hints, sealed the whole server for the turn. The fakes answered every call well, so no canary saw it.
+describe("1.0.21 cause6: one failed call never seals the owner's server for the turn", () => {
+  const initialized = (entry: Posted): Answer => ({ headers: { "mcp-session-id": "sess-1" }, body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {}, prompts: {} }, serverInfo: { name: "s", version: "1" } } }) });
+  const listed = (entry: Posted): Answer => ({ body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: { tools: [{ name: "echo" }] } }) });
+  const hello = { id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "c", version: "1" } } };
+
+  for (const [label, failure] of [
+    ["the server answered an error status (the relay's 502 server-error)", { status: 502, body: JSON.stringify({ code: "server-error", error: "The server at example.test had a problem. Try again in a moment." }) }],
+    ["the server gave no usable answer (the relay's 502 wrong-address)", { status: 502, body: JSON.stringify({ code: "wrong-address", error: "This link is not an MCP server." }) }],
+  ] as const) {
+    it(`a side call that fails because ${label} gets its own error, and the tools still list and run`, async () => {
+      const { next, write } = await start((entry) => {
+        if (entry.body.method === "initialize") return initialized(entry);
+        if (entry.body.method === "prompts/list") return failure;
+        if (entry.body.method === "tools/list") return listed(entry);
+        if (entry.body.method === "tools/call") return { body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: { content: [{ type: "text", text: "ran" }] } }) };
+        return { status: 202 };
+      });
+      write(hello);
+      expect(await next()).toMatchObject({ id: 1, result: { serverInfo: { name: "s" } } });
+      write({ method: "notifications/initialized" });
+      // what a real engine sends once the server announces prompts: the fakes never did
+      write({ id: 2, method: "prompts/list", params: {} });
+      expect(await next()).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: JSON.parse(failure.body).error } });
+      write({ id: 3, method: "tools/list", params: {} });
+      expect(await next()).toEqual({ jsonrpc: "2.0", id: 3, result: { tools: [{ name: "echo" }] } });
+      write({ id: 4, method: "tools/call", params: { name: "echo", arguments: {} } });
+      expect(await next()).toMatchObject({ id: 4, result: { content: [{ type: "text", text: "ran" }] } });
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+  }
+
+  it("a tool call the relay failed at 502 still seals (design 399: it may have run, so it is never a tool result)", async () => {
+    const { next, write, accepted } = await start((entry) => {
+      if (entry.body.method === "initialize") return initialized(entry);
+      return { status: 502, body: JSON.stringify({ code: "server-error", error: "The server had a problem." }) };
+    });
+    write(hello);
+    await next();
+    accepted.length = 0;
+    const terminal = Promise.race([once(child!, "close"), once(child!.stdout, "data")]);
+    write({ id: 2, method: "tools/call", params: { name: "echo", arguments: {} } });
+    await terminal;
+    expect(accepted).toEqual([]);
+    expect(boundProxyState(child!)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
+  });
+
+  it("a failed notification is owed no answer and seals nothing", async () => {
+    const { next, write, accepted } = await start((entry) => {
+      if (entry.body.method === "initialize") return initialized(entry);
+      if (entry.body.method === "notifications/initialized") return { status: 502, body: JSON.stringify({ code: "server-error", error: "The server had a problem." }) };
+      return listed(entry);
+    });
+    write(hello);
+    await next();
+    write({ method: "notifications/initialized" });
+    write({ id: 2, method: "tools/list", params: {} });
+    expect(await next()).toEqual({ jsonrpc: "2.0", id: 2, result: { tools: [{ name: "echo" }] } });
+    expect(accepted.length).toBe(2);
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  it("a 5xx that is not the relay's own answer still seals, and nothing of it reaches the engine", async () => {
+    for (const body of ["<html>upstream secret page</html>", JSON.stringify({ error: "upstream secret page" }), JSON.stringify({ code: "Not A Code", error: "upstream secret page" })]) {
+      const run = await start(() => ({ status: 502, body }));
+      const closed = once(child!, "close");
+      const replied = once(child!.stdout, "data");
+      run.write({ id: 7, method: "tools/list", params: {} });
+      await Promise.race([closed, replied]);
+      expect(run.accepted).toEqual([]);
+      expect(boundProxyState(child!)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
+      await stop();
+    }
+  });
+
+  it("tool hints that cannot be recorded fail that tools/list alone, with no tool listed; the next list succeeds", async () => {
+    let refuseHints = 2; // both attempts of the first list
+    const { posted, next, write } = await start((entry) => {
+      if (entry.url.endsWith("/wipe-metadata")) return refuseHints > 0 && refuseHints-- ? { status: 503, body: "{}" } : { body: JSON.stringify({ ok: true }) };
+      if (entry.body.method === "initialize") return initialized(entry);
+      if (entry.body.method === "tools/list") return { body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: { tools: [{ name: "delete_all_posts" }] } }) };
+      return { status: 202 };
+    }, "comfy", undefined, undefined, { MURAGE_MCP_WIPE_METADATA: "1" });
+    write(hello);
+    await next();
+    write({ id: 2, method: "tools/list", params: {} });
+    const refused = await next();
+    expect(refused).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: "Murage could not record this server's tools. Try again in a moment." } });
+    expect(JSON.stringify(refused)).not.toContain("delete_all_posts");
+    write({ id: 3, method: "tools/list", params: {} });
+    expect(await next()).toEqual({ jsonrpc: "2.0", id: 3, result: { tools: [{ name: "delete_all_posts" }] } });
+    const hints = posted.filter((entry) => entry.url.endsWith("/wipe-metadata"));
+    expect(hints.length).toBe(3);
+    expect(hints.at(-1)!.body).toEqual({ tools: [{ tool: "delete_all_posts", destructive: true, bulk: true }], replace: true });
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  // ASTRA cause6-mounts-fable abd393df02 High: the reopen sent the handshake notification and the retry sent it again.
+  describe("a replacement session gets notifications/initialized exactly once", () => {
+    /** A stand-in harness that holds one live session; any other session id is the relay's session-gone. */
+    const harness = (lacks: string[] = []) => {
+      const state = { live: "", opened: 0, order: [] as string[] };
+      const gone: Answer = { status: 502, body: JSON.stringify({ code: "session-gone", error: "The connection to this server was closed. Try again in a moment." }) }; // the relay's real body
+      const answer = (entry: Posted): Answer => {
+        const method = String(entry.body.method ?? "");
+        const session = String(entry.headers["mcp-session-id"] ?? "");
+        state.order.push(`${method}@${session}`);
+        if (method === "initialize") {
+          state.opened += 1;
+          state.live = `sess-${state.opened}`;
+          return { headers: { "mcp-session-id": state.live }, body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {}, prompts: {} }, serverInfo: { name: "s", version: "1" } } }) };
+        }
+        if (session !== state.live || lacks.includes(method)) return gone;
+        if (method.startsWith("notifications/")) return { status: 202 };
+        if (method === "tools/list") return listed(entry);
+        return { body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: {} }) };
+      };
+      return { state, answer };
+    };
+    const handshakes = (order: string[], session: string) => order.filter((line) => line === `notifications/initialized@${session}`).length;
+
+    it("when the engine's own notifications/initialized is the call that finds the session gone", async () => {
+      const { state, answer } = harness();
+      const { next, write } = await start(answer);
+      write(hello);
+      await next();
+      state.live = "revoked"; // the harness dropped generation 1's session before the engine's notification arrived
+      write({ method: "notifications/initialized" });
+      // alone on the wire: the notification is the only call that can open the replacement session
+      for (let waited = 0; handshakes(state.order, "sess-2") === 0 && waited < 400; waited++) await new Promise((resolve) => setTimeout(resolve, 25));
+      write({ id: 2, method: "tools/list", params: {} });
+      expect(await next()).toEqual({ jsonrpc: "2.0", id: 2, result: { tools: [{ name: "echo" }] } });
+      write({ id: 3, method: "tools/list", params: {} });
+      await next();
+      expect(state.opened).toBe(2);
+      expect(state.order.filter((line) => line.startsWith("notifications/initialized@"))).toEqual(["notifications/initialized@sess-1", "notifications/initialized@sess-2"]);
+      expect(handshakes(state.order, "sess-2")).toBe(1);
+      // the handshake is complete on the replacement session before any call runs on it
+      expect(state.order.indexOf("notifications/initialized@sess-2")).toBeLessThan(state.order.indexOf("tools/list@sess-2"));
+      expect(state.order.indexOf("notifications/initialized@sess-2")).toBeGreaterThan(-1);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+
+    it("when another call finds the session gone: the reopen sends it once and the call is retried once", async () => {
+      const { state, answer } = harness();
+      const { next, write } = await start(answer);
+      write(hello);
+      await next();
+      write({ method: "notifications/initialized" });
+      write({ id: 2, method: "tools/list", params: {} });
+      await next();
+      state.live = "revoked";
+      write({ id: 3, method: "tools/list", params: {} });
+      expect(await next()).toEqual({ jsonrpc: "2.0", id: 3, result: { tools: [{ name: "echo" }] } });
+      write({ id: 99, method: "ping" }); // barrier: nothing is still in flight when the counts are read
+      expect(await next()).toEqual({ jsonrpc: "2.0", id: 99, result: {} });
+      expect(state.opened).toBe(2);
+      expect(handshakes(state.order, "sess-1")).toBe(1);
+      expect(handshakes(state.order, "sess-2")).toBe(1);
+      expect(state.order.filter((line) => line.startsWith("tools/list@"))).toEqual(["tools/list@sess-1", "tools/list@sess-1", "tools/list@sess-2"]);
+    });
+
+    it("when two calls and the notification find it gone together: one replacement session, one handshake on it", async () => {
+      const { state, answer } = harness();
+      // hold every session-gone answer until all three calls have arrived, so all three learn it together
+      // (cause6-v2: not the proxy's own ping, which asks only after they have learned it)
+      let held: Array<() => void> = [];
+      const { next, write } = await start((entry) => {
+        const reply = answer(entry);
+        if (reply.status !== 502 || entry.body.method === "ping") return reply;
+        return { custom: (res) => {
+          held.push(() => { res.writeHead(502, { "content-type": "application/json" }); res.end(reply.body); });
+          if (held.length === 3) { const all = held; held = []; for (const release of all) release(); }
+        } };
+      });
+      write(hello);
+      await next();
+      state.live = "revoked";
+      write({ method: "notifications/initialized" });
+      write({ id: 2, method: "prompts/list", params: {} });
+      write({ id: 3, method: "tools/list", params: {} });
+      const answers = [await next(), await next()].sort((a, b) => a.id - b.id);
+      expect(answers).toEqual([{ jsonrpc: "2.0", id: 2, result: {} }, { jsonrpc: "2.0", id: 3, result: { tools: [{ name: "echo" }] } }]);
+      write({ id: 99, method: "ping" }); // barrier: nothing is still in flight when the counts are read
+      expect(await next()).toEqual({ jsonrpc: "2.0", id: 99, result: {} });
+      expect(state.opened).toBe(2);
+      expect(handshakes(state.order, "sess-2")).toBe(1);
+      expect(state.order.filter((line) => line.endsWith("@sess-2") && line !== "ping@sess-2").sort()).toEqual(["notifications/initialized@sess-2", "prompts/list@sess-2", "tools/list@sess-2"]);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+
+    it("an engine that initializes again on a session id the server keeps still sends its own handshake", async () => {
+      const order: string[] = [];
+      const { next, write } = await start((entry) => {
+        order.push(`${entry.body.method}@${entry.headers["mcp-session-id"] ?? ""}`);
+        if (entry.body.method === "initialize") return initialized(entry); // always sess-1
+        if (entry.body.method === "tools/list") return listed(entry);
+        return { status: 202 };
+      });
+      for (const id of [1, 3]) {
+        write({ ...hello, id });
+        await next();
+        write({ method: "notifications/initialized" });
+        write({ id: id + 1, method: "tools/list", params: {} });
+        await next();
+      }
+      expect(order.filter((line) => line.startsWith("notifications/"))).toEqual(["notifications/initialized@sess-1", "notifications/initialized@sess-1"]);
+    });
+  });
+});
+
+// ASTRA cause6-mounts-fable e779ade076 BLOCK (3 High): the session is one state machine with a generation fence.
+// Every test drives the real spawned proxy; `order` is the exact wire order the stand-in harness saw.
+describe("1.0.21 cause6-v2: one session state machine, a stale reply never changes it", () => {
+  const hello = { id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "c", version: "1" } } };
+  const relaySays = (code: string, error: string): Answer => ({ status: 502, body: JSON.stringify({ code, error }) }); // the relay's real status and body
+  const GONE = "The connection to this server was closed. Try again in a moment.";
+  const NO_ANSWER = "The server did not answer in time. Try again in a moment.";
+  const gone = relaySays("session-gone", GONE);
+  const noAnswer = relaySays("no-answer", NO_ANSWER);
+  const result = (entry: Posted, value: object = {}): Answer => ({ body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: value }) });
+  const opened = (entry: Posted, session: string): Answer => ({ headers: { "mcp-session-id": session }, body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {}, prompts: {} }, serverInfo: { name: "s", version: "1" } } }) });
+  const tools = { tools: [{ name: "echo" }] };
+  const send = (res: ServerResponse, answer: Answer) => { res.writeHead(answer.status ?? 200, { "content-type": answer.contentType ?? "application/json", ...(answer.headers ?? {}) }); res.end(answer.body ?? ""); };
+  /** A reply the test holds back until it releases it: the barrier that fixes the wire order. */
+  const held = () => {
+    let waiting: ServerResponse | null = null;
+    let arrived!: () => void;
+    const here = new Promise<void>((resolve) => { arrived = resolve; });
+    return { here, answer: { custom: (res: ServerResponse) => { waiting = res; arrived(); } } as Answer, release: (answer: Answer) => send(waiting!, answer) };
+  };
+  /** A stand-in harness: `live` is the one session the server holds; a call on any other is the relay's session-gone.
+   * `script` may answer a call first (return null to fall through). */
+  const harness = (script: (entry: Posted, method: string, session: string, state: { live: string; opened: number }) => Answer | null = () => null) => {
+    const state = { live: "", opened: 0, order: [] as string[] };
+    const answer = (entry: Posted): Answer => {
+      const method = String(entry.body.method ?? "");
+      const session = String(entry.headers["mcp-session-id"] ?? "");
+      state.order.push(`${method}@${session}`);
+      const scripted = script(entry, method, session, state);
+      if (scripted) return scripted;
+      if (method === "initialize") {
+        state.opened += 1;
+        state.live = `sess-${state.opened}`;
+        return opened(entry, state.live);
+      }
+      if (session === "") return relaySays("wrong-address", "Nothing at this address answers as an MCP server. Check that you copied the whole link.");
+      if (session !== state.live) return gone;
+      if (method.startsWith("notifications/")) return { status: 202 };
+      return result(entry, method === "tools/list" ? tools : {});
+    };
+    return { state, answer };
+  };
+  type Run = Awaited<ReturnType<typeof start>>;
+  /** The engine's first open, its handshake, and one answered call: everything before the scenario is on the wire. */
+  const connect = async (run: Run, order: string[]) => {
+    run.write(hello);
+    expect(await run.next()).toMatchObject({ id: 1, result: { serverInfo: { name: "s" } } });
+    run.write({ method: "notifications/initialized" });
+    // the engine's other calls do not wait for its handshake: see it arrive before anything else is sent
+    while (!order.some((line) => line.startsWith("notifications/initialized@"))) await new Promise((resolve) => setTimeout(resolve, 5));
+    await barrier(run, 90);
+  };
+  /** A call answered after everything before it: nothing is still in flight when the asserts run. */
+  const barrier = async (run: Run, id: number) => {
+    run.write({ id, method: "ping" });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id, result: {} });
+  };
+  const count = (order: string[], line: string) => order.filter((entry) => entry === line).length;
+  const isReopen = (entry: Posted) => String(entry.body.id).startsWith("reopen-");
+
+  // High 1 (:242): the engine's initialize did not take the reopen lock, so the automatic open's late answer won.
+  it("W1 an engine initialize supersedes an automatic reopen in flight: the late session is never used and the engine's handshake goes on its own", async () => {
+    const late = held();
+    const { state, answer } = harness((entry, method) => {
+      if (method === "initialize" && isReopen(entry)) return late.answer;
+      if (method === "initialize" && entry.body.id === 10) { state.live = "sess-B"; return opened(entry, "sess-B"); }
+      return null;
+    });
+    const stand = (entry: Posted): Answer => {
+      // both B and the late C are sessions the server holds: only the proxy decides which one it uses
+      if (String(entry.headers["mcp-session-id"] ?? "") === "sess-C" && entry.body.method !== "initialize") {
+        state.order.push(`${entry.body.method}@sess-C`);
+        return String(entry.body.method).startsWith("notifications/") ? { status: 202 } : result(entry, entry.body.method === "tools/list" ? tools : {});
+      }
+      return answer(entry);
+    };
+    const run = await start(stand);
+    await connect(run, state.order);
+    state.live = "revoked";
+    run.write({ id: 2, method: "tools/list", params: {} });
+    await late.here; // the automatic initialize is on the wire and unanswered
+    run.write({ ...hello, id: 10 });
+    expect(await run.next()).toMatchObject({ id: 10, result: { serverInfo: { name: "s" } } });
+    late.release({ headers: { "mcp-session-id": "sess-C" }, body: JSON.stringify({ jsonrpc: "2.0", id: "reopen-late", result: { protocolVersion: "2025-06-18", capabilities: {} } }) });
+    // A proxy that takes the late answer shows it at once (its handshake on sess-C). One that ignores it posts nothing, so there is
+    // nothing to wait on: give the late answer time to be read. The asserts below hold at any timing once the fence is in.
+    for (let waited = 0; !state.order.some((line) => line.endsWith("@sess-C")) && waited < 20; waited++) await new Promise((resolve) => setTimeout(resolve, 25));
+    run.write({ method: "notifications/initialized" });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: tools });
+    await barrier(run, 99);
+    expect(state.order.filter((line) => line.endsWith("@sess-C"))).toEqual([]);
+    expect(count(state.order, "notifications/initialized@sess-B")).toBe(1);
+    // the call that lost the first session ran on the engine's session, after its handshake
+    expect(state.order.indexOf("notifications/initialized@sess-B")).toBeLessThan(state.order.indexOf("tools/list@sess-B"));
+    expect(state.order.at(-1)).toBe("ping@sess-B");
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  // High 1 (:258): any response's mcp-session-id header replaced the session id.
+  it("W2 a late answer from the old session that names it does not put the proxy back on it", async () => {
+    const slow = held();
+    const { state, answer } = harness((_entry, method, session) => method === "prompts/list" && session === "sess-1" ? slow.answer : null);
+    const run = await start(answer);
+    await connect(run, state.order);
+    run.write({ id: 2, method: "prompts/list", params: {} });
+    await slow.here; // sent on sess-1, unanswered
+    state.live = "revoked";
+    run.write({ id: 3, method: "tools/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools }); // reopened: sess-2
+    slow.release({ headers: { "mcp-session-id": "sess-1" }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, result: {} }) });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: {} }); // the late answer still answers its own id
+    run.write({ id: 4, method: "tools/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 4, result: tools });
+    await barrier(run, 99);
+    expect(state.order.filter((line) => line.startsWith("tools/list@"))).toEqual(["tools/list@sess-1", "tools/list@sess-2", "tools/list@sess-2"]);
+    expect(state.opened).toBe(2);
+    expect(count(state.order, "notifications/initialized@sess-2")).toBe(1);
+  });
+
+  // High 1 (:211): "already replaced" was decided by comparing ids, so a server that reuses its id was reopened twice.
+  it("W3 a server that gives every session the same id is reopened once for two calls that lost the same session", async () => {
+    const slow = held();
+    let lost = false;
+    let initializes = 0;
+    const order: string[] = [];
+    const run = await start((entry) => {
+      const method = String(entry.body.method ?? "");
+      order.push(`${method}@${entry.headers["mcp-session-id"] ?? ""}`);
+      if (method === "initialize") { initializes += 1; lost = false; return opened(entry, "sess-fixed"); }
+      if (method === "prompts/list" && !lost && count(order, "prompts/list@sess-fixed") === 1) return slow.answer;
+      if (lost) return gone;
+      if (method.startsWith("notifications/")) return { status: 202 };
+      return result(entry, method === "tools/list" ? tools : {});
+    });
+    await connect(run, order);
+    run.write({ id: 2, method: "prompts/list", params: {} });
+    await slow.here; // sent on the first session, unanswered
+    lost = true;
+    run.write({ id: 3, method: "tools/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools }); // the one reopen is complete
+    slow.release(gone); // the second call learns its (first) session was gone only now
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
+    await barrier(run, 99);
+    expect(initializes).toBe(2);
+    expect(count(order, "notifications/initialized@sess-fixed")).toBe(2); // the engine's, and one for the one replacement
+    expect(count(order, "prompts/list@sess-fixed")).toBe(2); // sent, and sent once more
+  });
+
+  // High 2 (:189): the handshake was marked before its POST and the answer ignored.
+  for (const [label, refusal, sentence, killsSession] of [
+    ["the relay's session-gone", gone, GONE, true],
+    ["no answer in time", noAnswer, NO_ANSWER, false],
+  ] as const) {
+    it(`W4/W5 a replacement whose handshake gets ${label} is never used; the call fails alone and the next call opens a session with one handshake`, async () => {
+      const { state, answer } = harness((_entry, method, session, s) => {
+        if (method !== "notifications/initialized" || session !== "sess-2") return null;
+        if (killsSession) s.live = "revoked";
+        return refusal;
+      });
+      const run = await start(answer);
+      await connect(run, state.order);
+      state.live = "revoked";
+      run.write({ id: 2, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: sentence } });
+      run.write({ id: 3, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools });
+      await barrier(run, 99);
+      // nothing but its own handshake (and the probe that asks whether it is gone) ever went to the session without one
+      expect(state.order.filter((line) => line.endsWith("@sess-2") && !line.startsWith("notifications/initialized@") && !line.startsWith("ping@"))).toEqual([]);
+      expect(count(state.order, "notifications/initialized@sess-2")).toBe(1);
+      expect(state.opened).toBe(3);
+      expect(count(state.order, "notifications/initialized@sess-3")).toBe(1);
+      expect(state.order.indexOf("notifications/initialized@sess-3")).toBeLessThan(state.order.indexOf("tools/list@sess-3"));
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+  }
+
+  it("W6 a server that never answers the handshake is not locked out: the second replacement in a row is used, each session got it once", async () => {
+    const { state, answer } = harness((_entry, method, session) => method === "notifications/initialized" && session !== "sess-1" ? noAnswer : null);
+    const run = await start(answer);
+    await connect(run, state.order);
+    state.live = "revoked";
+    run.write({ id: 2, method: "tools/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: NO_ANSWER } });
+    run.write({ id: 3, method: "tools/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools });
+    await barrier(run, 99);
+    expect(state.opened).toBe(3);
+    expect(state.order.filter((line) => line.startsWith("tools/list@"))).toEqual(["tools/list@sess-1", "tools/list@sess-3"]);
+    expect(count(state.order, "notifications/initialized@sess-2")).toBe(1);
+    expect(count(state.order, "notifications/initialized@sess-3")).toBe(1);
+    expect(state.order.indexOf("notifications/initialized@sess-3")).toBeLessThan(state.order.indexOf("tools/list@sess-3"));
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  it("W11 the engine's own handshake that got no answer in time is sent once and the engine's session is still used", async () => {
+    const asked = held();
+    const { state, answer } = harness((_entry, method) => method === "notifications/initialized" ? asked.answer : null);
+    const run = await start(answer);
+    run.write(hello);
+    await run.next();
+    run.write({ method: "notifications/initialized" });
+    await asked.here; // the engine's handshake is on the wire
+    asked.release(noAnswer);
+    run.write({ id: 2, method: "tools/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: tools });
+    run.write({ method: "notifications/initialized" }); // a repeat from the engine is not sent again
+    await barrier(run, 99);
+    expect(state.order).toEqual(["initialize@", "notifications/initialized@sess-1", "tools/list@sess-1", "ping@sess-1"]);
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  // Found in this lane's own review: a reopen an engine initialize superseded was still the one later calls waited on.
+  it("W12 a superseded automatic reopen that never answers does not hold later calls: a session lost after it is reopened afresh", async () => {
+    const late = held();
+    let reopens = 0;
+    const { state, answer } = harness((entry, method) => {
+      if (method === "initialize" && isReopen(entry) && reopens++ === 0) return late.answer;
+      if (method === "initialize" && entry.body.id === 10) { state.live = "sess-B"; return opened(entry, "sess-B"); }
+      return null;
+    });
+    const run = await start(answer);
+    await connect(run, state.order);
+    state.live = "revoked";
+    run.write({ id: 2, method: "tools/list", params: {} });
+    await late.here; // the first automatic initialize is on the wire and stays unanswered
+    run.write({ ...hello, id: 10 });
+    expect(await run.next()).toMatchObject({ id: 10, result: { serverInfo: { name: "s" } } });
+    run.write({ method: "notifications/initialized" });
+    // the call that waited on the first reopen is released onto the engine's session, not held by the unanswered reopen
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: tools });
+    await barrier(run, 91);
+    expect(state.order.indexOf("notifications/initialized@sess-B")).toBeLessThan(state.order.indexOf("tools/list@sess-B"));
+    state.live = "revoked"; // the engine's session is lost too, while the first reopen is still unanswered
+    run.write({ id: 5, method: "prompts/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 5, result: {} });
+    late.release(noAnswer); // the superseded reopen answers at last: stale, it changes nothing
+    await barrier(run, 99);
+    expect(state.opened).toBe(2); // the engine's first open and the one fresh reopen (sess-B was the engine's own)
+    expect(state.order.filter((line) => line.endsWith("@sess-2")).sort()).toEqual(["notifications/initialized@sess-2", "ping@sess-2", "prompts/list@sess-2"]);
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  it("W13 a call that arrives while the replacement's handshake is unanswered is not posted before it is answered", async () => {
+    const shaking = held();
+    const { state, answer } = harness((_entry, method, session) => method === "notifications/initialized" && session === "sess-2" ? shaking.answer : null);
+    const run = await start(answer);
+    await connect(run, state.order);
+    state.live = "revoked";
+    run.write({ id: 2, method: "tools/list", params: {} });
+    await shaking.here; // the replacement is open, its handshake is on the wire
+    run.write({ id: 3, method: "prompts/list", params: {} });
+    // A proxy that does not wait shows it at once (prompts/list on sess-2). One that waits posts nothing: give it time to be wrong.
+    for (let waited = 0; !state.order.includes("prompts/list@sess-2") && waited < 20; waited++) await new Promise((resolve) => setTimeout(resolve, 25));
+    const before = state.order.filter((line) => line.endsWith("@sess-2"));
+    shaking.release({ status: 202 });
+    const answers = [await run.next(), await run.next()].sort((a, b) => a.id - b.id);
+    expect(answers).toEqual([{ jsonrpc: "2.0", id: 2, result: tools }, { jsonrpc: "2.0", id: 3, result: {} }]);
+    await barrier(run, 99);
+    expect(before).toEqual(["notifications/initialized@sess-2"]);
+    expect(count(state.order, "notifications/initialized@sess-2")).toBe(1);
+  });
+
+  // High 3 (:279): a method that lost two sessions in a row was remembered as refused and never reopened again.
+  it("W7 a method that lost two sessions in a row is not locked out: its next call opens a session and is answered", async () => {
+    const { state, answer } = harness((_entry, method, session, s) => {
+      // the second session dies right after its handshake
+      if (method === "notifications/initialized" && session === "sess-2") { s.live = "revoked"; return { status: 202 }; }
+      return null;
+    });
+    const run = await start(answer);
+    await connect(run, state.order);
+    state.live = "revoked";
+    run.write({ id: 2, method: "prompts/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: GONE } });
+    expect(state.order.filter((line) => line.startsWith("prompts/list@"))).toEqual(["prompts/list@sess-1", "prompts/list@sess-2"]); // sent once more, never twice
+    run.write({ id: 3, method: "prompts/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: {} });
+    await barrier(run, 99);
+    expect(state.opened).toBe(3);
+    expect(state.order.at(-2)).toBe("prompts/list@sess-3");
+    expect(count(state.order, "notifications/initialized@sess-3")).toBe(1);
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  // FABLE Medium 3, now without a memory: the probe tells a server that lacks a method from a lost session.
+  it("W8 a method the server answers 404 for on a live session gets its own error and costs no session at all", async () => {
+    const { state, answer } = harness((_entry, method, session, s) => method === "prompts/list" && session === s.live ? gone : null);
+    const run = await start(answer);
+    await connect(run, state.order);
+    for (const id of [2, 3]) {
+      run.write({ id, method: "prompts/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id, error: { code: -32000, message: GONE } });
+    }
+    run.write({ id: 4, method: "tools/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 4, result: tools });
+    expect(state.opened).toBe(1);
+    expect(count(state.order, "prompts/list@sess-1")).toBe(2); // never sent twice
+    // a session that is really lost later is still reopened, for this method too
+    state.live = "revoked";
+    run.write({ id: 5, method: "prompts/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 5, error: { code: -32000, message: GONE } }); // sess-2 lacks it as well
+    await barrier(run, 99);
+    expect(state.opened).toBe(2);
+    expect(count(state.order, "notifications/initialized@sess-2")).toBe(1);
+    expect(state.order.at(-1)).toBe("ping@sess-2");
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  it("W10 two calls that learn together that the session is gone share one probe and one replacement", async () => {
+    const { state, answer } = harness();
+    let waiting: Array<() => void> = [];
+    const run = await start((entry) => {
+      const reply = answer(entry);
+      if (reply.status !== 502 || entry.body.method === "ping") return reply;
+      // hold both session-gone answers until both calls have arrived
+      return { custom: (res) => {
+        waiting.push(() => send(res, reply));
+        if (waiting.length === 2) { const all = waiting; waiting = []; for (const release of all) release(); }
+      } };
+    });
+    await connect(run, state.order);
+    state.live = "revoked";
+    run.write({ id: 2, method: "prompts/list", params: {} });
+    run.write({ id: 3, method: "tools/list", params: {} });
+    const answers = [await run.next(), await run.next()].sort((a, b) => a.id - b.id);
+    expect(answers).toEqual([{ jsonrpc: "2.0", id: 2, result: {} }, { jsonrpc: "2.0", id: 3, result: tools }]);
+    await barrier(run, 99);
+    expect(state.opened).toBe(2);
+    expect(count(state.order, "ping@sess-1")).toBe(2); // the barrier in connect, and ONE probe for both calls
+    expect(count(state.order, "notifications/initialized@sess-2")).toBe(1);
+    expect(state.order.filter((line) => line.endsWith("@sess-2")).sort()).toEqual(["notifications/initialized@sess-2", "ping@sess-2", "prompts/list@sess-2", "tools/list@sess-2"]);
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+
+  it("W9 a reopen that fails once fails that call alone; the next call opens a session again", async () => {
+    let failOpens = 0;
+    const { state, answer } = harness((entry, method) => method === "initialize" && isReopen(entry) && failOpens > 0 && failOpens-- ? noAnswer : null);
+    const run = await start(answer);
+    await connect(run, state.order);
+    state.live = "revoked";
+    failOpens = 1;
+    run.write({ id: 2, method: "tools/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: NO_ANSWER } });
+    run.write({ id: 3, method: "tools/list", params: {} });
+    expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools });
+    await barrier(run, 99);
+    expect(state.order.filter((line) => line.endsWith("@") && !line.startsWith("initialize@"))).toEqual([]); // no call ever went out with no session
+    expect(state.opened).toBe(2);
+    expect(count(state.order, "notifications/initialized@sess-2")).toBe(1);
+    expect(state.order.indexOf("notifications/initialized@sess-2")).toBeLessThan(state.order.indexOf("tools/list@sess-2"));
+    expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+  });
+  // 1.0.21 cause6-v2 round 2 (ASTRA fbb454d706): HTTP 200 is not an open session. An initialize answered with a
+  // JSON-RPC error (or with no result) used to mark the session open with no id behind it, and every later call
+  // went out with no session for the rest of the turn. The ANSWER decides, exactly as a failed status does.
+  describe("an initialize answered HTTP 200 with an error opens nothing", () => {
+    const REFUSED = "The server had a problem answering. Try again in a moment.";
+    const WRONG = "Nothing at this address answers as an MCP server. Check that you copied the whole link.";
+    const SECRET = "upstream words the engine must not get from a reopen";
+    const rpcError = (entry: Posted) => ({ jsonrpc: "2.0", id: entry.body.id, error: { code: -32603, message: SECRET } });
+    /** Calls that went out with no session (an initialize opens one, so it has none). */
+    const sessionless = (order: string[]) => order.filter((line) => line.endsWith("@") && !line.startsWith("initialize@"));
+    const reopens = (run: Run) => run.posted.filter((entry) => entry.body.method === "initialize" && isReopen(entry)).length;
+    const forms: Array<[string, (entry: Posted) => Answer]> = [
+      ["a JSON-RPC error", (entry) => ({ body: JSON.stringify(rpcError(entry)) })],
+      ["a JSON-RPC error that also names a session", (entry) => ({ headers: { "mcp-session-id": "sess-bad" }, body: JSON.stringify(rpcError(entry)) })],
+      ["a JSON-RPC error in an SSE stream", (entry) => ({ contentType: "text/event-stream", headers: { "mcp-session-id": "sess-bad" }, body: sse(rpcError(entry)) })],
+      ["a result that is no object", (entry) => ({ headers: { "mcp-session-id": "sess-bad" }, body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: null }) })],
+    ];
+
+    for (const [label, form] of forms) {
+      it(`X1 a reopen answered 200 with ${label} is a failed open: that call fails alone, nothing goes out without a session, the next call opens one`, async () => {
+        let refuse = 0;
+        const { state, answer } = harness((entry, method) => method === "initialize" && isReopen(entry) && refuse > 0 && refuse-- ? form(entry) : null);
+        const run = await start(answer);
+        await connect(run, state.order);
+        const before = state.order.length;
+        state.live = "revoked";
+        refuse = 1;
+        run.write({ id: 2, method: "tools/list", params: {} });
+        expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: REFUSED } });
+        run.write({ id: 3, method: "tools/list", params: {} });
+        expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools });
+        await barrier(run, 99);
+        // the whole wire, in order: the lost call, the probe, the refused open, then ONE new open, its handshake, the call
+        expect(state.order.slice(before)).toEqual([
+          "tools/list@sess-1", "ping@sess-1", "initialize@",
+          "initialize@", "notifications/initialized@sess-2", "tools/list@sess-2", "ping@sess-2",
+        ]);
+        expect(sessionless(state.order)).toEqual([]);
+        expect(state.order.filter((line) => line.endsWith("@sess-bad"))).toEqual([]);
+        expect(reopens(run)).toBe(2);
+        expect(JSON.stringify(run.accepted)).not.toContain(SECRET);
+        expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      });
+    }
+
+    it("X2 a server that keeps refusing the reopen costs one open per call, never a call without a session, and connects as soon as it accepts", async () => {
+      let refusing = true;
+      const { state, answer } = harness((entry, method) => method === "initialize" && isReopen(entry) && refusing ? forms[0]![1](entry) : null);
+      const run = await start(answer);
+      await connect(run, state.order);
+      const before = state.order.length;
+      state.live = "revoked";
+      for (const id of [2, 3, 4]) {
+        run.write({ id, method: "tools/list", params: {} });
+        expect(await run.next()).toEqual({ jsonrpc: "2.0", id, error: { code: -32000, message: REFUSED } });
+        expect(reopens(run)).toBe(id - 1); // bounded: one open for one call, no loop
+      }
+      refusing = false;
+      run.write({ id: 5, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 5, result: tools });
+      await barrier(run, 99);
+      expect(state.order.slice(before)).toEqual([
+        "tools/list@sess-1", "ping@sess-1", "initialize@", "initialize@", "initialize@",
+        "initialize@", "notifications/initialized@sess-2", "tools/list@sess-2", "ping@sess-2",
+      ]);
+      expect(sessionless(state.order)).toEqual([]);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+
+    it("X3 a tool call that waited on a refused reopen seals, as it does for a reopen refused by status (design 399), and is never sent without a session", async () => {
+      let refuse = 0;
+      const { state, answer } = harness((entry, method) => method === "initialize" && isReopen(entry) && refuse > 0 && refuse-- ? forms[0]![1](entry) : null);
+      const run = await start(answer);
+      await connect(run, state.order);
+      const before = run.accepted.length;
+      state.live = "revoked";
+      refuse = 1;
+      const terminal = Promise.race([once(child!, "close"), once(child!.stdout, "data")]);
+      run.write({ id: 2, method: "tools/call", params: { name: "echo", arguments: {} } });
+      await terminal;
+      expect(run.accepted.slice(before)).toEqual([]);
+      expect(sessionless(state.order)).toEqual([]);
+      expect(state.order.slice(state.order.lastIndexOf("tools/call@sess-1"))).toEqual(["tools/call@sess-1", "ping@sess-1", "initialize@"]); // sent once, probed, one refused open, nothing after
+      expect(reopens(run)).toBe(1);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: true, terminal: sealedProxyRefusal });
+    });
+
+    for (const [label, body] of [
+      ["an empty body", () => "   "],
+      ["an answer to another id", () => JSON.stringify({ jsonrpc: "2.0", id: "someone-else", result: { capabilities: {} } })],
+    ] as const) {
+      it(`X4 a reopen answered 200 with ${label} is a request nobody answered: the mount is sealed, visibly, and no call goes out without a session`, async () => {
+        let hollow = 0;
+        const { state, answer } = harness((entry, method) => method === "initialize" && isReopen(entry) && hollow > 0 && hollow-- ? { body: body() } : null);
+        const run = await start(answer);
+        await connect(run, state.order);
+        const before = run.accepted.length;
+        state.live = "revoked";
+        hollow = 1;
+        const terminal = Promise.race([once(child!, "close"), once(child!.stdout, "data")]);
+        run.write({ id: 2, method: "tools/list", params: {} });
+        await terminal;
+        expect(run.accepted.slice(before)).toEqual([]);
+        expect(sessionless(state.order)).toEqual([]);
+        expect(state.order.at(-1)).toBe("initialize@"); // nothing was sent after the hollow open
+        expect(boundProxyState(child!)).toMatchObject({ sealed: true, terminal: sealedProxyRefusal });
+      });
+    }
+
+    for (const [label, form] of forms.slice(1, 3)) {
+      it(`X5 the engine's own initialize answered 200 with ${label} opens nothing: no session id is taken from it, no frame is kept, and the engine's next initialize connects`, async () => {
+        let refuse = 1;
+        const { state, answer } = harness((entry, method) => method === "initialize" && refuse > 0 && refuse-- ? form(entry) : null);
+        const run = await start(answer);
+        run.write(hello);
+        expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 1, error: { code: -32603, message: SECRET } }); // its own answer, told as it is
+        // an engine that calls anyway: no session exists, so none is named and none is opened behind its back
+        run.write({ id: 2, method: "tools/list", params: {} });
+        expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: WRONG } });
+        run.write({ ...hello, id: 3 });
+        expect(await run.next()).toMatchObject({ id: 3, result: { serverInfo: { name: "s" } } });
+        run.write({ method: "notifications/initialized" });
+        while (!state.order.includes("notifications/initialized@sess-1")) await new Promise((resolve) => setTimeout(resolve, 5));
+        run.write({ id: 4, method: "tools/list", params: {} });
+        expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 4, result: tools });
+        await barrier(run, 99);
+        expect(state.order).toEqual(["initialize@", "tools/list@", "initialize@", "notifications/initialized@sess-1", "tools/list@sess-1", "ping@sess-1"]);
+        expect(reopens(run)).toBe(0);
+        expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      });
+    }
+
+    it("X6 the engine's initialize answered as an SSE stream opens its session at the answer, and a lost one is still reopened", async () => {
+      const { state, answer } = harness((entry, method, _session, s) => {
+        if (method !== "initialize" || isReopen(entry)) return null;
+        s.opened += 1;
+        s.live = `sess-${s.opened}`;
+        const { headers, body } = opened(entry, s.live);
+        return { contentType: "text/event-stream", headers, body: sse(JSON.parse(body!)) };
+      });
+      const run = await start(answer);
+      await connect(run, state.order);
+      state.live = "revoked";
+      run.write({ id: 2, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: tools });
+      await barrier(run, 99);
+      expect(state.order).toEqual([
+        "initialize@", "notifications/initialized@sess-1", "ping@sess-1",
+        "tools/list@sess-1", "ping@sess-1", "initialize@", "notifications/initialized@sess-2", "tools/list@sess-2", "ping@sess-2",
+      ]);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+
+    it("X7 a reopen answered in an SSE stream the server leaves open is used as soon as its answer arrives", async () => {
+      const left: ServerResponse[] = [];
+      const { state, answer } = harness((entry, method, _session, s) => {
+        if (method !== "initialize" || !isReopen(entry)) return null;
+        s.opened += 1;
+        s.live = `sess-${s.opened}`;
+        const { headers, body } = opened(entry, s.live);
+        return { custom: (res) => { left.push(res); res.writeHead(200, { "content-type": "text/event-stream", ...headers }); res.write(sse(JSON.parse(body!))); } };
+      });
+      const run = await start(answer);
+      await connect(run, state.order);
+      const before = state.order.length;
+      state.live = "revoked";
+      run.write({ id: 2, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: tools });
+      await barrier(run, 99);
+      expect(state.order.slice(before)).toEqual(["tools/list@sess-1", "ping@sess-1", "initialize@", "notifications/initialized@sess-2", "tools/list@sess-2", "ping@sess-2"]);
+      expect(left.length).toBe(1);
+      for (const res of left) res.end();
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+
+    it("X10 a server that pings on the reopen's stream and waits for the reply before it answers gets its reply, on the new session", async () => {
+      const waiting: { res?: ServerResponse; answer?: string; reply?: unknown } = {};
+      const { state, answer } = harness((entry, method, _session, s) => {
+        if (method === "initialize" && isReopen(entry)) {
+          s.opened += 1;
+          s.live = `sess-${s.opened}`;
+          const { headers, body } = opened(entry, s.live);
+          return { custom: (res) => { waiting.res = res; waiting.answer = body!; res.writeHead(200, { "content-type": "text/event-stream", ...headers }); res.write(sse({ jsonrpc: "2.0", id: "srv-1", method: "ping" })); } };
+        }
+        if (method === "" && entry.body.id === "srv-1" && waiting.res) {
+          waiting.reply = entry.body;
+          waiting.res.end(sse(JSON.parse(waiting.answer!))); // the server answers the initialize only now
+          return { status: 202 };
+        }
+        return null;
+      });
+      const run = await start(answer);
+      await connect(run, state.order);
+      const before = state.order.length;
+      state.live = "revoked";
+      run.write({ id: 2, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: tools });
+      await barrier(run, 99);
+      expect(waiting.reply).toEqual({ jsonrpc: "2.0", id: "srv-1", result: {} });
+      expect(state.order.slice(before)).toEqual(["tools/list@sess-1", "ping@sess-1", "initialize@", "@sess-2", "notifications/initialized@sess-2", "tools/list@sess-2", "ping@sess-2"]);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+
+    // The two other 2xx answers the proxy reads for itself keep the design's rule (T9, T13): the server answered,
+    // so the handshake is spent and the session is alive. Neither can leave a session with nothing behind it.
+    it("X8 a replacement's handshake answered 200 with a JSON-RPC error is spent, as an error status is: sent once, the session is used", async () => {
+      const { state, answer } = harness((_entry, method, session) => method === "notifications/initialized" && session === "sess-2" ? { body: JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32600, message: SECRET } }) } : null);
+      const run = await start(answer);
+      await connect(run, state.order);
+      const before = state.order.length;
+      state.live = "revoked";
+      run.write({ id: 2, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: tools });
+      await barrier(run, 99);
+      expect(state.order.slice(before)).toEqual(["tools/list@sess-1", "ping@sess-1", "initialize@", "notifications/initialized@sess-2", "tools/list@sess-2", "ping@sess-2"]);
+      expect(JSON.stringify(run.accepted)).not.toContain(SECRET);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+
+    it("X9 a probe answered 200 with a JSON-RPC error means the session is alive: the call fails alone and no session is opened", async () => {
+      const { state, answer } = harness((entry, method, session, s) => {
+        if (session !== s.live) return null;
+        if (method === "prompts/list") return gone;
+        return method === "ping" && String(entry.body.id).startsWith("murage-probe-") ? { body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, error: { code: -32601, message: SECRET } }) } : null;
+      });
+      const run = await start(answer);
+      await connect(run, state.order);
+      const before = state.order.length;
+      run.write({ id: 2, method: "prompts/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: GONE } });
+      run.write({ id: 3, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools });
+      await barrier(run, 99);
+      expect(state.order.slice(before)).toEqual(["prompts/list@sess-1", "ping@sess-1", "tools/list@sess-1", "ping@sess-1"]);
+      expect(state.opened).toBe(1);
+      expect(JSON.stringify(run.accepted)).not.toContain(SECRET);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+  });
+
+  // ASTRA cause6-v2 1073bd52ac BLOCK, and the whole class behind it (DESIGN-R3): a fault that arrives late for a session
+  // that was superseded, replaced or closed never seals the mount and never changes the live session. Real spawned proxy.
+  describe("1.0.21 cause6 r3: only the live session can end the mount", () => {
+    const REPLACED = "The server's session was replaced during this call. Try again.";
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    /** An answer whose headers (an SSE stream, 200) are sent and whose body is held open until the test breaks the socket. */
+    const stream = (headers: Record<string, string> = {}, first = ": open\n\n") => {
+      let waiting: ServerResponse | null = null;
+      let arrived!: () => void;
+      const here = new Promise<void>((resolve) => { arrived = resolve; });
+      const custom = (res: ServerResponse) => { waiting = res; res.writeHead(200, { "content-type": "text/event-stream", ...headers }); res.write(first); arrived(); };
+      return { here, answer: { custom } as Answer, destroy: () => waiting!.socket!.destroy() };
+    };
+    /** The proxy's stderr so far: its one line per stale continuation is the barrier that the late fault was read. */
+    const stderrOf = () => { let text = ""; child!.stderr.on("data", (chunk) => { text += String(chunk); }); return () => text; };
+    /** Waits until the proxy has acted on the late fault: it logged the stale site, or (without the fence) it sealed. */
+    const acted = async (seen: () => boolean) => { for (let waited = 0; waited < 400 && !seen() && !boundProxyState(child!).sealed && child!.exitCode === null; waited++) await sleep(25); };
+    const sealedNow = async () => { for (let waited = 0; waited < 400 && !boundProxyState(child!).sealed; waited++) await sleep(25); return boundProxyState(child!); };
+    /** S1 is lost and its reopen (generation 2) is answered by `second`; then the engine initializes (sess-3), sends its
+     * handshake, and the call that lost S1 is answered on sess-3. The generation-2 open is now superseded and unanswered. */
+    const superseded = async (second: Answer, here: Promise<void>) => {
+      const { state, answer } = harness((entry, method) => {
+        if (method === "initialize" && isReopen(entry)) return second;
+        if (method === "initialize" && entry.body.id === 10) { state.live = "sess-3"; return opened(entry, "sess-3"); }
+        return null;
+      });
+      const run = await start(answer);
+      const stderr = stderrOf();
+      await connect(run, state.order);
+      state.live = "revoked";
+      run.write({ id: 2, method: "tools/list", params: {} });
+      await here; // the reopen's initialize is on the wire
+      run.write({ ...hello, id: 10 });
+      expect(await run.next()).toMatchObject({ id: 10, result: { serverInfo: { name: "s" } } });
+      run.write({ method: "notifications/initialized" });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: tools }); // resent on sess-3, after its handshake
+      return { run, state, stderr };
+    };
+    const healthyOnThree = async (run: Run, state: { order: string[] }) => {
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      run.write({ id: 3, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools });
+      await barrier(run, 99);
+      expect(state.order.slice(-2)).toEqual(["tools/list@sess-3", "ping@sess-3"]);
+      expect(state.order.filter((line) => line.endsWith("@sess-G2"))).toEqual([]); // the superseded open's id is never used
+      expect(count(state.order, "notifications/initialized@sess-3")).toBe(1);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    };
+
+    // ASTRA 1597 as written (:408, and the seal inside the body read under it).
+    it("Z1 a superseded reopen whose SSE body breaks late does not seal the engine's healthy session", async () => {
+      const second = stream({ "mcp-session-id": "sess-G2" });
+      const { run, state, stderr } = await superseded(second.answer, second.here);
+      second.destroy();
+      await acted(() => stderr().includes("stale reopen-read"));
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      expect(stderr()).toContain("stale reopen-read");
+      await healthyOnThree(run, state);
+    });
+
+    // :400, the same class.
+    it("Z2 a superseded reopen answered late with a gateway's 503 does not seal the engine's healthy session", async () => {
+      const second = held();
+      const { run, state, stderr } = await superseded(second.answer, second.here);
+      second.release({ status: 503, contentType: "text/html", body: "<html>bad gateway</html>" });
+      await acted(() => stderr().includes("stale reopen-status"));
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      expect(stderr()).toContain("stale reopen-status");
+      await healthyOnThree(run, state);
+    });
+
+    // The transport's other seal (the POST itself is refused, no headers at all), on the same superseded reopen.
+    it("Z9 a superseded reopen whose connection is cut before any answer does not seal the engine's healthy session", async () => {
+      let cut!: () => void;
+      let arrived!: () => void;
+      const here = new Promise<void>((resolve) => { arrived = resolve; });
+      const { run, state, stderr } = await superseded({ custom: (res: ServerResponse) => { cut = () => res.socket!.destroy(); arrived(); } }, here);
+      cut();
+      await acted(() => stderr().includes("stale reopen-post"));
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      expect(stderr()).toContain("stale reopen-post");
+      await healthyOnThree(run, state);
+    });
+
+    // :344, the same class.
+    it("Z3 a replacement's handshake answered late with a gateway's 503, after the engine initialized, does not seal the engine's session", async () => {
+      const shake = held();
+      const { state, answer } = harness((entry, method, session) => {
+        if (method === "notifications/initialized" && session === "sess-2") return shake.answer;
+        if (method === "initialize" && entry.body.id === 10) { state.live = "sess-3"; return opened(entry, "sess-3"); }
+        return null;
+      });
+      const run = await start(answer);
+      const stderr = stderrOf();
+      await connect(run, state.order);
+      state.live = "revoked";
+      run.write({ id: 2, method: "tools/list", params: {} });
+      await shake.here; // sess-2 is open and its handshake is on the wire, unanswered
+      run.write({ ...hello, id: 10 });
+      expect(await run.next()).toMatchObject({ id: 10, result: { serverInfo: { name: "s" } } });
+      run.write({ method: "notifications/initialized" });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 2, result: tools });
+      shake.release({ status: 503, contentType: "text/html", body: "<html>bad gateway</html>" });
+      await acted(() => stderr().includes("stale handshake"));
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      expect(stderr()).toContain("stale handshake");
+      await healthyOnThree(run, state);
+      expect(count(state.order, "notifications/initialized@sess-2")).toBe(1);
+    });
+
+    /** `first` is in flight on sess-1 as an open SSE stream. Another call then learns sess-1 is gone (the probe agrees), so
+     * sess-1 is closed and its reopen is on the wire, held unanswered. */
+    const closedUnderACall = async (first: object) => {
+      const body = stream();
+      const reopen = held();
+      const asked: Posted[] = [];
+      const { state, answer } = harness((entry, method, session) => {
+        if (entry.body.id === 2 && session === "sess-1") return body.answer;
+        if (method === "initialize" && isReopen(entry)) { asked.push(entry); return reopen.answer; }
+        return null;
+      });
+      const run = await start(answer);
+      await connect(run, state.order);
+      run.write({ id: 2, ...first });
+      await body.here; // the first call's answer stream is open on sess-1
+      state.live = "revoked";
+      run.write({ id: 3, method: "tools/list", params: {} });
+      await reopen.here; // sess-1 was confirmed gone and closed; the replacement is not open yet
+      return { run, state, body, reopen, asked };
+    };
+
+    // A call still in flight on a session that was found gone and is being replaced (:610, and the seal under the body
+    // read). The replacement's open has begun, so this is the replaced case; Z8 is the closed-and-nothing-opened case.
+    it("Z4 a call still streaming on a session another call found gone fails alone when its stream breaks, exactly once", async () => {
+      const { run, state, body, reopen, asked } = await closedUnderACall({ method: "resources/list", params: {} });
+      body.destroy();
+      const first = await Promise.race([run.next(), once(child!, "close").then(() => ({ closed: true }))]);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      expect(first).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: REPLACED } });
+      state.live = "sess-2";
+      reopen.release(opened(asked[0]!, "sess-2"));
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools });
+      await barrier(run, 99);
+      expect(run.accepted.filter((frame) => frame.id === 2)).toHaveLength(1);
+      expect(state.order.slice(-3)).toEqual(["notifications/initialized@sess-2", "tools/list@sess-2", "ping@sess-2"]);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+
+    // Guard (design 399): the same late break on a TOOL call is an unknown outcome and still seals.
+    it("Z5 a tool call still streaming on a session another call found gone still seals when its stream breaks", async () => {
+      const { run, body } = await closedUnderACall({ method: "tools/call", params: { name: "echo", arguments: {} } });
+      body.destroy();
+      expect(await sealedNow()).toMatchObject({ sealed: true, terminal: sealedProxyRefusal });
+      expect(run.accepted.filter((frame) => frame.id === 2)).toEqual([]);
+    });
+
+    // Guard (fail closed): the CURRENT generation's own fault still seals.
+    it("Z6 the current reopen's own body breaking still seals the mount", async () => {
+      const second = stream({ "mcp-session-id": "sess-G2" });
+      const { state, answer } = harness((entry, method) => method === "initialize" && isReopen(entry) ? second.answer : null);
+      const run = await start(answer);
+      await connect(run, state.order);
+      const before = run.accepted.length;
+      state.live = "revoked";
+      run.write({ id: 2, method: "tools/list", params: {} });
+      await second.here;
+      second.destroy();
+      expect(await sealedNow()).toMatchObject({ sealed: true, terminal: sealedProxyRefusal });
+      expect(run.accepted.slice(before)).toEqual([]);
+    });
+
+    // A session closed by its own answer, with nothing opened after it (the fence is the close, not only a newer open).
+    it("Z8 an engine initialize the server answered with an error, on a stream that then breaks, does not seal: the next initialize connects", async () => {
+      const refused = stream({ "mcp-session-id": "sess-refused" }, `data: ${JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32603, message: "not now" } })}\n\n`);
+      const { state, answer } = harness((entry, method) => method === "initialize" && entry.body.id === 1 ? refused.answer : null);
+      const run = await start(answer);
+      const stderr = stderrOf();
+      run.write(hello);
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 1, error: { code: -32603, message: "not now" } }); // told as it is; nothing is open
+      refused.destroy();
+      await acted(() => stderr().includes("stale stream-read"));
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      expect(stderr()).toContain("stale stream-read");
+      run.write({ ...hello, id: 3 });
+      expect(await run.next()).toMatchObject({ id: 3, result: { serverInfo: { name: "s" } } });
+      run.write({ method: "notifications/initialized" });
+      while (!state.order.includes("notifications/initialized@sess-1")) await sleep(5);
+      run.write({ id: 4, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 4, result: tools });
+      await barrier(run, 99);
+      expect(state.order.filter((line) => line.endsWith("@sess-refused"))).toEqual([]);
+      expect(run.accepted.filter((frame) => frame.id === 1)).toHaveLength(1);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+
+    // :482/:610 on the engine's own open.
+    it("Z7 an engine initialize that a second one superseded gets its own error when its stream breaks; the second session lives", async () => {
+      const first = stream({ "mcp-session-id": "sess-old" });
+      const { state, answer } = harness((entry, method) => method === "initialize" && entry.body.id === 1 ? first.answer : null);
+      const run = await start(answer);
+      run.write(hello);
+      await first.here; // the first initialize's answer stream is open
+      run.write({ ...hello, id: 10 });
+      expect(await run.next()).toMatchObject({ id: 10, result: { serverInfo: { name: "s" } } });
+      run.write({ method: "notifications/initialized" });
+      while (!state.order.includes("notifications/initialized@sess-1")) await sleep(5);
+      first.destroy();
+      const late = await Promise.race([run.next(), once(child!, "close").then(() => ({ closed: true }))]);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+      expect(late).toEqual({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: REPLACED } });
+      run.write({ id: 3, method: "tools/list", params: {} });
+      expect(await run.next()).toEqual({ jsonrpc: "2.0", id: 3, result: tools });
+      await barrier(run, 99);
+      expect(run.accepted.filter((frame) => frame.id === 1)).toHaveLength(1);
+      expect(state.order.filter((line) => line.endsWith("@sess-old"))).toEqual([]);
+      expect(state.order.slice(-2)).toEqual(["tools/list@sess-1", "ping@sess-1"]);
+      expect(boundProxyState(child!)).toMatchObject({ sealed: false, refusals: 0 });
+    });
+  });
+});

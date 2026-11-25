@@ -60,4 +60,4 @@ focused unit assertions: 42; guard smoke/mutant checks: 2. Filtered assertions
 are not counted as passes. The subsequent seven-driver guard matrix has one
 pass and six failures; its failed log is retained and containment stays OPEN.
 Evidence and full open-item disposition:
-`/work/fuigo-builds/orph/_ev/nolim-replay/1019/bld3-nolimreplay/SUMMARY.md`.
+`/root/fuigo-builds/orph/_ev/nolim-replay/1019/bld3-nolimreplay/SUMMARY.md`.

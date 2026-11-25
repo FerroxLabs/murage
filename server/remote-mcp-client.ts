@@ -230,12 +230,10 @@ export interface SseEvent {
 }
 
 /** Read server-sent events from a byte stream. Fails with `idle-timeout` when
- * nothing arrives for `idleMs`, and with `event-too-large` when one event
- * (its data lines together) passes `maxEventBytes`. Comment lines count as
- * activity but carry no bytes toward the cap. */
+ * nothing arrives for `idleMs`. An event of any size is read (MAIN-RULING cause22-no-transport-caps). */
 export function createSseReader(
   stream: AsyncIterable<Buffer | Uint8Array | string>,
-  options: { idleMs: number; maxEventBytes: number; accounting?: UpstreamAccounting; probeOnly?: true },
+  options: { idleMs: number; accounting?: UpstreamAccounting; probeOnly?: true },
 ): AsyncGenerator<SseEvent> {
   const inherited = currentUpstreamAccounting("sse");
   const accounting = options.accounting ?? inherited;
@@ -251,7 +249,6 @@ export function createSseReader(
   let buffered = "";
   let event = "message";
   let data: string[] = [];
-  let eventBytes = 0;
   const flush = (): SseEvent | null => {
     if (data.length === 0) {
       event = "message";
@@ -260,7 +257,6 @@ export function createSseReader(
     const out = { event, data: data.join("\n") };
     event = "message";
     data = [];
-    eventBytes = 0;
     return out;
   };
   try {
@@ -281,8 +277,6 @@ export function createSseReader(
       const chunk = next.value;
       accounting?.accept(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
       buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-      // A line that never ends is an event that never ends.
-      if (buffered.length > options.maxEventBytes + 1_024 && !buffered.includes("\n")) throw new SseReaderError("event-too-large");
       let newline = buffered.search(/\r\n|\n|\r/);
       while (newline !== -1) {
         const line = buffered.slice(0, newline);
@@ -297,8 +291,6 @@ export function createSseReader(
           const value = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
           if (field === "event") event = value;
           else if (field === "data") {
-            eventBytes += Buffer.byteLength(value) + 1;
-            if (eventBytes > options.maxEventBytes) throw new SseReaderError("event-too-large");
             data.push(value);
           }
         }
@@ -521,7 +513,7 @@ export async function probeRemoteMcp(input: RemoteProbeInput): Promise<McpProbeR
     const opened = await request({ url: input.url, method: "GET", kind: "sse", responseMode: "stream", headers: { accept: "text/event-stream", ...authHeaders() } });
     if (opened.status !== 200 || !("stream" in opened)) return explainStatus(opened.status, opened.headers, "");
     const stream = opened as unknown as GuardedStreamResponse;
-    const events = createSseReader(stream.stream as Readable, { idleMs: input.idleMs ?? 10_000, maxEventBytes: LIMITS.sseEventBytes, probeOnly: true });
+    const events = createSseReader(stream.stream as Readable, { idleMs: input.idleMs ?? 10_000, probeOnly: true });
     // Every wait on the stream is bounded by the probe's own deadline and its
     // caller's abort, not only by the reader's per-event idle timer (comment
     // lines reset that one): M4.

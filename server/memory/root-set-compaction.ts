@@ -16,6 +16,7 @@ import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // checkpoint that cuts the write-ahead log back (never waiting on a lock),
 // and incremental vacuum where the file allows it. No step changes what any
 // set holds: a converted set keeps its members and its content address.
+import { adoptWorker, writeSetGuardCall } from "./wake.ts";
 import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import { readTimeRetired } from "./read-time-retired.ts";
 import { statSync, statfsSync } from "node:fs";
@@ -616,6 +617,7 @@ let db;
 try {
   db = new DatabaseSync(workerData.file);
   db.exec("PRAGMA busy_timeout=60000");
+  ${writeSetGuardCall("root-set-compaction")}
   const number = (name) => { const row = db.prepare("PRAGMA " + name).get(); return row ? Number(Object.values(row)[0] || 0) : 0; };
   db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   db.exec("DROP INDEX IF EXISTS " + workerData.index);
@@ -665,6 +667,7 @@ export function reclaimLineageSpaceInWorker(db: DatabaseSync, options: StartupSt
     try {
       options.hold?.(true);
       const worker = new Worker(windowsHidePrelude + RECLAIM_WORKER_SOURCE, { eval: true, workerData: { file, index: LEGACY_MEMBER_INDEX, minBytes: options.reclaimMinBytes ?? RECLAIM_MIN_BYTES, fraction: options.reclaimFraction ?? 0.2 } });
+      adoptWorker(worker, "root-set-compaction");
       worker.on("message", (message: { ok: boolean; vacuumed?: boolean; message?: string }) => finish(message.ok, Boolean(message.vacuumed), message.message));
       worker.on("error", (error: Error) => finish(false, false, error.message));
       worker.on("exit", () => finish(false, false, "the worker ended early"));

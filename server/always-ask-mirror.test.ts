@@ -40,11 +40,11 @@ const CATASTROPHIC: Row[] = [
   ["rclone delete /etc", "delete-system-folder"],
   ["rclone bisync ~ remote:bak", "delete-home"],
   // robocopy, as cmd, PowerShell and Git Bash spell it
-  ["robocopy C:\\empty C:\\Users\\sean /MIR", "delete-home"],
+  ["robocopy C:\\empty C:\\Users\\exampleuser /MIR", "delete-home"],
   ["robocopy C:\\empty C:\\ /MIR", "delete-root"],
   ["robocopy C:\\empty C:\\Windows /PURGE", "delete-system-folder"],
-  ["robocopy.exe C:/empty C:/Users/alex //MIR", "delete-home"],
-  ["cmd /c robocopy C:\\empty C:\\Users\\sean /MIR /R:1", "delete-home"],
+  ["robocopy.exe C:/empty C:/Users/exampleuser //MIR", "delete-home"],
+  ["cmd /c robocopy C:\\empty C:\\Users\\exampleuser /MIR /R:1", "delete-home"],
   ["powershell -Command \"robocopy C:\\empty 'C:\\Program Files' /mir\"", "delete-system-folder"],
   // unison: a sync propagates deletes into both roots
   ["unison /tmp/empty ~ -batch", "delete-home"],
@@ -72,7 +72,7 @@ const CATASTROPHIC: Row[] = [
   ["npx -y rimraf@5 /etc", "delete-system-folder"],
   ["pnpm dlx rimraf ~/", "delete-home"],
   ["bunx rimraf /usr", "delete-system-folder"],
-  ["npx.cmd rimraf C:/Users/alex", "delete-home"],
+  ["npx.cmd rimraf C:/Users/exampleuser", "delete-home"],
 ];
 
 /** A value or expansion as the destination: the reader cannot see it, so it asks. */
@@ -113,11 +113,11 @@ const ORDINARY: Row[] = [
   // A+: a home or drive literal under a program off the read-only list asks
   ["rclone copy remote:x ~", "protected-path"],
   ["rclone purge remote:old-bucket", null],
-  ["robocopy C:\\src C:\\Users\\sean\\project /MIR", null],
+  ["robocopy C:\\src C:\\Users\\exampleuser\\project /MIR", null],
   // A+: a home or drive literal under a program off the read-only list asks
-  ["robocopy C:\\Users\\sean D:\\backup /MIR", "protected-path"],
+  ["robocopy C:\\Users\\exampleuser D:\\backup /MIR", "protected-path"],
   // A+: a home or drive literal under a program off the read-only list asks
-  ["robocopy C:\\src C:\\Users\\sean /E", "protected-path"],
+  ["robocopy C:\\src C:\\Users\\exampleuser /E", "protected-path"],
   ["unison ./a /tmp/b -batch", null],
   ["unison ~/project /tmp/mirror -batch", null],
   ["aws s3 sync s3://site ./public --delete", null],
@@ -146,7 +146,7 @@ const ORDINARY: Row[] = [
 // source-only reads retain their inherited No limits expectation.
 const PROTECTED_WRITES = new Set([
  "rsync -a --remove-source-files ./inbox/ ~/", "rclone copy remote:x ~",
- "robocopy C:\\src C:\\Users\\sean /E", "aws s3 sync s3://b ~",
+ "robocopy C:\\src C:\\Users\\exampleuser /E", "aws s3 sync s3://b ~",
  "gsutil rsync -r gs://b ~", "azcopy sync https://a/b ~ --delete-destination=false", "mc mirror play/b ~",
 ]);
 
@@ -159,9 +159,9 @@ const R9_NOCWD: Record<string, string> = {
   "rsync -a --delete src/ /tmp/mirror/": "unreadable",
   "rsync -a --delete-after ./out/ deploy@host:/var/www/": "unreadable",
 };
-// MARKS r9 C1: the cwd does not clear this Windows path. probe robocopy C:\src C:\Users\sean\project /MIR -> unreadable (value-path) at cwd /w and no cwd.
+// MARKS r9 C1: the cwd does not clear this Windows path. probe robocopy C:\src C:\Users\exampleuser\project /MIR -> unreadable (value-path) at cwd /w and no cwd.
 const R9_NOW: Record<string, string> = {
-  "robocopy C:\\src C:\\Users\\sean\\project /MIR": "unreadable",
+  "robocopy C:\\src C:\\Users\\exampleuser\\project /MIR": "unreadable",
 };
 
 describe("always-ask: a mirror that deletes is a recursive delete of its destination", () => {

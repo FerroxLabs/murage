@@ -24,7 +24,7 @@ and unresolved overlap block completeness. Repeated same-file rows remain
 separate. `elapsedMs` is null: a chunk timestamp is not a precise event time.
 Even a fully parsed grep extract remains INCOMPLETE for historical coverage.
 
-On build host, pre-stage the reviewed dependency-complete image and run with
+On Hetzner, pre-stage the reviewed dependency-complete image and run with
 `--pull=never --network none --read-only --cap-drop ALL --security-opt
 no-new-privileges --user 10001:10001`, explicit read-only `/raw-diag` and writable
 allocated `/output` mounts, no home/socket/credentials. Stage only these allocated
@@ -81,8 +81,8 @@ then MAIN removes those exact allocated directories with a receipt. No broad
 permission repair or recursive home read is permitted. No private inputs or
 results belong in git or public CI artifacts.
 
-The build host `seal-export` CLI additionally requires `--raw-diag
-/work/fuigo-builds/orph/_ev/nolim-replay/1019/raw-diag` and an explicit
+The Hetzner `seal-export` CLI additionally requires `--raw-diag
+/root/fuigo-builds/orph/_ev/nolim-replay/1019/raw-diag` and an explicit
 `--deletion-receipt` outside that directory. After byte-identical sealing it
 removes only the literal diagnostic-copy/receipt filenames and the allocated raw
 directory, then writes a digest-bound deletion receipt. An unexpected file,
@@ -96,7 +96,7 @@ must be empty, fidelity and origin completeness false, and release eligibility
 false. It copies exactly six files and leaves missing reviews unresolved.
 It cannot satisfy `seal-export`, release admission, COMPLETE, or baseline RED.
 The bld2 run sealed in a network-none container, then immediately called
-`erase_raw` on the build host; no source contents were displayed or saved in git.
+`erase_raw` on Hetzner; no source contents were displayed or saved in git.
 
 `inspect-replay.py --corpus <allocated-r1> --product-ref <resolved-local-ref>
 --baseline-ref origin/int1018/pin54b --out <new-private-directory>` records
@@ -107,7 +107,7 @@ admission receipt, not a finished replay runner. No diagnostic reason count is
 converted to a historical card count or a generated request. See BLD2-HANDOFF.md.
 
 For the runner, stage only the approved six files into a new private
-`/work/fuigo-builds/orph/_ev/nolim-replay/1019/corpus/<id>` allocation, owned by
+`/root/fuigo-builds/orph/_ev/nolim-replay/1019/corpus/<id>` allocation, owned by
 `10001:10001`, with 0700 directories and 0600 files. Allocate the empty result
 run directory with the same ownership. Check those exact allocations; do not
 chown the evidence tree or relax permissions broadly. `run.sh` checks both host

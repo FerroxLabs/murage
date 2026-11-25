@@ -43,7 +43,7 @@ Run with the jf2.sh pattern: one `--rm --network none` container, uid 2001, shar
 | C8 hold alert has an owner | same | RED | home.event_spool_failed is in the digest tier with no action text |
 | D1 to D9, D4b (rig) | deploy/cloud-home/qualify/home-events-deployed.sh | written, `bash -n` only, NOT RUN | no VM exists; D5 is TODO-r8 |
 
-Counts: RED 43 = 19 Python (P4b P5b P6b P7c P17 P18 P19 P20 P21 P21b P22 P23 P24, P26 x5, P27) + 19 Node (T5 x2, T7 x2, T9 T10 T11 T12 T13, T14, T14c, T15, T17 x5, T18 x2) + 5 CP (C3 C5 C6 C7a C8). PIN 2 (C7 different kind, different millisecond). GREEN guards 5 (G-VEC Python, G-VEC Node x2, P27 no-hold guard) . TODO-r8 skipped, not counted: P25, T16 (5), T4b (2), D5. build host containers used: 2 at most, all `--rm`, none left.
+Counts: RED 43 = 19 Python (P4b P5b P6b P7c P17 P18 P19 P20 P21 P21b P22 P23 P24, P26 x5, P27) + 19 Node (T5 x2, T7 x2, T9 T10 T11 T12 T13, T14, T14c, T15, T17 x5, T18 x2) + 5 CP (C3 C5 C6 C7a C8). PIN 2 (C7 different kind, different millisecond). GREEN guards 5 (G-VEC Python, G-VEC Node x2, P27 no-hold guard) . TODO-r8 skipped, not counted: P25, T16 (5), T4b (2), D5. Hetzner containers used: 2 at most, all `--rm`, none left.
 
 ## Findings (GREEN at base where RED or PIN was expected, and r7 gaps)
 
@@ -65,4 +65,4 @@ Counts: RED 43 = 19 Python (P4b P5b P6b P7c P17 P18 P19 P20 P21 P21b P22 P23 P24
 
 ## Not built, not run
 
-The rig and qualify/j5b-vm.sh are written and syntax checked only. No VM exists and none was created. The 20f95f742a control is at /work/fuigo-builds/j5b-r6-prep/artifacts/murage-control-20f95f742a (sha256 c117abfabc1b6e556d2f8bb1e448ed8f4c3785181f6a92365bc5ae0c3e7750bd).
+The rig and qualify/j5b-vm.sh are written and syntax checked only. No VM exists and none was created. The 20f95f742a control is at /root/fuigo-builds/j5b-r6-prep/artifacts/murage-control-20f95f742a (sha256 c117abfabc1b6e556d2f8bb1e448ed8f4c3785181f6a92365bc5ae0c3e7750bd).

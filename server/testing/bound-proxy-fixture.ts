@@ -51,7 +51,15 @@ function stopBoundChild(child: ChildProcess): Promise<void> {
 }
 
 export async function runBoundBridge(script: string, requests: string[], count: number, eof = false,
-  options: { role?: string; flipBeforeDelivery?: boolean; race?: "replacement" | "drain" | "transport"; env?: NodeJS.ProcessEnv; raceAtSequence?: number } = {}): Promise<string[]> {
+  options: { role?: string; flipBeforeDelivery?: boolean; race?: "replacement" | "drain" | "transport"; env?: NodeJS.ProcessEnv; raceAtSequence?: number;
+    /** A loaded server: the first verdict / the first upstream reserve is answered this many ms late (the answer itself is unchanged). */
+    slowVerdictMs?: number; slowUpstreamMs?: number;
+    /** cause22-one-rule owner rows: the turn's budget is bound with the owner keep (as index.ts binds an owner turn) and the child
+     * meets the release door handler index.ts runs (turn-release-door.ts handleTurnReleaseDoor), so the door names the owner's turn. */
+    owner?: boolean;
+    /** ms to wait (after the previous request) before request i is offered; request indexes in `raw` go straight to the child's stdin
+     * (the child's own line cap is the hop under test, not the relay's ingress in front of it). */
+    delays?: number[]; raw?: number[]; timeoutMs?: number } = {}): Promise<string[]> {
   // This fixture-only supervisor notice follows the real entry's import and
   // launch call. A syntax/import failure must not pass a zero-output case.
   script += '\nprocess.send?.({ type: "fixture-entry-ready" });';
@@ -100,17 +108,23 @@ export async function runBoundBridge(script: string, requests: string[], count: 
       removeTempDirSync(home);
     }
   }
-  const fixture = consumingFixture();
+  const fixture = consumingFixture(undefined, options.owner ? { continuePending: () => true } : {});
+  const ownerDoor = options.owner ? await import("../turn-release-door.ts").then(module => module.handleTurnReleaseDoor, () => undefined) : undefined;
   const isolatedHome = mkdtempSync(join(tmpdir(), "murage-bound-proxy-"));
   const caps = new InternalCapabilities(); caps.begin("B", "T", fixture.binding.identity.dispatchGeneration);
   const authority = createProxyReleaseAuthority(caps);
   const instance = authority.register(fixture.binding, registerConsumingDescriptor(`proxy:${options.role ?? "containerMcp"}:frame`, "body"), () => []);
-  let issued = false, verdicts = 0, envelopes = 0, stderrBytes = 0;
+  let issued = false, verdicts = 0, upstreams = 0, envelopes = 0, stderrBytes = 0;
   let httpStarted = 0, httpBodies = 0, httpDenied = 0, stdoutBytes = 0, acknowledgements = 0, terminals = 0;
   let phase = 0, operationFailed = false;
   const sockets = new Set<Socket>();
   const server = createServer(async (req, res) => {
     httpStarted++;
+    if (ownerDoor) {
+      issued = true; verdicts++;
+      const json = (out: typeof res, status: number, body: unknown) => { out.writeHead(status, { "content-type": "application/json" }); out.end(JSON.stringify(body)); };
+      return void ownerDoor(req, res, { capabilities: caps, authority, json });
+    }
     try {
       const chunks: Buffer[] = []; let bytes = 0;
       for await (const chunk of req) { bytes += chunk.length; if (bytes > 16 * 1024 * 1024) throw new Error("limit"); chunks.push(chunk); }
@@ -118,7 +132,9 @@ export async function runBoundBridge(script: string, requests: string[], count: 
       const claim = caps.resolve(req.headers.authorization);
       if (!claim) throw new Error("authority");
       const body = JSON.parse(Buffer.concat(chunks).toString());
-      if (body?.operation === "upstream") { authority.reserveUpstream(claim, body); res.end(JSON.stringify({ reserved: true })); return; }
+      const late = (ms: number | undefined, first: boolean) => first && ms ? new Promise<void>(done => setTimeout(done, ms)) : undefined;
+      if (body?.operation === "upstream") { await late(options.slowUpstreamMs, upstreams++ === 0); authority.reserveUpstream(claim, body); res.end(JSON.stringify({ reserved: true })); return; }
+      await late(options.slowVerdictMs, verdicts === 0 && !issued);
       const envelope = authority.verdict(claim, body);
       issued = true; verdicts++; res.end(JSON.stringify(envelope));
     } catch { httpDenied++; instance.ingress.seal(); res.writeHead(409).end(); }
@@ -142,7 +158,7 @@ export async function runBoundBridge(script: string, requests: string[], count: 
   try {
     phase = 1;
     return await new Promise<string[]>((resolve, reject) => {
-      timer = setTimeout(() => reject(diagnostic("bound fixture timeout")), 8000);
+      timer = setTimeout(() => reject(diagnostic("bound fixture timeout")), (options.timeoutMs ?? 8000) + (options.slowVerdictMs ?? 0) + (options.slowUpstreamMs ?? 0));
       instance.ingress.supervise(child);
       child.stderr!.on("data", chunk => { stderrBytes += chunk.length; });
       child.on("error", reject);
@@ -163,8 +179,23 @@ export async function runBoundBridge(script: string, requests: string[], count: 
           }
           if ((message as { type?: string })?.type === "fixture-entry-ready") {
             expect(entryReady).toBe(false); entryReady = true;
-            for (const request of requests) instance.ingress.request(request, () => { child.stdin!.write(request + "\n"); });
-            if (eof) child.stdin!.end();
+            if (!options.delays && !options.raw) {
+              for (const request of requests) instance.ingress.request(request, () => { child.stdin!.write(request + "\n"); });
+              if (eof) child.stdin!.end();
+              return;
+            }
+            void (async () => {
+              for (const [index, request] of requests.entries()) {
+                const wait = options.delays?.[index] ?? 0;
+                if (wait) await new Promise<void>(done => setTimeout(done, wait));
+                if (options.raw?.includes(index)) {
+                  // the relay saw a call with this id; the bytes on the child's pipe are the whole oversized line
+                  const { id, method } = JSON.parse(request) as { id: unknown; method: string };
+                  instance.ingress.request(JSON.stringify({ jsonrpc: "2.0", id, method, params: {} }), () => { child.stdin!.write(request + "\n"); });
+                } else instance.ingress.request(request, () => { child.stdin!.write(request + "\n"); });
+              }
+              if (eof) child.stdin!.end();
+            })().catch(error => { instance.ingress.seal(); reject(error); });
             return;
           }
           expect(message).toMatchObject({ type: "turn-release-terminal", instanceId: instance.instanceId,
@@ -178,10 +209,9 @@ export async function runBoundBridge(script: string, requests: string[], count: 
         stdoutBytes += Buffer.byteLength(chunk);
         try {
           pending += chunk;
-          if (Buffer.byteLength(pending) > 16 * 1024 * 1024) throw new Error("limit");
           let newline: number;
           while ((newline = pending.indexOf("\n")) >= 0) {
-            const envelope = decodeReleaseEnvelope(pending.slice(0, newline)); pending = pending.slice(newline + 1);
+            const envelope = decodeReleaseEnvelope(pending.slice(0, newline), options.owner === true); pending = pending.slice(newline + 1);
             envelopes++;
             const applyRace = envelope.sequence === raceAt;
             if (applyRace && raced) raceReached = true;
@@ -267,6 +297,9 @@ import { StringDecoder } from "node:string_decoder";
 import type { ChildProcessWithoutNullStreams, SpawnOptions } from "node:child_process";
 const boundStates = new WeakMap<object, () => { sealed: boolean; refusals: number; terminal?: unknown }>();
 const boundTerminals = new WeakMap<object, () => unknown>();
+const boundTerminalReasons = new WeakMap<object, () => unknown>();
+/** The code word a terminal notice named for its first refusing check (undefined before one arrived). */
+export function boundTerminalReason(child: object): unknown { return boundTerminalReasons.get(child)?.(); }
 export function boundProxyState(child: object) {
   const state = boundStates.get(child);
   if (!state) throw new Error("fixture child was not admitted");
@@ -332,9 +365,11 @@ export async function spawnBoundProxy(role: string, command: string, args: reado
   Object.defineProperty(child, "stdin", { value: engineInput });
   Object.defineProperty(child, "stdout", { value: accepted });
   let terminal: unknown;
+  let terminalReason: unknown;
   let terminalExit: ReturnType<typeof setTimeout> | undefined;
   boundStates.set(child, () => ({ sealed: instance.ingress.sealed, refusals: fixture.refusals, ...(terminal ? { terminal } : {}) }));
   boundTerminals.set(child, () => terminal);
+  boundTerminalReasons.set(child, () => terminalReason);
   engineInput.on("error", () => { instance.ingress.seal(); child.kill(); });
   instance.ingress.supervise(child);
   output.setEncoding("utf8").on("data", chunk => {
@@ -358,7 +393,7 @@ export async function spawnBoundProxy(role: string, command: string, args: reado
     if (notice?.type !== "turn-release-terminal" || notice.instanceId !== instance.instanceId
       || notice.frame?.error?.code !== -32099 || notice.frame.error.data?.code !== "MEMORY_CONTEXT_REVOKED"
       || notice.frame.error.data.terminal !== true || terminal) { child.kill(); return; }
-    terminal = notice.frame;
+    terminal = notice.frame; terminalReason = (message as { reason?: unknown }).reason;
     // A valid terminal notice already sealed final ingress. Let the exact
     // child flush its close and exit code; still bound its process lifetime.
     terminalExit = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill(); }, 1000);

@@ -2,7 +2,7 @@
 # Copyright 2026 Ferrox Labs
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Run the scale rig on build-host, in a container, against one commit of Murage.
+# Run the scale rig on hetzner-dsm, in a container, against one commit of Murage.
 #   scripts/scale/hz-scale.sh <label> <commit> <pr|extreme> [extra docker -e flags...]
 # e.g. scripts/scale/hz-scale.sh int102 fea681604 extreme -e LOAD=1 -e SLOW_DISK=1
 # The commit is exported with `git archive` from this repo (nothing is built here). The rig scripts
@@ -11,7 +11,7 @@
 # Generated data is cached in /root/mb-0161-hz/scale-data/cache, keyed by shape, seed, commit and generator.
 # Host rules: at most 2 rig containers at once, no ssh retry faster than 60 s, never prune.
 set -eu
-RIG_HOST=${RIG_HOST:-build-host}   # any ssh host with the rig layout (see README, "Other hosts")
+RIG_HOST=${RIG_HOST:-hetzner-dsm}   # any ssh host with the rig layout (see README, "Other hosts")
 label=${1:?label}; commit=${2:?commit}; shape=${3:?shape}; shift 3
 [[ "$label" =~ '^[a-z0-9-]+$' ]] || { echo "bad label"; exit 2; }
 [[ "$shape" == pr || "$shape" == extreme || "$shape" == owner ]] || { echo "shape is pr, extreme or owner"; exit 2; }

@@ -32,6 +32,10 @@ export function StorageSettings() {
             <dd className="text-right tabular-nums text-ink">{summary.attachments}</dd>
             <dt className="text-ink-secondary">Files</dt>
             <dd className="text-right tabular-nums text-ink">{summary.files}</dd>
+            {summary.upgradeCopies && <>
+              <dt className="text-ink-secondary" title="Kept in case an upgrade had to be undone by hand. Removed on its own a week after the upgrade.">Copies from memory upgrades</dt>
+              <dd className="text-right tabular-nums text-ink">{summary.upgradeCopies}</dd>
+            </>}
           </dl>
           <p className={summary.low ? "text-warning" : "text-ink-secondary"}>{summary.next}</p>
           <div>

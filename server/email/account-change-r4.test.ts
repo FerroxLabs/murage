@@ -4,7 +4,7 @@ import { createMemoryEmailSecrets } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// EMAIL-ACCOUNT-CHANGE r4 leftovers (designs/EMAIL-ACCOUNT-CHANGE-r4.md sections 1 to 3; vitest on the build host only, `--network none`):
+// EMAIL-ACCOUNT-CHANGE r4 leftovers (designs/EMAIL-ACCOUNT-CHANGE-r4.md sections 1 to 3; vitest on Hetzner only, `--network none`):
 //   R1  the server counts a key durable only when the shell's ack lists its key id (read-back by key id)
 //   R2  rotation keeps the old key on disk (prev slot) until the new key is acked and the ref names it; revoke only after both
 //   R3  a frozen held row is re-read (#20, retired key), never expired by age alone

@@ -41,8 +41,13 @@ export const TURN_INDEX_PREVIOUS_DDLS = Object.freeze([TURN_INDEX_PREVIOUS_DDL,
   `CREATE INDEX ${TURN_INDEX} ON messages(thread_id, ${TURN_INDEX_LEGACY_EXPR}) WHERE ${TURN_INDEX_LEGACY_EXPR} IS NOT NULL`,
   `CREATE INDEX ${TURN_INDEX} ON messages(thread_id, ${TURN_INDEX_LEGACY_EXPR})`]);
 export const TURN_INDEX_DDL = `CREATE INDEX IF NOT EXISTS ${TURN_INDEX} ON messages(thread_id, ${TURN_EXPR}) WHERE ${TURN_CANDIDATE}`;
-registerOptionalIndex({ name: TURN_INDEX, table: "messages", sql: TURN_INDEX_DDL, previousSql: TURN_INDEX_PREVIOUS_DDLS, minSchemaVersion: 0, preListen: true, requiredBeforeListen: true, logTag: "turn-index" });
-/** One turn's rows have no other read: the launch builds the index before it serves, so its absence is a fault and never an empty turn. */
+/** 1.0.20 T1: on a file larger than this the build (one statement over every message) is not made before listen, where a start that ends
+ * during it began it again at every launch. It is made after listen by the idle-gated worker; until then a turn is read through the prior
+ * definition when the file has one (exact and as bounded), else through its thread (message-db.ts turnRows). */
+export const TURN_INDEX_PRELISTEN_MAX_BYTES = 64 * 1024 * 1024;
+export const TURN_INDEX_REGISTRATION = registerOptionalIndex({ name: TURN_INDEX, table: "messages", sql: TURN_INDEX_DDL, previousSql: TURN_INDEX_PREVIOUS_DDLS, minSchemaVersion: 0, preListen: true, requiredBeforeListen: true, deferAboveBytes: TURN_INDEX_PRELISTEN_MAX_BYTES, logTag: "turn-index" });
+/** One turn's rows have no other indexed read: the launch builds the index before it serves or leaves it, declared, to the build after listen
+ * (optional-index.ts preListenIndexDeferred). Its absence in any other state is a fault and never an empty turn. */
 export const TURN_INDEX_NOT_READY = "TURN_INDEX_NOT_READY";
 export class TurnIndexNotReadyError extends Error {
   readonly code = TURN_INDEX_NOT_READY;

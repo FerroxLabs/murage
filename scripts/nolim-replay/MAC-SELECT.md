@@ -59,7 +59,7 @@ file exists in this job**. MAIN needs an independently retained exact join
 source, plus original typed requests and authenticated context. Do not commit
 keys or SELECT output. An empty result is incomplete evidence, not zero asks.
 
-Offline build host ingestion: `extract.py ingest-store --diagnostics CENSUS
+Offline Hetzner ingestion: `extract.py ingest-store --diagnostics CENSUS
 --local-input mac-select.jsonl --local-map REVIEW --out NEW_REVIEW` inside the
 prescribed `--network none` container. It validates exact fields, joins and
 redaction receipts, retains the six-file seal as incomplete, and refuses to

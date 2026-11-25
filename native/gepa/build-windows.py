@@ -51,7 +51,8 @@ def run(name, args, cwd=SOURCE):
 
 head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=SOURCE, text=True).strip()
 subprocess.run(["git", "diff", "--exit-code", head, "--", "native/gepa"], cwd=SOURCE, check=True)
-names = ["gepa-worker.py", "gepa-worker.spec", "requirements-build.txt", "requirements-runtime.txt", "offline-fixture.py"]
+names = ["gepa-worker.py", "gepa-worker.spec", "requirements-build.txt", "requirements-runtime.txt", "offline-fixture.py",
+         "vcruntime-pins.json"]
 identity = {"sourceSha": head, "pythonVersion": platform.python_version(), "architecture": platform.machine(),
             "pythonExecutableSha256": hashlib.sha256(pathlib.Path(sys.executable).read_bytes()).hexdigest(),
             "inputs": {name: hashlib.sha256((SOURCE / "native/gepa" / name).read_bytes()).hexdigest() for name in names}}
@@ -66,6 +67,32 @@ run("install", [python, "-I", "-m", "pip", "install", "--no-index", "--find-link
 run("package", [python, "-I", "-m", "PyInstaller", "--clean", "--noconfirm", "--distpath", ROOT / "dist",
                 "--workpath", ROOT / "work", SOURCE / "native/gepa/gepa-worker.spec"])
 bundle = ROOT / "dist/gepa-worker"
+# Microsoft's VC++ runtime comes from one deterministic source: the pinned python.org 3.13.15 install (sys.base_prefix,
+# set up by actions/setup-python), never from whichever copy PyInstaller's dependency walk met first (System32 or Visual
+# Studio's redistributable folder, both of which change with the runner image). Each file is pinned by sha256 in
+# vcruntime-pins.json, the one file windows-signers.ps1 also reads to admit exactly these bytes; a collected runtime name
+# without a pin, a missing source or any other bytes fails the build (python.org ships no MSVCP140*).
+REDISTRIBUTABLES = ("VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "MSVCP140.dll", "MSVCP140_1.dll", "MSVCP140_2.dll")
+PINNED_RUNTIME = {name.lower(): digest for name, digest in
+                  json.loads((SOURCE / "native/gepa/vcruntime-pins.json").read_text(encoding="utf-8"))["sha256"].items()}
+runtime_source = pathlib.Path(sys.base_prefix)
+redistributables = {}
+for collected in sorted((bundle / "_internal").iterdir()):
+    name = next((name for name in REDISTRIBUTABLES if name.lower() == collected.name.lower()), None)
+    if name is None:
+        continue
+    pin = PINNED_RUNTIME.get(name.lower())
+    if pin is None:
+        raise RuntimeError("No pinned Microsoft source for " + collected.name)
+    source = runtime_source / name.lower()
+    if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != pin:
+        raise RuntimeError("Pinned Python runtime missing or not the pinned bytes: " + str(source))
+    shutil.copyfile(source, collected)
+    if hashlib.sha256(collected.read_bytes()).hexdigest() != pin:
+        raise RuntimeError("Copied runtime is not the pinned bytes: " + collected.name)
+    redistributables[collected.name] = {"source": str(source), "sha256": pin}
+if "vcruntime140.dll" not in (name.lower() for name in redistributables):
+    raise RuntimeError("PyInstaller collected no VCRUNTIME140.dll")
 licenses = bundle / "licenses"
 licenses.mkdir()
 python_license = pathlib.Path(sys.base_prefix) / "LICENSE.txt"
@@ -98,5 +125,5 @@ shutil.copytree(bundle, DESTINATION)
 evidence = SOURCE / "qualification-evidence"
 evidence.mkdir(exist_ok=True)
 (evidence / "gepa-windows-build.json").write_text(json.dumps({**identity, "wheelHashes": wheel_hashes,
-    "stage": str(DESTINATION), "signed": False}, indent=2) + "\n")
+    "microsoftRedistributables": redistributables, "stage": str(DESTINATION), "signed": False}, indent=2) + "\n")
 print("GEPA Windows stage built; pre-manifest signing and runtime qualification still required.")

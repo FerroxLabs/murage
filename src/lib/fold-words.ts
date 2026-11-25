@@ -45,13 +45,25 @@ const REPLY_ACTION = /^app-action:[A-Z0-9_]*REPLY/;
 const OPEN_TOOL = /^(?:WebFetch|fetch|open_url|browse)$/i;
 const ASK_TOOL = /^(?:ask_bot|delegate|handoff)$|__ask_bot$/i;
 
+/** The card says Murage could not read what it asks about: the always-ask reader's `unreadable` hold (stamped on the
+ *  class as `unreadable` or `unreadable-held`), or a stop the stop line filed without reading the call. */
+function cardUnread(cardClass: CardClass | undefined): boolean {
+  if (!cardClass) return false;
+  if (cardClass.stop?.unread === true) return true;
+  return cardClass.reason === "always-ask" && (cardClass.rule === "unreadable" || cardClass.rule === "unreadable-held");
+}
+
 /** 1.1: the verb from the engine's call. Unknown is "allow" (Allow once). */
 export function cardVerb(card: FoldCard | undefined): CardVerb {
   if (!card) return "allow";
   const stop = card.cardClass?.stop;
-  if (stop) return stop.kind === "pay" ? "pay" : stop.kind === "delete" ? "delete" : stop.public ? "post" : "send";
+  // The verb says what Murage positively found. A card whose own line says Murage could not read the command (the
+  // reader gave up: `unreadable`, or the stop line held a call it could not read) found no delete, payment or send,
+  // so it never offers "Delete": it falls through to the tool's own verb (Run for a command, else Allow once).
+  const unread = cardUnread(card.cardClass);
+  if (stop && !unread) return stop.kind === "pay" ? "pay" : stop.kind === "delete" ? "delete" : stop.public ? "post" : "send";
   // a card from an older build: its stop key still names the kind
-  const stopKey = [card.taskAllowKey, card.allowKey].find((key) => key?.startsWith("stop:"));
+  const stopKey = unread ? undefined : [card.taskAllowKey, card.allowKey].find((key) => key?.startsWith("stop:"));
   if (stopKey) {
     if (stopKey.startsWith("stop:pay:")) return "pay";
     if (stopKey.startsWith("stop:delete:")) return "delete";

@@ -15,13 +15,12 @@ import { BotCallFields } from './BotCallFields';
 // src/lib/pending-approval.ts and are re-exported here.
 import { LayerSurface } from "@/components/LayerSurface";
 import { memo, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useStore, useStoreIfAny, type Bot, type GrantHolders } from "@/state/store";
+import { api, useStore, useStoreIfAny, type Bot, type GrantHolders } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
-import { HighLevelReviewValues, highlevelAllowDigest, highlevelReviewId, useHighLevelReview } from "@/components/HighLevelReviewValues";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
 import { usePlainApprovalReady } from "@/lib/plain-approval";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -80,8 +79,7 @@ function useFoldRows(pending: Pending, threadId: string, bot: Bot | undefined) {
   const refused = useComputerOnlyRefusal(threadId, pending.requestId);
   const card = pending.message.card;
   const computerOnly = allowNeedsComputer(surface, card, refused);
-  // a HighLevel change is approved one exact review at a time: never a remembered or standing answer (HL-S2-WRITES (a)4)
-  const special = isSpecialApproval(pending) || highlevelReviewId(pending.requestId) !== undefined;
+  const special = isSpecialApproval(pending);
   // 1.2: the rows the server would save; the desktop app and the paired phone
   // app give them (a browser pairing writes no grant), and bot rows need the bot
   const owner = desktop === true || surface === "app";
@@ -141,8 +139,6 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       )}
       {held && <CollapsibleText text={held} className="mt-1 text-[12.5px] text-warning" />}
       <OutsideEngineNote card={pending.message.card} bot={bot} />
-      {/* a HighLevel change: every value it would send, read live from the open review; Allow waits on it */}
-      {highlevelReviewId(pending.requestId) && <HighLevelReviewValues reviewId={highlevelReviewId(pending.requestId)!} />}
       {!held && needsRoutineReview(pending) && <p className="mt-2 text-[12px] text-warning">This older routine request needs a fresh review. Cancel it and ask the bot to propose it again.</p>}
       {!bar && (
         <>
@@ -251,7 +247,6 @@ export function ApprovalDetailsSheet({
         <BoxBody className="px-4 pb-2">
           {why && <p data-why-line className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{why}</p>}
           {pending.held && <p data-held-note className="mt-1 whitespace-pre-wrap break-words text-[12.5px] text-warning">{pending.held}</p>}
-          {highlevelReviewId(pending.requestId) && <HighLevelReviewValues reviewId={highlevelReviewId(pending.requestId)!} />}
           {ownWordsBody(pending) ?? (
             <ApprovalDetailBody
               tool={skill || routine ? undefined : pending.tool}
@@ -300,12 +295,7 @@ export function PendingApprovalActions({
     ? reviewedSkillSha256(card.skillRequest)
     : undefined;
   const offer = card?.grantRequest?.routine;
-  // HL-S2-WRITES (a)4: Allow waits until the values answered 200 and are on screen, and carries their digest; a surface
-  // refused the values (a phone, a browser) shows Deny only
-  const highlevelId = highlevelReviewId(pending.requestId);
-  const highlevelReview = useHighLevelReview(highlevelId);
-  const highlevelDigest = highlevelAllowDigest(highlevelReview);
-  const allowHidden = computerOnly || highlevelReview?.phase === "refused";
+  const allowHidden = computerOnly;
   const verb = special ? undefined : cardVerb(card);
   const verbLabel = verb ? verbWord(verb) : "";
   // Rule 81c: each recipient is its own choice, unticked until the owner ticks it
@@ -327,7 +317,13 @@ export function PendingApprovalActions({
   // Rule 83b: an answer that failed (not a cancelled device prompt) stays on
   // this card with its retry; the next press clears it.
   const [failed, setFailed] = useState<string | null>(null);
-  const status: QueueStatus = feedback.busy !== null || feedback.sent ? "sending" : failed ? "failed" : "waiting";
+  // 1021: an answer the server says can never be delivered (`delivery_failed_terminal`) closes the card at once: its plain
+  // line, no buttons to press again. The server's card patch removes it; until then nothing here offers a retry.
+  const [closed, setClosed] = useState<string | null>(null);
+  // 1021 Retry (RETRY-DESIGN-r2): an answer that did not reach a bot still waiting offers Send again, and only that.
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [retryNote, setRetryNote] = useState<string | null>(null);
+  const status: QueueStatus = feedback.busy !== null || feedback.sent ? "sending" : failed || closed ? "failed" : "waiting";
   useEffect(() => onStatus?.(status), [onStatus, status]);
   // A Deny and Cancel turn are never held by an Allow in flight: a Deny goes out at once and takes over the card.
   const btn = (choice: string, classes: string) => approvalButton(feedback, choice, classes, choice === "deny");
@@ -370,7 +366,6 @@ export function PendingApprovalActions({
       ...(card?.botAuthority && !card.botAuthority.cut ? { seen: { renderer: 'bot-card@1', digest: card.botAuthority.specDigest } } : {}),
       botName: bot?.name,
       reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
-      ...(behavior === "allow" && highlevelDigest ? { reviewDigest: highlevelDigest } : {}),
       alwaysAllow: botGrant,
       ...(routineGrant ? { alwaysAllowRoutine: routineGrant } : {}),
       // the allowance the server says this answer added (none when it was already held)
@@ -379,7 +374,8 @@ export function PendingApprovalActions({
       onDevicePrompt: hooks.devicePrompt,
       onSuccess: () => hooks.succeed(),
       onError: (error: string, code?: string) => {
-        if (hooks.live() && code !== "cancelled") setFailed(code === "delivery_pending" ? "Your earlier answer is still being delivered." : error || "This answer could not be delivered. Please try again.");
+        if (hooks.live() && code === "delivery_failed_terminal") setClosed(error || "The tool permission could not be delivered. Nothing was confirmed.");
+        else if (hooks.live() && code !== "cancelled") setFailed(code === "delivery_pending" ? "Your earlier answer is still being delivered." : error || "This answer could not be delivered. Please try again.");
         hooks.settle();
       },
     });
@@ -397,7 +393,7 @@ export function PendingApprovalActions({
     ? card?.skillRequest?.action === "update" ? "Update" : "Enable"
     : isRoutineRequest ? "Confirm" : hostConsent ? "Allow for this bot" : eventLimit ? "Allow" : verbLabel;
   const denyLabel = narrowWipe ? "Don't" : isRoutineRequest || isSkillRequest ? "Cancel" : hostConsent ? "Don't allow" : eventLimit ? "Not now" : dontWord(verb ?? "allow");
-  const primaryDisabled = (isSkillRequest && !reviewedSha256) || needsRoutineReview(pending) || (highlevelId !== undefined && !highlevelDigest);
+  const primaryDisabled = (isSkillRequest && !reviewedSha256) || needsRoutineReview(pending);
   const cancelTurn = !durableRequest && (
     <button onClick={onCancelTurn} className={cn(base, PRESSED, "text-ink-secondary hover:bg-control hover:text-ink", !bar && "mr-auto")}>
       Cancel turn
@@ -417,7 +413,7 @@ export function PendingApprovalActions({
       disabled={primaryDisabled}
       {...btn("allow", cn(base, "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40", caret && "rounded-r-none"))}
     >
-      <ApprovalBusyLabel busy={feedback.busy === "allow"}>{highlevelReview?.phase === "loaded" && highlevelReview.operation === "users.create" ? "Add user" : primaryLabel}</ApprovalBusyLabel>
+      <ApprovalBusyLabel busy={feedback.busy === "allow"}>{primaryLabel}</ApprovalBusyLabel>
     </button>
   );
   const foldChunk = (variant: "menu" | "sheet", onClose: () => void, autoFocus = true) => (
@@ -446,6 +442,33 @@ export function PendingApprovalActions({
         />
       </Suspense>
     </LazyBoundary>
+  );
+  if (card?.deliveryRetry && !closed) {
+    const sending = retryBusy || card.deliveryRetry === "sending";
+    const sendAgain = async () => {
+      setRetryBusy(true); setRetryNote(null);
+      try {
+        await api(`/api/threads/${threadId}/requests/${encodeURIComponent(pending.requestId)}/retry-delivery`, { method: "POST" });
+      } catch (error) {
+        const body = (error as { body?: { code?: string; error?: string } })?.body;
+        if (body?.code === "delivery_failed_terminal") setClosed(body.error || "The tool permission could not be delivered. Nothing was confirmed.");
+        else setRetryNote(body?.code === "delivery_pending" ? "Your earlier answer is still being delivered." : body?.error || "That answer could not be delivered. Nothing was confirmed. Please try again.");
+      } finally { setRetryBusy(false); }
+    };
+    return (
+      <div role="group" aria-label="Approval" data-approval-layout={bar ? "bar" : "panel"} data-approval-retry={card.deliveryRetry} className="flex shrink-0 flex-wrap items-center justify-end gap-2 px-4 pb-3 pt-1" aria-busy={sending}>
+        <p role="status" className="w-full text-right text-[13px] text-ink-secondary">{`Your answer (${card.answered === "Denied" ? "Deny" : "Allow"}) did not reach the bot. Nothing was run. The bot is still waiting.`}</p>
+        {retryNote && <div role="alert" className="w-full text-right text-[13px] text-danger">{retryNote}</div>}
+        <button type="button" data-approval-send-again disabled={sending} onClick={() => void sendAgain()} className={cn("inline-flex min-h-11 items-center justify-center rounded-full px-3.5 py-1.5 text-[13.5px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent", "bg-accent text-white disabled:opacity-60")}>
+          {sending ? "Sending..." : "Send again"}
+        </button>
+      </div>
+    );
+  }
+  if (closed) return (
+    <div role="group" aria-label="Approval" data-approval-layout={bar ? "bar" : "panel"} data-approval-closed className="flex shrink-0 flex-wrap items-center justify-end gap-2 px-4 pb-3 pt-1">
+      <p role="status" className="w-full text-right text-[13px] text-ink-secondary">{closed}</p>
+    </div>
   );
   return (
     <div role="group" aria-label="Approval" data-approval-layout={bar ? "bar" : "panel"} className="flex shrink-0 flex-wrap items-center justify-end gap-2 px-4 pb-3 pt-1" aria-busy={feedback.busy !== null}>

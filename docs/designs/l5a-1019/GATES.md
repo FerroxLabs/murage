@@ -8,7 +8,7 @@ claims to stop or authorize the separately seated builders.
 ## Evidence identity
 
 The exact basename `D-REDACT-MD-1018-r1.md` was not found in the inspected
-`/work/swarm1018` archive filename inventory. A strong identity candidate
+`/root/swarm1018` archive filename inventory. A strong identity candidate
 has now been recovered:
 
 - `history/D-REDACT-MD-1018-1018.md` and `history/r1-design.md` are byte-identical:

@@ -22,14 +22,18 @@ import { DatabaseSync } from "./sqlite-open.ts";
 import { randomUUID } from "node:crypto";
 import { DATA_DIR } from "./config.ts";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_PRE_V3_SNAPSHOT, MEMORY_PRE_V4_SNAPSHOT, MEMORY_SCHEMA_VERSION, lineageRepairPending, migrateMemorySchema, repairOutputRootBackfill } from "./memory/schema.ts";
+import { noteCleanMemoryOpen } from "./memory/upgrade-copies.ts";
 import type { BlockingHeartbeat } from "./memory/blocking-heartbeat.ts";
-import { buildEagerIndexesBeforeListen, buildPreListenIndexes, optionalIndexReady, preListenIndexMissing } from "./memory/optional-index.ts";
+import { writeLegacyForgetKeys } from "./memory/legacy-forget-keys.ts";
+import { setBootStep } from "./boot-progress.ts";
+import { buildEagerIndexesBeforeListen, buildPreListenIndexes, optionalIndexReady, preListenIndexDeferred, preListenIndexMissing } from "./memory/optional-index.ts";
 import { createProgressBoard, preListenHealthPort, setActivePreListenHealth, startPreListenHealth, type PreListenHealth, type ProgressBoard } from "./memory/upgrade-health.ts";
 import { UpgradeProgressTracker, nextUpgradeSeq, restampedUpgrade, upgradeCounts } from "./memory/upgrade-progress.ts";
 import { unknownUpgradeState } from "../shared/upgrade-contract.mjs";
+import { noteDataVersion } from "../shared/data-version-marker.mjs";
 import { bootLaunchId } from "./memory/boot-nonce.ts";
 import { bumpWriteEpoch, ensureWriteRevision, installWriteRevisionTriggers } from "./app-write-revision.ts";
-import { integrityPending, setIntegrityFlags } from "./memory/integrity-flags.ts";
+import { integrityPending, setConnectionHold, setIntegrityFlags } from "./memory/integrity-flags.ts";
 import { memoryHeldCode } from "./memory/memory-gate.ts";
 import { integrityHoldOf, integrityRunning, maxRowid, readIntegrityPass, writeIntegrityPass } from "./memory/integrity-state.ts";
 import { backgroundStatus, backgroundJobsPending, upgradeOutside, startBackgroundUpgradeWork, runBackgroundUpgradeWorkToEnd, walPressureGauge, type BackgroundHandle, type BackgroundHooks } from "./memory/upgrade-background.ts";
@@ -38,7 +42,8 @@ import { initializeInbox } from "./inbox.ts";
 import { verifyDerivedRows } from "./branch-index.ts";
 import { pendingBranchChanges } from "./memory/branch-change-flag.ts";
 import { bumpMessagesVersion } from "./inbox-version.ts";
-import { inStatementReusePass, instrumentDatabase, sharedRowsStamp, ioBudget, noteBusyTimeout, startWriteTrace, writeStatementCount } from "./io-budget.ts";
+import { inStatementReusePass, instrumentDatabase, observeConnection, rawConnection, sharedRowsStamp, ioBudget, noteBusyTimeout, startWriteTrace, writeStatementCount } from "./io-budget.ts";
+import { commitNotice, detachMemoryWake, installMemoryWake, suspendMemoryWake, wakeInstalled } from "./memory/wake.ts";
 import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, DatabaseBusyError, DiskFloorRefusal, awaitWriterGate, isLowDisk, backgroundSourceNow, isDatabaseBusy, noteBusy, setBusy, writersHeldForIndexBuild } from "./db-busy.ts";
 import { noteIdentityEpoch } from "./memory/provenance-stamp.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
@@ -289,6 +294,17 @@ export function databaseSharedRowsStamp(): number | undefined { return handle ? 
 let writesAtOpen: { db: DatabaseSync; count: number } | undefined;
 /** The writing statements run on the first handle since its open finished; undefined once that handle is gone. */
 export function writesSinceOpen(): number | undefined { return writesAtOpen && handle === writesAtOpen.db ? writeStatementCount(handle) - writesAtOpen.count : undefined; }
+/** Code of the hold a failed wake install sets: a missing trigger could hide a wake, so memory is set aside (fail closed) until the next open. */
+export const MEMORY_WAKE_HOLD = "MEMORY_WAKE_INSTALL";
+function installWakeBus(db: DatabaseSync): void {
+  const raw = rawConnection(db) ?? { exec: db.exec.bind(db), prepare: db.prepare.bind(db) };
+  const wake = installMemoryWake(db, raw, { readOnly: isReadOnly() });
+  if (wake.events) { observeConnection(db, wake.events); return; }
+  if (!wake.error) return; // a read-only start: nothing installed, recall is served as before
+  setConnectionHold(db, MEMORY_WAKE_HOLD);
+  // the owner is told once per open: the hold shows as "memory set aside" (memory-gate.ts), and this line names the cause
+  console.error(`[memory-wake] install failed, memory is set aside until the next start: ${wake.error.message}`);
+}
 export function database(): DatabaseSync {
   const file = join(DATA_DIR, "messages.db");
   // (inside a synchronous pass the file cannot be swapped, so the existence check is not repeated for each of its thousands of statements)
@@ -313,6 +329,8 @@ export function database(): DatabaseSync {
     // vacuum, root-set-compaction.ts); it can only be chosen before the first table.
     // The wait comes before the first statement that reads the file: another connection still leaving it (a worker that opened it by
     // path, a checkpointer) may hold it for a moment, and without the wait even this first pragma fails at once with "database is locked".
+    // the start-up note names the open: a large write-ahead log is replayed by the first statements below (boot-progress.ts)
+    if (firstOpen) setBootStep("database.wal");
     db.exec("PRAGMA busy_timeout=1000");
     if (freshInstallation) db.exec("PRAGMA auto_vacuum=INCREMENTAL");
     if (!isReadOnly()) db.exec("PRAGMA journal_mode=WAL");
@@ -373,10 +391,19 @@ export function database(): DatabaseSync {
     // branch move is still being flipped: counted once here (one seek), known after
     verifyDerivedRows(db);
     pendingBranchChanges(db);
+    if (firstOpen) setBootStep("database.memory");
     try {
       migrateMemorySchema(db, freshInstallation ? "active" : "off", { snapshotPath: join(DATA_DIR, MEMORY_PRE_V2_SNAPSHOT), snapshotV2Path: join(DATA_DIR, MEMORY_PRE_V3_SNAPSHOT), snapshotV3Path: join(DATA_DIR, MEMORY_PRE_V4_SNAPSHOT), onPhase: event => upgrade.phase(event), onValidating: () => upgrade.checking(), onBlocking: (first, from) => upgrade.blocking(first, from) });
       // A migration rewrites memory tables: whatever figures an earlier launch cached are void.
       if (migrating) { try { bumpWriteEpoch(db); } catch { /* as above */ } }
+      // This release accepted the memory tables (and migrated them if it had to): the data folder records it as the newest writer, so an
+      // older build that later refuses this data can name the version to install (shared/data-version-marker.mjs). Only ever raised; a
+      // source run (no released MURAGE_APP_VERSION) and a read-only start write nothing.
+      if (!isReadOnly()) noteDataVersion(DATA_DIR, process.env.MURAGE_APP_VERSION);
+      // q1022-disk: a clean (not migrating) writable open counts toward removing the upgrade's copies of messages.db. Not while the
+      // integrity pass is still proving the upgraded rows, nor after it left a hold: the copy is the way back until it passed.
+      const pass = readIntegrityPass(db);
+      if (!isReadOnly() && !migrating && !freshInstallation && !integrityRunning(pass) && integrityHoldOf(pass) === null) for (const name of noteCleanMemoryOpen(DATA_DIR, Date.now())) observeLine(`[memory] removed upgrade copy ${name}`);
       // What the connection holds back until the background work has finished.
       loadBackgroundFlags(db); if (firstOpen) startupMark("database.flags");
       // The search index tail is noted here (a seek), filled in the background; the log's high-water mark is cut back while the note is
@@ -417,6 +444,16 @@ export function database(): DatabaseSync {
         try { beat = upgrade.blocking("backfill", undefined, undefined, "indexing"); } catch { /* a status write never stops an upgrade */ }
         try { buildEagerIndexesBeforeListen(db, { log: firstOpen }); } finally { try { beat?.end(); } catch { /* as above */ } }
       }
+      // 1.0.21 cause10 v2 (FORGET-ATOMIC, MAIN-RULING 2026-11-21T15:42Z): a Forget an older build left queued owes deny keys its job never
+      // wrote on a profile whose runner does not drain. Every one is keyed here, before this open returns, so nothing is served on a
+      // half-forgotten profile (memory/legacy-forget-keys.ts: one transaction per batch of jobs, resumed by the next open after a kill;
+      // an open with none queued is one indexed read). An error ends the start like a failed memory migration: fail closed, never skipped.
+      // A read-only start writes nothing: its queue is keyed by the next writable start.
+      if (!isReadOnly()) {
+        let beat: BlockingHeartbeat | undefined;
+        try { writeLegacyForgetKeys(db, () => { try { beat = upgrade.blocking("backfill", undefined, undefined, "indexing"); } catch { /* a status write never stops a start */ } }); }
+        finally { try { beat?.end(); } catch { /* as above */ } }
+      }
       if (!isReadOnly()) removeDevTurnSpan(db);
       // The owner-pin index on every launch where it is missing (one scan, once per install): without it the first turn walked every active
       // record of its scopes for its pins (MEM-PIN-INDEX-BOOT, 1.3 to 2.0 s on the owner's data). On a slow disk that scan outlasts the shell's
@@ -429,7 +466,7 @@ export function database(): DatabaseSync {
           if (!optionalIndexReady(db, TURN_INDEX)) { console.error("[startup] read-only start: required index missing"); throw new TurnIndexNotReadyError(); }
           skippedAtStart.push("database.preListenIndexes");
         } else {
-          try { buildPreListenIndexes(db, { log: firstOpen }); if (!optionalIndexReady(db, TURN_INDEX)) throw new TurnIndexNotReadyError(); } finally { try { beat?.end(); } catch { /* as above */ } }
+          try { buildPreListenIndexes(db, { log: firstOpen }); if (!optionalIndexReady(db, TURN_INDEX) && !preListenIndexDeferred(db, TURN_INDEX)) throw new TurnIndexNotReadyError(); } finally { try { beat?.end(); } catch { /* as above */ } }
         }
       }
       {
@@ -447,6 +484,7 @@ export function database(): DatabaseSync {
       if (isLowDisk(error)) upgrade.done(); else upgrade.blocked(error);
       void responder?.close(); setActivePreListenHealth(null); throw error;
     } if (firstOpen) startupMark("database.noteDone");
+    if (firstOpen) setBootStep("database.initializers");
     if (isReadOnly() && !readOnlyEmpty) {
       initializeOwnerSends(db); initializeOwnWriteHolds(db);
     } else {
@@ -472,6 +510,10 @@ export function database(): DatabaseSync {
   // Boot tolerance, write authority: in a read-only process the engine refuses every write on this connection (SQLITE_READONLY), so a writer no
   // caller guarded changes nothing. Reads, and the checkpoint that returns log space, still run.
   if (isReadOnly()) db.exec("PRAGMA query_only=ON");
+  // MEMORY V2 (design 3.1, M0): the TEMP wake table, its triggers, the guards and the memo watches die with a handle, so they are
+  // installed on EVERY open (first start, snapshot swap, restore, quarantine), outside any transaction and outside the background budget,
+  // and the open-time probes then raise what a crash may have left. A read-only start installs nothing.
+  installWakeBus(db);
   // Boot tolerance (A2): a read-only start makes no write between the end of its open and listen. The count starts here, and every write
   // in that window notes its caller, so a count over 0 names the recovery that still has to be held back.
   if (firstOpen) { writesAtOpen = { db, count: writeStatementCount(db) }; if (isReadOnly()) startWriteTrace(); }
@@ -486,6 +528,8 @@ export function database(): DatabaseSync {
     }).catch(error => console.warn("[message-search] worker start failed:", error instanceof Error ? error.message : String(error)));
   } else if (!isReadOnly()) startSearchIndex(db, file); // the search worker's start writes its owner row and its own file: not in a read-only process
   if (!isReadOnly()) startWalMaintenance(file, {
+    // 1.0.21 W4 (lane D, WAL maintenance's port): the commit notice only where the wake bus observes this connection's commits
+    commitNotice: () => (handle === db && wakeInstalled(db) && rawConnection(db) !== undefined ? commitNotice() : null),
     // (a read-only start writes nothing, so no automatic checkpoint can fall due: its setting is left as the open found it)
     setAutocheckpoint: pages => { if (handle === db && !isReadOnly()) db.exec(`PRAGMA wal_autocheckpoint=${Math.trunc(pages)}`); },
     journalSizeLimit: () => (handle === db ? Number((db.prepare("PRAGMA journal_size_limit").get() as { journal_size_limit?: number } | undefined)?.journal_size_limit) : null),
@@ -637,7 +681,7 @@ function startupStorage(db: DatabaseSync, file: string, log: boolean) {
 }
 
 // A boot step that meets low disk turns the process read-only after the open: the live connection is closed to writes at that moment.
-onReadOnly(() => { if (handle) { try { handle.exec("PRAGMA query_only=ON"); } catch { /* handle closed: the next open sets it */ } } });
+onReadOnly(() => { if (handle) { suspendMemoryWake(handle); try { handle.exec("PRAGMA query_only=ON"); } catch { /* handle closed: the next open sets it */ } } });
 
 export function closeDatabase() {
   launchCounts = null; // a new connection counts again (or reads the cache)
@@ -645,6 +689,7 @@ export function closeDatabase() {
   if (storageTimer) { clearInterval(storageTimer); storageTimer = undefined; }
   if (handle) { const state = unrepaired.get(handle); if (state?.timer) clearTimeout(state.timer); unrepaired.delete(handle); }
   for (const hook of closeHooks) { try { hook(); } catch { /* idempotent shutdown */ } }
+  if (handle) { observeConnection(handle, null); detachMemoryWake(handle); }
   try { handle?.close(); } catch { /* idempotent shutdown */ }
   // After the server connection has closed, so the checkpointer's is the last one and not this one.
   void stopWalMaintenance();

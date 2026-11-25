@@ -12,10 +12,10 @@ import { randomUUID } from 'node:crypto';
 import { ParkFs } from './park-fs.ts';
 import { ownerOnlyVerdict, ownerVerdict } from '../../win-acl.ts';
 import { windowsSecurityPathKey as key, type SecurityRunner } from './storage.ts';
-const sid='S-1-5-21-2486017201-643397653-1543059810-1001';
+const sid='S-1-5-21-1111111111-1111111111-1111111105-1001';
 // Exact principal/flag shape from cireds-win/probe-service.txt, fresh ensureDirs
 // On test-host, the admin token creates O:BA, with inherited grants.
-const inherited=`O:BAG:S-1-5-21-2486017201-643397653-1543059810-513D:(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;${sid})`;
+const inherited=`O:BAG:S-1-5-21-1111111111-1111111111-1111111105-513D:(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;${sid})`;
 const privateSddl=`O:BAD:P(A;;FA;;;${sid})(A;;FA;;;SY)`;
 const roots:string[]=[];afterEach(()=>{vi.restoreAllMocks();for(const root of roots.splice(0))removeTempDirSync(root);});
 function fixture(){

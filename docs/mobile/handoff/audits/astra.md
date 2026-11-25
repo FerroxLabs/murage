@@ -1,0 +1,56 @@
+## Verdict
+
+**REJECT — revise before implementation.** The shared remote UI is a reasonable direction, but the spec is not implementation-ready. Capacitor’s bridge availability and security differ between platforms; notification authorization is incomplete; and several proposed fixes would leave existing server restrictions intact. These are architectural gaps, not reasons to abandon the approach. Reviewed `mobile/v1` at `139a546d`, the full spec, cited code, carry-over sources and platform documentation. No files changed, builds run or servers started.
+
+## Findings
+
+1. **Launcher → remote navigation does not reliably initialize the bridge — High.**  
+   Capacitor **8.5.2**, pinned by the carry-over scaffold, injects Android’s document-start bridge scripts only for the configured `appUrl` origin ([Bridge.java](https://github.com/ionic-team/capacitor/blob/8.5.2/android/capacitor/src/main/java/com/getcapacitor/Bridge.java#L266)). Adding another origin to `allowNavigation` does not extend that injection. iOS uses persistent WKUserScripts, so its behavior differs. **Change:** specify native bridge/WebView initialization for each selected workspace, including switching back to the bundled launcher. Put a two-platform remote-navigation proof before broad host work. Remote bridging is possible; this particular transition is underspecified.
+
+2. **The proposed bridge restrictions are not Capacitor defaults — High.**  
+   iOS dispatches messages without checking `frameInfo.isMainFrame` or `securityOrigin`; navigation allowlisting checks hostnames, not exact origins ([iOS implementation](https://github.com/ionic-team/capacitor/blob/8.5.2/ios/Capacitor/Capacitor/WebViewDelegationHandler.swift#L171)). Android’s modern listener checks frames, but falls back to `addJavascriptInterface`, losing that protection. **Change:** enforce scheme/host/port and main-frame checks at native dispatch, fail closed on unsupported Android paths, and restrict **all exposed Capacitor plugins**, not just `murageNative`. Cover redirects, opaque Mermaid frames and workspace-switch races. Same-origin compromised content remains trusted code; CSP alone cannot remove that risk.
+
+3. **Push-action authorization and step-up lack an enforceable contract — High.**  
+   The token is described as respond-only but also authenticates detail reads. Native POSTs encounter the browser Origin gate ([browser.ts:344](/Volumes/Fixture/workspace/muragemobile/app/companion/src/browser.ts:344)); the current respond handler has no biometric-proof contract ([index.ts:15087](/Volumes/Fixture/workspace/muragemobile/app/server/index.ts:15087)). **Change:** define issuance, separate read/action scopes, strict action bodies, atomic decision/replay handling, expiry and revocation on logout/device removal. Bind step-up proof to the request and operation digest; hiding Approve in JavaScript is insufficient. Define unknown-risk approvals as Open-only. Android’s authentication flag requires [API 31](https://developer.android.com/sdk/api_diff/31/changes/android.app.Notification.Action.Builder), while the scaffold supports API 29.
+
+4. **Five-minute rotation grace does not solve suspension loss — High.**  
+   `renewSession()` stores only the replacement hash ([devices.ts:933](/Volumes/Fixture/workspace/muragemobile/app/companion/src/devices.ts:933)). If the response is lost and the phone sleeps longer than five minutes, the original failure returns. Accepting the old hash briefly also does not explain how its holder obtains the current cookie. **Change:** specify a recoverable, bounded renewal protocol, concurrent/out-of-order response behavior, persistent generation state and revocation of every accepted generation. Measure “24 hours” from successful renewal, not session creation.
+
+5. **Allowlisting Inbox still leaves it unusable — High.**  
+   The server passes `owner: false` for remote callers and supplies an unfiltered thread inventory ([index.ts:10367](/Volumes/Fixture/workspace/muragemobile/app/server/index.ts:10367)); [inbox.ts:226](/Volumes/Fixture/workspace/muragemobile/app/server/inbox.ts:226) then rejects them. **Change:** add an explicit remote Inbox access model with visibility-filtered threads and scoped state mutations. Merely allowing `/api/inbox` fails; simply changing `owner` to true risks exposing hidden conversations. Include `/api/inbox/state` if mobile Inbox interactions require it.
+
+6. **Rich push needs a separate extension credential and resource design — High.**  
+   An NSE can make network requests, but documentation does not establish reliable Tailscale reachability while locked or reconnecting. Apple documents approximately [30 seconds](https://developer.apple.com/documentation/usernotifications/modifying-content-in-newly-delivered-notifications); an Apple engineer reports a [24 MB limit](https://developer.apple.com/forums/thread/761212), not a universal future guarantee. **Change:** specify shared Keychain access, locked-device accessibility, short network deadlines and expiration-handler fallback. Separate background-readable detail credentials from user-authenticated action authority. Test VPN off/on-demand, reboot-before-first-unlock and host sleep. Keep generic notifications a fully functional outcome.
+
+7. **Anonymous enrolment removes existing abuse controls — High.**  
+   Carry-over `cloudflare/control-plane/src/mobile-notifications.ts:106,139,203` authenticates users and binds challenges, quotas and publishers to accounts. Deleting email signup is not a contained substitution. **Change:** design installation/device proof, explicit phone consent to each host binding, publisher scoping, replay protection, revocation, installation/IP/global quotas and a bounded queue. Self-generated installation keys alone allow unlimited identities and relay-cost abuse.
+
+8. **Provider payloads and notification convergence need redesign — High.**  
+   Carry-over `mobile-notification-providers.ts:123` sends FCM notification-plus-data: background messages go directly to the tray, bypassing the proposed enrichment handler ([Firebase behavior](https://firebase.google.com/docs/cloud-messaging/android/receive-messages)). Its APNs payload at line 141 lacks `mutable-content`. **Change:** define APNs alert/category/thread/badge fields and Android service-owned delivery with bounded background execution. Separate stable request collapse identity from event IDs; add state revisions, TTLs and reconciliation for delayed or reordered pushes. Replacement is best-effort, not guaranteed removal. Presence suppression must expire and requeue unanswered requests; it must never suppress resolution updates.
+
+9. **Workspace identity is missing from routing and badge ownership — High.**  
+   Bridge events contain only thread/message IDs, while [openNotificationTarget at store.ts:977](/Volumes/Fixture/workspace/muragemobile/app/src/state/store.tsx:977) requires `botId` for non-group conversations. Each host independently setting the application badge also creates last-writer-wins counts. **Change:** carry an opaque workspace binding, resolve complete targets after hydration, fence asynchronous results during switching, and define cross-workspace badge aggregation. Specify native handling when the target workspace is removed or re-pairing is required.
+
+10. **Recovery depends on precisely the web code that may be unavailable — Medium.**  
+    A cookie-less shell can return an HTML 401 before bridge-aware React loads ([browser.ts:1314](/Volumes/Fixture/workspace/muragemobile/app/companion/src/browser.ts:1314)); EventSource does not expose HTTP status directly. An old host may never emit “ready.” **Change:** add native load/status handling, readiness deadlines, persistent WebView cookie-store requirements and a versioned capability handshake with old-host fallback. Persist the active route and pending notification intent across process death. Existing drafts use localStorage, but failed-send recovery is partly memory-only (`src/lib/drafts.ts:37`).
+
+11. **Automatic pruning can revoke legitimate devices — Medium.**  
+    Device records support bearer tokens independently of browser sessions ([devices.ts:40](/Volumes/Fixture/workspace/muragemobile/app/companion/src/devices.ts:40)). “No live sessions” therefore does not mean abandoned. `DELETE /session` also closes the caller’s session, not another phone’s entire authorization. **Change:** distinguish browser-only registrations from token-bearing devices; define explicit device revocation and prune only provably abandoned records, including push bindings.
+
+12. **Performance changes have correctness dependencies — Medium.**  
+    The proposed 45-second heartbeat exceeds the current [40-second stale threshold]( /Volumes/Fixture/workspace/muragemobile/app/src/lib/live-events.ts:8), causing false reconnects. Encoded upstream JSON bypasses scrubbing ([browser.ts:1373](/Volumes/Fixture/workspace/muragemobile/app/companion/src/browser.ts:1373)). **Change:** coordinate heartbeat/watchdog settings; compress JSON only after scrubbing and HTML after renewal-script injection; exclude SSE buffering; preserve CSP and emit `Vary: Accept-Encoding`. Treat bundle-reduction percentages as hypotheses. Define device, bandwidth, latency, cache state and percentile for startup targets, including Tailscale relay paths and lazy-chunk failures after host updates.
+
+13. **Store compliance is asserted too confidently — Medium.**  
+    Accepting arbitrary HTTPS addresses does not establish a usable no-Tailscale path. A read-only demo may not demonstrate the app’s core functionality. [Apple’s rules](https://developer.apple.com/app-store/review/guidelines/) still require consideration of 4.2, 4.2.3 and 2.5.2; remote UI is not automatically prohibited or automatically exempt. **Change:** provide an accessible, isolated functional review host, document native value and remote-update boundaries, and address initial-download disclosure. Inventory relay tokens, IP logs and event metadata for privacy labels and Play Data Safety. [Play permits interpreted WebView code subject to policy compliance](https://support.google.com/googleplay/android-developer/answer/16070163).
+
+14. **Build order postpones the highest uncertainty and overrides execution policy — Medium.**  
+    Spec line 338 says “No round caps,” contradicting the supplied eight-round policy. **Change:** restore bounded packages and begin with remote bridge/auth/lifecycle and locked-device push feasibility. Keep compatibility, re-pairing, scoped Inbox and generic push in V1. Consider moving rich enrichment, lock-screen mutations and icon shortcuts to V1.1; retain in-app approvals. Define the two-minute onboarding prerequisite explicitly—host and Tailscale already configured, or installation included.
+
+## Things the spec gets right
+
+- One shared UI and same-origin cookie authentication avoid substantial duplicated application logic.
+- Keeping `murageNative` separate from desktop identity is correct.
+- Content-free provider payloads with generic fallback preserve useful privacy boundaries.
+- Foreground-only voice is an honest V1 limitation.
+- Real-device acceptance and isolated fixtures are necessary; screenshot-sized browser tests alone cannot qualify the native behavior.
+

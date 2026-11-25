@@ -1,0 +1,178 @@
+[
+  {
+    "theme": "dark",
+    "what": "text on panel (pill, badge, side panel header)",
+    "fg": "#f5f5f5",
+    "bg": "#171717",
+    "ratio": 16.44,
+    "need": 4.5
+  },
+  {
+    "theme": "dark",
+    "what": "secondary text on card",
+    "fg": "#a8a8a8",
+    "bg": "#1f1f1f",
+    "ratio": 6.93,
+    "need": 4.5
+  },
+  {
+    "theme": "dark",
+    "what": "accent ink on accent fill (rail, Continue)",
+    "fg": "#2a1207",
+    "bg": "#ff6b35",
+    "ratio": 6.23,
+    "need": 4.5
+  },
+  {
+    "theme": "dark",
+    "what": "success ink on success fill (done rail)",
+    "fg": "#06231a",
+    "bg": "#34d399",
+    "ratio": 8.65,
+    "need": 4.5
+  },
+  {
+    "theme": "dark",
+    "what": "danger ink on danger fill (Stop)",
+    "fg": "#2a0806",
+    "bg": "#f87171",
+    "ratio": 6.68,
+    "need": 4.5
+  },
+  {
+    "theme": "dark",
+    "what": "warning ink on warning fill (Full marker)",
+    "fg": "#241800",
+    "bg": "#fbbf24",
+    "ratio": 10.43,
+    "need": 4.5
+  },
+  {
+    "theme": "dark",
+    "what": "bot initial on bot colour",
+    "fg": "#04221e",
+    "bg": "#01A492",
+    "ratio": 5.37,
+    "need": 4.5
+  },
+  {
+    "theme": "dark",
+    "what": "app background on ink fill (Your turn rail text)",
+    "fg": "#0a0a0a",
+    "bg": "#f5f5f5",
+    "ratio": 18.16,
+    "need": 4.5
+  },
+  {
+    "theme": "dark",
+    "what": "accent cue against keyline (edge cue on a dark page)",
+    "fg": "#ff6b35",
+    "bg": "#0a0a0a",
+    "ratio": 6.98,
+    "need": 3
+  },
+  {
+    "theme": "dark",
+    "what": "keyline against white page (outer edge of every cue)",
+    "fg": "#0a0a0a",
+    "bg": "#ffffff",
+    "ratio": 19.8,
+    "need": 3
+  },
+  {
+    "theme": "dark",
+    "what": "accent border against panel (control boundary)",
+    "fg": "#ff8255",
+    "bg": "#171717",
+    "ratio": 7.32,
+    "need": 3
+  },
+  {
+    "theme": "light",
+    "what": "text on panel (pill, badge, side panel header)",
+    "fg": "#0d0d0d",
+    "bg": "#f0f0f0",
+    "ratio": 17.05,
+    "need": 4.5
+  },
+  {
+    "theme": "light",
+    "what": "secondary text on card",
+    "fg": "#555555",
+    "bg": "#ffffff",
+    "ratio": 7.46,
+    "need": 4.5
+  },
+  {
+    "theme": "light",
+    "what": "accent ink on accent fill (rail, Continue)",
+    "fg": "#ffffff",
+    "bg": "#b8481f",
+    "ratio": 5.27,
+    "need": 4.5
+  },
+  {
+    "theme": "light",
+    "what": "success ink on success fill (done rail)",
+    "fg": "#ffffff",
+    "bg": "#0f7a52",
+    "ratio": 5.35,
+    "need": 4.5
+  },
+  {
+    "theme": "light",
+    "what": "danger ink on danger fill (Stop)",
+    "fg": "#ffffff",
+    "bg": "#b3261e",
+    "ratio": 6.54,
+    "need": 4.5
+  },
+  {
+    "theme": "light",
+    "what": "warning ink on warning fill (Full marker)",
+    "fg": "#ffffff",
+    "bg": "#8a6100",
+    "ratio": 5.54,
+    "need": 4.5
+  },
+  {
+    "theme": "light",
+    "what": "bot initial on bot colour",
+    "fg": "#04221e",
+    "bg": "#01A492",
+    "ratio": 5.37,
+    "need": 4.5
+  },
+  {
+    "theme": "light",
+    "what": "app background on ink fill (Your turn rail text)",
+    "fg": "#f7f7f7",
+    "bg": "#0d0d0d",
+    "ratio": 18.14,
+    "need": 4.5
+  },
+  {
+    "theme": "light",
+    "what": "accent cue against keyline (edge cue on a dark page)",
+    "fg": "#b8481f",
+    "bg": "#0a0a0a",
+    "ratio": 3.76,
+    "need": 3
+  },
+  {
+    "theme": "light",
+    "what": "keyline against white page (outer edge of every cue)",
+    "fg": "#0a0a0a",
+    "bg": "#ffffff",
+    "ratio": 19.8,
+    "need": 3
+  },
+  {
+    "theme": "light",
+    "what": "accent border against panel (control boundary)",
+    "fg": "#cc5529",
+    "bg": "#f0f0f0",
+    "ratio": 3.76,
+    "need": 3
+  }
+]

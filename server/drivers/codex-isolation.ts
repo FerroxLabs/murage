@@ -14,7 +14,7 @@
 // switched off by path with `skills.config = [{ path, enabled = false }]`,
 // matched against the skill's SKILL.md path.
 //
-// Rig (build host, codex-cli 0.146.0 and 0.160.0, `codex exec` against a fake
+// Rig (Hetzner, codex-cli 0.146.0 and 0.160.0, `codex exec` against a fake
 // Responses API, owner config.toml with 2 servers of 40+25 tools, a personal
 // skill and an ~/.agents skill): before 13.2k tokens with the owner's server
 // tools and skills in the request; MCP off 9.8k; skills off too, neither

@@ -181,9 +181,13 @@ export class ProductClient {
   async observe(bot, send, tick = async () => {}, messageWindow) {
     const window = messageWindow ?? await this.beginMessageWindow(bot.threadId);
     this.messageWindows.set(bot.threadId, window);
-    const mark = this.events.length, start = Date.now();
+    const mark = this.events.length;
     this.observing=bot;if(this.instructions.has(bot.id))this.declare(bot.threadId,this.instructions.get(bot.id));
     await send();
+    // The window measures the wait for the turn's end, so it opens when the send has returned. A send that does its own
+    // waiting (a fixture that polls for admission and takes a lock) used to spend the window before the first look: the
+    // loop below then never ran and a turn that had already ended was reported as timed out.
+    const start = Date.now();
     let ended, turnId;
     const answered = new Set();
     try {
@@ -226,7 +230,8 @@ export class ProductClient {
         errors: [...this.ledger.problems([bot.threadId]), ...this.streamErrors], threadIds: [bot.threadId],
         turn: { type: ended.type, ok: ended.ok, turnId: ended.turnId } };
     } catch (error) {
-      await this.stop(bot);
+      // Cleanup never replaces the reason the observation failed.
+      try { await this.stop(bot); } catch (stopError) { throw Error(`${error?.message ?? error}; then: ${stopError?.message ?? stopError}`, { cause: error }); }
       throw error;
     }
   }

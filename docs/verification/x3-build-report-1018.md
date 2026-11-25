@@ -83,7 +83,7 @@ BUILD-FIX status:
 5 companion-sidecar.pid covered.
 6 config-only Hermes coverage and state.db negative tested.
 7 not complete: no full coverage-column parsing test.
-8 not complete: no full real-writer/work/platform matrix.
+8 not complete: no full real-writer/root/platform matrix.
 9 every render_plan put listed, with route-header content read from the code.
 10 eligibility and root-shape rows tested; replay counts the three-level ls.
 11 requested store temp-name patterns covered.

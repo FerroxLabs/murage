@@ -1,12 +1,8 @@
 // Lane E renderer cost, skipped unless LANE_E_BENCH=1. Prints one BENCH line:
 // the per-dispatch work the sidebar and the transcript rows do over held
 // messages, the old way (inline copies of the removed code) and the new way.
-import { describe, it, vi } from "vitest";
+import { describe, it } from "vitest";
 
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false, optAction: () => "none" as const, setAnalyticsEnabled: () => {}, initAnalytics: () => {},
-  track: () => {}, identifyEmail: () => {}, emailGateDone: () => false, setEmailGateDone: () => {},
-}));
 (globalThis as unknown as { window?: unknown }).window ??= {};
 const { sidebarBotPreview } = await import("@/components/Sidebar");
 import { messageVersions, visibleMessages, type Bot, type Message } from "./store";

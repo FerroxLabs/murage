@@ -692,6 +692,7 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
         const carried = item.coordination as CoordinationTrace;
         options = { ...options, coordination: carried, commsDepth: carried.path.length - 1 };
       }
+      if (item.automationAncestry === true || item.routineAuthority !== undefined) options = { ...options, automationAncestry: true };
       sharedOps!.mirror(request!, { sourceMessageId: item.sourceMessageId });
     } else {
       release = h.reserveSlot(destination);
@@ -720,6 +721,8 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
         // the prompt rests on the one row that handed it over (rule 7); a legacy item without it keeps the asking conversation's prefix
         ...(item.sourceMessageId ? { handoffOf: { threadId: source, messageId: item.sourceMessageId } } : {}),
         ...(item.notOwnerAudience === true ? { chainNotOwner: true } : {}),
+        // PHONEAUD: a routine-started chain stays one, whatever the source thread runs when this starts
+        ...(item.automationAncestry === true || item.routineAuthority !== undefined ? { automationAncestry: true } : {}),
         eventId: item.eventId,
         coordination: item.coordination as CoordinationTrace | undefined,
         // The delegating bot is the one whose unattended state matters, and a room thread has no owner to look it up from.
