@@ -3,7 +3,7 @@
 import { constants, closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { connect } from 'node:net';
 
-const MAX_REQUEST = 64 * 1024, MAX_GUARD = 256 * 1024;
+const MAX_REQUEST = 64 * 1024, MAX_GUARD = 1024 * 1024;
 const unavailable = 11;
 function main() {
   if (process.argv.length !== 4 || process.argv[2] !== 'wipe-exec') return process.exit(unavailable);

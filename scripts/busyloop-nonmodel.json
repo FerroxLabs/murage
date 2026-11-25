@@ -95,7 +95,6 @@
   "server/default-engine.ts": {"sha256": "9029f7c11fc1f7347c42627d9334128cb20954d6c63aa21d5145450fa53435f1", "reason": "non-inference service, local persistence or transport utility; source pinned for review"},
   "server/delegations.ts": {"sha256": "c7809db5ef986f0b37f8e8396ed9faa3489570c08f2ee6399be9163f85d66f8a", "reason": "non-inference service, local persistence or transport utility; source pinned for review"},
   "server/drivers/agents-proxy.ts": {"sha256": "f1f50d28fb2069d33fa367a3638e96dcbea1c6a82b90e385e93c11da30ac4af5", "reason": "local control/RPC; no direct inference request"},
-  "server/drivers/boxagent.ts": {"sha256": "e6181fd68069d531785ab039f8a428eb86749d5d83aeb7073d24fdb22676072d", "reason": "local control/RPC; no direct inference request"},
   "server/drivers/browser-extension-mcp.ts": {"sha256": "008fb1ca992a853eb89aad32c0c5c469704d856fd90668a7bb3be0ee2ee28265", "reason": "local control/RPC; no direct inference request"},
   "server/drivers/browser-proxy.ts": {"sha256": "4913aa7e3341b20b5d4e03d6f5e83eab46c88fcda6bd75be4717fac358982a24", "reason": "local control/RPC; no direct inference request"},
   "server/drivers/dweb-proxy.ts": {"sha256": "01ecd7a9c286042164ab53b19c7452d0cd9f8b6bae914ea36f2e82e0cdb4fcd1", "reason": "local control/RPC; no direct inference request"},

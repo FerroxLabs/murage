@@ -3,7 +3,7 @@
 // "skip the card" value, and every error path resolves to a block. Same English prompt on every engine.
 import { looksLikeSecretValue } from "../shared/browser-secret-classifier.ts";
 import { fencePageText } from "./browser-untrusted.ts";
-import { redactPageOutput, redactUrlForOutput } from "./browser-output-redaction.ts";
+import { redactPageOutput, redactPageOutputChecked, redactUrlForOutput } from "./browser-output-redaction.ts";
 import { redactSecretUrl } from "../shared/browser-secret-classifier.ts";
 
 export type CheckerLevel = "L1" | "L2" | "L3" | "floor";
@@ -64,8 +64,15 @@ export function redactUrl(raw: string): string {
     return redactSecretUrl(`${redactUrlForOutput(`${u.origin}${u.pathname}`)}${names.length ? `?${names.join("&")}` : ""}`);
   } catch { return "(unparseable url)"; }
 }
-/** Page-derived text for the model request: cleaned first, then one line, then capped (a cut can never leave half a secret). */
-const pageText = (text: string, max: number) => oneLine(redactPageOutput(text.slice(0, 20000)), max);
+/** What the checker is told in place of page text the platform withheld whole. Platform words, so they stand OUTSIDE the fence. */
+export const CHECKER_WITHHELD = "withheld by the platform: this page text could not be checked, so it is not shown";
+/** Page text for a fence, with its provenance (MAIN-RULING 2026-11-22T21:44:35Z redact-parse-error (a)): text the platform withheld
+ * whole is a platform fact and is stated outside the fence; anything the page wrote, the placeholder spelled out included, is
+ * page text and goes inside it. */
+function fencedPageText(label: string, text: string, max: number, kind: string, origin: string): string[] {
+  const { text: clean, withheld } = redactPageOutputChecked(text.slice(0, 20000));
+  return withheld ? [`${label} ${CHECKER_WITHHELD}`] : [label, fence(oneLine(clean, max), kind, origin)];
+}
 
 /** Builds the model request from whitelisted fields only; unknown properties never pass through. */
 export function buildCheckerRequest(input: CheckerInput, stage: 1 | 2): Omit<CheckerRequest, "model" | "signal"> {
@@ -81,14 +88,15 @@ export function buildCheckerRequest(input: CheckerInput, stage: 1 | 2): Omit<Che
     `level: ${a.level}`,
     `site: ${origin}`,
     `site permission: ${oneLine(input.siteGrant, 80)}`);
-  if (a.targetRole) lines.push(`target role: ${pageText(a.targetRole, 40)}`);
-  if (a.targetName) lines.push("target name (from the page):", fence(pageText(a.targetName, 300), "target-name", origin));
+  // The role is page-derived like the name: it is fenced, so a role that spells the placeholder (or anything else) is page text.
+  if (a.targetRole) lines.push(...fencedPageText("target role (from the page):", a.targetRole, 40, "target-role", origin));
+  if (a.targetName) lines.push(...fencedPageText("target name (from the page):", a.targetName, 300, "target-name", origin));
   if (a.destinationUrl) lines.push("destination (from the page):", fence(redactUrl(a.destinationUrl), "destination", origin));
   // An excerpt that is itself a secret-shaped value (a code, a card) counts as a sensitive field, whatever the field was called.
   const hidden = a.sensitiveField || (!!a.typedTextExcerpt && looksLikeSecretValue(a.typedTextExcerpt));
   if (!hidden) {
     if (typeof a.typedTextLength === "number") lines.push(`typed text length: ${Math.max(0, Math.floor(a.typedTextLength))}`);
-    if (a.level === "L3" && a.isSend && a.typedTextExcerpt) lines.push("typed text excerpt (written by the assistant, may copy page text):", fence(pageText(a.typedTextExcerpt, EXCERPT_MAX), "typed-text", origin));
+    if (a.level === "L3" && a.isSend && a.typedTextExcerpt) lines.push(...fencedPageText("typed text excerpt (written by the assistant, may copy page text):", a.typedTextExcerpt, EXCERPT_MAX, "typed-text", origin));
   } else lines.push("typed text: hidden, the field is sensitive");
   lines.push("", stage === 1 ? "Answer ALLOW or FLAG." : "Answer with the JSON object.");
   return { system: stage === 1 ? STAGE1_SYSTEM : STAGE2_SYSTEM, user: lines.join("\n"), maxTokens: stage === 1 ? 4 : 120 };
@@ -143,19 +151,31 @@ const failed = (e: unknown, stage: 1 | 2): CheckerVerdict => {
   return failure(code === "CHECKER_MODEL_NOT_ALLOWED" ? "checker_model_not_allowed" : code === "CHECKER_MODEL_NOT_PERMITTED" ? "checker_model_not_permitted" : "checker_unavailable", stage);
 };
 
+/** True when the request for this action states a platform-withheld field: the checker model then judges without the page text. */
+function judgedBlind(input: CheckerInput): boolean {
+  const a = input.action;
+  const sent = [a.targetRole, a.targetName, a.level === "L3" && a.isSend && !a.sensitiveField ? a.typedTextExcerpt : undefined];
+  return sent.some(text => !!text && redactPageOutputChecked(text.slice(0, 20000)).withheld);
+}
+/** The reason on a step the checker could not see whole. Shown to the owner like the model's own reason. */
+export const CHECKER_BLIND_REASON = "Part of the page text for this step could not be checked, so Murage asks you first.";
+/** An action judged without its page text is never allowed by the checker alone: the owner decides (the checker only makes a step stricter). */
+const neverBlindAllow = (v: CheckerVerdict, blind: boolean): CheckerVerdict => blind && v.decision === "allow" ? { decision: "ask", code: "checker_ask", stage: v.stage, reason: CHECKER_BLIND_REASON } : v;
+
 export async function checkAction(input: CheckerInput, deps: CheckerDeps): Promise<CheckerVerdict> {
   const level = input.action.level;
   if (level === "L1") return { decision: "allow", code: "checker_skipped_l1", stage: 1, reason: "Reads are not checked." };
   if (level !== "L2" && level !== "L3") return { decision: "block", code: "checker_not_for_floor", stage: 1, reason: "Floor steps are never decided by the checker." };
+  const blind = judgedBlind(input);
   try {
     if (level === "L2") {
       const s1 = parseStage1(await call(deps, 1, input));
-      if (s1 === "allow") return { decision: "allow", code: "checker_ok", stage: 1, reason: "Matches the request." };
+      if (s1 === "allow") return neverBlindAllow({ decision: "allow", code: "checker_ok", stage: 1, reason: "Matches the request." }, blind);
     }
   } catch (e) { return failed(e, 1); }
   try {
     const v = parseStage2(await call(deps, 2, input));
-    return { decision: v.decision, reason: v.reason, stage: 2, code: v.decision === "allow" ? "checker_ok" : v.decision === "ask" ? "checker_ask" : "checker_block" };
+    return neverBlindAllow({ decision: v.decision, reason: v.reason, stage: 2, code: v.decision === "allow" ? "checker_ok" : v.decision === "ask" ? "checker_ask" : "checker_block" }, blind);
   } catch (e) { return failed(e, 2); }
 }
 

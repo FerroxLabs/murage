@@ -458,7 +458,7 @@ export const fixtureTurnDiagnostics = (botId: string, threadId: string | undefin
  * for it before spawning), so a test that stopped a turn and started another
  * had `startInternalFixtureTurn`'s 5 s launch wait also covering the old
  * engine's teardown — on a loaded 48-worker box that is what timed out
- * ("routes approved image MCP requests", build host full runs). The real state
+ * ("routes approved image MCP requests", Hetzner full runs). The real state
  * to wait on is the stopped process itself: its pid is in the launch dump
  * and it must exit after SIGTERM (a CLI that does not is a genuine defect),
  * so the launch wait measures only the new launch. Bounded by the driver's

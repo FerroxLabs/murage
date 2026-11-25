@@ -43,6 +43,17 @@ export const MAX_CRASHES_IN_WINDOW = 3;
  *  off so a fault that recurs cannot become a spin. */
 export const RESTART_DELAYS_MS = [500, 2_000, 8_000];
 
+/** On macOS and Linux a utility child killed by a signal reports the signal
+ *  number as its exit code, so 2026-11-18's "exited code=6" was SIGABRT (V8 or
+ *  native code aborting), not a code the server chose: no path in server/
+ *  exits with 6. Said in the log so the next one is not read as an app code. */
+export function exitCodeNote(code, platform = process.platform) {
+  if (platform === "win32") return "";
+  if (code === 6) return " (SIGABRT: the engine process aborted in V8 or native code; the [err] lines before this say where)";
+  if (code === 9) return " (SIGKILL: killed from outside, often the system under memory pressure)";
+  return "";
+}
+
 /**
  * @typedef {{ action: "restart", delayMs: number, attempt: number }
  *   | { action: "stay-down", reason: "intentional" }

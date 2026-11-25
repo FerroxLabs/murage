@@ -1,7 +1,9 @@
-import { lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { comparable } from "./data-roots.ts";
 import { claudeNativeTarget, clearDownloads, codexNativeTarget, installClaudeNative, stageCodexNative, versionFrom, type NativeInstallProgress, type NativeRun } from "./engine-native-install.ts";
-import { FUIGO_TARGETS, fuigoVersionNewer, latestFuigoVersion, managedFuigoReceipt, nativeFuigoTarget, offeredFuigoVersion, probeNativeFuigo, qualifiedFuigoVersion, stageNativeFuigo, supportedFuigoVersion, verifyManagedFuigo, type FuigoProbe } from "./fuigo-native-update.ts";
+import { FUIGO_TARGETS, QUALIFIED_FUIGO_VERSION, fuigoVersionNewer, latestFuigoVersion, managedFuigoReceipt, nativeFuigoTarget, offeredFuigoVersion, probeNativeFuigo, qualifiedFuigoVersion, stageNativeFuigo, supportedFuigoVersion, verifyManagedFuigo, type FuigoProbe } from "./fuigo-native-update.ts";
 import { execCli } from "./procs.ts";
 
 export { versionFrom };
@@ -9,6 +11,83 @@ export { versionFrom };
  * version the engine reports ("fuigo 1.0.39" reads as "1.0.39"). Never a pinned or qualified number. */
 export async function installedFuigoVersion(root: string, instance: { instanceId: string; cli?: string; snapshot: { version?: string | null } }): Promise<string | null> {
   return (await managedFuigoReceipt(root, instance.instanceId, instance.cli))?.version ?? versionFrom(instance.snapshot.version);
+}
+
+/** The config key that keeps the saved Fuigo path a managed follow replaced, written once (FUIGOREPOINT-1020). */
+export const FUIGO_CLI_BACKUP_KEY = "cliBeforeManagedFollow";
+/** The config key naming a managed Fuigo the owner went back to with Use previous managed version: a follow leaves it. */
+export const FUIGO_ROLLBACK_HOLD_KEY = "managedRollbackHold";
+/** The version of the Fuigo this Murage ships: the bundled pin is the qualified cap (a test keeps them equal). */
+export const BUNDLED_FUIGO_VERSION = QUALIFIED_FUIGO_VERSION;
+/** True when `cli` lies inside the managed Fuigo store under `root`. */
+export function insideManagedFuigo(root: string, cli: string | undefined): boolean {
+  if (!cli || !isAbsolute(cli)) return false;
+  const inside = relative(comparable(resolve(root, "fuigo")), comparable(resolve(cli)));
+  return !!inside && !inside.startsWith("..") && !isAbsolute(inside);
+}
+async function fileSha256(path: string): Promise<string> {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
+}
+/** The executable target from the first bytes of a file, or null. */
+async function headTarget(path: string): Promise<string | null> {
+  const stat = await lstat(path);
+  if (!stat.isFile() || stat.isSymbolicLink()) return null;
+  const handle = await open(path, "r");
+  try {
+    const head = Buffer.alloc(4096);
+    const { bytesRead } = await handle.read(head, 0, head.length, 0);
+    return nativeFuigoTarget(head.subarray(0, bytesRead));
+  } finally { await handle.close(); }
+}
+/**
+ * FUIGOREPOINT-1020: a saved Fuigo path inside the managed store follows the managed current version. A managed install saves
+ * a versioned folder (fuigo/<id>/<version>-<uuid>/fuigo), and nothing moved that saved path on, so an install from an older
+ * Murage kept running its old Fuigo after Murage shipped a newer one. The current version is the newest verified managed
+ * install on disk (receipt checked, executable unchanged), or the bundled Fuigo when the newest managed one is older than it
+ * or there is none. Returns the path to save, or null to keep the saved one: a path outside the store, a managed version the
+ * owner went back to (`hold`), or nothing verified to follow.
+ */
+export async function managedFuigoFollow(root: string, id: string, cli: string | undefined, options: { bundledCli?: string; target: string; hold?: string }): Promise<string | null> {
+  // A managed install saves its path under the store's real folder, so a store reached through a link still counts.
+  const realRoot = await realpath(root).catch(() => resolve(root));
+  if (!cli || cli === options.hold || !(insideManagedFuigo(root, cli) || insideManagedFuigo(realRoot, cli))) return null;
+  const parent = await realpath(join(resolve(root), "fuigo", id)).catch(() => null);
+  const executable = options.target.startsWith("win32-") ? "fuigo.exe" : "fuigo";
+  const folders = parent ? await readdir(parent).catch(() => [] as string[]) : [];
+  const found: { cli: string; version: string }[] = [];
+  for (const folder of folders) {
+    const candidate = join(parent!, folder, executable);
+    const receipt = await managedFuigoReceipt(root, id, candidate);
+    if (receipt && receipt.target === options.target) found.push({ cli: candidate, version: receipt.version });
+  }
+  found.sort((a, b) => fuigoVersionNewer(a.version, b.version) ? -1 : fuigoVersionNewer(b.version, a.version) ? 1 : a.cli === cli ? -1 : b.cli === cli ? 1 : 0);
+  let best: { cli: string; version: string } | undefined;
+  for (const entry of found) {
+    try {
+      const receipt = await managedFuigoReceipt(root, id, entry.cli);
+      if (receipt && await headTarget(entry.cli) === options.target && await fileSha256(entry.cli) === receipt.binarySha256) { best = entry; break; }
+    } catch { /* an install that cannot be read is never followed */ }
+  }
+  const bundled = options.bundledCli ? await headTarget(options.bundledCli).then(target => target === options.target).catch(() => false) : false;
+  const next = best && (!bundled || !fuigoVersionNewer(BUNDLED_FUIGO_VERSION, best.version)) ? best.cli : bundled ? options.bundledCli! : null;
+  return next && next !== cli ? next : null;
+}
+type FollowEntry = { driver: string; config?: unknown };
+/** Every Fuigo instance's saved managed path, followed (managedFuigoFollow). The replaced path is kept once under
+ * FUIGO_CLI_BACKUP_KEY. Returns the changed instances only, or null when nothing changed, so running it again is a no-op. */
+export async function followManagedFuigoInstances<T extends FollowEntry>(instances: Record<string, T>, root: string, options: { bundledCli?: string; target: string }): Promise<Record<string, T> | null> {
+  const changed: Record<string, T> = {};
+  for (const [id, entry] of Object.entries(instances)) {
+    const config = entry.config;
+    if (entry.driver !== "fuigoAgent" || !config || typeof config !== "object" || Array.isArray(config)) continue;
+    const saved = config as Record<string, unknown>;
+    if (typeof saved.cli !== "string") continue;
+    const hold = typeof saved[FUIGO_ROLLBACK_HOLD_KEY] === "string" ? saved[FUIGO_ROLLBACK_HOLD_KEY] as string : undefined;
+    const next = await managedFuigoFollow(root, id, saved.cli, { ...options, hold });
+    if (!next) continue;
+    changed[id] = { ...entry, config: { ...saved, cli: next, [FUIGO_CLI_BACKUP_KEY]: typeof saved[FUIGO_CLI_BACKUP_KEY] === "string" ? saved[FUIGO_CLI_BACKUP_KEY] : saved.cli } };
+  }
+  return Object.keys(changed).length ? changed : null;
 }
 
 export interface ManagedEngineInstance {
@@ -22,6 +101,8 @@ export interface EngineManagementStatus {
   updateAvailable: boolean; message: string; busy: boolean;
   source?: "managed" | "bundled" | "path" | "custom" | "unknown";
   releaseSupported?: boolean; rollbackAvailable?: boolean; bundledAvailable?: boolean;
+  /** Fuigo: the version Murage ships, and whether a Fuigo the owner chose outside the managed store is older than it. */
+  bundledVersion?: string; olderThanBundled?: boolean;
   /** Set while a native install is running on this engine. */
   progress?: NativeInstallProgress;
 }
@@ -29,8 +110,9 @@ interface Dependencies {
   root: string;
   getInstance: (id: string) => Promise<ManagedEngineInstance | undefined>;
   isBusy: () => boolean;
-  /** Persist the verified path and reload providers. Must atomically refuse active turns. */
-  activate: (id: string, cli: string, expectedCli?: string | null) => Promise<void>;
+  /** Persist the verified path and reload providers. Must atomically refuse active turns. `hold` marks a managed version the
+   * owner went back to, which a managed follow then leaves; any other activation clears the mark. */
+  activate: (id: string, cli: string, expectedCli?: string | null, hold?: boolean) => Promise<void>;
   platform?: NodeJS.Platform;
   arch?: string;
   envPath?: string;
@@ -103,11 +185,15 @@ export class EngineManager {
       const source = receipt ? "managed" : instance.cli && instance.cli !== "fuigo"
         ? instance.cli === instance.bundledCli ? "bundled" : "custom" : instance.defaultSource ?? "unknown";
       const supported = this.supported(instance), releaseSupported = latestVersion ? supportedFuigoVersion(latestVersion) : undefined;
-      return { supported, installedVersion, latestVersion, source, releaseSupported, busy: this.running,
+      // A Fuigo the owner chose outside the managed store stays theirs, and Settings says plainly when it is older than the built-in one.
+      const olderThanBundled = !!(instance.bundledCli && installedVersion && (source === "custom" || source === "path" || source === "unknown")
+        && !insideManagedFuigo(this.deps.root, instance.cli) && fuigoVersionNewer(BUNDLED_FUIGO_VERSION, installedVersion));
+      return { supported, installedVersion, latestVersion, source, releaseSupported, busy: this.running, bundledVersion: BUNDLED_FUIGO_VERSION, olderThanBundled,
         updateAvailable: !!(latestVersion && installedVersion && newer(latestVersion, installedVersion)),
         rollbackAvailable: !!(receipt?.previousManagedCli && await managedFuigoReceipt(this.deps.root, id, receipt.previousManagedCli)),
         bundledAvailable: !!instance.bundledCli,
-        message: !supported ? "Native Fuigo update isolation is not qualified on this platform. The selected engine is unchanged."
+        message: olderThanBundled ? `This Fuigo is version ${installedVersion}, older than the built-in Fuigo ${BUNDLED_FUIGO_VERSION}. With it, Murage can't confirm your approval settings.`
+          : !supported ? "Native Fuigo update isolation is not qualified on this platform. The selected engine is unchanged."
           : latestVersion && installedVersion && newer(installedVersion, latestVersion) ? `You have Fuigo ${installedVersion}, which is newer than this Murage version offers. It stays as it is.`
           : releaseSupported === false ? "The latest Fuigo release is outside this Murage version’s compatibility range. Keep the current engine."
           : source === "custom" || source === "path" || source === "unknown" ? "Your existing Fuigo selection is preserved. Choose Use managed Fuigo to opt in to verified native updates; no Node.js or npm is required."
@@ -247,11 +333,11 @@ export class EngineManager {
     catch (error) { throw new Error("Claude Code could not be installed. Check your connection and try again.", { cause: error }); }
   }
 
-  private async activateFuigo(id: string, cli: string, expectedCli: string | null): Promise<void> {
+  private async activateFuigo(id: string, cli: string, expectedCli: string | null, hold = false): Promise<void> {
     const current = await this.instance(id);
     if ((current.cli ?? null) !== expectedCli) throw new Error("The selected Fuigo engine changed while verification ran. Refresh Settings before changing it again.");
     if (this.deps.isBusy()) throw new Error("Tasks started while verifying Fuigo. Finish them before activating the update; the selected engine is unchanged.");
-    try { await this.deps.activate(id, cli, expectedCli); }
+    try { await (hold ? this.deps.activate(id, cli, expectedCli, true) : this.deps.activate(id, cli, expectedCli)); }
     catch { throw new Error("Fuigo activation did not complete. Check the selected engine in Settings before retrying; no task was retried automatically."); }
   }
   async rollback(id: string): Promise<EngineManagementStatus> {
@@ -264,7 +350,7 @@ export class EngineManager {
       const current = instance.driverKind === "fuigo" ? await managedFuigoReceipt(this.deps.root, id, instance.cli) : null;
       if (!current?.previousManagedCli) throw new Error("No previous verified managed Fuigo version is available.");
       await verifyManagedFuigo(this.deps.root, id, current.previousManagedCli, `${this.deps.platform ?? process.platform}-${this.deps.arch ?? process.arch}`, this.deps.fuigoProbe);
-      await this.activateFuigo(id, current.previousManagedCli, expectedCli); this.running = false; return this.status(id);
+      await this.activateFuigo(id, current.previousManagedCli, expectedCli, true); this.running = false; return this.status(id);
     } finally { this.running = false; }
   }
   async useBundled(id: string): Promise<EngineManagementStatus> {

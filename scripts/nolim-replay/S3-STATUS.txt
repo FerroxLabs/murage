@@ -1,6 +1,6 @@
 S3 round 3 — Tier 1 qualification; integrated/live G-NL remains GATE-PENDING
 
-Design: /work/build/bld-nolim-s3r2/DESIGN-S3-r3.md.
+Design: /root/fuigo-builds/swarm-b/bld-nolim-s3r2/DESIGN-S3-r3.md.
 Base: 83a3a611c. Resumed implementation: 14c386260.
 Only server/drivers/**, scripts/no-limits-live/** and scripts/nolim-replay/**
 changed. The interrupted implementation was preserved, not reset.
@@ -30,7 +30,7 @@ Q4: Host provision owns two containers and one internal Docker network with
      path observed; direct egress and DNS blocked. M91–M95 rejected; M93 is a
      timeout-report fixture. M95's DNS flag pin rejects the real provision even
      on hosts where default DNS also fails on an internal network.
-Q5: Shared corpus /work/build/_private/nolim-cards/mac-select-v2.jsonl
+Q5: Shared corpus /root/fuigo-builds/swarm-b/_private/nolim-cards/mac-select-v2.jsonl
      was found on resume. Source read only; identical staged bytes mounted read
      only in network-none container. Header excluded: 140 rows, all unavailable
      input, five input shapes mapped to existing J3 rows. No policy verdict or

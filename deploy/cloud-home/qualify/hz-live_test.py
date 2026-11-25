@@ -294,7 +294,7 @@ RUNNING = dict(SRV, id=88, name="mcq-builder-x", status="running", labels={"mcq"
 
 
 class ImageEnv:
-    """The image subcommand with SSH, rsync, openssl, signing and the build host API all mocked."""
+    """The image subcommand with SSH, rsync, openssl, signing and the Hetzner API all mocked."""
 
     def __init__(self, d, pub_body=None, typ="cx33", lane=None, prod=False, live=None):
         import os
@@ -687,7 +687,7 @@ class ControlJwkTest(unittest.TestCase):
 
 
 class VerifyWorld:
-    """Stateful fake build host for verify-image; `events` is the ordered list of everything the flow did."""
+    """Stateful fake Hetzner for verify-image; `events` is the ordered list of everything the flow did."""
     def __init__(self, labels=None, check_rc=0, fail_at=None, gone_after=0):
         self.events, self.fail_at, self.check_rc, self.gone_after = [], fail_at, check_rc, gone_after
         self.image_labels = dict({"murage/role": "image", "murage/image-kind": "unverified", "murage/env": "prod"} if labels is None else labels)

@@ -126,7 +126,7 @@ import ts from "typescript";
 
 it('T1-static inventories every browser reader reference and document save', () => {
   const referenceHashes: Record<string, string> = {
-  "server/browser-control.ts": "8e85c58e1f95aef4486311d7f014d832539261743c5edf8a10797104415dbb68",
+  "server/browser-control.ts": "17a5601eb8392c3f3d4c6386835bd00f6e58a18f589e9a9c006edf8c06c8d66f",
   "server/browser-engine-policy.ts": "7776e4d80a4735fc5708281a6f5016e64e3aa2389651da6241230bac5efdc6c1",
   "server/browser-extension-engine.ts": "23bcad396a8a049a02fba68bda0346b4c03ee785ba3aa2ef59fcc4f0353a8ef6",
   "server/browser-extension-service.ts": "83466a2e04bc9bc62b6d416b4c8e27e059f760d0dd803ca61c5a5abdfe04ba73",

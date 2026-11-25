@@ -179,7 +179,7 @@ it.each(["c11", "early", "confirmed", "uncertain", "duplicate", "retained", "ref
     // Q1: an exact native write is confirmed, so the owner is never told to send what the engine already received.
     expect(errors[0].memoryNote).toBeUndefined(); expect(JSON.stringify(after)).not.toContain(RESEND_LINE);
   }
-  expect(JSON.stringify(after)).not.toContain("could not start this reply");
+  expect(JSON.stringify(after)).not.toMatch(/could not start this reply|couldn't start this reply/);
   expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain("re-preparing");
 }, 60000);
 
@@ -486,7 +486,7 @@ it.each(["roomconfirmed", "roomuncertain"])("c11-review-3 room resend refusal pr
   expect(errors[0].tool).toEqual({ name: engineLimitLine("c11Fixture"), ok: false });
   if (variant === "roomuncertain") { expect(errors[1].memoryNote).toBe("resend"); expect(errors[1].tool.name).toBe(RESEND_LINE); expect(errors[1].from?.botId).toBe(bot.id); const asked = messages.filter(m => m.role === "user"); expect(asked).toHaveLength(1); expect(errors[1].resendOf).toEqual({ messageId: asked[0].id, threadId: room.threadId, botId: bot.id }); }
   else expect(errors[1].tool.name).toContain("The original message was submitted.");
-  expect(JSON.stringify(messages)).not.toContain("could not start this reply");
+  expect(JSON.stringify(messages)).not.toMatch(/could not start this reply|couldn't start this reply/);
   expect(rows().filter(r => r.event === "spawn")).toHaveLength(2);
   expect(rows().filter(r => r.event === "prompt")).toHaveLength(1);
 }, 45000);

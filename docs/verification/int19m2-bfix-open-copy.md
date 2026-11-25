@@ -17,11 +17,11 @@ The repository generators cannot clear the six NEW catalog/review checks from th
 
 ## Verification
 
-All tests and generator commands ran through `/work/fuigo-builds/tools/it-remote.sh`, with `IT_JOB=int19m2-Bfix`, `IT_W=/work/build/int19m2-B/wt` and `IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`. Its local fallback mounted shared dependencies and fixture tools read-only. Containers had no network and ran as an unprivileged user; at most two ran concurrently. No live application/data, Mac, paid service or provider was used.
+All tests and generator commands ran through `/root/fuigo-builds/tools/it-remote.sh`, with `IT_JOB=int19m2-Bfix`, `IT_W=/root/fuigo-builds/swarm-b/int19m2-B/wt` and `IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`. Its local fallback mounted shared dependencies and fixture tools read-only. Containers had no network and ran as an unprivileged user; at most two ran concurrently. No live application/data, Mac, paid service or provider was used.
 
 The full red-table Vitest files plus `scripts/copy-review.test.mjs` and `src/locales/copy-review-regressions.test.ts` report 522 passed and 13 failed assertions (535 total). The failed checks exactly match the previous report: six NEW copy/catalog checks and seven BASE checks. The separate offline runner again passes its ten structural controls and fake Ask case, then fails the settings PATCH with HTTP 400, retaining the eighth BASE classification. There are no additional failed checks. The isolated fake-engine fixture passes Doctor, create, send, settle and bot reply, and closes its owned server/data.
 
-Raw JSON, command wrapper, logs, per-record provenance and rejected-candidate details are retained at `/work/build/int19m2-Bfix/`. The original red table remains at `/work/build/int19m2-B/evidence/red-table.md`.
+Raw JSON, command wrapper, logs, per-record provenance and rejected-candidate details are retained at `/root/fuigo-builds/swarm-b/int19m2-Bfix/`. The original red table remains at `/root/fuigo-builds/swarm-b/int19m2-B/evidence/red-table.md`.
 
 `dev/1019-int19m2` must not be advanced: six NEW checks remain. Clearing them requires real accepted reviews for the exact live strings and merged lint files, followed by the existing rebuild and acceptance commands.
 

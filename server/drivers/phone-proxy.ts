@@ -14,7 +14,6 @@ type Json = Record<string, unknown>;
 type Device = { serial: string; state: string; model: string; connection: "usb" | "network" | "emulator" };
 type UiNode = { text: string; description: string; id: string; className: string; bounds: [number, number, number, number] };
 
-const MAX_ADB_OUTPUT = 16 * 1024 * 1024;
 const PACKAGE = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
 const COMPONENT = /^([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)\/\S+$/;
 const SAFE_TEXT = /^[A-Za-z0-9 _.,@-]+$/;
@@ -68,8 +67,8 @@ export async function runAdb(args: string[], options: { binary?: boolean; timeou
   if (!adb) throw new Error("Android platform tools are unavailable. Reopen Murage or install adb.");
   return new Promise((resolve, reject) => {
     const child = spawn(adb, [...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    const stdout = collectProxyUpstream("phone", child.stdout, MAX_ADB_OUTPUT);
-    const stderr = collectProxyUpstream("phone", child.stderr, MAX_ADB_OUTPUT);
+    const stdout = collectProxyUpstream("phone", child.stdout);
+    const stderr = collectProxyUpstream("phone", child.stderr);
     void stdout.catch(() => child.kill());
     void stderr.catch(() => child.kill());
     const timer = setTimeout(() => {

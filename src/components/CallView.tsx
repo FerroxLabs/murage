@@ -54,7 +54,7 @@ import type { NativeClipPlayer } from "@/lib/tts/native-player";
 import { approvalAnswer } from "@/lib/call-answers";
 import { answerCallQuestion, CALL_ENDPOINT_LONG_MS, CALL_ENDPOINT_MS, HeldLine, LONG_ENDPOINT_HOLD_MS, holdsOn, joinsTurn, micEndStep, turnTiming, VAD_ENDPOINT_LONG_MS, VAD_ENDPOINT_MS, MIN_SPEECH_SHARE, talkOverVerdict, UtteranceWords } from "@/lib/call-turns";
 import { callTrace, wordCount } from "@/lib/call-trace";
-import { freshAuthSpoken, type FreshAuthCode } from "@/lib/fresh-auth";
+import { freshAuthCodeOf, freshAuthSpoken, type DeliveryCode, type FreshAuthCode } from "@/lib/fresh-auth";
 import { coveredForCall, FOR_CALL_OFFER, FOR_CALL_SPOKEN } from "@/lib/call-grant";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { dropOldAckCues } from "@/lib/tts/ack-cue";
@@ -1710,7 +1710,8 @@ export function Call({
               allowedForCall.current = true;
               void sayThenListen(FOR_CALL_SPOKEN);
             },
-            onError: (error: string, code?: FreshAuthCode) => {
+            onError: (error: string, answerCode?: FreshAuthCode | DeliveryCode) => {
+              const code = freshAuthCodeOf(answerCode);
               const pending = askedApproval.current;
               if (
                 !alive.current ||
@@ -2136,7 +2137,8 @@ export function Call({
         botName: bot.name,
         // not saved: ask aloud rather than leave the work waiting on a card
         // nobody mentions
-        onError: (_error: string, code?: FreshAuthCode) => {
+        onError: (_error: string, answerCode?: FreshAuthCode | DeliveryCode) => {
+          const code = freshAuthCodeOf(answerCode);
           const pending = askedApproval.current;
           if (!alive.current || currentCall() !== bot.id || pending?.requestId !== requestId) return;
           pending.submitted = false;

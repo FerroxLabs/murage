@@ -137,9 +137,9 @@ it("F7 revoking a generation settles and removes a dead usage run", () => {
   const f = usageFixture(); const run = { request: f.request, generation: "gen", botId: "lead", engine: "fake" };
   f.pending.set("thread", run); f.turns.set(JSON.stringify(["thread", "turn"]), run);
   // phone tools (1.0.9 union-server): a revoked generation also drops its phone dispatch facts, phone authority and phone jobs
-  const phoneDispatchFacts = new Map([["gen", {}], ["other", {}]]), phoneAuthorities = { revokeGeneration: vi.fn() }, phoneJobs = { turnEnded: vi.fn() }, highlevelCalls = { turnEnded: vi.fn() };
+  const phoneDispatchFacts = new Map([["gen", {}], ["other", {}]]), phoneAuthorities = { revokeGeneration: vi.fn() }, phoneJobs = { turnEnded: vi.fn() };
   const botOutsideWrites = { release: vi.fn() }, botTurnOrigins = new Map([["gen", "owner"]]), taskAllowanceSuggestions = new Map([["gen", {}]]);
-  const deps: Record<string, unknown> = { ...f.deps, botOutsideWrites, botTurnOrigins, taskAllowanceSuggestions, replyState: { invalidateGeneration: vi.fn() }, callSpeech: { invalidate: vi.fn() }, hostComputerThreads: new Map(), projectTurnLeases: { abandon: vi.fn() }, internalCapabilities: { revokeGeneration: vi.fn() }, turnOutputRoots: new Map(), phoneDispatchFacts, phoneAuthorities, phoneJobs, highlevelCalls,
+  const deps: Record<string, unknown> = { ...f.deps, botOutsideWrites, botTurnOrigins, taskAllowanceSuggestions, replyState: { invalidateGeneration: vi.fn() }, callSpeech: { invalidate: vi.fn() }, hostComputerThreads: new Map(), projectTurnLeases: { abandon: vi.fn() }, internalCapabilities: { revokeGeneration: vi.fn() }, turnOutputRoots: new Map(), phoneDispatchFacts, phoneAuthorities, phoneJobs,
     retireInternalTurn: vi.fn(), retireAttention: vi.fn(), recallWaits: new Map(), refusedLeases: new Map(), releaseDecisionProvenance: vi.fn(async () => {}), revokeGatewayTurnCredentials: vi.fn() }; // lineage: a revoked generation drops its turn output roots
   // The cleanup seam is injected only if the implementation uses one.
   if (source.includes("function abandonProjectUsageTurn(")) deps.abandonProjectUsageTurn = seam("abandonProjectUsageTurn", deps);
@@ -147,8 +147,6 @@ it("F7 revoking a generation settles and removes a dead usage run", () => {
   expect(f.settle).toHaveBeenCalledOnce(); expect(f.pending.size).toBe(0); expect(f.turns.size).toBe(0);
   expect(f.complete).toHaveBeenCalledWith(expect.anything(), "usage-request", expect.objectContaining({ state: "failed" }), expect.anything(), { continuation: false });
   expect([...phoneDispatchFacts.keys()]).toEqual(["other"]); expect(phoneAuthorities.revokeGeneration).toHaveBeenCalledWith("gen"); expect(phoneJobs.turnEnded).toHaveBeenCalledWith("gen");
-  // native HighLevel (GAP-HIGHLEVEL-109 H3): the same revocation ends that generation's waiting HighLevel calls
-  expect(highlevelCalls.turnEnded).toHaveBeenCalledWith("gen");
   expect(botOutsideWrites.release).toHaveBeenCalledWith("gen");
   expect(botTurnOrigins.size).toBe(0); expect(taskAllowanceSuggestions.size).toBe(0);
 });

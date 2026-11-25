@@ -1,7 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$Extension)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-$prior='C:\Users\seand\AppData\Local\Temp\murage-b20-real-main-20260914-025600'
+$prior='C:\Users\exampleuser\AppData\Local\Temp\murage-b20-real-main-20260914-025600'
 $candidate=Join-Path $prior 'candidate-d70fe5a145d0'
 if($Extension -ne (Join-Path $prior 'extension-20260914-035100')){throw 'Unexpected extension root'}
 $deadline='2026-09-14T04:21:55.6960312Z'

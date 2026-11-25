@@ -93,6 +93,18 @@ describe("LASTRESORT §6.2, §7.5a and §7.6 mounted ACP", () => {
     if (branch === "RETRY") expect(sessions().filter(row => row.method === "session/load").length).toBeGreaterThan(1);
     if (branch !== "LOAD") expect(sessions().at(-1).method).toBe("session/new");
   }, 30_000);
+  it("T-ACP-OPTIONAL-BROWSER: the reply survives a lost browser even when the native list has no ready browser", async () => {
+    vi.stubEnv("FAKE_ACP_MCP_LIST", '{"browser":"failed"}');
+    const records = await create();
+    const sent = await instance!.adapter.sendTurn(fixtureMountTurn({
+      threadId: "r2-mounted", cwd: root, text: "hello", warmIdentity: { botId: "r2-bot", audience: "owner" },
+      integrations: { browser: { command: join(root, "missing-browser"), args: [], env: {} } },
+    }));
+    expect(await records.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+    expect(wire.some(row => row.method === "session/prompt")).toBe(true);
+    expect(records.events.filter(event => event.type === "item.started" && event.itemType === "tool" && event.toolKind === "notice"))
+      .toEqual([expect.objectContaining({ title: "Murage couldn't use the browser for this reply." })]);
+  });
   it("T-ACP-READINESS-REFUSES", async () => {
     vi.stubEnv("FAKE_ACP_MCP_LIST", "all:error");
     const records = await create();

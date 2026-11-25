@@ -8,7 +8,7 @@ import { closeSync, constants, createReadStream, fstatSync, lstatSync, mkdirSync
 import { basename, dirname, join, relative, resolve, sep, isAbsolute } from "node:path";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, MAX_RESTORABLE_PATH_BYTES, type BackupSkipReason } from "../shared/backup-limits.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
+import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation, type SetAsideRow } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { claimCopyScratch } from "./settle-copy.ts";
 import { safeBackupProgress, type BackupProgressReport } from "../shared/backup-progress.mjs";
@@ -473,7 +473,14 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       if (names.length) manifest.names = names;
       if (skippedCount) { manifest.skipped = skipped; manifest.skippedCount = skippedCount; }
       mkdirSync(join(stage, "state"), { recursive: true, mode: 0o700 });
-      manifest.database = await installation.snapshotDatabase(join(stage, "state", "messages.db"), options.onProgress);
+      // A conversation row the backup could not read is left out and listed with the other items a backup leaves out (1.0.22): the
+      // manifest's database entry keeps its exact shape, and the list names the conversation and the message.
+      const { setAside, memoryAside, ...database } = await installation.snapshotDatabase(join(stage, "state", "messages.db"), options.onProgress) as Awaited<ReturnType<OfflineInstallation["snapshotDatabase"]>> & { setAside?: SetAsideRow[]; memoryAside?: string[] };
+      manifest.database = database;
+      // A memory row that failed memory's own proof is left out of the copy and named; every other memory row is kept.
+      for (const item of memoryAside ?? []) skip(`messages.db/memory/${item}`, "unreadable");
+      for (const row of setAside ?? []) skip(`messages.db/conversation ${row.thread || "?"}/message ${row.id || "?"}`, "unreadable");
+      if (skippedCount) { manifest.skipped = skipped; manifest.skippedCount = skippedCount; }
       if (manifest.database.status === "copied") add("messages.db", manifest.database.bytes, manifest.database.sha256, "messages.db");
       else manifest.missing.push("messages.db");
       safeBackupProgress(options.onProgress)("ledger");

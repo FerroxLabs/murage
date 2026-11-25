@@ -770,7 +770,9 @@ test("04 RED2C: a turn whose own memory capture rolls the thread checkpoint is n
   const saves: Array<{ url: string; status: number }> = [];
   page.on("response", (r) => { if (["PUT", "POST", "PATCH"].includes(r.request().method()) && /workspace|artifacts/.test(r.url())) saves.push({ url: new URL(r.url()).pathname, status: r.status() }); });
   try {
-    const checkpoint = () => db.prepare("SELECT r.id,r.version,r.state FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE r.kind='checkpoint' AND s.kind='conversation' AND s.owner_key=? ORDER BY r.version DESC LIMIT 1").get(bot.threadId) as { id: string; version: number; state: string } | undefined;
+    // The thread's current checkpoint is its family head. Each roll publishes a new record (id family:sequence, version 1) and moves
+    // the head; the record it replaces is retained, still active, for the citations it backs (63b6d99a11, consolidate.ts).
+    const checkpoint = () => db.prepare("SELECT h.sequence,r.id,r.version,r.state FROM memory_checkpoint_heads h JOIN memory_scopes s ON s.id=h.scope_id JOIN memory_records r ON r.id=h.record_id AND r.version=h.record_version WHERE h.state='active' AND s.kind='conversation' AND s.owner_key=?").get(bot.threadId) as { sequence: number; id: string; version: number; state: string } | undefined;
     const pendingJobs = () => Number((db.prepare("SELECT count(*) AS n FROM memory_jobs WHERE status NOT IN ('complete','cancelled','failed')").get() as { n: number }).n);
     note(`memory mode: ${(await api("/api/memory/status")).mode}`);
     await openApp(page);
@@ -788,10 +790,12 @@ test("04 RED2C: a turn whose own memory capture rolls the thread checkpoint is n
     const workspace = await workspaceOf(bot);
     await say(page, bot.name, "Second turn: this one's own capture rolls the checkpoint.");
     await expect.poll(() => existsSync(`${gate}.waiting`), { timeout: 20_000 }).toBe(true);
-    await expect.poll(() => checkpoint()?.version, { timeout: 30_000 }).toBeGreaterThan(selected.version);
-    const archived = db.prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(selected.id, selected.version) as { state: string };
-    note(`checkpoint ${selected.id} v${selected.version} → ${archived.state}; now v${checkpoint()!.version} (turn held at the engine handshake)`);
-    expect(archived.state).toBe("archived");
+    await expect.poll(() => checkpoint()?.sequence, { timeout: 30_000 }).toBeGreaterThan(selected.sequence);
+    const rolled = checkpoint()!;
+    const retained = db.prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(selected.id, selected.version) as { state: string };
+    note(`checkpoint head ${selected.sequence} (${selected.id}) → ${rolled.sequence} (${rolled.id}); the replaced record is ${retained.state} (turn held at the engine handshake)`);
+    expect(rolled.id).not.toBe(selected.id);
+    expect(rolled.state).toBe("active");
     // The engine's shell writes a note during the held turn (fixture stand-in).
     mkdirSync(join(workspace, "outputs"), { recursive: true });
     writeFileSync(join(workspace, "outputs", "roll-notes.md"), "# Roll notes\n\nWritten during the held turn.\n");

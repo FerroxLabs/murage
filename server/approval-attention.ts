@@ -276,6 +276,14 @@ export function cardAttention(deps: AttentionDeps) {
       for (const closed of cleanup.get(threadId) ?? []) if (closed.waits.has(requestId) || closed.requests.has(requestId)) return closed;
       return undefined;
     },
+    /** The scope (live or closing) holding this exact card. A card key names one approval, so no other generation matches. */
+    holderOfCard(threadId: string, key: AttentionKey): AttentionScope | undefined {
+      const id = keyOf(key);
+      const scope = live.get(threadId);
+      if (scope?.cards.has(id)) return scope;
+      for (const closed of cleanup.get(threadId) ?? []) if (closed.cards.has(id)) return closed;
+      return undefined;
+    },
     /** request.opened: a generation/request-owned execution wait (watchdog, browser, driver), no owner attention. */
     acquireWait(scopeIn: AttentionScope | undefined, requestId: string): Transition {
       const scope = asScope(scopeIn);

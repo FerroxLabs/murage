@@ -1,0 +1,7 @@
+# T13 activity log report
+- server/browser-extension-activity.ts (new): BrowserActivityStore, configureBrowserActivity, recordBrowserActivity(input) => boolean. Fixed field allowlist (at, botId, bindingId, taskId, site, action, target, fromPage, level, decision, decidedBy, outcome, textLength, routine); typed text kept as a length only; control and bidi characters stripped; ids validated; lines capped at 512 bytes; 2,000 lines per binding (compacted after 100 over); 30 days (read filter plus prune at start); deleteBinding(bindingId) for the service to call.
+- server/index.ts: store at DATA_DIR/browser-extension/activity, GET /api/bots/:id/browser-extension/activity?bindingId=&taskId= behind mayApprove (desktop or paired phone), GET only, scoped to the bot.
+- server/route-policy.ts: companion route entry, and conversationSubject covers the path so a hidden bot is 404 for the phone.
+- server/data-dir-inventory.ts: "activity" added to BROWSER_EXTENSION_FILES (folder stays excluded and restore-refused).
+- Tests: server/browser-extension-activity.test.ts (15). Red: module not found on base. Green: 52/52 across activity, data-dir-inventory, route-policy, route-policy-api, installation-restore-preparation. Both tsc clean. Mac data-safety 6/6.
+- Open: nothing calls recordBrowserActivity yet, and nothing calls deleteBinding when a binding is removed (service.ts is another lane's). Note: mkdirSync recursive on /proc/x loops forever in Node; avoid in tests.

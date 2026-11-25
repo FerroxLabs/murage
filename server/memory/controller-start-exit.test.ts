@@ -12,17 +12,19 @@ import { captureSource } from "./capture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MEMORY_IDLE_SWEEP_MS, MemoryWorkerController } from "./worker-controller.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { setObserveSink, resetObserveWindows } from "../observe.ts";
+import { resetWorkerLog } from "./worker-log.ts";
 
 vi.mock("node:child_process",async importOriginal=>({...await importOriginal<typeof import("node:child_process")>(),fork:vi.fn()}));
 class Helper extends EventEmitter {
-  constructor(private readonly starts:boolean){super();}
+  constructor(private readonly starts:boolean,private readonly exit:[number|null,string|null]=[1,null]){super();}
   send=vi.fn((message:{type?:string})=>{
     if(message.type==="init")setTimeout(()=>this.emit("message",{type:"initialised"}),0);
     return true;
   });
   kill=vi.fn(()=>{this.emit("exit",null,"SIGKILL");return true;});
   disconnect(){this.emit("exit",0);}
-  boot(){setTimeout(()=>this.starts?this.emit("message",{type:"ready"}):this.emit("exit",1,null),0);}
+  boot(){setTimeout(()=>this.starts?this.emit("message",{type:"ready"}):this.emit("exit",...this.exit),0);}
 }
 let helpers:Helper[];
 let starts:number[];
@@ -72,4 +74,27 @@ it("the helper gets the server's data directory and home, so loading the config 
   expect(options.env.MURAGE_DATA_DIR).toBe(DATA_DIR);
   expect(process.env.HOME).toBeTruthy();
   expect(options.env.HOME).toBe(process.env.HOME);
+});
+
+// TRIAGE-1122 5: the start-failed line named no cause for the death. It now carries the child's exit code and signal (fixed words only).
+// The helper's stderr is NOT logged here: it can quote an error message that carries job content, which cannot be guaranteed away.
+function startFailedLine(exit:[number|null,string|null]){
+  const lines:string[]=[];resetWorkerLog();resetObserveWindows();setObserveSink(line=>lines.push(line));
+  vi.mocked(fork).mockImplementation(()=>{const next=new Helper(false,exit);helpers.push(next);next.boot();return next as unknown as ReturnType<typeof fork>;});
+  return {lines,run:async()=>{captureSource(database(),{id:"source",threadId:"thread",kind:"text",speaker:"owner",outcome:"recorded",text:"The smoke round is two."});controller.start();await vi.advanceTimersByTimeAsync(10);setObserveSink();return lines.find(line=>line.includes("cause=MEMORY_WORKER_START_FAILED"));}};
+}
+it("a helper that exits with code 3 before ready logs code=3, and the back-off is unchanged",async()=>{
+  const probe=startFailedLine([3,null]);
+  const line=await probe.run();
+  expect(line).toContain("code=3");
+  expect(line).toContain("signal=none");
+  expect(controller.error).toBe("MEMORY_WORKER_START_FAILED");
+  expect(helpers).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(MEMORY_IDLE_SWEEP_MS-1000);
+  expect(helpers).toHaveLength(1);
+});
+it("a helper killed by a signal before ready logs the signal name and no code",async()=>{
+  const line=await startFailedLine([null,"SIGKILL"]).run();
+  expect(line).toContain("code=none");
+  expect(line).toContain("signal=SIGKILL");
 });

@@ -79,7 +79,7 @@ Original conflict markers and combined diffs are retained in `../evidence/`. Eve
 
 ## Verification
 
-Checks use `/work/fuigo-builds/tools/it-remote.sh` with `IT_JOB=int19m5`, the integration worktree (or isolated detached base) as `IT_W`, `IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`, and network none. At most two job containers run concurrently, with a host-load wait above 60. Fixtures use temporary homes/data and fake providers; no live app, billable service or Mac is used.
+Checks use `/root/fuigo-builds/tools/it-remote.sh` with `IT_JOB=int19m5`, the integration worktree (or isolated detached base) as `IT_W`, `IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`, and network none. At most two job containers run concurrently, with a host-load wait above 60. Fixtures use temporary homes/data and fake providers; no live app, billable service or Mac is used.
 
 The requested memory prelude tool is unavailable; `.ijfw/memory/` is absent.
 
@@ -159,7 +159,7 @@ Evidence is retained in the job's `../evidence/` directory, including all raw JS
 
 Cleanup removes job-created dependency directories, dist/native outputs, TypeScript build metadata, Python bytecode and duplicate disposable planning output, retaining their evidence copies. Tracked `build/` assets remain intact. Exact owner-label checks confirm no job containers remain; no shared cache or other job is removed. Cleanup results are recorded in `cleanup.log`.
 
-The push is a normal non-force push to `HEAD:refs/heads/dev/1019-int19m5` in the shared bare hub `/work/mb-105-git.git`, with an ancestor check and a matching remote SHA check. This worktree owns that hub ref, so the push may report that it is already up to date. No history is rewritten on push.
+The push is a normal non-force push to `HEAD:refs/heads/dev/1019-int19m5` in the shared bare hub `/root/mb-105-git.git`, with an ancestor check and a matching remote SHA check. This worktree owns that hub ref, so the push may report that it is already up to date. No history is rewritten on push.
 
 ## Exact NEW failing identities
 

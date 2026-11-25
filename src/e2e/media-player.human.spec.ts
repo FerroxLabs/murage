@@ -79,7 +79,7 @@ const FILES = [
   { path: `${ROOT}/outputs/notes.txt`, name: "notes.txt" },
   // a real file of a playable type, but not this conversation's: the resolver
   // must refuse it at the first question and the chip must stay a chip
-  { path: "/Users/alex/Music/private.mp3", name: "private.mp3" },
+  { path: "/Users/exampleuser/Music/private.mp3", name: "private.mp3" },
 ];
 const MARKDOWN = [
   `The take is at [take](${ROOT}/outputs/broken.wav).`,

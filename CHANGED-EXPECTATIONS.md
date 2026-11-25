@@ -31,7 +31,7 @@ runtime configuration key, environment lookup or deployment value changed.
 
 # Changed expectations — cfix-askcards
 
-Binding: `/work/build/askcards1/RULING-askcards-hl-MAIN.md`.
+Binding: `/root/fuigo-builds/swarm-b/askcards1/RULING-askcards-hl-MAIN.md`.
 
 No expectation is loosened.
 
@@ -52,7 +52,7 @@ The following is the complete reviewed record from hlint1; MAIN item 2 retains t
 
 # Changed expectations
 
-Binding sources: MAIN hlint1 rulings in the user instruction; `/work/build/hls0/F0.2.4-FROZEN.txt`; `/work/build/hls0/RULING-hlf-r2-MAIN.md`.
+Binding sources: MAIN hlint1 rulings in the user instruction; `/root/fuigo-builds/swarm-b/hls0/F0.2.4-FROZEN.txt`; `/root/fuigo-builds/swarm-b/hls0/RULING-hlf-r2-MAIN.md`.
 
 No expectation is relaxed. Journal fixture property names adopt `approvalJournal`/`callJournal` under MAIN (3). Fixtures supplying a plain approval journal now supply the frozen RPC journal subclass, required by the single integrated host. Existing assertions are retained unless enumerated below.
 
@@ -163,3 +163,63 @@ Test implementation owner: ci-reds-ff3a-g. Product contract and native release q
 - `server/host-power.test.ts`, "reuses one caged ACP wrapper across three non-mounted turns with no integrations": a separate real-cage control requires one wrapper, one initialize/authenticate handshake, three successful prompts and one idle entry between turns. It verifies stable engine identity and the physical wrapper cmdline, no redundant session/load, and confirmed cleanup on disposal. No integration is supplied on any turn.
 
 Both native cases carry `// MAIN RULING 1115-ACP-MOUNTED-SINGLEUSE`. No other lifecycle, policy or platform expectation is changed. The anchored-reader diagnostic preserves refusal codes and guards; its Linux diagnostic unit does not qualify the macOS packaged job (B3 remains open).
+
+## redact2-1020 (fix/1020-redact2-n2)
+- server/transcript-page.test.ts "an old marker keeps its field without blanking its owner-only row siblings": the owner-only read of an
+  assistant text row stored as ONLY «redacted» now expects REPLY_WITHHELD (owner-display.ts), not the bare marker. Sean reported those
+  bubbles in a routine thread (1.0.20 pre9); the sibling field (removedText) assertion and the shared-audience assertions are unchanged.
+
+## userbug-sealed-1022 (fix/1022-userbug-sealed-fable)
+- server/drivers/cause22-owner-caps-relay-1021.test.ts "R6 owner turn": the two replies that meet a pending memory check on the owner's
+  running turn are now delivered whole and in order (1024 bytes and 19 MiB); before, each was held to the bound and answered with the
+  -32000 "still checking" error. Reason: owner report (turns refused or tools dead while a memory check never settled); memory readiness
+  never refuses or drops the owner's own turn. The no-seal and no-refusal assertions are unchanged, and the hold-then-drop at the bound is
+  still asserted for every other turn (server/drivers/mount-pending-defer-1020.test.ts REVKILL2 bound).
+- server/drivers/cause22-owner-mount-budget-1021.test.ts "W22-1 owner turn": the 200 tool results (over 20 MiB) that meet a pending memory
+  check on the owner's running turn are now delivered whole (dropped 0, no "was dropped" log line, more than 20 MiB reaches the engine);
+  before, each was held to the bound and answered with the -32000 error. Same reason as R6 above. Unchanged: no refusal, no seal, no stop
+  line, the budget does not degrade, nothing of the results is retained in the ledger, the turn completes.
+
+## learnhold-1022 (fix/1022q-learnhold-opus, MAIN-RULING 2026-11-25T04:52:20Z learning-send-transports :56)
+Ruling: the PIP Fuigo/Grok prompt file write and CLI spawn move out of the learning gate's held section; the gate commits its release
+first, then the write and the launch follow in the same synchronous turn. learning-send-transports.test.ts stays byte-unchanged.
+- server/drivers/headless-text-only.retry-ledger.test.ts "B: prompt write and spawn stay inside the gate" is now "B: the gate commits
+  first; the prompt write and spawn follow outside it": at the spawn the transaction is closed (was open) and the gate has released once.
+  Unchanged: the send emit runs inside BEGIN IMMEDIATE with the prompt file still empty; a refused gate writes and launches nothing.
+- "21: real gate COMMIT failure owns its child" (4 rows) is now "21: real gate COMMIT failure launches no child": the gate's COMMIT runs
+  before the spawn, so a failed COMMIT launches nothing and leaves no root (before: the child ran and was stopped). Unchanged: the error
+  is memory-send-commit-failed and the attempt counts as released.
+- "21: failed COMMIT and unconfirmed stop retain the credential root" is now "21: failed gate COMMIT with an unconfirmed stop leaves no
+  credential root: nothing ran with it": no child ever held the credentials, so the root is removed.
+- "5: after retry spawn, rollback and reopen ..." is now "5: at the retry's release, ...": the crash fixture sits on the retry's gate
+  COMMIT (now before its spawn) instead of the first COMMIT after the second spawn. Unchanged: the first run's journal survives the
+  rollback and the reopen; the reconcile result is the same.
+- server/memory/pip-paid-calls.test.ts "24: $kind paid cap at $window" (ASTRA int-1022q-n1 50c4d674fc High, integrator int-1022q-n1):
+  the three gate windows key on the learning gate's own release COMMIT (inside gate.send, durable charge already 3), not on the first
+  COMMIT after the spawn, which is now a later transaction. "after-spawn-before-commit" is now "after-commit-before-spawn" (COMMIT
+  lands, the spawn then crashes); "live-commit-failure" now expects no spawn for that attempt (was 1): a failed COMMIT launches
+  nothing. New: at that COMMIT no process of the attempt exists yet. "after-commit" still replays the first COMMIT after
+  the gate's COMMIT and the spawn (child recorded). Unchanged: injection reached, uncertain-transport state with its
+  transport, durable charge 3 after replay, and at most one release per paid call across five restart passes.
+
+---
+
+## 1.0.22 idle DO LESS (q1022-idlequiet-opus; owners: this lane = expectations + witnesses, MAIN = rulings)
+
+Authority: MAIN-RULING 2026-11-25T05:54:59Z (idle DO LESS), 06:57:58Z (rewrite superseded idle relief/start rows as
+CHANGED-EXPECTATION with an active-minute assert), 07:09:02Z (boot recovery on an active minute).
+
+- `server/io-budget-slice-admission.test.ts` "owed capture waits on an idle minute ..." and "overlapping capture slices ...": were
+  idle capture admission; now idle refuses the capture ticket and the same admission (BG ceiling, copy reservation, the minute's
+  closing guard) is asserted on an active minute.
+- `server/io-budget-slice-admission.test.ts` "BOOT_RECOVERY yields to owner CRUD ...": was refused for the rest of the minute after
+  owner CRUD; now admitted on that active minute under the BG cap (07:09:02Z). Yielding to a held turn, a turn start and typing is
+  unchanged (the it.each above it).
+- `server/memory/relief-all-subsystems-1022.test.ts` otherWritersSpendTheMinute: the owner-away shapes run on ACTIVE minutes (relief
+  still drains every family there). 11 of 18 rows GREEN on active minutes; 7 rows (W-RELIEF-ALL :287, W-BACKLOG-ALL :324,
+  W-FIELD-MINUTE foreground :358, W-DISPATCH-ORDER :394, W-ONE-DOOR-GATE :448, W-RELIEF-JUDGE :496, W-RELIEF-METER :533) assert idle
+  labels or an idle-only IoBudget of their own and are NOT yet rewritten (OPEN).
+- `server/memory/idle-relaunch.test.ts`: NOT rewritten (OPEN). 22 rows assert the idle helper start that DO LESS removes; the
+  active-minute flip alone leaves 23/24 red (the file's fixtures are the idle rule). The "stop, no lost receipt" rows are not a
+  receipt loss: they pass 2/2 in isolation on the tip; in the full file they fail with RangeError (Maximum call stack) at
+  idle-relaunch.test.ts:405, a Date.now spy left by an earlier failing row.

@@ -1,7 +1,7 @@
 {
   "name": "murage",
   "private": true,
-  "version": "1.0.19",
+  "version": "1.0.22",
   "description": "A local-first chat app for running a team of AI agents.",
   "homepage": "https://github.com/FerroxLabs/murage",
   "repository": {
@@ -152,7 +152,6 @@
     "mermaid": "12.1.0",
     "onnxruntime-web": "1.24.3",
     "parse5": "8.0.1",
-    "posthog-js": "^1.415.6",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { TURN_RELEASE_WAIT_MS } from "./turn-release-wait.ts";
 import { existsSync } from "node:fs";
 const hasIngress = existsSync(new URL("./consuming-turn-ingress.ts", import.meta.url));
 // b18 has no final ingress module. Assert the missing release contract inside
@@ -69,7 +70,8 @@ it("seals before supervisor terminal control and suppresses queued replies", asy
   expect(terminal).toHaveBeenCalledExactlyOnceWith(terminalProxyRefusal(1)); expect(envelope).not.toHaveBeenCalled();
 });
 // red-at-4df086541: a missing ingress acknowledgement is terminal too.
-it.each(["verdict", "acknowledgement"])("seals on the five-second %s deadline", async stage => {
+// cause14 (1.0.21): the deadline is TURN_RELEASE_WAIT_MS, not 5 s; a late answer inside it delivers (turn-release-slow-verdict-1021.test.ts).
+it.each(["verdict", "acknowledgement"])("seals on the %s wait deadline", async stage => {
   vi.useFakeTimers();
   const seal = vi.fn(), terminal = vi.fn(), close = vi.fn();
   const never = () => new Promise<never>(() => {});
@@ -78,7 +80,7 @@ it.each(["verdict", "acknowledgement"])("seals on the five-second %s deadline", 
     envelope: stage === "acknowledgement" ? never : async () => {}, seal, terminal, close,
   });
   const result = expect(release.release(1, frame)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
-  await vi.advanceTimersByTimeAsync(5000); await result;
+  await vi.advanceTimersByTimeAsync(TURN_RELEASE_WAIT_MS); await result;
   expect(seal).toHaveBeenCalledTimes(1); expect(terminal).toHaveBeenCalledTimes(1); expect(close).toHaveBeenCalledTimes(1);
 });
 
@@ -139,7 +141,7 @@ it.each(["end", "exit", "close", "disconnect", "error"])("T-PROXY-SUPERVISOR-LOS
 // red-at-4df086541: no parent-owned deadline existed when the child vanished silently.
 it("T-PROXY-SUPERVISOR-LOSS missing acknowledgement seals server permit", async () => {
   vi.useFakeTimers(); const f = fixture(), ingress = createConsumingIngress(f.binding, "proxy");
-  ingress.issue(frame); await vi.advanceTimersByTimeAsync(5000);
+  ingress.issue(frame); await vi.advanceTimersByTimeAsync(TURN_RELEASE_WAIT_MS);
   expect(ingress.sealed).toBe(true); expect(f.refusals).toBe(1);
 });
 // red-at-4df086541: unvalidated JSON, unknown ids and duplicate ids passed through.
@@ -286,7 +288,8 @@ it.each(proxyRoles)("T-PROXY-RELEASE %s upstream failure is terminal even with a
   const release = createProxyTurnRelease(role, { verdict: async () => { throw new Error("upstream"); }, envelope: async value => ingress.deliver(value, write),
     seal: ingress.seal, terminal, close: vi.fn() });
   await expect(release.release(1, frame)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
-  expect(f.refusals).toBe(1); expect(write).not.toHaveBeenCalled(); expect(terminal).toHaveBeenCalledExactlyOnceWith(terminalProxyRefusal(1));
+  // MACMOUNTS-1020: the terminal port also receives the code word of the refusing check (here the failed verdict call).
+  expect(f.refusals).toBe(1); expect(write).not.toHaveBeenCalled(); expect(terminal).toHaveBeenCalledExactlyOnceWith(terminalProxyRefusal(1), "verdict-failed");
 });
 // red-at-4df086541: cancellation previously carried text and preceded sealing.
 it("T-PROXY-SUPERVISOR-LOSS cancellation seals first and contains only a bound id", () => {
@@ -329,11 +332,12 @@ it("T-PROXY-RELEASE stale asynchronous verdict suppresses a queued envelope", as
   await expect(pending).rejects.toThrow("MEMORY_CONTEXT_REVOKED"); expect(write).not.toHaveBeenCalled(); expect(f.refusals).toBe(1);
 });
 // red-at-4df086541: staging could grow without bound before requesting any verdict.
-it("T-PROXY-RELEASE bounded pending queue seals synchronously", async () => {
+// changed for MAIN-RULING cause22-no-transport-caps (2026-11-22): the pending queue has no frame count or byte bound (this row used to
+// assert a seal at the 65th waiting frame).
+it("T-PROXY-RELEASE a pending queue of any length does not seal", () => {
   const seal = vi.fn(), release = createProxyTurnRelease("proxy", { verdict: () => new Promise(() => {}), envelope: async () => {}, seal, terminal: vi.fn(), close: vi.fn() });
-  const requests = Array.from({ length: 65 }, () => release.release(1, frame).catch(() => {}));
-  expect(seal).toHaveBeenCalledOnce(); expect(release.sealed).toBe(true);
-  await Promise.all(requests);
+  for (let n = 0; n < 65; n++) void release.release(1, frame).catch(() => {});
+  expect(seal).not.toHaveBeenCalled(); expect(release.sealed).toBe(false);
 });
 
 import { fileURLToPath } from "node:url";

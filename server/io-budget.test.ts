@@ -180,7 +180,11 @@ describe("io-budget", () => {
     }finally{db.close();removeTempDirSync(root);}
   });
 
-  it("closes the -shm descriptor on unregister and holds a fresh one after re-instrumentation",()=>{
+  it("lets go of the -shm descriptor on unregister (kept on POSIX while a connection is on the shm, closed once none is) and holds at most one per shm inode",()=>{
+    // 1.0.22 fix1022-revoke-ioerr: on POSIX a close of ANY descriptor on the shm drops every WAL lock this process's other connections
+    // hold on it (the checkpointer outlives the server handle), so the release keeps it while a connection is on the shm and closes it
+    // only once none is; Windows locks are per handle.
+    const keep=process.platform!=="win32";
     const root=mkdtempSync(join(tmpdir(),"murage-io-fdleak-")),path=join(root,"fixture.db");
     const open=(fd:number|undefined)=>{if(fd===undefined)return false;try{fstatSync(fd);return true;}catch{return false;}};
     const openFds=()=>{let n=0;for(let fd=3;fd<1024;fd++)if(open(fd))n++;return n;};
@@ -193,9 +197,10 @@ describe("io-budget", () => {
       const fd=reader.fd();expect(open(fd)).toBe(true);
       const unregister=budget.registerByteSource("database:"+path,reader);
       unregister();unregister();
-      expect(open(fd)).toBe(false);expect(reader.fd()).toBeUndefined();
+      expect(open(fd)).toBe(keep);expect(reader.fd()).toBeUndefined();
       expect(()=>reader()).not.toThrow();expect(reader.fd()).toBeUndefined();
-      // instrumentDatabase hands back the release: closing it frees exactly the one held shm descriptor.
+      // instrumentDatabase hands back the release: it frees exactly the one held shm descriptor once no connection is left on the shm
+      // (first is closed here). CHANGED-EXPECTATIONS 1.0.22 r6 (int-1022q-n1 n4:6394): r2-r5 kept it on POSIX for the process life.
       const release1=instrumentDatabase(first,budget);
       first.prepare("INSERT INTO data VALUES(?)").run(Buffer.alloc(10));
       first.close();
@@ -212,9 +217,10 @@ describe("io-budget", () => {
       // this descriptor scan never sees.
       const instrumented=openFds();
       release2();release2();
-      expect(openFds()).toBe(instrumented-1);
+      expect(openFds()).toBe(keep?instrumented:instrumented-1);
       second.close();
-      expect(openFds()).toBeLessThanOrEqual(base);
+      // POSIX: one kept descriptor for the new shm inode SQLite created for this connection, and no more
+      expect(openFds()).toBeLessThanOrEqual(keep?base+1:base);
     }finally{try{second?.close();}catch{/* closed */}try{first.close();}catch{/* closed */}removeTempDirSync(root);}
   });
 });

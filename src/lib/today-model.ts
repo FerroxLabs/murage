@@ -30,6 +30,7 @@ import { isCloudHome } from "@/lib/cloud-workspace";
 import { FLUX_NOT_READY_COPY } from "../../shared/provider-error";
 import type { Connectivity } from "@/lib/connectivity";
 import type { Routine, RoutineRun } from "@/lib/routines";
+import { routineErrorText } from "@/lib/routine-error";
 import type { EngineHealthRow, FluxHealthState, HealthLevel, TodayTag, TodayTone } from "@/components/shell/shell-contract";
 
 /** What a tag does when pressed; TodayView maps each to a store action. */
@@ -156,15 +157,19 @@ export interface NeedsTagState {
 
 /** The head's Needs you tag, on the same conditions as NeedsBlock: "Nothing needs you" in green only when the count
  *  is fresh, 0, and no Worth a look line exists. Unknown (on a surface that reads it) or stale: the checking words in
- *  the checking tone. Count 0 with Worth a look lines: those lines, counted, in the "info" tone. */
+ *  the checking tone. Count 0 with Worth a look lines: "Worth a look" in the "info" tone, never a count the Needs you
+ *  page does not show. */
 export function needsTag(count: number | undefined, state: NeedsTagState = {}): TodayTagModel | null {
   const lines = state.lines ?? 0;
   if (count === undefined) return state.reads ? { key: "needs", tone: "info", text: t("ux.l2a.today.needsChecking"), action: "needs" } : null;
   if (state.stale) return { key: "needs", tone: "info", text: t("ux.l2a.today.needsChecking"), action: "needs" };
-  const n = count > 0 ? count : lines;
-  const text = n === 0 ? t("ux.l2a.tag.needsNone") : n === 1 ? t("ux.l2a.tag.needsOne") : t("ux.l2a.tag.needsMany", { n });
+  // One source of truth: "N things need you" is the Needs you page's own count, never the Worth a look lines Today
+  // adds (1.0.20 owner walk: Today said "5 things need you" while Needs you read "Needs you (0)"). Nothing owed but
+  // something worth a look reads "Worth a look" in the info tone and opens nothing: those lines are on Today itself.
+  if (count === 0 && lines > 0) return { key: "needs", tone: "info", text: t("ux.l2a.today.needs.look") };
+  const text = count === 0 ? t("ux.l2a.tag.needsNone") : count === 1 ? t("ux.l2a.tag.needsOne") : t("ux.l2a.tag.needsMany", { n: count });
   // Nothing owed and nothing worth a look is good news, so it reads in the "ok" tone (1.0.18).
-  return { key: "needs", tone: n === 0 ? "ok" : "info", text, action: "needs" };
+  return { key: "needs", tone: count === 0 ? "ok" : "info", text, action: "needs" };
 }
 
 export type DetailedBlock = "needs" | "cost" | "day" | "routines" | "working" | "done";
@@ -334,7 +339,7 @@ export function doneToday(runs: readonly RoutineRun[], botNames: Readonly<Record
     const at = run.finishedAt ?? run.scheduledFor;
     if (!Number.isFinite(at) || !sameDay(at, now)) continue;
     const ok = run.status === "completed";
-    const error = firstLine(run.error ?? "");
+    const error = firstLine(routineErrorText(run.error) ?? "");
     const output = firstLine(run.output ?? "");
     const line: TodayText | null = ok ? (output ? { raw: output } : null) : error ? { raw: error } : { key: "ux.l2a.today.look.failedGeneric" };
     const threadId = run.executionThreadId ?? run.threadId;

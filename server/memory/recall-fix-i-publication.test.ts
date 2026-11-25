@@ -31,7 +31,8 @@ it('capture and its exact checkpoint debt survive reopen through the existing ma
   const db = database();
   expect(db.prepare('SELECT status,cursor FROM memory_jobs WHERE id=?').get(w.id)).toMatchObject({ status: 'complete', cursor: w.totalBytes });
   expect(debt(w.id)).toMatchObject({ scope_id: w.scopeId, subject_type: 'system', subject_id: 'checkpoint-pending', state: 'granted' });
-  expect(JSON.parse(String(debt(w.id)!.intent))).toEqual({ jobId: w.id, sourceId: w.sourceId, revision: w.revision });
+  // memv2 E3 adds the thread and the debt's start (JSON fields); the three fields an older build reads are unchanged
+  expect(JSON.parse(String(debt(w.id)!.intent))).toEqual({ jobId: w.id, sourceId: w.sourceId, revision: w.revision, threadId: expect.any(String), from: expect.any(Number) });
   const sql = "SELECT id FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type='system' AND subject_id='checkpoint-pending' AND rowid>? ORDER BY rowid LIMIT 2";
   expect(db.prepare(sql).all(0)).toEqual([{ id: 'checkpoint-debt:' + w.id }]);
   expect(db.prepare('EXPLAIN QUERY PLAN ' + sql).all(0).map(row => row.detail).join(' ')).toContain('USING INDEX memory_bindings_subject');

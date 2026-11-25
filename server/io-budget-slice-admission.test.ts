@@ -14,15 +14,19 @@ function watching() {
   budget.start(); budgets.push(budget); return budget;
 }
 it("a fresh fixture uses the admission reader's physical floor and still counts later writes", () => {
-  let blocks = 200_000;
+  // 1.0.21 B1/I8 (memv2-D): the admission ledger counts the application meter only (no OS counter is an input), so the fixture's floor and
+  // its later writes are meter bytes; the OS counter moving alone is asserted to count nothing.
+  let blocks = 200_000, meter = 200_000 * 512;
   const budget = new IoBudget({ read: () => ({ at: 30_000, fsWriteBlocks: 0, cpuMicros: 0 }), isIdle: () => false });
   budgets.push(budget);
-  Reflect.set(budget, "admissionRead", () => ({ at: 30_000, fsWriteBlocks: blocks, cpuMicros: 0 }));
+  Reflect.set(budget, "admissionRead", () => ({ at: 30_000, fsWriteBlocks: blocks, meterBytes: meter, cpuMicros: 0 }));
   budget.resetAdmissionForFixture();
   const ticket = budget.admit("BG", 64 * 1024);
   expect(ticket).not.toBeNull();
   budget.settle(ticket!, 0);
   blocks += 2048;
+  expect(budget.admissionState().total, "the OS counter alone counts nothing").toBe(0);
+  meter += 2048 * 512;
   expect(budget.admissionState().total).toBeGreaterThanOrEqual(1024 * 1024);
 });
 it("one measured backfill slice is repaid before another periodic writer starts", () => {
@@ -92,8 +96,13 @@ it("BOOT_RECOVERY yields to owner CRUD while automatic health and presence leave
   expect(ticket, "automatic polling does not manufacture owner activity").not.toBeNull();
   budget.settle(ticket!, 0);
   budget.noteOwnerRequest("POST", "/api/bots");
-  expect(budget.admit("BOOT_RECOVERY", 64 * 1024), "owner CRUD has priority").toBeNull();
-  expect(() => recovery.run(() => true)).toThrow(BgDeferred);
+  // CHANGED-EXPECTATION (MAIN-RULING 2026-11-25T07:09:02Z, idle DO LESS no starvation; was: owner CRUD refuses recovery for the rest of the
+  // minute): owner activity makes the minute ACTIVE, and on an active minute boot recovery is admitted under the BG cap; it still yields
+  // while a turn streams or starts and while the owner types (the it.each above)
+  const active = budget.admit("BOOT_RECOVERY", 64 * 1024);
+  expect(active, "an active minute after owner CRUD admits recovery under the BG cap").not.toBeNull();
+  budget.settle(active!, 0);
+  expect(recovery.run(() => budget.currentSource())).toBe("memory-boot-recovery");
   recovery.close();
 });
 
@@ -104,19 +113,21 @@ it("BOOT_RECOVERY writes repay the existing periodic debt before other idle work
   expect(budget.deferredForMs("owner-turn")).toBe(0);
 });
 
-it("owed capture alone may drain idle, within the existing idle write and copy ceiling", () => {
+// CHANGED-EXPECTATION (MAIN-RULING 2026-11-25T05:54:59Z idle DO LESS; was: an owed capture alone drains on an idle minute within the idle
+// ceiling): on an idle minute no capture ticket is given; the owed capture drains on the next ACTIVE minute under the BG minute ceiling.
+it("owed capture waits on an idle minute and drains on the next active minute (idle DO LESS)", () => {
   const budget = watching();
   expect(budget.admit('BG', 61_440, 61_440)).toBeNull();
   budget.withSource('memory-capture', () => {
+    expect(budget.admit('BG', 61_440, 61_440), 'idle DO LESS: no capture ticket on an idle minute').toBeNull();
+  });
+  budget.setIsIdle(() => false);
+  budget.withSource('memory-capture', () => {
     const ticket = budget.admit('BG', 61_440, 61_440);
-    expect(ticket, 'already-owed capture has an idle admission path').not.toBeNull();
+    expect(ticket, 'an active minute admits the owed capture').not.toBeNull();
     budget.settle(ticket!, 4096, { salt: 'fixture', frame: 1 }, 4096);
   });
   expect(budget.admissionState()).toMatchObject({ bg: 4096, debt: 4096, reserved: 0 });
-  budget.withSource('memory-capture', () => {
-    expect(budget.admit('BG', 1024 * 1024, 0), 'idle ceiling is unchanged').toBeNull();
-  });
-  expect(budget.withSource('memory-worker', () => budget.admit('BG', 61_440))).toBeNull();
 });
 
 it.each([[2_600_960, 9_900_032, 40_960], [2_486_272, 10_022_912, 36_864]])(
@@ -141,17 +152,19 @@ it.each([[2_600_960, 9_900_032, 40_960], [2_486_272, 10_022_912, 36_864]])(
     expect(budget.admit('BG', 61_440, 61_440)).not.toBeNull();
   },
 );
-it('overlapping idle capture slices reserve copy room and preserve the closing guard',()=>{
+// CHANGED-EXPECTATION (MAIN-RULING 2026-11-25T05:54:59Z idle DO LESS; was: overlapping idle capture slices): idle refuses the capture; on an
+// active minute the slices reserve their copy room and the closing guard (the minute's last 5 s) still refuses.
+it('overlapping capture slices: refused idle, on an active minute they reserve copy room and preserve the closing guard',()=>{
  const budget=watching();
+ budget.withSource('memory-capture',()=>{expect(budget.admit('BG',200_000,200_000),'idle DO LESS').toBeNull();});
+ budget.setIsIdle(()=>false);
  budget.withSource('memory-capture',()=>{
   const first=budget.admit('BG',200_000,200_000)!;expect(first).not.toBeNull();
-  expect(budget.admit('BG',200_000,200_000)).toBeNull();
   budget.settle(first,4096,{salt:'fixture',frame:1},4096);
   vi.advanceTimersByTime(56_000);
-  expect(budget.admit('BG',61_440,61_440)).toBeNull();
+  expect(budget.admit('BG',61_440,61_440),'the closing guard').toBeNull();
   vi.advanceTimersByTime(4000);
   const next=budget.admit('BG',61_440,61_440)!;expect(next).not.toBeNull();
   budget.settle(next,0);
  });
- expect(budget.admissionState()).toMatchObject({bg:0,debt:4096,reserved:0});
 });

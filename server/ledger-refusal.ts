@@ -5,9 +5,9 @@ import { SEND_NOTICE_ENGLISH, type NativeTurnNoticeCode } from "../shared/send-n
 import { afterCommit, inTxScope, onRollback } from "./tx-scope.ts";
 import { beginRefusalTurn, bindRefusalTurn, inFenceCall, refusalForVerdict, type CloseResult, type FencedRefusal } from "./drivers/engine-input.ts";
 
-import { LEDGER_REFUSAL_LINE } from "./ledger-refusal-line.ts";
+import { BUDGET_REFUSAL_LINE, LEDGER_REFUSAL_LINE, REFUSAL_KIND_HEADER, refusalLineFor } from "./ledger-refusal-line.ts";
 // Defined in a leaf module: a spawned proxy needs the line and must not load this module's lease graph (engine-input.ts) to get it.
-export { LEDGER_REFUSAL_LINE };
+export { BUDGET_REFUSAL_LINE, LEDGER_REFUSAL_LINE, REFUSAL_KIND_HEADER, refusalLineFor };
 const refusalReasons = new Set(["own-flag", "tombstone", "thread-deny", "deny-line", "deny-range", "watermark", "footprint",
   "deny-session", "session-forgotten", "deny-memory", "scope-deny", "murage-anchor", "door-epoch", "pack-ineligible",
   "no-lineage", "thread-not-ready", "pending", "footprint-wide", "lookup-error", "not-built", "retained-over", "retained-budget"]);
@@ -55,7 +55,8 @@ export function createLedgerRefusal(identity: ConsumingIdentity, ports: LedgerRe
       if (inTxScope()) { afterCommit(persist); onRollback(persist); return; }
       persisted = true;
       try { ports.settle("memory-refused", first!); } catch { quarantine(); }
-      try { ports.present(LEDGER_REFUSAL_LINE); } catch { quarantine(); }
+      // cause22: a bookkeeping refusal (the release budget) never says context became unavailable
+      try { ports.present(refusalLineFor(first)); } catch { quarantine(); }
     };
     persist();
   };

@@ -115,7 +115,7 @@ it("the owner can add a version only to a partition library that exists", () => 
 });
 
 it("every harness route that reads the library asks for the calling turn's key", () => {
-  // Wiring check in the 0.1.61 style: the routes build their library actor
+  // Wiring check in the lane T2 style: the routes build their library actor
   // from the turn's own thread, never from the bot id alone.
   const source = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
   expect(source).toContain("const actor = { kind: \"bot\" as const, botId: imageLibraryKey(internalClaim.botId, internalClaim.threadId) };");

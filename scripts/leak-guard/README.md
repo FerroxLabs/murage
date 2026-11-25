@@ -1,7 +1,7 @@
 # Shared public-tree leak guard
 
 Run `node scripts/leak-guard/check.mjs --root . --base 0bcda6c9e`.
-This thin adapter invokes `/work/fuigo-builds/shared/leak-guard.sh` with the
+This thin adapter invokes `/root/fuigo-builds/shared/leak-guard.sh` with the
 same directory's `public-leak-patterns.txt`. There is no repository pattern
 list or alternate matcher. Do not edit the shared pair or create exclusions.
 

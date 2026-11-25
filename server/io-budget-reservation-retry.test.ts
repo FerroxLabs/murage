@@ -31,9 +31,10 @@ it("an idle capture behind a live reservation with idle room left retries at the
 
 it("an idle capture whose idle allowance is already spent waits for the minute, even beside a live reservation", () => {
   const w = world();
-  w.idle(true);
-  const spent = w.capture(() => w.budget.admit("BG", IDLE_ROOM, 0))!;
-  expect(spent, "the whole idle allowance can be admitted").not.toBeNull();
+  // MAIN 2026-11-22 idle-capture: the captures' own settled bytes no longer spend the idle allowance for the next capture, so the
+  // allowance is spent here by another background writer's bytes (admitted while the owner was active), which still close it.
+  const spent = w.budget.withSource("memory-worker", () => w.budget.admit("BG", IDLE_ROOM, 0))!;
+  expect(spent, "the whole idle allowance can be written by another source").not.toBeNull();
   w.budget.settle(spent, IDLE_ROOM);
   // An unrelated holder reserved while the owner was active; its settle cannot return idle room that is already spent.
   w.idle(false);

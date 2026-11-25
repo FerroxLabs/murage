@@ -61,6 +61,7 @@ import { ASK_STOP_NOTE, ASK_STOP_PROMPT, ASK_STOP_REASON, askStopUnavailableLine
 import { buildMcpServers } from "./mcp-mounts.ts";
 import { providerCloseDeadlineMs } from "./child-teardown.ts";
 import { createStopGate, GateStopped, type GateEntry, type StopGate } from "./stop-gate.ts";
+import { appendTurnText } from "./bounded-lines.ts";
 
 const DRIVER_KIND = "museCode";
 const ENGINE = "Muse Code";
@@ -1163,7 +1164,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
               emit({ type: "content.delta", threadId, turnId: active.turnId, itemId: item.itemId, streamKind: "assistant_text", delta: text.slice(streamed.length) });
             }
             if (text) {
-              active.reply += `${text}\n`;
+              active.reply = appendTurnText(active.reply, `${text}\n`);
               emit({ type: "item.completed", threadId, turnId: active.turnId, itemId: item.itemId, itemType: "assistant_text", origin: "engine", text });
             }
           } else if (item.kind === "reasoning") {

@@ -12,7 +12,8 @@ export const METER_COPY_PREFIX = "murage-meter-";
 export const METER_COPY_MARKER = "owner.json";
 export const METER_COPY_FILE = "engine-exclusion.node";
 const NAME = /^murage-meter-[A-Za-z0-9]{6}$/;
-const MAX_SWEEP_REMOVALS = 64;
+// METERDL: up to 1.0.19 every worker left a folder (one install held 554); one start clears that backlog, and each removal is four small calls.
+export const MAX_SWEEP_REMOVALS = 1024;
 const MAX_MARKER_BYTES = 512;
 
 export interface CopyMarker { v: 1; pid: number; start: string | null }

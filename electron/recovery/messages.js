@@ -24,6 +24,8 @@
   // sentence names the one on screen (audit IPC-L3).
   const OWNER = "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.";
   const OWNER_BACKUP_MODE = "Another copy of Murage may still be open. Quit every other Murage window, then choose Return to workspace.";
+  // "This is my computer, continue" found a record it could not rule out (lock files untouched).
+  const SET_ASIDE_REFUSED = "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.";
   const SLOW = "That took too long, so Murage stopped it and nothing was changed. Try again; a large backup can take several minutes.";
   const TOO_BIG = "This backup is larger than Murage can restore in one go. Contact support with the diagnostics folder.";
   const PLACE = "That location can't be used. Choose a new file name in a folder outside Murage's data folder.";
@@ -68,7 +70,8 @@
     [REVIEW_CHANGED, ["REVIEW_STATE_CHANGED", "RESTORE_CANDIDATE_IDENTITY_CHANGED", "RESTORE_ORIGINAL_IDENTITY_CHANGED"]],
     [TOOL, ["BACKUP_UNAVAILABLE", "AGE_TOOL_PLATFORM_UNQUALIFIED", "AGE_TOOL_UNVERIFIED", "AGE_PROCESS_CLOSE_UNCONFIRMED"]],
     [BUSY, ["RECOVERY_BUSY", "SNAPSHOT_EPOCH_CLOSED", "BACKUP_BUSY", "BACKUP_WORK_ACTIVE", "BACKUP_ACTIVITY_UNAVAILABLE", "BACKUP_RELEASE_UNCONFIRMED", "BACKUP_PREPARE_UNCONFIRMED"]],
-    [OWNER, ["RECOVERY_OWNERSHIP_REQUIRED", "LEASE_FOREIGN_HOST", "UNTRUSTED_RECOVERY_SENDER", "RESTORE_ORIGINAL_UNAVAILABLE"]],
+    [OWNER, ["RECOVERY_OWNERSHIP_REQUIRED", "LEASE_FOREIGN_HOST", "LEASE_BUSY", "LEASE_CHILD_BUSY", "UNTRUSTED_RECOVERY_SENDER", "RESTORE_ORIGINAL_UNAVAILABLE"]],
+    [SET_ASIDE_REFUSED, ["LEASE_TAKEOVER_REFUSED", "LEASE_RECOVERY_BUSY", "LEASE_INVALID", "LEASE_UNREADABLE", "LEASE_OWNER_UNVERIFIED", "LEASE_IO"]],
     [SLOW, ["AGE_TOOL_TIMEOUT", "RECOVERY_WORKER_TIMEOUT", "RECOVERY_INPUT_TIMEOUT", "RECOVERY_CAPTURE_TIMEOUT"]],
     [LIMITS, ["INVALID_ARCHIVE_LIMITS", "INVALID_AGE_PROCESS_LIMITS", "INVALID_SNAPSHOT_LIMITS", "INVALID_BACKUP_LIMITS", "INVALID_BACKUP_BUDGET"]],
     [DEFAULT, ["BACKUP_CREDENTIAL_POLICY_REQUIRED", "INVALID_RECOVERY_REQUEST", "INVALID_RECOVERY_RESULT", "RECOVERY_OPERATION_FAILED"]],

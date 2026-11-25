@@ -584,7 +584,7 @@ function mergeSharedDirectory(source: string, dest: string): boolean {
     for (const name of readdirSync(source)) conflict = mergeSharedDirectory(join(source, name), join(dest, name)) || conflict;
     return conflict;
   }
-  if (!info.isFile()) throw new Error("history contains an entry that cannot be merged safely");
+  if (!info.isFile()) throw new Error("history contains an entry that cannot be merged");
   try { copyFileSync(source, dest, fsConstants.COPYFILE_EXCL); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;

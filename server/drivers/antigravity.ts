@@ -771,6 +771,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           entry.finish({ ok: false, stopReason: "memory-refused", final: true, leaseMode: true, releaseAfter: fenced.teardown });
           return;
         }
+        if (ok && !stopRequested) mountRelay?.reportUnavailable(() => base(threadId, turnId), emit);
         // the one ending: an asked Stop is the stopped pair, a dispose nobody asked is the engine closing, read at emission
         entry.finish({
           ok,

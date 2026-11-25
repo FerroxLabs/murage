@@ -14,7 +14,6 @@ import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
-import { HighLevelReviewValues, highlevelReviewId } from "@/components/HighLevelReviewValues";
 import { approvalTitle, isAcpPermissionKind, isPendingApprovalMessage, knownToolAction, pendingOf, toolLabel, whyLine } from "@/lib/pending-approval";
 import { focusApprovalPanel } from "@/lib/approval-focus";
 import { plainApproval, usePlainApprovalReady } from "@/lib/plain-approval";
@@ -379,8 +378,6 @@ export function ApprovalCard({
         )}
       </details>
 
-      {/* a HighLevel change: every value it would send, read live from the open review (never stored in the chat) */}
-      {!settled && highlevelReviewId(card.requestId) && <HighLevelReviewValues reviewId={highlevelReviewId(card.requestId)!} />}
       {card.botAuthority && <BotCallFields authority={card.botAuthority} />}
 
       {/* one reason sentence: the held note only when there is no why-line */}
@@ -440,8 +437,7 @@ function ApprovalWaitingRow({ bot, message }: { bot?: Bot; message: Message }) {
   usePlainApprovalReady();
   const who = bot?.name ?? message.from?.name ?? t("ux.l1.outcome.botFallback");
   const title = approvalTitle(pendingOf(message), who);
-  const highlevel = highlevelReviewId(message.card?.requestId);
-  const row = (
+  return (
     <div data-approval-waiting={message.card?.requestId} className="flex w-full max-w-[840px] items-center gap-2.5 rounded-xl border border-accent/40 bg-card py-1.5 pl-3.5 pr-1.5 text-[14px]">
       <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
       <span role="status" className="min-w-0 flex-1 text-ink">{t("ux.l1.card.waiting", { bot: who })}</span>
@@ -456,7 +452,4 @@ function ApprovalWaitingRow({ bot, message }: { bot?: Bot; message: Message }) {
       </button>
     </div>
   );
-  // a HighLevel change: its values show here too, read live from the open review (HL-S2-WRITES (a)3)
-  if (!highlevel) return row;
-  return <div className="w-full max-w-[840px]">{row}<HighLevelReviewValues reviewId={highlevel} /></div>;
 }

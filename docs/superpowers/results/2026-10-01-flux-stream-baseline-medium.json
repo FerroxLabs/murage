@@ -1,0 +1,374 @@
+{
+  "mode": "acceptance",
+  "base": "ws://127.0.0.1:8787/v1",
+  "sim": true,
+  "results": [
+    {
+      "id": "P01",
+      "status": "pass",
+      "ms": 1365
+    },
+    {
+      "id": "P02",
+      "status": "pass",
+      "ms": 1314
+    },
+    {
+      "id": "P03",
+      "status": "pass",
+      "ms": 1300
+    },
+    {
+      "id": "P04",
+      "status": "pass",
+      "ms": 27091
+    },
+    {
+      "id": "P05",
+      "status": "pass",
+      "ms": 8542
+    },
+    {
+      "id": "A01",
+      "status": "pass",
+      "ms": 6
+    },
+    {
+      "id": "A02",
+      "status": "pass",
+      "ms": 2
+    },
+    {
+      "id": "A03",
+      "status": "pass",
+      "ms": 1
+    },
+    {
+      "id": "A04",
+      "status": "pass",
+      "ms": 1
+    },
+    {
+      "id": "A05",
+      "status": "pass",
+      "ms": 2
+    },
+    {
+      "id": "A06",
+      "status": "excluded",
+      "ms": 0
+    },
+    {
+      "id": "A07",
+      "status": "pass",
+      "ms": 1
+    },
+    {
+      "id": "V01",
+      "status": "pass",
+      "ms": 1
+    },
+    {
+      "id": "V02",
+      "status": "pass",
+      "ms": 1375
+    },
+    {
+      "id": "V03",
+      "status": "pass",
+      "ms": 1312
+    },
+    {
+      "id": "V04",
+      "status": "pass",
+      "ms": 1621
+    },
+    {
+      "id": "V05",
+      "status": "pass",
+      "ms": 1324
+    },
+    {
+      "id": "V06",
+      "status": "pass",
+      "ms": 1329
+    },
+    {
+      "id": "V07",
+      "status": "pass",
+      "ms": 1339
+    },
+    {
+      "id": "T01-T03",
+      "status": "fail",
+      "detail": "f09-backchannel: WER 1.00",
+      "ms": 89790
+    },
+    {
+      "id": "T04",
+      "status": "pass",
+      "ms": 14641
+    },
+    {
+      "id": "T05",
+      "status": "pass",
+      "ms": 7434
+    },
+    {
+      "id": "T06",
+      "status": "pass",
+      "ms": 2349
+    },
+    {
+      "id": "T07",
+      "status": "pass",
+      "ms": 11295
+    },
+    {
+      "id": "T08",
+      "status": "pass",
+      "ms": 1340
+    },
+    {
+      "id": "T09",
+      "status": "pass",
+      "ms": 8570
+    },
+    {
+      "id": "T10",
+      "status": "pass",
+      "ms": 5147
+    },
+    {
+      "id": "T11",
+      "status": "pass",
+      "ms": 5159
+    },
+    {
+      "id": "L01",
+      "status": "pass",
+      "ms": 46334
+    },
+    {
+      "id": "L02",
+      "status": "pass",
+      "ms": 5017
+    },
+    {
+      "id": "L03",
+      "status": "fail",
+      "detail": "close 1000 after 2013 ms",
+      "ms": 5462
+    },
+    {
+      "id": "L04",
+      "status": "pass",
+      "ms": 20091
+    },
+    {
+      "id": "L05",
+      "status": "fail",
+      "detail": "close 1000 at 92235 ms",
+      "ms": 93537
+    },
+    {
+      "id": "L06",
+      "status": "pass",
+      "ms": 10045
+    },
+    {
+      "id": "L07",
+      "status": "pass",
+      "ms": 1315
+    },
+    {
+      "id": "L08",
+      "status": "pass",
+      "ms": 27298
+    },
+    {
+      "id": "L09",
+      "status": "pass",
+      "ms": 0
+    },
+    {
+      "id": "B01",
+      "status": "pass",
+      "ms": 11535
+    },
+    {
+      "id": "B02",
+      "status": "pass",
+      "ms": 5324
+    },
+    {
+      "id": "F01",
+      "status": "pass",
+      "ms": 2127
+    },
+    {
+      "id": "F02",
+      "status": "pass",
+      "ms": 10013
+    },
+    {
+      "id": "F03",
+      "status": "pass",
+      "ms": 2
+    },
+    {
+      "id": "F04",
+      "status": "pass",
+      "ms": 2
+    },
+    {
+      "id": "X01",
+      "status": "pass",
+      "ms": 8532
+    },
+    {
+      "id": "M01",
+      "status": "pass",
+      "ms": 127542
+    },
+    {
+      "id": "E-latency",
+      "status": "pass",
+      "ms": 42697
+    },
+    {
+      "id": "E-nosplit-flux",
+      "status": "pass",
+      "ms": 68012
+    },
+    {
+      "id": "E-murage",
+      "status": "pass",
+      "ms": 96479
+    },
+    {
+      "id": "L10",
+      "status": "pass",
+      "detail": "90 accepted then one refused (launch #91); 58303 ms, max 4 in flight; retried: no",
+      "ms": 108774
+    }
+  ],
+  "metrics": {
+    "wer": {
+      "p50": 0,
+      "p90": 1,
+      "n": 9
+    },
+    "l06_next_eot": {
+      "p50": 1659,
+      "p90": 1659,
+      "n": 1
+    },
+    "rtt": {
+      "p50": 1,
+      "p90": 1,
+      "n": 5
+    },
+    "text_client": {
+      "p50": 867,
+      "p90": 967,
+      "n": 5
+    },
+    "eot_client": {
+      "p50": 867,
+      "p90": 1726,
+      "n": 5
+    },
+    "server_lag": {
+      "p50": 348,
+      "p90": 473,
+      "n": 5
+    },
+    "start": {
+      "p50": 1312,
+      "p90": 1319,
+      "n": 5
+    },
+    "eot_murage": {
+      "p50": 969,
+      "p90": 1252,
+      "n": 5
+    },
+    "audible_restarts": {
+      "p50": 0,
+      "p90": 0,
+      "n": 6
+    },
+    "superseded": {
+      "p50": 0,
+      "p90": 2,
+      "n": 5
+    }
+  },
+  "gates": [
+    {
+      "id": "T-text-p50",
+      "value": 866,
+      "limit": 800,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-text-p90",
+      "value": 966,
+      "limit": 1000,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-eot-p50",
+      "value": 866,
+      "limit": 900,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-eot-p90",
+      "value": 1725,
+      "limit": 2000,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-eot-murage-p90",
+      "value": 1251,
+      "limit": 1300,
+      "samples": 5,
+      "needed": 5,
+      "pass": true
+    },
+    {
+      "id": "T-superseded",
+      "value": 3,
+      "limit": 2,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-audible-restarts",
+      "value": 0,
+      "limit": 0,
+      "samples": 6,
+      "needed": 6,
+      "pass": true
+    }
+  ],
+  "owner": [],
+  "failures": [
+    "check T01-T03: f09-backchannel: WER 1.00",
+    "check L03: close 1000 after 2013 ms",
+    "check L05: close 1000 at 92235 ms",
+    "gate T-text-p50: 866 against 800 (5/5 samples)",
+    "gate T-superseded: 3 against 2 (5/5 samples)"
+  ]
+}

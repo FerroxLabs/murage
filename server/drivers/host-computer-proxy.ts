@@ -13,12 +13,7 @@ export function post(url: URL, token: string, body: string, signal: AbortSignal)
   return new Promise((resolve, reject) => {
     const req = NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
       const chunks: Buffer[] = [];
-      let size = 0;
-      res.on("data", (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > 16 * 1024 * 1024) { req.destroy(new Error("too large")); return; }
-        chunks.push(chunk);
-      });
+      res.on("data", (chunk: Buffer) => { chunks.push(chunk); });
       res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
       res.on("error", reject);
     }));
@@ -50,6 +45,13 @@ export async function runHostComputerProxy(env: NodeJS.ProcessEnv = process.env)
     try {
       if (rpc.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "murage-host-computer", version: "1" } };
       else if (rpc.method === "ping") result = {};
+      // BROWSERROOT-1020: Claude Code's `server/discover` probe (and any other non-tool request) is answered here; forwarded, a
+      // refusal from the route sealed the mount for the whole turn.
+      else if (rpc.method !== "tools/list" && rpc.method !== "tools/call") {
+        await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference",
+          req.respond({ jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: `Method not found: ${String(rpc.method).slice(0, 64)}` } }));
+        return;
+      }
       else {
         // node:http, not fetch: fetch gives up on a reply that takes over five
         // minutes (its default header and body timeouts)
@@ -78,7 +80,7 @@ export async function runHostComputerProxy(env: NodeJS.ProcessEnv = process.env)
     const req = catalog.observeRequest(rpc);
     const request = { ...rpc, id: rpc.id };
     queue = queue.then(() => call(request, withdrawn, req)).catch((error) => { process.stderr.write(`host-computer proxy output failed: ${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
-  }, 64 * 1024);
+  });
   for await (const chunk of process.stdin) splitter.push(chunk);
   splitter.flush();
   // The engine closed this tool: withdraw what is in flight and queued.
