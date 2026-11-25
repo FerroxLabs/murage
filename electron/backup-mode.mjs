@@ -201,7 +201,7 @@ export function readBackupIdentity(file, installation) {
   // not live inside the installation the backups exist to replace. Resolve
   // natively: the JavaScript realpath follows links but keeps the spelling it
   // was given, so a differently cased or 8.3-aliased pick
-  // (C:\Users\SEAN~1\.murage\key.txt against C:\Users\Sean\.murage) read as
+  // (C:\Users\EXAMPLEUSER~1\.murage\key.txt against C:\Users\ExampleUser\.murage) read as
   // independent and the key was filed inside the thing it unlocks.
   const resolved = realpathSync.native(file), root = realpathSync.native(installation);
   if (pathWithin(root, resolved)) throw new Error("BACKUP_IDENTITY_MUST_BE_INDEPENDENT");

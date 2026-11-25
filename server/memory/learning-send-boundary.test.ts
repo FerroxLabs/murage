@@ -1386,6 +1386,12 @@ function lintWriterContracts(prog: ts.Program): string[] {
     entered = true;
     return write();
   }`, "engineWriter");
+  // 1.0.21 cause4: emit's write() is this wrapper; the caller's write runs first and only an accepted release is counted after it.
+  requireNode("server/drivers/engine-input.ts", "final write runs the caller's write first", `write = (): R => {
+      const taken = release();
+      for (const budget of budgets) budget.accepted();
+      return taken;
+    }`, "engineWriter");
   if (cacheKey) writerContractObservations.set(cacheKey, out);
   return out;
 }

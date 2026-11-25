@@ -1,4 +1,5 @@
 import { settleDesktopStartup, terminalDesktopStartup } from './startup-settle.mjs';
+import { startupRecoveryReason } from './installation-recovery-controller.mjs';
 import assert from "node:assert/strict";
 import path from "node:path";
 import { readFileSync } from "node:fs";
@@ -155,7 +156,7 @@ test("actual packaged early startup rejection opens recovery without exposing pr
   const calls = [];
   const startup = Promise.reject(new Error("PRIVATE_CREDENTIAL_CANARY"));
   const scope = { desktopStartup: startup, desktopShutdownStarted: false, closedBackupRequested: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: code => calls.push(code) };
-  Object.assign(scope, { settleDesktopStartup, terminalDesktopStartup, shutdownCause: null,
+  Object.assign(scope, { settleDesktopStartup, terminalDesktopStartup, startupRecoveryReason, shutdownCause: null,
     recordStartupRefusal: () => {}, closeStartupSplash: () => {}, cleanupDesktopForExit: async () => {} });
   await new Function(...Object.keys(scope), body)(...Object.values(scope));
   assert.equal(calls.includes("STARTUP_FAILED"), true);
@@ -167,13 +168,36 @@ test("actual startup catch forwards foreign ownership code without private error
   const calls = [];
   const startup = Promise.reject(Object.assign(new Error("PRIVATE_ERROR_CANARY"), { name: "DataDirLeaseError", code: "LEASE_FOREIGN_HOST" }));
   const scope = { desktopStartup: startup, desktopShutdownStarted: false, closedBackupRequested: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: code => calls.push(code) };
-  Object.assign(scope, { settleDesktopStartup, terminalDesktopStartup, shutdownCause: null,
+  Object.assign(scope, { settleDesktopStartup, terminalDesktopStartup, startupRecoveryReason, shutdownCause: null,
     recordStartupRefusal: () => {}, closeStartupSplash: () => {}, cleanupDesktopForExit: async () => {} });
   await new Function(...Object.keys(scope), body)(...Object.values(scope));
   assert.equal(calls.includes("LEASE_FOREIGN_HOST"), true);
   assert.equal(calls.includes("STARTUP_FAILED"), false);
   assert.equal(calls.includes("quit"), false);
   assert.equal(JSON.stringify(calls).includes("PRIVATE_ERROR_CANARY"), false);
+});
+// 1.0.19 stuck users (RECOVERY-STUCK-FABLE T2 rank 3): a lock still held by a leftover copy opened the
+// generic "couldn't finish starting" page. It now opens with the "another copy may be open" sentence.
+for (const code of ["LEASE_BUSY", "LEASE_CHILD_BUSY"]) test(`actual startup catch opens ${code} as another copy still open`, async () => {
+  const body = between("const startupSettleDeps = {", 'app.on("window-all-closed"').replace('void settleDesktopStartup(desktopStartup', 'return settleDesktopStartup(desktopStartup');
+  const calls = [];
+  const startup = Promise.reject(Object.assign(new Error("PRIVATE_ERROR_CANARY"), { name: "DataDirLeaseError", code }));
+  const scope = { desktopStartup: startup, desktopShutdownStarted: false, closedBackupRequested: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: reason => calls.push(reason) };
+  Object.assign(scope, { settleDesktopStartup, terminalDesktopStartup, startupRecoveryReason, shutdownCause: null,
+    recordStartupRefusal: () => {}, closeStartupSplash: () => {}, cleanupDesktopForExit: async () => {} });
+  await new Function(...Object.keys(scope), body)(...Object.values(scope));
+  assert.equal(calls.includes("LEASE_BUSY"), true);
+  assert.equal(calls.includes("STARTUP_FAILED"), false);
+  assert.equal(calls.includes("quit"), false);
+  assert.equal(JSON.stringify(calls).includes("PRIVATE_ERROR_CANARY"), false);
+  // The page says it with the recovery window's own owner sentence, in every language pack.
+  const recovery = between("function showDesktopRecovery(", "function canSetAsideForeignLease()");
+  assert.match(recovery, /reasonCode === "LEASE_BUSY"\n\s*\? words\["lease-busy"\]/);
+  assert.equal(updateRecoveryWords("en")["lease-busy"], "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.");
+  for (const locale of ["de", "es", "fr", "pt-br", "ja", "zh", "hi"]) {
+    assert.equal(typeof updateRecoveryWords(locale)["lease-busy"], "string");
+    assert.notEqual(updateRecoveryWords(locale)["lease-busy"], updateRecoveryWords("en")["lease-busy"]);
+  }
 });
 test("failed acquisition retains location for diagnostics without granting ownership", () => {
   const body = between("function acquireDesktopDataOwner()", "function ownedDesktopDataDir()");
@@ -203,7 +227,7 @@ test("actual snapshot supervisor owns only the capture clone and restores its va
 
 import vm from "node:vm";
 import {createReturnAuthority} from "./backup-offline-return.mjs";
-import {updateRecoveryCopy} from "./update-recovery-copy.mjs";
+import {updateRecoveryCopy, updateRecoveryWords} from "./update-recovery-copy.mjs";
 test("BF-3 T15 T25 actual failure and reopen functions retain the latest descriptor after writer shutdown",()=>{
   const events=[],authority=createReturnAuthority();let progress={destroy:()=>events.push("destroy")},descriptor;
   const scope={presentedCleanupFailures:new WeakSet(),returnAuthority:authority,desktopShutdownStarted:true,desktopCleanupStage:"owned harness",updateRequester:false,updateRecoveryDescriptor:null,recoveryWindow:null,

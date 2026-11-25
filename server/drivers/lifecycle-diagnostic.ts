@@ -134,6 +134,13 @@ export interface LifecycleRecorder {
   record(event: Exclude<LifecycleEventName, "events_omitted">, fields?: LifecycleFields): void;
   /** killCliTree observer: route choice → stop_route, outcome → stop_route_result. */
   readonly observeStopRoute: (observation: StopRouteObservation) => void;
+  /** The engine's own version once its `initialize` answer names one; later events carry it. A malformed one is ignored. */
+  setEngineVersion(value: unknown): void;
+}
+
+/** A version the record may carry, or null: an unversioned dev build ("dev") stays null instead of voiding every event. */
+export function lifecycleVersion(value: unknown): string | null {
+  return version(value) ? value as string : null;
 }
 
 /** Reserved slots survive the ordinary budget: first stop request, one turn
@@ -154,6 +161,7 @@ export function createLifecycleRecorder(options: LifecycleRecorderOptions): Life
   const identity: Record<string, unknown> = { driver: options.driver };
   if (options.instanceId !== undefined) identity.instanceId = options.instanceId;
   if (options.turnId !== undefined) identity.turnId = options.turnId;
+  // meetgreet 1.0.19: both were null on every event because no caller passed them.
   identity.appVersion = options.appVersion ?? null;
   identity.engineVersion = options.engineVersion ?? null;
   const identityValid =
@@ -335,7 +343,9 @@ export function createLifecycleRecorder(options: LifecycleRecorderOptions): Life
     });
   };
 
-  return { generation, record, observeStopRoute };
+  const setEngineVersion = (value: unknown) => { if (version(value)) identity.engineVersion = value; };
+
+  return { generation, record, observeStopRoute, setEngineVersion };
 }
 
 /** A UUID is the harness's own turn and process id. The only rule that ever rewrites one is the card-number rule (a

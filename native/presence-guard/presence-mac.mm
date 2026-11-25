@@ -144,11 +144,31 @@ static napi_value OnChange(napi_env env, napi_callback_info info) {
   }
 }
 
+static napi_value SafeAreaTop(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argument, result;
+  uint32_t displayId;
+  double top = 0;
+  if (napi_get_cb_info(env, info, &argc, &argument, nullptr, nullptr) == napi_ok && argc == 1 &&
+      napi_get_value_uint32(env, argument, &displayId) == napi_ok) {
+    if (@available(macOS 12.0, *)) {
+      for (NSScreen* screen in [NSScreen screens]) {
+        NSNumber* number = screen.deviceDescription[@"NSScreenNumber"];
+        if (number && number.unsignedIntValue == displayId) {
+          top = screen.safeAreaInsets.top;
+          break;
+        }
+      }
+    }
+  }
+  return napi_create_double(env, top, &result) == napi_ok ? result : nullptr;
+}
+
 NAPI_MODULE_INIT() {
-  // Exports: read(), onChange(callback) -> unsubscribe(). No application object is needed.
   napi_property_descriptor properties[] = {
     {"read", nullptr, Read, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"onChange", nullptr, OnChange, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"safeAreaTop", nullptr, SafeAreaTop, nullptr, nullptr, nullptr, napi_default, nullptr},
   };
   return Install(env, exports, properties);
 }

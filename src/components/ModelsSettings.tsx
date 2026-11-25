@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { orderedModelMetadata, preloadModelMetadata, subscribeModelMetadata, modelMetadataReady, type FillableModelRow } from "@/lib/model-metadata";
+import { orderedModelMetadata, preloadModelMetadata, subscribeModelMetadata, modelMetadataRevision, type FillableModelRow } from "@/lib/model-metadata";
 import { Card, InAdvanced, Part, Switch } from "./SettingsPrimitives";
 import { fluxDesktopSigninEnabled } from "@/lib/feature-flags";
 import { api, useStore, type ConfigStatus } from "@/state/store";
@@ -76,7 +76,7 @@ function ExistingKey({ id, label, configured, onSaved, settingControl }: { setti
 }
 
 export function ModelsSettings() {
-  useSyncExternalStore(subscribeModelMetadata, modelMetadataReady, modelMetadataReady);
+  useSyncExternalStore(subscribeModelMetadata, modelMetadataRevision, modelMetadataRevision);
   useEffect(() => { void preloadModelMetadata(); }, []);
   const { state, dispatch } = useStore();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null), [busy, setBusy] = useState<string | null>(null), [error, setError] = useState(""), [notice, setNotice] = useState("");

@@ -155,8 +155,14 @@ export const hasSidecar = (path: string) => SQLITE_SIDECARS.some(suffix => exist
 export interface SettleCopyOptions {
   /** `PRAGMA quick_check` must answer `ok` (a damaged export's copy). */
   check: boolean;
+  /** Caller schema drops run right after the pragmas, before the first statement that deletes a row (a staged backup's Inbox
+   *  projection: its triggers' text is not compared, so none may run on the copy). */
+  beforeAny?: (db: DatabaseSync) => void;
   /** Caller-specific deletes (the staged backup's email rows), run before the one VACUUM. */
   beforeVacuum?: (db: DatabaseSync) => void;
+  /** Caller deletes of messages (a backup's unreadable rows), run before the search index's orphans are swept, so a removed
+   *  message's postings leave with the other orphans and the proof after VACUUM still holds. */
+  beforeIndex?: (db: DatabaseSync) => void;
 }
 
 /** The points of a settle a crash test stops at (a real SIGKILL in a child process); a no-op otherwise. */
@@ -182,8 +188,10 @@ export function settleFtsCopy(partial: string, options: SettleCopyOptions): void
     expectPragma(db, "PRAGMA secure_delete=ON", 1);
     if (options.check) expectPragma(db, "PRAGMA quick_check", "ok");
     settleCopyIo.step("opened", partial);
+    options.beforeAny?.(db);
     dropRetiredSearchTables(db);
     if (hasTable(db, "search_intents")) db.exec("DELETE FROM search_intents");
+    options.beforeIndex?.(db);
     if (hasTable(db, "messages_fts")) {
       // 2. orphans out; 3. optimize until the probe proves the index clean
       deleteFtsOrphans(db);

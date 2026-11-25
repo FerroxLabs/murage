@@ -49,7 +49,7 @@ function service(route: (call: number) => number, options: Record<string, unknow
     const target = new URL(String(url));
     return fetch(`http://127.0.0.1:${route(calls)}${target.pathname}`, init);
   }) as typeof fetch;
-  const images = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_IMAGE_CONN_KEY", revision: "1" }), connectionIds: () => ["flux"], fetch: fetcher, ...options });
+  const images = new ImageGenerationService({ resolveConnection: () => ({ id: "flux", provider: "flux", apiKey: "FAKE_IMGCONN_KEY", revision: "1" }), connectionIds: () => ["flux"], fetch: fetcher, ...options });
   const outcomes: string[] = [];
   const hooks = (signal?: AbortSignal) => ({ assertActive: () => {}, reserve: async () => ({ finish: (outcome: string) => { outcomes.push(outcome); } }), publish: async () => ({ id: "artifact" }), ...(signal ? { signal } : {}) });
   return { images, hooks, calls: () => calls, outcomes };

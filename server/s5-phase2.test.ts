@@ -88,7 +88,7 @@ describe("S5 phase 2 moved data folder", () => {
     moved();
     const prior = join(old, "attachments", "s5-image.png"), next = join(DATA_DIR, "attachments", "s5-image.png");
     const text = `<attached-image path="${prior}">`;
-    insertMessage("s5-image-thread", { id: "s5-image", at: 1, role: "user", kind: "text", text, attachments: [{ kind: "image", path: prior, mime: "image/png" }] });
+    insertMessage("s5-image-thread", { id: "s5-image", at: 1, role: "user", kind: "text", text, attachments: [{ kind: "image", path: prior, mime: "image/png" }] }); database().prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?").run(JSON.stringify({ id: "s5-image", at: 1, role: "user", kind: "text", text, attachments: [{ kind: "image", path: prior, mime: "image/png" }] }), "s5-image-thread", "s5-image"); // the row as an older version wrote it before the move (writes now store current-root paths, MAIN-RULING STARTUP-1022 H2-sameKey)
     expect(rebaseMessageAttachmentPaths()).toBeGreaterThanOrEqual(1);
     expect(readMessage("s5-image-thread", "s5-image")).toMatchObject({ text, attachments: [{ path: next }] });
     expect(rowsNamingImage("s5-image-thread", next)).toHaveLength(1);

@@ -10,12 +10,15 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { connectionId, database, transaction } from "../database.ts";
+import { BgDeferred, isBgDeferred } from "../bg-admission.ts";
+import { ioBudget } from "../io-budget.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
 import { sanitizeDisplayTextUnit } from "../transcript-page.ts";
 import { ensureScope } from "./policy.ts";
+import { memoryCaptureRoster } from "./capture-scope.ts";
 import { withContinuityInferenceLease, continuityDay, reportMemoryUsage, reconcileRecentMonths, type TextOnlyExtractor } from "./extract.ts";
 import { digestOf, isMemorySendBusy, learningGate, sampleLearningFence } from "./learning-send.ts";
-import { admissibleActionSources, admissibleOwnerSources, admissionStamp, admissionVector, eachPageNow, forEachThreadSourcePage, hasAdmissibleAfter, hasAdmissibleAfterSliced, livedRowAdmissible, livedRowStillShown, newestThreadSource, readShownNow, readShownSliced, settingsGen, compareAdmitted, stampMoved, THREAD_SOURCE_PAGE_ROWS, visitAdmittedActionSourcesSliced, visitAdmittedOwnerSourcesSliced, admissibleOwnerSourcesSliced, admissibleActionSourcesSliced, type AdmissionStamp, type AdmittedSource, type StampCheck, type WalkAnswer } from "./pip-admission.ts";
+import { admissibleActionSources, admissibleOwnerSources, admissionStamp, admissionVector, pendingChanges, threadIsBotsOwn, eachPageNow, forEachThreadSourcePage, hasAdmissibleAfter, hasAdmissibleAfterSliced, livedRowAdmissible, livedRowStillShown, newestThreadSource, readShownNow, readShownSliced, settingsGen, compareAdmitted, stampMoved, THREAD_SOURCE_PAGE_ROWS, visitAdmittedActionSourcesSliced, visitAdmittedOwnerSourcesSliced, admissibleOwnerSourcesSliced, admissibleActionSourcesSliced, type AdmissionStamp, type AdmittedSource, type StampCheck, type WalkAnswer } from "./pip-admission.ts";
 import { heldStep } from "../observe.ts";
 import { applyLivedResult, expireProposals, validOwnerNominations, LIVED_SCHEMA, validLivedResult, type LivedResult } from "./pip-lived.ts";
 import { EPISODE_MAX_HANDLES, writeEpisode, writeTraceEpisode, type TraceThread } from "./pip-episodes.ts";
@@ -91,8 +94,21 @@ export interface RunRecord {
   deadlineAt?: number; bootEpoch: BootEpoch; createdAt: number; fingerprint: string;
   families: Record<string, FamilyRecord>;
 }
-export interface ThreadCursor { cursorMessageId: string | null; cursorAt: number; lastRunAt: number; lastAppliedAt?: number; surprise: number; unreflected: string[] }
-export interface SupportEntry { probe?: { at: number; verdict: Verdict }; status: "ok" | "unsupported" | "transient"; reason: string; at: number; retryAt?: number; failures?: number; history?: MissHistory }
+export interface ThreadCursor { cursorMessageId: string | null; cursorAt: number; lastRunAt: number; lastAppliedAt?: number; surprise: number; unreflected: string[];
+  /** 1.0.22: runs of this thread that ended refused as unstable since its last applied run; at UNSTABLE_RUNS_GIVE_UP the thread is given up
+   *  (gaveUpAt = when the last one settled) until a newer turn arrives, so no paid retry repeats on the same history. */
+  unstableRuns?: number; gaveUpAt?: number }
+export const UNSTABLE_RUNS_GIVE_UP = 3;
+const FAILED_RUN_STATES: readonly string[] = ["refused:unstable", "refused:bad-output"];
+/** A given-up thread whose newest text turn is no newer than the run that gave it up is not a candidate. */
+const givenUp = (cursor: ThreadCursor | undefined, newestAt: number | undefined): boolean => cursor?.gaveUpAt !== undefined && (newestAt ?? 0) <= cursor.gaveUpAt;
+export interface SupportEntry { probe?: { at: number; verdict: Verdict }; status: "ok" | "unsupported" | "transient"; reason: string; at: number; retryAt?: number; failures?: number; history?: MissHistory;
+  /** 1.0.22 idle: rechecks that found the route still unsupported (the wait doubles from SUPPORT_RECHECK_MS to SUPPORT_RECHECK_MAX_MS), and
+   *  the thread it was resolved for, so the next recheck resolves the route before any thread is read. */
+  rechecks?: number; thread?: string;
+  /** the bot's thread list when the wait last doubled: a thread added or removed since (a new task may run another route) waits only
+   *  SUPPORT_RECHECK_MS, never the doubled wait */
+  threads?: string }
 export interface Refusal { at: number; runId: string; state: string; reason: string }
 export interface ReflectState {
   threads: Record<string, ThreadCursor>; run?: RunRecord; cooldownUntil: number;
@@ -105,7 +121,10 @@ export interface ReflectState {
 }
 const fresh = (): ReflectState => ({ threads: {}, cooldownUntil: 0, dailyRuns: { day: "", count: 0, dreamCalls: 0 }, excludedThreads: [], support: {}, refusals: [] });
 export function readReflectState(db: DatabaseSync, botId: string): ReflectState {
-  const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(reflectBindingId(botId));
+  return reflectStateOf(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(reflectBindingId(botId)));
+}
+/** The state a reflect binding row holds (readReflectState, for a row already read). */
+function reflectStateOf(row: Record<string, unknown> | undefined): ReflectState {
   if (!row) return fresh();
   try { return { ...fresh(), ...JSON.parse(String(row.intent)) }; } catch { return fresh(); }
 }
@@ -116,21 +135,98 @@ export const isTerminalFamilyState = (state: FamilyStateName): boolean => state.
 function clearTerminalResults(state: ReflectState): void {
   for (const f of Object.values(state.run?.families ?? {})) if (isTerminalFamilyState(f.state)) { f.result = undefined; f.resultAdmitted = undefined; }
 }
-function writeReflectState(db: DatabaseSync, botId: string, state: ReflectState) {
+function writeReflectState(db: DatabaseSync, botId: string, state: ReflectState): string {
   clearTerminalResults(state);
+  const text = JSON.stringify(state);
   db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','pip-reflect',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
-    .run(reflectBindingId(botId), ensureScope("bot", botId), JSON.stringify(state));
+    .run(reflectBindingId(botId), ensureScope("bot", botId), text);
+  return text;
 }
-/** Read-modify-write in one transaction; nothing holds a state object across an await. */
+// What an edit of a bot's reflect state leaves for the pending check (ASTRA 6821ad0caa: the check found the one cursor an edit moved by
+// comparing every stored cursor of two whole states). The writer knows which cursors it touched; the check takes them from it.
+/** More cursors than this touched by the edits since the check last looked: no hand-over, the check compares the two states whole. */
+export const REFLECT_EDIT_MAX_CURSORS = 64;
+/** The edits of one bot's reflect state since the pending check last took them: the mark (textMark) of the binding's text before the
+ *  first and after the last, each cursor those edits touched as last written (undefined: no cursor under that name), and the written
+ *  state without its cursors (a copy no writer holds). It is true by content: a state whose text is `from` differs from one whose text
+ *  is `to` in the cursors named at most, whoever wrote the row since, so the check takes it only when both texts are exactly the ones it
+ *  holds and reads. One per bot, replaced by the next edit that does not join it; it holds no copy of either text (a state with a cursor
+ *  for every thread is a long text: MAIN-RULING local memory stays low). */
+interface ReflectEdit { from: string; to: string; cursors: Map<string, ThreadCursor | undefined>; rest: Omit<ReflectState, "threads"> }
+let reflectEdits = new WeakMap<DatabaseSync, Map<string, ReflectEdit>>();
+/** A binding text by its length and digest: two texts with one mark are one text. */
+const textMark = (text: string): string => `${text.length}:${createHash("sha256").update(text).digest("hex")}`;
+/** Puts the state's cursors behind a recorder for the time of one edit: every cursor name read, set or removed through it is noted.
+ *  `done` puts the plain cursors back and gives the names, or null when the edit cannot be told by names: it listed the cursors (keys,
+ *  values, a spread, a stringify), touched more than REFLECT_EDIT_MAX_CURSORS of them, used a name that is no plain string key, or put
+ *  another object in the cursors' place. Null is always safe: the check then compares the states whole. */
+function recordCursorEdits(state: ReflectState): { done: () => Set<string> | null } {
+  const plain = state.threads, names = new Set<string>();
+  let all = plain === null || typeof plain !== "object";
+  if (all) return { done: () => null };
+  const note = (key: string | symbol): void => {
+    if (typeof key !== "string" || key === "__proto__" || names.size >= REFLECT_EDIT_MAX_CURSORS && !names.has(key)) all = true;
+    else names.add(key);
+  };
+  const recorder = new Proxy(plain, {
+    get(target, key, receiver) { if (typeof key === "string") note(key); return Reflect.get(target, key, receiver); },
+    set(target, key, value) { note(key); return Reflect.set(target, key, value); },
+    deleteProperty(target, key) { note(key); return Reflect.deleteProperty(target, key); },
+    defineProperty(target, key, descriptor) { note(key); return Reflect.defineProperty(target, key, descriptor); },
+    getOwnPropertyDescriptor(target, key) { note(key); return Reflect.getOwnPropertyDescriptor(target, key); },
+    ownKeys(target) { all = true; return Reflect.ownKeys(target); },
+    setPrototypeOf(target, prototype) { all = true; return Reflect.setPrototypeOf(target, prototype); },
+  });
+  state.threads = recorder;
+  return { done: () => { if (state.threads !== recorder) return null; state.threads = plain; return all ? null : names; } };
+}
+/** Leaves the edit for the pending check, joined to the edits before it when it began where they ended. */
+function leaveReflectEdit(db: DatabaseSync, botId: string, fromText: string, toText: string, state: ReflectState, names: Set<string> | null): void {
+  let edits = reflectEdits.get(db);
+  const earlier = edits?.get(botId);
+  edits?.delete(botId);
+  if (!names) return;
+  const from = textMark(fromText), to = textMark(toText);
+  const cursors = earlier && earlier.to === from ? earlier.cursors : new Map<string, ThreadCursor | undefined>();
+  for (const name of names) {
+    // each cursor as a reader of the written text would parse it (a value the text cannot hold is not kept as the writer held it)
+    const written = Object.hasOwn(state.threads, name) ? JSON.stringify(state.threads[name]) : undefined;
+    const cursor = written === undefined ? undefined : JSON.parse(written) as ThreadCursor | null;
+    // a state holds what was written under a name: anything that is not a cursor object is compared whole
+    if (cursor !== undefined && (cursor === null || typeof cursor !== "object")) return;
+    cursors.set(name, cursor ?? undefined);
+  }
+  if (cursors.size > REFLECT_EDIT_MAX_CURSORS) return;
+  // the rest of the state, likewise as its text reads (reflectStateOf)
+  const { threads: _cursors, ...others } = state;
+  const { threads: _none, ...rest } = { ...fresh(), ...JSON.parse(JSON.stringify(others)) as Omit<ReflectState, "threads"> };
+  if (!Array.isArray(rest.excludedThreads)) return;
+  if (!edits) reflectEdits.set(db, edits = new Map());
+  edits.set(botId, { from: earlier && earlier.to === from ? earlier.from : from, to, cursors, rest });
+}
+/** Read-modify-write in one transaction; nothing holds a state object across an await. The cursors the edit touched are left for the
+ *  pending check (ReflectEdit); a rollback around this leaves an edit whose `to` is not the row's text, which the check never takes. */
 export function mutateReflect<T>(botId: string, fn: (state: ReflectState, db: DatabaseSync) => T): T {
-  return transaction(db => { const state = readReflectState(db, botId); const out = fn(state, db); writeReflectState(db, botId, state); return out; });
+  return transaction(db => {
+    const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(reflectBindingId(botId));
+    const state = reflectStateOf(row), recorded = recordCursorEdits(state);
+    let names: Set<string> | null;
+    let out: T;
+    try { out = fn(state, db); } finally { names = recorded.done(); }
+    const to = writeReflectState(db, botId, state);
+    leaveReflectEdit(db, botId, row ? String(row.intent) : "", to, state, names);
+    return out;
+  });
 }
 const dayOf = continuityDay;
 const digest = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 
 // ------------------------------------------------------------------ deps ----
 
-export interface ReflectBot { id: string; name?: string; threadIds: readonly string[]; continuity: boolean; options?: ContinuityOptions; settingsGeneration?: number }
+export interface ReflectBot { id: string; name?: string; threadIds: readonly string[]; continuity: boolean; options?: ContinuityOptions; settingsGeneration?: number;
+  /** 1.0.22 idle: the owner's route choice for the bot's threads (each thread's model selection and the reflect model), read only while a held
+   *  route's doubled recheck gates: a changed choice waits SUPPORT_RECHECK_MS, never the doubled wait */
+  routeStamp?: () => string }
 export interface ResolvedRoute {
   fingerprint: string; engine: string; kind: "cli" | "http"; model: string; providerRoute?: ProviderTurnRoute;
   probeRequired?: boolean;
@@ -320,25 +416,34 @@ export function fitSnapshot(_db: DatabaseSync, snap: Snapshot, bot: ReflectBot, 
 
 export interface Candidate { bot: ReflectBot; threadId: string; surprise: number; cursorAt: number }
 
-function newestIsSettledBotReply(db: DatabaseSync, threadId: string, now: number): boolean {
+function newestIsSettledBotReply(db: DatabaseSync, threadId: string, now: number, seen?: { at?: number }): boolean {
   const row = db.prepare(`SELECT s.speaker,s.kind,json_extract(v.payload,'$.occurredAt') AS at FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
     WHERE s.thread_id=? AND s.kind='text' AND s.state='active' ORDER BY s.rowid DESC LIMIT 1`).get(threadId);
   if (!row) return false;
+  if (seen) seen.at = Number(row.at ?? 0);
   const isOwnerish = row.speaker === "owner" || String(row.speaker).startsWith("person:");
   return !isOwnerish && now - Number(row.at ?? 0) >= REFLECTABLE_AGE_MS;
 }
 /** newestIsSettledBotReply, the same answer, its newest row found in pages of the thread (pip-admission.ts newestThreadSource, no sort): the one
  *  statement sorted every text source of the thread and read each row to filter it (rc13 real-data run, server3.log:27: 158 ms for one thread). */
 async function newestIsSettledBotReplySliced(db: DatabaseSync, threadId: string, now: number, between: () => Promise<void>, signal?: AbortSignal): Promise<boolean> {
+  const newest = await newestTextTurn(db, threadId, between, signal);
+  return newest !== undefined && settledBotReply(newest, now);
+}
+/** What newestIsSettledBotReplySliced reads of the thread's newest text source: who spoke and when; null when the thread has none. */
+type NewestTurn = { ownerish: boolean; at: number } | null;
+/** The thread's newest text source as the settled test reads it, or undefined when the walk was stopped. */
+async function newestTextTurn(db: DatabaseSync, threadId: string, between: () => Promise<void>, signal?: AbortSignal): Promise<NewestTurn | undefined> {
   const newest = await newestThreadSource(db, threadId, "text", between, signal);
-  if (signal?.aborted) return false;
-  if (!newest) return false;
+  if (signal?.aborted) return undefined;
+  if (!newest) return null;
   const speaker = String(newest.speaker);
   let at = 0;
   try { at = Number((JSON.parse(String(newest.payload)) as { occurredAt?: unknown }).occurredAt ?? 0); } catch { at = 0; }
-  const isOwnerish = speaker === "owner" || speaker.startsWith("person:");
-  return !isOwnerish && now - at >= REFLECTABLE_AGE_MS;
+  return { ownerish: speaker === "owner" || speaker.startsWith("person:"), at };
 }
+/** The settled test itself: the newest text source is a reply (not the owner's or a person's words) at least REFLECTABLE_AGE_MS old. */
+const settledBotReply = (newest: NewestTurn, now: number): boolean => newest !== null && !newest.ownerish && now - newest.at >= REFLECTABLE_AGE_MS;
 /** newestIsSettledBotReplySliced, true only when the admission stamp taken before the snapshot has not moved (a capture in this thread moves its
  *  epoch; captures elsewhere do not), so the answer holds for the thread as it stands when this returns. A thread that changed meanwhile is
  *  left for the next pass. */
@@ -349,10 +454,18 @@ async function threadStillSettled(db: DatabaseSync, threadId: string, now: numbe
 }
 /** A held route is re-resolved at most this often: a changed binary or route (new fingerprint) clears the entry then. */
 export const SUPPORT_RECHECK_MS = 5 * 60_000;
-export function routeBlocked(state: ReflectState, fingerprint: string | undefined, now: number, scheduling = false): string | null {
+/** 1.0.22 idle: each recheck that finds the same route still unsupported doubles the wait, up to a day. */
+export const SUPPORT_RECHECK_MAX_MS = 24 * 3_600_000;
+export const supportRecheckMs = (entry: SupportEntry): number => Math.min(SUPPORT_RECHECK_MS * 2 ** Math.min(entry.rechecks ?? 0, 20), SUPPORT_RECHECK_MAX_MS);
+/** What a doubled recheck wait is bound to: the bot's thread list and its route choice (an owner who moves the bot to another engine). */
+export const threadsKey = (bot: Pick<ReflectBot, "threadIds" | "routeStamp">): string => bot.threadIds.join("\n") + "\n#" + (bot.routeStamp?.() ?? "");
+export function routeBlocked(state: ReflectState, fingerprint: string | undefined, now: number, scheduling = false, threads?: () => string): string | null {
   const entry = fingerprint ? state.support[fingerprint] : undefined;
   if (!entry) return null;
-  if (entry.status === "unsupported") return scheduling && now - entry.at >= SUPPORT_RECHECK_MS ? null : "unsupported";
+  if (entry.status === "unsupported") {
+    const wait = threads !== undefined && entry.threads !== undefined && entry.threads !== threads() ? SUPPORT_RECHECK_MS : supportRecheckMs(entry);
+    return scheduling && now - entry.at >= wait ? null : "unsupported";
+  }
   if (entry.status === "transient" && (entry.retryAt ?? 0) > now) return "transient";
   return null;
 }
@@ -363,21 +476,295 @@ function reflectGateOpen(deps: ReflectDeps, bot: ReflectBot, state: ReflectState
   if (!["capture", "active"].includes(deps.memoryMode())) return false;
   if (state.run) return false;
   if (now < state.cooldownUntil) return false;
-  if (routeBlocked(state, state.lastFingerprint, now, true)) return false;
+  if (routeBlocked(state, state.lastFingerprint, now, true, () => threadsKey(bot))) return false;
   const today = dayOf(now);
   return !(state.dailyRuns.day === today && state.dailyRuns.count >= DAILY_RUN_CAP);
 }
-/** The pending form of reflectableThreads (pendingOnly), in slices: at most PIP_PENDING_SLICE_MS of the serving thread at a time, the loop handed
- *  back between slices (between threads, and between pages of one thread's walk). True when some thread has something to reflect. */
+// ------------------------------------------- the pending check's memory ----
+// What the sliced pending check knows of each thread of each Continuity bot, kept true by the change feed (pip-admission.ts
+// pendingChanges) and four marks of its own, so that a pass does work only for what changed (1.0.21 owner copy, 9.5 h idle: a memo miss
+// touched every thread of every bot once a minute):
+//  - the feed's mark is read first, once per bot: while it has not moved, no thread is read, looked up in the roster or compared;
+//  - a thread the feed names is forgotten and read again (`unknown`); no other thread is touched;
+//  - time alone changes an answer only at a known instant (a reply settles, the spacing after a run ends): those threads wait in a heap by
+//    that instant (`waiting`), and a pass looks at the top of the heap, never at every thread;
+//  - the bot's reflect state (cursors, excluded threads) is compared as one string; when it moved, the threads whose cursor or exclusion
+//    changed are placed again, from what is known of them;
+//  - the roster (whose thread is whose: an in-process list no write announces) is compared by its revision; when it moved, the threads
+//    with a remembered admissible answer have their ownership looked up again, and only those whose ownership changed are read again;
+//  - the bot's thread list is compared by identity, then by content: a new thread is unknown, a removed one is dropped.
+// A change that concerns every thread (the feed's generation) forgets everything once.
+/** What was read of one thread: its newest text turn (who, when: the settled test is then a subtraction at any later time) and, once the
+ *  reply settled, whether anything was admissible after the cursor it was asked with, for the ownership the roster gave then. */
+interface ThreadFact { newest: NewestTurn; admissible?: { after: string; value: boolean; own: boolean } }
+interface BotPending {
+  threadIds: readonly string[]; members: Set<string>;
+  /** the reflect binding's intent as last read, and the state parsed from it (read only) */
+  intent: string; state: ReflectState;
+  roster: unknown; rosterRevision: number | undefined;
+  facts: Map<string, ThreadFact>;
+  /** threads to read: never read, or named by the feed since */
+  unknown: Set<string>;
+  /** threads whose answer time alone may change, and the instant from which: a min-heap by that instant (an entry counts only while
+   *  `waiting` still holds the same instant for its thread) */
+  waiting: Map<string, number>; heap: Array<{ at: number; threadId: string }>;
+  /** threads with something to reflect, and the instant from which */
+  ready: Map<string, number>;
+  /** threads whose remembered admissible answer a change of hands could change: something admissible (the thread was the bot's own), or
+   *  an answer read while it was not the bot's own. "Nothing admissible" read of an own thread stays true whoever holds the thread. */
+  rosterBound: Set<string>;
+  /** moves when the state, the roster or the thread list is applied: a read that began before is not kept */
+  version: number;
+}
+/** The memory of one connection, of one generation of the feed. `touched` counts the times the feed named a thread: a read that began
+ *  before a count moved read the thread as it was, and is not kept. */
+interface PendingMemory { generation: string; bots: Map<string, BotPending>; touched: Map<string, number> }
+let pendingMemories = new WeakMap<DatabaseSync, PendingMemory>();
+const forgetThread = (m: BotPending, threadId: string) => { m.facts.delete(threadId); m.waiting.delete(threadId); m.ready.delete(threadId); m.rosterBound.delete(threadId); };
+/** Takes the feed: the threads it names become unknown, for the bots that hold them; everything is forgotten when its generation moved.
+ *  Null when there is no feed (nothing is kept, nothing is answered from memory). Unchanged feed: no thread is touched. */
+function pendingMemory(db: DatabaseSync): PendingMemory | null {
+  // inside a transaction the feed is not taken: what is known stays for the next pass
+  if (db.isTransaction) return null;
+  const changes = pendingChanges(db);
+  if (!changes) { pendingMemories.delete(db); return null; }
+  let memory = pendingMemories.get(db);
+  if (!memory || memory.generation !== changes.generation) {
+    memory = { generation: changes.generation, bots: new Map(), touched: new Map() };
+    pendingMemories.set(db, memory);
+    return memory;
+  }
+  for (const threadId of changes.threads) {
+    memory.touched.set(threadId, (memory.touched.get(threadId) ?? 0) + 1);
+    for (const m of memory.bots.values()) if (m.members.has(threadId)) { forgetThread(m, threadId); m.unknown.add(threadId); }
+  }
+  return memory;
+}
+function heapPush(heap: BotPending["heap"], entry: { at: number; threadId: string }): void {
+  let i = heap.push(entry) - 1;
+  while (i > 0) {
+    const parent = (i - 1) >> 1;
+    if (heap[parent]!.at <= entry.at) break;
+    heap[i] = heap[parent]!; i = parent;
+  }
+  heap[i] = entry;
+}
+function heapPop(heap: BotPending["heap"]): void {
+  const last = heap.pop()!;
+  if (!heap.length) return;
+  let i = 0;
+  for (;;) {
+    let child = 2 * i + 1;
+    if (child >= heap.length) break;
+    if (child + 1 < heap.length && heap[child + 1]!.at < heap[child]!.at) child++;
+    if (heap[child]!.at >= last.at) break;
+    heap[i] = heap[child]!; i = child;
+  }
+  heap[i] = last;
+}
+const waitUntil = (m: BotPending, threadId: string, at: number) => { m.waiting.set(threadId, at); heapPush(m.heap, { at, threadId }); };
+const afterKey = (cursor: ThreadCursor | undefined) => JSON.stringify([cursor?.cursorAt ?? null, cursor?.cursorMessageId ?? null]);
+/** Places a thread by what is known of it and the bot's state, reading nothing: unknown (no fact), waiting (a reply that is or will be
+ *  settled, not known to have nothing admissible), or nowhere (excluded, no reply, the owner's word last, nothing admissible after the
+ *  cursor: only a change makes such a thread pending, and a change places it again). */
+function placeThread(m: BotPending, threadId: string): void {
+  m.waiting.delete(threadId); m.ready.delete(threadId);
+  if (!m.members.has(threadId)) return;
+  const fact = m.facts.get(threadId);
+  if (!fact) { m.unknown.add(threadId); return; }
+  if (m.state.excludedThreads.includes(threadId)) return;
+  if (fact.newest === null || fact.newest.ownerish) return;
+  const cursor = m.state.threads[threadId];
+  if (fact.admissible && fact.admissible.after === afterKey(cursor) && !fact.admissible.value) return;
+  // reflectableThreads: `now - at >= REFLECTABLE_AGE_MS` and not `now - lastRunAt < MIN_RUN_INTERVAL_MS`, as one instant
+  const settles = fact.newest.at + REFLECTABLE_AGE_MS, spaced = cursor ? cursor.lastRunAt + MIN_RUN_INTERVAL_MS : -Infinity;
+  // a reply with no readable time never settles (`now - NaN >= age` is false); a run with no readable time spaces nothing (`now - NaN < interval` is false)
+  if (Number.isNaN(settles)) return;
+  waitUntil(m, threadId, Number.isNaN(spaced) ? settles : Math.max(settles, spaced));
+}
+/** The roster's mark: the roster object and its revision (store.ts memoryRosterRevision moves with every save of the bots or of a room's
+ *  structure). A roster with no revision cannot be compared: it is treated as moved at every pass. A moved mark looks up the ownership of
+ *  the `rosterBound` threads alone (BotPending), never of every thread. */
+function rosterMark(): { roster: unknown; revision: number | undefined } {
+  const roster = memoryCaptureRoster();
+  return { roster, revision: roster.memoryRosterRevision };
+}
+/** The threads whose cursor (where it stands, when its last run was) or exclusion differs between two reflect states of one bot. The
+ *  cursors are compared field by field, as the values they are: nothing is built from a cursor that did not move (no key string, no list
+ *  of every thread: ASTRA 1977a62606, one edit built two keys for every stored cursor). What is left for an unchanged cursor is three
+ *  comparisons, on a path that has just parsed the whole state from its text. The excluded lists are compared as lists first. */
+export function movedReflectThreads(before: Pick<ReflectState, "threads" | "excludedThreads">, state: Pick<ReflectState, "threads" | "excludedThreads">): string[] {
+  const moved: string[] = [], was = before.threads, now = state.threads;
+  for (const threadId in now) {
+    const a = was[threadId], b = now[threadId];
+    // a stored state may hold anything under a thread (it is parsed as it was written): no cursor on either side is one that moved
+    if (!a || !b) { if (a || b) moved.push(threadId); continue; }
+    // (a give-up set or cleared, as owner Try again does, places the thread again)
+    if (!Object.is(a.cursorAt, b.cursorAt) || (a.cursorMessageId ?? "") !== (b.cursorMessageId ?? "") || !Object.is(a.lastRunAt, b.lastRunAt) || !Object.is(a.gaveUpAt, b.gaveUpAt)) moved.push(threadId);
+  }
+  for (const threadId in was) if (!(threadId in now)) moved.push(threadId);
+  movedExclusions(before.excludedThreads, state.excludedThreads, moved);
+  return moved;
+}
+/** Adds to `moved` the threads in one excluded list and not in the other; the lists are compared as lists first. */
+function movedExclusions(out: readonly string[], excluded: readonly string[], moved: string[]): void {
+  if (out.length === excluded.length && !out.some((threadId, i) => threadId !== excluded[i])) return;
+  const outSet = new Set(out), excludedSet = new Set(excluded);
+  for (const threadId of excluded) if (!outSet.has(threadId)) moved.push(threadId);
+  for (const threadId of out) if (!excludedSet.has(threadId)) moved.push(threadId);
+}
+/** The bot's reflect state for a binding text that moved, taken from the writer when it can be (ReflectEdit): the edits since the text
+ *  this memory holds, ending at the text the row holds now. The cursors they touched are written into the cursors already held and those
+ *  threads are placed again; no other cursor is read, nothing is parsed and the cursors are never listed (ASTRA 6821ad0caa: one moved
+ *  cursor compared every stored one). Undefined when there is no such hand-over (another process wrote the row, a rollback, an edit that
+ *  could not be told by names, a memory that holds no state yet): the caller parses the text and botPendingMemory compares the states
+ *  whole. It applies everything at once, so the memory never holds cursors newer than its text. */
+function takeReflectEdit(db: DatabaseSync, botId: string, m: BotPending, intent: string): ReflectState | undefined {
+  const edits = reflectEdits.get(db), edit = edits?.get(botId);
+  if (!edit || edit.to !== textMark(intent) || edit.from !== textMark(m.intent)) return undefined;
+  edits!.delete(botId);
+  const cursors = m.state.threads, moved = [...edit.cursors.keys()];
+  if (cursors === null || typeof cursors !== "object" || !Array.isArray(m.state.excludedThreads)) return undefined;
+  for (const [threadId, cursor] of edit.cursors) { if (cursor) cursors[threadId] = cursor; else delete cursors[threadId]; }
+  movedExclusions(m.state.excludedThreads, edit.rest.excludedThreads, moved);
+  m.intent = intent; m.state = { ...edit.rest, threads: cursors }; m.version++;
+  for (const threadId of moved) placeThread(m, threadId);
+  return m.state;
+}
+/** The bot's memory, brought up to its inputs that no write to a thread announces: the thread list, the reflect state, the roster. Each
+ *  is compared as a whole first (identity, one string, a revision); a thread is touched only when the comparison moved. */
+function botPendingMemory(memory: PendingMemory, bot: ReflectBot, state: ReflectState, intent: string): BotPending {
+  const mark = rosterMark();
+  let m = memory.bots.get(bot.id);
+  if (!m) {
+    m = { threadIds: bot.threadIds, members: new Set(bot.threadIds), intent, state, roster: mark.roster, rosterRevision: mark.revision,
+      facts: new Map(), unknown: new Set(bot.threadIds), waiting: new Map(), heap: [], ready: new Map(), rosterBound: new Set(), version: 0 };
+    memory.bots.set(bot.id, m);
+    return m;
+  }
+  if (m.threadIds !== bot.threadIds) {
+    const ids = bot.threadIds;
+    if (ids.length !== m.threadIds.length || ids.some((id, i) => id !== m!.threadIds[i])) {
+      const members = new Set(ids);
+      for (const threadId of m.members) if (!members.has(threadId)) { forgetThread(m, threadId); m.unknown.delete(threadId); }
+      for (const threadId of members) if (!m.members.has(threadId)) m.unknown.add(threadId);
+      m.members = members; m.version++;
+    }
+    m.threadIds = ids;
+  }
+  if (m.intent !== intent) {
+    const moved = movedReflectThreads(m.state, state);
+    m.intent = intent; m.state = state; m.version++;
+    for (const threadId of moved) placeThread(m, threadId);
+  }
+  if (mark.revision === undefined || mark.roster !== m.roster || mark.revision !== m.rosterRevision) {
+    if (mark.roster !== m.roster || mark.revision !== m.rosterRevision) m.version++;
+    m.roster = mark.roster; m.rosterRevision = mark.revision;
+    for (const threadId of [...m.rosterBound]) {
+      const fact = m.facts.get(threadId);
+      if (fact?.admissible && fact.admissible.own === threadIsBotsOwn(bot.id, threadId)) continue;
+      // the answer was read for another ownership: asked again when the thread is next due
+      m.rosterBound.delete(threadId);
+      if (fact) fact.admissible = undefined;
+      placeThread(m, threadId);
+    }
+  }
+  return m;
+}
+/** What can be said of one thread at `now` without reading it; true when it has to be read (its newest turn, or what is admissible after
+ *  the cursor). Every false leaves the thread out of `unknown` and out of the due part of `waiting`. */
+function settleKnown(m: BotPending, threadId: string, now: number): boolean {
+  if (!m.members.has(threadId) || m.state.excludedThreads.includes(threadId)) { m.unknown.delete(threadId); m.waiting.delete(threadId); m.ready.delete(threadId); return false; }
+  const fact = m.facts.get(threadId), cursor = m.state.threads[threadId];
+  if (!fact) {
+    // reflectableThreads does not read a thread reflected this recently: it is read when the spacing has passed
+    if (cursor && now - cursor.lastRunAt < MIN_RUN_INTERVAL_MS) { m.unknown.delete(threadId); waitUntil(m, threadId, cursor.lastRunAt + MIN_RUN_INTERVAL_MS); return false; }
+    // read now: unknown until it has been
+    m.waiting.delete(threadId); m.unknown.add(threadId);
+    return true;
+  }
+  m.unknown.delete(threadId);
+  if (givenUp(cursor, fact.newest?.at)) { m.waiting.delete(threadId); m.ready.delete(threadId); return false; }
+  placeThread(m, threadId);
+  const at = m.waiting.get(threadId);
+  if (at === undefined || at > now) return false;
+  if (fact.admissible?.after !== afterKey(cursor)) return true;
+  // placeThread left out the thread with nothing admissible: this one has something
+  m.waiting.delete(threadId); m.ready.set(threadId, at);
+  return false;
+}
+/** The next thread a pass at `now` has to read: one whose instant has come (the top of the heap), else an unknown one. Undefined when
+ *  there is none: with nothing changed and no instant reached, that is one look at the top of the heap and one at the set. */
+function nextThreadToRead(m: BotPending, now: number): string | undefined {
+  for (;;) {
+    const top = m.heap[0];
+    if (!top || (top.at > now && m.waiting.get(top.threadId) === top.at)) break;
+    if (m.waiting.get(top.threadId) !== top.at) { heapPop(m.heap); continue; }
+    // due: settled from what is known (its heap entry then no longer counts), or read
+    if (settleKnown(m, top.threadId, now)) return top.threadId;
+    if (m.waiting.get(top.threadId) === top.at) { m.waiting.delete(top.threadId); }
+  }
+  for (const threadId of m.unknown) if (settleKnown(m, threadId, now)) return threadId;
+  return undefined;
+}
+const readyNow = (m: BotPending, now: number): boolean => { for (const at of m.ready.values()) if (at <= now) return true; return false; };
+/** The pending form of reflectableThreads (pendingOnly) for one bot, from memory: the same answer, reading only the threads that are
+ *  unknown or due, in slices (the loop is handed back before each read and between its pages; the feed is taken again after every
+ *  hand-back). "again" when everything was forgotten meanwhile (the caller starts the bot over), undefined when stopped. */
+async function pendingFromMemory(db: DatabaseSync, memory: PendingMemory, m: BotPending, bot: ReflectBot, now: number, between: () => Promise<void>, signal?: AbortSignal): Promise<boolean | "again" | undefined> {
+  let handedBack = false;
+  const handBack = async () => { handedBack = true; await between(); };
+  for (;;) {
+    if (handedBack) {
+      handedBack = false;
+      if (database() !== db || signal?.aborted) return undefined;
+      // a write may have landed while the loop was handed back
+      if (pendingMemory(db) !== memory || memory.bots.get(bot.id) !== m) return "again";
+    }
+    if (readyNow(m, now)) return true;
+    const threadId = nextThreadToRead(m, now);
+    if (threadId === undefined) return readyNow(m, now);
+    const version = m.version, touched = memory.touched.get(threadId) ?? 0, state = m.state;
+    const current = () => m.version === version && (memory.touched.get(threadId) ?? 0) === touched;
+    pipPendingScanStats.threadWalks++;
+    await handBack();
+    if (signal?.aborted) return undefined;
+    let fact = m.facts.get(threadId);
+    if (!fact) {
+      const newest = await newestTextTurn(db, threadId, handBack, signal);
+      if (newest === undefined || signal?.aborted) return undefined;
+      // named again, or the bot's inputs applied, while it was read: it stays unknown and is read again
+      if (!current()) { handedBack = true; continue; }
+      fact = { newest };
+      m.facts.set(threadId, fact);
+      if (settleKnown(m, threadId, now) === false) continue;
+    }
+    const cursor = state.threads[threadId], after = afterKey(cursor);
+    const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: state.excludedThreads };
+    // the ownership the walk is about to read (the same roster, in the same turn of the loop)
+    const own = threadIsBotsOwn(bot.id, threadId);
+    const value = await hasAdmissibleAfterSliced(db, bot.id, q, handBack, signal);
+    if (signal?.aborted) return undefined;
+    if (!current() || m.facts.get(threadId) !== fact) { handedBack = true; continue; }
+    fact.admissible = { after, value, own };
+    if (value || !own) m.rosterBound.add(threadId); else m.rosterBound.delete(threadId);
+    settleKnown(m, threadId, now);
+  }
+}
+/** The pending form of reflectableThreads (pendingOnly), in slices, reading every eligible thread: the check when there is no change
+ *  feed (pendingMemory null). At most PIP_PENDING_SLICE_MS of the serving thread at a time, the loop handed back between threads and
+ *  between pages of one thread's walk. True when some thread has something to reflect. */
 async function anyThreadPendingSliced(db: DatabaseSync, deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number, between: () => Promise<void>, signal?: AbortSignal): Promise<boolean> {
   if (!reflectGateOpen(deps, bot, state, now)) return false;
   for (const threadId of bot.threadIds) {
     if (state.excludedThreads.includes(threadId)) continue;
     const cursor = state.threads[threadId];
     if (cursor && now - cursor.lastRunAt < MIN_RUN_INTERVAL_MS) continue;
+    pipPendingScanStats.threadWalks++;
     await between();
     if (signal?.aborted) return false;
-    if (!await newestIsSettledBotReplySliced(db, threadId, now, between, signal)) continue;
+    const newest = await newestTextTurn(db, threadId, between, signal);
+    if (newest === undefined || !settledBotReply(newest, now) || givenUp(cursor, newest?.at)) continue;
     const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: state.excludedThreads };
     if (await hasAdmissibleAfterSliced(db, bot.id, q, between, signal) && !signal?.aborted) return true;
   }
@@ -395,7 +782,7 @@ export function reflectableThreads(db: DatabaseSync, deps: ReflectDeps, bot: Ref
   if (state.run) return [];
   if (now < state.cooldownUntil) return [];
   // A held route does not spin the idle lane: its support entry gates it until the fingerprint changes or the owner retries.
-  if (routeBlocked(state, state.lastFingerprint, now, true)) return [];
+  if (routeBlocked(state, state.lastFingerprint, now, true, () => threadsKey(bot))) return [];
   const today = dayOf(now);
   if (state.dailyRuns.day === today && state.dailyRuns.count >= DAILY_RUN_CAP) return [];
   const out: Candidate[] = [];
@@ -403,7 +790,8 @@ export function reflectableThreads(db: DatabaseSync, deps: ReflectDeps, bot: Ref
     if (state.excludedThreads.includes(threadId)) continue;
     const cursor = state.threads[threadId];
     if (cursor && now - cursor.lastRunAt < MIN_RUN_INTERVAL_MS) continue;
-    if (!newestIsSettledBotReply(db, threadId, now)) continue;
+    const seen: { at?: number } = {};
+    if (!newestIsSettledBotReply(db, threadId, now, seen) || givenUp(cursor, seen.at)) continue;
     const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: state.excludedThreads };
     if (pendingOnly) {
       // the pending check reads the newest sources until the cursor, never the whole thread (the run keeps the full lists below)
@@ -432,7 +820,8 @@ export async function reflectableThreadsSliced(db: DatabaseSync, deps: ReflectDe
     await between();
     // a stop ends the choice at the next page: no candidate comes from a partial read
     if (signal?.aborted) return [];
-    if (!await newestIsSettledBotReplySliced(db, threadId, now, between, signal)) continue;
+    const newest = await newestTextTurn(db, threadId, between, signal);
+    if (newest === undefined || !settledBotReply(newest, now) || givenUp(cursor, newest?.at)) continue;
     const q = { threadId, afterAt: cursor?.cursorAt, afterMessageId: cursor?.cursorMessageId ?? null, excludedThreads: state.excludedThreads };
     const owner = await admissibleOwnerSourcesSliced(db, bot.id, q, between, signal), actions = await admissibleActionSourcesSliced(db, bot.id, q, between, signal);
     if (signal?.aborted) return [];
@@ -466,9 +855,14 @@ export function pipReflectPending(deps: ReflectDeps): string | undefined {
  *  reflect state and settings, the memory mode, the newest message, and the minute. A maintenance pass then costs one map read
  *  per bot instead of a scan of every thread (34.6 s stall, STALLS-FINAL-DESIGN section 4). */
 const pendingScans = new Map<string, { key: string; pending: boolean }>();
-export const pipPendingScanStats = { scans: 0, memoHits: 0 };
+/** `threadWalks`: the threads the sliced check visited (read from the store), one count per visit. */
+export const pipPendingScanStats = { scans: 0, memoHits: 0, threadWalks: 0 };
 /** Test hook: forget the remembered scans. */
-export function resetPipPendingScans(): void { pendingScans.clear(); pipPendingScanStats.scans = 0; pipPendingScanStats.memoHits = 0; }
+export function resetPipPendingScans(): void {
+  pendingScans.clear(); pendingMemories = new WeakMap(); reflectEdits = new WeakMap();
+  refusedPasses = new WeakMap(); pipRefusedPassStats.held = 0; pipRefusedPassStats.probes = 0; pipRefusedPassStats.refused = 0;
+  pipPendingScanStats.scans = 0; pipPendingScanStats.memoHits = 0; pipPendingScanStats.threadWalks = 0;
+}
 const PENDING_SCAN_BUCKET_MS = 60_000;
 function pipReflectPendingUnnamed(deps: ReflectDeps): string | undefined {
   const db = database(), now = nowOf(deps);
@@ -496,22 +890,49 @@ function pipReflectPendingUnnamed(deps: ReflectDeps): string | undefined {
   return undefined;
 }
 
-/** pipReflectPending, the same answer and the same per-bot memo, with the thread scan in slices of at most PIP_PENDING_SLICE_MS: the idle lane's
- *  check (index.ts onContinuity) never holds the serving thread for a bot's whole history (rc13 real-data boot: a 581 ms stall,
- *  `memory.pip.pending:261ms others=memory.pip.threads:261msx2`). */
+const RUN_UNSETTLED = ["requested", "uncertain-transport", "validated", "pending", "catch-up"];
+/** pipReflectPending, the same answer, with the thread reads in slices of at most PIP_PENDING_SLICE_MS: the idle lane's check (index.ts
+ *  onContinuity) never holds the serving thread for a bot's whole history (rc13 real-data boot: a 581 ms stall,
+ *  `memory.pip.pending:261ms others=memory.pip.threads:261msx2`). It answers from the pending check's memory (above): a pass with nothing
+ *  changed reads the feed's mark and each bot's reflect binding, and no thread. `memoHits` counts the bots answered with no thread read,
+ *  `scans` the others. With no change feed (pendingMemory null) it is the per-bot memo of pipReflectPending and a read of every thread. */
 export async function pipReflectPendingSliced(deps: ReflectDeps, sliceMs = PIP_PENDING_SLICE_MS, signal?: AbortSignal): Promise<string | undefined> {
   const between = sliceBetween(sliceMs);
   const db = database(), now = nowOf(deps);
-  let revision: string | null = null;
-  try { revision = `${connectionId(db)}:${Number(db.prepare("SELECT data_revision FROM memory_meta WHERE id=1").get()?.data_revision ?? 0)}:${Number(db.prepare("SELECT COALESCE(MAX(rowid),0) AS n FROM messages").get()?.n ?? 0)}`; } catch { /* unknown: no memo */ }
+  let revision: string | null | undefined;
   for (const bot of deps.bots()) {
     if (!bot.continuity) continue;
     await between();
     // the data folder may have changed while the loop was handed back: the scan reads the connection it began on, or stops; a stop ends it too
     if (database() !== db || signal?.aborted) return undefined;
     const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(reflectBindingId(bot.id));
-    const state = readReflectState(db, bot.id);
-    if (state.run && Object.values(state.run.families).some(f => ["requested", "uncertain-transport", "validated", "pending", "catch-up"].includes(f.state))) return bot.id;
+    let answered = false;
+    // everything forgotten again and again while the bot is read (a change that concerns every thread at each hand-back): the third time
+    // the bot is read without the memory, as below
+    for (let starts = 0; starts < 3; starts++) {
+      const memory = pendingMemory(db);
+      if (!memory) break;
+      const intent = row ? String(row.intent) : "", known = memory.bots.get(bot.id);
+      // the state is parsed when its text moved and its writer left no account of the edit, never per pass
+      const state = known && known.intent === intent ? known.state : known && takeReflectEdit(db, bot.id, known, intent) || reflectStateOf(row);
+      if (state.run && Object.values(state.run.families).some(f => RUN_UNSETTLED.includes(f.state))) return bot.id;
+      const walks = pipPendingScanStats.threadWalks;
+      const pending = reflectGateOpen(deps, bot, state, now) ? await pendingFromMemory(db, memory, botPendingMemory(memory, bot, state, intent), bot, now, between, signal) : false;
+      if (pending === undefined || signal?.aborted) return undefined;
+      if (pending === "again") continue;
+      if (pipPendingScanStats.threadWalks === walks) pipPendingScanStats.memoHits++; else pipPendingScanStats.scans++;
+      if (pending) return bot.id;
+      answered = true;
+      break;
+    }
+    if (answered) continue;
+    // no change feed: the memo of pipReflectPending, and every thread on a miss
+    if (revision === undefined) {
+      revision = null;
+      try { revision = `${connectionId(db)}:${Number(db.prepare("SELECT data_revision FROM memory_meta WHERE id=1").get()?.data_revision ?? 0)}:${Number(db.prepare("SELECT COALESCE(MAX(rowid),0) AS n FROM messages").get()?.n ?? 0)}`; } catch { /* unknown: no memo */ }
+    }
+    const state = reflectStateOf(row);
+    if (state.run && Object.values(state.run.families).some(f => RUN_UNSETTLED.includes(f.state))) return bot.id;
     // r2 M1: the full admission vector (global, data_version and every thread's epoch), never an aggregate of it
     const vector = revision === null ? null : admissionVector(db, bot.threadIds);
     const key = vector === null ? null : `${revision}|${vector}|${Math.floor(now / PENDING_SCAN_BUCKET_MS)}|${deps.memoryMode()}|${bot.settingsGeneration ?? ""}|${JSON.stringify(bot.options ?? null)}|${bot.threadIds.join(",")}|${String(row?.intent ?? "")}`;
@@ -544,7 +965,8 @@ function noteSupport(state: ReflectState, fingerprint: string, now: number, stat
   const prev = state.support[fingerprint];
   if (status === "ok") { state.support[fingerprint] = { probe: prev?.probe, status: "ok", reason: "", at: now, history: history ?? prev?.history }; return; }
   const failures = status === "transient" ? (prev?.failures ?? 0) + 1 : prev?.failures;
-  state.support[fingerprint] = { probe: prev?.probe, status, reason, at: now, ...(status === "transient" ? { retryAt: now + TRANSIENT_RETRY_MS[Math.min(failures! - 1, TRANSIENT_RETRY_MS.length - 1)], failures } : {}), history: history ?? prev?.history };
+  state.support[fingerprint] = { probe: prev?.probe, status, reason, at: now, ...(status === "transient" ? { retryAt: now + TRANSIENT_RETRY_MS[Math.min(failures! - 1, TRANSIENT_RETRY_MS.length - 1)], failures } : {}), history: history ?? prev?.history,
+    ...(status === "unsupported" ? { rechecks: prev?.status === "unsupported" ? (prev.rechecks ?? 0) + 1 : 0, ...(prev?.thread ? { thread: prev.thread } : {}) } : {}) };
 }
 function noteRefusal(state: ReflectState, now: number, runId: string, stateName: string, reason: string) {
   state.refusals = [{ at: now, runId, state: stateName, reason }, ...state.refusals].slice(0, 3);
@@ -565,28 +987,111 @@ function createRun(deps: ReflectDeps, bot: ReflectBot, candidate: Candidate, rou
   };
 }
 
+// ------------------------------------------------------- a refused pass ----
+// q1022 (field log, one idle minute under a 1 MB/min background budget: the thread page statement 3,907 times). A reflection pass reads
+// before it writes: the choice of a thread walks every candidate thread whole (reflectableThreadsSliced), the snapshot and the settled
+// recheck walk the chosen one again, and only then is the first write asked (mutateReflect's BEGIN IMMEDIATE). When the background write
+// gate refuses that write (BG_DEFERRED, io-budget.ts beforeWrite) nothing is recorded, so the pending check still answers "pending" from
+// its memory and the next sweep read the whole history again, to be refused again. What a refused pass leaves here:
+//  - the pass is not started again while nothing it reads has moved (the admission vector of the bots' threads, their reflect bindings,
+//    their settings, the memory mode) and the floor has not passed: the retry the gate named, at least PIP_REFUSED_PASS_FLOOR_MS, doubled
+//    for every whole pass refused in a row over the same inputs;
+//  - before the pass is started again the gate that refused is asked first, by a transaction that writes nothing: still shut, it refuses
+//    here and no thread is read.
+// Nothing is skipped: a held pass is the same pass later, read from the start, and a new source moves the vector, which ends the hold.
+interface RefusedPass { key: string | null; until: number; times: number }
+let refusedPasses = new WeakMap<DatabaseSync, Map<string, RefusedPass>>();
+export const PIP_REFUSED_PASS_FLOOR_MS = 60_000;
+const PIP_REFUSED_PASS_CEILING_MS = 5 * 60_000;
+/** Test seam: `held` passes not started (nothing moved, floor not passed), `probes` gate questions asked, `refused` those it refused. */
+export const pipRefusedPassStats = { held: 0, probes: 0, refused: 0 };
+/** What a pass over `bots` reads, as one string of a few seeks per bot; null when it cannot be told (no counters): then only the gate is asked. */
+function refusedPassKey(db: DatabaseSync, deps: ReflectDeps, bots: readonly ReflectBot[]): string | null {
+  try {
+    const parts: unknown[] = [deps.memoryMode()];
+    for (const bot of bots) {
+      const vector = admissionVector(db, bot.threadIds);
+      if (vector === null) return null;
+      parts.push(bot.id, vector, settingsGen(bot), String(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(reflectBindingId(bot.id))?.intent ?? ""));
+    }
+    return JSON.stringify(parts);
+  } catch { return null; }
+}
+/** Runs `pass` unless the same pass was refused by the write gate and would be again (see the section note). A refusal is thrown on, as
+ *  the pass itself throws it, so the caller's retry timer is the one it already has. */
+async function unlessRefused<T>(db: DatabaseSync, deps: ReflectDeps, name: string, bots: readonly ReflectBot[], pass: () => Promise<T>): Promise<T> {
+  // (bgstarve: a pass the relief dispatcher gave this minute's grant to is run, whatever an earlier refusal left here)
+  const held = ioBudget.bgReliefGrantRoom() > 0 ? undefined : refusedPasses.get(db)?.get(name);
+  if (held) {
+    const now = nowOf(deps), key = refusedPassKey(db, deps, bots);
+    if (key !== null && key === held.key && now < held.until) { pipRefusedPassStats.held++; throw new BgDeferred(Math.max(1, held.until - now)); }
+    pipRefusedPassStats.probes++;
+    try { transaction(() => undefined); }
+    catch (error) {
+      // only the gate's own refusal ends the pass here; any other failure of the question (a busy writer) is the pass's to meet
+      if (isBgDeferred(error)) { pipRefusedPassStats.refused++; held.key = key; held.until = now + Math.max(PIP_REFUSED_PASS_FLOOR_MS, error.retryInMs); throw error; }
+    }
+  }
+  try {
+    const out = await pass();
+    refusedPasses.get(db)?.delete(name);
+    return out;
+  } catch (error) {
+    if (isBgDeferred(error) && database() === db && !db.isTransaction) {
+      let passes = refusedPasses.get(db);
+      if (!passes) refusedPasses.set(db, passes = new Map());
+      const key = refusedPassKey(db, deps, bots), prior = passes.get(name), times = prior && key !== null && prior.key === key ? prior.times + 1 : 1;
+      const floor = Math.min(PIP_REFUSED_PASS_CEILING_MS, Math.max(PIP_REFUSED_PASS_FLOOR_MS, error.retryInMs) * 2 ** Math.min(times - 1, 5));
+      passes.set(name, { key, until: nowOf(deps) + floor, times });
+    }
+    throw error;
+  }
+}
+
 /** Pick one thread (unease first once P3 lands, then surprise, then oldest cursor) and run it to a terminal state. */
 export async function runPipReflect(deps: ReflectDeps, botIdHint: string | undefined, signal: AbortSignal): Promise<ReflectOutcome> {
   const db = database(), now0 = nowOf(deps);
   await reconcilePipRuns(deps, { signal });
   if (signal.aborted) return { status: "idle" };
   const bots = deps.bots().filter(b => b.continuity && (!botIdHint || b.id === botIdHint));
-  for (const bot of bots) {
-    const state = readReflectState(db, bot.id);
-    // An unfinished run (restart, catch-up) resumes before anything new starts.
-    if (state.run) { const resumed = await driveRun(deps, bot, signal); if (resumed.status !== "idle") return resumed; continue; }
-    // in slices (reflectableThreadsSliced): the choice of a thread reads every candidate thread's sources
-    const candidates = await reflectableThreadsSliced(db, deps, bot, state, now0, sliceBetween(), signal);
-    // the loop was handed back: a stop, or a data folder changed meanwhile, ends the pass
-    if (signal.aborted || database() !== db) return { status: "idle" };
-    for (const candidate of candidates) {
-      const started = await startRun(deps, bot, candidate, signal);
-      if (started.status !== "idle") return started;
+  // q1022: a pass the write gate refused is not read again from the start at every sweep (unlessRefused)
+  return unlessRefused<ReflectOutcome>(db, deps, "reflect:" + (botIdHint ?? ""), bots, async () => {
+    for (const bot of bots) {
+      const state = readReflectState(db, bot.id);
+      // An unfinished run (restart, catch-up) resumes before anything new starts.
+      if (state.run) { const resumed = await driveRun(deps, bot, signal); if (resumed.status !== "idle") return resumed; continue; }
+      // 1.0.22 idle: a held route's recheck resolves the route first; one still unsupported reads no thread and waits twice as long
+      if (await stillUnsupported(deps, bot, state, now0)) continue;
+      if (signal.aborted || database() !== db) return { status: "idle" };
+      // in slices (reflectableThreadsSliced): the choice of a thread reads every candidate thread's sources
+      const candidates = await reflectableThreadsSliced(db, deps, bot, state, now0, sliceBetween(), signal);
+      // the loop was handed back: a stop, or a data folder changed meanwhile, ends the pass
+      if (signal.aborted || database() !== db) return { status: "idle" };
+      for (const candidate of candidates) {
+        const started = await startRun(deps, bot, candidate, signal);
+        if (started.status !== "idle") return started;
+      }
     }
-  }
-  return { status: "idle" };
+    return { status: "idle" };
+  });
 }
 
+/** The recheck of a held route, before any thread is read: true when the route of every thread of the bot (routes are per thread: a task
+ *  thread may run another engine) resolves to the held fingerprint and is still unsupported (its wait is doubled). Any thread on a changed or
+ *  supported route, an older entry with no thread, or a throw reads the threads as before. */
+async function stillUnsupported(deps: ReflectDeps, bot: ReflectBot, state: ReflectState, now: number): Promise<boolean> {
+  const fingerprint = state.lastFingerprint, entry = fingerprint ? state.support[fingerprint] : undefined;
+  if (!fingerprint || entry?.status !== "unsupported" || !entry.thread || !bot.threadIds.includes(entry.thread)) return false;
+  if (!reflectGateOpen(deps, bot, state, now)) return false;
+  for (const threadId of bot.threadIds) {
+    if (state.excludedThreads.includes(threadId)) continue;
+    let route: ResolvedRoute;
+    try { route = await deps.resolveRoute(bot, threadId); } catch { return false; }
+    if (route.fingerprint !== fingerprint || !(route.unsupported || !route.textOnlyTurn)) return false;
+  }
+  mutateReflect(bot.id, (s) => { const e = s.support[fingerprint]; if (e && e.status === "unsupported") { e.at = now; e.rechecks = (e.rechecks ?? 0) + 1; e.threads = threadsKey(bot); } });
+  return true;
+}
 async function startRun(deps: ReflectDeps, bot: ReflectBot, candidate: Candidate, signal: AbortSignal): Promise<ReflectOutcome> {
   const db = database(), now = nowOf(deps);
   let route: ResolvedRoute;
@@ -611,12 +1116,13 @@ async function startRun(deps: ReflectDeps, bot: ReflectBot, candidate: Candidate
   const pre = readReflectState(db, bot.id);
   const blocked = routeBlocked(pre, route.fingerprint, now);
   if (blocked) {
-    // Still held: re-arm the recheck timer so the idle lane does not spin on an unchanged fingerprint.
-    mutateReflect(bot.id, (s) => { const e = s.support[route.fingerprint]; if (e && e.status === "unsupported") e.at = now; });
+    // Still held: re-arm the recheck timer so the idle lane does not spin on an unchanged fingerprint. The wait doubles only in
+    // stillUnsupported (every thread on this route): a bot with another thread on a supported route keeps the 5 min recheck.
+    mutateReflect(bot.id, (s) => { const e = s.support[route.fingerprint]; if (e && e.status === "unsupported") { e.at = now; e.thread = candidate.threadId; } });
     return { status: "idle", reason: blocked };
   }
   if (route.unsupported || !route.textOnlyTurn) {
-    mutateReflect(bot.id, (s) => { noteSupport(s, route.fingerprint, now, "unsupported", (route.unsupported?.reason ?? "no-text-only-turn") + (route.unsupported?.detail ? ":" + route.unsupported.detail.slice(0, 300) : "")); s.lastEngine = route.engine; });
+    mutateReflect(bot.id, (s) => { noteSupport(s, route.fingerprint, now, "unsupported", (route.unsupported?.reason ?? "no-text-only-turn") + (route.unsupported?.detail ? ":" + route.unsupported.detail.slice(0, 300) : "")); s.support[route.fingerprint]!.thread = candidate.threadId; s.lastEngine = route.engine; });
     return { status: "refused", reason: "unsupported", botId: bot.id };
   }
   const rows = currentLivedRows(db, bot.id, pre.excludedThreads);
@@ -1168,13 +1674,20 @@ export function settleRun(deps: ReflectDeps, botId: string) {
     if (fams.some(f => f.transport && f.state.startsWith("refused:"))) return;
     if (fams.every(f => f.state === "applied")) {
       const t = s.threads[r.threadId] ?? { cursorMessageId: null, cursorAt: 0, lastRunAt: now, surprise: 0, unreflected: [] };
-      s.threads[r.threadId] = { ...t, cursorMessageId: r.toMessageId, cursorAt: r.toAt, lastAppliedAt: Math.max(...fams.map(f => f.appliedAt ?? r.createdAt)), surprise: 0 };
+      s.threads[r.threadId] = { ...t, cursorMessageId: r.toMessageId, cursorAt: r.toAt, lastAppliedAt: Math.max(...fams.map(f => f.appliedAt ?? r.createdAt)), surprise: 0, unstableRuns: undefined, gaveUpAt: undefined };
       s.run = undefined; return;
     }
     // Terminal refusals clear the run but leave the cursor; the cooldown and the support entry gate the next try.
     if (fams.every(f => f.state.startsWith("refused:") || f.state === "off" || f.state === "applied")) {
       if (fams.some(f => f.state === "refused:off")) { s.run = undefined; return; }
       s.cooldownUntil = Math.max(s.cooldownUntil, fams.some(f => f.state === "refused:unstable") ? now + COOLDOWN_MS : 0);
+      // (a run refused as unstable or for bad output spent its paid calls on this history and left the cursor where it was)
+      if (fams.some(f => FAILED_RUN_STATES.includes(f.state))) {
+        const t = s.threads[r.threadId] ?? { cursorMessageId: null, cursorAt: 0, lastRunAt: now, surprise: 0, unreflected: [] };
+        // (a thread run again after a give-up had a newer turn: its count starts again)
+        const unstableRuns = (t.gaveUpAt !== undefined ? 0 : t.unstableRuns ?? 0) + 1;
+        s.threads[r.threadId] = { ...t, unstableRuns, gaveUpAt: unstableRuns >= UNSTABLE_RUNS_GIVE_UP ? now : undefined };
+      }
       s.run = undefined;
     }
   });
@@ -1440,7 +1953,7 @@ export function reflectionStatus(botId: string, now = Date.now(), fingerprint?: 
 
 /** Owner "Try again": clears a held route and the cooldown so the next idle tick may reflect. */
 export function retryReflection(botId: string): void {
-  mutateReflect(botId, (s) => { s.support = {}; s.cooldownUntil = 0; for (const f of Object.values(s.run?.families ?? {})) if (f.state.startsWith("refused:")) { /* a refused run is dropped below */ } if (s.run && Object.values(s.run.families).every(f => f.state.startsWith("refused:") && !f.transport)) s.run = undefined; });
+  mutateReflect(botId, (s) => { s.support = {}; s.cooldownUntil = 0; for (const [id, t] of Object.entries(s.threads)) if (t.gaveUpAt !== undefined || t.unstableRuns !== undefined) { const { gaveUpAt: _g, unstableRuns: _u, ...rest } = t; s.threads[id] = rest; } for (const f of Object.values(s.run?.families ?? {})) if (f.state.startsWith("refused:")) { /* a refused run is dropped below */ } if (s.run && Object.values(s.run.families).every(f => f.state.startsWith("refused:") && !f.transport)) s.run = undefined; });
 }
 export function setReflectExcluded(botId: string, threadId: string, excluded: boolean): void {
   transaction(db => {

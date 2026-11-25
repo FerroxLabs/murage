@@ -62,6 +62,9 @@ it("T-BUDGET-DRAIN-DIAGNOSIS pays before diagnosing even the first part", async 
   expect(db.prepare).not.toHaveBeenCalled(); expect(get).not.toHaveBeenCalled();
 });
 // red-at-4df086541: a budget crossing could append refs or run attribution first.
+// "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": the bytes and attempts rows asserted that
+// exhausting the 64 MiB / 4096-attempt limits refused here; those limits are gone, so they now seal the budget with an invalid cost
+// on the same counter first and still assert that a refused budget cannot mutate a proposed ledger.
 it.each(["bytes", "work", "attempts", "statements"] as const)("T-RELEASE-BUDGET %s exhaustion cannot mutate a proposed ledger", async key => {
   const { RELEASE_LIMITS } = api();
   const { consumingFixture } = await import("../testing/consuming-fixture.ts");
@@ -69,7 +72,8 @@ it.each(["bytes", "work", "attempts", "statements"] as const)("T-RELEASE-BUDGET 
   const f = consumingFixture();
   try {
     const parents = f.turn.parents, write = vi.fn(), commit = vi.fn();
-    f.budget.charge({ [key]: RELEASE_LIMITS[key] - f.budget.counts[key] });
+    if (key === "bytes" || key === "attempts") expect(() => f.budget.charge({ [key]: -1 })).toThrow("MEMORY_CONTEXT_REVOKED");
+    else f.budget.charge({ [key]: RELEASE_LIMITS[key] - f.budget.counts[key] });
     expect(() => emitConsumingTurnResponse(f.binding, registerConsumingDescriptor("gateway:json-error-limit-done", "body"), {
       bytes: 1, refs: [{ kind: "line", threadId: "T", messageId: "Y" }], commitAttribution: commit, write,
     })).toThrow("MEMORY_CONTEXT_REVOKED");

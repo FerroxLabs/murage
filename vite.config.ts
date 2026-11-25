@@ -50,7 +50,7 @@ export default defineConfig({
     },
   },
   test: {
-    // Missing snapshots are failures on every runner, including local build host
+    // Missing snapshots are failures on every runner, including local Hetzner
     // and vt shells without CI. Re-recording requires an explicit --update.
     update: "none",
     environment: "node",
@@ -71,8 +71,11 @@ export default defineConfig({
       "src/attention-ui/AttentionPanel.test.tsx",
       "src/float/*.test.tsx",
       "src/components/PinToEdgeMenuItem.test.tsx",
+      "src/components/NotifyMeSettings.test.tsx",
       "src/pill/Pill.test.tsx",
       "src/components/DataFolderSettings.test.tsx",
+      "src/components/ReconnectAppsBanner.panel.test.tsx",
+      "src/components/notice-lane.test.tsx",
       "shared/**/*.test.ts",
       "tools/**/*.test.ts",
       "companion/**/*.test.ts",
@@ -96,7 +99,7 @@ export default defineConfig({
     // (scripts/release-ci-gate.mjs). The rule is in .github/workflows/nightly.yml.
     tags: [
       { name: "nightly", description: "Over 60 s on a hosted runner: runs in nightly.yml on all three OSes, not in the per-push shards (memory-timing-nightly.yml also runs the WebAssembly parity test with the pinned model prepared)." },
-      { name: "perf-budget", description: "Asserts a wall-clock budget measured on dedicated hardware: runs on the build host perf job in nightly.yml, not on hosted runners." },
+      { name: "perf-budget", description: "Asserts a wall-clock budget measured on dedicated hardware: runs on the Hetzner perf job in nightly.yml, not on hosted runners." },
     ],
   },
   resolve: {

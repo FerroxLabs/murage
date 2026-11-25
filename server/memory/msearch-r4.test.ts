@@ -359,7 +359,9 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     const failing: MemorySearchBridge = { search: async () => { throw new Error("MEMORY_WORKER_EXITED"); } };
     const index = await world([entry("kept", scope, kept)]);
     const quiet = shown(await searchMemory(QUERY, accessOf(), failing, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
-    expect(quiet.coverageComplete).toBe(true);
+    // q1022 recallperf item 4 (changed expectation): the meaning search did not run, so words alone are never complete coverage.
+    // What this test guards is unchanged: records the reader may not read do not move the answer (busy equals quiet below).
+    expect(quiet.coverageComplete).toBe(false);
     // somebody else's record is still owed its projection, and so is a record of this reader's that it may not read
     clearMemorySearchCache();
     add("theirs", other, kept, true, "pending");

@@ -23,6 +23,28 @@ export interface RouteHost {
   connectionModels?(connectionId: string): readonly string[];
 }
 
+/** 1.0.22 idle: ReflectBot.routeStamp, the owner's route choice for every thread of the bot (the reflect model and each thread's model
+ *  selection, as resolveRoute reads them). Pure configuration: no route is resolved, no binary is read. */
+export function reflectRouteStamp(bot: Pick<ReflectBot, "threadIds" | "options">, selectionOf: (threadId: string) => { instanceId: string; model: string; connectionId?: string } | undefined): string {
+  return JSON.stringify([bot.options?.reflectModel ?? null, bot.threadIds.map(threadId => { const s = selectionOf(threadId); return s ? [s.instanceId, s.model, s.connectionId ?? null] : null; })]);
+}
+
+/** What reflectBotsOf reads of the server's store (server/store.ts: bots, threadIdsForBot, projectBotForTask). */
+export interface ReflectStoreView {
+  readonly bots: ReadonlyArray<{ id: string; name?: string; continuity?: boolean; continuityOptions?: ReflectBot["options"]; continuityGeneration?: number; modelSelection?: { instanceId: string; model: string; connectionId?: string } }>;
+  threadIdsForBot(botId: string, includeActiveDuplicate?: boolean): readonly string[];
+  projectBotForTask(botId: string, threadId: string): { modelSelection?: { instanceId: string; model: string; connectionId?: string } } | null;
+}
+/** ReflectDeps.bots for the server (index.ts pipReflectDeps): every bot with its threads, continuity settings and route stamp. */
+export function reflectBotsOf(store: ReflectStoreView): () => ReflectBot[] {
+  return () => store.bots.map(bot => {
+    const threadIds = store.threadIdsForBot(bot.id, true), options = bot.continuityOptions;
+    // 1.0.22 idle: the route choice a doubled reflect recheck is bound to (read only while one gates)
+    const routeStamp = () => reflectRouteStamp({ threadIds, options }, t => (store.projectBotForTask(bot.id, t) ?? store.bots.find(x => x.id === bot.id))?.modelSelection);
+    return { id: bot.id, name: bot.name, threadIds, continuity: bot.continuity === true, options, settingsGeneration: bot.continuityGeneration, routeStamp };
+  });
+}
+
 const identityCache = new Map<string, { at: number; value: string }>();
 async function cachedBinaryIdentity(path: string): Promise<string> {
   const hit = identityCache.get(path);

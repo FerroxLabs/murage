@@ -1,6 +1,7 @@
 import "../shared/win-hide-child-process.mjs";
 import {exitWithChildIoReceipt} from "./io-child-receipts.ts";
-import { onProxyReleaseClose, sendProxyFrame, proxyTransportLost, reserveProxyUpstream, processProxyRelease } from "./proxy-turn-release.ts";
+import { learnProxyOwnerTurn, onProxyReleaseClose, sendProxyFrame, proxyOwnerTurn, proxyTransportLost, reserveProxyUpstream, processProxyRelease } from "./proxy-turn-release.ts";
+import { OVERSIZE_PERMISSION_ANSWER_LINE, OVERSIZE_PERMISSION_ASK_LINE, OWNER_ENVELOPE_MAX, OWNER_ITEM_MAX, SNIFF_BYTES, itemCap } from "./owner-turn-caps.ts";
 // permission-proxy — the MCP stdio server the claude CLI spawns for
 // --permission-prompt-tool (ported from agentcal's runPermissionProxy;
 // dedicated entry file, so there is no argv-dispatch fork-bomb hazard).
@@ -78,28 +79,60 @@ onProxyReleaseClose(() => conn.destroy());
 // become U+FFFD in an approved write (adapted from OpenMausBot #2387).
 const brokerDecoder = new TextDecoder();
 let brokerReads = Promise.resolve();
-let connBuf = "";
+// One broker line as it arrives: its parts (never re-copied per read) and their size.
+let lineParts: string[] = [], lineBytes = 0;
+// cause22 caps: the rest of one answer of the owner's own turn that went over the 64 MiB ceiling is being discarded up to its
+// newline. Only its first 64 KiB are kept, to name the ask it answers (the broker writes the id first).
+let cutLine: { head: string } | undefined;
+/** cause22 caps (ASTRA c0174cc11d High): one broker answer over the ceiling denies the one ask it answers, with a fixed line that is
+ * NOT the broker-unavailable note (the driver ends the turn on that note). The socket, the mount and the turn stay as they were.
+ * The ask is named by the id in the line's first 64 KiB; failing that it is the only ask waiting; failing that every waiting ask is
+ * denied (none can be told apart, and none may wait for ever). */
+const denyCutLine = (head: string) => {
+  process.stderr.write("permission oversized=1\n");
+  const named = [...head.matchAll(/"id"\s*:\s*"([^"\\]{1,128})"/g)].map(match => match[1]!).find(id => waiting.has(id));
+  const ids = named !== undefined ? [named] : [...waiting.keys()];
+  for (const id of ids) { waiting.get(id)?.({ behavior: "deny", message: OVERSIZE_PERMISSION_ANSWER_LINE }); waiting.delete(id); }
+};
+/** One complete broker line. False: the line is not an answer to a waiting ask, so the broker is treated as gone. */
+const brokerLine = (line: string): boolean => {
+  let msg: any;
+  try { msg = JSON.parse(line); } catch { return false; }
+  if (!(msg?.t === "answer" && typeof msg.id === "string" && waiting.has(msg.id))) return false;
+  waiting.get(msg.id)?.(msg);
+  waiting.delete(msg.id);
+  return true;
+};
 conn.on("data", (raw: Buffer) => {
   conn.pause();
   brokerReads = brokerReads.then(async () => {
   await reserveProxyUpstream("permission", raw.byteLength);
-  const chunk = brokerDecoder.decode(raw, { stream: true });
-  if (Buffer.byteLength(connBuf) + Buffer.byteLength(chunk) > 8 * 1024 * 1024) { dead(); conn.destroy(); return; }
-  connBuf += chunk;
-  let nl;
-  while ((nl = connBuf.indexOf("\n")) !== -1) {
-    const line = connBuf.slice(0, nl);
-    connBuf = connBuf.slice(nl + 1);
-    let msg: any;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      dead(); conn.destroy(); return;
+  let chunk = brokerDecoder.decode(raw, { stream: true });
+  // cause22 caps: 8 MiB for every turn but the owner's own (the reserve just answered says whose), where the 64 MiB ceiling applies.
+  // Over the ceiling the owner's turn is not ended either: that one answer is cut and its ask denied (denyCutLine).
+  const owner = proxyOwnerTurn();
+  if (!owner && (cutLine !== undefined || lineBytes + Buffer.byteLength(chunk) > 8 * 1024 * 1024)) { dead(); conn.destroy(); return; }
+  for (;;) {
+    const nl = chunk.indexOf("\n");
+    const piece = nl === -1 ? chunk : chunk.slice(0, nl);
+    if (cutLine) {
+      if (nl === -1) break;
+      denyCutLine(cutLine.head); cutLine = undefined;
+    } else {
+      lineParts.push(piece); lineBytes += Buffer.byteLength(piece);
+      if (lineBytes > itemCap(owner, 8 * 1024 * 1024)) {
+        const head = lineParts.join("").slice(0, SNIFF_BYTES);
+        lineParts = []; lineBytes = 0;
+        if (nl === -1) { cutLine = { head }; break; }
+        denyCutLine(head);
+      } else {
+        if (nl === -1) break;
+        const line = lineParts.length === 1 ? lineParts[0]! : lineParts.join("");
+        lineParts = []; lineBytes = 0;
+        if (!brokerLine(line)) { dead(); conn.destroy(); return; }
+      }
     }
-    if (msg?.t === "answer" && typeof msg.id === "string" && waiting.has(msg.id)) {
-      waiting.get(msg.id)?.(msg);
-      waiting.delete(msg.id);
-    } else { dead(); conn.destroy(); return; }
+    chunk = chunk.slice(nl + 1);
   }
   conn.resume();
   }).catch(() => { dead(); conn.destroy(); });
@@ -171,16 +204,22 @@ export async function handle(msg: any) {
       : Array.isArray(args.suggestions)
         ? args.suggestions
         : null;
-    const answer: any = await new Promise((resolve) => {
+    const ask = isQuestion
+      ? { t: "ask", id: askId, kind: "question", tool: "ask_user", input: { question: args.question, choices: args.choices } }
+      : isClaudeQuestion
+        ? { t: "ask", id: askId, kind: "question", tool: "AskUserQuestion", input: args.input }
+        : { t: "ask", id: askId, tool: args.tool_name, input: args.input };
+    const askLine = JSON.stringify(ask) + "\n";
+    // cause22 caps: on the owner's own turn an ask over the 64 MiB ceiling is never sent (the broker would skip it or close the socket
+    // on it, and a closed socket ends the turn): this one call is denied here with a fixed note and the turn continues. The door is
+    // asked first when it has not said yet whose turn this is. Every other turn: sent as before.
+    const tooLarge = Buffer.byteLength(askLine) > OWNER_ITEM_MAX && await learnProxyOwnerTurn("permission");
+    if (tooLarge) process.stderr.write("permission oversized=1\n");
+    const answer: any = tooLarge ? { behavior: "deny", message: OVERSIZE_PERMISSION_ASK_LINE } : await new Promise((resolve) => {
       waiting.set(askId, resolve);
       if (conn.destroyed) return dead();
-      const ask = isQuestion
-        ? { t: "ask", id: askId, kind: "question", tool: "ask_user", input: { question: args.question, choices: args.choices } }
-        : isClaudeQuestion
-          ? { t: "ask", id: askId, kind: "question", tool: "AskUserQuestion", input: args.input }
-          : { t: "ask", id: askId, tool: args.tool_name, input: args.input };
       try {
-        conn.write(JSON.stringify(ask) + "\n");
+        conn.write(askLine);
       } catch {
         dead();
       }
@@ -212,6 +251,16 @@ export async function handle(msg: any) {
         text = JSON.stringify(result);
       } else {
         text = JSON.stringify({ behavior: "deny", message: answer.message || "Denied from Murage" });
+      }
+    }
+    // cause22 caps r3: the decision is JSON inside the reply's JSON, so an answer that passed the 64 MiB line ceiling can be over it
+    // once escaped (quotes and backslashes double). Downstream such a frame is swapped for a tool error; this is a permission answer,
+    // so on the owner's own turn this ONE call is denied here with the fixed note instead. Every other turn: sent as before.
+    if (text.length > 8 * 1024 * 1024) {
+      const frame = JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } });
+      if ((Buffer.byteLength(frame) > OWNER_ITEM_MAX || Buffer.byteLength(JSON.stringify(frame)) > OWNER_ENVELOPE_MAX - 2048) && await learnProxyOwnerTurn("permission")) {
+        process.stderr.write("permission oversized=1\n");
+        text = JSON.stringify({ behavior: "deny", message: OVERSIZE_PERMISSION_ANSWER_LINE });
       }
     }
     return send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } });

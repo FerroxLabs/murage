@@ -79,7 +79,9 @@ import {
   mergeLocalInject,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
-import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { appendTurnText, createBoundedLineSplitter } from "./bounded-lines.ts";
+import { LINE_FITTED_NOTICE } from "../owner-turn-caps.ts";
+import { markTurnOutside } from "../email/external-marks.ts";
 import { registerIntake } from "../harness/intake.ts";
 import { fromPi, toPiValue, type QuestionAnswer, type QuestionSpec } from "../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
@@ -167,7 +169,7 @@ const PI_ARGS = ["--mode", "rpc", "--no-session"];
  * --no-context-files 0.67.4. A version below the newest floor, or unknown
  * (the probe is retried once), is rejected: the turn does not start and the
  * owner is told to update pi.
- * Rig (build host, pi 0.73.1, fake model): before = personal extension tool,
+ * Rig (Hetzner, pi 0.73.1, fake model): before = personal extension tool,
  * personal skill and global AGENTS.md in the request; after = none of them,
  * project AGENTS.md and an explicit `-e` extension's tool still present.
  */
@@ -519,22 +521,20 @@ export async function fetchPiModels(
     };
     const timer = setTimeout(() => finish({ default: "", options: [] }), 15_000);
     timer.unref?.();
-    // Byte-bounded framing (A4): an oversized catalog frame is never parsed;
-    // the probe resolves empty, the same as any other failed probe.
-    const stdoutLines = createBoundedLineSplitter({
-      onLine: (line) => {
-        if (done || !line.trim()) return;
-        const parsed = parsePiCatalog(line + "\n", fallbackDefault);
-        if (parsed.options.length || line.includes('"get_available_models"')) {
-          clearTimeout(timer);
-          finish(parsed);
-        }
-      },
-      onOverflow: () => {
+    // Line framing (A4), no frame size limit (MAIN-RULING
+    // cause22-no-transport-caps); a probe that never answers resolves empty
+    // on its timeout, the same as any other failed probe.
+    const onCatalogLine = (line: string) => {
+      if (done || !line.trim()) return;
+      const parsed = parsePiCatalog(line + "\n", fallbackDefault);
+      if (parsed.options.length || line.includes('"get_available_models"')) {
         clearTimeout(timer);
-        finish({ default: "", options: [] });
-      },
-    });
+        finish(parsed);
+      }
+    };
+    // 1.0.21 group B (design3-fable B R2, AMEND X5): `room: 1` keeps a line plus the newline above within the string limit; a
+    // longer line is fitted and read by the same handler (no requests come on this probe).
+    const stdoutLines = createBoundedLineSplitter({ onLine: onCatalogLine, onFit: onCatalogLine, room: 1 });
     child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
     child.on("error", () => finish({ default: "", options: [] }));
     child.on("close", () => finish({ default: "", options: [] }));
@@ -1441,7 +1441,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             if (!e) return;
             if (e.type === "text_delta" && typeof e.delta === "string") {
               attemptStreamed = true;
-              assistantText += e.delta;
+              assistantText = appendTurnText(assistantText, e.delta);
               emitTodoOutput(todo.push(e.delta));
             } else if (e.type === "thinking_delta" && typeof e.delta === "string") {
               attemptStreamed = true;
@@ -1640,29 +1640,49 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
       };
 
-      // Byte-bounded framing (A4): UTF-8 is decoded per complete line, so a
-      // multibyte character split across reads stays intact, and one frame
-      // never holds more than ENGINE_FRAME_MAX_BYTES of the shared process.
+      // Line framing (A4): UTF-8 is decoded per complete line, so a
+      // multibyte character split across reads stays intact. No frame size
+      // limit (MAIN-RULING cause22-no-transport-caps).
+      const onStdoutLine = (line: string) => {
+        if (!line.trim()) return;
+        try {
+          onEvent(registerBusyloopPayloadSite("read", JSON.parse(line)) as PiEvent, line.length);
+        } catch (error) {
+          // a fenced refusal thrown from a handler is the turn's refusal, never a malformed line (PI1+)
+          const R = claimRefusal(error, "pi.stdout");
+          if (R && R.closer === "driver") refusalOwner.closing = finishRefusal(R);
+          /* otherwise: skip non-JSON line */
+        }
+      };
+      let lineFitNoticed = false;
       const stdoutLines = createBoundedLineSplitter({
-        onLine: (line) => {
-          if (!line.trim()) return;
-          try {
-            onEvent(registerBusyloopPayloadSite("read", JSON.parse(line)) as PiEvent, line.length);
-          } catch (error) {
-            // a fenced refusal thrown from a handler is the turn's refusal, never a malformed line (PI1+)
-            const R = claimRefusal(error, "pi.stdout");
-            if (R && R.closer === "driver") refusalOwner.closing = finishRefusal(R);
-            /* otherwise: skip non-JSON line */
+        onLine: onStdoutLine,
+        // 1.0.21 group B (cause22-eng-design3-fable B, AMEND X6): a line past the string limit, fitted. R1 an
+        // extension_ui_request is never shown on cut text: that dialog is cancelled by its id (pi's own negative answer). R2 any
+        // other line (response, message updates, agent_end, agent_settled) goes to the same handler; the live turn is marked and
+        // told once BEFORE it, so a fitted terminal frame still carries the mark. A mark, never a stop.
+        onFit: (line) => {
+          let msg: any;
+          try { msg = JSON.parse(line); } catch { msg = null; }
+          if (msg && typeof msg === "object" && !Array.isArray(msg) && msg.type === "extension_ui_request") {
+            if (msg.id === undefined || msg.id === null) return;
+            try { NotModelRequest("Pi session setup, model/effort selection, abort or extension UI reply; no prompt is submitted", send({ type: "extension_ui_response", id: msg.id, cancelled: true })); }
+            catch (error) {
+              const R = claimRefusal(error, "pi.answer.fit");
+              if (R?.closer === "driver") refusalOwner.closing = finishRefusal(R);
+            }
+            return;
           }
-        },
-        onOverflow: (overflow) => {
-          appendNative(threadId, { dir: "in", source: "pi.rpc", msg: { frameOverflow: overflow } });
-          if (settled) return;
-          const message = frameOverflowMessage("pi", overflow);
-          // closed first so a pending handshake step sees the turn is over
-          // and adds no second failure
-          closeTurn(failed(message, { stopReason: FRAME_TOO_LARGE }));
-          rejectWaiters(new Error(message));
+          if (!settled) {
+            markTurnOutside(threadId, "outside tool", undefined, undefined, "pi-line-fitted");
+            if (!lineFitNoticed) {
+              lineFitNoticed = true;
+              const itemId = `line-fit-${turnId}`;
+              emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId, title: LINE_FITTED_NOTICE, toolKind: "notice" });
+              emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
+            }
+          }
+          onStdoutLine(line);
         },
       });
       // The last words pi wrote, for the line shown if it closes before its turn ended (a missing runtime, a crash).

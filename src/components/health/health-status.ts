@@ -12,6 +12,7 @@ import { FLUX_NOT_READY_COPY } from "../../../shared/provider-error";
 import { firstRunOwnsMainView } from "@/lib/first-run";
 import { useSetupView } from "@/components/FirstRunChrome";
 import type { HealthIssueLevel } from "../../../shared/health-levels";
+import { isUnseenRoutineProblem } from "../../../shared/routine-problems";
 import type { EngineHealthRow, FluxHealthState, HealthStatus } from "@/components/shell/shell-contract";
 
 /** The level from the engine reading alone: a signed-out or missing engine, or Flux used up, is the owner's to fix. */
@@ -42,6 +43,14 @@ export function healthWithChecks(engines: HealthStatus, checks: HealthIssueLevel
   return engines;
 }
 
+/** Failed or missed routine runs the owner has not opened (the Routines page's red count, unseenRoutineProblems)
+ * raise an all-clear to "watch": the dot is never green beside a red routines count (1.0.20 owner walk: Routines
+ * read 178 failures while the Health dot was green). Never "act": red needs a Needs you row, and these have none. */
+export function healthWithRoutines(status: HealthStatus, runs: readonly { status: string; seenAt?: number | null }[]): HealthStatus {
+  if (status.level === "act" || status.level === "watch") return status;
+  return runs?.some(isUnseenRoutineProblem) ? { level: "watch", line: t("ux.l2b.health.lineWatch") } : status;
+}
+
 /** `checks`: the level from the owner's Inbox read (NeedsSummary.healthLevel); absent on a read that did not prove the owner. */
 export function useHealthStatus(checks?: HealthIssueLevel | null): HealthStatus {
   const { state } = useStore();
@@ -49,5 +58,5 @@ export function useHealthStatus(checks?: HealthIssueLevel | null): HealthStatus 
   const { view } = useSetupView();
   const answered = reading.fromServer || state.instances.length > 0;
   const engines = healthInFirstRun(healthFromEngines(reading.health, reading.flux, answered), Boolean(view && firstRunOwnsMainView(view)), answered);
-  return healthWithChecks(engines, checks);
+  return healthWithRoutines(healthWithChecks(engines, checks), state.routineRuns);
 }

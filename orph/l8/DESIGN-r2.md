@@ -7,7 +7,7 @@ Job odr2-l8. This revision supersedes DESIGN.md's implementation deferrals and t
 
 ## 1. Authority, scope and historical evidence
 
-Citations: B = `/work/fuigo-builds/orph/_base`; E = `/work/fuigo-builds/orph/_ev`; P = `/work/fuigo-builds/orph/ORPHAN-PLAN-1019.md`; R = `/fixture/jobs/odes-l8/last.txt`; UX = `/fixture/jobs/_designs/MURAGE-UX-BAR.md`. Source-relative implementation paths below are for the future integration checkout, never permission to edit B.
+Citations: B = `/root/fuigo-builds/orph/_base`; E = `/root/fuigo-builds/orph/_ev`; P = `/root/fuigo-builds/orph/ORPHAN-PLAN-1019.md`; R = `/fixture/jobs/odes-l8/last.txt`; UX = `/fixture/jobs/_designs/MURAGE-UX-BAR.md`. Source-relative implementation paths below are for the future integration checkout, never permission to edit B.
 
 | Source and quoted decision | Required outcome |
 |---|---|
@@ -29,11 +29,11 @@ The feature is a view of an ordinary owner conversation with the visible Chief i
 All nine answers at R:5–13 are adopted without disagreement:
 
 1. The F7 draft is historical input from `304e59c7b`. The complete original review has been recovered from Appendix A of the binding ruling and copied to `evidence/F7-review-original.md`; all six High and eight Medium/Low findings are mapped in `evidence/l8-provenance.md`. Ruling R1 replaces the former missing-review prerequisite. Mapping is complete; behavioral verification remains with the named slices.
-2. M2 r1.3 remains rejected. Its actual review was recovered from `/work/swarm1018/_reviews/D-M2-TURNID-astra-r13.md` (84 lines), copied to `evidence/M2-astra-r13.md`. It identifies tree `13315e2a7089360b06d0db253b7e329f8187c2db` and design SHA256 `973fe9fb9fc7288043a866a82fc1c4eb72d87a62805a44fe513518b56c15f458`. Section 9 maps its High and four Mediums to this replacement design. Exactness and performance budgets stay binding.
+2. M2 r1.3 remains rejected. Its actual review was recovered from `/root/swarm1018/_reviews/D-M2-TURNID-astra-r13.md` (84 lines), copied to `evidence/M2-astra-r13.md`. It identifies tree `13315e2a7089360b06d0db253b7e329f8187c2db` and design SHA256 `973fe9fb9fc7288043a866a82fc1c4eb72d87a62805a44fe513518b56c15f458`. Section 9 maps its High and four Mediums to this replacement design. Exactness and performance budgets stay binding.
 3. Choose app-maintained `messages.turn_id` with `(thread_id,turn_id)` index, transactional dirty identities for all writers and same-snapshot readiness. Performance is measured, never inferred.
 4. Payload-free receipts live as long as their transcript. Deletion first creates scoped irreversible retired-ID digests, retained until installation reset; no duplicate transcript text is stored in receipts.
 5. Port verified changes onto the supplied base. Use `571b3212b` for L4B code; `13315e2a7` for M2 history/tests; `5b0a0a1eb` and `19ef45264` for L13 comparison. `29f17944b` is proof provenance; `7c5cbfc3e` is an unverified historical pointer. No wholesale span-era merge or shared-branch rewrite.
-6. Preserve the plan's never-run report and E/handoffs/HANDOFF-1018-ux-l4b-full.md:151–155's later `19ef45264` q12 “ALL 15 PASS” report. Neither closes this base. The full packaged fixture, including 7b, runs first under xvfb in a build host container with source/package identity recorded.
+6. Preserve the plan's never-run report and E/handoffs/HANDOFF-1018-ux-l4b-full.md:151–155's later `19ef45264` q12 “ALL 15 PASS” report. Neither closes this base. The full packaged fixture, including 7b, runs first under xvfb in a Hetzner container with source/package identity recorded.
 7. Old clients keep broad Stop. New clients require affirmative scoped capability; its absence means Open in chat. Never test an old server by sending `turnId`.
 8. Current ownership, submission, restore, authorization, deletion and lineage contracts win. Combined-SHA proof is mandatory.
 9. Estimate 9–12 builder-sessions plus 1–2 design/review sessions, provisional rather than promised. Sections 3 and 6 now specify the missing schema/protocol. Scope and hard budgets do not shrink if the estimate slips.
@@ -301,7 +301,7 @@ Unchanged performance gates: recovered honest T-WRITE-1 workloads, three quiet f
 
 ## 7. L13 proof discipline
 
-Rows 5 and 8 remain **NOT FIXED**. First execution by the authorized build job is the entire unmutated `src/e2e/help-ask-fixture.human.spec.ts`, including 7b, with `src/e2e/help-ask-fixture.config.ts` and matching fixture/package at recovered source. Run a help-fixture packaged Electron app under xvfb in a build host container, never a live app attachment. Record source SHA, package hash, fixture/config hash, executable identity, image, command, exit status, all case names and artifact paths. A launch failure is a blocked baseline, not behavioral RED. No unit test or mutation execution may precede this baseline. Reconcile `5b0a0a1eb` and `19ef45264` provenance before carrying their harness into the new base.
+Rows 5 and 8 remain **NOT FIXED**. First execution by the authorized build job is the entire unmutated `src/e2e/help-ask-fixture.human.spec.ts`, including 7b, with `src/e2e/help-ask-fixture.config.ts` and matching fixture/package at recovered source. Run a help-fixture packaged Electron app under xvfb in a Hetzner container, never a live app attachment. Record source SHA, package hash, fixture/config hash, executable identity, image, command, exit status, all case names and artifact paths. A launch failure is a blocked baseline, not behavioral RED. No unit test or mutation execution may precede this baseline. Reconcile `5b0a0a1eb` and `19ef45264` provenance before carrying their harness into the new base.
 
 Row 5 separately holds Remove success and `{kind:'fail'}` release across close/reopen. Wait for driver request-id settlement, close/reopen again to observe committed React state, then assert queued question, enabled Remove and old observation `live:false`. M5a and M5b must fail the intended behavioral assertions in rebuilt packages.
 
@@ -446,7 +446,7 @@ Frozen interfaces: F1 = §3 receipt/BindingKey/CAS/terminal effects; F2 = §3.2 
 
 Owner I. Exact files: `src/e2e/help-ask-fixture.human.spec.ts`, `src/e2e/help-ask-fixture.config.ts`, `src/components/help/help-ask-fixture.ts`, `src/components/help/help-ask-fixture.test.ts`, `src/components/help/help-ask-port.ts`, `src/components/help/help-ask-build.test.ts`, `scripts/check-help-fixture-absent.mjs`, `playwright.config.ts`, recovered matching package/fixture wiring in `src/components/help/HelpAsk.tsx`, `package.json`; design-only manifests `DESIGN-r2.md`, `BUILD.md`, `evidence/l8-provenance.md`, `evidence/l8-baseline.md`, `evidence/F7-review-original.md`. Recover source wiring via the historical diff; do not substitute current product fixes before baseline. Build package from the matching recovered historical tree in an isolated workspace, with its recorded config.
 
-Depends on F7 and header reviews/MAIN seating, exact historical source identities, recovery of F7 original review with all six High/eight Medium/Low mappings. First test execution: entire **`src/e2e/help-ask-fixture.human.spec.ts`**, including 7b, in a build host container against packaged Electron under xvfb. Preserve both L13 reports. A failed launch blocks baseline; it is not RED. After baseline, separate Slice I0 lands shared `shared/help-turn-state.ts` and schema contract stubs; Slice 0 does not edit those files. Exit: source/package/config hashes and observed baseline recorded; rows 5/8 still NOT FIXED pending final proof.
+Depends on F7 and header reviews/MAIN seating, exact historical source identities, recovery of F7 original review with all six High/eight Medium/Low mappings. First test execution: entire **`src/e2e/help-ask-fixture.human.spec.ts`**, including 7b, in a Hetzner container against packaged Electron under xvfb. Preserve both L13 reports. A failed launch blocks baseline; it is not RED. After baseline, separate Slice I0 lands shared `shared/help-turn-state.ts` and schema contract stubs; Slice 0 does not edit those files. Exit: source/package/config hashes and observed baseline recorded; rows 5/8 still NOT FIXED pending final proof.
 
 ### Slice A1 — parallel wave A, durable lifecycle and isolation (L, 2–2.5 sessions)
 
@@ -657,7 +657,7 @@ A1 and A2 then own the bodies of their modules; DDL changes after I0 go to I as 
 
 Serial prerequisite, then parallel A1/A2/A3, then parallel B1/B2/B3, then serial integration, as the review confirmed:
 
-1. **Slice 0** (serial, owner I, 0.5 to 1 session): DESIGN-r2 Slice 0 plus write `evidence/F7-review-original.md` from Appendix A and the F7-ML1 to F7-ML8 manifest. First test execution remains the full packaged `src/e2e/help-ask-fixture.human.spec.ts` including 7b, under xvfb in a build host container. L13 rows 5 and 8 stay NOT FIXED until final proof.
+1. **Slice 0** (serial, owner I, 0.5 to 1 session): DESIGN-r2 Slice 0 plus write `evidence/F7-review-original.md` from Appendix A and the F7-ML1 to F7-ML8 manifest. First test execution remains the full packaged `src/e2e/help-ask-fixture.human.spec.ts` including 7b, under xvfb in a Hetzner container. L13 rows 5 and 8 stay NOT FIXED until final proof.
 2. **Slice I0** (serial, owner I, 0.25 session): R4.
 3. **Wave A, parallel:**
    - A1 (2.5 to 3 sessions): DESIGN-r2 files plus `server/channel-queue.ts`, `server/channel-queue.test.ts` and the `clearRetainedContextForAmbiguousAttempts` body in `server/send-attempt-compat.ts`. RED first: DESIGN-r2 A1 list plus F7-ML1, F7-ML2, F7-ML5, F7-ML6, F7-ML8, and the server half of F7-ML3 and the legacy resend tests.

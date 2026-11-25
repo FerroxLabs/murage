@@ -73,6 +73,9 @@ CREATE INDEX IF NOT EXISTS app_event_runs_history ON app_event_runs(routine_id, 
 CREATE INDEX IF NOT EXISTS app_event_runs_card_owed ON app_event_runs(run_id) WHERE child_refusal IS NOT NULL AND child_card_written = 0;
 `;
 
+/** Settled connected-app event history is kept this long (q1022-disk). */
+export const APP_EVENT_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
 /** The tables this store creates (the snapshot inspector and the restore fence list them). */
 export const APP_TRIGGER_TABLES = ["app_trigger_bindings", "app_trigger_policies", "app_event_inbox", "app_event_tombstones", "app_event_batches", "app_event_run_events", "app_event_runs"] as const;
 
@@ -383,6 +386,31 @@ export class AppTriggerStore implements AppEventRunStore {
       for (const row of this.db.prepare(PER_EVENT_SQL.dueBatches).all(now, limit) as Array<{ batch_id: string }>) {
         this.db.prepare("UPDATE app_event_batches SET state='sealed' WHERE batch_id=? AND state='open'").run(row.batch_id);
       }
+    });
+  }
+
+  /** q1022-disk: settled app-event history older than APP_EVENT_KEEP_MS leaves, at most `limit` runs a call. A finished run
+   * takes its batch, its batch's member rows and their inbox rows with it; acknowledged tombstones and acknowledged
+   * stale/rejected inbox rows that never joined a batch go at the same age. Kept: anything unacknowledged, any run not
+   * finished, any run still owing its card, and the run row of a run that had a thread (the child guard finds the run by
+   * its thread for every later turn there, app-trigger-zero.ts:57), so only its batch rows go. Returns rows deleted. */
+  pruneSettled(now: number, limit: number): number {
+    const cutoff = now - APP_EVENT_KEEP_MS;
+    return inTx(this.db, () => {
+      let gone = 0;
+      const runs = this.db.prepare(`SELECT run_id, batch_id, thread_id FROM app_event_runs r WHERE state IN ('completed','failed','cancelled','outcome_unknown','refused')
+        AND updated_at<? AND NOT (child_refusal IS NOT NULL AND child_card_written=0)
+        AND (thread_id IS NULL OR EXISTS (SELECT 1 FROM app_event_batches b WHERE b.batch_id=r.batch_id)) LIMIT ?`).all(cutoff, limit) as Array<{ run_id: string; batch_id: string; thread_id: string | null }>;
+      for (const run of runs) {
+        gone += Number(this.db.prepare("DELETE FROM app_event_inbox WHERE acked=1 AND delivery_id IN (SELECT delivery_id FROM app_event_run_events WHERE batch_id=?)").run(run.batch_id).changes);
+        gone += Number(this.db.prepare("DELETE FROM app_event_run_events WHERE batch_id=?").run(run.batch_id).changes);
+        gone += Number(this.db.prepare("DELETE FROM app_event_batches WHERE batch_id=?").run(run.batch_id).changes);
+        if (run.thread_id === null) gone += Number(this.db.prepare("DELETE FROM app_event_runs WHERE run_id=?").run(run.run_id).changes);
+      }
+      gone += Number(this.db.prepare(`DELETE FROM app_event_inbox WHERE rowid IN (SELECT i.rowid FROM app_event_inbox i WHERE i.disposition IN ('stale','rejected') AND i.acked=1
+        AND i.received_at<? AND NOT EXISTS (SELECT 1 FROM app_event_run_events e WHERE e.delivery_id=i.delivery_id) LIMIT ?)`).run(cutoff, limit * 100).changes);
+      gone += Number(this.db.prepare("DELETE FROM app_event_tombstones WHERE rowid IN (SELECT rowid FROM app_event_tombstones WHERE acked=1 AND at<? ORDER BY at LIMIT ?)").run(cutoff, limit * 100).changes);
+      return gone;
     });
   }
 

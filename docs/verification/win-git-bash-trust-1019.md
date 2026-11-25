@@ -185,7 +185,7 @@ builder lane's `evidence/`; exact commands/hashes are in the receipt attachment.
 | NL-ST4 `8bddd0b22c077847185c081309883c82d23adfa2` | Object exists, not an ancestor; no port performed. |
 | No limits `0765e00d3a5846f0d162793c4b7fe9b13bd01267` | Object exists, not an ancestor; no port performed. |
 | argv `5de94ab23e4e2d124e9fd38492246a773884f5d1` | Rejected as drop-in by r2; retain conservative section 5 behavior. |
-| Fuigo candidate | `/work/fuigo-builds/u42/src`, clean at `413f407d6afe85ba8fb7f411af5006f6240577b2`; read-only inspection only. |
+| Fuigo candidate | `/root/fuigo-builds/u42/src`, clean at `413f407d6afe85ba8fb7f411af5006f6240577b2`; read-only inspection only. |
 
 The Fuigo candidate is a Rust workspace. The shell crate is
 `crates/codegen/fuigo-shell`, not a repository-root `fuigo-shell` directory.

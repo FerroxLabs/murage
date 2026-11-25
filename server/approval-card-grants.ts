@@ -70,7 +70,7 @@ export function cardClassFor(input: CardGrantInput, keys: CardKeys): CardClass {
   const routineId = keys.routineId ?? keys.routineOffer?.routineId;
   return {
     reason: input.questionAsk ? "question" : input.verdict?.source ?? "no-grant",
-    ...(stop ? { stop: { kind: stop.kind, public: stop.kind === "message" && !!stop.place?.startsWith("public:"), placed: stopLineKey(stop) !== undefined, places: stopFindings(stop).length } } : {}),
+    ...(stop ? { stop: { kind: stop.kind, public: stop.kind === "message" && !!stop.place?.startsWith("public:"), placed: stopLineKey(stop) !== undefined, places: stopFindings(stop).length, ...(stop.unread ? { unread: true as const } : {}) } } : {}),
     ...(routineId ? { routine: { routineId } } : {}),
     unattended: input.unattended === true,
     automated: input.automated === true,

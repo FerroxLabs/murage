@@ -13,15 +13,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { KeyCandidate, ProviderId } from "../../shared/key-extract";
 import { extractKeys } from "../../shared/key-extract";
 
-// desktop.ts reads `window` at module scope and @/lib/analytics boots
-// posthog-js on import; neither survives a node-env import of the component.
+// desktop.ts reads `window` at module scope, which does not survive a
+// node-env import of the component.
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false,
-  setAnalyticsEnabled: () => {},
-  initAnalytics: () => {},
-  track: () => {},
-}));
 
 const { PasteKeysBody, createPasteController, rowTarget, toPasteRow } = await import("./PasteKeys");
 type Props = Parameters<typeof PasteKeysBody>[0];

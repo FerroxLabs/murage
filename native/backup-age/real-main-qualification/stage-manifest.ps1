@@ -33,7 +33,7 @@ $manifest=[ordered]@{
   exeSha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant();
   asarSha256=(Get-FileHash -LiteralPath $asar -Algorithm SHA256).Hash.ToLowerInvariant();
   nodeExecutable='C:\Program Files\nodejs\node.exe';nodeSha256='b3094d0b49f9ad602262a9921551737bb97637c05dd357a06ae98188d7290aa3';
-  sid='S-1-5-21-3954847422-1325544036-2038804778-1001';sessionId=1;deadlineUtc='2026-09-14T03:56:00Z';fixtureFiles=$hashes
+  sid='S-1-5-21-1111111111-1111111111-1111111104-1001';sessionId=1;deadlineUtc='2026-09-14T03:56:00Z';fixtureFiles=$hashes
 }
 $manifestPath=Join-Path $Parent 'journey-manifest.json'
 if(Test-Path -LiteralPath $manifestPath){throw 'Manifest already exists'}

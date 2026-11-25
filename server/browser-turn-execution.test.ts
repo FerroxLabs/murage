@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { IndependentThreadRuns } from "./independent-thread-runs.ts";
-import { BrowserTurnExecution } from "./browser-turn-execution.ts";
+import { BrowserTurnExecution, turnGone } from "./browser-turn-execution.ts";
 
 function setup(computer = false) {
   const runs = new IndependentThreadRuns<object>();
@@ -114,8 +114,12 @@ it.each(["stop-before-answer", "stop-while-reacquiring"])("does not revive an ex
 });
 
 it("keeps a bootstrap navigation gated to the extension and leaves the fresh snapshot requirement in place", () => {
-  const { execution, a } = setup();
-  execution.waiting(a, "q", true); execution.waiting(a, "q", false);
+  const { runs, execution, a, b, resources } = setup();
+  // 1.0.20 brsnap: the fence now needs the browser to have really changed hands during the wait (an instant auto-answered ask
+  // nobody else used the browser in no longer fences: W1), so a sibling takes and returns it here.
+  execution.waiting(a, "q", true);
+  expect(runs.claim(b, resources)).toBe(true); runs.releaseResources(b, resources);
+  execution.waiting(a, "q", false);
   expect(() => execution.begin(a, "tools/call", "agent_browser_open")).toThrow(/snapshot/i);
   const navigation = execution.begin(a, "tools/call", "agent_browser_open", false, true);
   expect(navigation.bootstrapOnly).toBe(true);
@@ -184,4 +188,185 @@ it.each(["disconnect", "approval-abort", "cancel", "settling", "forget", "finish
     runs.release(b);
     expect(runs.owns(a, resources[0])).toBe(false);
   } finally { call.finish(false); runs.cancel(a); vi.useRealTimers(); }
+});
+
+// ── BROWSERQ-1020 (customer-seen on 1.0.19: "1st in line for the browser profile ... About 252 min." after 1m33s) ──
+// User failure: my turn sat first in line for the browser behind a turn that could no longer use it.
+// MAIN ruling: the owner's Stop always frees the profile; otherwise only positive evidence that the holder is gone does; unknown keeps
+// the holder and is asked again every 30 s. Each witness queues the sibling through the real scheduler wait, as a turn's setup does.
+const STILL_WAITING = "still waiting";
+function firstInLine(runs: IndependentThreadRuns<object>, b: Parameters<IndependentThreadRuns<object>["acquire"]>[0], resources: readonly string[]) {
+  const places: number[] = [];
+  let state: boolean | "yielded" | typeof STILL_WAITING = STILL_WAITING;
+  void runs.acquire(b, resources, (_blockers, position) => places.push(position)).then(result => { state = result; });
+  expect(places).toEqual([1]);
+  // lets the grant's promise settle, and with fake timers moves no clock
+  return async () => { for (let turn = 0; turn < 5; turn++) await Promise.resolve(); return state; };
+}
+it("BROWSERQ-1020 W1: a Stop the engine has not confirmed hands the browser to the turn first in line, and keeps the folder", async () => {
+  const { runs, a, b, resources } = setup();
+  const outcome = firstInLine(runs, b, resources);
+  expect(await outcome()).toBe(STILL_WAITING);
+  // Stop: the run is "stopping" and stays so until its engine child confirms its close (A2). Nothing releases it here.
+  expect(runs.cancel(a)).toBe(true);
+  expect(await outcome()).toBe(true);
+  expect(resources.every(resource => runs.owns(b, resource))).toBe(true);
+  expect(runs.get("a")?.phase).toBe("stopping");
+  expect(runs.owns(a, "workspace:/a")).toBe(true);
+});
+it("BROWSERQ-1020 W2: a turn whose browser use was ended while it still runs keeps the profile (unknown), and Stop then frees it", async () => {
+  const { runs, execution, a, b, resources } = setup();
+  const outcome = firstInLine(runs, b, resources);
+  // releaseBrowserCapabilityForThread on a run the reload retained: the entry goes, the run and its engine child are still there.
+  execution.forgetThread("a", a.generation);
+  expect(() => execution.begin(a, "tools/call", "agent_browser_snapshot")).toThrow(/ended/i);
+  expect(await outcome()).toBe(STILL_WAITING);
+  expect(runs.owns(a, resources[0])).toBe(true);
+  runs.cancel(a);
+  expect(await outcome()).toBe(true);
+  expect(runs.owns(b, resources[0])).toBe(true);
+  expect(runs.owns(a, "workspace:/a")).toBe(true);
+});
+it("BROWSERQ-1020 W3: a stopped turn's browser step still in flight keeps the profile until that step ends, then frees it", async () => {
+  const { runs, execution, a, b, resources } = setup();
+  const call = execution.begin(a, "tools/call", "agent_browser_snapshot");
+  const outcome = firstInLine(runs, b, resources);
+  runs.cancel(a);
+  expect(call.authorized()).toBe(false);
+  expect(await outcome()).toBe(STILL_WAITING);
+  call.finish(false);
+  expect(await outcome()).toBe(true);
+  expect(runs.owns(b, resources[0])).toBe(true);
+});
+it("BROWSERQ-1020 W4: a finished turn whose engine close is unconfirmed keeps the profile while its engine still holds a child, is asked again every 30 s, and frees it once the engine says it holds none", async () => {
+  vi.useFakeTimers();
+  try {
+    const { runs, execution, a, b, resources } = setup();
+    runs.dispatch(a); runs.accepted(a, "provider-a");
+    let tracked = true, asked = 0;
+    execution.gone = owner => { asked++; return turnGone({ conversationExists: true, threadId: owner.threadId, providerTurnId: runs.get(owner.threadId)?.providerTurnId, adapter: { turnChildTracked: () => tracked } }); };
+    const outcome = firstInLine(runs, b, resources);
+    expect(runs.settling(a)).toBe(true);
+    expect(await outcome()).toBe(STILL_WAITING);
+    const before = asked;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(asked).toBeGreaterThanOrEqual(before + 2);
+    expect(await outcome()).toBe(STILL_WAITING);
+    expect(runs.owns(a, resources[0])).toBe(true);
+    tracked = false;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await outcome()).toBe(true);
+    expect(runs.get("a")?.phase).toBe("settling");
+    expect(runs.owns(a, "workspace:/a")).toBe(true);
+  } finally { vi.useRealTimers(); }
+});
+it("BROWSERQ-1020 W5: a superseded turn held for its rebuild keeps the profile while nothing is known, and frees it once its conversation is deleted", async () => {
+  vi.useFakeTimers();
+  try {
+    const { runs, execution, a, b, resources } = setup();
+    runs.dispatch(a); runs.accepted(a, "provider-a");
+    const outcome = firstInLine(runs, b, resources);
+    expect(runs.holdForRebuild(a)).toBe(true);
+    // no evidence source at all: unknown
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(await outcome()).toBe(STILL_WAITING);
+    expect(runs.owns(a, resources[0])).toBe(true);
+    execution.gone = owner => turnGone({ conversationExists: false, threadId: owner.threadId });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await outcome()).toBe(true);
+    expect(runs.rebuilding(a)).toBe(true);
+    expect(runs.owns(a, "workspace:/a")).toBe(true);
+  } finally { vi.useRealTimers(); }
+});
+it("BROWSERQ-1020 W6: a stopped turn whose browser use was already ended frees the profile when its last step ends", async () => {
+  const { runs, execution, a, b, resources } = setup();
+  const call = execution.begin(a, "tools/call", "agent_browser_snapshot");
+  const outcome = firstInLine(runs, b, resources);
+  execution.forgetThread("a");
+  runs.cancel(a);
+  expect(await outcome()).toBe(STILL_WAITING);
+  call.finish(false);
+  expect(await outcome()).toBe(true);
+});
+it("BROWSERQ-1020 W8: a stopped turn that also drives the computer gives back the profile and keeps its screen", async () => {
+  const { runs, a, b, resources } = setup(true);
+  const outcome = firstInLine(runs, b, [resources[0]]);
+  runs.cancel(a);
+  expect(await outcome()).toBe(true);
+  expect(runs.owns(b, resources[0])).toBe(true);
+  expect(runs.owns(a, resources[1])).toBe(true);
+});
+it("BROWSERQ-1020 W9: only positive evidence says a turn is gone; an engine that is missing, has no close watch or cannot say is unknown", () => {
+  const base = { conversationExists: true, threadId: "a", providerTurnId: "t" };
+  expect(turnGone({ ...base, conversationExists: false })).toBe(true);
+  expect(turnGone({ ...base, adapter: { knowsTurnClose: () => false } })).toBe(true);
+  expect(turnGone({ ...base, adapter: { turnChildTracked: () => false } })).toBe(true);
+  expect(turnGone({ ...base, adapter: { knowsTurnClose: () => undefined, turnChildTracked: () => false } })).toBe(true);
+  // unknown: the engine is no longer registered, or it has no close watch at all (the reviewer's HIGH)
+  expect(turnGone(base)).toBe(false);
+  expect(turnGone({ ...base, adapter: {} })).toBe(false);
+  expect(turnGone({ ...base, adapter: { knowsTurnClose: () => undefined } })).toBe(false);
+  expect(turnGone({ ...base, adapter: { knowsTurnClose: () => true, turnChildTracked: () => false } })).toBe(false);
+  expect(turnGone({ ...base, adapter: { turnChildTracked: () => true } })).toBe(false);
+  expect(turnGone({ conversationExists: true, threadId: "a", adapter: { knowsTurnClose: () => false } })).toBe(false);
+});
+it("BROWSERQ-1020 W10: a turn still running is never taken off the browser, whatever the evidence says, and neither is one whose probe throws", async () => {
+  vi.useFakeTimers();
+  try {
+    const { runs, execution, a, b, resources } = setup();
+    runs.dispatch(a); runs.accepted(a, "provider-a");
+    execution.gone = () => true;
+    const outcome = firstInLine(runs, b, resources);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await outcome()).toBe(STILL_WAITING);
+    execution.forgetThread("a");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await outcome()).toBe(STILL_WAITING);
+    expect(resources.every(resource => runs.owns(a, resource))).toBe(true);
+    execution.gone = () => { throw new Error("no answer"); };
+    runs.settling(a);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await outcome()).toBe(STILL_WAITING);
+  } finally { vi.useRealTimers(); }
+});
+
+// 1.0.20 brsnap: every engine tool call is asked first (request.opened -> waiting(true)) and auto mode answers it at once
+// (request.resolved -> waiting(false)). The browser is handed back for that instant, but nobody else took it, so the turn's
+// page references are still its own and the next step must run, not be refused with browser_snapshot_required.
+it("1.0.20 brsnap W1: auto-answered tool approvals no sibling used the browser during never fence snapshot -> open", () => {
+  const { runs, execution, a, resources } = setup();
+  execution.begin(a, "tools/call", "agent_browser_snapshot").finish(true);
+  execution.waiting(a, "open-ask-1", true);
+  // the browser really is available to siblings while the ask is open
+  expect(runs.owns(a, resources[0])).toBe(false);
+  execution.waiting(a, "open-ask-1", false);
+  const first = execution.begin(a, "tools/call", "agent_browser_open");
+  expect(first.authorized()).toBe(true); first.finish(true);
+  execution.waiting(a, "snap-ask", true); execution.waiting(a, "snap-ask", false);
+  execution.begin(a, "tools/call", "agent_browser_snapshot").finish(true);
+  execution.waiting(a, "open-ask-2", true); execution.waiting(a, "open-ask-2", false);
+  const open = execution.begin(a, "tools/call", "agent_browser_open");
+  expect(open.authorized()).toBe(true); open.finish(true);
+  // the very first step of a turn, asked before it ever touched the browser
+  const fresh = setup();
+  fresh.execution.waiting(fresh.a, "first-ask", true); fresh.execution.waiting(fresh.a, "first-ask", false);
+  fresh.execution.begin(fresh.a, "tools/call", "agent_browser_open").finish(true);
+});
+it.each(["claim", "queued-waiter"])("1.0.20 brsnap W2: a wait in which a sibling (%s) took the released browser still requires a fresh snapshot", async how => {
+  const { runs, execution, a, b, resources } = setup();
+  execution.begin(a, "tools/call", "agent_browser_snapshot").finish(true);
+  const queued = how === "queued-waiter" ? runs.acquire(b, resources) : undefined;
+  execution.waiting(a, "person-card", true);
+  if (queued) expect(await queued).toBe(true);
+  else expect(runs.claim(b, resources)).toBe(true);
+  runs.releaseResources(b, resources);
+  execution.waiting(a, "person-card", false);
+  expect(() => execution.begin(a, "tools/call", "agent_browser_open")).toThrow(/released while waiting/);
+  expect(() => execution.begin(a, "tools/call", "agent_browser_click")).toThrow(/snapshot/i);
+  // a later instant ask cannot launder the fence away
+  execution.waiting(a, "auto-ask", true); execution.waiting(a, "auto-ask", false);
+  expect(() => execution.begin(a, "tools/call", "agent_browser_open")).toThrow(/snapshot/i);
+  execution.begin(a, "tools/call", "agent_browser_snapshot").finish(true);
+  const open = execution.begin(a, "tools/call", "agent_browser_open");
+  expect(open.authorized()).toBe(true); open.finish(true);
 });

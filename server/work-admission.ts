@@ -142,7 +142,7 @@ export interface WorkAdmissionDeps {
   flags(): { autonomy: boolean; budgets: boolean; autoWake?: boolean };
   /** A live turn on exactly this thread (direct run, task, or room). */
   threadRunning(botId: string, threadId: string): boolean;
-  /** The bot is the speaker of a room turn (speaker lock). */
+  /** The bot is the speaker of a room turn (lane T speaker lock). */
   speakingInRoom(botId: string): boolean;
   /** Direct (1:1 and task) runs, which the arbiter does not hold itself. */
   directThreads(botId: string): number;

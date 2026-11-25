@@ -18,7 +18,7 @@ vi.mock("@/state/store", async (original) => ({
   useStore: () => ({ state: { instances: [] }, dispatch: () => {}, refreshInstances: () => {} }),
 }));
 vi.mock("@/lib/use-surface", () => ({ useDesktopSurface: () => true }));
-vi.mock("@/lib/analytics", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
+vi.mock("@/lib/first-run-gate", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
 
 const { signedOutEngineRows } = await import("@/lib/signed-out-engines");
 const { InboxEngineSignInRow } = await import("./InboxEngineSignInRow");

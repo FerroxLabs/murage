@@ -356,10 +356,24 @@ async function identityListing(): Promise<ReturnType<typeof parseIdentityListing
     const rows = await windowsListing();
     return rows ? rows.map((row) => ({ pid: row.pid, ppid: row.ppid, start: row.start, rest: "" })) : null;
   }
-  return new Promise((resolve) => {
-    execFile("ps", [...PS_ID_ARGS], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }), (error, stdout) => {
-      if (error) return resolve(null);
-      resolve(parseIdentityListing(String(stdout)));
+  return sharedIdentityListing();
+}
+
+/** The full `ps` listing, shared by every caller of the same turn of the event loop. A stop ends several MCP servers at once and
+ *  each asks for the whole process table; on a loaded machine eight listings side by side each took longer than the stop waited.
+ *  The listing is started on the next loop turn (setImmediate), after every caller that shares it asked, so its rows are never
+ *  older than a caller's request. A caller that arrives once it started gets a new listing, never the running one. */
+let gatheringListing: Promise<ReturnType<typeof parseIdentityListing> | null> | null = null;
+function sharedIdentityListing(): Promise<ReturnType<typeof parseIdentityListing> | null> {
+  return gatheringListing ??= new Promise((resolve) => {
+    setImmediate(() => {
+      gatheringListing = null;
+      try {
+        execFile("ps", [...PS_ID_ARGS], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }), (error, stdout) => {
+          if (error) return resolve(null);
+          resolve(parseIdentityListing(String(stdout)));
+        });
+      } catch { resolve(null); }
     });
   });
 }

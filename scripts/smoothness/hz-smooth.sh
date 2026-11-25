@@ -12,9 +12,9 @@
 # Results: /srv/murage-smooth/smooth-<label>/out; the log is .../gate.log and ends with REALEXIT=<gate exit>.
 # Host rules: at most 2 containers per lane (the run and nothing else here), no ssh retry under 60 s (sshw waits 60 s
 # between attempts), never prune. Preserve the previous run before the upload and remote driver script.
-# SSH_JUMP=<host> routes both through a jump host (e.g. build-host) when the direct path is flaky.
+# SSH_JUMP=<host> routes both through a jump host (e.g. hetzner-dsm) when the direct path is flaky.
 set -euo pipefail
-# CI runs locally inside its isolated build host job container. No SSH, data copy or login.
+# CI runs locally inside its isolated Hetzner job container. No SSH, data copy or login.
 if [[ "${1:-}" == --nightly-real-engine ]]; then
   shift
   exec node scripts/smoothness/real-engine.mjs "$@"
@@ -87,7 +87,7 @@ runtime=$H/smoothness/runs/$O
 tar --format=ustar -cf "$local_stage/runtime.tar" -C "$here" keep-logs.sh keep-logs.mjs scrub-accounting.mjs stage-keeper.sh follow-run.sh
 SSHW_IN="$local_stage/runtime.tar" sshw "umask 077; mkdir -p $runtime; tar -xf - -C $runtime" || exit 4
 # 1) the tree: upload only when the box does not already hold this sha (the check rides inside the upload connection)
-# SMOOTH_SYNC=<path to hz-sync.sh> sends only the git delta through the build-host mirror instead of a tarball from here.
+# SMOOTH_SYNC=<path to hz-sync.sh> sends only the git delta through the hetzner-dsm mirror instead of a tarball from here.
 # SMOOTH_SYNC=present: the tree was placed at $L/src by other means (e.g. a patch applied on the box); only check its sha.
 if [[ "${SMOOTH_SYNC:-}" == present ]]; then
   sshw "test \"\$(cat $L/src/.smooth-sha 2>$runtime/check.err)\" = $sha" || { echo "$L/src does not hold $sha"; exit 5; }

@@ -131,7 +131,8 @@ export function createAttentionWindowHost({ actions, transportFor, readItems, op
         ...(info.kind === "pill" ? { pill: {
           state: ["collapsed", "expanded", "stacked", "finished"].includes(data?.pill?.state) ? data.pill.state : "hidden",
           count: Number.isInteger(data?.pill?.count) ? Math.max(0, Math.min(100, data.pill.count)) : 0,
-          toggleToken: mintOpen(info, state, { kind: "pill-expand", expanded: !["expanded", "stacked"].includes(data?.pill?.state) }),
+          toggleToken: mintOpen(info, state, data?.pill?.fromNeedsYou && !items.length
+            ? { kind: "needs-you" } : { kind: "pill-expand", expanded: !["expanded", "stacked"].includes(data?.pill?.state) }),
         } } : {}),
       };
     },

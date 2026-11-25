@@ -7,6 +7,7 @@ export type SurfaceReason = "mac-only" | "wayland" | "no-session" | "no-tray-hos
 export interface NotifyCapabilities {
   platform: string;
   session: "x11" | "wayland" | null;
+  trayHidden?: boolean;
   surfaces: Record<NotifySurfaceId, { available: boolean; reason?: SurfaceReason }>;
 }
 export interface NotifySurfacesBridge {

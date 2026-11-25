@@ -33,7 +33,7 @@ into the structural identity binder before any applied receipt is released.
 Legacy create plans without the time bound cannot prove a create after restart.
 
 Evidence is archived outside the worktree at
-`/work/build/afix2-hlc2-rv/evidence/`:
+`/root/fuigo-builds/swarm-b/afix2-hlc2-rv/evidence/`:
 
 - `red.log`: five assertion failures, including blocked creates at 51, 101 and
   100,000 records and a failed populated-location crash fixture.
@@ -59,7 +59,7 @@ before transport. Direct record reads and the generic helper are unchanged.
 Existing pipeline replay expectations now reflect unknown with zero reads.
 
 Fix-round evidence remains untracked in `.evidence/afix-afix2-hlc2-rv/` and is
-archived at `/work/build/afix-afix2-hlc2-rv/evidence/`. The new
+archived at `/root/fuigo-builds/swarm-b/afix-afix2-hlc2-rv/evidence/`. The new
 host crash/restart matrix covers pipeline, note and task creates against fake
 unpaginated collections of 0, 1, 51, 101 and 100,000 records, including an exact
 recent witness. All 15 cases fail before the guard and pass after it, with zero

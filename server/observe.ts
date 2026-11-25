@@ -90,19 +90,35 @@ export function noteActiveTask(name: string): () => void {
 }
 
 let loopMonitor: ReturnType<typeof monitorEventLoopDelay> | undefined;
-let loopTimer: ReturnType<typeof setInterval> | undefined;
+/** 1.0.22 idle burn (HIDDEN-COST row 8): the histogram's own timer fires once per resolution. It was 20 ms (50 wakeups a second, forever);
+ * 200 ms still sees every block the lag line reports (p99 over 100 ms, max over the stall threshold), and it samples only while busy. */
+export const LOOP_DELAY_RESOLUTION_MS = 200;
+/** Whether a turn or job is running (index.ts sets it to the same predicate the io budget uses). Unset: always busy, as before. */
+let loopBusy: () => boolean = () => true;
+export function setLoopWatchBusy(read?: () => boolean): void { loopBusy = read ?? (() => true); }
+function busyNow(): boolean { try { return loopBusy(); } catch { return true; } }
+/** While nothing runs (no turn, no job) the stall watch is parked: no timer and the histogram off, so an idle server is not woken at all.
+ * The sites that start a turn or a job (index.ts: the store's bot/room change stream, the turn owner maps, a routine run going live) call
+ * this; it re-arms the fine tick when the busy predicate now reads busy, and costs one predicate read while parked, nothing while armed. */
+let wakeParked: (() => void) | undefined;
+export function wakeLoopWatch(): void { wakeParked?.(); }
+/** The stall watch's current tick in ms, or undefined when it is parked or stopped (read-only, for the witnesses). */
+let stallPeriod: number | undefined;
+export function stallWatchPeriod(): number | undefined { return stallPeriod; }
 /** `[loop] lag p50= p99= max= topSource=` every 5 minutes while p99 is over 100 ms. */
 export function startLoopLagMonitor(intervalMs = 300_000, thresholdMs = 100): void {
   if (loopMonitor) return;
-  loopMonitor = monitorEventLoopDelay({ resolution: 20 });
-  loopMonitor.enable();
-  loopTimer = setInterval(() => reportLoopLag(thresholdMs), intervalMs);
-  loopTimer.unref();
-  startLoopStallWatch(STALL_THRESHOLD_MS, stallTickFor(STALL_THRESHOLD_MS));
+  loopMonitor = monitorEventLoopDelay({ resolution: LOOP_DELAY_RESOLUTION_MS });
+  // the five-minute line rides the stall watch's tick (no timer of its own)
+  lagReport = { everyMs: intervalMs, thresholdMs, at: performance.now() };
+  startLoopStallWatch(STALL_THRESHOLD_MS, stallTickFor(STALL_THRESHOLD_MS), undefined, true);
 }
+let lagReport: { everyMs: number; thresholdMs: number; at: number } | undefined;
 export function reportLoopLag(thresholdMs = 100): string | undefined {
   if (!loopMonitor) return undefined;
-  const p50 = loopMonitor.percentile(50) / 1e6, p99 = loopMonitor.percentile(99) / 1e6, max = loopMonitor.max / 1e6;
+  // each sample is the whole interval between the histogram's own wakeups: the delay is what exceeds its resolution
+  const late = (ns: number) => Math.max(0, ns / 1e6 - LOOP_DELAY_RESOLUTION_MS);
+  const p50 = late(loopMonitor.percentile(50)), p99 = late(loopMonitor.percentile(99)), max = late(loopMonitor.max);
   loopMonitor.reset();
   const holder = topSource?.name ?? "unknown";
   topSource = undefined;
@@ -114,8 +130,7 @@ export function reportLoopLag(thresholdMs = 100): string | undefined {
   return line;
 }
 export function stopLoopLagMonitor(): void {
-  loopMonitor?.disable(); loopMonitor = undefined;
-  if (loopTimer) clearInterval(loopTimer); loopTimer = undefined;
+  loopMonitor?.disable(); loopMonitor = undefined; lagReport = undefined;
   stopLoopStallWatch();
 }
 
@@ -161,28 +176,47 @@ export function gcPauseMs(from: number, to: number): number {
  * over the whole block and the largest three named, the long operations
  * still open, and the task named last (`noteActiveTask`).
  */
-export function startLoopStallWatch(thresholdMs = STALL_THRESHOLD_MS, tickMs = 250, now: () => number = () => performance.now()): void {
-  if (stallTimer) return;
+export function startLoopStallWatch(thresholdMs = STALL_THRESHOLD_MS, tickMs = 250, now: () => number = () => performance.now(), parkWhenIdle = false): void {
+  if (stallTimer || wakeParked) return;
   startGcWatch();
   let last = now();
   stallSteps = new Map();
-  stallTimer = setInterval(() => {
+  // Parking (startLoopLagMonitor): the tick and the histogram run only while busy; the tick that first reads idle parks the watch, and
+  // wakeLoopWatch() re-arms it. Without parking (the tests' direct watch) the tick runs until stopped, as before.
+  const arm = () => {
+    // a reset before enabling: the first sample after an idle stretch would otherwise span the whole stretch (a false lag line)
+    loopMonitor?.reset(); loopMonitor?.enable();
+    // the parked stretch is not a block (nor its steps): measure from the re-arm
+    last = now(); stallSteps = new Map();
+    stallPeriod = tickMs;
+    stallTimer = setInterval(tick, tickMs);
+    stallTimer.unref();
+  };
+  const park = () => {
+    if (stallTimer) clearInterval(stallTimer);
+    stallTimer = undefined; stallPeriod = undefined;
+    loopMonitor?.disable();
+  };
+  const tick = () => {
     const at = now();
     const blocked = at - last - tickMs;
     const from = last;
     last = at;
     const steps = stallSteps;
     stallSteps = new Map();
+    if (lagReport && at - lagReport.at >= lagReport.everyMs) { lagReport.at = at; reportLoopLag(lagReport.thresholdMs); }
+    if (parkWhenIdle && !busyNow()) park();
     if (blocked <= thresholdMs) return;
     const running = runningLongOps(), active = activeTask;
     const line = `[loop] stall blocked=${Math.round(blocked)}ms ${stallHolderText(steps)}${running.length ? ` running=${running.slice(0, 4).join(",")}` : ""}${active ? ` active=${active}` : ""}`;
     // the collector's entries for a pause inside the block are delivered after this timer: the line waits one turn for them
     const window = { from: performance.now() - (at - from) - tickMs, to: performance.now() };
     setImmediate(() => { const gc = gcPauseMs(window.from, window.to); observeLine(gc >= 1 ? `${line} gc=${Math.round(gc)}ms` : line); });
-  }, tickMs);
-  stallTimer.unref();
+  };
+  if (parkWhenIdle) wakeParked = () => { if (!stallTimer && busyNow()) arm(); };
+  if (!parkWhenIdle || busyNow()) arm(); else park();
 }
-export function stopLoopStallWatch(): void { if (stallTimer) clearInterval(stallTimer); stallTimer = undefined; stopGcWatch(); }
+export function stopLoopStallWatch(): void { if (stallTimer) clearInterval(stallTimer); stallTimer = undefined; stallPeriod = undefined; wakeParked = undefined; stopGcWatch(); }
 
 /** A statement that held the loop this long is reported (and remembered as the loop's top holder). */
 export const SLOW_SQL_MS = 50;

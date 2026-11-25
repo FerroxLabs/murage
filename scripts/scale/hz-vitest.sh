@@ -2,7 +2,7 @@
 # Copyright 2026 Ferrox Labs
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Run tagged Vitest tests on build-host (dedicated hardware), in a throwaway container, against one commit.
+# Run tagged Vitest tests on hetzner-dsm (dedicated hardware), in a throwaway container, against one commit.
 #   scripts/scale/hz-vitest.sh <label> <commit> <tags filter>
 # e.g. scripts/scale/hz-vitest.sh ci-123 "$GITHUB_SHA" perf-budget
 # The perf-budget tag (vite.config.ts) marks tests that assert a wall-clock budget measured on this kind of
@@ -11,7 +11,7 @@
 # `pnpm build:murage-cage` (Linux x64, Docker and the host build tools). Output streams back and the exit
 # code is Vitest's. The tree is removed afterwards. Host rules: at most 2 such containers, never prune.
 set -euo pipefail
-RIG_HOST=${RIG_HOST:-build-host}
+RIG_HOST=${RIG_HOST:-hetzner-dsm}
 label=${1:?label}; commit=${2:?commit}; filter=${3:?tags filter}
 [[ "$label" =~ '^[a-z0-9-]+$' ]] || { echo "bad label"; exit 2; }
 [[ "$filter" =~ '^[a-z0-9 !&|()-]+$' ]] || { echo "bad tags filter"; exit 2; }

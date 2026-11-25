@@ -14,6 +14,7 @@
 import { useState } from "react";
 
 import { api } from "@/state/store";
+import { permissionAnswerBody } from "@/state/permission-answer";
 import { decideWithFreshAuth } from "@/lib/fresh-auth";
 import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal } from "@/lib/approval-surface";
 import { inNativeShell } from "@/lib/native-shell";
@@ -25,7 +26,7 @@ import type { Message, OptionCardData } from "@/state/store";
 import { approvalTitle } from "@/lib/pending-approval";
 import { t } from "@/lib/i18n";
 import { answersInOneTap, isQuestionCard, questionsForCard, type QuestionAnswer } from "../../shared/questions";
-import { QuestionCardView, questionDisplayAction } from "./QuestionCard";
+import { QuestionCardView, questionDisplayAction, questionDisplayActionByLabel } from "./QuestionCard";
 
 /** A request that is still open: nothing answered it, dismissed it, and the
  * bot has not stopped waiting. */
@@ -211,6 +212,15 @@ function useRequestAnswer(threadId: string, card: OptionCardData, botName: strin
   // A phone's Allow on a card not rated low may meet fresh authentication, which signs the card's details.
   const reviewFirst = kind === "approval" && desktop !== true && card.lowRisk !== true;
 
+  // Allow and Deny post the chat card's own body (permission-answer.ts, q1022-approvefix): one answer path, never the
+  // display handle sent as a raw request id. A question's one-tap pick posts the chat card's display action for the same
+  // pick (questionDisplayActionByLabel); the open card's answer or skip already names its handle.
+  const wireBody = (body: Record<string, unknown>): Record<string, unknown> => body.requestHandle ? body
+    : body.behavior === "allow" || body.behavior === "deny"
+      ? permissionAnswerBody(card, card.requestId ?? "", body.behavior, { message: typeof body.message === "string" ? body.message : undefined, allowForTask: body.allowForTask === true })
+      : body.behavior === "answer" && card.requestHandle && Array.isArray(body.answers)
+        ? questionDisplayActionByLabel(card, card.requestHandle.slice(2), body.answers as QuestionAnswer[])
+        : { requestId: card.requestId, ...body };
   const respond = async (body: Record<string, unknown>, hooks?: DecisionHooks) => {
     setBusy(true);
     setError(null);
@@ -220,7 +230,7 @@ function useRequestAnswer(threadId: string, card: OptionCardData, botName: strin
     let failed = false;
     let failure = "";
     await decideWithFreshAuth(
-      (extra) => api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify(body.requestHandle ? { ...body, ...extra } : { requestId: card.requestId, ...body, ...extra }) }),
+      (extra) => api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify({ ...wireBody(body), ...extra }) }),
       {
         threadId,
         requestId: card.requestId ?? "",

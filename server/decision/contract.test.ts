@@ -64,6 +64,8 @@ const publicFunctions = [
   "cancelRequests",
   "answerQuestionReply",
   "relistQuestions",
+  // 1021 Retry (RETRY-DESIGN-r2): re-send a delivery-failed engine card's stored answer through the release gate.
+  "retryDelivery",
   "saveContinuation", "readContinuation", "deleteContinuation", "executeService", "installDecisionObserver"
 ].sort();
 const publicTypes = [
@@ -158,6 +160,7 @@ describe('A13a: frozen r3.1 contract', () => {
       cancelRequests: (scope: RequestCancellation, state: 'cancelled' | 'expired' | 'superseded') => Promise<void>;
       answerQuestionReply: (threadId: string, text: string) => Promise<QuestionReplyResult>;
       relistQuestions: (threadId: string) => Promise<void>;
+      retryDelivery: (ref: ApprovalRef) => Promise<'accepted' | 'delivery_pending' | 'delivery_retry' | 'delivery_failed_terminal' | 'delivery_unconfirmed'>;
       saveContinuation: (key: ContinuationKey, parent: TurnIdentity) => Promise<void>;
       readContinuation: (key: ContinuationKey) => ContinuationProvenance | undefined;
       deleteContinuation: (key: ContinuationKey) => Promise<void>;
@@ -270,7 +273,11 @@ describe('final S0 cross-slice amendment', () => {
     }>();
     expectTypeOf<DecisionTransport>().toEqualTypeOf<{
       respond: (target: DecisionEngineTarget, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>) => Promise<RequestDelivery>;
-      interrupt: (target: DecisionEngineTarget) => Promise<void>;
+      // 1020 perm-deliver: a decision-builder stop names its host reason, so it is never shown as the owner's Stop
+      interrupt: (target: DecisionEngineTarget, hostStopReason?: string) => Promise<void>;
+      // 1021 Retry (RETRY-DESIGN-r2 D3/step 5): the driver's open map proves the ask is still held; re-arm its failed slot
+      canRedeliver?(target: DecisionEngineTarget): boolean;
+      rearmRetry?(target: DecisionEngineTarget): boolean;
     }>();
     expectTypeOf<DecisionHost>().toEqualTypeOf<{
       readonly store: Store; view: (registration: Readonly<Registration>) => ApprovalView;
@@ -278,10 +285,15 @@ describe('final S0 cross-slice amendment', () => {
       featureOff?: (threadId:string,botId:string,tool:string) => string | undefined;
       // Registered roots and resolved data-directory facts for the narrow breaker.
       executionContext?: (threadId:string,botId:string) => {cwd?:string;project?:string;home?:string;projects?:readonly string[];dataDir?:string};
+      // 1021 Retry: a failed engine card that ended settles its attention
+      deliveryEnded?(ref: ApprovalRef): void;
     }>();
     expectTypeOf<ProviderInstance['decisionAdapter']>().toEqualTypeOf<DecisionProviderAdapter | undefined>();
     expectTypeOf<DecisionProviderAdapter>().toEqualTypeOf<Pick<ProviderAdapter<RequestDelivery>,
-      'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'>>();
+      'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'> & {
+      canRedeliver?(threadId: string, requestId: string): boolean;
+      rearmRetry?(threadId: string, requestId: string): boolean;
+    }>();
     expectTypeOf<Extract<GateTapEvent, { type: 'posture' }>>().toEqualTypeOf<{
       type: 'posture'; threadId: string; generation: string;
       state: 'requested' | 'accepted' | 'failed' | 'interrupted'; level: 'ask' | 'auto' | 'full' | 'unlimited';

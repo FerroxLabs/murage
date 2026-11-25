@@ -806,7 +806,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     });
 
     it("8. binds a Windows credential path so its backslashes survive in the generated config", () => {
-      const winPath = "C:\\Users\\sean\\AppData\\Local\\Temp\\murage-cred-ab12\\cred.json";
+      const winPath = "C:\\Users\\exampleuser\\AppData\\Local\\Temp\\murage-cred-ab12\\cred.json";
       const arg = `mcp_servers.agents.env.MURAGE_CRED_FILE=${JSON.stringify(CRED_FILE_PLACEHOLDER)}`;
       const [bound] = bindCredentialPathInArgs([arg], winPath);
       const value = bound!.slice(bound!.indexOf("=") + 1);

@@ -1,6 +1,7 @@
 import { eligibleViewPage, lexicalViewPage, pendingViewPage, RecallWorkBudget } from './recall-view-index.ts';
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { database } from "../database.ts";
+import { noteSemanticCapacityHit } from "./model-adoption.ts";
 import { assertMemoryAccess, inMemoryAccessPass, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { authorityStamp } from "./authority-epoch.ts";
 import { denyGeneration } from "./deny-read.ts";
@@ -116,7 +117,7 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // evidence withdrawn, outside the reader's scopes), and stops at the search's own deadline with a page flagged partial
   // (msearch review round 6). Reader-specific refusals are still decided record by record below.
   const lexicalSource=options.lexical===null?null:((q:string,_scopes:readonly string[],limit:number,offset=0)=>
-    options.lexical ? options.lexical(q,[],limit,offset) : lexicalViewPage(database(),q,access.view,limit,offset,scanBudget));
+    options.lexical ? options.lexical(q,[],limit,offset) : lexicalViewPage(database(),q,access.view,limit,offset,scanBudget,!(options.historical??false),options.historical??false));
   assertMemoryAccess(access);
   ownerIndexHandle();
   const direct=lexicalSource?await lexicalSource(query,[],RECALL_FIRST_PAGE):null;
@@ -135,7 +136,9 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // The helper's index was readable and it did not answer: whether anything the reader may read is still waiting for the
   // word index is worked out below, from the reader's own scopes and after authorization.
   let pendingScan=false;
-  try{result=cached??await helper!;}
+  try{result=cached??await helper!;
+    // The scan stopped at its budget with records left: the owner is told (memory status semantic.capacityHitAt).
+    if(result.resumeAfter!==undefined)noteSemanticCapacityHit();}
   catch(error){
     options.signal?.throwIfAborted();assertMemoryAccess(access);
     logSwallowed("recall",error);helperAnswered=false;
@@ -361,13 +364,13 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     // Pending projections the reader's own scopes hold (the word index has not caught up): only a readable one counts.
     let pendingReadable=false;
     if(pendingScan){
-      for(let after=0;;){
+      for(let after='';;){
         const refs=pendingViewPage(database(),access.view,after,PENDING_PAGE,scanBudget);
         if(!refs.length){if(scanBudget.remaining===0)partial=true;break;}
         await authorizeAll(refs);
         if(refs.some(ref=>readableOf(ref)!==null)){pendingReadable=true;break;}
         if(partial){pendingReadable=true;break;}
-        after=refs[refs.length-1].rowid;
+        after=JSON.stringify([refs[refs.length-1].id,refs[refs.length-1].version]);
       }
     }
     return {ranked:ranked.map(({read,...hit})=>({...hit,...read})),incomplete:incomplete||unproven,unscored,recentReadable,meaningRead:meaning.taken.length>0,paged,pendingReadable};
@@ -428,12 +431,17 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   const note=caller==="tool"&&isPartial?(selected.length?PARTIAL_NOTE:degradedReason==="MEMORY_RECALL_UNAVAILABLE"?UNAVAILABLE_NOTE:undefined):caller==="tool"&&boundedScan?BOUNDED_NOTE:undefined;
   // The recent fallback is reported only when it found a record this reader may read.
   if(cut||boundedScan||lists.recentReadable)coverage=false;
+  // q1022 recallperf item 4: the meaning search was dropped (cut off at SEMANTIC_CUTOFF_MS or failed): what meaning alone would find was
+  // never looked at, so the answer is never reported complete.
+  if(!helperAnswered&&!cached)coverage=false;
   // Only these fields are the answer. The helper's counts, memory use and timings stay in the process (telemetry above), and
   // the helper's cursor, an id that may name a record this reader cannot read, is replaced by a token only this reader can use.
   // Final admission check follows every callback and all result construction work.
   assertMemoryAccess(access);
   return {hits:selected,...degradedReason!==undefined?{degradedReason}:{},...coverage!==undefined?{coverageComplete:coverage}:{},...lists.paged?{nextCursor:sealMemoryCursor(result.resumeAfter!,access,options.historical??false)}:{},
-    ...isPartial?{partial:true,recallMode:"keyword" as const}:{},...note?{note}:{},evolutionPolicyRevision:evolutionPolicy.revision,...lists.recentReadable?{recentFallback:true}:{},
+    ...isPartial?{partial:true,recallMode:"keyword" as const}:{},
+    // A readable record may have been missed (hydration or scan cut short, or words only before the word index is ready); words-only recall over a ready index misses none.
+    ...partial||scanCut||keywordOnly&&!lexicalReady?{missed:true as const}:{},...note?{note}:{},evolutionPolicyRevision:evolutionPolicy.revision,...lists.recentReadable?{recentFallback:true}:{},
     };
 }
 
