@@ -15,7 +15,7 @@ import { known, type Verdict, type WipeContext, type WipeEffect } from '../wipe/
 import { secureGuardFilePath, writeGuardFile } from './guard-file.ts';
 
 export const GUARD_LIMITS = Object.freeze({ requestBytes: 64 * 1024, strings: 256, stringBytes: 4096,
-  roots: 512, concurrent: 8, requests: 128, approvals: 32, directoryEntries: 8192,
+  roots: 8192, concurrent: 8, requests: 128, approvals: 32, directoryEntries: 8192,
   readMs: 5000, probeMs: 250, operationMs: 500, approvalMs: 10 * 60 * 1000 });
 export interface GuardOperation { tool: string; argv: readonly string[]; cwd: string; targets: readonly string[] }
 export interface GuardRequest extends GuardOperation { v: 1; kind: 'wipe-exec'; id: string; token: string; threadId: string }
@@ -295,7 +295,12 @@ function fingerprint(r: GuardOperation, ctx: WipeContext, probes: GuardProbes): 
 
 /** G3 owns start/end calls and supplies its existing wipe-card adapter. */
 export async function startWipeGuardTurn(options: GuardTurnOptions): Promise<GuardTurn> {
-  if (!text(options.threadId, 256) || !options.threadId || options.roots.length > GUARD_LIMITS.roots || !options.roots.every(p => text(p) && absolute(p))) throw Error('wipe-guard-invalid-turn');
+  // 1.0.20 T1: the check that failed and the count are logged (never a path). The root count is not a reason to refuse a turn: every
+  // registered bot/room/task root and mount is published (never truncated, which would weaken the wipe check); the guard file's own byte
+  // cap (MAX_GUARD_FILE_BYTES) bounds what is written, and this count only bounds the work before that.
+  const invalid = !text(options.threadId, 256) || !options.threadId ? 'thread-id' : options.roots.length > GUARD_LIMITS.roots ? 'root-count'
+    : !options.roots.every(p => text(p) && absolute(p)) ? 'root-path' : undefined;
+  if (invalid) { console.warn(`[wipe-guard] turn refused: check=${invalid} roots=${options.roots.length}`); throw Error('wipe-guard-invalid-turn'); }
   const directory = mkdtempSync(join(options.directory, 'wg-'));
   const token = randomBytes(32).toString('hex');
   const socketPath = process.platform === 'win32' ? '\\\\.\\pipe\\murage-wipe-' + randomBytes(24).toString('hex') : join(directory, 's.sock');

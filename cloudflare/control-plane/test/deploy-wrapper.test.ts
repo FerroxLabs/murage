@@ -1000,7 +1000,7 @@ describe("KMS W2b freeze mode: check-deploy --freeze and deploy.mjs --freeze (KM
       };
       const code = await deployWithPreflight(argv, {
         env: o.env ?? { CLOUDFLARE_API_TOKEN: TOKEN }, configPath: CFG, exists: () => false, homeImages: FIX, imageTrust: TRUST, readConfig: () => text, fetch: fetchImpl, git, ...epochIo().io,
-        now: () => CLOCK, who: () => "user@host",
+        now: () => CLOCK, who: () => "sean@mac",
         alert: async (payload: Record<string, unknown>) => { alerts.push(payload); return o.alertOk !== false; },
         record: (e: Record<string, unknown>) => { if (o.recordThrows) throw new Error("disk"); records.push(e); },
         run: (c: string, a: string[]) => { ran.push([c, ...a]); return 0; }, log: () => undefined, error: (m: string) => { errors.push(m); },
@@ -1041,10 +1041,10 @@ describe("KMS W2b freeze mode: check-deploy --freeze and deploy.mjs --freeze (KM
       const r = await go(["production", "--freeze"]);
       const a = r.alerts[0];
       expect(a.kind).toBe("freeze.deploy"); expect(a.severity).toBe("critical");
-      expect(a.head).toBe(HEAD); expect(a.tree).toBe(TREE); expect(a.who).toBe("user@host"); expect(a.at).toBe(CLOCK_ISO);
-      expect(a.text).toContain(HEAD); expect(a.text).toContain(TREE); expect(a.text).toContain("user@host"); expect(a.text).toContain(CLOCK_ISO);
+      expect(a.head).toBe(HEAD); expect(a.tree).toBe(TREE); expect(a.who).toBe("sean@mac"); expect(a.at).toBe(CLOCK_ISO);
+      expect(a.text).toContain(HEAD); expect(a.text).toContain(TREE); expect(a.text).toContain("sean@mac"); expect(a.text).toContain(CLOCK_ISO);
       expect(r.records.map((x) => x.stage)).toEqual(["start", "done"]);
-      for (const rec of r.records) { expect(rec.head).toBe(HEAD); expect(rec.tree).toBe(TREE); expect(rec.who).toBe("user@host"); }
+      for (const rec of r.records) { expect(rec.head).toBe(HEAD); expect(rec.tree).toBe(TREE); expect(rec.who).toBe("sean@mac"); }
       expect(r.alerts).toHaveLength(1);
     });
     it("an undelivered alert or an unwritable record refuses: nothing ships", async () => {
@@ -1144,7 +1144,7 @@ describe("Astra G3-KMS H3: the epoch is activated in D1 BEFORE wrangler deploy (
       fetch: async (url: string) => (url.endsWith("/settings") ? new Response(JSON.stringify({ success: true, result: { bindings: [{ type: "plain_text", name: "CLOUD_PROVISIONING_OPEN", text: "false" }, { type: "plain_text", name: "CLOUD_SALES_OPEN", text: "false" }] } }), { status: 200 })
         : url.includes(`/accounts/${PRODUCTION_ACCOUNT}/`) ? new Response(JSON.stringify(LISTED), { status: 200 }) : new Response(JSON.stringify(DENIED), { status: 403 })),
       git: (a: string[]) => (a[0] === "status" ? { status: 0, stdout: "" } : a[0] === "rev-parse" ? { status: 0, stdout: a[1] === "HEAD" ? sha : tree } : a[0] === "remote" ? { status: 0, stdout: "https://github.com/FerroxLabs/murage-dev.git" } : { status: 0, stdout: `${sha}\trefs/heads/cloud-v2/release\n` }),
-      now: () => CLOCK, who: () => "user@host", alert: async () => { e.events.push("alert"); return true; }, record: () => { e.events.push("record"); },
+      now: () => CLOCK, who: () => "sean@mac", alert: async () => { e.events.push("alert"); return true; }, record: () => { e.events.push("record"); },
       run: () => { e.events.push("run"); return 0; }, log: () => undefined, error: () => undefined,
     });
     expect(code).toBe(0); expect(e.events).toEqual(["d1:links", "d1:INSERT", "d1:SELECT", "alert", "record", "run", "record", "d1:mark"]); // ..., the closing deploy record, the rollout marker

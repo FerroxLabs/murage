@@ -38,7 +38,9 @@ it("a completed tool row that is only the tool's name keeps an empty payload, it
   expect({ state: bare.state, status: bare.status, text: payload.text, excluded: payload.excluded }).toEqual({ state: "active", status: "complete", text: "", excluded: undefined });
   expect(payload.action).toEqual({ label: "read_file", reportedOutcome: "completed", verification: "tool-reported" });
   const said = source("said");
-  expect({ state: said.state, status: said.status, text: JSON.parse(String(said.payload)).text }).toEqual({ state: "active", status: "pending", text: "read_file\nnotes.md: 3 lines" });
+  // mem-f6 (1.0.21): the capture stage writes nothing for a tool outcome, so its job is no longer queued for a claim: it is written complete,
+  // its text covered (was "pending" here; the text and the row are captured exactly as before).
+  expect({ state: said.state, status: said.status, text: JSON.parse(String(said.payload)).text }).toEqual({ state: "active", status: "complete", text: "read_file\nnotes.md: 3 lines" });
   // a failed one stays procedure evidence, as before: its own text, its job born complete
   const fail = source("fail");
   expect({ state: fail.state, outcome: fail.outcome, status: fail.status, text: JSON.parse(String(fail.payload)).text }).toEqual({ state: "active", outcome: "failed", status: "complete", text: "read_file" });

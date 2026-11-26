@@ -1,0 +1,50 @@
+# Copyright 2026 Ferrox Labs
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# PRIVATE-ONLY workflow: the wall-clock budget tests (tag `perf-budget`, vite.config.ts) on the maintainers'
+# dedicated perf box. It needs host and SSH-key secrets that must never exist in the public repository, so
+# the public-tree scrub removes this file (scrub.sh, like scale-budget.yml). The public nightly.yml runs
+# the `nightly` tag only.
+name: Nightly perf
+
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-perf-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # 2026-10-25: Linux runners are pinned to ubuntu-24.04. ubuntu-latest moved to 26.04, which stays pinned out until
+  # Playwright supports chromium there and the electron no-desktop-session backup test passes on it (1.0.7 follow-up).
+  perf-budget:
+    name: wall-clock budgets (Hetzner)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # git archive in hz-vitest.sh exports this commit
+          fetch-depth: 1
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: ./.github/actions/linux-cage
+      - name: ssh key
+        env:
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+        run: |
+          mkdir -p ~/.ssh && umask 077 && printf '%s\n' "$HETZNER_SSH_KEY" > ~/.ssh/id_ed25519
+          printf 'Host hetzner-dsm\n  HostName %s\n  User root\n  StrictHostKeyChecking accept-new\n' "$HETZNER_HOST" > ~/.ssh/config
+      - name: Run the perf-budget tests on dedicated hardware
+        run: |
+          sudo apt-get install -y zsh >/dev/null
+          zsh scripts/scale/hz-vitest.sh "nightly-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$GITHUB_SHA" perf-budget

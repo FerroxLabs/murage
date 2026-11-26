@@ -189,7 +189,7 @@ test("every registered channel: the Cloud-home window reaches it only if cloud-s
 test("the named channels are refused for the Cloud-home window, by name, before the listener runs", async () => {
   const named = [
     ...inventory.handles.filter((c) => c.startsWith("cua:")),
-    "engine:open-terminal", "engine:open-setup-terminal", "desktop:pick-folder", "credential:set", "highlevel:commit",
+    "engine:open-terminal", "engine:open-setup-terminal", "desktop:pick-folder", "credential:set",
     ...inventory.handles.filter((c) => c.startsWith("model-signin:")),
     ...inventory.handles.filter((c) => c.startsWith("backup-")),
     ...inventory.handles.filter((c) => c.startsWith("companion:")),
@@ -227,7 +227,7 @@ test("desktop:surface-secret returns \"\" to the Cloud-home window and never run
 
 test("every synchronous channel answers a refused Cloud-home sender (no hang)", () => {
   const syncChannels = [...preloadSource.matchAll(/ipcRenderer\.sendSync\("([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(syncChannels.sort(), ["desktop:surface-secret", "screen:preview-intent"]);
+  assert.deepEqual(syncChannels.sort(), ["desktop:server-launch", "desktop:surface-secret", "screen:preview-intent"]);
   const f = gateFixture();
   f.gate.on("screen:preview-intent", () => { f.ran.push("x"); }, { refusedReturnValue: false });
   const event = { ...f.cloudWindow.event };
@@ -236,6 +236,7 @@ test("every synchronous channel answers a refused Cloud-home sender (no hang)", 
   assert.equal(event.returnValue, false);
   assert.match(read("main.mjs"), /ipcMain\.on\("screen:preview-intent"[\s\S]{0,200}refusedReturnValue: false/);
   assert.match(read("main.mjs"), /ipcMain\.on\("desktop:surface-secret"[\s\S]{0,200}refusedReturnValue: ""/);
+  assert.match(read("main.mjs"), /ipcMain\.on\("desktop:server-launch"[\s\S]{0,200}refusedReturnValue: ""/);
 });
 
 test("cloud-safe channels work from both windows; cloud-only channels only from the Cloud-home window", async () => {
@@ -317,11 +318,10 @@ test("main.mjs hands the gate the Cloud sender kind only when the flag installed
   assert.ok(main.indexOf("const cloudHome = installCloudHome(") < main.indexOf("const ipcMain = createOwnedMainIpc("), "cloudHome exists before the gate is built");
 });
 
-test("flag off: the snapshot plus exactly the S1 pop-out and HighLevel local handlers; flag on adds only Cloud handlers", () => {
+test("flag off: the snapshot plus exactly the S1 pop-out local handlers; flag on adds only Cloud handlers", () => {
   const snapshot = JSON.parse(read("ipc-channels.flag-off.snapshot.json"));
   assert.equal(snapshot.base, "cloud-v2/b3 @ 471d88479");
-  // MAIN RULING 5f4b635020: the encrypted HighLevel capability bank adds one main-only commit channel.
-  assert.deepEqual({ handles: inventory.handles, ons: inventory.ons }, { handles: [...snapshot.handles, "browser-popout:close", "browser-popout:open", "browser-popout:state-now", "highlevel:commit"].sort(), ons: snapshot.ons });
+  assert.deepEqual({ handles: inventory.handles, ons: inventory.ons }, { handles: [...snapshot.handles, "browser-popout:close", "browser-popout:open", "browser-popout:state-now"].sort(), ons: [...snapshot.ons, "desktop:open-chat", "desktop:server-launch"].sort() });
   const added = flagOn.handles.filter((c) => !inventory.handles.includes(c));
   assert.deepEqual(added, ["cloud-home:browser-popout:close", "cloud-home:browser-popout:open", "cloud-home:browser-popout:state-now", "cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:disconnect-this", "cloud-home:engine-login:input", "cloud-home:engine-login:open-link", "cloud-home:engine-login:start", "cloud-home:engine-login:stop", "cloud-home:list-bots", "cloud-home:list-homes", "cloud-home:open", "cloud-home:reachable", "cloud-home:request-sign-in", "cloud-home:state"], "flag on adds ONLY the WP4 cloud-home:* channels and the WP5 engine sign-in relay plus A7 pop-outs");
   assert.deepEqual(flagOn.ons, inventory.ons, "flag on adds no listener channel");

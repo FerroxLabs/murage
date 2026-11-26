@@ -21,7 +21,7 @@ const WINDOWS_ROOT = /^[a-zA-Z]:[\\/]/;
  * this returns.
  *
  * Windows paths compare case-insensitively because its filesystems do; POSIX
- * paths do not, so "/home/Sean" never matches "/home/sean". */
+ * paths do not, so "/home/ExampleUser" never matches "/home/exampleuser". */
 export function workspaceRelativePath(root: string | undefined, absolutePath: string): string | null {
   if (!root || !absolutePath) return null;
   const windows = WINDOWS_ROOT.test(root);

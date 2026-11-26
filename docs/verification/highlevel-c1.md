@@ -15,9 +15,9 @@ Run only in an isolated, network-disabled test container through the lane runner
 
 ```sh
 IT_JOB=afix-hlc1-r3 \
-IT_W=/work/build/hlc1/wt \
-IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh \
-/work/fuigo-builds/tools/it-remote.sh \
+IT_W=/root/fuigo-builds/swarm-b/hlc1/wt \
+IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh \
+/root/fuigo-builds/tools/it-remote.sh \
 'mkdir -p .test-tmp/afix-hlc1-r3/api-final; HLC1_EVIDENCE_DIR=.test-tmp/afix-hlc1-r3/api-final npx vitest run server/highlevel/grants-management-api.test.ts server/highlevel/grants-management.test.ts'
 ```
 

@@ -10,6 +10,7 @@ import {
 
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
+import { routineErrorText } from "@/lib/routine-error";
 import { CLOUD_ROUTINE_NOT_YET, CLOUD_ROUTINE_NOT_YET_EARLIER, PROJECT_CLOSED_COPY, type RoutineRunCardData } from "../../shared/routine-run";
 import type { Message } from "@/state/store";
 import { ArtifactCards } from "./ArtifactCards";
@@ -117,8 +118,8 @@ export function RoutineRunCard({
   const visualStatus = goalVisualStatus(run);
   const detail = compactDetail(
     run.status === "failed" || run.status === "missed"
-      ? (run.error ?? run.summary)
-      : (run.summary ?? run.error),
+      ? (routineErrorText(run.error) ?? run.summary)
+      : (run.summary ?? routineErrorText(run.error)),
   );
   const asking = run.status === "waiting" || run.status === "needs-you";
   const actionLabel = asking ? "Review" : "Open run";

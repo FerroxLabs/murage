@@ -111,6 +111,19 @@ describe("registerCloudHomeIpc", () => {
     expect(t.client.pasteDoorLink).toHaveBeenCalledWith("");
   });
 
+  it("state while Cloud is not live is a quiet unavailable answer, never a thrown error; work channels still refuse", async () => {
+    // meetgreet 1.0.19: the not-live gate threw "Cloud isn't available yet." from cloud-home:state on every Home render, so
+    // Electron logged "Error occurred in handler" again and again. The renderer reads any non-enabled state as off.
+    const handlers = new Map();
+    const client = { pairedHomes: vi.fn(async () => [{ homeId: "home-1", origin: "https://h.example" }]), listHomes: vi.fn(async () => []) };
+    registerCloudHomeIpc({ handle: (channel, fn) => handlers.set(channel, fn) }, { cloudHome: { client, open: vi.fn(), senderHomeId: () => null }, getCpToken: () => "cp-secret-token", active: () => false });
+    await expect(handlers.get("cloud-home:state")({ sender: "e" })).resolves.toEqual({ enabled: false });
+    expect(client.pairedHomes).not.toHaveBeenCalled();
+    await expect(handlers.get("cloud-home:state")({ sender: "e" }, "extra")).rejects.toThrow("Invalid request.");
+    expect(() => handlers.get("cloud-home:list-homes")({ sender: "e" })).toThrow("Cloud isn't available yet.");
+    expect(client.listHomes).not.toHaveBeenCalled();
+  });
+
   it("disconnect validates the home id, revokes and forgets through the client, and closes that home's window", async () => {
     const t = setup();
     await expect(t.call("cloud-home:disconnect", "../x")).rejects.toThrow("Invalid request.");

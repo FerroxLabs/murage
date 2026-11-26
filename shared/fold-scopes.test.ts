@@ -23,7 +23,7 @@ const STOPS: { name: string; stop?: CardClass["stop"]; keys: CardKeys }[] = [
   { name: "message one new", stop: { kind: "message", public: false, placed: true, places: 1 }, keys: { allowKey: "stop:message:dana@acme.example", taskAllowKey: "stop:message:dana@acme.example" } },
   { name: "message several", stop: { kind: "message", public: false, placed: false, places: 3 }, keys: {} },
   { name: "public post", stop: { kind: "message", public: true, placed: true, places: 1 }, keys: { allowKey: "stop:public:github:ferrox/murage", taskAllowKey: "stop:public:github:ferrox/murage" } },
-  { name: "delete folder", stop: { kind: "delete", public: false, placed: true, places: 1 }, keys: { allowKey: "stop:delete:/Users/alex/site/build", taskAllowKey: "stop:delete:/Users/alex/site/build" } },
+  { name: "delete folder", stop: { kind: "delete", public: false, placed: true, places: 1 }, keys: { allowKey: "stop:delete:/Users/exampleuser/site/build", taskAllowKey: "stop:delete:/Users/exampleuser/site/build" } },
   { name: "delete app", stop: { kind: "delete", public: false, placed: true, places: 1 }, keys: { allowKey: "stop:delete:app:github", taskAllowKey: "stop:delete:app:github" } },
   { name: "delete unplaced", stop: { kind: "delete", public: false, placed: true, places: 1 }, keys: { allowKey: 'stop:delete:unplaced:["/tmp","rm -rf $X"]', taskAllowKey: 'stop:delete:unplaced:["/tmp","rm -rf $X"]' } },
   { name: "delete no place", stop: { kind: "delete", public: false, placed: false, places: 1 }, keys: {} },
@@ -74,7 +74,7 @@ describe("foldScopes: the 1.2 table", () => {
     const stop = STOPS[4]!.stop!;
     expect(foldScopes(classOf("stop-line", { stop }, keys), keys).map((row) => row.id)).toEqual(["task", "always"]);
     expect(foldScopes(classOf("stop-line", { stop, automated: true }, keys), keys).map((row) => row.id)).toEqual(["always"]);
-    expect(foldScopes(classOf("stop-line", { stop }, keys), keys)[0]).toMatchObject({ window: { hours: 12, where: "conversation" }, target: { kind: "delete-folder", folder: "/Users/alex/site/build" } });
+    expect(foldScopes(classOf("stop-line", { stop }, keys), keys)[0]).toMatchObject({ window: { hours: 12, where: "conversation" }, target: { kind: "delete-folder", folder: "/Users/exampleuser/site/build" } });
   });
 
   it("a payment offers the task row only", () => {
@@ -87,14 +87,14 @@ describe("foldScopes: the 1.2 table", () => {
     const targets = STOPS.slice(3, 7).map(({ stop, keys }) => foldScopes(classOf("stop-line", { stop: stop! }, keys), keys).find((row) => row.id === "always")?.target);
     expect(targets).toEqual([
       { kind: "public", where: "github:ferrox/murage" },
-      { kind: "delete-folder", folder: "/Users/alex/site/build" },
+      { kind: "delete-folder", folder: "/Users/exampleuser/site/build" },
       { kind: "delete-place", where: "app", name: "github" },
       { kind: "delete-command", folder: "/tmp", command: "rm -rf $X" },
     ]);
   });
 
   it("no-grant rows: exact command, program, native tool, app action, set, mount, another bot", () => {
-    const exact = exactCommandKey({ engine: "claude", cwd: "/Users/alex/site", command: "git push" })!;
+    const exact = exactCommandKey({ engine: "claude", cwd: "/Users/exampleuser/site", command: "git push" })!;
     const cmd: CardKeys = { allowKey: "Bash:git", exactAllowKey: exact };
     expect(foldScopes(classOf("no-grant", {}, cmd), cmd).map((row) => [row.id, row.target.kind])).toEqual([["always-exact", "exact-command"], ["always", "program"]]);
     const one = (allowKey: string) => foldScopes(classOf("no-grant", {}, { allowKey }), { allowKey })[0]?.target;
@@ -116,7 +116,7 @@ describe("foldScopes: the 1.2 table", () => {
   });
 
   it("an always row is shown only when its key is on the card", () => {
-    const keys: CardKeys = { taskAllowKey: "stop:delete:/Users/alex/site/build" };
+    const keys: CardKeys = { taskAllowKey: "stop:delete:/Users/exampleuser/site/build" };
     expect(foldScopes(classOf("stop-line", { stop: STOPS[4]!.stop! }, keys), keys).map((row) => row.id)).toEqual(["task"]);
   });
 
@@ -132,7 +132,7 @@ describe("foldScopes: the 1.2 table", () => {
 
   it("every offered stop key is honored on the next identical ask; every key it saves answers it", () => {
     const hits: StopHit[] = [
-      { kind: "delete", place: "/Users/alex/site/build", what: "Delete" },
+      { kind: "delete", place: "/Users/exampleuser/site/build", what: "Delete" },
       { kind: "delete", place: "app:github", what: "Delete on GitHub" },
       { kind: "message", place: "public:github:ferrox/murage", recipients: ["github:ferrox/murage"], what: "Post" },
       { kind: "pay", place: "stripe:brightline", what: "Pay" },
@@ -152,13 +152,13 @@ describe("foldScopes: the 1.2 table", () => {
       }
     }
     // a delete "always" covers a subfolder (the row says so), not a sibling
-    expect(stopLineKeyCovers("stop:delete:/Users/alex/site/build", { kind: "delete", place: "/Users/alex/site/build/x", what: "" })).toBe(true);
-    expect(stopLineKeyCovers("stop:delete:/Users/alex/site/build", { kind: "delete", place: "/Users/alex/site/dist", what: "" })).toBe(false);
+    expect(stopLineKeyCovers("stop:delete:/Users/exampleuser/site/build", { kind: "delete", place: "/Users/exampleuser/site/build/x", what: "" })).toBe(true);
+    expect(stopLineKeyCovers("stop:delete:/Users/exampleuser/site/build", { kind: "delete", place: "/Users/exampleuser/site/dist", what: "" })).toBe(false);
   });
 
   it("the hidden task row on an unattended turn is one the reader would have ignored", () => {
-    const hit: StopHit = { kind: "delete", place: "/Users/alex/site/build", what: "Delete" };
-    const verdict = autoVerdict({}, "Bash", "x", { stopLine: hit, stopAllowedForTask: "stop:delete:/Users/alex/site/build", unattended: true });
+    const hit: StopHit = { kind: "delete", place: "/Users/exampleuser/site/build", what: "Delete" };
+    const verdict = autoVerdict({}, "Bash", "x", { stopLine: hit, stopAllowedForTask: "stop:delete:/Users/exampleuser/site/build", unattended: true });
     expect(verdict.approve).toBeNull();
   });
 });

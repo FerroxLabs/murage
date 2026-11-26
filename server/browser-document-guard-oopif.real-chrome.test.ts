@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Real Chromium, two origins served from this test (localhost and 127.0.0.1 are different sites, so the iframe is an
-// out-of-process frame): the page lock sees it. Runs only where CHROME_BIN names a Chrome (build host container).
+// out-of-process frame): the page lock sees it. Runs only where CHROME_BIN names a Chrome (Hetzner container).
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:http";

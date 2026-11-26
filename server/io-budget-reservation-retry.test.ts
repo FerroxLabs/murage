@@ -9,31 +9,42 @@ const reading = { cpuMicros: 0, fsWriteBlocks: 0, meterBytes: 0 };
 const IDLE_ROOM = IO_BUDGET_IDLE_BYTES_PER_MINUTE - 65536;
 function world() {
   // A fixed clock early in a minute keeps the closing guard out of these rows.
-  const at = 600 * 60_000 + 1000;
+  let at = 600 * 60_000 + 1000;
   const budget = new IoBudget({ read: () => ({ ...reading, at }) as never, log: () => {} });
   let idle = false;
   budget.setIsIdle(() => idle);
   const capture = <T>(run: () => T) => budget.withSource("memory-capture", run);
-  return { budget, capture, idle: (value: boolean) => { idle = value; } };
+  return { budget, capture, idle: (value: boolean) => { idle = value; }, next: () => { at += 60_000; } };
 }
 
-it("an idle capture behind a live reservation with idle room left retries at the short step", () => {
+// CHANGED-EXPECTATION (MAIN-RULING 2026-11-25T05:54:59Z idle DO LESS, 11:49:12Z rewrite; was: an idle capture behind a live reservation with
+// idle room left retries at the short step): (a) on the idle minute no capture holds a reservation and a refused capture waits for the
+// minute; (b) on the next ACTIVE minute a capture behind a live reservation retries at the short step, and the reservation settles once.
+it("a capture behind a live reservation retries at the short step on the next active minute; on the idle minute nothing reserves and it waits for the minute", () => {
   const w = world();
   w.idle(true);
+  expect(w.capture(() => w.budget.admit("BG", 8192, 0)), "idle DO LESS: no capture reservation on the idle minute").toBeNull();
+  const idleRetry = w.capture(() => w.budget.refusalRetry());
+  expect(idleRetry.reservationWait, "nothing is reserved on the idle minute: not a reservation wait").toBe(false);
+  expect(idleRetry.retryInMs, "the idle refusal waits for the next minute's look").toBe(w.budget.nextAdmissionMs());
+  w.next();
+  w.idle(false);
   const live = w.capture(() => w.budget.admit("BG", 8192, 0))!;
   expect(live).not.toBeNull();
   const retry = w.capture(() => w.budget.refusalRetry());
   expect(retry.reservationWait).toBe(true);
   expect(retry.retryInMs).toBeLessThanOrEqual(1000);
   expect(w.capture(() => w.budget.claimRetryMs(true))).toBeLessThanOrEqual(1000);
-  w.budget.settle(live, 0);
+  w.budget.settle(live, 4096);
+  expect(w.budget.admissionState(), "the reservation settled exactly once").toMatchObject({ bg: 4096, reserved: 0 });
 });
 
 it("an idle capture whose idle allowance is already spent waits for the minute, even beside a live reservation", () => {
   const w = world();
-  w.idle(true);
-  const spent = w.capture(() => w.budget.admit("BG", IDLE_ROOM, 0))!;
-  expect(spent, "the whole idle allowance can be admitted").not.toBeNull();
+  // MAIN 2026-11-22 idle-capture: the captures' own settled bytes no longer spend the idle allowance for the next capture, so the
+  // allowance is spent here by another background writer's bytes (admitted while the owner was active), which still close it.
+  const spent = w.budget.withSource("memory-worker", () => w.budget.admit("BG", IDLE_ROOM, 0))!;
+  expect(spent, "the whole idle allowance can be written by another source").not.toBeNull();
   w.budget.settle(spent, IDLE_ROOM);
   // An unrelated holder reserved while the owner was active; its settle cannot return idle room that is already spent.
   w.idle(false);

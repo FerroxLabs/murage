@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// cloud-init user-data carries the enrollment token and the backup credentials. build host and Vultr serve it from
+// cloud-init user-data carries the enrollment token and the backup credentials. Hetzner and Vultr serve it from
 // 169.254.169.254 to any process on the host, and cloud-init keeps copies on disk. Both exposures are closed here.
 import { execFileSync } from "node:child_process";
 import { chmodSync, closeSync, existsSync, fstatSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, symlinkSync, writeFileSync } from "node:fs";

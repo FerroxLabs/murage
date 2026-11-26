@@ -7,6 +7,7 @@ export interface StorageReport {
   floorBytes: number;
   attachments: { bytes: number; inProgressBytes: number };
   files: { bytes: number };
+  upgradeCopies?: { bytes: number; count: number };
 }
 
 /** A byte count as a person reads it: 1.5 GB, 243 KB, 12 bytes. */
@@ -25,6 +26,8 @@ export interface StorageSummary {
   free: string;
   attachments: string;
   files: string;
+  /** The copies of messages.db kept from memory upgrades, or null when there are none. */
+  upgradeCopies: string | null;
   /** What to do next, in one sentence. */
   next: string;
   /** The disk is at or under the space Murage leaves free, or unreadable. */
@@ -43,6 +46,7 @@ export function storageSummary(report: StorageReport): StorageSummary {
     free: unreadable ? "Unknown" : readableBytes(report.freeBytes!),
     attachments: readableBytes(report.attachments.bytes + report.attachments.inProgressBytes),
     files: readableBytes(report.files.bytes),
+    upgradeCopies: report.upgradeCopies?.count ? readableBytes(report.upgradeCopies.bytes) : null,
     next,
     low,
   };

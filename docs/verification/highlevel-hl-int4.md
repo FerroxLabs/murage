@@ -1,7 +1,7 @@
 # HighLevel recovery integration: hl-int4
 
 Base: `f6b9b86de72d64bd10f1d0363b7d44f58ae3af32`.
-Evidence: `/work/build/hl-int4/evidence/`.
+Evidence: `/root/fuigo-builds/swarm-b/hl-int4/evidence/`.
 
 ## Merge interaction and binding design
 
@@ -14,7 +14,7 @@ absence. The guard is byte-identical before and after the hlf2 merge. The
 ftsdrain merge `dc1d2ede5` changes no files under `server/highlevel`.
 
 The approved recovery amendment is MAIN (1),
-`/work/build/hlint1/prompt.txt:2`:
+`/root/fuigo-builds/swarm-b/hlint1/prompt.txt:2`:
 
 > Validate the WHOLE provider response, including nonmatching collection members,
 > before any reconstruction. A negative or missing confirmation means unconfirmed,
@@ -40,8 +40,8 @@ must return `outcome_unknown` with one pipeline lookup and zero resends.
 
 ## Verification
 
-All tests run through `/work/fuigo-builds/tools/it-remote.sh` with `IT_JOB=hl-int4`,
-the assigned worktree, `IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`, and
+All tests run through `/root/fuigo-builds/tools/it-remote.sh` with `IT_JOB=hl-int4`,
+the assigned worktree, `IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`, and
 network disabled. One container runs at a time; launches wait while host load
 exceeds 60. The isolated fixture uses `launchVerificationServer`, an explicit URL
 for Doctor, a temporary home/data directory and fake engines/providers, and

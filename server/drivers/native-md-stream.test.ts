@@ -165,6 +165,7 @@ async function loadShared(): Promise<Shared | null> {
   return import(/* @vite-ignore */ path).catch(() => null) as Promise<Shared | null>;
 }
 
+const COUNTED_MARKER_PREFIX = /^«(?:r(?:e(?:d(?:a(?:c(?:t(?:e(?:d(?: (?:\d{1,9}(?: (?:c(?:h(?:a(?:r(?:s)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?$/;
 describe("row 18: split equivalence of the stream detector", () => {
   it("equals findSecretLabels at every split point of a seeded corpus", async () => {
     const lib = await loadShared();
@@ -190,7 +191,11 @@ describe("row 18: split equivalence of the stream detector", () => {
         expect(start >= 0, where).toBe(Boolean(hit));
         if (hit) {
           expect(start, where).toBeGreaterThanOrEqual(hit.sepEnd);
-          expect(line.slice(hit.sepEnd, start).trim(), where).toBe("");
+          // MAIN-RULING 2026-11-22T17:58:19Z Q1: "in turn mode, a label whose value is exactly a counted redaction marker is
+          // complete". A stream cannot flag a value's first units while they may still begin one, so the finding may land just past
+          // a strict prefix of a counted marker («, «red, «redacted 12 ...); any other unit before it (a mark, a letter) is still RED.
+          const gap = line.slice(hit.sepEnd, start).trim();
+          expect(gap === "" || COUNTED_MARKER_PREFIX.test(gap), `${where}: ${JSON.stringify(gap)}`).toBe(true);
         }
       }
     }

@@ -102,6 +102,10 @@ export class MountProbe {
 const mountProbe=new MountProbe();
 export function systemMountPaths():Promise<string[]> {return mountProbe.read();}
 export const mountedRoots=new MountInventory();
-const refresh=()=>{try{void Promise.resolve(mountedRoots.refresh()).catch(()=>{});}catch{}};
-refresh();
-const timer=setInterval(refresh,60000);timer.unref();
+/** 1.0.22 idle: the inventory is read once at start and again at a wipe guard's admission when this old, never on a timer (a 60 s
+ * interval spawned /sbin/mount 1,440 times a day on darwin with no wipe in sight). */
+export const MOUNT_REFRESH_STALE_MS=60_000;
+let refreshedAt=0;
+const refresh=():Promise<void>=>{refreshedAt=Date.now();try{return Promise.resolve(mountedRoots.refresh()).catch(()=>{});}catch{return Promise.resolve();}};
+void refresh();
+export function refreshMountsForWipe():Promise<void>{return Date.now()-refreshedAt<MOUNT_REFRESH_STALE_MS?Promise.resolve():refresh();}

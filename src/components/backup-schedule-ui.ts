@@ -35,6 +35,25 @@ export function enabledSchedule(draft: ScheduleDraft, status: BackupScheduleStat
     selection: { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } });
   return parsed.success ? parsed.data : null;
 }
+/** What a press on the Backups on/off switch does. Off is always allowed.
+ * On used to need the setup card's consent box ticked first; without it the
+ * switch had no handler and a press did nothing at all (1.0.20, Mac). The
+ * press itself is now the person's choice to turn daily backups on, with the
+ * saved time and limits; anything that still stops it is said in words. */
+export type BackupSwitchPress = { action: "disable" } | { action: "enable"; schedule: BackupSchedule } | { action: "refused"; message: string };
+export function backupSwitchPress(draft: ScheduleDraft, status: BackupScheduleStatus): BackupSwitchPress {
+  if (status.enabled) return { action: "disable" };
+  const schedule = enabledSchedule(draft, status, true);
+  if (schedule) return { action: "enable", schedule };
+  const why = !status.supported ? "backups aren't available in this window right now."
+    : !status.refs ? "choose a backup folder first."
+    : status.pending ? "a backup is being taken. Try again when it has finished."
+    : scheduleNeedsReview(status.phase) ? "the last backup didn't finish. Clear it first, then turn backups on."
+    : (draft.preUpgrade || status.schedule.preUpgrade) && status.preUpgradeSupported !== true ? "pre-update backups aren't available in this app. Turn that option off under Advanced."
+    : draft.closedApp && status.closedAppSupported !== true ? "backing up while Murage is closed isn't set up. Untick it, or set it up first."
+    : "the time each day or a backup limit is missing. Set them under Advanced.";
+  return { action: "refused", message: `Daily backups are still off: ${why}` };
+}
 export function scheduleNeedsReview(phase: string) {
   return ["claiming", "capturing", "needs-review", "handoff-prepared", "handoff-armed", "offline-claimed", "return-pending","install-requested"].includes(phase)
     || !["idle", "due", "waiting-idle", "waiting-backup-mode", "waiting", "local-verified", "skipped", "returned","upgrade-complete","upgrade-cancelled"].includes(phase);

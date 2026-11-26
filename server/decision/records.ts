@@ -14,7 +14,7 @@ const termSql=(x:string)=>`CASE WHEN json_valid(${x}.json) THEN (${CARD_TERMINAL
 const resultFields=['held','answers','expired','folderTrust.late'];
 const sendReceiptSql=(value:string)=>`CASE WHEN json_extract(${value},'$.answerAsSend')=1 THEN json_remove(${value},'$.sendId','$.sentAsMessage') ELSE ${value} END`;
 const resultSql=(value:string)=>`json_remove(${sendReceiptSql(value)},${resultFields.map(k=>sql('$.'+k)).join(',')})`;
-const projectionSql=(x:string,display=false)=>`json_remove(${sendReceiptSql(`json_extract(${x}.json,'$.card')`)},${[...CARD_TERMINAL_FIELDS,'undone','held','answers','expired','folderTrust.late',...(display?CARD_DISPLAY_FIELDS:[])].map(k=>sql('$.'+k)).join(',')})`;
+const projectionSql=(x:string,display=false)=>`json_remove(${sendReceiptSql(`json_extract(${x}.json,'$.card')`)},${[...CARD_TERMINAL_FIELDS,'undone','held','answers','expired','folderTrust.late','deliveryRetry',...(display?CARD_DISPLAY_FIELDS:[])].map(k=>sql('$.'+k)).join(',')})`;
 const invalidSendReceiptSql=(x:string)=>`json_extract(${x}.json,'$.card.answerAsSend')=1 AND (json_extract(${x}.json,'$.card.sendId') IS NOT NULL OR json_extract(${x}.json,'$.card.sentAsMessage') IS NOT NULL) AND
  (NOT (${termSql(x)}) OR json_extract(${x}.json,'$.card.sendId') IS NOT ('ask-'||${x}.id) OR (json_extract(${x}.json,'$.card.sentAsMessage') IS NOT NULL AND (json_extract(${x}.json,'$.card.sentAsMessage') IS NOT 1 OR json_extract(${x}.json,'$.card.expired') IS NOT 1)))`;
 // MAIN RULING 2026-11-17T04:53Z: the one late change a terminal card takes is sentAsMessage absent/false -> true,
@@ -202,6 +202,7 @@ export function readContinuationRecord(db:DatabaseSync,key:string):string|undefi
 export function deleteContinuationRecord(db:DatabaseSync,key:string){db.prepare('DELETE FROM decision_continuations WHERE key=?').run(key);}
 export function recordStats(db:DatabaseSync){const c=cache(db);return {cache:c.size,open:[...c.values()].filter(v=>v.state==='open').length};}
 
+export function failedEngineAnswers(db:DatabaseSync):RecordRow[]{return db.prepare("SELECT * FROM approval_records WHERE state='answered' AND delivery='failed' AND source_kind='engine'").all() as unknown as RecordRow[];}
 export function pendingEngineAnswers(db:DatabaseSync):RecordRow[]{return db.prepare("SELECT * FROM approval_records WHERE state='answered' AND delivery='pending' AND source_kind='engine'").all() as unknown as RecordRow[];}
 
 /** Lazy historical imports are non-actionable before the INSERT seam. */

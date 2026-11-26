@@ -53,7 +53,7 @@ export interface ProviderAdapter {
   /** The provider's own record of this power call, by the action id its answer carried (the only correlated receipt). "none": no
    *  such action. Optional: without it no reservation is ever completed by the provider's word. */
   power_action_status?(id: string, action: "reboot" | "start", actionId: string): Promise<PowerStatus>;
-  /** Whether the server is up now (build host status running; Vultr power_status running and server_status ok). Optional. */
+  /** Whether the server is up now (Hetzner status running; Vultr power_status running and server_status ok). Optional. */
   server_up?(id: string): Promise<boolean>;
   /** `signal`: the caller's bound (the cleanup claim's lease): an in-flight destroy is aborted before the claim could be taken over. */
   destroy(id: string, signal?: AbortSignal): Promise<void>;

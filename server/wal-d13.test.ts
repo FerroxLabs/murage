@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { checkpointLedger } from "./admission-shared.ts";
-import { ioBudget } from "./io-budget.ts";
+import { ADMISSION_MISS_BACKOFF_MS, ioBudget } from "./io-budget.ts";
 import { JOURNAL_SIZE_LIMIT_BYTES, closeDatabase, database } from "./database.ts";
 import { checkpointPassive, readWalHeader, settleWal, startWalMaintenance, stopWalMaintenance, walMaintenanceCounters, walMaintenanceReady, walResetFence } from "./wal-maintenance.ts";
 import { searchCleanupPending, stopSearchIndex } from "./message-search-index.ts";
@@ -245,8 +245,11 @@ it("D3 recovery: one held 25 ms invocation misses (slot 7 = 1); the next invocat
     // acknowledge the release
     Atomics.store(flag, 0, 1); Atomics.notify(flag, 0);
     await new Promise<void>(resolve => { holder.once("message", () => resolve()); holder.once("exit", () => resolve()); });
-    // Phase 2: the next invocation, asserted BEFORE anything is awaited
+    // Phase 2: the next invocation, asserted BEFORE anything is awaited. CHANGED EXPECTATION (MAIN-RULING 2026-11-25T13:37:06Z IDLECPU-1022 cause 3,
+    // q1022-lockloop-opus): after a miss the refresh backs off ADMISSION_MISS_BACKOFF_MS (250 ms), never a 25 ms re-arm, so the next invocation is at 250 ms.
     vi.advanceTimersByTime(25);
+    expect(publications(), "phase 2: backed off, no invocation 25 ms after the miss").toBe(0);
+    vi.advanceTimersByTime(ADMISSION_MISS_BACKOFF_MS - 25);
     expect(publications(), "phase 2: exactly one successful timer-origin publication").toBe(1);
     expect(slots[7], "phase 2: slot 7 = 0").toBe(0n);
     expect(ioBudget.admissionHealth().lockTimeouts, "no second miss").toBe(missed.lockTimeouts);

@@ -2,6 +2,7 @@
 import { Worker } from "node:worker_threads";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import type { ForgottenText } from "./harness/event-log.ts";
+import { registerWalReader } from "./wal-maintenance.ts";
 
 export type TranscriptReadRequest = { kind: "forgotten"; after: number };
 type ForgottenPage = { items: ForgottenText[]; last: number | null };
@@ -16,6 +17,8 @@ export const TRANSCRIPT_READ_PENDING = 8;
 export class TranscriptReader {
   private worker?: Worker;
   private pending = new Map<number, Pending>();
+  /** B5: half-gate releases waiting for the reads in flight to end. */
+  private drained: Array<() => void> = [];
   private sequence = 0;
   private stopped = false;
   private closing?: Promise<void>;
@@ -44,10 +47,17 @@ export class TranscriptReader {
             if (!entry) return;
             this.pending.delete(message.id);
             if (message.error) entry.reject(new Error(message.error)); else entry.resolve(message.result);
-            if (!this.pending.size) worker.unref();
+            if (!this.pending.size) { worker.unref(); for (const done of this.drained.splice(0)) done(); }
           });
           worker.on("error", error => this.fail(error instanceof Error ? error : new Error(String(error))));
+          // 1.0.21 B5 (memv2-D): a read holds a snapshot only while a message runs. At the WAL half gate the release waits for the reads in
+          // flight to end (an idle worker holds none) and never ends the worker, so the prune keeps reading off the main thread; only a
+          // worker still busy at the 5 s bound is ended (restart), and its reads reject as an exit (the caller's bounded fallback).
+          const unregister = registerWalReader({ name: "transcript-read", memory: true,
+            release: done => { if (this.worker !== worker || !this.pending.size) done(); else this.drained.push(done); },
+            restart: () => { if (this.worker === worker && this.pending.size) void worker.terminate().catch(() => {}); } });
           worker.on("exit", () => {
+            unregister();
             if (this.worker === worker) { this.worker = undefined; this.fail(new Error("Transcript reader exited")); }
           });
         }
@@ -62,6 +72,7 @@ export class TranscriptReader {
   private fail(error: Error): void {
     for (const entry of this.pending.values()) entry.reject(error);
     this.pending.clear();
+    for (const done of this.drained.splice(0)) done();
   }
 
   close(): Promise<void> {

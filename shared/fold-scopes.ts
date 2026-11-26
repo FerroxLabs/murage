@@ -27,7 +27,9 @@ export type CardKeyField = "allowKey" | "allowKeys" | "exactAllowKey" | "taskAll
 /** 1.2: content free, built from facts the server has when the request opens. */
 export interface CardClass {
   reason: CardReason;
-  stop?: { kind: "delete" | "pay" | "message"; public: boolean; placed: boolean; places: number };
+  /** `unread`: the stop line found no delete, payment or message; it could not read the call and holds it under `kind`.
+   *  The card words such a hold as unread (Run / Allow once), never by `kind`. */
+  stop?: { kind: "delete" | "pay" | "message"; public: boolean; placed: boolean; places: number; unread?: true };
   /** the card was raised by a routine's run (server proven, as routineCardFields does) */
   routine?: { routineId: string };
   /** the turn was marked unattended (webhook, channel, unproven origin) */

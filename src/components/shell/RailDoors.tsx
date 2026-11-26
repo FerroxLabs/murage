@@ -23,6 +23,8 @@ export interface RailDoorsProps {
   iconsOnly?: boolean;
   /** a routine problem nobody has looked at yet: a dot on Routines */
   routinesAttention?: boolean;
+  /** the reconnect line was put away while an app still needs signing in again: its sentence, and a dot on Needs you */
+  reconnect?: string | null;
   onOpen: (door: ShellDoor) => void;
 }
 
@@ -56,7 +58,7 @@ export function needsDoorName(count: number | undefined, stale: boolean): string
   return stale && count !== undefined ? t("ux.l2a.door.needsStale", { label: base }) : base;
 }
 
-export function RailDoors({ lit, needs, iconsOnly = false, routinesAttention = false, onOpen }: RailDoorsProps) {
+export function RailDoors({ lit, needs, iconsOnly = false, routinesAttention = false, reconnect = null, onOpen }: RailDoorsProps) {
   const waiting = (needs.count ?? 0) > 0;
   return (
     <nav aria-label={t("ux.l2a.door.navLabel")} data-rail-doors className={cn("flex flex-col gap-0.5", iconsOnly && "items-center")}>
@@ -64,7 +66,7 @@ export function RailDoors({ lit, needs, iconsOnly = false, routinesAttention = f
         const on = lit === door;
         const label = t(DOOR_LABEL[door]);
         const name = door === "needs-you"
-          ? needsDoorName(needs.count, needs.stale)
+          ? reconnect ? `${needsDoorName(needs.count, needs.stale)}. ${reconnect}` : needsDoorName(needs.count, needs.stale)
           : door === "routines" && routinesAttention
             ? t("ux.l2a.door.routinesAttention", { label })
             : iconsOnly ? label : undefined;
@@ -86,6 +88,9 @@ export function RailDoors({ lit, needs, iconsOnly = false, routinesAttention = f
           >
             <span className={cn("relative shrink-0", on ? "text-accent-text" : "text-ink-secondary")}>
               {DOOR_ICON[door](iconsOnly ? 20 : 17)}
+              {door === "needs-you" && reconnect && (
+                <span aria-hidden="true" data-needs-you-reconnect className="absolute -right-1 -top-1 size-2 rounded-full bg-warning ring-2 ring-panel" />
+              )}
               {door === "routines" && routinesAttention && (
                 <span aria-hidden="true" data-routines-attention className="absolute -right-1 -top-1 size-2 rounded-full bg-danger ring-2 ring-panel" />
               )}

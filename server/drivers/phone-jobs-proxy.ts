@@ -53,7 +53,7 @@ export function phoneToolDefinitions(names: readonly PhoneToolName[]): Array<{ n
 export function post(url: URL, token: string, body: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
-      void collectProxyUpstream("phoneJobs", res, 4 * 1024 * 1024).then(body => resolve({ status: res.statusCode ?? 0, body: body.toString() }), reject);
+      void collectProxyUpstream("phoneJobs", res).then(body => resolve({ status: res.statusCode ?? 0, body: body.toString() }), reject);
       res.on("error", error => { proxyTransportLost("phoneJobs"); reject(error); });
     });
     req.on("error", error => { proxyTransportLost("phoneJobs"); reject(error); });
@@ -116,7 +116,7 @@ export async function runPhoneJobsProxy(env: NodeJS.ProcessEnv = process.env): P
     const req = guardHandle(catalog.observeRequest(rpc), (error) => { process.stderr.write(`phone-jobs proxy output failed: ${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
     const request = { ...rpc, id: rpc.id };
     queue = queue.then(() => call(request, withdrawn, req)).catch((error) => { process.stderr.write(`phone-jobs proxy output failed: ${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
-  }, 64 * 1024);
+  });
   for await (const chunk of process.stdin) splitter.push(chunk);
   splitter.flush();
   for (const withdrawn of withdrawable.values()) withdrawn.abort();

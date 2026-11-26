@@ -10,7 +10,6 @@ import { object } from "./openai-chat-protocol.ts";
 import type { ChatMcpSession } from "./chat-mcp-client.ts";
 
 export const MAX_CHAT_ROUNDS = 64;
-export const MAX_TURN_TOOL_CALLS = 200;
 export const MAX_ANNOUNCEMENT_NUDGES = 3;
 /** s4 caps. */
 export const MAX_TURN_TOOLS = 128;

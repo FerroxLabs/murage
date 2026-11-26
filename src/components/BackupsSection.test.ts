@@ -315,6 +315,17 @@ describe("Backups headline card", () => {
     expect(locked).toMatch(/disabled=""[^>]*>Back up now</);
   });
 
+  // MAIN ruling 1020 (backupmac 0950252b30): turning the Backups switch on consents to idle restarts, so the card says so
+  // under the switch before it is turned on, and not once backups are on.
+  it("says Murage briefly restarts when idle, under the switch, before backups are turned on", () => {
+    const sentence = "Murage briefly restarts when idle to take the daily backup.";
+    const before = renderToStaticMarkup(createElement(BackupHeadline, { summary, s: controller({ status: off, choices: {} as ScheduleController["choices"] }) }));
+    expect(before).toMatch(/aria-label="Backups on"[^>]*aria-checked="false"|aria-checked="false"[^>]*aria-label="Backups on"/);
+    expect(before.indexOf(sentence)).toBeGreaterThan(before.indexOf('aria-label="Backups on"'));
+    const after = renderToStaticMarkup(createElement(BackupHeadline, { summary, s: controller({ status: on }) }));
+    expect(after).toContain('aria-label="Backups on"'); expect(after).not.toContain(sentence);
+  });
+
   it("says a failed Back up now once when Needs attention already says it (0.1.60 Windows final 2 L1)", () => {
     const missing = runNowError(new Error("BACKUP_FOLDER_MISSING"), { folderName: "Murage Backups" });
     const attention = ["The last backup didn't finish; backups are paused until you clear it", `The last backup stopped while checking your backup folder and recovery key. ${missing}`];

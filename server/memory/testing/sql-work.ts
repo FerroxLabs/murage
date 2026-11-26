@@ -6,7 +6,7 @@
 // statement's EXPLAIN QUERY PLAN, and the plan of every trigger body on a table it writes, is checked for a full scan of a table.
 // node:sqlite has no sqlite3_stmt_status or scanstatus, so "no full scan of a table, and no more statements and rows for the large
 // file than for the smaller one" is the flat proof, the same on every OS and on a loaded runner. Test-only; never imported by the product.
-import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { DatabaseSync, type StatementSync } from "node:sqlite";
 
 export interface SqlWork { statements: number; returned: number; changed: number; sqls: Map<string, number> }
 type Method = "run" | "get" | "all" | "iterate";
@@ -40,6 +40,9 @@ function install(db: DatabaseSync) {
     };
   }
 }
+// Install before callers can bind native methods into statement caches.
+const meterDb = new DatabaseSync(':memory:');
+try { install(meterDb); } finally { meterDb.close(); }
 const changes = (db: DatabaseSync) => Number((db.prepare("SELECT total_changes() AS n").get() as { n: number | bigint }).n);
 
 /** Counts the statements `work` runs on any connection, the rows they returned, and the rows changed on `db`. */

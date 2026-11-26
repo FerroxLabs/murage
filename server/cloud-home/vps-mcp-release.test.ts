@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import * as relayApi from "./vps-mcp-relay.ts";
+import { RELEASE_LIMITS } from "../memory/release-budget.ts";
 import { existsSync } from "node:fs";
 const hasIngress = existsSync(new URL("../consuming-turn-ingress.ts", import.meta.url));
 const fixturesApi = hasIngress ? await import("../testing/consuming-fixture.ts") : undefined;
@@ -42,8 +43,18 @@ it.each(["flip", "stale-generation", "unknown-id", "malformed", "binary-shape", 
   if (mutation === "flip") f.flip();
   if (mutation === "stale-generation") f.replace();
   if (mutation === "transport-loss") fence.lost();
-  if (mutation === "budget") f.budget.charge({ attempts: 4096 - f.budget.counts.attempts });
+  if (mutation === "budget") {
+    // MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): the attempt count and byte budget are gone, so a transport charge never
+    // crosses; the budget that suppresses a frame is a bookkeeping limit (work) spent in a window with no accepted release.
+    // 1.0.21 cause4 (release-budget.ts): a window that holds an accepted release (the exchange above) is followed by another, so cross
+    // into that window first, then spend it.
+    expect(f.budget.acceptedReleases).toBeGreaterThan(0);
+    f.budget.charge({ work: RELEASE_LIMITS.work - f.budget.counts.work });
+    f.budget.charge({ work: 1 }); expect(f.budget.windows).toBe(2); expect(f.budget.acceptedReleases).toBe(0);
+    f.budget.charge({ work: RELEASE_LIMITS.work - f.budget.counts.work });
+  }
   const value = mutation === "unknown-id" ? response(99) : mutation === "malformed" ? "{}" : mutation === "binary-shape" ? "\u0000" : response(2);
+  // mutant M-WORK-SEAL (release-budget.ts check(), before `const first = !this.sealed`): `if (bounded && this.releases === 0) { reset used; return; }` removes the work-budget seal; the "budget" case then reaches the next line and goes RED at its toThrow.
   expect(() => fence.response(value, send)).toThrow(); expect(send).not.toHaveBeenCalled(); expect(f.refusals).toBe(1);
 });
 // red-at-4df086541: the WebSocket verdict did not cover the subsequent child stdout write.

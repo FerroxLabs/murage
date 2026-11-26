@@ -21,9 +21,9 @@ from a version banner. This work does not claim to verify the real gate binary.
 ## Evidence
 
 All runs used `it-remote.sh` with `IT_JOB=bld-toolid-s3`, the S3 worktree, and
-`IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`. One test container ran at
+`IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`. One test container ran at
 a time. JSON reports and the isolated server transcript/log are retained at
-`/work/build/toolid-s3/evidence/`.
+`/root/fuigo-builds/swarm-b/toolid-s3/evidence/`.
 
 | Group | Result |
 |---|---|

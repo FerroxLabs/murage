@@ -157,22 +157,23 @@ it(`${wrapped?"wrapped ":""}uses the same fresh alias through session/load then 
 it.each(["after-result", "after-cancel"])(`${wrapped?"wrapped ":""}never automatically grants a request %s`, async scenario => {
   const f = await fixture(scenario, "memory_search", wrapped);
   const readWire = () => readFileSync(join(NATIVE_DIR, `${f.threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
-  // Stop sends session/cancel and then, in the same turn of the event loop, kills the engine tree once every mount child's
-  // descendant probe is ready. The late request the peer sends on cancel must be read before that kill, so the kill is held
-  // (after Stop only) until the adapter has logged the request as received; a request never read keeps this held and fails the
-  // poll below, so the first assertion still proves the request was observed.
+  // Stop sends session/cancel and the mount relay ends the engine tree right after it (CliMountRelay.endEngine; since 1.0.21
+  // cause9 it no longer waits for the mount children's descendant probes, so holding ChatMcpDescendants.ready no longer holds
+  // it). The late request the peer sends on cancel must be read before that end, so the end is held (after Stop only) until
+  // the adapter has logged the request as received; a request never read keeps this held and fails the poll below, so the
+  // first assertion still proves the request was observed.
   let cancelSent = false;
-  const actualReady = ChatMcpDescendants.prototype.ready;
-  const ready = vi.spyOn(ChatMcpDescendants.prototype, "ready").mockImplementation(async function (this: ChatMcpDescendants) {
+  const actualEnd = relayApi.CliMountRelay.prototype.endEngine;
+  const end = vi.spyOn(relayApi.CliMountRelay.prototype, "endEngine").mockImplementation(async function (this: relayApi.CliMountRelay, cli) {
     if (cancelSent) await expect.poll(() => readWire().some(item => item.dir === "in" && item.msg?.id === "memory-permission")).toBe(true);
-    return actualReady.call(this);
+    return actualEnd.call(this, cli);
   });
   try {
     const sent = await f.instance.adapter.sendTurn(f.turn);
     if (scenario === "after-cancel") { await f.recorder.until(event => event.type === "content.delta"); cancelSent = true; await f.instance.adapter.interruptTurn(f.threadId, sent.turnId); }
     await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
     await f.instance.dispose();
-  } finally { ready.mockRestore(); }
+  } finally { end.mockRestore(); }
   const wire = readWire();
   expect(wire.some(item => item.dir === "in" && item.msg?.id === "memory-permission")).toBe(true);
   expect(wire.some(item => item.dir === "out" && item.msg?.id === "memory-permission" && item.msg?.result?.outcome?.optionId === "once")).toBe(false);

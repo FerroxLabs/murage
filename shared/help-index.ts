@@ -1125,6 +1125,45 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- A wide set of everyday improvements. Up to eight per-bot desktops, MCP tools that start from Windows command shims, remote MCP servers that get 30 seconds to list their tools, phone pairing that picks your real Wi-Fi or Ethernet address, chats that follow the newest message after you switch threads, routines that keep their detailed error, and settings files saved with a byte order mark all work as you would expect.\n- Every release is checked on Intel Macs. Each build now starts on a real Intel Mac and checks its WhatsApp connection before it is published."
   },
   {
+    "id": "changelog/v1-0-22#overview",
+    "title": "What changed in Murage 1.0.22",
+    "description": "Memory search that reaches further back, a quieter computer, and bots that keep answering through long days.",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "url": "https://murage.ai/docs/changelog/v1-0-22",
+    "text": "Murage 1.0.22 is out for Mac, Windows and Linux. Your computer stays calm while Murage works in the background, memory search reaches further back, and your bots keep answering through long days."
+  },
+  {
+    "id": "changelog/v1-0-22#new-in-1-0-22",
+    "title": "What changed in Murage 1.0.22",
+    "description": "Memory search that reaches further back, a quieter computer, and bots that keep answering through long days.",
+    "heading": "New in 1.0.22",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "url": "https://murage.ai/docs/changelog/v1-0-22#new-in-1-0-22",
+    "text": "- Memory search finds older memories. Ask for something you saved a while ago and your bot finds it, even in a very long history. The Memory page tells you when a search covered everything.\n- Faster startup. Murage gets to your chats sooner on every launch, with less work done up front.\n- Approve works the first time. The Approve button and one-tap answers in Needs you land on the first click, and a request that has ended is shown as ended.\n- Replies keep coming in long conversations. Even when a conversation grows large, your bots carry on and rebuild what they need so you still get your answer.\n- Bots with full access keep going.…"
+  },
+  {
+    "id": "changelog/v1-0-22#better-in-1-0-22",
+    "title": "What changed in Murage 1.0.22",
+    "description": "Memory search that reaches further back, a quieter computer, and bots that keep answering through long days.",
+    "heading": "Better in 1.0.22",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "url": "https://murage.ai/docs/changelog/v1-0-22#better-in-1-0-22",
+    "text": "- Quiet on your disk and processor. While you are away, Murage does very little background work, and the jobs that matter still run on time.\n- Background work rests when there is nothing to do. Murage's background checks wake only when there is something to look at, so your computer stays cool.\n- Your storage stays tidy. Old checkpoints and old upgrade copies are cleared on a sensible schedule, and restoring a checkpoint never touches files it did not save.\n- Lighter channels. Signal, sharing and Release cards do less work behind the scenes."
+  },
+  {
+    "id": "changelog/v1-0-22#how-to-update-in-1-0-22",
+    "title": "What changed in Murage 1.0.22",
+    "description": "Memory search that reaches further back, a quieter computer, and bots that keep answering through long days.",
+    "heading": "How to update in 1.0.22",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "url": "https://murage.ai/docs/changelog/v1-0-22#how-to-update-in-1-0-22",
+    "text": "Murage shows an update banner when 1.0.22 is ready, or choose Check for updates in Settings.\n- What's new: https://murage.ai/blog/whats-new-in-murage-1-0-22\n- Download: https://murage.ai/download\n- Changelog: https://murage.ai/changelog"
+  },
+  {
     "id": "changelog/v1-0-3#always-ask-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
     "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
@@ -1755,9 +1794,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "heading": "HighLevel",
     "breadcrumb": "Murage docs → Connected apps",
-    "where": "Settings → Connected apps → HighLevel",
+    "where": "Settings → Connected apps",
     "url": "https://murage.ai/docs/connected-apps#highlevel",
-    "text": "Your bots can look things up in your HighLevel CRM. They can read it and cannot change anything in it. On this computer, open Settings → Connected apps → HighLevel and paste a private integration token (make one in HighLevel under Settings, Private Integrations). Enter your Location ID, select Check location, then Confirm. Then choose which bots can read that location. Murage keeps the token with your other saved keys and never shows it again. HighLevel opens only for a message you send a bot directly in its chat."
+    "text": "Connect HighLevel the same way as any other app: through Settings → Connected apps (Composio), or add your own HighLevel MCP server under Settings → Connected apps → Advanced → Connected tools details. Then turn on connected apps or that tool for each bot that should use it."
   },
   {
     "id": "connected-apps#disconnecting",
@@ -2825,16 +2864,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → General → Advanced → Start at login and run in the background\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/general/startup"
   },
   {
-    "id": "features/every-setting#general-advanced-send-usage-analytics",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "General, Advanced: Send usage analytics",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → General → Advanced → Send usage analytics",
-    "url": "https://murage.ai/docs/features/every-setting#general-advanced-send-usage-analytics",
-    "text": "Settings → General → Advanced → Send usage analytics\n\nAddress: murage://settings/app/general/analytics"
-  },
-  {
     "id": "features/every-setting#general-about-me-for-every-bot",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
@@ -2933,16 +2962,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Skills → Teach a skill",
     "url": "https://murage.ai/docs/features/every-setting#skills-teach-a-skill",
     "text": "Settings → Skills → Teach a skill\n\nOn the computer running Murage.\n\nWhen it is off: Off. Turn it on to let bots learn a skill from a recording or /learn.\n\nAddress: murage://settings/app/skills/recorder"
-  },
-  {
-    "id": "features/every-setting#skills-advanced-voice-transcription-key",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Skills, Advanced: Voice transcription key",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Skills → Advanced → Voice transcription key",
-    "url": "https://murage.ai/docs/features/every-setting#skills-advanced-voice-transcription-key",
-    "text": "Settings → Skills → Advanced → Voice transcription key\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/voice-key"
   },
   {
     "id": "features/every-setting#skills-skills-library-and-import",
@@ -3253,16 +3272,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Connected apps → Bot email",
     "url": "https://murage.ai/docs/features/every-setting#connected-apps-bot-email",
     "text": "Settings → Connected apps → Bot email\n\nOn the computer running Murage.\n\nWhen it is off: Needs a Flux Router account with email on. Ask your Chief to set it up, or open Flux Router.\n\nAddress: murage://settings/app/connections/bot-email"
-  },
-  {
-    "id": "features/every-setting#connected-apps-highlevel",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Connected apps: HighLevel",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Connected apps → HighLevel",
-    "url": "https://murage.ai/docs/features/every-setting#connected-apps-highlevel",
-    "text": "Settings → Connected apps → HighLevel\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/connections/highlevel"
   },
   {
     "id": "features/every-setting#connected-apps-phone-calls",

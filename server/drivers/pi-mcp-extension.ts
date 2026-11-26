@@ -103,8 +103,6 @@ export const MCP_LIST_TIMEOUT_MS = 20_000;
 const PROVISIONAL_TOOLS_META = "murage/provisional";
 const MCP_PROVISIONAL_SETTLE_MS = 4_000;
 const MCP_PROVISIONAL_RELIST_MS = 400;
-const MCP_MAX_LIST_PAGES = 100;
-const MCP_MAX_FRAME_BYTES = 32 * 1024 * 1024;
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 2_000;
 const TOOL_NAME_MAX_LENGTH = 64;
@@ -114,7 +112,8 @@ const TOOL_NAME_MAX_LENGTH = 64;
 export class StdioMcp implements EngineTransport {
   readonly engineTransport = true as const;
   private child: ChildProcessWithoutNullStreams;
-  private buf = "";
+  /** The current frame's pieces before its newline: only each new chunk is searched, so a large frame is scanned once. */
+  private parts: string[] = [];
   private nextId = 1;
   private disposed = false;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
@@ -171,17 +170,15 @@ export class StdioMcp implements EngineTransport {
     }
   }
 
+  // MAIN-RULING cause22-no-transport-caps (1.0.21): no frame size cap; a frame of any size is read whole and the
+  // connection lives. What the model sees is trimmed where the tool result enters its context (truncateToolText).
   private onData(chunk: string): void {
-    this.buf += chunk;
     let nl: number;
-    while ((nl = this.buf.indexOf("\n")) !== -1) {
-      const line = this.buf.slice(0, nl).trim();
-      this.buf = this.buf.slice(nl + 1);
+    while ((nl = chunk.indexOf("\n")) !== -1) {
+      const line = (this.parts.length ? this.parts.join("") + chunk.slice(0, nl) : chunk.slice(0, nl)).trim();
+      this.parts = [];
+      chunk = chunk.slice(nl + 1);
       if (!line) continue;
-      if (Buffer.byteLength(line, "utf8") > MCP_MAX_FRAME_BYTES) {
-        this.closeWithError(new Error(`MCP frame exceeded ${MCP_MAX_FRAME_BYTES} bytes`));
-        return;
-      }
       let msg: { id?: unknown; method?: unknown; error?: { message?: string }; result?: unknown };
       try {
         msg = registerBusyloopPayloadSite("read", JSON.parse(line));
@@ -211,9 +208,7 @@ export class StdioMcp implements EngineTransport {
         try { this.onToolsListChanged?.(); } catch { /* never let a handler end the transport */ }
       }
     }
-    if (Buffer.byteLength(this.buf, "utf8") > MCP_MAX_FRAME_BYTES) {
-      this.closeWithError(new Error(`MCP frame exceeded ${MCP_MAX_FRAME_BYTES} bytes without a newline`));
-    }
+    if (chunk) this.parts.push(chunk);
   }
 
   private write(frame: unknown): void {
@@ -290,7 +285,10 @@ export class StdioMcp implements EngineTransport {
     const seenCursors = new Set<string>();
     const deadline = Date.now() + MCP_LIST_TIMEOUT_MS;
     let cursor: string | undefined;
-    for (let page = 0; page < MCP_MAX_LIST_PAGES; page += 1) {
+    // No page count limit (MAIN-RULING cause22-no-transport-caps): the list ends at the server's last page, a repeated cursor or the list deadline.
+    for (let page = 0; ; page += 1) {
+      // the deadline bounds the whole list: past it no further page is asked (a peer answering every page at once never outlives it)
+      if (page > 0 && Date.now() >= deadline) throw new Error("MCP tools/list did not finish before its deadline");
       const remainingMs = Math.max(1, deadline - Date.now());
       const res = (await this.call(
         "tools/list",
@@ -299,13 +297,13 @@ export class StdioMcp implements EngineTransport {
       )) as { tools?: unknown; nextCursor?: unknown; _meta?: Record<string, unknown> } | undefined;
       if (!Array.isArray(res?.tools)) throw new Error("MCP tools/list returned no tools array");
       if (page === 0) this.lastListProvisional = res?._meta?.[PROVISIONAL_TOOLS_META] === true;
-      tools.push(...(res.tools as McpTool[]));
+      // one push per tool: a spread of a long page exceeds the engine's argument limit (RangeError) and discovery would fail
+      for (const tool of res.tools as McpTool[]) tools.push(tool);
       if (typeof res.nextCursor !== "string" || !res.nextCursor) return tools;
       if (seenCursors.has(res.nextCursor)) throw new Error("MCP tools/list repeated a pagination cursor");
       seenCursors.add(res.nextCursor);
       cursor = res.nextCursor;
     }
-    throw new Error(`MCP tools/list exceeded ${MCP_MAX_LIST_PAGES} pages`);
   }
 
   /** tools/list that waits (bounded) for a provisional answer to be replaced. */

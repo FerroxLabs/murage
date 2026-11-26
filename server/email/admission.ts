@@ -92,7 +92,10 @@ function ownerTurn(input: EmailMountInput): EmailTurnKind | null {
 /** The mount predicate (3.1, 3.2). */
 export function emailMounts(input: EmailMountInput): EmailMountVerdict {
   if (!input.enabled || !input.binding || !EMAIL_MOUNT_STATES.has(input.binding)) return { mounted: false, line: input.noLimits ? EMAIL_OFF : null };
-  const turn: EmailTurnKind | null = input.noLimits ? { kind: "no-limits" } : ownerTurn(input);
+  // PHONEAUD: No limits is an approval level, not an audience: a turn with automation ancestry (a routine's hand-off, ask, wake or retry;
+  // automationThread carries it) is judged by ownerTurn, which refuses it. The routine's own scheduled or manual run keeps No limits.
+  const routineOwn = input.automationSource === "schedule" || input.automationSource === "manual";
+  const turn: EmailTurnKind | null = input.noLimits && (!input.automationThread || routineOwn) ? { kind: "no-limits" } : ownerTurn(input);
   if (!input.noLimits && input.bot.draftOnly) return { mounted: false, line: turn ? EMAIL_DRAFT_ONLY_ABSENT : null };
   if (!input.agentsMcp) return { mounted: false, line: turn ? EMAIL_ENGINE_ABSENT : null };
   if (!turn) return { mounted: false, line: null };

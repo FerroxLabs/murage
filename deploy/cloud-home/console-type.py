@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Type a login and one command line into a build host server through its authenticated web console.
+"""Type a login and one command line into a Hetzner server through its authenticated web console.
 
-build host's request_console action returns a wss URL and a VNC password over HTTPS. This helper opens that
+Hetzner's request_console action returns a wss URL and a VNC password over HTTPS. This helper opens that
 WebSocket (TLS, certificate verified), speaks just enough RFB 3.8 to log in with VNC authentication, and
 sends key events. It never reads the screen. Standard library only; secrets come from files, never argv.
 
@@ -223,7 +223,7 @@ class Rfb:
             ws.send(bytes([2]))
             ws.send(vnc_response(password, ws.read(16)))
         elif 1 in types and (ws.tls or ws.loopback_test):
-            # build host's web console (seen 2026-10-25) offers only security type 1 (None): the credential is the one-time
+            # Hetzner's web console (seen 2026-10-25) offers only security type 1 (None): the credential is the one-time
             # console URL, fetched with the API token over HTTPS and opened here over certificate-verified TLS.
             ws.send(bytes([1]))
         else:
@@ -264,7 +264,7 @@ def type_text(rfb, text, delay):
         time.sleep(delay)
 
 
-# build host's rescue console starts with the German keyboard layout ("active keyboard layout: de", seen 2026-10-25) and
+# Hetzner's rescue console starts with the German keyboard layout ("active keyboard layout: de", seen 2026-10-25) and
 # ships no keymap files, so loadkeys cannot change it. The server maps each key we send to its US position, so for a
 # German console we send the US key that sits where the wanted character is on a German keyboard. Only characters
 # that need neither AltGr nor the extra 102nd key are typable; | > < are not, so the command is sent inside a

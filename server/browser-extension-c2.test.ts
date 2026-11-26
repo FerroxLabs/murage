@@ -268,6 +268,29 @@ describe("C2b SEC-006: deliver() output goes through OUT's redactor", () => {
   });
 });
 
+// cause22 GROUP E (b) round 3, MAIN-RULING 2026-11-22T21:44:35Z redact-parse-error (a): page text the parser had to recover is the
+// withheld placeholder, never its source after the text cleaner alone (the parser drops a duplicate attribute from the tree that
+// is walked, so the source is not what was cleaned). Entry: service.dispatch -> deliver() (browser-extension-service.ts).
+describe("cause22-E round 3: deliver() withholds page text that does not parse cleanly", () => {
+  const read = async (text: string) => {
+    const w = await world();
+    const service = await w.open({ createEngine: () => ({ resolveTab: async () => undefined, event() {}, async close() {}, async call() { return { content: [{ type: "text", text }] }; } }) as never });
+    const { bindingId } = await w.bind(service);
+    return JSON.stringify(await service.dispatch(bindingId, "agent_browser_snapshot", {}, () => true));
+  };
+  it.each([
+    ["a duplicate event handler", '<p onclick="" onclick="fixtureCanaryHandlerTb48()">Recovered words</p>', "fixtureCanaryHandlerTb48"],
+    ["a duplicate title with a quoted value", '<p title="x" title="password: &quot;fixtureplainvalueRm62Xd&quot;">Recovered words</p>', "fixtureplainvalueRm62Xd"],
+  ])("PE1 %s the parser dropped is never returned: the text is the placeholder", async (_name, page, canary) => {
+    const out = await read(page);
+    expect({ canary: out.includes(canary), words: out.includes("Recovered words"), placeholder: out.includes("[hidden]") }).toEqual({ canary: false, words: false, placeholder: true });
+  });
+  it("PE1 control: markup that parses cleanly keeps its words", async () => {
+    const out = await read('<p title="plain">Shown words</p>');
+    expect({ words: out.includes("Shown words"), placeholder: out.includes("[hidden]") }).toEqual({ words: true, placeholder: false });
+  });
+});
+
 describe("C2b panel phase: waiting for the owner", () => {
   const panelOf = (w: any, op: string) => (w.calls.filter((c: any) => c.operation === op).at(-1)?.params as any)?.panel;
   it("a hand-over reports phase waiting; an active task with no card reports none", async () => {

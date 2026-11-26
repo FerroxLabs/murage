@@ -398,6 +398,8 @@ export function recoveredSteerLine(row: SendRow, steerId: string) {
     queueId: row.queueId,
     // a phone's line keeps its standing: without `via` the owner could edit it into an owner turn
     ...(row.via ? { via: row.via } : {}),
+    // the live steer line carries the send's origin (index.ts); a recovered one keeps it too, so the owner's words stay the owner's
+    ...(row.origin === "desktop" || row.origin === "companion" || row.origin === "unproven" ? { origin: row.origin as "desktop" | "companion" | "unproven" } : {}),
     steered: true, steerUnconfirmed: true, steerId,
     ...(row.turnId ? { dispatchedIn: row.turnId } : {}),
   };

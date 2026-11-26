@@ -63,7 +63,9 @@ type MountInput = Parameters<typeof venueReadMounts>[0] & { botId: string; messa
  * holds (the same predicate venue_read mounts on, plus not draft-only). Returns the record to keep for the generation, or null. */
 export function venuePostMounts(input: MountInput): Omit<VenuePostRecord, "attempts"> | null {
   const message = input.message;
+  // PHONEAUD: No limits admits no turn with automation ancestry (automationThread carries it) other than the routine's own run
   if (input.agentsMcp && hasNoLimits(input.bot as BotRecord) && input.notOwnerAudience !== true && !input.chainNotOwner
+    && (!input.automationThread || input.automationSource === "schedule" || input.automationSource === "manual")
     && isWorkspaceOwner(threadHumanPrincipal(input.threadId))) {
     return { noLimits: true, botId: input.botId, threadId: input.threadId, origin: input.origin === "companion" ? "companion" : "desktop",
       request: { messageId: message?.id ?? "", textHash: textHash(message?.text ?? ""), postTo: { venueId: "" } } };

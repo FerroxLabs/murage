@@ -27,7 +27,7 @@ export function answerQuery(index: MemoryIndex, eligibility: MemoryEligibility, 
   if(input.view&&!input.reader)throw new RecallPreparationPending();
   const budget=new RecallWorkBudget(8192);
   let eligible = eligibility.read(input,budget);
-  const words=input.view?eligibility.lexical(input.query,input.view,budget.reserveCandidates(Math.max(0,budget.remaining-1024))):undefined;
+  const words=input.view?eligibility.lexical(input.query,input.view,budget.reserveCandidates(Math.max(0,budget.remaining-1024)),input.historical===true):undefined;
   const eligibilityMs = performance.now() - started;
   let degradedReason = degraded;
   const usable = input.semantic ? vector : null;
