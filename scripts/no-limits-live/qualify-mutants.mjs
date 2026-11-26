@@ -1,3 +1,4 @@
+import { assertExternalEvidencePath, evidencePath } from '../evidence-path.mjs';
 // Mutation qualification of the proof gate. Files in the candidate tree are
 // never rewritten: each child sees exactly one source mutation via a loader.
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const out = resolve(process.argv[2] ?? 'scripts/no-limits-live/evidence/mutants');
+const out = assertExternalEvidencePath(resolve(process.argv[2] ?? evidencePath('scripts/no-limits-live/evidence/mutants')));
 mkdirSync(out, { recursive:true });
 const live = 'scripts/no-limits-live/ruling.node-test.mjs', replay = 'scripts/nolim-replay/ruling.node-test.mjs';
 const correction='scripts/no-limits-live/correction.node-test.mjs', release='scripts/nolim-replay/release-ruling.node-test.mjs';

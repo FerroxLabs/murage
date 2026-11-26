@@ -9,6 +9,7 @@ import {sentinelInstallationIdOf} from "../../shared/sentinel-installation.mjs";
 import {defaultOutputRoot,writeDescriptor,sourcePaths,type SentinelDescriptor} from "../sentinel/paths.ts";
 import {SentinelFileReceiver} from "../sentinel/file-receipts.ts";
 import {sampleSentinelFileIo} from "../sentinel-file-sampling.ts";
+import { safeWipeSync } from "./safe-wipe.mjs";
 
 export async function defaultCoverageScenario(kind:string){
  const root=mkdtempSync(join(tmpdir(),"sentinel-default-")),data=join(root,"data"),home=join(root,"home");
@@ -122,5 +123,5 @@ export async function defaultCoverageScenario(kind:string){
    }finally{await host.shutdown();}
   }
   throw Error("FIXTURE_SCENARIO");
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 }

@@ -215,7 +215,7 @@ export function filterFluxRows(
   );
   if (options.length === catalog.options.length) return catalog;
   const kept = options.some((option) => option.id === catalog.default);
-  return { default: kept ? catalog.default : (options[0]?.id ?? ""), options };
+  return { ...catalog, default: kept ? catalog.default : (options[0]?.id ?? ""), options };
 }
 
 /**

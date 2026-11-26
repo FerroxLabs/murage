@@ -182,7 +182,7 @@ fail-closed on Wayland. XWayland's `DISPLAY` never bypasses the Wayland safety g
 
 ## Enable local control
 
-Installed `.deb` and AppImage builds include the certified **Cua Driver 0.19.3** CLI and cursor-theme sidecar.
+Installed `.deb` and AppImage builds include the certified **Cua Driver 0.55.0** CLI and cursor-theme sidecar.
 On GNOME Xorg, open Settings, choose **Enable local control (Beta)**, wait for **Ready**, then explicitly assign a bot
 to **This computer**. No driver download, terminal command, `chmod`, or daemon setup is required. The owned daemon
 starts with `--no-overlay`, so Cua's decorative full-screen X11 cursor surface is never created.
@@ -205,10 +205,10 @@ controlled by an environment override.
 The upstream release has no signature or GitHub artifact attestation and is not immutable, so the build uses an
 explicit reviewed digest as its trust anchor:
 
-- source commit: `a1672e7b11951275ecfba3384264d4530185d0db`;
-- archive SHA-256: `3db9d4257d84bacaf7eb104d225f85613ce67edbb20d6eeb83c1384b6d8a5b10`;
-- packaged driver SHA-256: `ed5844fadf07b9b72c4a3b3802e1c47233c166d66d6198608d5991f807aab4ac`;
-- packaged cursor-theme SHA-256: `e589b2b7521bbfeaf9e2bfce668a38e80ed1b9790b1327b13d374fc331d8312a`.
+- source commit: `8f484f30586eef722bede7a5ce315de1148cca96`;
+- archive SHA-256: `1cb8aa6d30e5cdf5bf4d222cb3693a50af2c178073a49dc59e88737c5f7807e6`;
+- packaged driver SHA-256: `5d7ff450488e6a3e796d5c69c6d835dda71933c15c572097bc3bc6707212f826`;
+- packaged cursor-theme SHA-256: `b69b09dc7ab54cba4e565d863f6f03bb30a9af251d538813dd74b11c37089e67`.
 
 Packaging verifies the exact archive size, checksum, member names/types/sizes, and inner hashes before extracting
 only those two executables. The app performs no runtime driver download or self-update. Cua's MIT license, the
@@ -238,7 +238,7 @@ pnpm typecheck
 pnpm test
 pnpm check:electron
 pnpm build:cua:linux          # networked, checksum-pinned staging
-dbus-run-session -- xvfb-run -a pnpm smoke:cua-x11-input
+dbus-run-session -- xvfb-run -a sh -c 'xfwm4 --compositor=off & sleep 2; exec pnpm smoke:cua-x11-input'  # 0.55.0 needs a window manager
 pnpm package:linux:offline    # CUA staging is offline; builder caches must already be available
 node scripts/verify-linux-package.mjs
 pnpm smoke:linux-package

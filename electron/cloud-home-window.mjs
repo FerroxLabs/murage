@@ -15,7 +15,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
   CLOUD_HOME_SCHEME, CLOUD_HOME_SCHEME_PRIVILEGES, cloudHomeEntryUrl, cloudPartition,
-  createCloudHomeHandler, isValidHomeId,
+  createCloudHomeHandler, isApiPath, isValidHomeId,
 } from "./cloud-home-protocol.mjs";
 import { cloudHomeNavigationAction, createMainNavigationGuard } from "./main-ipc-trust.mjs";
 import { cloudHomeSenderId } from "./main-trust.mjs";
@@ -91,6 +91,91 @@ export function cloudRequestAllowed(url) {
   }
 }
 
+/** True when `value` (a URL or an origin) is exactly this home's own murage-home:// origin: no other host, port or user. */
+export function isThisHomeUrl(value, homeId) {
+  if (typeof value !== "string" || !value || !isValidHomeId(homeId)) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === `${CLOUD_HOME_SCHEME}:` && url.hostname === homeId && url.port === "" && url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * E5 (PARITYFIX): may the Cloud window's page use this permission? Only the microphone (audio, never video, never the
+ * empty media list Electron uses for screen capture) and notifications, only for this home's own origin, only from the top
+ * frame of this home's own Cloud window. Everything else stays refused.
+ */
+export function cloudPermissionRequestAllowed({ contents, ownedContents, homeId, permission, details }) {
+  try {
+    if (!contents || !ownedContents || contents !== ownedContents) return false;
+    if (typeof contents.isDestroyed === "function" && contents.isDestroyed()) return false;
+    if (!details || typeof details !== "object" || details.isMainFrame !== true) return false;
+    if (!isThisHomeUrl(details.requestingUrl, homeId)) return false;
+    if (permission === "notifications") return true;
+    if (permission !== "media") return false;
+    if (details.securityOrigin !== undefined && !isThisHomeUrl(details.securityOrigin, homeId)) return false;
+    return Array.isArray(details.mediaTypes) && details.mediaTypes.length > 0 && details.mediaTypes.every((type) => type === "audio");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The matching permission CHECK, so Notification.permission reads "granted" and the microphone check agrees with the
+ * request. Every check must come from this home's own Cloud window (its webContents) and its top frame (isMainFrame true),
+ * never the browser pop-out page. On real Electron 43.8.1 the page's Notification.permission, requestPermission and
+ * new Notification are all checked from the owned window's top frame; only a worker's check is frame-less (no sender,
+ * isMainFrame false, no requestingUrl). It cannot say which window (the pop-out shares this origin), so it is refused like
+ * any check with no sender. A subframe, this origin embedded in another, and every other permission are refused.
+ */
+export function cloudPermissionCheckAllowed({ contents, ownedContents, homeId, permission, requestingOrigin, details }) {
+  try {
+    if (!details || typeof details !== "object") return false;
+    if (details.isMainFrame !== true) return false;
+    if (!contents || !ownedContents || contents !== ownedContents) return false;
+    if (typeof contents.isDestroyed === "function" && contents.isDestroyed()) return false;
+    if (typeof details.requestingUrl === "string" && new URL(details.requestingUrl).searchParams.get("surface") === "browser-popout") return false;
+    if (details.embeddingOrigin !== undefined && details.embeddingOrigin !== "" && !isThisHomeUrl(details.embeddingOrigin, homeId)) return false;
+    if (!isThisHomeUrl(requestingOrigin, homeId)) return false;
+    if (details.requestingUrl !== undefined && !isThisHomeUrl(details.requestingUrl, homeId)) return false;
+    if (permission === "notifications") return true;
+    if (permission !== "media") return false;
+    if (details.securityOrigin !== undefined && !isThisHomeUrl(details.securityOrigin, homeId)) return false;
+    return details.mediaType === "audio";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * E6 (PARITYFIX): a file the Cloud window downloads must come from this home's own file routes (murage-home://<home>/api/...,
+ * or a blob: the page made on this home's origin), and from this home's own Cloud window. Every URL in the redirect chain
+ * is checked. Anything else is cancelled before a byte is written.
+ */
+export function cloudDownloadAllowed({ contents, ownedContents, homeId, urls }) {
+  try {
+    if (!contents || !ownedContents || contents !== ownedContents) return false;
+    if (typeof contents.isDestroyed === "function" && contents.isDestroyed()) return false;
+    if (!Array.isArray(urls) || urls.length === 0) return false;
+    return urls.every((value) => {
+      if (typeof value !== "string") return false;
+      if (value.startsWith("blob:")) return isThisHomeUrl(value.slice("blob:".length), homeId);
+      if (!isThisHomeUrl(value, homeId)) return false;
+      return isApiPath(new URL(value).pathname);
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** The name the save dialog suggests: a plain file name (no folders, no control characters), never empty. */
+export function cloudDownloadName(name) {
+  const base = String(name ?? "").split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f]/g, "").replace(/^\.+/, "").trim().slice(0, 200);
+  return base || "download";
+}
+
 /**
  * @param {object} deps
  * @param {{ registerSchemesAsPrivileged: Function }} deps.protocol electron protocol
@@ -108,10 +193,11 @@ export function cloudRequestAllowed(url) {
  *   `onAuthFailure` is what the proxy calls on a 401 / 403 session-invalid (one refresh, one retry).
  * @param {string} [deps.cloudPreload] absolute path of preload-cloud.cjs: the Cloud window's own tiny bridge (WP4). It is NOT the main
  *   preload; it exposes `muragecloud` (unread badge, approval notification, reachability, disconnect, https link out) and nothing else.
+ * @param {() => string} [deps.downloadsDir] the system Downloads folder the save dialog starts in (E6)
  * @param {(homeId: string) => void} [deps.onWindowClosed] a Cloud window closed (main re-applies the unread badge)
  * @param {(m: string) => void} [deps.warn]
  */
-export function installCloudHome({ liveGate = null, packaged = true, protocol, session, BrowserWindow, shell: osShell, net, env, userDataDir, distDir, provider = null, createClient = null, cloudPreload, onWindowClosed = () => {}, onWindowOpened = () => {}, warn = () => {}, timers = DEFAULT_TIMERS, popoutState = {} }) {
+export function installCloudHome({ liveGate = null, packaged = true, protocol, session, BrowserWindow, shell: osShell, net, env, userDataDir, distDir, provider = null, createClient = null, cloudPreload, downloadsDir = null, onWindowClosed = () => {}, onWindowOpened = () => {}, warn = () => {}, timers = DEFAULT_TIMERS, popoutState = {} }) {
   // MURAGE_DESKTOP_CLOUD=0 is a hard off: nothing registered, null. Otherwise the scheme is ALWAYS registered (it must be
   // before app ready) but inert: active() is false, so every scheme request is refused, open() throws and the IPC stubs refuse,
   // until the developer override (unpackaged builds only) is on or the live gate (verified live:true from the pinned prod origin,
@@ -124,6 +210,7 @@ export function installCloudHome({ liveGate = null, packaged = true, protocol, s
   let currentProvider = provider ?? (client ? (homeId) => client.provider(homeId) : null);
   const readAsset = createDistReader(distDir);
   const windows = new Map();
+  const downloadSessions = new WeakSet();
   const refusedResponse = () => new Response(null, { status: 403, headers: { "cache-control": "no-store" } });
   const activeListeners = new Set();
   /** True while this home's Cloud window is open. Going not-live never closes one: it may be in the middle of a task. */
@@ -177,12 +264,37 @@ export function installCloudHome({ liveGate = null, packaged = true, protocol, s
       });
       // Served while Cloud is on, or while THIS window is still open (a task in it keeps working after Cloud goes not-live).
       ses.protocol.handle(CLOUD_HOME_SCHEME, (request) => (active() || windowOpen(homeId) ? handler(request) : refusedResponse()));
-      ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+      // E5: microphone (audio only) and notifications for THIS home's own Cloud window, top frame only. Pop-outs share
+      // this session but are never the owned window, so they are refused.
+      let ownedContents = null;
+      ses.setPermissionRequestHandler((contents, permission, callback, details) =>
+        callback(cloudPermissionRequestAllowed({ contents, ownedContents, homeId, permission, details })));
+      ses.setPermissionCheckHandler?.((contents, permission, requestingOrigin, details) =>
+        cloudPermissionCheckAllowed({ contents, ownedContents, homeId, permission, requestingOrigin, details }));
       ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !cloudRequestAllowed(details.url) }));
+      // E6: a download from this home's own window opens the system save dialog, suggesting the Downloads folder.
+      // Installed once per session: a reopened window of the same home reuses its partition.
+      if (!downloadSessions.has(ses)) {
+        downloadSessions.add(ses);
+        ses.on?.("will-download", (event, item, contents) => {
+          const urls = typeof item?.getURLChain === "function" ? item.getURLChain() : [item?.getURL?.()];
+          if (!cloudDownloadAllowed({ contents, ownedContents: windows.get(homeId)?.webContents ?? null, homeId, urls })) {
+            try { event?.preventDefault?.(); } catch {}
+            try { item?.cancel?.(); } catch {}
+            warn("cloud window download refused: not from this home's own files");
+            return;
+          }
+          let folder = "";
+          try { folder = typeof downloadsDir === "function" ? downloadsDir() : ""; } catch {}
+          const name = cloudDownloadName(item.getFilename?.());
+          item.setSaveDialogOptions({ title: "Save file", defaultPath: folder ? path.join(folder, name) : name });
+        });
+      }
       const win = new BrowserWindow({
         width: 1200, height: 800, minWidth: 900, minHeight: 600, show: true,
         webPreferences: { partition, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, ...(cloudPreload ? { preload: cloudPreload, additionalArguments: [`--murage-cloud-home=${homeId}`] } : {}) },
       });
+      ownedContents = win.webContents;
       windows.set(homeId, win);
       try { onWindowOpened(homeId); } catch {} // NOTIFY-EVERYWHERE-1019 S4a: a replaced Cloud window kills outstanding attention tokens
       // F43 load watchdog: a page that fails or hasn't loaded in CLOUD_OPEN_MS is the offline screen, which looks again by

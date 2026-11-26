@@ -10,6 +10,8 @@ import { CLAIM_WINDOW, MEMORY_CLAIM_SQL } from "../jobs.ts";
 import { CLAIM_INDEX_SQL, memoryClaimIndex } from "../claim-index.ts";
 import { SETTLE_SQL } from "../claim-settle.ts";
 import { SETTLE_SWEEP_SQL } from "../park.ts";
+import { IDENTITY_EPOCH_SQL } from "../provenance-stamp.ts";
+import { DATA_VERSION_SQL } from "../data-version.ts";
 
 type Formula = (db: DatabaseSync, params: unknown[], result: unknown) => number;
 const count = (db: DatabaseSync, sql: string, params: unknown[]) => Number(db.prepare(sql).get(...(params as never[]))!.n);
@@ -38,8 +40,9 @@ const FORMULAS = new Map<string, Formula>([
   ["SELECT 1 FROM memory_scope_bindings WHERE id='memory-roster-policy' AND state='pending'", one],
   ["UPDATE memory_jobs SET status='leased',lease_owner=?,lease_generation=?,lease_until=?,policy_revision=?,deletion_epoch=? WHERE id=?", one],
   ["SELECT created_at FROM memory_source_versions WHERE source_id=? AND revision=?", one],
-  // the transaction wrapper's identity-epoch reading (provenance-stamp.ts): a one-row temp table and the data_version pragma
-  ["SELECT (SELECT n FROM temp.identity_epoch) AS epoch, (SELECT data_version FROM pragma_data_version) AS version", one],
+  // the transaction wrapper's identity-epoch reading (provenance-stamp.ts): a one-row temp table; the commit counter, where a caller
+  // needs it, is the PRAGMA statement on the same connection (never the shadowable table-valued form)
+  [IDENTITY_EPOCH_SQL, one], [DATA_VERSION_SQL, one],
   // the claim index: one candidate by rowid with its source and the deny/tombstone seeks; the table end and gap jumps are one step
   [CLAIM_INDEX_SQL.check, () => 5], [CLAIM_INDEX_SQL.end, one], [CLAIM_INDEX_SQL.nextRid, one], [CLAIM_INDEX_SQL.byId, one],
   // a chunk of the index build or of new rows: every rowid of the range and a source probe for each (the index's own reading,

@@ -197,3 +197,73 @@ export function installServerChildCrashObserver({
   processTarget.on("uncaughtExceptionMonitor", onFailure);
   return () => processTarget.off("uncaughtExceptionMonitor", onFailure);
 }
+
+// WHY THE SERVER ENDED, EVERY TIME IT CAN SAY SO (cause12, 2026-11-21).
+//
+// Twenty-two server starts in three days on the owner's Mac, and for eight of
+// them the log could not say whether the previous server was asked to close,
+// threw, or was killed: the only exit record was the I/O census, which is
+// written only when launch counts are non-zero and was dropped outright when
+// stderr's pipe was full. These two lines close that gap from the inside:
+//
+//   event=server-child-close via=<SIGTERM|SIGINT|message|restart>
+//       written the moment a close is asked for; a repeat while the first is
+//       still running is written too (bounded), because a second SIGTERM is
+//       the desktop's kill after its grace period ran out.
+//   event=server-child-exit code=<n> cause=<close:<via>|failure|none>
+//       written on EVERY 'exit' event, whatever the census counts.
+//
+// So a server whose last word is a close line and no exit line stalled in
+// shutdown and was killed; one with neither was killed or aborted from
+// outside (SIGKILL, V8 heap abort, a native fault: no JavaScript runs for
+// those, and the desktop's "exited code=" line names the signal). Same rules
+// as the failure line above: fixed vocabulary only, synchronous, never throws.
+
+/** Marker for a close request the server received. */
+export const SERVER_CHILD_CLOSE_EVENT = "server-child-close";
+/** Marker for the server's exit event. */
+export const SERVER_CHILD_EXIT_EVENT = "server-child-exit";
+const CLOSE_VIAS = new Set(["SIGTERM", "SIGINT", "message", "restart"]);
+/** Repeats beyond this are not news: the first ones already say it is stuck. */
+const MAX_CLOSE_REPEATS = 3;
+
+/**
+ * Install the exit note. Returns `closeRequested(via)` for the server's close
+ * paths to call, and a disposer for tests.
+ *
+ * @param {{ processTarget?: NodeJS.Process, write?: (line: string) => void }} [options]
+ * @returns {{ closeRequested: (via: unknown) => void, dispose: () => void }}
+ */
+export function installServerChildExitNote({
+  processTarget = process,
+  write = writeCrashLineSync,
+} = {}) {
+  let cause = "none";
+  let repeats = 0;
+  const emit = (line) => {
+    try { write(line); } catch { /* the record is worth less than the exit it records */ }
+  };
+  const onFailure = () => { cause = "failure"; };
+  const onExit = (code) => {
+    emit(`event=${SERVER_CHILD_EXIT_EVENT} code=${Number.isInteger(code) ? code : "-"} cause=${cause}\n`);
+  };
+  processTarget.on("uncaughtExceptionMonitor", onFailure);
+  processTarget.once("exit", onExit);
+  return {
+    closeRequested(via) {
+      const safeVia = typeof via === "string" && CLOSE_VIAS.has(via) ? via : "other";
+      if (cause === "none") {
+        cause = `close:${safeVia}`;
+        emit(`event=${SERVER_CHILD_CLOSE_EVENT} via=${safeVia}\n`);
+        return;
+      }
+      if (repeats >= MAX_CLOSE_REPEATS) return;
+      repeats += 1;
+      emit(`event=${SERVER_CHILD_CLOSE_EVENT} via=${safeVia} repeat=${repeats} still-closing\n`);
+    },
+    dispose() {
+      processTarget.off("uncaughtExceptionMonitor", onFailure);
+      processTarget.off("exit", onExit);
+    },
+  };
+}

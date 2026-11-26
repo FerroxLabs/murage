@@ -5,6 +5,7 @@ import os from 'node:os';
 import { here } from './adapter.mjs';
 import { assertTempRoot } from './safety.mjs';
 import { execute } from './process.mjs';
+import { safeWipe } from '../testing/safe-wipe.mjs';
 const results = [];
 function check(name, ok) { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'} selftest/${name}`); }
 function summaryOf(output) {
@@ -58,6 +59,6 @@ try {
   const failed = await execute(process.execPath, [...replayArgs, '--checker', broken], process.env, sandbox);
   check('replay-errors-private', failed.code === 1 && !failed.stdout.includes(marker) && !failed.stderr.includes(marker));
 } catch { check('completed', false); }
-finally { if (sandbox) { await assertTempRoot(sandbox); await fs.rm(sandbox, { recursive: true, force: true }); } }
+finally { if (sandbox) { await assertTempRoot(sandbox); await safeWipe(sandbox); } }
 console.log(JSON.stringify({ kind: 'wipe-proof-selftest', passed: results.filter(Boolean).length, failed: results.filter(x => !x).length }));
 process.exitCode = results.every(Boolean) ? 0 : 1;

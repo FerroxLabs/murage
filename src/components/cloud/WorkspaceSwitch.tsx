@@ -4,12 +4,14 @@
 // B3 WP4: "This computer" / "Cloud home". Shown ONLY when the desktop Cloud flag is on (main registers the cloud-home
 // channels only then; loadCloudWorkspace turns a rejection into "off"), and never inside the Cloud window itself.
 // "This computer" is where you already are. "Cloud home" opens the Cloud window for your one paired home, or shows the
-// Connect panel when there is none (or several to choose from).
+// Connect panel when there is none (or several to choose from). E1 (PARITYFIX): with one paired home the Connect panel is
+// skipped, so once that home opens and says an engine it has is signed out, the panel opens here too with its sign-in rows.
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
 import { cloudCopy } from "@/lib/cloud-copy";
 import { cloudChoiceAction, cloudHomeBridge, loadCloudWorkspace, type CloudHomeBridge, type CloudWorkspace } from "@/lib/cloud-workspace";
 import { CloudReconnectingBannerView, REATTACH_POLL_MS, RECONNECT_GRACE_MS } from "./CloudUnreachableBanner";
+import type { SignInRequest } from "./EngineSignIns";
 // The Connect panel (and its engine sign-ins) opens on a click, so it loads then, not with the first paint.
 const ConnectHome = lazy(() => import("./ConnectHome").then((module) => ({ default: module.ConnectHome })));
 
@@ -28,7 +30,7 @@ export function WorkspaceSwitch({ bridge = cloudHomeBridge() }: { bridge?: Cloud
   const [pairing, setPairing] = useState(false);
   const [error, setError] = useState("");
   const [openingHome, setOpeningHome] = useState<string | null>(null);
-  const [signInRequest, setSignInRequest] = useState<{ homeId: string; bot: string; engine: string } | null>(null);
+  const [signInRequest, setSignInRequest] = useState<SignInRequest | null>(null);
   const reload = useCallback(() => { void loadCloudWorkspace(bridge).then(setWorkspace); }, [bridge]);
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => bridge?.onLive?.(() => reload()), [bridge, reload]);
@@ -63,7 +65,17 @@ export function WorkspaceSwitch({ bridge = cloudHomeBridge() }: { bridge?: Cloud
       try {
         const result = await bridge.open(openingHome, true);
         if (stopped) return;
-        if (result.opened) { finish(); return; }
+        if (result.opened) {
+          finish();
+          // E1: the Cloud window cannot sign an engine in (the terminal runs here). Once the home opened, show this
+          // computer's sign-in rows beside it when the home says an engine it has is signed out.
+          const opened = openingHome;
+          void Promise.resolve(bridge.listEngines?.(opened)).then(
+            (engines) => { if (Array.isArray(engines) && engines.some((entry) => entry.installed && !entry.signedIn)) setPairing(true); },
+            () => {},
+          );
+          return;
+        }
         if (performance.now() >= deadline) { finish(cloudCopy.homeUnreachable); return; }
         retry = setTimeout(() => void attempt(), REATTACH_POLL_MS);
       } catch (cause) {

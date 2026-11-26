@@ -28,7 +28,7 @@ import {
   STAMP_STEPS, admissibleOwnerSources, admissibleOwnerSourcesSliced, admissionStamp, compareAdmitted, hasAdmissibleAfter, type AdmittedSource, ensureAdmissionEpochs, hasAdmissibleAfterSliced, ownerSourceStillAdmissible, pipFenceHooks, readShownSliced, stampMoved,
 } from "./pip-admission.ts";
 import {
-  COOLDOWN_MS, READ_MOVE_BUDGET, maybeTraceEpisodeSliced, mutateReflect, pipPendingScanStats, pipReadHooks, pipReflectPending, readReflectState, readSnapshotSliced,
+  READ_MOVE_BUDGET, maybeTraceEpisodeSliced, mutateReflect, pipPendingScanStats, pipReadHooks, pipReflectPending, readReflectState, readSnapshotSliced,
   resetPipPendingScans, runPipReflect, setReflectExcluded, type ReflectBot, type ReflectDeps,
 } from "./pip-reflect.ts";
 import { RUN_BOUND_MS, type IsolationReport, type TextOnlyTurnInput, type TextOnlyTurnResult } from "./pip-transport.ts";
@@ -429,12 +429,15 @@ describe("T6: the trace day writes nothing from a moved read, then the next pass
 // --------------------------------------------------------------- T8 ----
 
 describe("T8: the read-move budget", () => {
-  it("a thread moved on every page: pending three times with the attempt unchanged, then refused unstable with the cooldown", async () => {
+  // 1.0.22 mem-strict (MAIN lane brief bld1022-mem-strict, audit-strict-b: READ_MOVE_BUDGET 3 -> 10 with no cooldown for moved reads):
+  // was "pending three times ... then refused unstable with the cooldown". The count is written out, not READ_MOVE_BUDGET, so a budget
+  // put back to 3 fails here.
+  it("a thread moved on every page: pending ten times with the attempt unchanged, then refused unstable with no cooldown", async () => {
     seedConversation(); const r = rig();
     let n = 0;
     // a payload touch on a bot reply: the thread's epoch moves, nothing about admission changes
     pipReadHooks.between = () => { if (!state().run) return; database().prepare("UPDATE memory_source_versions SET payload=json_set(payload,'$.touch',?) WHERE source_id=?").run(++n, sourceIdOf("b1")); };
-    for (let move = 1; move <= READ_MOVE_BUDGET; move++) {
+    for (let move = 1; move <= 10; move++) {
       expect(await run(r)).toMatchObject({ status: "uncertain", reason: "read-moved" });
       expect(family()).toMatchObject({ state: "pending", attempt: 1, readMoves: move });
     }
@@ -443,11 +446,13 @@ describe("T8: the read-move budget", () => {
     expect(r.calls).toHaveLength(0);
     expect(state().run).toBeUndefined();
     expect(state().refusals[0]).toMatchObject({ state: "refused:unstable", reason: "read-moved" });
-    expect(state().cooldownUntil).toBe(r.clock.now + COOLDOWN_MS);
+    expect(state().cooldownUntil ?? 0).toBeLessThanOrEqual(r.clock.now);
   });
   // MurageMain 11-03 (drop-rate ruling): a refused reflection is never lost. A moved read keeps the run pending for the next pass; a run
   // refused unstable keeps the thread's cursor, so once the cooldown ends the same turns are reflected with no new message or other trigger.
-  it("a reflection refused for moving reads is retried after the cooldown with no new turn, and its turns are sent then", async () => {
+  // 1.0.22 mem-strict (same MAIN lane brief): was "retried after the cooldown"; a refusal for moved reads takes no cooldown, so the next
+  // pass after the ordinary run spacing (MIN_RUN_INTERVAL_MS, 30 min, well inside the 2 h COOLDOWN_MS), with no new turn, sends the same turns.
+  it("a reflection refused for moving reads is retried after the run spacing, not the cooldown, with no new turn, and its turns are sent then", async () => {
     seedConversation(); const r = rig();
     let n = 0;
     pipReadHooks.between = () => { if (!state().run) return; database().prepare("UPDATE memory_source_versions SET payload=json_set(payload,'$.touch',?) WHERE source_id=?").run(++n, sourceIdOf("b1")); };
@@ -455,14 +460,9 @@ describe("T8: the read-move budget", () => {
     expect(state().run).toBeUndefined();
     expect(state().refusals[0]).toMatchObject({ state: "refused:unstable", reason: "read-moved" });
     expect(r.calls).toHaveLength(0);
-    // the thread stops moving; still inside the cooldown nothing starts
+    // the thread stops moving; 31 minutes on, no message added: the pending check finds the bot and the run sends the same turns
     pipReadHooks.between = undefined;
-    r.clock.now += COOLDOWN_MS - MIN;
-    expect(pipReflectPending(r.deps)).toBeUndefined();
-    await run(r);
-    expect(r.calls).toHaveLength(0);
-    // past the cooldown, no message was added: the pending check finds the bot and the run sends the same turns
-    r.clock.now += 2 * MIN;
+    r.clock.now += 31 * MIN;
     expect(pipReflectPending(r.deps)).toBe("moss");
     await run(r);
     expect(r.calls.length).toBeGreaterThanOrEqual(1);
@@ -478,6 +478,23 @@ describe("T8: the read-move budget", () => {
     expect(await run(r)).toMatchObject({ status: "refused", reason: "unstable" });
     expect(state().refusals[0]).toMatchObject({ state: "refused:unstable", reason: "run-bound" });
     expect(r.calls).toHaveLength(0);
+  });
+  // 1.0.22 mem-strict r4 (Opus self-review H1): the run bound (RUN_BOUND_MS, 270 s from the first move) arrives long before the eleventh
+  // move when passes are 30 s apart, so a refusal for moving reads alone must take no cooldown there either. Refused run-bound on attempt 1
+  // with no paid call: no cooldown, and 31 minutes on (the run spacing, inside the 2 h COOLDOWN_MS) the same turns are sent.
+  it("a first attempt refused run-bound only because its reads kept moving takes no cooldown, and its turns are sent after the run spacing", async () => {
+    seedConversation(); const r = rig();
+    pipReadHooks.between = () => { if (!state().run) return; database().prepare("UPDATE memory_source_versions SET payload=json_set(payload,'$.touch',?) WHERE source_id=?").run(Math.random(), sourceIdOf("b1")); };
+    expect(await run(r)).toMatchObject({ reason: "read-moved" });
+    r.clock.now += RUN_BOUND_MS + 1;
+    expect(await run(r)).toMatchObject({ status: "refused", reason: "unstable" });
+    expect(state().refusals[0]).toMatchObject({ state: "refused:unstable", reason: "run-bound" });
+    pipReadHooks.between = undefined;
+    r.clock.now += 31 * MIN;
+    expect({ calls: r.calls.length, pending: pipReflectPending(r.deps), cooldown: (state().cooldownUntil ?? 0) > r.clock.now }).toEqual({ calls: 0, pending: "moss", cooldown: false });
+    await run(r);
+    const sent = JSON.stringify(r.calls);
+    expect(TEXTS.filter(text => !sent.includes(text))).toEqual([]);
   });
 });
 

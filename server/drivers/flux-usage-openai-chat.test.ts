@@ -15,6 +15,7 @@ import { setFluxMemorySettings } from "../flux-memory-headers.ts";
 import { fluxThreadIdValue } from "../flux-usage-tags.ts";
 import { recordEvents } from "../testing/events.ts";
 import { createOpenAIChatRuntime } from "../testing/bound-openai-fixture.ts";
+import { qualifyPromptCache } from "../../scripts/prompt-cache-qualify.ts";
 
 type Sent = { url: string; headers: Headers };
 const reply = (headers: Record<string, string> = {}) =>
@@ -70,6 +71,42 @@ describe("usage tags and the served model on an openai-compat turn", () => {
     recorder.stop();
     return recorder.events;
   };
+
+  it("PC-F7 fake-provider qualification consumes the real adapter's terminal cache usage", async () => {
+    const report = await qualifyPromptCache(async ({ system, scenario }) => {
+      const usage = { prompt_tokens: 100, completion_tokens: 3, prompt_tokens_details: { cached_tokens: scenario === "warm" ? 80 : 0 } };
+      answer = () => new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage }), { headers: { "content-type": "application/json" } });
+      const done = (await run({ providerRoute: otherRoute, system })).find(event => event.type === "turn.completed");
+      if (!done || done.type !== "turn.completed" || !done.usage) throw new Error("fixture adapter omitted terminal usage");
+      return done.usage;
+    }, [{ id: "house-rules", text: "PRIVATE_QUALIFICATION_SENTINEL" }]);
+    expect(sent).toHaveLength(8);
+    expect(sent.every(request => request.url.startsWith(otherRoute.baseUrl))).toBe(true);
+    expect(report).toMatchObject({ samples: 8, knownSamples: 8, knownInput: 800, cachedRead: 400, tokenShare: 0.5, prefixStable: true, configurationChanged: true, audienceChanged: true });
+    expect(JSON.stringify(report)).not.toContain("PRIVATE_QUALIFICATION_SENTINEL");
+  });
+
+  it("PC-R2-openai-cache-100-80", async () => {
+    answer = () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 100, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 80 } } })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+    const events = await run({ providerRoute: otherRoute });
+    expect(events.find(event => event.type === "turn.completed")).toMatchObject({ usage: { input: 100, output: 3, cachedInput: 80, usageAccounting: { version: 1, inputComplete: true, cacheComplete: true } } });
+  });
+
+  it.each(["stream", "json"])("PC-F1: %s reply preserves one valid cache count, including repeated streaming snapshots", async format => {
+    const usage = { prompt_tokens: 100, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 80 } };
+    answer = () => format === "json"
+      ? new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage }), { headers: { "content-type": "application/json" } })
+      : new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }], usage })}\n\ndata: ${JSON.stringify({ choices: [], usage })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+    const events = await run({ providerRoute: otherRoute });
+    expect(events.filter(e => e.type === "turn.completed")).toHaveLength(1);
+    expect(events.find(e => e.type === "turn.completed")).toMatchObject({ usage: { input: 100, output: 3, cachedInput: 80, usageAccounting: { version: 1, inputComplete: true, cacheComplete: true } } });
+  });
+  it.each([undefined, null, -1, 0.5, 101, "80"])("PC-F1: cached wire value %s remains unreported", async cached_tokens => {
+    answer = () => new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 100, completion_tokens: 3, prompt_tokens_details: { cached_tokens } } }), { headers: { "content-type": "application/json" } });
+    const done = (await run({ providerRoute: otherRoute })).find(e => e.type === "turn.completed") as { usage?: unknown };
+    expect(done.usage).toMatchObject({ input: 100, output: 3, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } });
+    expect(done.usage).not.toHaveProperty("cachedInput");
+  });
 
   it("a chat turn on Flux carries the bot, the chat feature and the opaque conversation tag", async () => {
     await run({ providerRoute: fluxRoute });

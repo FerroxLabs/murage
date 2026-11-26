@@ -27,13 +27,13 @@ if (
   );
 }
 
-const SOURCE_COMMIT = "a1672e7b11951275ecfba3384264d4530185d0db";
+const SOURCE_COMMIT = "8f484f30586eef722bede7a5ce315de1148cca96";
 const SOURCE_ROOT = `https://github.com/trycua/cua/tree/${SOURCE_COMMIT}/libs/cua-driver/rust`;
-const RELEASE_VERSION = "0.19.3";
+const RELEASE_VERSION = "0.55.0";
 const ARCHIVE_SHA256 =
-  "3db9d4257d84bacaf7eb104d225f85613ce67edbb20d6eeb83c1384b6d8a5b10";
+  "1cb8aa6d30e5cdf5bf4d222cb3693a50af2c178073a49dc59e88737c5f7807e6";
 const CARGO_LOCK_SHA256 =
-  "c1a8df7f4bedd554f6fc90c852c3625c91a89b28d9f2c642d966279e9e372362";
+  "1550b8d9ba05724bdae700dc839616f6d40adb873255ca23179c40e0456b221c";
 const INTER_LICENSE_SHA256 =
   "ecfea75d8a36217d19528567070745a516072ffe907c9fffecbab92eb3b6fc59";
 const INTER_FONT_SHA256 =
@@ -43,16 +43,18 @@ const INTER_COMMIT = "66647c0bbbe41a850d79d9c76fb13add3378940f";
 const REGISTRY_SOURCE_PREFIX =
   "registry+https://github.com/rust-lang/crates.io-index";
 
-const EXPECTED_DRIVER_REGISTRY_COUNT = 325;
-const EXPECTED_CURSOR_THEME_REGISTRY_COUNT = 113;
-const EXPECTED_REGISTRY_UNION_COUNT = 330;
+const EXPECTED_DRIVER_REGISTRY_COUNT = 381;
+const EXPECTED_CURSOR_THEME_REGISTRY_COUNT = 239;
+const EXPECTED_REGISTRY_UNION_COUNT = 386;
 const EXPECTED_DRIVER_LOCAL = Object.freeze([
-  "cua-driver@0.19.3",
-  "cursor-overlay@0.19.3",
-  "pip-preview@0.19.3",
-  "platform-linux@0.19.3",
+  "cua-agent-setup@0.28.6",
+  "cua-driver@0.55.0",
+  "cua-home@0.28.6",
+  "cua-telemetry@0.28.6",
+  "cursor-overlay@0.55.0",
+  "platform-linux@0.55.0",
 ]);
-const EXPECTED_CURSOR_THEME_LOCAL = Object.freeze(["cursor-overlay@0.19.3"]);
+const EXPECTED_CURSOR_THEME_LOCAL = Object.freeze(["cursor-overlay@0.55.0"]);
 const EXPECTED_CURSOR_THEME_ONLY = Object.freeze([
   "bumpalo@3.20.2",
   "typed-path@0.12.3",
@@ -70,13 +72,15 @@ const EXPECTED_MPL_COMPONENTS = Object.freeze([
   "uniffi_pipeline@0.31.0",
 ]);
 const TRYCUA_COMPONENTS = Object.freeze([
+  "cua-agent-setup",
   "cua-driver",
   "cua-driver-contract",
   "cua-driver-core",
   "cua-driver-sdk",
+  "cua-home",
+  "cua-telemetry",
   "cursor-overlay",
   "cursor-theme-cli",
-  "pip-preview",
   "platform-linux",
 ]);
 
@@ -460,7 +464,7 @@ const [driverBytes, cursorThemeBytes, cargoLockBytes] = await Promise.all([
 ]);
 if (sha256(cargoLockBytes) !== CARGO_LOCK_SHA256) {
   throw new Error(
-    "Cargo.lock does not match the reviewed Cua 0.19.3 source commit",
+    "Cargo.lock does not match the reviewed Cua 0.55.0 source commit",
   );
 }
 
@@ -603,7 +607,7 @@ const bom = {
         {
           name: "murage:file:cua-driver:sha256",
           value:
-            "ed5844fadf07b9b72c4a3b3802e1c47233c166d66d6198608d5991f807aab4ac",
+            "5d7ff450488e6a3e796d5c69c6d835dda71933c15c572097bc3bc6707212f826",
         },
         {
           name: "murage:file:cua-cursor-theme:sha256",

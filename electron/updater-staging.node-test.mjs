@@ -20,7 +20,7 @@ function initialize(platform,env={},startOptions,profile={}){
   const context=vm.createContext({
     queueMicrotask,
     updateNotificationsEnabled,
-    updaterCoordinator:null,checksScheduled:false,autoUpdater:null,app:{isPackaged:profile.packaged ?? true},process:{platform,env,mas:profile.mas,windowsStore:profile.windowsStore},
+    updaterCoordinator:null,launchPause:null,checksScheduled:false,autoUpdater:null,app:{isPackaged:profile.packaged ?? true},process:{platform,env,mas:profile.mas,windowsStore:profile.windowsStore},
     require:()=>({autoUpdater:updater}),updaterLogger:()=>({}),
     linuxPackageType:()=>null,HAND_OFF_TYPES:new Set(),createUpdateDownloadVerifier:()=>async()=>({recheck:async()=>{}}),createGithubFallbackFeed:()=>({activate:async()=>false,reset(){}}),installWindowsUpdateVerifier:()=>false,runningVersion:()=>"1.0.0",
     setState:patch=>{state={...state,...patch};},

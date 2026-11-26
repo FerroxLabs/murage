@@ -6,7 +6,7 @@ import ts from 'typescript';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { freshDataDir } from './memory/testing/recall-fixture.ts';
 import { database, closeDatabase } from './database.ts';
-import { subscribeRecallViewPublication } from './memory/recall-view.ts';
+import { recallViewProjection, subscribeRecallViewPublication } from './memory/recall-view.ts';
 import { RecallReadiness } from './memory/recall-readiness.ts';
 import { RecallPreparationPending, MemoryPinProjectionPending } from './memory/recall-recovery.ts';
 
@@ -59,27 +59,27 @@ it('other admission failures propagate immediately without waiting or a provider
 it('a lagging mandatory-pin projection is retried through the guarded bundle reader', async () => {
   const bundle = { records: ['current pin'] }; let reads = 0;
   const read = vi.fn(async () => { if (++reads < 3) throw new Error('MEMORY_RECALL_UNAVAILABLE'); return bundle; });
-  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, requestRecallViewMaintenance: vi.fn(), setTimeout, readMemoryBundle: read });
+  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, recallViewProjection, requestRecallViewMaintenance: vi.fn(), setTimeout, readMemoryBundle: read });
   const args = ['query', { view: { viewId: 'fixture-view', generation: 1 } }, {}, { signal: undefined }];
   expect(await buildMemoryBundle(...args)).toBe(bundle);
   expect(read).toHaveBeenCalledTimes(3); expect(read.mock.calls.every(call => call.every((value, i) => value === args[i]))).toBe(true);
 });
 it('bundle cancellation or policy failure during upkeep refuses before provider submission', async () => {
   let reads = 0; const submit = vi.fn();
-  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, requestRecallViewMaintenance: vi.fn(), setTimeout,
+  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, recallViewProjection, requestRecallViewMaintenance: vi.fn(), setTimeout,
     readMemoryBundle: async () => { throw new Error(++reads === 1 ? 'MEMORY_RECALL_UNAVAILABLE' : 'MEMORY_UNAUTHORIZED'); } });
   await expect(buildMemoryBundle('query', { view: { viewId: 'fixture-view', generation: 1 } }, {}, {}).then(submit)).rejects.toThrow('MEMORY_UNAUTHORIZED');
   expect(reads).toBe(2); expect(submit).not.toHaveBeenCalled();
 });
 it('bundle preparation has a fixed retry ceiling and never returns an unavailable pin frame', async () => {
   const refusal = new Error('MEMORY_RECALL_UNAVAILABLE'), read = vi.fn(async () => { throw refusal; }), submit = vi.fn();
-  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, requestRecallViewMaintenance: vi.fn(), setTimeout: (fn: () => void) => setImmediate(fn), readMemoryBundle: read });
+  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, recallViewProjection, requestRecallViewMaintenance: vi.fn(), setTimeout: (fn: () => void) => setImmediate(fn), readMemoryBundle: read });
   await expect(buildMemoryBundle('query', { view: { viewId: 'fixture-view', generation: 1 } }, {}, {}).then(submit)).rejects.toBe(refusal);
   expect(read).toHaveBeenCalledTimes(64); expect(submit).not.toHaveBeenCalled();
 });
 it('a known bundle authority refusal propagates immediately without waiting', async () => {
   const delay = vi.fn(), refusal = new Error('MEMORY_CONTEXT_REVOKED');
-  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, requestRecallViewMaintenance: vi.fn(), setTimeout: delay, readMemoryBundle: async () => { throw refusal; } });
+  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, recallViewProjection, requestRecallViewMaintenance: vi.fn(), setTimeout: delay, readMemoryBundle: async () => { throw refusal; } });
   await expect(buildMemoryBundle('query', { view: { viewId: 'fixture-view', generation: 1 } }, {}, {})).rejects.toBe(refusal);
   expect(delay).not.toHaveBeenCalled();
 });
@@ -90,7 +90,7 @@ it('post-reset projection waiting resets and drains once while rerunning guarded
   expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
   const value = { records: ['current pin'] }; let reads = 0;
   const read = vi.fn(async () => { if (++reads < 3) throw new Error('MEMORY_RECALL_UNAVAILABLE'); return value; });
-  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, requestRecallViewMaintenance: vi.fn(), setTimeout, readMemoryBundle: read });
+  const { buildMemoryBundle } = wiring(['buildMemoryBundle'], { Error, database, recallViewProjection, requestRecallViewMaintenance: vi.fn(), setTimeout, readMemoryBundle: read });
   const validate = vi.fn(), reset = vi.fn(async () => {}), drain = vi.fn(async () => {});
   const context = vm.createContext({ assertMemoryAccess: validate, drainBranchChanges: drain, database: () => ({}), buildMemoryBundle: read });
   const code = source.slice(start, end).replace('export ', '') + ';globalThis.afterReset=buildMemoryBundleAfterReset;';

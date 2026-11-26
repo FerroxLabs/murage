@@ -70,6 +70,41 @@ describe('bound provider routes',()=>{
    finally{events.stop();await instance.dispose();removeTempDirSync(home);}
   });
  }
+ describe('Codex retry cap on a saved Flux connection',()=>{
+  const flux={...route,connectionId:'legacy-flux',preset:'flux' as const,baseUrl:'https://api.fluxrouter.ai/v1',model:'flux-pinned-fixture-chat'};
+  const capsFor=(args:string[],id:string)=>args.filter(a=>/_max_retries=/.test(a)).sort().map(a=>a.replace(id,'<id>'));
+  const want=['model_providers.<id>.request_max_retries=2','model_providers.<id>.stream_max_retries=2'];
+  it('caps request and stream retries at 2 on the generated provider id',()=>{
+   const result=applyProviderRoute('codex',{},flux);
+   expect(capsFor(result.args??[],result.modelProvider!)).toEqual(want);
+  });
+  it('caps a custom connection whose endpoint is the Flux host',()=>{
+   for(const baseUrl of ['https://api.fluxrouter.ai/v1','https://API.FluxRouter.ai/v1/']){
+    const result=applyProviderRoute('codex',{},{...route,connectionId:'custom-flux-host',baseUrl});
+    expect(capsFor(result.args??[],result.modelProvider!)).toEqual(want);
+   }
+  });
+  it('does not cap a look-alike host',()=>{
+   const result=applyProviderRoute('codex',{},{...route,baseUrl:'https://notfluxrouter.ai/v1'});
+   expect((result.args??[]).some(a=>/_max_retries=/.test(a))).toBe(false);
+  });
+  it('leaves a non-Flux selected provider on codex defaults',()=>{
+   const result=applyProviderRoute('codex',{},route);
+   expect((result.args??[]).some(a=>/_max_retries=/.test(a))).toBe(false);
+  });
+  it('reaches the real codex spawn argv',async()=>{
+   const home=mkdtempSync(join(tmpdir(),'murage-provider-flux-')),dump=join(home,'dump.json');
+   const instance=await CodexDriver.create({instanceId:'fixture-flux-codex',displayName:'codex',enabled:true,environment:{HOME:home,USERPROFILE:home,FAKE_CODEX_DUMP:dump},config:CodexDriver.decodeConfig({cli:join(import.meta.dirname,'testing','fake-codex-app-server.ts')}) as any});const events=recordEvents(instance.adapter);
+   try{await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:'flux-saved',text:'fixture only',model:flux.model,providerRoute:flux});await events.until(e=>e.type==='turn.completed');const child=JSON.parse(readFileSync(dump,'utf8'));const id=child.calls.find((c:any)=>c.method==='thread/start').params.modelProvider;
+    expect(capsFor(child.argv,id)).toEqual(want);}
+   finally{events.stop();await instance.dispose();removeTempDirSync(home);}
+  });
+  it('a Cloud home refuses a Flux route for codex, so a saved connection cannot reach Flux there',()=>{
+   const before=process.env.MURAGE_CLOUD_ROLE;process.env.MURAGE_CLOUD_ROLE='home';
+   try{expect(()=>applyProviderRoute('codex',{},flux)).toThrow();}
+   finally{if(before===undefined)delete process.env.MURAGE_CLOUD_ROLE;else process.env.MURAGE_CLOUD_ROLE=before;}
+  });
+ });
  // MAIN RULING: 2ffd134722 extends the chat-tools MCP set with the built-in browser; exact provider routing remains required.
  it('routes Grok API to the exact selected provider; its MCP set is the chat-tools set (OPENAI-TOOLS-109: agents yes, browser no)',async()=>{
   let received:any;const server=createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;received={url:req.url,auth:req.headers.authorization,body:JSON.parse(body)};res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({choices:[{delta:{content:'fixture answer'}}]})+'\n\ndata: [DONE]\n\n');});await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));

@@ -45,7 +45,7 @@ async function fixture(size: number) {
   const db = new DatabaseSync(":memory:"); cleanups.push(() => db.close());
   db.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id))");
   initializeInbox(db);
-  const store = { bots: [{ id: "bot", name: "Bot", threadId: "thread" }], groups: [], bot: () => ({ hidden: false }), groupByThread: () => undefined, group: () => undefined,
+  const store = { isMailboxSealed: () => false, bots: [{ id: "bot", name: "Bot", threadId: "thread" }], groups: [], bot: () => ({ hidden: false }), groupByThread: () => undefined, group: () => undefined,
     botByThread: () => ({ hidden: false }), onChange: () => () => {},
   };
   const legacy = vi.fn(() => manager.listRuns().map(run => ({ runId: run.id, routineId: run.routineId, routineName: run.routineName, threadId: run.threadId,

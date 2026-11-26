@@ -1,5 +1,7 @@
+import { addCacheUsage, legacyTurnUsage, type UsageAccounting } from "../shared/prompt-cache-usage.ts";
+import { genericMailboxMessage, mailboxMessageForRewrite, mailboxSealed, mailboxSealState } from "./mailbox/custody.ts";
 import { isReadOnly, skippedAtStart } from "./read-only-start.ts";
-import { acknowledgeRecallRosterRevision as acknowledgeViewRosterRevision, prepareRosterRecallViews as prepareViewRoster, queueRecallRosterPreparation as queueViewRosterPreparation } from './memory/recall-view.ts';
+import { acknowledgeRecallRosterRevision as acknowledgeViewRosterRevision, prepareRosterRecallViews as prepareViewRoster, queueRecallRosterPreparation as queueViewRosterPreparation, unsettleRecallRoster } from './memory/recall-view.ts';
 import { BotTurnState } from "./bot-turn-state.ts";
 import { permissionsForOrigin, explicitPermission, inheritedPermissions } from "./permission-inheritance.ts";
 import { BrowserModeStorage } from './browser-mode-storage.ts';
@@ -8,7 +10,9 @@ import type { BrowserChoiceBot, DirectReservation } from './browser-mode-transit
 export type BotPermissionWrite<T> = T;
 import { canEmit, assertCardPatch, readRecord } from './decision/records.ts';
 import type { ApprovalRef, ApprovalView, PermissionCard, InfoCard } from './decision/types.ts';
-import { bumpChatsGen } from "./thread-summary.ts";
+import { bumpChatsGen, redactThreadSummary } from "./thread-summary.ts";
+import { removeBotFromEveryBotMarks } from "./skill-every-bot.ts";
+import { project } from "./mailbox/projection.ts";
 import type { HeldContinuation } from "./external-context-delivery.ts";
 import type { AskerWakeSnapshot } from "./asker-wake.ts";
 import { formerChiefOutcome } from "../shared/chief-handover.ts";
@@ -38,8 +42,8 @@ import type { ConnectedAppAccess } from "../shared/bot-access.ts";
 import { mentionedPeers, mentionsEveryone } from "../shared/mention-boundary.ts";
 import type { LocalSetupFailure, ProviderErrorInfo } from "../shared/provider-error.ts";
 import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
-import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs";
+import { basename, join } from "node:path";
 
 import { cancelCoalesced, flushCoalesced, hasPendingCoalesced, scheduleCoalesced, tightenOwnerOnlyFile, writeFileAtomic } from "./atomic.ts";
 import { readPersistedRecords } from "./persisted-state.ts";
@@ -145,6 +149,8 @@ export interface OptionCardData {
   options: string[];
   answered?: string;
   dismissed?: boolean;
+  /** 1021 Retry: the owner's answer did not reach the engine, which still holds the ask ('offered': Send again; 'sending'). */
+  deliveryRetry?: "offered" | "sending";
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
   /** 1.0.4 SL-I I5: the harness's own limit offer (engines that can answer now, with their billing). */
@@ -321,7 +327,7 @@ export interface SecretRequestCardData {
 }
 
 /** A routine turn's share of the month, beside the bot's own bucket (upstream #1864). No routine, no write. */
-function bumpRoutineUsage(owner: { usageRoutineMonths?: Record<string, Record<string, RoutineUsageMonth>> }, routine: { id: string; name: string } | undefined, turn: { input?: number; output?: number; cachedInput?: number }): void {
+function bumpRoutineUsage(owner: { usageRoutineMonths?: Record<string, Record<string, RoutineUsageMonth>> }, routine: { id: string; name: string } | undefined, turn: { input?: number; output?: number; cachedInput?: number; usageAccounting?: UsageAccounting }): void {
   if (!routine?.id) return;
   owner.usageRoutineMonths ??= {};
   bumpRoutineUsageMonth(owner.usageRoutineMonths, routine, turn);
@@ -370,6 +376,7 @@ export function dropUnprovenShare<T extends { role?: string; kind?: string; orig
 }
 
 export interface Message {
+  sealed?: true;
   /** Accepted choice still awaiting its durable failover application. */
   limitApplication?: { approvalId: string; principal: string; rowId: string;
     answer: Extract<import("./limit-continuation.ts").LimitCardAnswer, { kind: "engine" }> };
@@ -465,6 +472,7 @@ export interface Message {
    * "without-memory" (DELEGATION-HOLD F5): the server's activity row saying a reply ran without remembered context. The chat and the room
    * show it as a quiet note with Settings > Tool calls off. */
   memoryNote?: "export-paste" | "without-memory" | "resend";
+  memoryReplay?: true;
   /** Resend rows: the message this offer is for (the user row the refused turn was answering), its conversation and, in a room, the member.
    * Written by the server where the row is posted; Send again resolves exactly this message and offers nothing when it is not found. */
   resendOf?: { messageId: string; threadId: string; botId?: string };
@@ -738,7 +746,7 @@ export const cursorStartedBelowSeal = (task: SealRead | undefined | null, instan
 export const dispatchSealStart = (task: SealRead | undefined | null, instanceId: string, resumeCursor: unknown): number => {
   if (resumeCursor === undefined) return task?.sealGeneration ?? 0;
   const entry = task?.resumeSeals?.[instanceId];
-  return entry?.cursor === String(resumeCursor) ? entry.generation : 0;
+  return entry?.cursor === String(resumeCursor) && entry.generation >= 0 ? entry.generation : 0;
 };
 
 export const sessionTainted = (task: SealRead | undefined | null, instanceId: string): boolean => {
@@ -797,7 +805,7 @@ export interface TaskRecord {
   resumeIncarnations?: Record<string, number>;
   /** Thread recall (THREAD-SEAL 3.1), per engine: the cursor this entry is bound to and the task's `sealGeneration` at the START of
    * that session. For one native id the number only ever goes down. Never on the wire. */
-  resumeSeals?: Record<string, { cursor: string; generation: number }>;
+  resumeSeals?: Record<string, { cursor: string; generation: number; partialReplay?: number }>;
   /** This chat's own model, set only when the owner picked one in this chat
    * (1.0.4 SL-K K1). Absent: the chat follows its bot's model. */
   modelSelection?: ModelSelection;
@@ -907,7 +915,7 @@ export interface TaskUsage {
    * the model re-read rather than fresh text. Every turn resends the whole
    * conversation plus the system prompt and tool schemas, so on a chatty
    * thread this is most of `input`. Absent on records from older builds. */
-  cachedInput?: number;
+  cachedInput?: number; usageAccounting?: UsageAccounting;
   /** null until any turn reports a cost — most engines never do. Records
    * written by builds before cost existed lack the field; read as null. */
   costUsd: number | null;
@@ -961,7 +969,9 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       take(copy, fields);
     }
   }
-  const safe = sanitizeDisplayTextUnit(textFields.map(field => field.text));
+  // A reply holding one inline «redacted …» span (the turn policy's own
+  // redaction) is stored with that span, not as a bare marker for the whole row.
+  const safe = sanitizeDisplayTextUnit(textFields.map(field => field.text), undefined, { markerStays: true });
   textFields.forEach((field, i) => { field.target[field.key] = safe[i]; });
   // The unit has already crossed the shared mask on its original bytes.
   // Re-masking a generated marker can turn a scalar label into a wrapped
@@ -1045,18 +1055,17 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
         ? createHash("sha256").update(preview).digest("hex")
         : undefined;
       const sha256 = card.skillRequest.sha256 !== undefined
-        && card.skillRequest.sha256 === previewSha256
+        && (card.skillRequest.sha256 === previewSha256
+          || ["turn_on", "turn_off", "delete"].includes(card.skillRequest.action) && originalPreview === undefined && /^[a-f0-9]{64}$/.test(card.skillRequest.sha256))
         ? card.skillRequest.sha256
         : undefined;
       card.skillRequest = {
         ...card.skillRequest,
-        gist: redactSecretsInText(card.skillRequest.gist),
-        source: card.skillRequest.source === undefined
-          ? undefined
-          : redactSecretsInText(card.skillRequest.source),
-        preview,
-        sha256,
-        warnings: card.skillRequest.warnings.map((warning) => redactSecretsInText(warning)),
+        ...(card.skillRequest.gist !== undefined ? { gist: redactSecretsInText(card.skillRequest.gist) } : {}),
+        ...(card.skillRequest.source !== undefined ? { source: redactSecretsInText(card.skillRequest.source) } : {}),
+        ...(originalPreview !== undefined ? { preview } : {}),
+        ...(card.skillRequest.sha256 !== undefined ? { sha256 } : {}),
+        ...(card.skillRequest.warnings !== undefined ? { warnings: card.skillRequest.warnings.map(warning => redactSecretsInText(warning)) } : {}),
       };
     }
     out.card = card as Message['card'];
@@ -1194,6 +1203,7 @@ export interface BotRecord {
   createdByBotId?: string;
   /** The one chat note saying local control is off was shown; cleared once control is on. */
   localControlOffNoted?: boolean;
+  ownServerCloudNoted?: boolean;
   /** Which cloud computer backs `computer: "cloud"`; absent means Box. */
   cloudBackend?: CloudBackend;
   /** Auto mode may prepare/start this bot's managed VPS container. Off by
@@ -1363,9 +1373,9 @@ export interface BotRecord {
   browser?: boolean;
   /** 1.0.9 phone tools: what this bot may ask the owner's phone to do. Absent key = off. Owner-only PATCH (S7). */
   phoneApps?: import("../shared/phone-apps.ts").PhoneApps;
-  /** Native HighLevel grants (HL-S2): which confirmed locations and tools this bot may use, read or propose. Owner-only PUT
-   * /api/highlevel/bots/:botId/access; bound to the bot's role (server/highlevel/access.ts nativeAccessFor). */
-  highlevelAccess?: import("../shared/highlevel.ts").HighLevelBotAccess;
+  /** Stored grants of Murage's own HighLevel (removed in 1.0.20). Kept as stored so a bot save never rewrites them; nothing
+   *  reads them except the one-time moved line (highlevel-moved-notice.ts). Cleanup is a 1.0.21 row. */
+  highlevelAccess?: unknown;
   /** Id of a named browser profile from config.browserProfiles; absent = the
    * bot's own private session. */
   browserProfile?: string;
@@ -1421,6 +1431,12 @@ export interface InstalledPlaybook {
 const BOTS_FILE = join(DATA_DIR, "bots.json");
 const GROUPS_FILE = join(DATA_DIR, "groups.json");
 const messagesFile = (threadId: string) => join(DATA_DIR, `messages-${threadId}.json`);
+/** The pending legacy transcripts (messages-<thread>.json, not yet renamed .imported) in one read of the data folder; an unreadable folder
+ * holds none, as an existsSync probe would have said. */
+function legacyTranscriptNames(): Set<string> {
+  try { return new Set(readdirSync(DATA_DIR).filter(name => name.startsWith("messages-") && name.endsWith(".json"))); }
+  catch { return new Set(); }
+}
 
 const COLORS: EmberColor[] = [
   "green",
@@ -1865,16 +1881,22 @@ export interface RecallRosterCertificate {
 
 // Couple certification to the existing publication hooks, not presentation-only counter moves.
 const ACK_RECALL_ROSTER = Symbol('acknowledge-recall-roster');
+/** closer2-1021 (O11 M3): which revision a roster proof covers from. 'proof' records an ack or a changed persist at the live revision and
+ * returns the revision of the previous proof when every bump since was flushed through a proof (deferred, coalesced saves included), else
+ * undefined; 'unproven' marks a counter bump whose write skipped the memory roster proof (memory not ready, a team change open, a package
+ * publication): recall fences every build holding the live token at once, and the next ack carries nothing across it (fail closed). */
+const RECALL_PROOF = Symbol('recall-roster-proof');
 function prepareRosterRecallViews(roster: Store): void {
   roster.queueRecallRosterCertification();
   prepareViewRoster(roster);
 }
 function queueRecallRosterPreparation(roster: () => Store): void {
+  roster()[RECALL_PROOF]('proof');
   roster().queueRecallRosterCertification();
   queueViewRosterPreparation(roster);
 }
 function acknowledgeRecallRosterRevision(roster: Store): void {
-  acknowledgeViewRosterRevision(roster);
+  acknowledgeViewRosterRevision(roster, roster[RECALL_PROOF]('proof'));
   roster[ACK_RECALL_ROSTER]();
 }
 
@@ -1969,6 +1991,14 @@ export class Store {
   private taskRevisions = new Map<string, number>();
   private botRosterCounter = 0;
   private memoryRosterCounter = 0;
+  private recallProofRevision: number | undefined;
+  private recallUnproven = false;
+  [RECALL_PROOF](event: 'proof' | 'unproven'): number | undefined {
+    if (event === 'unproven') { this.recallUnproven = true; unsettleRecallRoster(this); return undefined; }
+    const from = this.recallUnproven ? undefined : this.recallProofRevision;
+    this.recallProofRevision = this.memoryRosterCounter; this.recallUnproven = false;
+    return from;
+  }
   /** Bot snapshot inputs, independent of room-only saves. */
   get botRosterRevision(): number { return this.botRosterCounter; }
   /** Moves before a structural roster edit; turn-state and state-only room writes leave it alone. */
@@ -2459,11 +2489,13 @@ export class Store {
       ...this.bots.flatMap((b) => [b.threadId, ...(b.tasks ?? []).map((task) => task.threadId)]),
       ...this.groups.flatMap((group) => [group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)]),
     ]);
+    // q1022-startup item 7: one listing of the data folder names every pending file, not one existsSync probe per known thread.
+    const pendingLegacy = legacyTranscriptNames();
     for (const threadId of knownThreads) {
       const legacyFile = messagesFile(threadId);
       // A thread that already has rows is not read: readThread would load all of them (one whole-thread read per conversation, 29 s for 12,000 on
       // a heavy install) only to return, because the import below it runs only for a thread with no rows.
-      if (existsSync(legacyFile) && !mdb.threadHasRows(threadId)) mdb.readThread(threadId, legacyFile);
+      if (pendingLegacy.has(basename(legacyFile)) && !mdb.threadHasRows(threadId)) mdb.readThread(threadId, legacyFile);
     }
     // The one-time Auto confirmation starts from what each bot has already
     // done, once per record: a bot that already used this computer keeps
@@ -2501,6 +2533,7 @@ export class Store {
    * (banked in the same write, so they stay consistent). Messages live in
    * SQLite and are never in this file. */
   private saveBots(bots: BotPermissionWrite<BotRecord[]> = this.bots, options: { defer?: boolean } = {}) {
+    this.observeChiefOffice(bots);
     this.botRosterCounter++; this.memoryRosterCounter++;
     this.recordRevision++;
     if (options.defer && bots === this.bots) { scheduleCoalesced(BOTS_FILE, () => this.saveBotsNow()); return; }
@@ -2567,6 +2600,7 @@ export class Store {
   private afterRosterSave(bots: BotRecord[], normalized: BotRecord[], audienceUnchanged = false) {
     if(audienceUnchanged)acknowledgeRecallRosterRevision(this);
     if (this.memoryReady && !teamChangeOpen() && !audienceUnchanged) queueRecallRosterPreparation(() => this);
+    else if (!audienceUnchanged) this[RECALL_PROOF]('unproven');
     // The channels save against the roster being written, not the live one it replaces:
     // a stale label there would give a moved team's old name a fresh memory scope.
     if (!teamChangeOpen() && markPartitions({ bots: normalized, groups: this.groups })) this.saveGroupsNow(normalized);
@@ -2614,15 +2648,21 @@ export class Store {
         ["groups.json", Buffer.from(JSON.stringify(nextGroups.map(({ busyBotId: _busy, turnStartedAt: _turnStartedAt, ...group }) => group), null, 2))],
       ]),
       publish: () => {
-        this.botRosterCounter++; this.memoryRosterCounter++;
+        this.botRosterCounter++; this.memoryRosterCounter++; this[RECALL_PROOF]('unproven');
         for (const bot of bots) this.indexTaskAssignments(bot);
         this.bots = nextBots; this.groups = nextGroups;
+        this.observeChiefOffice();
         this.turnState.checkpoint(nextBots, turnStateBase);
         // a package's records come with whatever they hold: the pending set looks at their threads once
         try{this.refreshPendingThreads([...bots.flatMap(bot => [bot.threadId, ...(bot.tasks ?? []).map(task => task.threadId)]), ...groups.flatMap(group => [group.threadId, ...(group.tasks ?? []).map(task => task.threadId)])]);
         if (this.memoryReady && !teamChangeOpen()) reconcileMemoryRoster(this);
         }finally{this.emit({type:"workroot-reset"});}
-        for (const bot of bots) this.emit({ type: "bot", botId: bot.id });
+        for (const bot of bots) {
+          for (const hook of this.botCreatedHooks) {
+            try { hook(bot, true); } catch { console.warn("[store] a package bot hook failed; the package was published"); }
+          }
+          this.emit({ type: "bot", botId: bot.id });
+        }
         for (const group of groups) this.emit({ type: "group", groupId: group.id });
       },
     };
@@ -2631,18 +2671,24 @@ export class Store {
   markPartitions(): void { if (!teamChangeOpen() && markPartitions(this)) this.saveGroups(); }
 
   /** Persist groups.json; same contract as saveBots (immediate unless `defer`). */
+  /** closer2-1021 (O11 M3, Astra fix-check): a roster bump whose groups proof has not run yet. A later stateOnly save on the same coalesced
+   * key (the last closure wins) or an immediate stateOnly save (which cancels the deferred one) still runs the proof, so no bump is left
+   * unproven and an in-flight recall build never waits out its publication bound for a proof that was dropped. */
+  private groupsProofOwed = false;
   private saveGroups(bots: BotPermissionWrite<BotRecord[]> = this.bots, options: { defer?: boolean; stateOnly?: boolean } = {}) {
-    if (!options.stateOnly) this.memoryRosterCounter++;
+    if (!options.stateOnly) { this.memoryRosterCounter++; this.groupsProofOwed = true; }
     this.recordRevision++; // a channel's tasks and members are records too (task-window.ts, shared-wire.ts)
-    if (options.defer && bots === this.bots) { scheduleCoalesced(GROUPS_FILE, () => this.saveGroupsNow(this.bots, options.stateOnly)); return; }
-    this.saveGroupsNow(bots, options.stateOnly);
+    if (options.defer && bots === this.bots) { scheduleCoalesced(GROUPS_FILE, () => this.saveGroupsNow(this.bots, options.stateOnly && !this.groupsProofOwed)); return; }
+    this.saveGroupsNow(bots, options.stateOnly && !this.groupsProofOwed);
     if (bots === this.bots) cancelCoalesced(GROUPS_FILE);
   }
 
   private saveGroupsNow(bots: BotPermissionWrite<BotRecord[]> = this.bots, stateOnly = false) {
     assertBotCreateRecovered(DATA_DIR);
+    if (!stateOnly) this.groupsProofOwed = false;
     if (!stateOnly && !teamChangeOpen()) markPartitions({ bots, groups: this.groups });
     const write = () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, turnStartedAt: _turnStartedAt, ...g }) => g), null, 2), { mode: 0o600, syncDir: inTxScope() });
+    if (!stateOnly && (!this.memoryReady || teamChangeOpen())) this[RECALL_PROOF]('unproven');
     if (stateOnly || !this.memoryReady || teamChangeOpen()) write(); else { const unchanged=persistMemoryRoster({ bots, groups: this.groups, botRosterRevision: this.botRosterRevision, memoryRosterRevision: this.memoryRosterRevision }, write); if(unchanged)acknowledgeRecallRosterRevision(this);else queueRecallRosterPreparation(() => this); }
   }
 
@@ -2670,6 +2716,10 @@ export class Store {
     if (inTxScope()) { afterCommit(() => this.emit(change, tasksChanged)); return; }
     if ((change.type === 'message' || change.type === 'message.patch') && !canEmit(database(), change.threadId, change.message, change.type === 'message.patch')) {
       console.warn('card-emit-dropped', change.type); return;
+    }
+    if (change.type === "message" || change.type === "message.patch") {
+      const message = genericMailboxMessage(database(), change.threadId, change.message);
+      if (message !== change.message) change = { ...change, message, ...("before" in change && change.before ? { before: genericMailboxMessage(database(), change.threadId, change.before) } : {}) };
     }
     // every message write passes here (append, insert before or after, resend): the thread's last activity moves with it
     if (change.type === "message") { const was = this.lastActivity.get(change.threadId); if (was === undefined || was === null || change.message.at > was) this.lastActivity.set(change.threadId, change.message.at); }
@@ -3177,11 +3227,12 @@ export class Store {
       const point = this.messageByIdPoint(threadId, current.id);
       return point ? this.patchMessage(threadId, current.id, patch, undefined, point) : null;
     }
+    current = mailboxMessageForRewrite(database(), threadId, current);
     const next = checkStoredRow(redactBotPatch({ ...current, ...patch, card: patch.card ?? current.card }));
     assertCardPatch(current, next);
     mdb.updateMessage(threadId, next);
     this.emit({ type: "message.patch", threadId, message: next, before: current });
-    return next;
+    return genericMailboxMessage(database(), threadId, next);
   }
 
   // ── channel tasks ────────────────────────────────────────────────────
@@ -3481,15 +3532,17 @@ export class Store {
     const leading = Math.floor((limit - 1) / 2);
     const start = Math.max(0, Math.min(index - leading, all.length - limit));
     const stop = Math.min(all.length, start + limit);
-    return { messages: all.slice(start, stop), hasMore: start > 0 };
+    const messages = all.slice(start, stop);
+    return { messages: this.isMailboxSealed(threadId) ? messages.map(project) : messages, hasMore: start > 0 };
   }
 
   /** One message of a thread by id: from memory when the thread is loaded,
    * otherwise a single indexed row. Never materializes the transcript. */
   messageById(threadId: string, messageId: string, options?: { buildIndex: false }): Message | undefined {
     const loaded = this.threads.get(threadId);
-    if (loaded && options?.buildIndex !== false) return indexedMessage(loaded.messages, messageId);
-    if (options?.buildIndex === false) return this.messageByIdPoint(threadId, messageId, loaded);
+    const inCache = loaded && options?.buildIndex !== false ? indexedMessage(loaded.messages, messageId)
+      : options?.buildIndex === false ? this.messageByIdPoint(threadId, messageId, loaded) : undefined;
+    if (loaded || options?.buildIndex === false) return inCache && genericMailboxMessage(database(), threadId, inCache);
     const row = mdb.readMessage(threadId, messageId);
     return row ? this.loadedMessages([row])[0] : undefined;
   }
@@ -3518,7 +3571,8 @@ export class Store {
     const loaded = this.threads.get(threadId);
     if (loaded) {
       const wanted = new Set(ids);
-      return loaded.messages.filter((message) => wanted.has(message.id));
+      const rows = loaded.messages.filter((message) => wanted.has(message.id));
+      return this.isMailboxSealed(threadId) ? rows.map(message => genericMailboxMessage(database(), threadId, message)) : rows;
     }
     return ids.flatMap((id) => {
       const row = mdb.readMessage(threadId, id);
@@ -3541,7 +3595,29 @@ export class Store {
   }
 
   messagesFor(threadId: string): Message[] {
-    return this.thread(threadId).messages;
+    const messages = this.thread(threadId).messages;
+    return this.isMailboxSealed(threadId) ? messages.map(message => genericMailboxMessage(database(), threadId, message)) : messages;
+  }
+
+  isMailboxSealed(threadId: string): boolean { return mailboxSealed(database(), threadId); }
+
+  /** Mailbox tool entry uses the durable barrier before its driver works on a thread. */
+  beginMailboxSeal(threadId: string): "pending" | "complete" {
+    if (database().isTransaction) throw new Error("Mailbox seal requires its own commit");
+    const state = transaction(db => {
+      const existing = mailboxSealState(db, threadId);
+      if (existing === "deleted") throw new Error("Email conversation was deleted");
+      if (existing) return existing;
+      db.prepare(`
+        INSERT INTO mailbox_sealed_threads(thread_id, generation, state)
+        VALUES (?, (SELECT COALESCE(MAX(generation), 0) + 1 FROM mailbox_sealed_threads), 'pending')
+      `).run(threadId);
+      redactThreadSummary(db, threadId);
+      bumpChatsGen(db);
+      return "pending" as const;
+    });
+    if (state === "pending") this.threads.delete(threadId);
+    return state;
   }
 
   /** The newest `limit` rows of a thread in stored order, and whether older
@@ -3555,7 +3631,8 @@ export class Store {
       if (slice) return { messages: this.loadedMessages(slice.messages, slice.previous), hasMore: slice.hasMore };
     }
     const all = (loaded ?? this.thread(threadId)).messages;
-    return { messages: all.slice(Math.max(0, all.length - limit)), hasMore: all.length > limit };
+    const rows = all.slice(Math.max(0, all.length - limit));
+    return { messages: this.isMailboxSealed(threadId) ? rows.map(message => genericMailboxMessage(database(), threadId, message)) : rows, hasMore: all.length > limit };
   }
 
   /** When this thread last had a message: the task switcher's "last
@@ -3657,7 +3734,7 @@ export class Store {
    * newest `limit` rows (one answered or settled since). Never the thread. */
   cardForRequest(threadId: string, requestId: string, test: (message: Message) => boolean = () => true, limit = TURN_SCAN_ROWS): Message | undefined {
     const accepts = (message: Message) => message.card?.requestId === requestId && test(message);
-    return this.openRequestCardRows(threadId).reverse().find(accepts) ?? this.newestMatching(threadId, accepts, limit);
+    return this.openDecisionCardRows(threadId).reverse().find(accepts) ?? this.newestMatching(threadId, accepts, limit);
   }
 
   /** Rows stored after `messageId`, oldest first, at most `limit`: what was
@@ -3813,11 +3890,23 @@ export class Store {
   /** The same rows, with whether the read is COMPLETE (Rev 3.3 V1): the index answered exactly AND the open-card part (before the orphan
    *  merge) is under the sweep limit. The merged length never establishes completeness. `limit` is for tests that need a saturated index. */
   openRequestCardRowsStatus(threadId: string, limit: number = OPEN_CARD_SWEEP_LIMIT): { rows: Message[]; complete: boolean } {
+    const status = this.openDecisionCardRowsStatus(threadId, limit);
+    return this.isMailboxSealed(threadId) ? { ...status, rows: status.rows.map(project) } : status;
+  }
+
+  /** Decision authorization and cleanup read signed cards by thread. */
+  openDecisionCardRows(threadId: string): Message[] {
+    return this.openDecisionCardRowsStatus(threadId, OPEN_CARD_SWEEP_LIMIT).rows;
+  }
+
+  private openDecisionCardRowsStatus(threadId: string, limit: number): { rows: Message[]; complete: boolean } {
     const loaded = this.threads.get(threadId);
-    const status = mdb.openRequestCardsStatus(threadId, limit);
+    const status = mdb.openCanonicalRequestCardsStatus(threadId, limit);
     const complete = !status.incomplete && status.cards.length < limit;
-    const open = status.cards.reverse()
-      .map(({ message }) => loaded?.messages.find((row) => row.id === message.id) ?? message);
+    const open = status.cards.reverse().map(({ message }) => {
+      const cached = loaded?.messages.find(row => row.id === message.id);
+      return cached && !cached.sealed ? cached : message;
+    });
     // a card the start retired (its run died) is out of the open-card list but still answerable: it counts as open here (keyed family "orphaned")
     const seen = new Set(open.map((row) => row.id));
     const orphaned = (loaded ? loaded.messages.filter((row) => row.card?.orphaned && row.card.requestId && !row.card.answered && !row.card.dismissed) : mdb.keyedCardRows(threadId, "orphaned"))
@@ -3828,7 +3917,7 @@ export class Store {
   /** Rev 3.3 X2: the open cards (and answerable orphaned cards) of this thread for these request ids, ONE query, no sweep or history limit. */
   openCardsForRequests(threadId: string, requestIds: readonly string[]): { found: Map<string, Message>; unknown: boolean } {
     const loaded = this.threads.get(threadId);
-    const got = mdb.openCardsForRequests(threadId, requestIds);
+    const got = mdb.openCanonicalCardsForRequests(threadId, requestIds);
     if (got.unknown) return { found: new Map(), unknown: true };
     const found = new Map<string, Message>();
     for (const [id, message] of got.found) found.set(id, loaded?.messages.find((row) => row.id === message.id) ?? message);
@@ -3838,6 +3927,7 @@ export class Store {
       const id = row.card?.requestId;
       if (id && wanted.has(id) && !found.has(id) && !row.card?.answered && !row.card?.dismissed) found.set(id, row);
     }
+    if (this.isMailboxSealed(threadId)) for (const [id, row] of found) found.set(id, project(row));
     return { found, unknown: false };
   }
   /** The one-id form of openCardsForRequests: found, authoritatively absent, or unknown (the index cannot say). */
@@ -4086,6 +4176,7 @@ export class Store {
   /** The newest text line of the active branch that `test` accepts (the room's last owner message, for one). */
   newestLineOnBranch(threadId: string, test: (message: Message) => boolean): Message | undefined {
     const loaded = this.threads.get(threadId);
+    if (this.isMailboxSealed(threadId)) return undefined;
     if (loaded && !isThreadPrepared(threadId)) return this.activePath(threadId).findLast((m) => m.kind === "text" && Boolean(m.text) && test(m));
     const found = mdb.topRowsOnBranch(threadId, this.branchLeaf(threadId), LINE_TEXT, 1, test).rows[0];
     return found && found.message;
@@ -4108,6 +4199,7 @@ export class Store {
   activeTextLines(threadId: string, limit: number): { messages: Message[]; hasMore: boolean; exact: boolean } {
     const loaded = this.threads.get(threadId);
     if (loaded && !isThreadPrepared(threadId)) {
+      if (this.isMailboxSealed(threadId)) return { messages: [], hasMore: false, exact: true };
       const out: Message[] = [];
       let more = false;
       this.walkActivePath(threadId, (m) => {
@@ -4142,6 +4234,7 @@ export class Store {
   newestTextLines(threadId: string, limit: number): Message[] {
     const loaded = this.threads.get(threadId);
     if (loaded) {
+      if (this.isMailboxSealed(threadId)) return [];
       const out: Message[] = [];
       for (let i = loaded.messages.length - 1; i >= 0 && out.length < limit; i--) { const m = loaded.messages[i]!; if (m.kind === "text" && m.text) out.push(m); }
       return out.reverse();
@@ -4255,7 +4348,7 @@ export class Store {
       this.speechAttribute(threadId, full);
       mdb.appendMessage(threadId, full, () => this.speechAccepted(threadId, full));
       this.emit({ type: "message", threadId, message: full });
-      return full;
+      return genericMailboxMessage(database(), threadId, full);
     });
   }
 
@@ -4274,12 +4367,13 @@ export class Store {
       const t = this.thread(threadId);
       if (stableId) { const held = t.messages.find(m => m.id === stableId) ?? mdb.storedMessage(threadId, stableId); if (held) return held; }
       const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
-      if (message === null) return { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(input) };
-      const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
+      if (message === null) return genericMailboxMessage(database(), threadId, { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(input) });
+      let full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
       // Runtime proof of the one dispatch path: a hand-off's prompt id is written only in the transaction that moves its row to started (handoff-stamp.ts).
       this.speechAttribute(threadId, full);
       const inside = () => { this.speechAccepted(threadId, full); within?.(full); };
       mdb.appendMessage(threadId, full, isHandoffPromptId(full.id) ? guardHandoffPrompt(database, full.id, inside) : inside, reply, lineage, began);
+      full = genericMailboxMessage(database(), threadId, full);
       t.messages.push(full);
       t.activeLeafId = full.id;
       this.grew(threadId, t, messageBytes(full));
@@ -4336,12 +4430,13 @@ export class Store {
     if (leaf === null) return null;
     if (stableId) { const held = mdb.storedMessage(threadId, stableId); if (held) return held; }
     const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
-    if (message === null) return { id: newId(), at: Date.now(), parentId: leaf, ...redactBotAuthored(input) };
+    if (message === null) return genericMailboxMessage(database(), threadId, { id: newId(), at: Date.now(), parentId: leaf, ...redactBotAuthored(input) });
     const owner = message.role === "user" && message.kind === "text";
     const recent = owner ? this.newestMessages(threadId, APPEND_TAIL_ROWS).messages : [];
-    const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: leaf, ...redactBotAuthored(message) };
+    let full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: leaf, ...redactBotAuthored(message) };
     this.speechAttribute(threadId, full);
     mdb.appendMessage(threadId, full, () => { this.speechAccepted(threadId, full); within?.(full); }, undefined, lineage, began);
+    full = genericMailboxMessage(database(), threadId, full);
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames({ messages: this.newestFrames(threadId) }, 4)) {
         mdb.updateMessage(threadId, pruned);
@@ -4397,7 +4492,7 @@ export class Store {
       const t = this.threads.get(threadId);
       const anchorExists = anchorId !== undefined && (t ? t.messages.some((m) => m.id === anchorId) : mdb.readMessage(threadId, anchorId) !== null);
       if (!anchorExists || this.activeLeaf(threadId) === anchorId) return this.appendMessage(threadId, message);
-      const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
+      let full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
       const children = t ? t.messages.filter((m) => m.parentId === anchorId) : this.childrenStoredAfter(threadId, anchorId!);
       // A splice, not an append: the leaf stays where it is, in memory and on
       // disk. mdb.appendMessage would move the stored leaf to this message,
@@ -4419,6 +4514,7 @@ export class Store {
       const reparented = children.map((child) => checkStoredRow({ ...child, parentId: full.id }));
       this.speechAttribute(threadId, full);
       transaction(() => { mdb.insertMessageAfter(threadId, full, anchorId!, prunedCopies, reparented); this.speechAccepted(threadId, full); });
+      full = genericMailboxMessage(database(), threadId, full);
       if (!t) {
         for (const pruned of prunedCopies) this.emit({ type: "message.patch", threadId, message: pruned });
         this.emit({ type: "message", threadId, message: full });
@@ -4465,10 +4561,10 @@ export class Store {
       const target = t ? t.messages.find((m) => m.id === beforeId) : step ? checkStoredRow({ ...step.message, parentId: step.parent }) : undefined;
       if (!target) return this.appendMessage(threadId, input, stableId, within, reply);
       const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
-      if (message === null) return { id: newId(), at: Date.now(), parentId: target.parentId, ...redactBotAuthored(input) };
+      if (message === null) return genericMailboxMessage(database(), threadId, { id: newId(), at: Date.now(), parentId: target.parentId, ...redactBotAuthored(input) });
       // No backfill for unmarked rows: insertion before a row first ships with
       // this marker, so no saved database holds an unmarked inserted row.
-      const full: Message = { id: stableId ?? newId(), at: Date.now(), ...redactBotAuthored(message), parentId: target.parentId, insertedBefore: target.id };
+      let full: Message = { id: stableId ?? newId(), at: Date.now(), ...redactBotAuthored(message), parentId: target.parentId, insertedBefore: target.id };
       const moved = checkStoredRow({ ...target, parentId: full.id });
       this.speechAttribute(threadId, full);
       transaction(() => {
@@ -4477,6 +4573,7 @@ export class Store {
         const inside = within ? () => within(full) : undefined;
         if (isHandoffPromptId(full.id)) guardHandoffPrompt(database, full.id, inside)(); else inside?.();
       });
+      full = genericMailboxMessage(database(), threadId, full);
       if (!t) {
         this.emit({ type: "message", threadId, message: full });
         this.emit({ type: "message.patch", threadId, message: moved, before: target });
@@ -4547,8 +4644,9 @@ export class Store {
     }
     return this.writing(threadId, () => {
       const t = this.thread(threadId);
-      const source = t.messages.find((m) => m.id === sourceId);
-      if (!source) return null;
+      const stored = t.messages.find((m) => m.id === sourceId);
+      if (!stored) return null;
+      const source = mailboxMessageForRewrite(database(), threadId, stored);
       const full: Message = {
         id: newId(),
         at: Date.now(),
@@ -4564,14 +4662,15 @@ export class Store {
       };
       this.speechAttribute(threadId, full);
       mdb.appendMessage(threadId, full, () => this.speechAccepted(threadId, full));
-      t.messages.push(full);
+      const generic = genericMailboxMessage(database(), threadId, full);
+      t.messages.push(generic);
       t.activeLeafId = full.id;
-      this.grew(threadId, t, messageBytes(full));
+      this.grew(threadId, t, messageBytes(generic));
       this.emit({ type: "message", threadId, message: full });
       // A fork is not a child of the old leaf; publish the durable selection
       // after its message so clients can display the server's active branch.
       this.emit({ type: "thread", threadId, activeLeafId: full.id });
-      return full;
+      return generic;
     });
   }
 
@@ -4584,7 +4683,8 @@ export class Store {
     return this.writing(threadId, () => {
       const stored = mdb.readMessage(threadId, sourceId);
       if (!stored) return null;
-      const source = this.loadedMessages([stored], stored.parentId === undefined ? mdb.readThreadBefore(threadId, sourceId, 1)?.messages[0] ?? null : null)[0]!;
+      const prior = this.loadedMessages([stored], stored.parentId === undefined ? mdb.readThreadBefore(threadId, sourceId, 1)?.messages[0] ?? null : null)[0]!;
+      const source = mailboxMessageForRewrite(database(), threadId, prior);
       const full: Message = {
         id: newId(),
         at: Date.now(),
@@ -4602,7 +4702,7 @@ export class Store {
       mdb.appendMessage(threadId, full, () => this.speechAccepted(threadId, full));
       this.emit({ type: "message", threadId, message: full });
       this.emit({ type: "thread", threadId, activeLeafId: full.id });
-      return full;
+      return genericMailboxMessage(database(), threadId, full);
     });
   }
 
@@ -4650,28 +4750,30 @@ export class Store {
           : mdb.branchStep(threadId, messageId);
         // the message is gone: the other change is still owed, as on a loaded thread (no conversation is made for it)
         if (!step) { if (within) transaction(() => within()); return null; }
-        const before = checkStoredRow({ ...step.message, parentId: step.parent });
+        const before = mailboxMessageForRewrite(database(), threadId, checkStoredRow({ ...step.message, parentId: step.parent }));
         const next = redactBotPatch({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
         // `within` joins this write too: a card settled with the send it became (QW Q1) is one transaction on an unloaded thread as well
         assertCardPatch(before, next);
         mdb.updateMessage(threadId, next, within);
         if (loaded) this.threads.delete(threadId);
         this.emit({ type: "message.patch", threadId, message: next, before });
-        return next;
+        return genericMailboxMessage(database(), threadId, next);
       }
       const t = loaded!;
       if (idx === undefined) { if (within) transaction(() => within()); return null; }
-      const next = checkStoredRow(redactBotPatch({ ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card }));
-      assertCardPatch(t.messages[idx], next);
+      const canonical = mailboxMessageForRewrite(database(), threadId, t.messages[idx]);
+      const next = checkStoredRow(redactBotPatch({ ...canonical, ...patch, card: patch.card ?? canonical.card }));
+      assertCardPatch(canonical, next);
       // SQLite is the durable source of truth. Persist before changing memory so
       // a failed write cannot make this process believe a card was answered
       // while a restart would still show it as pending.
       mdb.updateMessage(threadId, next, within);
       const before = t.messages[idx];
-      t.messages[idx] = next;
-      this.grew(threadId, t, messageBytes(next) - messageBytes(before));
+      const generic = genericMailboxMessage(database(), threadId, next);
+      t.messages[idx] = generic;
+      this.grew(threadId, t, messageBytes(generic) - messageBytes(before));
       this.emit({ type: "message.patch", threadId, message: next, before });
-      return next;
+      return generic;
     });
   }
 
@@ -4769,8 +4871,19 @@ export class Store {
         this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "options", card: intakeOpeningQuestion() as InfoCard }));
       }
     }, { op: "createBot" });
+    // F10/E1: hooks run once the create has committed (an enclosing transaction waits for its own commit), never for a rolled-back
+    // create, and a hook's failure never fails the create.
+    afterCommit(() => {
+      for (const hook of this.botCreatedHooks) {
+        try { hook(bot); } catch { console.warn("[store] a new-bot hook failed; the bot was created"); }
+      }
+    });
     return bot;
   }
+
+  private readonly botCreatedHooks: Array<(bot: BotRecord, imported?: boolean) => void> = [];
+  /** Run after a bot create commits or a durable package publishes; imported skills must stay inert. */
+  onBotCreated(fn: (bot: BotRecord, imported?: boolean) => void): void { this.botCreatedHooks.push(fn); }
 
   /** The journal restores first; then withdraw the live record and reinstate any save that predated this create. */
   private withdrawCreatedBot(botId: string, pendingBots: boolean, pendingGroups: boolean) {
@@ -4924,6 +5037,7 @@ export class Store {
     try {
       rmSync(join(DATA_DIR, "skill-state", id), { recursive: true, force: true });
     } catch {}
+    removeBotFromEveryBotMarks(id);
     // Checkpoint shadow repos (checkpoints.ts shadowDir) are snapshots the
     // bot's own threads offered to roll back to. With the threads gone
     // nothing can reach them, and a full-folder snapshot per working
@@ -5058,9 +5172,12 @@ export class Store {
     catch (error) {
       if (!(error instanceof RosterPostCommitError)) { this.recordRevision = revision; throw error; }
       for (const live of staged.keys()) { this.publishCommitted(live, error.normalized); this.emit({ type: "bot", botId: live.id }); }
+      // propose-500: the roster as published after a post-commit error is observed too
+      this.observeChiefOffice();
       throw error;
     }
     for (const [live, record] of staged) publishBotRecord(live, record);
+    this.observeChiefOffice();
   }
 
   /** 1.0.13 UX-TRUST-L1B: a level change. The next file is written first and the live record moves only once that returned, so a failed
@@ -5394,6 +5511,22 @@ export class Store {
     return this.bots.find((bot) => bot.hidden !== true && !inertBot(bot) && isWorkspaceChief(bot)) ?? null;
   }
 
+  /** propose-500 (MAIN-RULING 2026-11-22): who holds the owner's Chief office (the visible, not staged workspace Chief)
+   * and how many times the holder has changed in this process. Runtime only. A grant taken under one epoch is void under any
+   * other, so a bot that lost the office and got it back (A -> B -> A, or A -> nobody -> A) does not get its old grant back. The
+   * holder is observed on every roster write (saveBots, with the roster BEING WRITTEN, which a staged change publishes only after
+   * the write returns), again where a roster is published (staged records, the import) and again on every read. A write that
+   * fails after it was observed can raise the epoch with no lasting change: that only voids a grant. */
+  private chiefOfficeSeen: { holder: string | null; epoch: number } = { holder: null, epoch: 0 };
+  private observeChiefOffice(bots: readonly BotRecord[] = this.bots): void {
+    const holder = bots.find((bot) => bot.hidden !== true && !inertBot(bot) && isWorkspaceChief(bot))?.id ?? null;
+    if (holder !== this.chiefOfficeSeen.holder) this.chiefOfficeSeen = { holder, epoch: this.chiefOfficeSeen.epoch + 1 };
+  }
+  chiefOffice(): { holder: string | null; epoch: number } {
+    this.observeChiefOffice();
+    return { ...this.chiefOfficeSeen };
+  }
+
   setChiefOfStaff(
     id: string | null,
     section?: string | null,
@@ -5512,10 +5645,14 @@ export class Store {
 
   /** Thread recall (THREAD-SEAL 3.1): bind this native id to the generation its session started under. A later write for the same
    * id can never raise what is stored; another id replaces the entry. */
-  private writeResumeSeal(task: TaskRecord, instanceId: string, cursor: string, sealStart: number) {
+  private writeResumeSeal(task: TaskRecord, instanceId: string, cursor: string, sealStart: number | undefined, partialReplay?: number | false) {
     const prev = task.resumeSeals?.[instanceId];
-    const generation = prev !== undefined && prev.cursor === cursor ? Math.min(prev.generation, sealStart) : sealStart;
-    task.resumeSeals = { ...task.resumeSeals, [instanceId]: { cursor, generation } };
+    const same = prev?.cursor === cursor ? prev : undefined;
+    // An early session.started can persist its replay mark before acceptance binds the seal.
+    const bound = same && same.generation >= 0 ? same.generation : undefined;
+    const generation = sealStart === undefined ? bound ?? -1 : Math.min(bound ?? sealStart, sealStart);
+    const partial = partialReplay ?? same?.partialReplay;
+    task.resumeSeals = { ...task.resumeSeals, [instanceId]: { cursor, generation, ...(partial ? { partialReplay: partial } : {}) } };
   }
 
   /** The acceptance step of the fold (THREAD-SEAL 3.3): a `session.started` that reached the fold before the dispatch knew its own
@@ -5528,8 +5665,8 @@ export class Store {
     this.saveTaskTurnState(this.bot(botId)!, task);
   }
 
-  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number, sealStart?: number, fuigo?: { policy: { root: string; sha256: string }; replayPending?: boolean }) {
-    if (!this.applyResumeCursor(botId, instanceId, cursor, threadId, audience, contract, plainToolNames, incarnation, sealStart, fuigo)) return;
+  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number, sealStart?: number, fuigo?: { policy: { root: string; sha256: string }; replayPending?: boolean }, partialReplay?: boolean) {
+    if (!this.applyResumeCursor(botId, instanceId, cursor, threadId, audience, contract, plainToolNames, incarnation, sealStart, fuigo, partialReplay)) return;
     const bot=this.bot(botId)!, task=threadId?this.taskByThread(botId,threadId):this.activeTask(botId);
     if(task)this.saveTaskTurnState(bot,task);
     this.emit({ type: "bot", botId },false);
@@ -5554,7 +5691,7 @@ export class Store {
   }
 
   /** The record change of setResumeCursor, without its save or announcement. False when the bot is gone. */
-  private applyResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number, sealStart?: number, fuigo?: { policy: { root: string; sha256: string }; replayPending?: boolean }): boolean {
+  private applyResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number, sealStart?: number, fuigo?: { policy: { root: string; sha256: string }; replayPending?: boolean }, partialReplay?: boolean): boolean {
     const bot = this.bot(botId);
     if (!bot) return false;
     // the cursor belongs to the task that produced it, not to the bot
@@ -5594,7 +5731,11 @@ export class Store {
       }
       // and to the seal generation its session started under (THREAD-SEAL 3.1). An unbound save of the same id leaves the entry: it
       // says what that id started under, which nothing later changes. Any other id, or no cursor, ends it.
-      if (cursor !== undefined && sealStart !== undefined) this.writeResumeSeal(task, instanceId, String(cursor), sealStart);
+      const previousSeal = task.resumeSeals?.[instanceId];
+      const clearsPartialReplay = partialReplay === false && previousSeal?.partialReplay !== undefined && previousSeal.cursor === String(cursor);
+      if (cursor !== undefined && (sealStart !== undefined || partialReplay || clearsPartialReplay)) {
+        this.writeResumeSeal(task, instanceId, String(cursor), sealStart, partialReplay ? incarnation ?? 1 : partialReplay);
+      }
       else if (task.resumeSeals && Object.hasOwn(task.resumeSeals, instanceId) && (cursor === undefined || task.resumeSeals[instanceId]!.cursor !== String(cursor))) {
         const { [instanceId]: _dropped, ...rest } = task.resumeSeals;
         task.resumeSeals = rest;
@@ -5897,7 +6038,7 @@ export class Store {
   addTaskUsage(
     botId: string,
     threadId: string,
-    turn: { input?: number; output?: number; cachedInput?: number; costUsd: number | null },
+    turn: { input?: number; output?: number; cachedInput?: number; usageAccounting?: UsageAccounting; costUsd: number | null },
     /** idempotency key of the provider turn: banked in the same write as the totals, so a redelivery changes nothing */
     turnKey?: string,
     /** the routine whose run this turn was, if any: its share of the month is kept apart as well */
@@ -5910,20 +6051,12 @@ export class Store {
     const prev: TaskUsage = { input: 0, output: 0, costUsd: null, turns: 0, ...task.usage };
     const cost = typeof turn.costUsd === "number" && Number.isFinite(turn.costUsd) ? turn.costUsd : null;
     const prevCost = typeof prev.costUsd === "number" ? prev.costUsd : null;
-    // providers occasionally report NaN or a negative on a partial turn —
-    // never let that poison a running tally
-    const clean = (n: number | undefined) => (typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
-    // the cached share exists on a record only once a driver has reported
-    // it — a driver that never does leaves the record shaped as before
-    const cachedKnown = typeof prev.cachedInput === "number" || typeof turn.cachedInput === "number";
-    const prevInput = clean(prev.input);
-    const turnInput = clean(turn.input);
-    const nextCachedInput = Math.min(clean(prev.cachedInput), prevInput)
-      + Math.min(clean(turn.cachedInput), turnInput);
+    // providers occasionally report NaN or a negative on a partial turn: that
+    // turn is an incomplete contribution (prompt-cache-usage.ts), never a zero.
+    // A driver with no accounting metadata is read from its reported numbers.
+    const contribution = turn.usageAccounting ? turn : legacyTurnUsage(turn);
     task.usage = {
-      input: prevInput + turnInput,
-      output: prev.output + clean(turn.output),
-      ...(cachedKnown ? { cachedInput: nextCachedInput } : {}),
+      ...addCacheUsage(previousUsage, contribution),
       costUsd: cost === null ? prevCost : (prevCost ?? 0) + cost,
       turns: prev.turns + 1,
     };
@@ -5940,7 +6073,7 @@ export class Store {
    * task of the bot's own, so addTaskUsage never saw them while the project ledger (settleProjectUsage) counted the same
    * tokens against the limit. Same figures, same turn event: Usage and the limit now read one stream. A redelivery adds nothing. */
   private roomUsageKeys = new Set<string>();
-  addRoomTurnUsage(botId: string, turn: { input?: number; output?: number; cachedInput?: number }, turnKey: string, routine?: { id: string; name: string }): boolean {
+  addRoomTurnUsage(botId: string, turn: { input?: number; output?: number; cachedInput?: number; usageAccounting?: UsageAccounting }, turnKey: string, routine?: { id: string; name: string }): boolean {
     const owner = this.bots.find(candidate => candidate.id === botId);
     if (!owner || this.roomUsageKeys.has(turnKey)) return false;
     this.roomUsageKeys.add(turnKey);
@@ -6378,7 +6511,7 @@ export class Store {
    * last one leaves a fresh, empty "New task" in its place, the same as a
    * channel's last conversation (deleteGroupTask). It used to be refused
    * after the owner had confirmed it, with "a bot keeps at least one task". */
-  deleteTask(botId: string, threadId: string): BotRecord | null {
+  deleteTask(botId: string, threadId: string, nextThreadId?: string): BotRecord | null {
     const bot = this.bot(botId);
     if (!bot || !bot.tasks?.some((t) => t.threadId === threadId)) return null;
     if (bot.tasks.length < 2) this.createTask(botId, undefined, false);
@@ -6387,7 +6520,9 @@ export class Store {
     this.refreshPendingThreads([threadId]);
     this.deleteThreadRecord(threadId);
     if (bot.threadId === threadId) {
-      const next = bot.tasks[0]!;
+      // The list knows its visible order. A stale choice, or one from another
+      // bot, falls back to a surviving task on this bot.
+      const next = bot.tasks.find((task) => task.threadId === nextThreadId) ?? bot.tasks[0]!;
       bot.threadId = next.threadId;
       bot.resumeCursors = { ...next.resumeCursors };
       bot.resumePolicies = structuredClone(next.resumePolicies); bot.replayPending = structuredClone(next.replayPending);

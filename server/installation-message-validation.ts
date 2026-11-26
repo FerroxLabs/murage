@@ -43,7 +43,10 @@ const webhookOperation = z.union([
 ]);
 const webhookRequestCard = z.object({ version: z.literal(1), kind: z.literal("webhook"), requestId: text, botId: text, threadId: text, createdAt: number, operation: webhookOperation, appliedAt: number.optional(), resultId: text.optional() }).passthrough();
 const routineRequest = z.union([routineRequestCard, webhookRequestCard]);
-const skillRequest = z.object({ version: z.literal(1), requestId: text, botId: text, threadId: text, stagedId: text, action: z.enum(["create", "update"]), name: text, gist: text, source: text.optional(), preview: text.optional(), sha256: text.optional(), warnings: strings, createdAt: number }).passthrough();
+const authoredSkillRequest = z.object({ version: z.literal(1), requestId: text, botId: text, threadId: text, stagedId: text, action: z.enum(["create", "update"]), name: text, gist: text, source: text.optional(), preview: text.optional(), sha256: text.optional(), warnings: strings, createdAt: number }).passthrough();
+// Shared switch receipts deliberately omit every skill-body field.
+const switchedSkillRequest = authoredSkillRequest.extend({ action: z.enum(["turn_on", "turn_off", "delete"]), gist: text.optional(), warnings: strings.optional() });
+const skillRequest = z.union([authoredSkillRequest, switchedSkillRequest]);
 const candidate = z.object({ slug: text, name: text, skillNames: strings }).passthrough();
 const intake = z.object({ step: z.enum(["open", "narrow", "confirm"]), outcome: z.enum(["profile", "general"]).optional(), candidate: candidate.optional(), choices: z.array(candidate).optional(), asked: z.union([z.literal(1), z.literal(2)]) }).passthrough();
 const setupCard = z.object({ step: text, variant: text, key: text, settled: boolean.optional() }).passthrough();

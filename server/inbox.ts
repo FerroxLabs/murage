@@ -1441,6 +1441,14 @@ export function owedThreadsCached(db: DatabaseSync, access: InboxAccess): Set<st
   return new Set(hit);
 }
 
+/** Point read using the same grouped request identity as the Inbox projection. */
+export function inboxRequestSnoozed(db: DatabaseSync, threadId: string, messageId: string, now: number): boolean {
+  return Boolean(db.prepare(`SELECT 1 FROM inbox_item_state WHERE source_key = (
+    SELECT json_array(thread_id,kind,json_extract(json,'$.card.requestId'))
+    FROM messages WHERE thread_id=? AND id=? AND kind='options'
+  ) AND snoozed_until>?`).get(threadId, messageId, now));
+}
+
 /** State updates cannot change source status, approve requests or run tools. */
 export function updateInboxState(db: DatabaseSync, update: InboxStateUpdate, access: InboxAccess, now = Date.now()) {
   const allowed = scope(access);

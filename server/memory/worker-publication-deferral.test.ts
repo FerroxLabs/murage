@@ -126,3 +126,30 @@ it("startup capture is not stranded behind an index batch whose copy charges are
   expect(state.indexing).toBe(true);
   expect(sent).toContainEqual(expect.objectContaining({type:"index"}));
 });
+
+// Producer owner: recall-fix-c (capture scheduling); consumer owner: recall-privacy-close-b-n6 (idle/capture boundary).
+it("a queued idle pass rechecks capture ownership after its microtask and resumes after publication", async () => {
+  const {ownerFirst}=await import('../owner-first.ts');
+  const idle=vi.fn(async()=>false);
+  controller=new MemoryWorkerController({onIdleConsolidation:idle});
+  const state=controller as unknown as {child:unknown;ready:boolean;tick():void;work:NonNullable<ReturnType<typeof claimMemoryJob>>|null;idleTask:Promise<unknown>|null;nextEligibleWorkAt:number;later(step:()=>void):void;onWorkerMessage(child:unknown,event:unknown):void};
+  state.child={kill(){},on(){},send(){}};state.ready=true;
+  const pending:Array<()=>void>=[];state.later=step=>{pending.push(step);};
+  vi.spyOn(ownerFirst,"admit").mockReturnValue({admitted:true,forced:false});
+  vi.spyOn(ioBudget,"withSource").mockImplementation(<T,>(_source:string,operation:()=>T):T=>operation());
+  vi.spyOn(ioBudget,"shouldDefer").mockReturnValue(false);
+  vi.spyOn(ioBudget,"backgroundRoom").mockReturnValue(12*1024*1024);
+  state.tick();
+  expect(state.idleTask).not.toBeNull();
+  storeAnchorMessage(database(),"thread","idle-capture-line","The pending fixture capture comes first.");
+  captureSource(database(),{id:"idle-capture-source",threadId:"thread",messageId:"idle-capture-line",kind:"text",speaker:"owner",outcome:"recorded",text:"The pending fixture capture comes first."});
+  state.tick();
+  expect(state.work).toMatchObject({sourceId:"idle-capture-source"});
+  await vi.waitFor(()=>expect(state.idleTask).toBeNull());
+  expect(idle).not.toHaveBeenCalled();
+  state.onWorkerMessage(state.child,{type:"result",result:captureWork(state.work!)});
+  expect(pending).toHaveLength(1);pending.shift()!();
+  expect(state.work).toBeNull();
+  vi.setSystemTime(Date.now()+60_001);state.nextEligibleWorkAt=0;state.tick();
+  await vi.waitFor(()=>expect(idle).toHaveBeenCalledTimes(1));
+});

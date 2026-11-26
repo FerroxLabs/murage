@@ -9,6 +9,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { connectionId } from "../database.ts";
 import { audienceFingerprint, turnAudienceIsOwner } from "../owner-audience.ts";
 import { heldStep } from "../observe.ts";
+import { isDatabaseBusy } from "../db-busy.ts";
+import { ioBudget } from "../io-budget.ts";
 import { DENIED_PLACE, DENIED_RECORD_SCOPE, threadDenied } from "./deny.ts";
 import { isLearnableSource } from "./learnable.ts";
 import { learningSourceBot } from "./learning-guard.ts";
@@ -411,6 +413,10 @@ CREATE TEMP TRIGGER IF NOT EXISTS pip_adm_deny_delete AFTER DELETE ON main.memor
 `;
 export const ADMISSION_TRIGGERS = [...ADMISSION_EPOCH_SQL.matchAll(/TRIGGER IF NOT EXISTS (\w+)/g), ...ADMISSION_DENY_SQL.matchAll(/TRIGGER IF NOT EXISTS (\w+)/g)].map(m => m[1]);
 const epochsReady = new WeakMap<DatabaseSync, boolean>();
+/** A "not now" refusal (the background budget's BG_DEFERRED, a lock wait that ran out) is never kept as the answer (sweep-1021 B2): the install is tried
+ *  again on a later look, no sooner than this floor, doubling to the ceiling. Any other error keeps the fail-closed answer for the connection. */
+const epochsRetry = new WeakMap<DatabaseSync, { at: number; delayMs: number }>();
+export const ADMISSION_EPOCH_RETRY_FLOOR_MS = 250, ADMISSION_EPOCH_RETRY_CEILING_MS = 60_000;
 let epochsWarned = false;
 /** Makes the counters and their triggers on this connection (once; outside a transaction, so a rollback never takes them away unseen).
  *  False when they are not there: every stamp then compares as moved (fail closed). */
@@ -418,13 +424,24 @@ export function ensureAdmissionEpochs(db: DatabaseSync): boolean {
   const known = epochsReady.get(db);
   if (known !== undefined) return known && present(db);
   if (db.isTransaction) return false;
+  const retry = epochsRetry.get(db);
+  if (retry && retry.at > Date.now()) return false;
   let ready = false;
   try {
-    db.exec(ADMISSION_EPOCH_SQL);
-    if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_deny'").get()) db.exec(ADMISSION_DENY_SQL);
+    // Temp objects write no page of the main file: the install is no background source's write, whichever source the first reflection read runs in.
+    ioBudget.withSource("pip-epoch", () => {
+      db.exec(ADMISSION_EPOCH_SQL);
+      if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_deny'").get()) db.exec(ADMISSION_DENY_SQL);
+    });
     ready = true;
+    epochsRetry.delete(db);
   } catch (error) {
     if (!epochsWarned) { epochsWarned = true; console.warn(`[memory] pip admission epochs could not be installed; reflection reads compare as moved (${error instanceof Error ? error.message : String(error)})`); }
+    if (isDatabaseBusy(error)) {
+      const delayMs = Math.min(ADMISSION_EPOCH_RETRY_CEILING_MS, Math.max(ADMISSION_EPOCH_RETRY_FLOOR_MS, (retry?.delayMs ?? 0) * 2));
+      epochsRetry.set(db, { at: Date.now() + delayMs, delayMs });
+      return false;
+    }
   }
   epochsReady.set(db, ready);
   return ready;
@@ -471,7 +488,12 @@ function reflectBits(db: DatabaseSync, botId: string): ReflectBits {
 const reflectDigest = (bits: ReflectBits, run?: AdmissionStamp["run"]) =>
   digest([[...bits.excluded].sort(), run ? [bits.run?.runId === run.runId, bits.run?.families?.[run.family]?.attempt === run.attempt] : null]);
 const audienceOf = (botId: string, threadId: string) => `${audienceFingerprint(threadId)}|${threadIsBotsOwn(botId, threadId)}`;
-const counters = (db: DatabaseSync) => db.prepare("SELECT (SELECT global FROM temp.memory_admission_epoch WHERE id=1) AS g, (SELECT data_version FROM pragma_data_version) AS v").get();
+// data_version by the PRAGMA statement on this connection only (the table-valued form can be shadowed by a table or view of that name),
+// read after the global counter, so stampMoved still samples it last
+const counters = (db: DatabaseSync) => {
+  const g = db.prepare("SELECT global FROM temp.memory_admission_epoch WHERE id=1").get()?.global;
+  return { g, v: db.prepare("PRAGMA data_version").get()?.data_version };
+};
 function threadEpochs(db: DatabaseSync, threadIds: readonly string[]): Record<string, number> {
   const out: Record<string, number> = Object.fromEntries(threadIds.map(t => [t, 0]));
   for (const row of db.prepare("SELECT thread_id,epoch FROM temp.memory_thread_admission WHERE thread_id IN (SELECT value FROM json_each(?))").all(JSON.stringify(threadIds))) out[String(row.thread_id)] = Number(row.epoch);
@@ -507,7 +529,11 @@ export const pipFenceHooks: { step?: (step: StampStep) => void } = {};
  *  another connection at any point between the stamp and that sample (including during the checks above it) answers "moved"; the
  *  counters this connection's own triggers keep cannot move while a synchronous function runs. The adapters call this after their last
  *  await and immediately before dispatch, so nothing can commit between the sample and the send. */
-export function stampMoved(db: DatabaseSync, deps: StampDeps, botId: string, stamp: AdmissionStamp): StampAnswer {
+/** `held` (1.0.22 mem-strict): the caller sends only through a learning gate that holds every row the request shows (learning-send.ts
+ *  HeldRefs) and re-checks those rows, and any withdrawal, whenever anything moved. Then the global counter and data_version (an unrelated
+ *  tombstone, deny, Forget or another connection's commit) are that gate's to judge, never a refusal here; every bot, thread, mode,
+ *  settings, exclusion and audience check above still applies. */
+export function stampMoved(db: DatabaseSync, deps: StampDeps, botId: string, stamp: AdmissionStamp, options: { held?: boolean } = {}): StampAnswer {
   const step = pipFenceHooks.step;
   const bot = deps.bots().find(b => b.id === botId);
   if (!bot?.continuity || (stamp.needsReflect && !bot.options?.reflect)) return "off";
@@ -531,6 +557,7 @@ export function stampMoved(db: DatabaseSync, deps: StampDeps, botId: string, sta
   for (const t of threads) if (audienceOf(botId, t) !== stamp.audience[t]) return "moved";
   step?.("audience");
   // last, after every read above: a commit elsewhere since the stamp, whenever it landed, shows here
+  if (options.held) return "none";
   const c = counters(db);
   if (Number(c?.v ?? 0) !== stamp.version || Number(c?.g ?? 0) !== stamp.global) return "moved";
   return "none";
@@ -541,6 +568,186 @@ export function admissionVector(db: DatabaseSync, threadIds: readonly string[]):
   const c = counters(db);
   const epochs = threadEpochs(db, threadIds);
   return JSON.stringify([connectionId(db), Number(c?.v ?? 0), Number(c?.g ?? 0), threadIds.map(t => epochs[t])]);
+}
+
+// ------------------------------------------------- pending change feed ----
+// What the reflection pending check (pip-reflect.ts anyThreadPendingSliced) remembers per thread is kept true by this feed: the threads
+// whose answer a write may have changed since the last call, and one generation that moves when a write may have changed every thread's.
+// The check then reads only the threads named here, never every thread of every Continuity bot again (1.0.21 owner copy, 9.5 h idle:
+// about 1,000 source pages a minute, the whole history once a minute and once more after every memory write anywhere).
+//  - A thread is named when its admission epoch moves (its sources, their versions and payloads, capture-job completion: the triggers
+//    above), when a tombstone names one of its sources, or when the origin binding of one of its sources changes. The pending check reads
+//    tombstones and origin bindings by source id only, so those two never concern another thread.
+//  - The generation moves with what the check reads for every thread alike: memory policy, deletion epoch and mode, the owner's settings
+//    and the human, bot and room bindings, the learning settings, denies, a scope's kind.
+//  - A commit by another connection (`PRAGMA data_version`) fires none of these triggers. It is placed by what it left in the file, in a
+//    fixed number of seeks: rows added to the source, version, capture-job, tombstone and binding tables since the last look name their
+//    threads (a row changed in place elsewhere is known by the revision its writer moves; no worker connection writes these tables); a memory revision, policy revision or deletion epoch that moved by more than this connection moved it, a changed mode or
+//    learning settings, a deny added or removed, or a changed schema (a VACUUM renumbers rows) moves the generation. A commit that
+//    touched none of these (a search index, a recall view, a root set) names nothing.
+// an upsert, never INSERT OR IGNORE: inside a trigger the conflict rule of the statement that fired it replaces the trigger's own
+// Each change row carries the feed's sequence number at the time of the change (the number moves first, so a later change is always a
+// greater number): the reader keeps the last number it saw and reads the rows after it by the index on seq, never the whole table.
+const NEXT_SEQ = "UPDATE memory_pending_feed SET seq=seq+1 WHERE id=1;";
+const SEQ = "(SELECT seq FROM memory_pending_feed WHERE id=1)";
+const DIRTY = (thread: string) => `${NEXT_SEQ} INSERT INTO memory_pending_dirty(thread_id,seq) SELECT ${thread},${SEQ} WHERE ${thread} IS NOT NULL ON CONFLICT(thread_id) DO UPDATE SET seq=excluded.seq;`;
+const SOURCE_DIRTY = (sourceId: string) => `${NEXT_SEQ} INSERT INTO memory_pending_dirty(thread_id,seq) SELECT s.thread_id,${SEQ} FROM memory_sources s WHERE s.id=${sourceId} AND s.thread_id IS NOT NULL ON CONFLICT(thread_id) DO UPDATE SET seq=excluded.seq;`;
+const WIDE = "UPDATE memory_pending_feed SET wide=wide+1 WHERE id=1;";
+/** The tables whose greatest rowid tells the rows another connection added (ADDED_ROWS). A row this connection adds to or removes from
+ *  one of them moves `own_rows`: the reader then knows its rowid marks are behind by rows of its own (pendingChanges). */
+const ADDED_ROW_TABLES = ["memory_sources", "memory_source_versions", "memory_jobs", "memory_tombstones", "memory_scope_bindings"] as const;
+const OWN_ROWS = "UPDATE memory_pending_feed SET own_rows=own_rows+1 WHERE id=1;";
+const WIDE_BINDING = (row: string) => `(${ADMISSION_BINDING(row as "NEW")} AND ${row}.subject_type<>'source-origin')`;
+const BINDING_COLUMNS = ["id", "scope_id", "subject_type", "subject_id", "revision", "state", "intent"] as const;
+export const PENDING_FEED_SQL = `
+CREATE TEMP TABLE IF NOT EXISTS memory_pending_dirty (thread_id TEXT PRIMARY KEY NOT NULL, seq INTEGER NOT NULL) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS temp.memory_pending_dirty_seq ON memory_pending_dirty(seq);
+CREATE TEMP TABLE IF NOT EXISTS memory_pending_feed (id INTEGER PRIMARY KEY CHECK(id=1), wide INTEGER NOT NULL DEFAULT 0, seq INTEGER NOT NULL DEFAULT 0,
+ own_data INTEGER NOT NULL DEFAULT 0, own_policy INTEGER NOT NULL DEFAULT 0, own_deletion INTEGER NOT NULL DEFAULT 0, own_rows INTEGER NOT NULL DEFAULT 0);
+INSERT OR IGNORE INTO temp.memory_pending_feed(id) VALUES(1);
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_thread_insert AFTER INSERT ON temp.memory_thread_admission BEGIN ${DIRTY("NEW.thread_id")} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_thread_update AFTER UPDATE ON temp.memory_thread_admission BEGIN ${DIRTY("NEW.thread_id")} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_source_message AFTER UPDATE OF message_id ON main.memory_sources WHEN NEW.message_id IS NOT OLD.message_id BEGIN ${DIRTY("OLD.thread_id")} ${DIRTY("NEW.thread_id")} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_tombstone AFTER INSERT ON main.memory_tombstones WHEN NEW.target_type='source' BEGIN ${SOURCE_DIRTY("NEW.target_id")} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_tombstone_update AFTER UPDATE ON main.memory_tombstones WHEN (NEW.target_type='source' OR OLD.target_type='source') AND (${changed(["target_type", "target_id", "revision"])})
+ BEGIN ${SOURCE_DIRTY("OLD.target_id")} ${SOURCE_DIRTY("NEW.target_id")} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_tombstone_delete AFTER DELETE ON main.memory_tombstones WHEN OLD.target_type='source' BEGIN ${SOURCE_DIRTY("OLD.target_id")} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_origin AFTER INSERT ON main.memory_scope_bindings WHEN NEW.subject_type='source-origin' BEGIN ${SOURCE_DIRTY("NEW.subject_id")} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_origin_update AFTER UPDATE ON main.memory_scope_bindings WHEN (NEW.subject_type='source-origin' OR OLD.subject_type='source-origin') AND (${changed(BINDING_COLUMNS)})
+ BEGIN ${SOURCE_DIRTY("OLD.subject_id")} ${SOURCE_DIRTY("NEW.subject_id")} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_origin_delete AFTER DELETE ON main.memory_scope_bindings WHEN OLD.subject_type='source-origin' BEGIN ${SOURCE_DIRTY("OLD.subject_id")} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_binding AFTER INSERT ON main.memory_scope_bindings WHEN ${WIDE_BINDING("NEW")} BEGIN ${WIDE} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_binding_update AFTER UPDATE ON main.memory_scope_bindings WHEN (${WIDE_BINDING("NEW")} OR ${WIDE_BINDING("OLD")}) AND (${changed(BINDING_COLUMNS)}) BEGIN ${WIDE} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_binding_delete AFTER DELETE ON main.memory_scope_bindings WHEN ${WIDE_BINDING("OLD")} BEGIN ${WIDE} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_meta AFTER UPDATE OF policy_revision,deletion_epoch,mode ON main.memory_meta WHEN ${changed(["policy_revision", "deletion_epoch", "mode"])} BEGIN ${WIDE} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_meta_own AFTER UPDATE OF policy_revision,deletion_epoch,data_revision ON main.memory_meta BEGIN
+ UPDATE memory_pending_feed SET own_data=own_data+NEW.data_revision-OLD.data_revision, own_policy=own_policy+NEW.policy_revision-OLD.policy_revision, own_deletion=own_deletion+NEW.deletion_epoch-OLD.deletion_epoch WHERE id=1; END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_learning AFTER UPDATE ON main.memory_learning_config WHEN ${changed(["revision", "settings"])} BEGIN ${WIDE} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_learning_insert AFTER INSERT ON main.memory_learning_config BEGIN ${WIDE} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_scope_kind AFTER UPDATE OF kind ON main.memory_scopes WHEN NEW.kind IS NOT OLD.kind BEGIN ${WIDE} END;
+${ADDED_ROW_TABLES.map(table => `CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_own_insert_${table} AFTER INSERT ON main.${table} BEGIN ${OWN_ROWS} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_own_delete_${table} AFTER DELETE ON main.${table} BEGIN ${OWN_ROWS} END;`).join("\n")}
+`;
+/** memory_deny is a late object: its two triggers are made when the table is first seen (pendingChanges looks until it is there). */
+export const PENDING_DENY_SQL = `
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_deny AFTER INSERT ON main.memory_deny BEGIN ${WIDE} END;
+CREATE TEMP TRIGGER IF NOT EXISTS pip_pend_deny_delete AFTER DELETE ON main.memory_deny BEGIN ${WIDE} END;
+`;
+interface PendingFeed {
+  /** `PRAGMA data_version` when another connection's commits were last placed */
+  version: number;
+  /** what a commit elsewhere may have changed for every thread, as last read */
+  fingerprint: string;
+  /** greatest rowid of each ADDED_ROWS table, as last read */
+  marks: number[] | null;
+  /** times a commit elsewhere, or the deny table arriving, moved the generation */
+  elsewhere: number;
+  deny: boolean;
+  /** the feed's sequence number when the change rows were last read */
+  seq: number;
+  /** the feed's own row (everything this connection's writes move in it) when `fingerprint` and `marks` were last read */
+  own: string;
+}
+/** The change rows after sequence number ?1: one range of the index on seq (EXPLAIN QUERY PLAN: SEARCH ... USING COVERING INDEX), so the
+ *  read costs the rows that changed, whatever the number of threads. */
+export const PENDING_CHANGED_SQL = "SELECT thread_id FROM temp.memory_pending_dirty WHERE seq>?";
+const pendingFeeds = new WeakMap<DatabaseSync, PendingFeed | false>();
+let feedWarned = false;
+/** The tables a commit elsewhere may have added rows to, and the threads rows ?1 < rowid <= ?2 concern. */
+const ADDED_ROWS: ReadonlyArray<{ table: (typeof ADDED_ROW_TABLES)[number]; threads: string }> = [
+  { table: "memory_sources", threads: "SELECT DISTINCT a.thread_id AS t FROM main.memory_sources a WHERE a.rowid>?1 AND a.rowid<=?2 AND a.thread_id IS NOT NULL" },
+  { table: "memory_source_versions", threads: "SELECT DISTINCT s.thread_id AS t FROM main.memory_source_versions a JOIN main.memory_sources s ON s.id=a.source_id WHERE a.rowid>?1 AND a.rowid<=?2 AND s.thread_id IS NOT NULL" },
+  { table: "memory_jobs", threads: "SELECT DISTINCT s.thread_id AS t FROM main.memory_jobs a JOIN main.memory_sources s ON s.id=a.source_id WHERE a.rowid>?1 AND a.rowid<=?2 AND a.stage='capture' AND s.thread_id IS NOT NULL" },
+  { table: "memory_tombstones", threads: "SELECT DISTINCT s.thread_id AS t FROM main.memory_tombstones a JOIN main.memory_sources s ON s.id=a.target_id WHERE a.rowid>?1 AND a.rowid<=?2 AND a.target_type='source' AND s.thread_id IS NOT NULL" },
+  { table: "memory_scope_bindings", threads: "SELECT DISTINCT s.thread_id AS t FROM main.memory_scope_bindings a JOIN main.memory_sources s ON s.id=a.subject_id WHERE a.rowid>?1 AND a.rowid<=?2 AND a.subject_type='source-origin' AND s.thread_id IS NOT NULL" },
+];
+const ADDED_WIDE_BINDING = `SELECT 1 FROM main.memory_scope_bindings a WHERE a.rowid>?1 AND a.rowid<=?2 AND ${WIDE_BINDING("a")} LIMIT 1`;
+/** Test seam: counts the times a commit by another connection was placed, and the times one moved the generation. */
+export const pendingFeedStats = { placed: 0, wide: 0, ranges: 0, rebased: 0 };
+/** What a commit elsewhere is compared against: what it may have changed for every thread (as one string, this connection's own moves of
+ *  the revisions taken out), and the greatest rowid of each ADDED_ROWS table. A fixed number of seeks. */
+function fileBaseline(db: DatabaseSync, feed: PendingFeed, own: Record<string, unknown>): { fingerprint: string; marks: number[] } {
+  const meta = db.prepare("SELECT policy_revision AS p,deletion_epoch AS d,data_revision AS r,mode FROM main.memory_meta WHERE id=1").get();
+  const learning = db.prepare("SELECT revision,settings FROM main.memory_learning_config WHERE id=1").get();
+  const denies = feed.deny ? Number(db.prepare("SELECT COUNT(*) AS n FROM main.memory_deny").get()?.n ?? 0) : 0;
+  const fingerprint = JSON.stringify([meta?.mode ?? null, Number(meta?.r ?? 0) - Number(own.own_data), Number(meta?.p ?? 0) - Number(own.own_policy), Number(meta?.d ?? 0) - Number(own.own_deletion),
+    Number(db.prepare("PRAGMA schema_version").get()?.schema_version ?? 0), learning?.revision ?? null, learning?.settings ?? null, denies]);
+  return { fingerprint, marks: ADDED_ROWS.map(({ table }) => Number(db.prepare(`SELECT MAX(rowid) AS n FROM main.${table}`).get()?.n ?? 0)) };
+}
+/** Places the commits of other connections since the last look (see the section note): adds the threads their new rows concern to
+ *  `threads`, and counts one more `elsewhere` when they may have changed every thread's answer. A constant number of statements. */
+function placeCommitsElsewhere(db: DatabaseSync, feed: PendingFeed, own: Record<string, unknown>, threads: Set<string>): void {
+  pendingFeedStats.placed++;
+  const { fingerprint, marks } = fileBaseline(db, feed, own);
+  let wide = feed.marks !== null && fingerprint !== feed.fingerprint;
+  if (feed.marks !== null) ADDED_ROWS.forEach(({ table, threads: sql }, i) => {
+    const from = feed.marks![i], to = marks[i];
+    // fewer rows than last time: rows went and their numbers may have been given again, so no range of new rows can be trusted
+    if (to < from) { wide = true; return; }
+    if (to === from) return;
+    for (const row of db.prepare(sql).all(from, to)) threads.add(String(row.t));
+    if (table === "memory_scope_bindings" && db.prepare(ADDED_WIDE_BINDING).get(from, to)) wide = true;
+  });
+  if (wide) { feed.elsewhere++; pendingFeedStats.wide++; }
+  feed.fingerprint = fingerprint; feed.marks = marks;
+}
+export interface PendingChanges {
+  /** differs from the last call's when a write may have changed every thread's answer (or the connection changed) */
+  generation: string;
+  /** threads whose answer a write may have changed since the last call */
+  threads: string[];
+}
+/** The feed since the last call on this connection (the first call makes it: every thread is unknown then), or null when it cannot be kept
+ *  (the counters are not installed) or taken now (inside a transaction): the caller then answers nothing from memory and reads every
+ *  thread, as before. Synchronous. The mark is read first: the feed's own row (its sequence number and generation) and
+ *  `PRAGMA data_version`. While neither moved nothing else is read and no thread is named: a fixed number of seeks whatever the number of
+ *  threads. When the sequence number moved, the change rows after the last one seen are read by their index (PENDING_CHANGED_SQL); when
+ *  another connection committed, its commits are placed (placeCommitsElsewhere). */
+export function pendingChanges(db: DatabaseSync): PendingChanges | null {
+  // the feed is temp rows: taken inside a transaction that rolls back, the rows it took would come back unread by anyone
+  if (db.isTransaction || !ensureAdmissionEpochs(db)) return null;
+  let feed = pendingFeeds.get(db);
+  try {
+    if (feed === undefined) {
+      db.exec(PENDING_FEED_SQL);
+      feed = { version: NaN, fingerprint: "", marks: null, elsewhere: 0, deny: false, seq: 0, own: "" };
+      pendingFeeds.set(db, feed);
+    }
+    if (!feed) return null;
+    if (!feed.deny && db.prepare("SELECT 1 FROM main.sqlite_schema WHERE type='table' AND name='memory_deny'").get()) {
+      db.exec(PENDING_DENY_SQL);
+      // denies written before the triggers were there; the table is new to the fingerprint too, which is read again below
+      feed.deny = true; feed.elsewhere++; feed.own = "";
+    }
+    const version = Number(db.prepare("PRAGMA data_version").get()?.data_version);
+    const own = db.prepare("SELECT wide,seq,own_data,own_policy,own_deletion,own_rows FROM temp.memory_pending_feed WHERE id=1").get();
+    if (!own) return null;
+    const threads = new Set<string>(), seq = Number(own.seq);
+    if (seq !== feed.seq) {
+      pendingFeedStats.ranges++;
+      for (const row of db.prepare(PENDING_CHANGED_SQL).all(feed.seq)) threads.add(String(row.thread_id));
+      feed.seq = seq;
+    }
+    // sampled before the file is read: a commit that lands during the reads below is placed again by the next call
+    // the schema too: a table or an index this connection makes moves `schema_version`, which the fingerprint holds, and no row of the feed
+    const ownMark = `${Number(own.wide)}:${seq}:${Number(own.own_data)}:${Number(own.own_policy)}:${Number(own.own_deletion)}:${Number(own.own_rows)}:${Number(db.prepare("PRAGMA schema_version").get()?.schema_version ?? 0)}`;
+    if (version !== feed.version) { placeCommitsElsewhere(db, feed, own, threads); feed.version = version; feed.own = ownMark; }
+    else if (ownMark !== feed.own) {
+      // This connection wrote (or changed the schema) since the fingerprint and the rowid marks were read, and no other connection has committed since: what moved
+      // in the file is this connection's own, and its triggers have named it already (the change rows read above, the generation below).
+      // The fingerprint and the marks are read again here, so that the next commit elsewhere is placed from this point and is never asked
+      // about rows and settings of this connection the check has consumed already (ASTRA 1977a62606: an unrelated commit elsewhere read
+      // every thread this connection had written to again). They are kept only when `data_version` still stands after the reads: a commit
+      // that landed among them is left to the next call, placed from the older point (wider, never narrower).
+      const base = fileBaseline(db, feed, own);
+      if (Number(db.prepare("PRAGMA data_version").get()?.data_version) === version) { feed.fingerprint = base.fingerprint; feed.marks = base.marks; feed.own = ownMark; pendingFeedStats.rebased++; }
+    }
+    return { generation: `${connectionId(db)}:${Number(own.wide)}:${feed.elsewhere}`, threads: [...threads] };
+  } catch (error) {
+    if (!feedWarned) { feedWarned = true; console.warn(`[memory] pip pending change feed is off; the pending check reads every thread (${error instanceof Error ? error.message : String(error)})`); }
+    pendingFeeds.set(db, false);
+    return null;
+  }
 }
 
 // ---------------------------------------------- persisted window re-read ----

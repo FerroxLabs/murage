@@ -2,11 +2,12 @@ import { t } from "@/lib/i18n";
 import { SEND_KEYS, chooseSendKey, currentSendKey, isMacPlatform, sendKeyName, subscribeSendKey } from "@/lib/send-key";
 import { useEffect, useRef, useState, useSyncExternalStore, } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
-import { ANALYTICS_NOT_SAVED, analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
+import { getStarState, isStoreBuild, starAllowedInStores, starPromptSetting, subscribeStarState, switchStarPrompt } from "@/lib/star-prompt";
 import { localeChoices } from "@/locales";
 import { Card, Switch } from "../../SettingsPrimitives";
 import { cn } from "@/lib/cn";
-import { useDesktopSurface, } from "@/lib/use-surface";
+import { useDesktopSurface } from "@/lib/use-surface";
+import { knownComputer } from "@/lib/surface";
 import {
   chooseAutoRail,
   chooseSidebarDensity,
@@ -82,29 +83,19 @@ export function ProfileFields() {
   );
 }
 
-/** Usage analytics, on by default and switchable here. Naming what is sent
- * matters more than the switch: people who cannot see the scope assume the
- * worst, and the worst — conversation text — is exactly what this never
- * sends (autocapture is off; see lib/analytics.ts). */
-export function AnalyticsRow() {
-  const [on, setOn] = useState(analyticsEnabled);
-  // A choice that could not be saved shows as such, never as a switch that stuck.
-  const [unsaved, setUnsaved] = useState(false);
-  const choose = (next: boolean) => {
-    setUnsaved(!setAnalyticsEnabled(next));
-    setOn(next);
-  };
+/** Turns the "Like Murage so far?" card off or on. Local only; it is not offered where the card never shows. */
+export function StarPromptRow() {
+  // useDesktopSurface re-renders this when the harness answers; `computer` is stored by that same answer.
+  const computer = useDesktopSurface() === true && knownComputer() === true;
+  const star = useSyncExternalStore(subscribeStarState, getStarState, getStarState);
+  if (!computer || (isStoreBuild() && !starAllowedInStores())) return null;
   return (
-    <Card
-      title="Usage analytics"
-      subtitle="Product events and counts use a stored anonymous identifier. PostHog also sees your IP address. Never conversations, prompts, file contents, file paths, or bot output, and never your name or email."
-    >
+    <Card title={t("starPrompt.setting.title")} subtitle={t("starPrompt.setting.note")}>
       <Switch
-        checked={on}
-        data-setting-control="analytics-heading" aria-label="Send usage analytics"
-        onClick={() => choose(!on)}
+        checked={starPromptSetting(star)}
+        aria-label={t("starPrompt.setting.title")}
+        onClick={() => switchStarPrompt(!starPromptSetting(star))}
       />
-      {unsaved && <div role="alert" className="mt-2 text-[12px] text-danger">{ANALYTICS_NOT_SAVED} <button type="button" onClick={() => choose(on)} className="rounded px-1 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Try again</button></div>}
     </Card>
   );
 }

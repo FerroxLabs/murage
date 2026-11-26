@@ -1,6 +1,6 @@
 # Murage 1.0.19 RC gates
 
-On build-host, from this checkout:
+On hetzner-dsm, from this checkout:
 
 ```sh
 bash scripts/release-gate/gate-1019.sh <candidate-sha>
@@ -34,7 +34,7 @@ homes/data and fake engines, as required by `docs/verification/README.md`.
 
 | Gate | Execution and interpretation |
 |---|---|
-| FULL | `/work/fuigo-builds/tools/vt-shard.sh <worktree> <sha> --hosts hz`; explicit `VT_WIDEN=0`, `VT_REMOTE_OK=0`, `MAXC=5`. Reuses completed registry results and reports NEW, BASE and FIXED failing assertion lines. FULL is PASS only with no NEW reds; FULL-base-reds separately blocks inherited reds. Incomplete candidate/base registries never pass. |
+| FULL | `/root/fuigo-builds/tools/vt-shard.sh <worktree> <sha> --hosts hz`; explicit `VT_WIDEN=0`, `VT_REMOTE_OK=0`, `MAXC=5`. Reuses completed registry results and reports NEW, BASE and FIXED failing assertion lines. FULL is PASS only with no NEW reds; FULL-base-reds separately blocks inherited reds. Incomplete candidate/base registries never pass. |
 | SMOOTH-idle / load | Pinned rig `1715ad380105197f58345d1fc4912dae50c8f43c`, the corrected `g8-smooth.sh` from tri-smooth-a's triage. `PREBUILD=1`; idle and load run sequentially even after failures. Collects the worker reports, requires the 63-row verdict and matching worker exit. S10 real-engine proof remains separate. |
 | G-NL | Sean ruling 2026-11-12 02:05Z: No limits permits every call except the wipe/catastrophe list, including tainted, unreadable, key-file and protected-path calls. The direct, registered, inheritance, R3 origin/level/wipe and editor tests plus nlsym and both Full access twins are required; missing required files fail the gate. Sean’s 02:50Z webhook ruling applies, guest threads never inherit, and channel-off wins. The fake native replay is `scripts/no-limits-live/truly-proof.mjs`. Candidate replay harness and its receipt verifier. The S3 status explicitly leaves real-engine transport, containment and integration evidence open. Synthetic replay API tests run when present; otherwise the inert Marc policy fixtures run, including wipe controls. Neither qualifies installed engines. |
 | G-WEB | Candidate `scripts/web-read-replay/run.mjs --fake --out <new-dir>`. Reads `routeVerdict` separately from release `verdict`; requires the harness exit to agree with its release verdict (0 for PASS, 1 for FAIL/UNVERIFIED); timeouts/crashes fail. Installed native reader/binary proof is always separate and UNVERIFIED until supplied by its lane. |
@@ -50,7 +50,7 @@ To dispatch an already installed, reviewed **inert** replay image, add
 `--nolim-config /absolute/path/config.json`. The file binds `sha`, `image`
 (`name@sha256:...`), `inert: true`, `corpus`, `results`, `pendingReceipt`,
 `corpusDigest` and `policyDigest`. The three paths must be allocated under
-`/work/fuigo-builds/orph/_ev/nolim-replay/1019/`. The candidate harness enforces
+`/root/fuigo-builds/orph/_ev/nolim-replay/1019/`. The candidate harness enforces
 its UID, permissions, immutable image source label, pending receipt and complete
 report/coverage oracle. Missing images are never pulled. No private corpus is
 created or copied by this kit. Installed-engine proof stays UNVERIFIED even
@@ -131,10 +131,10 @@ gate-1019.mjs
   "'./owned-shards.mjs'",
   "'./smooth-receipt.mjs'",
   "'./truly-verdict.mjs'",
-  "'/work/fuigo-builds/orph/_ev/nolim-replay/1019/'",
-  "'/work/fuigo-builds/shared/leak-guard.sh'",
-  "'/work/build/bld-gatekit-1019/runs'",
-  "'/work/fuigo-builds/tools/vt-shard.sh'",
+  "'/root/fuigo-builds/orph/_ev/nolim-replay/1019/'",
+  "'/root/fuigo-builds/shared/leak-guard.sh'",
+  "'/root/fuigo-builds/swarm-b/bld-gatekit-1019/runs'",
+  "'/root/fuigo-builds/tools/vt-shard.sh'",
   "'5 vt-shard containers + 2 local fixture containers + 1 smoothness worker = 8 maximum for this kit'",
   "'BROWSER_WAIT_EVIDENCE=/evidence/browser-workflow'",
   "'COPY-release-pending'",
@@ -159,7 +159,7 @@ gate-1019.mjs
   "'G-WEB-fake-routes'",
   "'G-WEB-installed'",
   "'Gate box SSH unavailable'",
-  "'build host vt-shard tool missing'",
+  "'Hetzner vt-shard tool missing'",
   "'Inert replay receipt verified by candidate harness; installed engine qualification stays separate'",
   "'Installed native-reader exclusions and binary proof missing; fake-route PASS never promotes this gate'",
   "'Invalid inert replay configuration; use the harness allocated paths and exact candidate'",
@@ -173,7 +173,7 @@ gate-1019.mjs
   "'Real engine login/transport evidence is unavailable; no billable engines invoked'",
   "'Replay harness absent at candidate'",
   "'Required complete wipe-only origin/inheritance HTTP/SSE replay with a fake native engine'",
-  "'Run on build-host; never the Mac'",
+  "'Run on hetzner-dsm; never the Mac'",
   "'Runner is stopping'",
   "'S10 rows require dedicated signed-in engines; fake rig does not prove them; no billable calls authorized'",
   "'S3-STATUS.txt; Sean 2026-11-12 02:05/02:50Z: admitted No limits origins, including webhooks, are wipe-only; guests never inherit; channel off wins; all available rig engines'",
@@ -244,9 +244,9 @@ gate-1019.mjs
   "`${ref}^{commit}`",
   "`${sha.slice(0, 12)}-`",
   "`'${String(s).replaceAll(\"'\", \"'\\\\''\")}'`",
-  "`/work/fuigo-builds/shared-base/${s}/out`",
-  "`/work/fuigo-builds/tools/cage/${cageKey}/linux-x64/bwrap`",
-  "`/work/fuigo-builds/tools/nm/${lock}/node_modules`",
+  "`/root/fuigo-builds/shared-base/${s}/out`",
+  "`/root/fuigo-builds/tools/cage/${cageKey}/linux-x64/bwrap`",
+  "`/root/fuigo-builds/tools/nm/${lock}/node_modules`",
   "`Candidate checkout failed; ${out}/checkout.log`",
   "`Candidate clone failed; ${out}/clone.log`",
   "`Evidence: ${out}\\n`",
@@ -452,10 +452,10 @@ S17 runner operator literals:
 
 The adapter also transports the two authoritative shared leak-guard files as
 read-only mounts when `MURAGE_TEST_SHARED_GUARD_DIR` is supplied. The gate sets
-this from `PUBLIC_LEAK_GUARD_SHARED_DIR` (default `/work/fuigo-builds/shared`).
+this from `PUBLIC_LEAK_GUARD_SHARED_DIR` (default `/root/fuigo-builds/shared`).
 It exposes neither the rest of that directory nor a replacement pattern list.
 
-- `"'/work/fuigo-builds/shared'"`
+- `"'/root/fuigo-builds/shared'"`
 - `"'PUBLIC_LEAK_GUARD_SHARED_DIR=/opt/murage-test-shared'"`
 - `"'leak-guard.sh'"`
 - `"'public-leak-patterns.txt'"`

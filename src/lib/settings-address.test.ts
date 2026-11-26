@@ -29,6 +29,13 @@ describe("Settings addresses", () => {
     expect(hit.entry).toMatchObject({ scope: "app", section: "about", anchor, advanced, card: { anchor } });
   });
 
+  it("opens the saved Connected apps phone calls link in Calls", () => {
+    const address = parseSettingsAddress("murage://settings/app/connections/phone-calls")!;
+    expect(settingsAddressActions(address, context)).toEqual([
+      { type: "toggleAppSettings", open: true, section: "calls", anchor: "phone-calls-heading" },
+    ]);
+  });
+
   it("every app entry opens its page on its card", () => {
     for (const entry of SETTINGS_INDEX) {
       if (entry.scope !== "app") continue;

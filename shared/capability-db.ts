@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "30de51dc810235d88f77532ceb231d1827521f4c08e93957fcbc25ef77c20503";
+export const CAPABILITY_DB_REV = "97a2e1ee3cb43fe367efb6a107f952c4a2e3855caa5466ee535f811b2bd1cbb9";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -142,7 +142,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "description": "Murage can do this.",
     "heading": "Can my bot open a web result and read the page? / Can a bot read a link? / Can my bot read a whole web page?",
     "breadcrumb": "Murage capabilities",
-    "where": "Murage docs → Features → What bots can do for themselves",
+    "where": "Settings → Search, images and dictation → Web search",
     "url": "https://murage.ai/docs/features/bot-tools#reading-web-pages",
     "text": "Yes. After a web search or a link, a bot can open the page and read it with Murage, instead of only seeing the search snippet. Murage saves the full page once. A long page comes in pieces of up to 16,000 characters. The page is read as untrusted text. OpenClaw and Box Agent read pages with their own tools, so long pages may be cut short; so may some agent engines.",
     "capability": "apps.web-read",
@@ -389,10 +389,10 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "breadcrumb": "Murage capabilities",
     "where": "Settings → Models & engines → Engines",
     "url": "https://murage.ai/docs/providers#default-models-and-saved-choices",
-    "text": "For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation. Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
+    "text": "For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback recommends GPT-6.1 Sol, supported by the Codex 0.162.1 and Codex 0.167.0 catalogs. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation. Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
     "capability": "engines.default-models",
     "status": "can",
-    "answer": "For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation.",
+    "answer": "For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback recommends GPT-6.1 Sol, supported by the Codex 0.162.1 and Codex 0.167.0 catalogs. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation.",
     "limits": "Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
     "askYourBot": "",
     "platforms": [
@@ -406,7 +406,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "codex"
     ],
     "applies": "Applies to Mac, Windows, Linux, Murage Cloud; Claude, Codex.",
-    "rev": "b4166648c939679c2a273bbf6c1f4aff7d0ccdcd5e2d51b8380e16ed676428e8"
+    "rev": "2c8557ba02c6f8141afc0d25c0c95b8647aa83f0ad7eefa2c3502612d2808a11"
   },
   {
     "id": "cap:engines.muse-code",

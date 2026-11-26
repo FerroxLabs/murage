@@ -8,7 +8,8 @@ import { closeDatabase, database } from '../database.ts';
 import { InternalCapabilities } from '../internal-capabilities.ts';
 import { assertMemoryAccess, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from './policy.ts';
 import { removeTempDirSync } from '../testing/cleanup.ts';
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+// q1022-upgradecatchup (CHANGED-EXPECTATIONS.md): this file's rows predate the build pace (recall-view.ts RECALL_BUILD_BYTES_PER_MINUTE) and test what is reclaimed and built, not how fast; the pace is opened for them. The pace has its own witnesses (upgrade-catchup-1022.test.ts W-PACE, W-CAP, W-STEADY).
+beforeEach(async () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); (await import('./recall-view.ts')).setRecallBuildPaceForTest(Infinity); });
 function fixture() {
   const roster: MemoryRoster = {memoryRosterRevision:1,bots:[{id:'reader',threadId:'direct'}],groups:[]}; reconcileMemoryRoster(roster);
   const registry = new InternalCapabilities(); registry.begin('reader','direct','generation');

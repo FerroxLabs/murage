@@ -406,6 +406,16 @@ describe("audit round 1", () => {
   it("A9: an app's own description obeys the copy rules", async () => {
     const { slimApp } = await import("./app-catalog.ts");
     expect(slimApp({ slug: "a", name: "A", meta: { description: "Automate work — fast" } })?.blurb).toBe("Automate work, fast");
+    // 1.0.21 polish (Sean's live walk): descriptions were cut mid-word at 90 characters. The card ends at a word with
+    // an ellipsis, and the full words travel along for the hover title.
+    const long = "Track every customer conversation across email and chat, then summarise the threads that need a reply today";
+    const clamped = slimApp({ slug: "d", name: "D", description: long });
+    expect(clamped?.blurb.length).toBeLessThanOrEqual(90);
+    expect(clamped?.blurb.endsWith("…")).toBe(true);
+    expect(long.startsWith(clamped!.blurb.slice(0, -1))).toBe(true);
+    expect(long.charAt(clamped!.blurb.length - 1)).toBe(" ");
+    expect(clamped?.blurbFull).toBe(long);
+    expect(slimApp({ slug: "e", name: "E", description: "Short and whole" })).not.toHaveProperty("blurbFull");
     expect(slimApp({ slug: "b", name: "B", meta: { description: "Safe automation" } })?.blurb).toBe("");
     expect(slimApp({ slug: "c", name: "C", meta: { description: "Compare price plans" } })?.blurb).toBe("");
     expect(slimApp({ slug: "d", name: "D — Pro" })?.label).toBe("D - Pro");

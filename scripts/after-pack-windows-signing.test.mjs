@@ -372,7 +372,7 @@ it("release signature gate exempts only exact verified upstream paths and still 
   expect(gate.indexOf("& node scripts/windows-release-gates.mjs backup")).toBeGreaterThan(-1);
   expect(gate.indexOf("& node scripts/windows-release-gates.mjs backup")).toBeLessThan(gate.indexOf("if ($LASTEXITCODE -ne 0)"));
   expect(gate.indexOf("if ($LASTEXITCODE -ne 0)")).toBeLessThan(gate.indexOf("$rawBackupFiles ="));
-  expect(gate).toContain("$allowed = @('Ferrox Labs, LLC', 'Cloudflare, Inc.')");
+  expect(gate).toContain("$allowed = @('Ferrox Labs, LLC', 'Cloudflare, Inc.', 'Cua AI, Inc.')");
   expect(gate).toContain("@('Murage.exe', 'Murage-*-setup.exe', 'fuigo.exe', 'murage-browser-host.exe')");
   // The gate hands the packaged resources folder's own addon to the check, as an absolute path (require() reads a bare
   // relative path as a package name). This runs the real gate function with the checks injected.

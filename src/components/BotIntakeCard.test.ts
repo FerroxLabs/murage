@@ -15,12 +15,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
 const card = read("./BotIntakeCard.tsx");
 const chat = read("./ChatView.tsx");
-const settings = read("./SettingsPanel.tsx");
+const settings = settingsPanelSource();
 
 const profileEntry = card.slice(card.indexOf("export function BotSetupAction("));
 
@@ -120,7 +121,7 @@ describe("setup is somewhere you go and ask for it", () => {
     // 0.1.57 puts it FIRST: the avatar studio used to open this panel, and
     // the Role control now waits for a second bot to exist, so this is the
     // only thing guaranteed to be on screen.
-    expect(settings).toContain('import { BotSetupAction } from "./BotIntakeCard";');
+    expect(settings).toContain('import { BotSetupAction } from "../BotIntakeCard";');
     const overview = settings.indexOf('<SettingsSection id="overview" active={section}>');
     expect(settings.indexOf("<BotSetupAction bot={bot} />", overview)).toBeGreaterThan(overview);
     expect(settings.indexOf("<BotSetupAction bot={bot} />", overview))

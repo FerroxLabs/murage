@@ -116,8 +116,9 @@ describe("platform process hooks", () => {
     });
     const measure = vi.fn(async () => new Map<number, number>());
     const pool = createWarmPool({ now: () => 1, totalmem: () => 64 * 1024 * MB, freemem: () => 64 * 1024 * MB, sampleFree: async () => {}, measure, env: { MURAGE_WARM_POOL_BUDGET_MB: "8000" }, log: () => {}, timer: false });
-    pool.noteUserActivity();
+    // one active bot per engine: MAIN-RULING warm-active-only keeps one engine per active bot, and this case measures three
     for (const [pid, engine] of [[1, "claude"], [2, "codex"], [3, "acp"]] as const) {
+      pool.noteUserActivity(`b${pid}`, `t${pid}`);
       await pool.markIdle({}, { engine, threadId: `t${pid}`, pid: () => pid, close: () => {} });
     }
     expect(measure).not.toHaveBeenCalled();

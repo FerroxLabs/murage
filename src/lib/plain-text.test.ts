@@ -16,6 +16,26 @@ describe("plainText", () => {
     );
   });
 
+  it.each([
+    ["任务*已经完成*请查收", "任务已经完成请查收"],
+    ["pre*view*text", "previewtext"],
+    ["*a*b", "ab"],
+    ["*a*1", "a1"],
+    ["*a* b", "a b"],
+    ["*a*。", "a。"],
+    ["_a_b", "_a_b"],
+    ["a_b_", "a_b_"],
+    ["_a_b_c_", "a_b_c"],
+    ["𐐀_a_", "𐐀_a_"],
+    ["_a_𐐀", "_a_𐐀"],
+    ["a__b__c", "a__b__c"],
+    ["\\*a\\*b", "*a*b"],
+    ["`*a*b`", "*a*b"],
+    ["**use `*a*` now**", "use *a* now"],
+  ])("flattens preview emphasis in %j without changing literal markers", (input, expected) => {
+    expect(plainText(input)).toBe(expected);
+  });
+
   it("keeps link and image text and drops the target", () => {
     expect(plainText("see [the docs](https://example.com) and ![a chart](chart.png)")).toBe(
       "see the docs and a chart",

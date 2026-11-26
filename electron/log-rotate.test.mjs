@@ -137,7 +137,8 @@ describe("the desktop wiring", () => {
     expect(rotate).toBeGreaterThan(lock);
   });
   it("opens the log through the stream that hears its errors", () => {
-    expect(main).toContain("openLogStream(path.join(LOG_DIR");
+    // q1022-disk: slog now writes through createServerLog, which rotates by size while running and keeps the error listener.
+    expect(main).toContain("createServerLog(path.join(LOG_DIR");
     expect(main).not.toContain("fs.createWriteStream(path.join(LOG_DIR");
   });
 });

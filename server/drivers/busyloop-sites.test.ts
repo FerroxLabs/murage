@@ -40,6 +40,15 @@ it('a newly added or renamed Flux socket cannot silently escape the inventory', 
   const added=source+"\nasync function newSite(){const providerFetch=fetch;const response=await providerFetch('https://api.fluxrouter.ai/v1/responses');return response;}";
   expect(inventory(new Map([[file,added]])).errors.some(e=>e.startsWith('UNROUTED '+file+':providerFetch'))).toBe(true);
 });
+it('a fenced fetch classifies its own response before leaving it to any decision', () => {
+  const file='server/memory/extract.ts', source=readFileSync(file,'utf8');
+  const errors=(text: string) => inventory(new Map([[file,text]])).errors.filter(error=>error.startsWith('UNCLASSIFIED '+file));
+  expect(errors(source)).toEqual([]);
+  const classification='await inspectFluxResponse(response,';
+  expect(source).toContain(classification);
+  expect(errors(source.replace(classification,'await inspectFluxResponse(otherResponse,'))).toHaveLength(1);
+  expect(errors(source.replace(classification,'()=>inspectFluxResponse(response,'))).toHaveLength(1);
+});
 it('R1 a same-named local function cannot replace the shared route decision', () => {
   const file='server/drivers/openai-chat.ts',source=readFileSync(file,'utf8');
   const changed=source.replace(', fluxRouteFor }', ' }').replace('import { fluxRouteFor }', 'import { fluxRouteFor as unusedRoute }')+'\nfunction fluxRouteFor(requestUrl: string) { return {requestUrl,routed:true}; }';
@@ -118,9 +127,9 @@ it('R3 adding an unmarked byte sink in ANY driver is RED', async () => {
   const control = sinkInventory();
   expect(control.errors).toEqual([]);
   const files = Object.keys(control.drivers);
-  const changes = new Map(files.map(file => [file, readFileSync(file, 'utf8') + '\nfunction r3UnmarkedSink(child: import("node:child_process").ChildProcessWithoutNullStreams) { child.stdin.write(`opaque serialized bytes`); }\n']));
+  const changes = new Map(files.map(file => [file, readFileSync(file, 'utf8') + '\nfunction r3UnmarkedSink(addedChild) { addedChild.stdin.write(`opaque serialized bytes`); }\n']));
   const mutant = sinkInventory(changes);
-  for (const file of files) expect(mutant.errors.some(e => e.startsWith('UNROUTED SINK ' + file + ':')), file).toBe(true);
+  for (const file of files) expect(mutant.errors.some(e => e.startsWith('UNROUTED SINK ' + file + ':') && e.endsWith(' addedChild.stdin.write')), file).toBe(true);
   evidence('r3-added-sink-every-driver', files);
 }, 120000);
 
@@ -161,3 +170,11 @@ it('R3 deleting Antigravity or Pi route decisions makes their sinks RED', async 
     expect(result.errors.some(e => e.startsWith('UNROUTED SINK ' + file + ':')), file).toBe(true);
   }
 }, 120000);
+
+it("R12 no non-model exemption covers the model gateway, the Cloud box agent or any file that registers busy-loop sites", () => {
+  const exempt = JSON.parse(readFileSync("scripts/busyloop-nonmodel.json", "utf8")) as Record<string, unknown>;
+  // The Cloud box agent and gateway read live model responses, including translator SSE frames.
+  for (const file of ["server/model-gateway.ts", "server/model-gateway-translate.ts", "server/drivers/boxagent.ts"]) expect(Object.keys(exempt), file).not.toContain(file);
+  const marked = Object.keys(exempt).filter(file => /registerBusyloop(?:Request|Payload)Site\(/.test(readFileSync(file, "utf8")));
+  expect(marked, "an exemption suppresses payload-read and classification checks for these files").toEqual([]);
+}, 30000);

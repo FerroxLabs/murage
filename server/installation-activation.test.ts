@@ -17,7 +17,7 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
-async function fixture(options: { brokenLedger?: boolean; brokenDatabase?: boolean } = {}) {
+async function fixture(options: { brokenLedger?: boolean; brokenDatabase?: boolean; marks?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "murage-activation-")); roots.push(root);
   const source = join(root, "source"), target = join(root, "target"); mkdirSync(source); mkdirSync(target);
   writeFileSync(join(source, "config.json"), "{}");
@@ -31,6 +31,11 @@ async function fixture(options: { brokenLedger?: boolean; brokenDatabase?: boole
     try { db.exec("CREATE TABLE memory_meta (id INTEGER PRIMARY KEY)"); } finally { db.close(); }
   }
   if (options.brokenDatabase) writeFileSync(join(target, "messages.db"), "this is not a database");
+  if (options.marks) {
+    mkdirSync(join(source, "skill-state", "bot"), { recursive: true });
+    writeFileSync(join(source, "skill-state", "every-bot.json"), JSON.stringify({ version: 1, marks: { "collection:hello": { acknowledged: "a".repeat(64), appliedTo: ["bot"] } } }));
+    writeFileSync(join(source, "skill-state", "bot", "skills.json"), JSON.stringify({ hello: { enabled: true } }));
+  }
   const archive = join(root, "backup.zip"), saved = await writeInstallationArchive(source, archive);
   if (!options.brokenDatabase) await restoreInstallation(target, archive, saved.sha256);
   return { root, target, archive, saved };
@@ -193,4 +198,19 @@ it("refuses an unreadable destination database before replacement because perman
 it("a restore whose deletion ledger was read carries no notice and opens as before (B2)", async () => {
   const f = await fixture();
   expect(reviewInstallation(f.target)).not.toHaveProperty("notice");
+});
+
+it("restores global marks as inert state and activates without treating the file as a bot", async () => {
+  const f = await fixture({ marks: true });
+  const file = join(f.target, "skill-state", "every-bot.json");
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ version: 1, marks: {} });
+  expect(JSON.parse(readFileSync(join(f.target, "skill-state", "bot", "skills.json"), "utf8")).hello.enabled).toBe(false);
+  const review = reviewInstallation(f.target);
+  expect(activateInstallation(f.target, review.reviewHash).status).toBe("reviewed-engines-disabled");
+});
+it("restored enablement authority cannot be reintroduced before activation", async () => {
+  const f = await fixture({ marks: true });
+  const review = reviewInstallation(f.target);
+  writeFileSync(join(f.target, "skill-state", "every-bot.json"), JSON.stringify({ version: 1, marks: { "library:hello": { appliedTo: [] } } }));
+  expect(() => activateInstallation(f.target, review.reviewHash)).toThrowError(expect.objectContaining({ code: "RESTORE_WORK_NOT_PAUSED" }));
 });

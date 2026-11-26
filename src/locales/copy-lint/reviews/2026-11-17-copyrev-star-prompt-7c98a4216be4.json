@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "muragemain-copyrev",
+    "account": "claude opus 5.5, MurageMain copy review"
+  },
+  "author": "up-star-prompt-1020",
+  "date": "2026-11-17",
+  "base": "2fe0e7349a",
+  "scope": "starPrompt-strings",
+  "strings": {
+    "en:starPrompt.title": {
+      "text": "Like Murage so far?",
+      "en": "Like Murage so far?",
+      "verdict": "pass"
+    },
+    "en:starPrompt.body": {
+      "text": "A star on GitHub helps more people find Murage.",
+      "en": "A star on GitHub helps more people find Murage.",
+      "verdict": "pass"
+    },
+    "en:starPrompt.notNow": {
+      "text": "Not now",
+      "en": "Not now",
+      "verdict": "pass"
+    },
+    "en:starPrompt.star": {
+      "text": "Star on GitHub",
+      "en": "Star on GitHub",
+      "verdict": "pass"
+    },
+    "en:starPrompt.failed": {
+      "text": "The page did not open. Try again.",
+      "en": "The page did not open. Try again.",
+      "verdict": "pass"
+    },
+    "en:starPrompt.setting.title": {
+      "text": "Ask for a star on GitHub",
+      "en": "Ask for a star on GitHub",
+      "verdict": "pass"
+    },
+    "en:starPrompt.setting.note": {
+      "text": "A small card, shown at most twice. Murage counts days on this computer and sends nothing.",
+      "en": "A small card, shown at most twice. Murage counts days on this computer and sends nothing.",
+      "verdict": "pass",
+      "note": "local day count only, says nothing is sent; no telemetry wording"
+    },
+    "de:starPrompt.title": {
+      "text": "Gefällt dir Murage bisher?",
+      "en": "Like Murage so far?",
+      "verdict": "pass"
+    },
+    "de:starPrompt.body": {
+      "text": "Ein Stern auf GitHub hilft mehr Menschen, Murage zu finden.",
+      "en": "A star on GitHub helps more people find Murage.",
+      "verdict": "pass"
+    },
+    "de:starPrompt.notNow": {
+      "text": "Jetzt nicht",
+      "en": "Not now",
+      "verdict": "pass"
+    },
+    "de:starPrompt.star": {
+      "text": "Auf GitHub einen Stern geben",
+      "en": "Star on GitHub",
+      "verdict": "pass",
+      "note": "longest button label; fits the card's wrap row"
+    },
+    "de:starPrompt.failed": {
+      "text": "Die Seite hat sich nicht geöffnet. Versuche es erneut.",
+      "en": "The page did not open. Try again.",
+      "verdict": "pass",
+      "note": "fixed: Versuch es noch einmal -> Versuche es erneut (house wording)"
+    },
+    "de:starPrompt.setting.title": {
+      "text": "Um einen Stern auf GitHub bitten",
+      "en": "Ask for a star on GitHub",
+      "verdict": "pass"
+    },
+    "de:starPrompt.setting.note": {
+      "text": "Eine kleine Karte, höchstens zweimal. Murage zählt Tage auf diesem Computer und sendet nichts.",
+      "en": "A small card, shown at most twice. Murage counts days on this computer and sends nothing.",
+      "verdict": "pass"
+    },
+    "es:starPrompt.title": {
+      "text": "¿Te gusta Murage hasta ahora?",
+      "en": "Like Murage so far?",
+      "verdict": "pass"
+    },
+    "es:starPrompt.body": {
+      "text": "Una estrella en GitHub ayuda a que más personas encuentren Murage.",
+      "en": "A star on GitHub helps more people find Murage.",
+      "verdict": "pass"
+    },
+    "es:starPrompt.notNow": {
+      "text": "Ahora no",
+      "en": "Not now",
+      "verdict": "pass"
+    },
+    "es:starPrompt.star": {
+      "text": "Dar una estrella en GitHub",
+      "en": "Star on GitHub",
+      "verdict": "pass"
+    },
+    "es:starPrompt.failed": {
+      "text": "La página no se abrió. Inténtalo de nuevo.",
+      "en": "The page did not open. Try again.",
+      "verdict": "pass"
+    },
+    "es:starPrompt.setting.title": {
+      "text": "Pedir una estrella en GitHub",
+      "en": "Ask for a star on GitHub",
+      "verdict": "pass"
+    },
+    "es:starPrompt.setting.note": {
+      "text": "Una tarjeta pequeña, como máximo dos veces. Murage cuenta los días en este equipo y no envía nada.",
+      "en": "A small card, shown at most twice. Murage counts days on this computer and sends nothing.",
+      "verdict": "pass"
+    },
+    "fr:starPrompt.title": {
+      "text": "Murage te plaît jusqu'ici ?",
+      "en": "Like Murage so far?",
+      "verdict": "pass"
+    },
+    "fr:starPrompt.body": {
+      "text": "Une étoile sur GitHub aide plus de monde à trouver Murage.",
+      "en": "A star on GitHub helps more people find Murage.",
+      "verdict": "pass"
+    },
+    "fr:starPrompt.notNow": {
+      "text": "Pas maintenant",
+      "en": "Not now",
+      "verdict": "pass"
+    },
+    "fr:starPrompt.star": {
+      "text": "Mettre une étoile sur GitHub",
+      "en": "Star on GitHub",
+      "verdict": "pass"
+    },
+    "fr:starPrompt.failed": {
+      "text": "La page ne s'est pas ouverte. Réessaie.",
+      "en": "The page did not open. Try again.",
+      "verdict": "pass"
+    },
+    "fr:starPrompt.setting.title": {
+      "text": "Demander une étoile sur GitHub",
+      "en": "Ask for a star on GitHub",
+      "verdict": "pass"
+    },
+    "fr:starPrompt.setting.note": {
+      "text": "Une petite carte, deux fois au plus. Murage compte les jours sur cet ordinateur et n'envoie rien.",
+      "en": "A small card, shown at most twice. Murage counts days on this computer and sends nothing.",
+      "verdict": "pass"
+    },
+    "hi:starPrompt.title": {
+      "text": "अब तक Murage कैसा लगा?",
+      "en": "Like Murage so far?",
+      "verdict": "pass"
+    },
+    "hi:starPrompt.body": {
+      "text": "GitHub पर एक स्टार से ज़्यादा लोगों को Murage ढूँढने में मदद मिलती है।",
+      "en": "A star on GitHub helps more people find Murage.",
+      "verdict": "pass",
+      "note": "fixed: machine text said more people get Murage; now says a star helps more people find it"
+    },
+    "hi:starPrompt.notNow": {
+      "text": "अभी नहीं",
+      "en": "Not now",
+      "verdict": "pass"
+    },
+    "hi:starPrompt.star": {
+      "text": "GitHub पर स्टार दें",
+      "en": "Star on GitHub",
+      "verdict": "pass"
+    },
+    "hi:starPrompt.failed": {
+      "text": "पेज नहीं खुला। फिर कोशिश करें।",
+      "en": "The page did not open. Try again.",
+      "verdict": "pass"
+    },
+    "hi:starPrompt.setting.title": {
+      "text": "GitHub पर स्टार माँगें",
+      "en": "Ask for a star on GitHub",
+      "verdict": "pass"
+    },
+    "hi:starPrompt.setting.note": {
+      "text": "एक छोटा कार्ड, ज़्यादा से ज़्यादा दो बार। Murage इस कंप्यूटर पर दिन गिनता है और कुछ नहीं भेजता।",
+      "en": "A small card, shown at most twice. Murage counts days on this computer and sends nothing.",
+      "verdict": "pass"
+    },
+    "ja:starPrompt.title": {
+      "text": "ここまで Murage は気に入りましたか？",
+      "en": "Like Murage so far?",
+      "verdict": "pass"
+    },
+    "ja:starPrompt.body": {
+      "text": "GitHub のスターは、より多くの人が Murage を見つける助けになります。",
+      "en": "A star on GitHub helps more people find Murage.",
+      "verdict": "pass"
+    },
+    "ja:starPrompt.notNow": {
+      "text": "今はしない",
+      "en": "Not now",
+      "verdict": "pass",
+      "note": "今はしない matches the 9 other Not now strings"
+    },
+    "ja:starPrompt.star": {
+      "text": "GitHub でスターを付ける",
+      "en": "Star on GitHub",
+      "verdict": "pass"
+    },
+    "ja:starPrompt.failed": {
+      "text": "ページを開けませんでした。もう一度お試しください。",
+      "en": "The page did not open. Try again.",
+      "verdict": "pass"
+    },
+    "ja:starPrompt.setting.title": {
+      "text": "GitHub のスターをお願いする",
+      "en": "Ask for a star on GitHub",
+      "verdict": "pass"
+    },
+    "ja:starPrompt.setting.note": {
+      "text": "小さなカードで、表示は多くても2回です。Murage はこのコンピューターで日数を数えるだけで、何も送信しません。",
+      "en": "A small card, shown at most twice. Murage counts days on this computer and sends nothing.",
+      "verdict": "pass"
+    },
+    "pt-br:starPrompt.title": {
+      "text": "Está gostando do Murage até agora?",
+      "en": "Like Murage so far?",
+      "verdict": "pass"
+    },
+    "pt-br:starPrompt.body": {
+      "text": "Uma estrela no GitHub ajuda mais gente a encontrar o Murage.",
+      "en": "A star on GitHub helps more people find Murage.",
+      "verdict": "pass"
+    },
+    "pt-br:starPrompt.notNow": {
+      "text": "Agora não",
+      "en": "Not now",
+      "verdict": "pass"
+    },
+    "pt-br:starPrompt.star": {
+      "text": "Dar uma estrela no GitHub",
+      "en": "Star on GitHub",
+      "verdict": "pass"
+    },
+    "pt-br:starPrompt.failed": {
+      "text": "A página não abriu. Tente de novo.",
+      "en": "The page did not open. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:starPrompt.setting.title": {
+      "text": "Pedir uma estrela no GitHub",
+      "en": "Ask for a star on GitHub",
+      "verdict": "pass"
+    },
+    "pt-br:starPrompt.setting.note": {
+      "text": "Um cartão pequeno, no máximo duas vezes. O Murage conta os dias neste computador e não envia nada.",
+      "en": "A small card, shown at most twice. Murage counts days on this computer and sends nothing.",
+      "verdict": "pass"
+    },
+    "zh:starPrompt.title": {
+      "text": "到目前为止喜欢 Murage 吗？",
+      "en": "Like Murage so far?",
+      "verdict": "pass"
+    },
+    "zh:starPrompt.body": {
+      "text": "在 GitHub 上点一颗星，能让更多人找到 Murage。",
+      "en": "A star on GitHub helps more people find Murage.",
+      "verdict": "pass"
+    },
+    "zh:starPrompt.notNow": {
+      "text": "暂不",
+      "en": "Not now",
+      "verdict": "pass"
+    },
+    "zh:starPrompt.star": {
+      "text": "在 GitHub 上加星",
+      "en": "Star on GitHub",
+      "verdict": "pass"
+    },
+    "zh:starPrompt.failed": {
+      "text": "页面未能打开。请重试。",
+      "en": "The page did not open. Try again.",
+      "verdict": "pass",
+      "note": "fixed: 请再试一次 -> 请重试 (house wording)"
+    },
+    "zh:starPrompt.setting.title": {
+      "text": "提示在 GitHub 上加星",
+      "en": "Ask for a star on GitHub",
+      "verdict": "pass",
+      "note": "fixed: 请求 read as a formal request; 提示 fits a settings switch"
+    },
+    "zh:starPrompt.setting.note": {
+      "text": "一张小卡片，最多出现两次。Murage 只在这台电脑上计算使用天数，不会发送任何内容。",
+      "en": "A small card, shown at most twice. Murage counts days on this computer and sends nothing.",
+      "verdict": "pass",
+      "note": "使用天数 is the plain meaning of counting days; local only, sends nothing"
+    }
+  },
+  "files": {}
+}

@@ -257,7 +257,7 @@ export function createStopGate(env: GateEnv) {
   const settleThrow = (e: GateEntry, error: unknown, classify: Classify): { turnId: string } => {
     if (e.done) {
       // a rejection after the entry was settled (timeout settle, an earlier ending): swallowed, never a second ending
-      console.warn("stop-gate: late rejection after the turn ended", error instanceof Error ? error.message : error);
+      console.info("stop-gate: late rejection after the turn ended", error instanceof Error ? error.message : error);
       return { turnId: e.turnId ?? "" };
     }
     // Fable M-C: a live turn's ending belongs to the live close path (cost, usage, the interrupted ending); the wrapper never finishes it

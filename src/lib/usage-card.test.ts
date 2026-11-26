@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { setLocale, t } from "./i18n";
 import { usageCaption } from "./usage-card";
+import { settingsPanelSource } from "../components/bot-pages/panel-source";
 
 afterEach(() => setLocale("en"));
 
@@ -31,8 +32,10 @@ describe("the bot usage card follows the app language", () => {
   }
 
   it("the card source holds no English literal for its labels", () => {
-    const panel = readFileSync(new URL("../components/SettingsPanel.tsx", import.meta.url), "utf8");
-    const card = panel.slice(panel.indexOf("function BotUsageCard("), panel.indexOf("const inputCls"));
+    const panel = settingsPanelSource();
+    const page = readFileSync(new URL("../components/bot-pages/BotUsagePage.tsx", import.meta.url), "utf8");
+    const card = page.slice(page.indexOf("function BotUsageCard("), page.indexOf("export function UsagePart"));
+    expect(card.length).toBeGreaterThan(200);
     for (const literal of [">Turns<", ">Tokens<", ">Cost<", '"Unknown"', "All bots", "Tokens are still counted"]) {
       expect(card).not.toContain(literal);
     }

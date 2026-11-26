@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, appendFileSync, readFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, appendFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installBindings } from './bindings.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 // Retain the original three test declarations (four cases), including both
 // negative proofs. Only their fixtures moved from prepareAppDenial to the
@@ -51,7 +52,7 @@ test(`${id} binds a real persisted denial fixture and observes its inert app eff
     // MAIN RULING 2026-11-13 wipe-only: saved app denials cannot card at No limits.
     assert.equal(result.obs.cards.length, 0);
     assert.deepEqual(f.captured(), [{ id, ruleId: result.witness.ruleId, executed: true, tool: 'GMAIL_SEND_EMAIL', input: { accountId: 'fixture-account', to: 'fixture@example.test', body: 'inert fixture' } }]);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });
 test('a generic MCP effect cannot prove a connected-app denial target was exercised', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gnl-app-wrong-target-')), f = fixture(root, { generic: true });
@@ -64,7 +65,7 @@ test('a generic MCP effect cannot prove a connected-app denial target was exerci
     assert.equal(result.obs.events[0].toolIdentity.name, 'mcp__fixture__write');
     assert.equal(result.obs.events[1].ok, true);
     assert.deepEqual(f.captured(), [{ id: 'deny-app-denied', ruleId: result.witness.ruleId, executed: true, tool: 'write', input: { text: 'fixture' } }]);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });
 test('an app tool receipt without its independently captured effect cannot prove execution', async () => {
   const root = mkdtempSync(join(tmpdir(), 'gnl-app-no-effect-')), f = fixture(root, { effect: false });
@@ -77,5 +78,5 @@ test('an app tool receipt without its independently captured effect cannot prove
     assert.equal(result.obs.events[0].toolIdentity.name, 'mcp__fixture__connected_app_write');
     assert.equal(result.obs.events[1].ok, true);
     assert.deepEqual(f.captured(), []);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });

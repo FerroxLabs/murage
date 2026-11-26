@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { imeComposing } from "@/lib/composer-enter";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { api, useStoreIfAny } from "@/state/store";
 import { LearningPausedCard } from "./LearningPausedCard";
@@ -20,6 +21,7 @@ import { t } from "@/lib/i18n";
 import { DiskLowCard } from "./DiskLowCard";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { InboxEngineSignInRow } from "./InboxEngineSignInRow";
+import { ReconnectAppsNeedsYou } from "./ReconnectAppsBanner";
 import { NeedsRow } from "./needs/NeedsRow";
 import { offerSnoozeUndo } from "./needs/snooze-undo";
 import { BotAvatar } from "./Avatar";
@@ -247,6 +249,61 @@ function InboxSection({ label, aside, children }: { label: string; aside?: React
   </section>;
 }
 
+/** q1022-cards (#48): how long Approve all from a bot waits on one card's answer before going on to the next. */
+export const APPROVE_ALL_STEP_MS = 30_000;
+/** q1022-cards (#46): the door's rows as they stood when the pointer came over the list (HeldDoor), kept in place. */
+export interface HeldDoor { groups: { bot: string; ids: string[]; bulkBot: string }[]; items: ReadonlyMap<string, InboxItem>; chips: string[]; approveAllShown: boolean; approveAllHeight: number; botButtons: string[]; /** the grey bulk line on approval rows, as it was */ bulkNote: boolean; /** the cards the held rows had, by message id, and each arrival's once its record says it had one (a card read
+ *  landing later adds no buttons to a held row, and one that drops it, or brings it back, takes none away) */ cards: Readonly<Record<string, OptionCardData>>; /** rows that arrived while held, in the order they were first seen; `card` is whether its live card was there once a
+ *  later arrival was seen (unset while it is the last row, where a card read landing moves nothing below it) */ arrived: { bot: string; id: string; card?: boolean }[] }
+export interface DoorGroup { bot: string; entries: { item: InboxItem; live: boolean }[] }
+/** Unheld: the live groups (`held` is what withArrivals gave back for these groups). Held: every held row keeps its slot (live, or `live: false` once it left the list), and a
+ *  row that arrived since goes after all of them in the order it was first seen (never by the live sort, so a later,
+ *  older-stamped arrival cannot go ahead of an earlier one; Astra H1a), under its bot when the list is grouped. */
+export function heldLayout(held: HeldDoor | null, groups: readonly { bot: string; rows: readonly InboxItem[] }[]): DoorGroup[] {
+  if (!held) return groups.map(group => ({ bot: group.bot, entries: group.rows.map(item => ({ item, live: true })) }));
+  const live = new Map(groups.flatMap(group => group.rows.map(item => [item.id, item] as const)));
+  const kept = held.groups.map(group => ({ bot: group.bot, entries: group.ids.map(id => {
+    const now = live.get(id);
+    return now ? { item: now, live: true } : { item: held.items.get(id)!, live: false };
+  }) }));
+  // Arrivals already seen keep their place (and their slot once they leave); one not seen yet goes after them.
+  const arrived = held.arrived.map(({ bot, id }) => {
+    const now = live.get(id);
+    return { bot, entry: now ? { item: now, live: true } : { item: held.items.get(id)!, live: false } };
+  });
+  if (!arrived.length) return kept;
+  const grouped = held.groups.some(group => group.bot);
+  if (!grouped && kept.length === 1) return [{ ...kept[0]!, entries: [...kept[0]!.entries, ...arrived.map(({ entry }) => entry)] }];
+  // Grouped: each arrival goes at the very end too, in a new group when its bot is not the last one's, never into an
+  // earlier group above another bot's arrival (Astra r3 High: Petra, Max, Petra moved Max's card down).
+  const after: DoorGroup[] = [];
+  for (const { bot, entry } of arrived) {
+    const last = after.at(-1);
+    if (last && last.bot === bot) last.entries.push(entry); else after.push({ bot, entries: [entry] });
+  }
+  return [...kept, ...after];
+}
+/** Held: the rows on the list that are neither held nor already seen arriving, added to the arrivals in the order they
+ *  are first seen (the same object back when there are none, so recording them settles). Every arrival that now has a
+ *  row after it keeps whether its live card was there at that moment (Astra/Fable/Opus r4 High: a first arrival's card
+ *  read landing after a second arrival was on screen grew the first and moved the second under the pointer). */
+export function withArrivals(held: HeldDoor | null, groups: readonly { bot: string; rows: readonly InboxItem[] }[], cards: Readonly<Record<string, OptionCardData>>): HeldDoor | null {
+  if (!held) return held;
+  const known = new Set([...held.groups.flatMap(group => group.ids), ...held.arrived.map(entry => entry.id)]);
+  const fresh = groups.flatMap(group => group.rows.filter(item => !known.has(item.id)).map(item => ({ bot: group.bot, item })));
+  if (!fresh.length) return held;
+  const items = new Map([...held.items, ...fresh.map(({ item }) => [item.id, item] as const)]);
+  const arrived: HeldDoor["arrived"] = [...held.arrived, ...fresh.map(({ bot, item }) => ({ bot, id: item.id }))];
+  const kept = { ...held.cards };
+  const recorded = arrived.map((entry, at) => {
+    if (at === arrived.length - 1 || entry.card !== undefined) return entry;
+    const messageId = items.get(entry.id)!.link.messageId;
+    if (cards[messageId]) kept[messageId] = cards[messageId];
+    return { ...entry, card: Boolean(cards[messageId]) };
+  });
+  return { ...held, items, cards: kept, arrived: recorded };
+}
+
 export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, onOpenSettingsPage, refreshKey = 0, initialView = "decisions", door = false, onViewChange }: { onOpen: (link: InboxLink) => void; door?: boolean; /** a tab picked here (the page keeps it, and may ask for another through `initialView`) */ onViewChange?: (view: InboxView) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; onOpenSettingsPage?: (section: "backups" | "storage" | "memory" | "engines" | "models", anchor?: string) => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
@@ -360,7 +417,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // A new list: what was on screen belongs to the old one, so it goes rather
   // than sitting there under the new tab's name until the read lands.
   const reset = () => { setResult(null); setPage(0); setCursors([]); };
-  const chooseView = (next: InboxView) => { if (next !== view) { setView(next); reset(); setOpenId(null); setBotFilter(""); onViewChange?.(next); } };
+  const chooseView = (next: InboxView) => { if (next !== view) { setView(next); reset(); setOpenId(null); setBotFilter(""); setHeld(null); onViewChange?.(next); } };
   // THE TAB IS THE PAGE'S, NOT ONLY OURS (FUNCTION-SWEEP-1018). A tab picked here never reached the page, so the page
   // still thought it was on Needs you, and the rail's Needs you door (which asks for that tab) changed nothing while
   // Approvals was open. Picked tabs are reported up; a tab the page asks for is taken here.
@@ -507,6 +564,122 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const groups = doorRows ? groupNeeds(picked ? ordered.filter(item => botOf(item) === picked) : ordered, botOf) : [];
   const doorIds = groups.flatMap(group => group.rows.map(item => item.id));
   const shownOpen = openId && doorIds.includes(openId) ? openId : null;
+  // q1022-cards (#46): NOTHING MOVES UNDER THE POINTER. While the pointer is over the door's list the rows keep the
+  // slots they had when it came in: a row answered (here, by Approve all, elsewhere) stays in its slot as a grey
+  // "Answered" line with no buttons, a new row is added at the end, and the chips and Approve all keep their place.
+  // The list closes up only once the pointer leaves, so a click always lands on the card that was under it.
+  const [held, setHeld] = useState<HeldDoor | null>(null);
+  // The hold as it is now, for an answer that settles later than the render it was sent from (Astra r3 pass 2 High).
+  const heldNow = useRef<HeldDoor | null>(null);
+  heldNow.current = held;
+  const approveAllSlot = useRef<HTMLDivElement>(null);
+  // Held on every pointer move over the door, not only on entering it: a chip or a tab picked inside it lets go (the
+  // owner asked for the new list), and the next move onto a row holds that list (Opus self-review High).
+  // The list can go while held (its last card answered, a tab change): no mouseleave fires then, so let go here.
+  const doorShown = doorRows && list.length > 0;
+  useEffect(() => { if (!doorShown) setHeld(null); }, [doorShown]);
+  // Rows answered here, so a held slot says "Answered" only for those (a snooze or a row that left says it is no longer waiting).
+  const answeredHere = useRef(new Set<string>());
+  // The page's Approve all counts as there only if it took room when the hold began (Fable r3 LATE H1: the hint is
+  // never null where the button can show, so one that was not on screen could appear above the held rows).
+  const holdDoor = () => setHeld(current => { if (current) return current; const approveAllHeight = approveAllSlot.current?.getBoundingClientRect().height ?? 0; return {
+    groups: groups.map(group => ({ bot: group.bot, ids: group.rows.map(item => item.id), bulkBot: botBulk(group.bot, group.rows).bot })),
+    items: new Map(groups.flatMap(group => group.rows.map(item => [item.id, item] as const))),
+    chips: chips.map(chip => chip.bot),
+    approveAllShown: approveAllHeight > 0,
+    approveAllHeight,
+    bulkNote,
+    cards,
+    botButtons: groups.flatMap(group => { const bulk = botBulk(group.bot, group.rows); return bulk.ids.length > 1 ? [bulk.bot] : []; }),
+    arrived: [],
+  }; });
+  // Every row that arrives while held is recorded once, in the order it is first seen (Astra H1a).
+  useEffect(() => { setHeld(current => withArrivals(current, groups, cards)); }, [held, groups, cards]);
+  // Held: each row's height as last laid out, so a row that leaves keeps its slot at that height, wrapped or open
+  // (Astra H1b: a fixed-height placeholder let every row below move up under the pointer).
+  const doorBox = useRef<HTMLDivElement>(null);
+  const rowHeights = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    if (!held) { rowHeights.current.clear(); return; }
+    for (const row of doorBox.current?.querySelectorAll<HTMLElement>("li[data-needs-row]") ?? []) {
+      const height = row.getBoundingClientRect().height;
+      if (height > 0) rowHeights.current.set(row.dataset.needsRow!, height);
+    }
+  });
+  // "Approve all from <bot>": a group headed by its bot, or a list that is one bot's (its chip, or the only bot); the
+  // rows the server stamped ok whose own one-click Approve is on screen.
+  const botOkIds = (bot: string, rows: readonly InboxItem[]) => bot ? rows.filter(item => botOf(item) === bot && item.bulk === "ok" && approvable.has(item.id)).map(item => item.id) : [];
+  const botBulk = (groupBot: string, rows: readonly InboxItem[]) => {
+    const bot = groupBot || (picked || (rows.length && rows.every(item => botOf(item) === botOf(rows[0]!)) ? botOf(rows[0]!) : ""));
+    return { bot, ids: botOkIds(bot, rows) };
+  };
+  // This render's arrivals, as the effect above records them (so an arrival's first frame already follows the rule below).
+  const seen = withArrivals(held, groups, cards);
+  const doorLayout = heldLayout(seen, groups);
+  const heldIds = seen ? new Set(seen.groups.flatMap(group => group.ids)) : new Set<string>();
+  const arrivedCard = new Map((seen?.arrived ?? []).map(entry => [entry.id, entry.card] as const));
+  // Held: a row that had no live card when the hold began gets none until it ends, closed or open (Astra r3 High, r4
+  // precheck High: the card read landing adds its buttons or its answer panel, the row grows and every row below moves
+  // down under the pointer). An arrival follows the same rule from the moment a later arrival is seen below it; until
+  // then it is the last row and its card read moves nothing.
+  const cardOf = (item: InboxItem) => {
+    if (!seen) return cards[item.link.messageId];
+    const messageId = item.link.messageId;
+    const had = heldIds.has(item.id) ? Object.hasOwn(seen.cards, messageId) : arrivedCard.get(item.id);
+    if (had === undefined) return cards[messageId];
+    // A card a later read lost (an older request took its place among the cards read, a read that failed) stays as
+    // it was, so the row neither shrinks nor grows back under the pointer (Astra q1023 precheck High).
+    return had ? cards[messageId] ?? seen.cards[messageId] : undefined;
+  };
+  // Held: the chips that were there, and no chip row that was not (a row of chips appearing would push the list down).
+  const chipBots = held ? held.chips : chips.map(chip => chip.bot);
+  // q1022-cards (#48): each one-click row hands its own Approve press here, by row id (InboxQuickAnswer onApprover).
+  const approvers = useRef(new Map<string, () => Promise<void>>());
+  const [approvable, setApprovable] = useState<ReadonlySet<string>>(() => new Set());
+  const approverSlots = useRef(new Map<string, (approve: (() => Promise<void>) | null) => void>());
+  const approverFor = useCallback((id: string) => {
+    let slot = approverSlots.current.get(id);
+    if (!slot) {
+      slot = (approve) => {
+        if (approve) approvers.current.set(id, approve); else approvers.current.delete(id);
+        setApprovable(current => (current.has(id) === Boolean(approve) ? current : approve ? new Set([...current, id]) : new Set([...current].filter(entry => entry !== id))));
+      };
+      approverSlots.current.set(id, slot);
+    }
+    return slot;
+  }, []);
+  // q1022-cards (#19): the cards whose answer is out, from any copy of the row or its open card (InboxRequest
+  // useAnsweringReport); a copy that leaves keeps it out, so Approve all never sends it again.
+  const answersOut = useRef(new Set<string>());
+  const answeringSlots = useRef(new Map<string, (out: boolean) => void>());
+  const answeringFor = useCallback((id: string) => {
+    let slot = answeringSlots.current.get(id);
+    if (!slot) {
+      slot = (out) => { if (out) answersOut.current.add(id); };
+      answeringSlots.current.set(id, slot);
+    }
+    return slot;
+  }, []);
+  // One Approve all at a time; each row it was pressed over is pressed once, in order, and never again in that run.
+  const [botApproving, setBotApproving] = useState<string | null>(null);
+  const botApprovingNow = useRef(false);
+  const approveAllFromBot = async (bot: string, ids: readonly string[]) => {
+    if (botApprovingNow.current) return;
+    botApprovingNow.current = true; setBotApproving(bot);
+    try {
+      // Every press is taken at the click (Astra High): a row that leaves the screen mid-run (a chip, a read) is still
+      // answered, through its own press. One that never settles (a hung request) moves on after the bound.
+      const presses = [...new Set(ids)].flatMap(id => { const press = approvers.current.get(id); return press ? [{ id, press }] : []; });
+      for (const { id, press } of presses) {
+        // #19, never a second answer (Astra r3 High, self-review High): a card answered meanwhile (by hand, on a row
+        // that came back after a chip, or from its open card) is skipped; it stays out once sent.
+        if (answersOut.current.has(id)) continue;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([press(), new Promise<void>(done => { timer = setTimeout(done, APPROVE_ALL_STEP_MS); })]);
+        clearTimeout(timer);
+      }
+    } finally { botApprovingNow.current = false; setBotApproving(null); }
+  };
   // "N snoozed" counts what this tab's Show snoozed brings back: everything owed on Needs you, the segment's own on its tab.
   const snoozedOwed = owed ? (view === "decisions" ? result?.snoozedOwed : result?.snoozedHere) ?? 0 : 0;
   // Focus follows the sweep: into the card that just opened (its first control, so 1 to 9 pick), or back to a row's Open.
@@ -528,11 +701,18 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     if (!group && loading) focusAfter.current = next;
   });
   const openRow = (id: string | null, into = true) => { setOpenId(id); if (id) focusAfter.current = { id, into }; };
+  /** The open card was answered or snoozed: the next one opens (the sweep). Held, it is not opened under the pointer
+   *  (it would grow and push every row below it down; Fable H1b): focus goes to its Open, and it opens on a press. */
+  const openAfter = (id: string) => {
+    const next = nextAfterAnswer(doorIds, id);
+    if (heldNow.current) { setOpenId(null); if (next) focusAfter.current = { id: next, into: false }; } else openRow(next);
+  };
   /** A one-click answer from a collapsed row (NEEDSYOU-INLINE-APPROVE) was accepted: the row leaves now, and focus
    *  goes to the next row's Open, never onto another answer, so a second Enter opens a card rather than approving. */
   const settledInline = (item: InboxItem) => {
     snoozeReturns.cancel(item.id);
     const next = nextAfterAnswer(doorIds, item.id);
+    answeredHere.current.add(item.id);
     setGone(current => new Set([...current, item.id]));
     if (next && next !== item.id) focusAfter.current = { id: next, into: false };
     // the last row answered: the page's heading, so focus is never dropped (Astra full review Medium)
@@ -543,7 +723,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     const target = snoozeTarget(Date.now());
     const remaining = doorIds.filter(id => id !== item.id);
     setGone(current => new Set([...current, item.id]));
-    if (shownOpen === item.id) openRow(nextAfterAnswer(doorIds, item.id));
+    if (shownOpen === item.id) openAfter(item.id);
     else if (remaining.length) focusAfter.current = { id: nextAfterAnswer(doorIds, item.id) ?? remaining[0]!, into: false };
     const putBack = () => setGone(current => new Set([...current].filter(id => id !== item.id)));
     let written: Promise<unknown> | null = null;
@@ -606,7 +786,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
             // The bot's own words head the card whenever the live request can be
             // read; `item.title` is the kind of thing it is, and stays as the
             // line above it rather than as the headline.
-            const card = cards[item.link.messageId];
+            const card = cardOf(item);
             // APPROVALS-SIMPLE-1018: an approval is headed by what the bot wants, in words ("Petra wants to ..."),
             // never by its command; the command stays in the answer panel and the conversation.
             const headline = requestHeadline(card) || (card && inlineAnswerKind(card) === "approval" ? rowLine(card, botNameFromSource(item.sourceLabel), requestSummary) : "");
@@ -636,10 +816,14 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
                 {item.duplicates > 1 && <span className="py-0.5 text-ink-secondary">{item.kind === "error" ? `${item.duplicates} times` : `${item.duplicates} matching receipts`}</span>}
                 {snoozeShown && snoozed && <span className="py-0.5 text-ink-secondary">{door ? t("ux.l2b.snooze.until", { time: shortWhen(item.snoozedUntil!) }) : `Snoozed until ${shortWhen(item.snoozedUntil!)}`}</span>}
               </div>}
-              {answerable && <InboxRequestAnswer threadId={item.link.threadId} card={card!} botName={botNameFromSource(item.sourceLabel)} details={door} onSettled={() => {
+              {answerable && <InboxRequestAnswer threadId={item.link.threadId} card={card!} botName={botNameFromSource(item.sourceLabel)} details={door} onAnswering={answeringFor(item.id)} onSettled={() => {
                 // The sweep: an accepted answer takes the row away now and opens the next one.
                 snoozeReturns.cancel(item.id);
-                if (doorRows) { setGone(current => new Set([...current, item.id])); openRow(nextAfterAnswer(doorIds, item.id)); }
+                if (doorRows) {
+                  answeredHere.current.add(item.id);
+                  setGone(current => new Set([...current, item.id]));
+                  openAfter(item.id);
+                }
                 setRevision(current => current + 1);
               }} />}
               <div className="mt-3 flex flex-wrap gap-2">
@@ -682,7 +866,10 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     <BoxBody className="flex flex-col p-4 sm:p-6">
     <p className="text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
     {/* Approve all (APPROVE-ALL-1016): Approvals and Needs you; the server says whether this surface shows it, and under 2 waiting approvals it stays away (NOLIM-1019 N3: eligible or not) */}
+    {/* q1022-cards (#46): while the pointer is over the list its slot keeps the height it had, so the list never jumps up when it goes. */}
+    <div ref={approveAllSlot} data-approve-all-slot style={!held ? undefined : held.approveAllShown ? { minHeight: held.approveAllHeight } : { height: 0, overflow: "hidden" }}>
     {approveAllEligible !== null && <ApproveAllButton ready={approveAllReady} listed={approveAllListed} counts={approveAllDisplayed} screen={approveAllScreen} refreshes={refreshes} onApplied={() => setRevision(current => current + 1)} onChanged={() => setRevision(current => current + 1)} />}
+    </div>
     {/* FIVE LISTS, AND ONLY THREE OF THEM CARRY A NUMBER.
         The owner opened this with thirty six against it, and thirty five of
         those were one provider outage listed once per run. A count he cannot
@@ -697,7 +884,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         {label}{shown && count ? ` (${count(shown) + (door && value === "decisions" ? result?.snoozedOwed ?? 0 : 0)})` : ""}
       </button>)}
     </nav>
-    <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); const next = draft.trim(); if (next !== query) { setQuery(next); reset(); } else setRevision(current => current + 1); }}>
+    <form onKeyDown={event => { if (event.key === "Enter" && imeComposing(event.nativeEvent)) event.preventDefault(); }} role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); const next = draft.trim(); if (next !== query) { setQuery(next); reset(); } else setRevision(current => current + 1); }}>
       <label className="sr-only" htmlFor="inbox-search">Search Inbox</label><input id="inbox-search" type="search" maxLength={200} value={draft} onChange={event => setDraft(event.target.value)} className={`${field} flex-1`} placeholder="Search results or bots" />
       <button className={button}>Search</button>
     </form>
@@ -834,6 +1021,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         rather than an item: there is no message under it to open, read or
         snooze. The run carrying the error is the only evidence there is, so
         that is what it offers. */}
+    {/* An app to sign in again, listed here too, so the reconnect line can be put away without losing the way back. */}
+    <ReconnectAppsNeedsYou dispatch={store?.dispatch} label={t("settings.group.reach")} />
     {restoreRows.length > 0 && (
       <InboxSection label="Connections to restore">
         <ul className="space-y-2" aria-label="Connections to restore">
@@ -885,18 +1074,38 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
           {clearable.length > 1 && <button className={button} disabled={saving} aria-label={`Clear all ${clearable.length} that need nothing from you`} onClick={() => void clearAll(clearable)}>Clear all {clearable.length}</button>}
         </>}
       >
-        {doorRows ? <>
-          {chips.length > 1 && <div role="group" aria-label={t("ux.l2b.door.chipsLabel")} data-needs-chips className="mb-3 flex flex-wrap gap-2 max-md:flex-nowrap max-md:overflow-x-auto max-md:py-0.5 max-md:[&>button]:shrink-0">
-            <button type="button" className={viewTab(!picked)} aria-pressed={!picked} onClick={() => setBotFilter("")}>{t("ux.l2b.door.chipAll", { n: ordered.length })}</button>
-            {chips.map(chip => <button key={chip.bot} type="button" className={viewTab(picked === chip.bot)} aria-pressed={picked === chip.bot} onClick={() => setBotFilter(chip.bot)}>{t("ux.l2b.door.chip", { bot: chip.bot, n: chip.count })}</button>)}
+        {doorRows ? <div data-needs-door ref={doorBox} onMouseOver={holdDoor} onMouseLeave={() => setHeld(null)}>
+          {chipBots.length > 1 && <div role="group" aria-label={t("ux.l2b.door.chipsLabel")} data-needs-chips className="mb-3 flex flex-wrap gap-2 max-md:flex-nowrap max-md:overflow-x-auto max-md:py-0.5 max-md:[&>button]:shrink-0">
+            <button type="button" className={viewTab(!picked)} aria-pressed={!picked} onClick={() => { setHeld(null); setBotFilter(""); }}>{t("ux.l2b.door.chipAll", { n: ordered.length })}</button>
+            {chipBots.map(bot => <button key={bot} type="button" className={viewTab(picked === bot)} aria-pressed={picked === bot} onClick={() => { setHeld(null); setBotFilter(bot); }}>{t("ux.l2b.door.chip", { bot, n: chips.find(chip => chip.bot === bot)?.count ?? 0 })}</button>)}
           </div>}
           <p className="sr-only">{t("ux.l2b.door.keys")}</p>
           <div onKeyDownCapture={onDoorKeyCapture} onKeyDown={onDoorKey}>
-            {groups.map(group => <div key={group.bot || "all"} className="mt-3 first:mt-0">
-              {group.bot && <h3 className={`${sectionHeading} mb-2`}>{t("ux.l2b.door.group", { bot: group.bot, n: group.rows.length })}</h3>}
-              <ul className="space-y-2" aria-label={group.bot ? t("ux.l2b.door.group", { bot: group.bot, n: group.rows.length }) : t("ux.l2a.door.needsYou")}>
-                {group.rows.map(item => {
-                  const card = cards[item.link.messageId];
+            {doorLayout.map((group, at) => {
+              const liveRows = group.entries.flatMap(entry => (entry.live ? [entry.item] : []));
+              // Held: the bot and the button this group had when the pointer came in, kept even once fewer than two are
+              // left, and none added (#46: nothing closes up or opens up mid-click).
+              const heldGroup = held?.groups[at];
+              const bulkBot = held ? heldGroup?.bulkBot ?? group.bot : botBulk(group.bot, liveRows).bot;
+              const bulkIds = botOkIds(bulkBot, liveRows);
+              const bulkButton = bulkBot && (held ? held.botButtons.includes(bulkBot) && (heldGroup !== undefined || !group.bot) : bulkIds.length > 1 || botApproving === bulkBot)
+                ? <button type="button" data-needs-bot-approve-all={bulkBot} className={button} disabled={botApproving !== null || bulkIds.length === 0} onClick={() => void approveAllFromBot(bulkBot, bulkIds)}>
+                  {botApproving === bulkBot ? `Approving ${bulkBot}'s cards…` : `Approve all ${bulkIds.length} from ${bulkBot}`}
+                </button> : null;
+              return <div key={`${at}:${group.bot || "all"}`} className="mt-3 first:mt-0">
+              {(group.bot || bulkButton) && <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                {group.bot ? <h3 className={sectionHeading}>{t("ux.l2b.door.group", { bot: group.bot, n: liveRows.length })}</h3> : <span />}
+                {bulkButton}
+              </div>}
+              <ul className="space-y-2" aria-label={group.bot ? t("ux.l2b.door.group", { bot: group.bot, n: liveRows.length }) : t("ux.l2a.door.needsYou")}>
+                {group.entries.map(({ item, live }) => {
+                  if (!live) return <li key={item.id} data-needs-resolved={item.id} style={rowHeights.current.has(item.id) ? { minHeight: rowHeights.current.get(item.id) } : undefined} className="rounded-xl border border-hairline/30 bg-inset opacity-60">
+                    <div className="flex min-h-14 flex-wrap items-center gap-3 px-3 py-2">
+                      <p className="min-w-0 flex-1 basis-48 break-words text-[14px] leading-snug text-ink-secondary">{rowLine(cardOf(item), botOf(item), requestSummary) || item.title}</p>
+                      <span className="text-[12px] text-ink-secondary">{answeredHere.current.has(item.id) ? "Answered" : "No longer waiting"}</span>
+                    </div>
+                  </li>;
+                  const card = cardOf(item);
                   const bot = botOf(item);
                   const since = waitingSinceTime(item.at, Date.now());
                   const botRecord = item.botId ? store?.state.bots.find(entry => entry.id === item.botId) : undefined;
@@ -908,7 +1117,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
                     key={item.id}
                     id={item.id}
                     line={rowLine(card, bot, requestSummary) || item.title}
-                    meta={approval ? rowMeta({ kind: rowKind(item, card), ...(bot ? { bot } : {}), time: since, ...(item.bulk ? { bulk: item.bulk } : {}), note: bulkNote })
+                    meta={approval ? rowMeta({ kind: rowKind(item, card), ...(bot ? { bot } : {}), time: since, ...(item.bulk ? { bulk: item.bulk } : {}), note: held ? held.bulkNote : bulkNote })
                       : bot ? t("ux.l2b.door.meta", { bot, time: since }) : t("ux.l2b.door.metaNoBot", { time: since })}
                     details={item.kind === "request"}
                     avatar={botRecord ? <BotAvatar bot={botRecord} size={32} /> : undefined}
@@ -916,15 +1125,16 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
                     cameBack={cameBack(item, Date.now())}
                     onToggle={() => openRow(shownOpen === item.id ? null : item.id)}
                     headRef={(element) => { if (element) heads.current.set(item.id, element); else heads.current.delete(item.id); }}
-                    actions={card ? <InboxQuickAnswer threadId={item.link.threadId} card={card} botName={bot} labelledBy={`needs-row-line-${item.id}`} onSettled={() => settledInline(item)} /> : undefined}
+                    actions={card ? <InboxQuickAnswer threadId={item.link.threadId} card={card} botName={bot} labelledBy={`needs-row-line-${item.id}`} onSettled={() => settledInline(item)} onApprover={approverFor(item.id)} onAnswering={answeringFor(item.id)} /> : undefined}
                     onNotNow={item.snoozedUntil !== null && item.snoozedUntil > Date.now() ? undefined : () => snooze(item)}
                     onNext={nextId ? () => openRow(nextId) : undefined}
                   >{cardBody(item)}</NeedsRow>;
                 })}
               </ul>
-            </div>)}
+            </div>;
+            })}
           </div>
-        </> : <ul className="space-y-2" aria-label="Inbox items">
+        </div> : <ul className="space-y-2" aria-label="Inbox items">
           {list.map(item => <li key={item.id} className={`rounded-xl border bg-inset p-4 ${item.read ? "border-hairline/50" : "border-hairline"}`} data-inbox-id={item.id}>{cardBody(item)}</li>)}
         </ul>}
       </InboxSection>

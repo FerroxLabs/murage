@@ -509,3 +509,20 @@ describe("DOOR-1 L8 receipt authorization", () => {
     expect(cloudRouteDecision(method,path,"browser",{})).toBe(method === "GET" ? "allow" : "deny");
   });
 });
+
+it("G43 Cloud MCP summaries admit owner desktop and phone, never browser scopes", () => {
+  for (const scope of ["browser", "owner-browser", "remembered-owner", "anonymous", "service"] as const) {
+    for (const steppedUp of [false, true]) expect(cloudRouteDecision("GET", "/api/bots/b1/mcp-servers", scope, {}, steppedUp)).toBe("deny");
+  }
+  for (const scope of ["owner-desktop", "owner-phone"] as const) expect(cloudRouteDecision("GET", "/api/bots/b1/mcp-servers", scope, {})).toBe("allow");
+});
+
+it("Grok H2: only the desktop and paired companion can reach the private skill review", () => {
+  const path = "/api/threads/fixture-thread/skill-switch-review/fixture-message";
+  const klass = routeClass("GET", path);
+  expect(klass).toBe("companion");
+  const nobody = { desktop: false, companion: false, door: false, bot: false };
+  for (const who of ["desktop", "companion"] as const) expect(routeAdmits(klass, { ...nobody, [who]: true })).toBe(true);
+  expect(routeAdmits(klass, nobody)).toBe(false);
+  for (const who of ["door", "bot"] as const) expect(routeAdmits(klass, { ...nobody, [who]: true })).toBe(false);
+});

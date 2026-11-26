@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -9,6 +9,7 @@ import {startApiFixture,waitForMemoryCapture} from './fakes/api-service.mjs';
 import {sameMemoryInput,sameRoutineInput} from './live-accounting.mjs';
 import {operationCompleted} from './native-operation-evidence.mjs';
 import {scenarioBudget} from './run.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 test('flattened native Write/custom write collision preserves namespace, schema and exact input',async()=>{
  const service=await startApiFixture();
@@ -37,7 +38,7 @@ test('memory normalization binds idempotency, candidate, source revision and quo
   assert.equal(sameMemoryInput({...service,input:{...service.input,evidence:[{...service.input.evidence[0],source_revision:3}]}},native,dir),false);
   db.prepare('UPDATE memory_source_versions SET payload=?').run(JSON.stringify({text:'Quote: rm -rf /'}));
   assert.equal(sameMemoryInput(service,native,dir),false);
- }finally{db.close();rmSync(dir,{recursive:true,force:true});}
+ }finally{db.close();safeWipeSync(dir);}
 });
 
 test('text-only custom write requires an exact native start and successful result',()=>{
@@ -78,7 +79,7 @@ test('fast HTTP fake waits for the current owner source rather than accepting an
   await new Promise(r=>setTimeout(r,60));assert.equal(finished,false);
   db.prepare('UPDATE memory_jobs SET status=?').run('complete');
   await pending;assert.equal(finished,true);
- }finally{db.close();rmSync(dir,{recursive:true,force:true});}
+ }finally{db.close();safeWipeSync(dir);}
 });
 
 test('room service registration binds the exact native action and persisted routine revision',()=>{
@@ -91,7 +92,7 @@ test('room service registration binds the exact native action and persisted rout
   assert.equal(sameRoutineInput(service,{...native,action:'delete'},dir),false);
   assert.equal(sameRoutineInput({...service,input:{...service.input,expectedUpdatedAt:122}},native,dir),false);
   assert.equal(sameRoutineInput({...service,input:{...service.input,changes:{enabled:true}}},native,dir),false);
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{safeWipeSync(dir);}
 });
 
 

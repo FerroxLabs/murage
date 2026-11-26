@@ -16,7 +16,7 @@ Command (network-none container, the fixture setup supplies temporary HOME/data)
 
     pnpm exec vitest run server/memory/lineage-allowance-reads.test.ts server/memory/upgrade-fix-r3.test.ts --maxWorkers=1
 
-Evidence: /work/build/afix-bld-s2m-r4/evidence/handoff-before.log
+Evidence: /root/fuigo-builds/swarm-b/afix-bld-s2m-r4/evidence/handoff-before.log
 and handoff-before-container.log. Final-tip reruns and deliberate regressions
 are recorded in the same job's DONE and evidence directory. These are passing
 suite runs, not waivers of the inherited failure report. No product lineage

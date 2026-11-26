@@ -11,7 +11,7 @@ export function event() {
   const listeners = new Set();
   return { addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn), fire: (...args) => Promise.all([...listeners].map(fn => fn(...args))) };
 }
-export async function workerFixture() {
+export async function workerFixture({ clock, random } = {}) {
   const stored = {}, ports = [], timers = new Map(), tabs = new Map();
   let nextTab = 0, nextTimer = 0, runtime;
   const completed = event();
@@ -35,7 +35,9 @@ export async function workerFixture() {
   runInNewContext(source, { chrome: api, createBrowserExtensionRuntime: (chrome, options) => {
     runtime = createBrowserExtensionRuntime(chrome, { ...options, uuid: () => 'profile_1' });
     vi.spyOn(runtime, 'connection'); return runtime;
-  }, setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id) });
+  }, ...(clock ? { Date: class extends Date { static now() { return clock.now; } } } : {}),
+  ...(random ? { Math: Object.create(Math, { random: { value: random } }) } : {}),
+  setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; }, clearTimeout: id => timers.delete(id) });
   await settle();
   await ports[0].onMessage.fire({ version: 1, type: 'command', id: `${'a'.repeat(32)}_1`, bindingId: 'bot_a', generation: 1, operation: 'bind', params: { profileId: 'profile_1', botName: 'Preview', approvedOrigins: ['https://allowed.test'] } });
   expect(stored.murageBrowserState.bindings[0].state).toBe('active');

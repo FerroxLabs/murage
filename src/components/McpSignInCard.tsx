@@ -11,7 +11,8 @@ import { Check, KeyRound, Loader2, X } from "lucide-react";
 
 import { api, type Message } from "@/state/store";
 import { t } from "@/lib/i18n";
-import { mcpBridge } from "@/lib/mcp-bridge";
+import { canUseOwnMcpApp, mcpBridge } from "@/lib/mcp-bridge";
+import { McpOwnAppForm } from "./McpOwnAppForm";
 
 /** Close the card. From the browser door the route is the computer's alone, so
  * a refusal is said out loud instead of leaving the card standing silently
@@ -32,6 +33,7 @@ export async function dismissSignInCard(
 export function McpSignInCard({ botId, threadId, message }: { botId: string; threadId: string; message: Message }) {
   const card = message.mcpSignIn!;
   const [busy, setBusy] = useState(false);
+  const [ownApp, setOwnApp] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   if (card.dismissed) return null;
 
@@ -47,9 +49,13 @@ export function McpSignInCard({ botId, threadId, message }: { botId: string; thr
     try {
       const result = await bridge.signIn(card.name);
       if (!result.ok) {
-        if (result.error !== "cancelled") setLocalError(result.message);
+        if (result.error !== "cancelled") {
+          setLocalError(result.message);
+          setOwnApp(canUseOwnMcpApp(result.error));
+        }
         return;
       }
+      setOwnApp(false);
       await api(`${endpoint}/resume`, { method: "POST", body: JSON.stringify({ threadId }) });
     } catch (cause) {
       setLocalError(cause instanceof Error ? cause.message : String(cause));
@@ -85,6 +91,9 @@ export function McpSignInCard({ botId, threadId, message }: { botId: string; thr
             </button>
           )}
         </div>
+        {!signedIn && !busy && ownApp && bridge?.useOwnApp && (
+          <div className="px-4 pb-3"><McpOwnAppForm name={card.name} save={bridge.useOwnApp} /></div>
+        )}
         {!signedIn && bridge && (
           <div className="flex items-center justify-end border-t border-hairline/40 bg-panel/40 px-4 py-2.5">
             <button

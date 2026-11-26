@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Test owner: tafix-r4a (taken over from the closed tafix-r4b). Production owners remain responsible for any exposed bug.
 // Run inside the test container: node server/testing/tafix-r4b-mutants.mjs <group> <external-output-dir>.
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { verifyDecisionMutant } from '../../scripts/test-truth/decision-mutant.test-helper.mjs';
 import { tmpdir } from 'node:os';
+import { safeWipeSync } from './safe-wipe.mjs';
 const [group, outputArg] = process.argv.slice(2), root = process.cwd(), output = resolve(outputArg);
 if (!relative(root, output).startsWith('..' + sep)) throw Error('Evidence must be outside the checkout');
 mkdirSync(output, { recursive: true });
@@ -64,5 +65,5 @@ try {
   if (result.killed) console.log(`${id}: KILLED by ${title}`);
   else { failed = true; console.log(`${id}: NOT CERTIFIED`); }
  }
-} finally { process.chdir(root); rmSync(scratch, { recursive: true, force: true }); }
+} finally { process.chdir(root); safeWipeSync(scratch); }
 if (failed) process.exitCode = 1;

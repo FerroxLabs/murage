@@ -1,3 +1,4 @@
+import { assertExternalEvidencePath, evidencePath } from './evidence-path.mjs';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Networkless container only. Mutations affect private copies, never the checkout.
@@ -9,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const root = resolve('.');
-const evidence = resolve(process.argv[2] ?? 'evidence/bld5-toolid-s4a');
+const evidence = assertExternalEvidencePath(resolve(process.argv[2] ?? evidencePath('evidence/bld5-toolid-s4a')));
 const scratch = mkdtempSync(join(tmpdir(), 'r13a-parity-mutants-'));
 const mutations = [
   ['cut-to-run',

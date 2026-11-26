@@ -24,35 +24,35 @@
     ]
   },
   "D034": {
-    "sha256": "1615f063c894aa824fd55c89f8f05e9904f63cce0c95d0cbce7394d77884fba5",
-    "bytes": 97760996,
+    "sha256": "c24d40a3786322ff3a5e3ac6eed162226cbaf07ebe468715407827226b0f8897",
+    "bytes": 105057133,
     "urls": [
-      "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/mac-arm64/chrome-headless-shell-mac-arm64.zip",
-      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/152.0.7977.82%2Fmac-arm64%2Fchrome-headless-shell-mac-arm64.zip?alt=media"
+      "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.36/mac-arm64/chrome-headless-shell-mac-arm64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/158.0.8127.36%2Fmac-arm64%2Fchrome-headless-shell-mac-arm64.zip?alt=media"
     ]
   },
   "D035": {
-    "sha256": "c903707292c6aaed7c6e572c0bb5e6645454e45d9e0e6db27e876b18e9165f31",
-    "bytes": 102895824,
+    "sha256": "e0c5d07d8f5bcc5bdd5ef370e7daf3770856b585fcc9eecf441c7e3bb2e3d1cf",
+    "bytes": 112306247,
     "urls": [
-      "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/mac-x64/chrome-headless-shell-mac-x64.zip",
-      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/152.0.7977.82%2Fmac-x64%2Fchrome-headless-shell-mac-x64.zip?alt=media"
+      "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.36/mac-x64/chrome-headless-shell-mac-x64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/158.0.8127.36%2Fmac-x64%2Fchrome-headless-shell-mac-x64.zip?alt=media"
     ]
   },
   "D036": {
-    "sha256": "0ca12ea26b502a83e32db334a17883c315348845efc071d908de7a6d94a97eff",
-    "bytes": 119454769,
+    "sha256": "2d3a23017323c54fd457a678e4351f895c4076d8050e39d5aa6247f93448b73a",
+    "bytes": 132087165,
     "urls": [
-      "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/linux64/chrome-headless-shell-linux64.zip",
-      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/152.0.7977.82%2Flinux64%2Fchrome-headless-shell-linux64.zip?alt=media"
+      "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.36/linux64/chrome-headless-shell-linux64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/158.0.8127.36%2Flinux64%2Fchrome-headless-shell-linux64.zip?alt=media"
     ]
   },
   "D037": {
-    "sha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845",
-    "bytes": 119768220,
+    "sha256": "9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e",
+    "bytes": 127876264,
     "urls": [
-      "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/win64/chrome-headless-shell-win64.zip",
-      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/152.0.7977.82%2Fwin64%2Fchrome-headless-shell-win64.zip?alt=media"
+      "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.36/win64/chrome-headless-shell-win64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/158.0.8127.36%2Fwin64%2Fchrome-headless-shell-win64.zip?alt=media"
     ]
   },
   "D039": {

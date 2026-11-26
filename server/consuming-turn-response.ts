@@ -28,11 +28,12 @@ import type { Readable } from "node:stream";
 import type { LineageRef, LineageVerdict, StagedResultProvenance, TurnLineage } from "./memory/lineage-types.ts";
 import { captureTurnParentAdditions, checkedOpenTurns, commitTurnParents, proposeTurnParents, retainedTurnDatabase } from "./memory/lineage-write.ts";
 import { releaseTransaction, ReleaseCommitFailed } from "./memory/release-transaction.ts";
-import { assertRetainedFence } from "./memory/send-fence.ts";
+import { assertRetainedFence, isPendingFenceDeferral } from "./memory/send-fence.ts";
 import type { ConsumingIdentity } from "./ledger-refusal.ts";
-import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
+import { ledgerRefusalCause, refusalLineFor, REFUSAL_KIND_HEADER } from "./ledger-refusal.ts";
 import { consumingSinkEntry, type SinkInventoryEntry } from "./consuming-sink-inventory.ts";
 import { checkReleaseAvailable, reserveRelease, withReleaseBudgets, RELEASE_CHUNK_MAX } from "./memory/release-budget.ts";
+import { logSwallowedConsumingError } from "./consuming-error-log.ts";
 import { isDatabaseBusy, setBusy, DEFAULT_BUSY_MS, BACKGROUND_BUSY_MS } from "./db-busy.ts";
 
 export interface ConsumingTurnBinding {
@@ -68,6 +69,14 @@ export function refuseConsumingTurn(binding: ConsumingTurnBinding, verdict: Line
     throw error;
   }
 }
+/** 1.0.20 busy-engines: the verdict of a refusal an engine's driver raises itself, with no ledger verdict behind it (its servers never listed
+ * or readied, the engine exited, a capacity or mount rule). Every driver uses this one mark: the direct turn's lease ends such a turn at once
+ * unless its context really was revoked (index.ts admitLedgerLease seal), as on 1.0.19; a rebuild would meet the same refusal again. */
+export const ENGINE_OWN_REFUSAL: LineageVerdict = Object.freeze({ state: "checking", reason: "not-built", driverRaised: true } as const);
+/** refuseConsumingTurn for a refusal the engine's own driver raised (ENGINE_OWN_REFUSAL). */
+export function refuseEngineOwnTurn(binding: ConsumingTurnBinding): never {
+  return refuseConsumingTurn(binding, ENGINE_OWN_REFUSAL);
+}
 export function bindConsumingTurn(binding: ConsumingTurnBinding): ConsumingTurnBinding {
   const identity = Object.freeze({ ...binding.identity, lineageTurnIds: Object.freeze([...binding.identity.lineageTurnIds]) });
   const result = Object.freeze({ ...binding, identity });
@@ -95,6 +104,7 @@ export function assertConsumingBinding(binding: ConsumingTurnBinding): void {
     if (!terminalAllowances.has(binding)) terminalAllowances.set(binding, members.map(member => member.budget!));
   } catch (error) {
     if (error instanceof Object && reportedRefusals.has(error)) throw error;
+    logSwallowedConsumingError("binding.assert", error);
     refuseConsumingTurn(binding, (error as { fence?: LineageVerdict }).fence);
   }
 }
@@ -123,7 +133,16 @@ interface ConsumingEmission<T> {
   refs: readonly LineageRef[];
   prepareAttribution?: () => void;
   commitAttribution?: () => void;
-  write: () => T;
+  /** `confirm` is for a destination that learns later whether it took the frame (see `confirms`). */
+  write: (confirm: () => void) => T;
+  /** The destination reports failure after write() has returned (a socket: Node never throws for a dead one). write() then calls
+   * `confirm` once the destination itself reported the frame taken; a write() that merely returned accepted nothing. */
+  confirms?: boolean;
+  /** 1.0.22 userbug-sealed: set only by the turn's tool exchange (consuming-turn-ingress.ts ownerToolExchange: the engine's call into a
+   * mounted tool and the tool's reply; consumingHttpWriter ownerToolExchange: an internal route answering a bundled tool of the turn).
+   * Only such an emission may take the owner rule for held context still checking:pending (send-fence.ts ownerHeldPendingProposal); every
+   * other emission (engine input, the model gateway, the outer error writer, the own-server VPS relay) keeps the refusal unchanged. */
+  ownerProposal?: boolean;
 }
 export function emitConsumingTurnResponse<T>(binding: ConsumingTurnBinding, descriptor: ConsumingDescriptor,
   emission: ConsumingEmission<T>): T {
@@ -167,8 +186,9 @@ function emitPreparedConsumingResponse<T>(binding: ConsumingTurnBinding, descrip
         const captured = emission.prepareAttribution
           ? captureTurnParentAdditions(binding.turn, () => attribution(emission.prepareAttribution!)) : [];
         const refs = [...emission.refs, ...preparedParents, ...captured];
-        const proposal = proposeTurnParents(binding.turn, refs);
-        for (const entry of proposal.entries) assertRetainedFence(entry.open, db, 0, entry.parents, "check-only");
+        const owner = emission.ownerProposal === true;
+        const proposal = proposeTurnParents(binding.turn, refs, owner);
+        for (const entry of proposal.entries) assertRetainedFence(entry.open, db, 0, entry.parents, "check-only", owner);
         // Rollback hooks stay under the writer owner until final acceptance.
         if (refs.length) commitTurnParents(proposal);
         if (emission.commitAttribution) {
@@ -179,11 +199,30 @@ function emitPreparedConsumingResponse<T>(binding: ConsumingTurnBinding, descrip
         assertRetainedFence(binding.turn, db);
       },
       onRelease: () => reserveRelease(budgets, { attempts: 1, bytes: emission.bytes, work: 1 }),
-      emit: () => { entered = true; return emission.write(); },
+      // 1.0.21 cause4: the fence passed and the destination took the frame, so this window of the turn's budget may be followed by
+      // another (release-budget.ts). A write that throws accepted nothing, and neither did a frame with no bytes (headers alone).
+      // Round 2: a socket's write returns normally even when the socket is gone and reports the failure later, so a destination that
+      // `confirms` is believed only when it says so itself (at most once per frame); until then the frame renews nothing.
+      emit: () => {
+        entered = true;
+        let confirmed = false;
+        // A late report counts only for the window its frame was written in: it never renews a window that released nothing itself.
+        const written = budgets.map(budget => budget.windows);
+        const confirm = () => {
+          if (confirmed) return;
+          confirmed = true;
+          if (emission.bytes > 0) budgets.forEach((budget, index) => { if (budget.windows === written[index]) budget.accepted(); });
+        };
+        const taken = emission.write(confirm);
+        if (!emission.confirms) confirm();
+        return taken;
+      },
       }); } finally { try { setBusy(db, DEFAULT_BUSY_MS); } catch { /* closed handle remains a fence failure */ } }
     });
   } catch (error) {
     if (error instanceof ConsumingPreparationFailed) throw error;
+    // 1.0.20 revkill: nothing was released and nothing is refused; the deferring caller waits for the check (send-fence.ts).
+    if (!entered && isPendingFenceDeferral(error)) throw error;
     if (error instanceof ReleaseCommitFailed || entered && error instanceof Error && error.message === "ASYNC_RELEASE_TRANSACTION") {
       // The transport may own bytes even though durable commit or the writer
       // contract failed. Keep its charge and seal; never retry the frame.
@@ -192,6 +231,7 @@ function emitPreparedConsumingResponse<T>(binding: ConsumingTurnBinding, descrip
     }
     if (entered) throw error; // Native transport errors retain identity.
     if (error instanceof Object && reportedRefusals.has(error)) throw error;
+    logSwallowedConsumingError(isDatabaseBusy(error) ? "response.emit:busy" : "response.emit", error);
     if (isDatabaseBusy(error)) {
       // A committed revoke still wins over contention. Read the retained
       // ledger without trying to acquire the already-held writer again.
@@ -205,8 +245,33 @@ function emitPreparedConsumingResponse<T>(binding: ConsumingTurnBinding, descrip
 
 /** A restricted destination facade: raw writes remain private to this module.
  * Header, data and final data (including SSE DONE) each cross the same gate. */
+/** 1.0.22 userbug-sealed (ASTRA n4:5920, ASTRA pre-check r3): which internal routes answer a bundled tool of the turn (its tool exchange).
+ * An ALLOWLIST by method and route: a route not named here (a new one included) keeps the refusal unchanged. Not named, because the
+ * response is the proxy's own control or publication traffic, not a tool's answer: the computer proxy's activity heartbeat
+ * (POST computer-activity, computer-proxy.ts) and its hold/help/release control (computer-control, control-client.ts), the headless
+ * browser's authority read and cleanup (headless-browser), the proxy's save of an oversized result (POST tool-result: the engine gets the
+ * preview), the cloud MCP catalog and MCP wipe-metadata publications, and a box's wake and state poll (POST .../resume, GET .../<id>).
+ * Whether proxy control on the owner's turn should take the owner rule is GROK-HOLD (userbug-sealed-fable-r4 QUESTIONS.md Q-G3).
+ * index.ts passes this to consumingHttpWriter. */
+const OWNER_TOOL_EXCHANGE_ROUTES: ReadonlySet<string> = new Set([
+  ...["project/propose", ...["thread-search", "thread-list", "thread-read", "search", "get", "save", "propose-correction"].map(name => `memory/${name}`),
+    "register-artifact", "needs-owner-now", "voice-note", "stop-line-allowance", "publish-site", "take-down-site", "generate-image", "web-read",
+    "web-search", "resolve-image-reference", "device/call", "host-computer", "unified-browser", "venue/read-messages", "venue/post",
+    "room-share/ask", "bot-management", "access-request", "permission-status", "outcome-proposals", "routine-requests", "skills/stage",
+    "ask-bot", "delegate-bot", "create-bot", "request-browser-connection", "mcp-servers", "ask-user", "show-widget", "update-widget",
+    "request-credential", "connectors/mcp", "connectors/request", "image-prompt-blocks", "image-reference-packs"].map(name => `POST /api/internal/${name}`),
+  ...["image-models", "image-prompt-block", "agents", "routines", "skills", "image-prompt-blocks", "image-reference-packs", "tool-result"]
+    .map(name => `GET /api/internal/${name}`),
+]);
+export const ownerToolExchangeRoute = (method: string, path: string): boolean =>
+  OWNER_TOOL_EXCHANGE_ROUTES.has(`${method} ${path}`)
+  || method === "POST" && /^\/api\/internal\/(?:project|email|mcp-remote)\/[a-z][a-z0-9_-]*$/.test(path)
+  || method === "POST" && /^\/api\/internal\/box\/v1\/boxes\/[A-Za-z0-9_-]{1,128}\/commands$/.test(path)
+  || method === "GET" && /^\/api\/internal\/(?:delegations\/[\w-]{4,64}|box\/v1\/boxes\/[A-Za-z0-9_-]{1,128}\/(?:artifacts|files))$/.test(path);
+/** `ownerToolExchange` (1.0.22 userbug-sealed): this response answers a bundled tool of the turn on an internal route (index.ts), so it is
+ * part of the turn's tool exchange and may take the owner rule for held context still checking:pending (ConsumingEmission.ownerProposal). */
 export function consumingHttpWriter(raw: ServerResponse, binding: ConsumingTurnBinding,
-  descriptors: Readonly<{ headers: ConsumingDescriptor; body: ConsumingDescriptor; chunk: ConsumingDescriptor }>): ServerResponse {
+  descriptors: Readonly<{ headers: ConsumingDescriptor; body: ConsumingDescriptor; chunk: ConsumingDescriptor }>, ownerToolExchange = false): ServerResponse {
   let status = 200, sealed = false, declared = false;
   const headers = new Map<string, string | number | string[]>();
   const staged: { refs: LineageRef[]; prepares: Array<() => void>; commits: Array<() => void> } = { refs: [], prepares: [], commits: [] };
@@ -249,15 +314,18 @@ export function consumingHttpWriter(raw: ServerResponse, binding: ConsumingTurnB
         }
         if (sealed || !declared) refuseConsumingTurn(binding);
         const finalBytes = typeof data === "string" ? Buffer.byteLength(data, encoding) : data?.byteLength ?? 0;
-        return { bytes: finalBytes, refs: mode === "headers" ? [] : staged.refs,
+        return { bytes: finalBytes, refs: mode === "headers" ? [] : staged.refs, ownerProposal: ownerToolExchange,
         ...(mode !== "headers" && staged.prepares.length ? { prepareAttribution: () => { for (const prepare of staged.prepares) synchronousAttribution(prepare); } } : {}),
         commitAttribution: () => { if (mode !== "headers") for (const commit of staged.commits) synchronousAttribution(commit); },
-        write: () => {
+        confirms: true,
+        write: (confirm: () => void) => {
           entered = true;
           if (!raw.headersSent) raw.writeHead(status, Object.fromEntries(headers));
           if (mode === "headers") return true;
           const onDone = callback;
-          const done = onDone ? () => onDone.call(facade) : undefined;
+          // Node calls this with the error when the write failed (ERR_STREAM_DESTROYED and the like) and, for end(), only on
+          // 'finish': a response whose socket is gone never finishes. Only an error-free report is an accepted release.
+          const done = (error?: Error | null) => { if (!error) confirm(); onDone?.call(facade); };
           const accepted = mode === "body" ? raw.end(data, encoding ?? "utf8", done) : raw.write(data!, encoding ?? "utf8", done);
           if (accepted && typeof (accepted as { then?: unknown }).then === "function") refuseConsumingTurn(binding);
           staged.refs = []; staged.prepares = []; staged.commits = [];
@@ -443,7 +511,7 @@ export function stageProvenance(writer: object, provenance: StagedResultProvenan
   stageConsumingResponse(writer, provenance.refs, provenance.commit, provenance.prepare);
 }
 /** Only context-free denial is available without a consuming binding. */
-export function denyConsumingHttp(raw: ServerResponse, binding?: ConsumingTurnBinding): void {
+export function denyConsumingHttp(raw: ServerResponse, binding?: ConsumingTurnBinding, cause?: unknown): void {
   if (raw.destroyed || raw.writableEnded) return;
   if (binding) {
     const budgets = terminalAllowances.get(binding);
@@ -452,8 +520,17 @@ export function denyConsumingHttp(raw: ServerResponse, binding?: ConsumingTurnBi
   }
   if (raw.headersSent) { raw.destroy(); return; }
   for (const name of raw.getHeaderNames()) raw.removeHeader(name);
-  raw.writeHead(409, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
-  raw.end(LEDGER_REFUSAL_LINE);
+  // 1.0.21 cause22: the refusing check's own verdict when the caller holds it (fixed vocabulary only, ledgerRefusalCause); the door
+  // name alone hid a real budget stop behind a label.
+  const fence = (cause as { fence?: LineageVerdict } | null | undefined)?.fence;
+  const word = fence && typeof fence === "object" ? ledgerRefusalCause(fence) : "invalid-verdict";
+  console.warn(word === "invalid-verdict" ? "[memory] ledger refusal cause=consuming-http-denied" : `[memory] ledger refusal cause=${word} door=consuming-http-denied`);
+  // cause22 r2: the engine-facing body is the same truthful line the owner is shown. A budget stop (the verdict the caller holds, or the
+  // bound turn's own budget having refused) lost no context, so it is never told "context is no longer available". The header is the
+  // fixed word a spawned proxy reads to give its own terminal JSON-RPC error the same line (proxy-turn-release.ts); no other value exists.
+  const budgetStop = word === "checking:retained-budget" || (binding ? terminalAllowances.get(binding)?.some(budget => budget.refused) === true : false);
+  raw.writeHead(409, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", ...(budgetStop ? { [REFUSAL_KIND_HEADER]: "retained-budget" } : {}) });
+  raw.end(refusalLineFor(budgetStop ? { state: "checking", reason: "retained-budget" } : undefined));
 }
 
 /** A consuming source never receives the destination. Every bounded piece is

@@ -89,6 +89,7 @@ import {
   healthMark,
   markNeedsReconnect,
   needsReconnectSlugs,
+  NEVER_ASKS_SIGN_IN,
   readAppAnswer,
   updateMark,
 } from "./connected-app-health.ts";
@@ -137,7 +138,7 @@ const connectorServiceSchema = z.object({
     expiresAt: z.number().finite().optional(),
   })).optional(),
 });
-const connectorServicesResponseSchema = z.object({ services: z.record(z.string(), connectorServiceSchema).optional() });
+const connectorServicesResponseSchema = z.object({ services: z.record(z.string(), connectorServiceSchema).optional(), complete: z.boolean().optional() });
 const removalResponseSchema = z.object({ removed: z.number() });
 const authUrlResponseSchema = z.object({ url: z.string().optional() });
 
@@ -376,6 +377,7 @@ function setFluxBrokerAccessInner(access: unknown, url: string): void {
 /** Forget every desktop-sent broker fact; the env becomes authoritative
  * again. For tests and for a restored-profile relaunch. */
 export function resetManagedBrokerState(): void {
+  failedCallAt.clear();
   managedBrokerAccess = undefined;
   managedFluxBrokerUrl = undefined;
   managedFluxAccess = undefined;
@@ -1915,6 +1917,7 @@ async function observeAppAnswer(cfg: AppConfig, payload: JsonValue, bytes: Uint8
   // Flux forwards provider failures without a stable error code. Refresh the
   // authoritative account statuses on EVERY tool error, including generic ones.
   if (reading.errors.size) {
+    if (owner) for (const slug of reading.errors) failedCallAt.set(JSON.stringify([owner, slug]), Date.now());
     try { await readConnectedInventory(cfg, { force: true, fresh: true }); }
     catch { /* A failed inventory read is not proof of an account lapse. */ }
   }
@@ -2045,6 +2048,8 @@ async function retireReplacedAccounts(cfg: AppConfig, slug: string, ids: Readonl
 /** The name the bot and the chat show for an app: the curated or monogram
  * label (never one the broker supplied), letters, digits and spaces only. */
 function reconnectLabel(slug: string): string {
+  // The catalog name for this app does not read as the product's own name.
+  if (slug === "highlevel") return "HighLevel";
   const clean = (text: string) => text.replace(/[^A-Za-z0-9 ]+/g, " ").replace(/ {2,}/g, " ").trim().slice(0, 40).trim();
   return clean(knownApps(null, [slug])[slug]?.label ?? "") || clean(slug) || "A connected app";
 }
@@ -2577,12 +2582,25 @@ function loadInventory(cfg: AppConfig, owner: string, signal?: AbortSignal): () 
       }
       for (const [slug, service] of Object.entries(services)) {
         for (const account of service.accounts) if (account.expiresAt !== undefined && account.expiresAt <= Date.now()) account.status = "EXPIRED";
-        const failed = service.accounts.filter(a => !/^ACTIVE$/i.test(a.status));
-        if (failed.length || /^(EXPIRED|REVOKED|NEEDS_RECONNECT)$/i.test(service.status)) {
-          markNeedsReconnect(owner, slug, "sign-in no longer accepted", accountKeyOf(service.accounts));
+        // "Sign in again" is only for a sign-in that worked and stopped. A sign-in still in progress or never
+        // finished, and an account the owner switched off, are not connected: they never ask (1.0.19 owner report).
+        const neverLapsed = new Set(service.accounts.filter(a => NOT_A_LAPSED_SIGN_IN.test(a.status)).map(a => a.id));
+        const failed = service.accounts.filter(a => !/^ACTIVE$/i.test(a.status) && !neverLapsed.has(a.id));
+        // 1.0.20 (owner report): for an app whose row alone does not prove a lapse, a row that is not active asks
+        // only right after a call to that app failed. An incident an earlier read opened from the row alone ends.
+        const callFailed = !CALL_PROVEN_SIGN_IN.has(slug) || failedCallRecently(owner, slug);
+        if (!callFailed && healthMark(owner, slug)?.cause === INVENTORY_LAPSE) clearNeedsReconnect(owner, slug);
+        if (callFailed && (failed.length || (!service.accounts.length && /^(EXPIRED|REVOKED|NEEDS_RECONNECT)$/i.test(service.status)))) {
+          markNeedsReconnect(owner, slug, CALL_PROVEN_SIGN_IN.has(slug) ? INVENTORY_LAPSE_AFTER_CALL : INVENTORY_LAPSE, accountKeyOf(service.accounts));
           const merged = new Map((healthMark(owner, slug)?.accounts ?? []).map(a => [a.id, a]));
-          for (const { id, alias } of failed.length ? failed : service.accounts) merged.set(id, { id, ...(alias ? { alias } : {}) });
+          for (const { id, alias } of failed) merged.set(id, { id, ...(alias ? { alias } : {}) });
           updateMark(owner, slug, { accounts: [...merged.values()] });
+        }
+        // An incident an earlier read opened for such an account ends here, so it cannot stay or come back.
+        const held = healthMark(owner, slug)?.accounts;
+        if (held?.some(a => neverLapsed.has(a.id))) {
+          const kept = held.filter(a => !neverLapsed.has(a.id));
+          if (kept.length) updateMark(owner, slug, { accounts: kept }); else clearNeedsReconnect(owner, slug);
         }
       }
       withAppHealth(cfg, owner, services);
@@ -2590,6 +2608,42 @@ function loadInventory(cfg: AppConfig, owner: string, signal?: AbortSignal): () 
     return services;
   };
 }
+
+/** Why an inventory read opened an incident: a row that is not active, alone or right after a failed call. */
+const INVENTORY_LAPSE = "sign-in no longer accepted";
+const INVENTORY_LAPSE_AFTER_CALL = "sign-in no longer accepted after a failed call";
+/**
+ * Apps whose inventory row alone never asks to sign in again (1.0.20 owner report). HighLevel has Murage's own
+ * connection beside the connected-apps one, and a stale connected-apps row nobody calls asked an owner whose
+ * HighLevel works to sign in again, with no failed call anywhere. For these apps only a real call proves a lapse:
+ * an authorization failure on the call (401), or a failed call while the row says it is no longer active. A call
+ * that succeeds ends the incident. (1.0.20: HighLevel itself never opens one, see NEVER_ASKS_SIGN_IN.)
+ */
+const CALL_PROVEN_SIGN_IN: ReadonlySet<string> = new Set(["highlevel"]);
+/**
+ * 1.0.20 upgrade (Sean 11-19, Murage's own HighLevel removed; MAIN 12:40Z): every HighLevel sign-in incident an older
+ * build saved, from the row alone or after a failed call, ends once at start, so the update shows no HighLevel sign-in
+ * prompt anywhere. The mark gate (connected-app-health.ts NEVER_ASKS_SIGN_IN) keeps any from coming back. Resolution is
+ * silent (it settles the card and the push); no other app's mark is touched. Returns the count.
+ */
+export function retireHighLevelSignInMarks(): number {
+  const store = connectorHealthStore();
+  let retired = 0;
+  for (const owner of store.owners()) {
+    for (const slug of NEVER_ASKS_SIGN_IN) if (store.clear(owner, slug)) retired += 1;
+  }
+  return retired;
+}
+/** When a call to an app last failed, per owner and app: the forced inventory read right after it may mark the app. */
+const failedCallAt = new Map<string, number>();
+const FAILED_CALL_WINDOW_MS = 2 * 60_000;
+function failedCallRecently(owner: string, slug: string): boolean {
+  const at = failedCallAt.get(JSON.stringify([owner, slug]));
+  return at !== undefined && Date.now() - at < FAILED_CALL_WINDOW_MS;
+}
+
+/** Inventory states that are not a lapsed sign-in: one in progress, one that never finished, one switched off. */
+const NOT_A_LAPSED_SIGN_IN = /^(INITIATED|INITIALIZING|PENDING|FAILED|INACTIVE)$/i;
 
 type PreflightOutcome = "stale" | "unknown" | "reconnect" | "healthy" | "outage";
 
@@ -2768,6 +2822,19 @@ export function hasRememberedConnected(cfg: AppConfig): boolean {
   return owner !== null && hasInventory(owner);
 }
 
+/** The remembered inventory without any read (for the synchronous list scope). */
+export function rememberedInventory(cfg: AppConfig): Record<string, ConnectorServiceState> | null {
+  const owner = inventoryOwner(cfg);
+  return owner === null ? null : peekInventory(owner);
+}
+
+/** What the relay checks a levels bot's account against: the remembered inventory, with one awaited read when nothing is remembered. */
+export async function relayInventory(cfg: AppConfig): Promise<Record<string, ConnectorServiceState> | null> {
+  const owner = inventoryOwner(cfg);
+  if (owner === null) return null;
+  return peekInventory(owner) ?? await connectedServices(cfg).catch(() => null);
+}
+
 /** The inventory for a view or a count: one shared, single-flight read. Waits
  * only when nothing is remembered (or `fresh` is set). */
 export async function connectedServices(cfg: AppConfig, options: { fresh?: boolean } = {}): Promise<Record<string, ConnectorServiceState>> {
@@ -2812,13 +2879,19 @@ function connectionsRemoved(): void {
  * the cached readers below are what views use.
  */
 async function fetchConnectedServices(cfg: AppConfig): Promise<Record<string, ConnectorServiceState>> {
+  return (await fetchConnectedInventory(cfg)).services;
+}
+
+/** One broker round trip. `complete` is true only when the broker says the account sweep finished: an answer without the
+ * flag (older broker) or with `complete: false` may omit accounts, so it never reads as the whole list. */
+async function fetchConnectedInventory(cfg: AppConfig): Promise<{ services: Record<string, ConnectorServiceState>; complete: boolean }> {
   if (activeBroker(cfg)) {
     const response = await brokerRequest(cfg, "/v1/connectors/connected");
     if (!response.ok) await throwStatusFailure(response, "managed inventory");
     const body = connectorServicesResponseSchema.parse(await response.json());
     // A 200 without a services map is not an inventory: it must never read as "nothing connected" (bot calls free/busy r1).
     if (!body.services) throw new Error("Connected-app inventory answer had no services list");
-    return Object.fromEntries(
+    const services = Object.fromEntries(
       Object.entries(body.services).map(([slug, state]) => [slug, {
         connected: state.connected,
         pending: state.pending ?? false,
@@ -2828,8 +2901,17 @@ async function fetchConnectedServices(cfg: AppConfig): Promise<Record<string, Co
         ...(state.createdAt ? { createdAt: state.createdAt } : {}),
       }]),
     );
+    return { services, complete: body.complete === true };
   }
   throw new Error(BROKER_UNAVAILABLE);
+}
+
+/** A fresh, uncached read for a save that must know the list is whole (levels Keep current apps). */
+export async function connectedServicesSettled(cfg: AppConfig): Promise<{ services: Record<string, ConnectorServiceState>; settled: boolean; complete: boolean }> {
+  const owner = inventoryOwner(cfg);
+  if (!owner) throw new Error(BROKER_UNAVAILABLE);
+  const read = await fetchConnectedInventory(cfg);
+  return { services: await withAppHealth(cfg, owner, read.services, read.complete), settled: true, complete: read.complete };
 }
 
 export async function connectionStatus(cfg: AppConfig, slugs: string[]) {

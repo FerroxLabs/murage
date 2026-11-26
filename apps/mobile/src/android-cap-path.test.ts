@@ -1,5 +1,5 @@
 // P3 fix: the Android build script ships the node_modules path it reads from
-// capacitor.settings.gradle to the build host, so that path must never lead outside
+// capacitor.settings.gradle to Hetzner, so that path must never lead outside
 // apps/mobile/node_modules (or, mirrored, outside the lane). No build runs here.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -89,7 +89,7 @@ describe("P3: cap_path keeps the Capacitor path inside node_modules", () => {
   });
 
   it("is what the build script uses, with the lane and path quoted in remote commands", () => {
-    const script = readFileSync(fileURLToPath(new URL("../scripts/android-remote.sh", import.meta.url)), "utf8");
+    const script = readFileSync(fileURLToPath(new URL("../scripts/android-hetzner.sh", import.meta.url)), "utf8");
     expect(script).toContain('CAP=$(cap_path "$HERE")');
     expect(script).not.toMatch(/ssh "\$HOST" "[^"]*\$(LANE|CAP)\b/);
     expect(script).not.toMatch(/-v \$LANE/);

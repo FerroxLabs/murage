@@ -1,0 +1,98 @@
+{
+  "job": "afix-fix-webread-r3",
+  "base": "99f2a23c11c96a648ae70f40342c78a7a7e6be5f",
+  "review": "arev-fix-webread-r3/REVIEW-from-last.txt",
+  "scope": [
+    "P1 automatic read consent lifetime",
+    "P2 immediate and delayed Never Allow answers"
+  ],
+  "environment": {
+    "wrapper": "$JOB_TEST_RUNNER",
+    "network": "none",
+    "maximumConcurrentContainers": 1,
+    "fakesOnly": true,
+    "isolatedFixture": true
+  },
+  "tests": {
+    "passed": 141,
+    "newRegressionCases": 15,
+    "log": ".webread-evidence/afix-r3/green.log"
+  },
+  "fullTypecheck": {
+    "exits": [
+      0,
+      0,
+      0
+    ],
+    "commands": [
+      "tsc -b",
+      "tsc -p tsconfig.server.json",
+      "tsc -p tools/flux-stream-conformance/tsconfig.json"
+    ],
+    "logs": [
+      ".webread-evidence/afix-r3/typecheck-ui.log",
+      ".webread-evidence/afix-r3/typecheck-server.log",
+      ".webread-evidence/afix-r3/typecheck-conformance.log"
+    ]
+  },
+  "baselineAndMutants": [
+    {
+      "id": "RED-authority-baseline",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "7 failed",
+        "promise resolved",
+        "expected"
+      ]
+    },
+    {
+      "id": "RED-never-baseline",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "8 failed",
+        "site_denied",
+        "WAITING FOR THE OWNER"
+      ]
+    },
+    {
+      "id": "M7-task-consent",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "7 failed",
+        "promise resolved"
+      ]
+    },
+    {
+      "id": "M8-ignore-immediate",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "4 failed",
+        "site_denied"
+      ]
+    },
+    {
+      "id": "M8-ignore-delayed",
+      "exit": 1,
+      "killed": true,
+      "expected": [
+        "4 failed",
+        "WAITING FOR THE OWNER"
+      ]
+    }
+  ],
+  "rawMutationLogs": ".webread-evidence/afix-r3/mutants",
+  "installedExclusions": {
+    "status": "UNVERIFIED",
+    "disposition": "P1-3 OPEN",
+    "unchanged": true
+  },
+  "sourceSha256": {
+    "server/browser-extension-service.ts": "c1ad3c745af24e0920409b54cc1a8d46b0771732df55c5ec73da562ceafa83ac",
+    "server/browser-read-route-inventory.test.ts": "63c9d090711219b07d27b7c538aacb2e35da1f717d85ce1a03bcdce1cff2c837",
+    "scripts/web-read-replay/afix-round3-mutants.mjs": "dd3b5986eb242ca442f989bda22b0a64830103eed5b1d295b7c6facf4b513c0f"
+  }
+}

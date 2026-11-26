@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Card, CommandLine } from "./SettingsPrimitives";
+import { DeveloperDetail } from "./DeveloperDetail";
 import { cn } from "@/lib/cn";
 import { api } from "@/state/store";
 import { openLocalVmViewer, withoutViewerUrl } from "@/lib/local-vm-viewer";
@@ -326,13 +327,10 @@ export function LocalComputerSection() {
             <div className="text-[13px] leading-relaxed text-ink-secondary">
               Podman and Colima work as well. If you use Docker Desktop at a larger company or in government, check its licence terms.
             </div>
-            {c?.install ? (
-              <CommandLine command={c.install} />
-            ) : (
-              <a href="https://podman.io/docs/installation" target="_blank" rel="noreferrer" className="text-[13px] text-accent hover:underline">
-                Open the Podman installation guide
-              </a>
-            )}
+            <a href="https://podman.io/docs/installation" target="_blank" rel="noreferrer" className="text-[13px] text-accent hover:underline">
+              Open the Podman installation guide
+            </a>
+            {c?.install && <DeveloperDetail><p>Install from a terminal instead</p><CommandLine command={c.install} /></DeveloperDetail>}
           </Step>
 
           <Step
@@ -340,10 +338,11 @@ export function LocalComputerSection() {
             title={status?.runtime && !status.daemonUp ? `Open and start ${status.runtime}` : "Start the container runtime"}
             done={Boolean(status?.daemonUp)}
           >
-            {!status?.runtime ? null : c?.runtimeStart ? (
-              <CommandLine command={c.runtimeStart} />
-            ) : (
-              <div className="text-[13px] text-ink-secondary">Open the installed runtime and start its engine, then re-check.</div>
+            {!status?.runtime ? null : (
+              <>
+                <div className="text-[13px] text-ink-secondary">Open the installed runtime and start its engine, then re-check.</div>
+                {c?.runtimeStart && <DeveloperDetail><p>Start it from a terminal instead</p><CommandLine command={c.runtimeStart} /></DeveloperDetail>}
+              </>
             )}
           </Step>
 
@@ -351,7 +350,7 @@ export function LocalComputerSection() {
             {status?.daemonUp && (
               <ActionButton action="pull" pending={pending} onClick={() => void act("pull")}>Prepare Cua desktop</ActionButton>
             )}
-            {c?.pull && <div className="text-[12px] text-ink-secondary"><p>Base-image download command</p><div className="mt-2"><CommandLine command={c.pull} /></div></div>}
+            {c?.pull && <DeveloperDetail><p>Base-image download command</p><CommandLine command={c.pull} /></DeveloperDetail>}
           </Step>
 
           <Step
@@ -388,7 +387,7 @@ export function LocalComputerSection() {
             ) : status?.image ? (
               <ActionButton action="run" pending={pending} onClick={() => void act("run")}>Create Local VM</ActionButton>
             ) : null}
-            {c?.run && <div className="text-[12px] text-ink-secondary"><p>Command to create it yourself</p><div className="mt-2"><CommandLine command={c.run} /></div></div>}
+            {c?.run && <DeveloperDetail><p>Command to create it yourself</p><CommandLine command={c.run} /></DeveloperDetail>}
           </Step>
         </div>
       </Card>
@@ -405,8 +404,8 @@ export function LocalComputerSection() {
       <Card
         title="Protection and storage"
         subtitle={perBot
-          ? `Cua Driver operates only each VM's desktop. Every bot gets a private host folder mounted at ${status?.workspace_guest_path ?? "/home/cua/workspace"}; its files and browser profile survive VM replacement. Viewers bind only to loopback, and exact bot-derived targets prevent one bot from attaching to another bot's container. Each VM keeps the existing 4 GB, 2 CPU, 512-process and dropped-capability limits. VMs can still reach the internet.`
-          : `Cua Driver operates only the VM's desktop. Exactly one private host folder is mounted at ${status?.workspace_guest_path ?? "/home/cua/workspace"}; files and browser sign-ins there survive VM replacement, while everything elsewhere in the VM remains disposable. The password-protected viewer is available only on this machine. Docker and Podman runs are limited to 4 GB memory, 2 CPUs and 512 processes; all Linux capabilities are dropped except the two the desktop supervisor needs to switch to its unprivileged user. The VM can still reach the internet, and bots share it one at a time.`}
+          ? "Each bot gets its own walled-off desktop with a private folder that stays when the desktop is replaced. The desktops can still reach the internet."
+          : "Bots use a walled-off desktop with one private folder that stays when the desktop is replaced. It can still reach the internet, and bots take turns."}
       >
         {existing && (
           <div className="flex flex-wrap gap-2">
@@ -420,7 +419,10 @@ export function LocalComputerSection() {
             </ActionButton>
           </div>
         )}
-        <div className="mt-3 break-all text-[11px] text-ink-secondary">
+        <div className="mt-3">
+          <DeveloperDetail>
+            <p>{perBot ? `Cua Driver operates only each VM's desktop. Every bot gets a private host folder mounted at ${status?.workspace_guest_path ?? "/home/cua/workspace"}; its files and browser profile survive VM replacement. Viewers bind only to loopback, and exact bot-derived targets prevent one bot from attaching to another bot's container. Each VM keeps the existing 4 GB, 2 CPU, 512-process and dropped-capability limits. VMs can still reach the internet.` : `Cua Driver operates only the VM's desktop. Exactly one private host folder is mounted at ${status?.workspace_guest_path ?? "/home/cua/workspace"}; files and browser sign-ins there survive VM replacement, while everything elsewhere in the VM remains disposable. The password-protected viewer is available only on this machine. Docker and Podman runs are limited to 4 GB memory, 2 CPUs and 512 processes; all Linux capabilities are dropped except the two the desktop supervisor needs to switch to its unprivileged user. The VM can still reach the internet, and bots share it one at a time.`}</p>
+            <div className="break-all text-[11px] text-ink-secondary">
           Durable workspace: {status?.workspace_path ?? "not created"} ·{" "}
           {/* Never name a version the harness did not report: the Local VM's
               driver pin lives in server/container-computer.ts and has drifted
@@ -428,6 +430,8 @@ export function LocalComputerSection() {
               fallbacks do. */}
           Cua Driver: {status?.driver_version ?? "unknown"} · Local image: {status?.image_ref ?? "not prepared"}
           {status?.base_image_ref ? <> · Base: {status.base_image_ref}</> : null}
+        </div>
+          </DeveloperDetail>
         </div>
       </Card>
     </>

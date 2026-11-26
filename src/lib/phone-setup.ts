@@ -198,6 +198,17 @@ export function phonePairingGate(
   }
 }
 
+/** P2 (settings v10): the pairing code is drawn, QR or digits, only while some route can carry it. An open window with no usable
+ * route (no hosted endpoint in automatic mode, a pin that no longer matches what is advertised) shows no code. */
+export function phonePairingCodeVisible(input: {
+  pairingOpen: boolean;
+  expired: boolean;
+  pairingLink: string | null;
+  browserLink: string | null;
+}): boolean {
+  return input.pairingOpen && !input.expired && Boolean(input.browserLink ?? input.pairingLink);
+}
+
 export function newlyPairedDevice<T extends { id: string; name: string }>(
   baselineDeviceIds: string[],
   devices: T[],

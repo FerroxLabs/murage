@@ -4,6 +4,20 @@ import { describe, expect, it } from "vitest";
 
 import { READER_PREVIEW_CHARS, SkillReaderView, type SkillReaderViewProps } from "./SkillReader";
 import type { SkillDetail } from "@/lib/skills-api";
+import { setLocale } from "@/lib/i18n";
+
+it("translates the Every bot label, explanation, and accessible switch name", async () => {
+  try {
+    await setLocale("de");
+    const html = render({});
+    expect(html).toContain("Alle Bots");
+    expect(html).toContain("Gib diese Fähigkeit allen vorhandenen Bots");
+    expect(html).toContain('aria-label="invoice-chaser allen Bots geben"');
+    expect(render({ skill: detail({ everyBot: true }) })).toContain('aria-label="invoice-chaser nicht mehr allen Bots geben"');
+  } finally {
+    await setLocale("en");
+  }
+});
 
 const detail = (over: Partial<SkillDetail> = {}): SkillDetail => ({
   ref: "collection:invoice-chaser",
@@ -35,7 +49,9 @@ describe("the skill reader", () => {
     expect(html).not.toContain("No red flags");
     expect(html).not.toContain("safety check found");
     expect(html).toContain("Use with");
-    expect(html.match(/role="switch"/g)).toHaveLength(2);
+    const switches = html.match(/<[^>]*role="switch"[^>]*>/g) ?? [];
+    expect(switches).toHaveLength(3);
+    expect(switches[0]).toContain('aria-label="Give invoice-chaser to every bot"');
     expect(html).toContain("This bot&#x27;s engine can&#x27;t use skills.");
     expect(html).toContain("Draft polite reminders.");
     expect(html).toContain("Delete");
@@ -56,6 +72,15 @@ describe("the skill reader", () => {
     expect(html).toContain("This skill was blocked by the skill check and can&#x27;t be switched on.");
     expect(html).not.toContain('role="switch"');
     expect(render({ skill, mode: { kind: "bot", botId: "b1" } })).not.toContain(">Add<");
+  });
+
+  it("lets the owner turn off an existing Every bot mark after the skill becomes blocked", () => {
+    const html = render({ skill: detail({ verdict: "blocked", everyBot: true }) });
+    const switches = html.match(/<[^>]*role="switch"[^>]*>/g) ?? [];
+    expect(switches).toHaveLength(1);
+    expect(switches[0]).toContain('aria-label="Stop giving invoice-chaser to every bot"');
+    expect(switches[0]).toContain('aria-checked="true"');
+    expect(switches[0]).not.toMatch(/\sdisabled(?:=|\s|>)/);
   });
 
   it("has one Add button in the bot window, and says Added once it is on", () => {

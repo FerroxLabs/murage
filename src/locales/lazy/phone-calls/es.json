@@ -44,6 +44,7 @@
   "phoneCalls.error.badSettings": "Algunos de estos ajustes no se pueden usar. Revísalos y guarda de nuevo.",
   "phoneCalls.error.notSetUp": "Primero guarda tu clave privada de Vapi.",
   "phoneCalls.error.generic": "Algo salió mal. Inténtalo de nuevo.",
+  "phoneCalls.error.store": "Murage no pudo abrir el historial de llamadas. Reinicia Murage. Si el problema continúa, comprueba el espacio libre en disco.",
   "phoneCalls.older.one": "1 llamada programada usa ajustes anteriores",
   "phoneCalls.older.many": "{count} llamadas programadas usan ajustes anteriores",
   "phoneCalls.cancel": "Cancelar",

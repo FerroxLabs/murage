@@ -256,7 +256,8 @@ it('T17 permission responses have one sending point, including memory preallow',
     ts.forEachChild(node, visit);
   };
   visit(handler!); expect(sends).toBe(1);
-  expect(cancelled).toBe(2);
+  // MC63 ruling K2 (cl-eng-hermes-int2) adds the third: a request whose option ids are not unique is cancelled with no card.
+  expect(cancelled).toBe(3);
 });
 
 for (const duplicate of [false, true]) it(duplicate

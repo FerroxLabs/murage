@@ -8,11 +8,16 @@
  *  1. A lock is NEVER taken over by time. A holder that is slow, descheduled or paused might be alive, and a live holder that
  *     lost its lock would keep writing without owning it. Only the main thread, after it has CONFIRMED the holder's exit (the
  *     worker's 'exit' event), may clear the word, and only if it still holds that thread's token: recoverAfterExit(id).
- *  2. The MAIN THREAD (owner 0) never waits or spins: lock() is ONE non-blocking compare-exchange and, when the word is busy,
- *     throws an error named AdmissionLockTimeout at once (Atomics.wait is not allowed on the main thread and a busy loop would
- *     stop the event loop). A worker thread may wait in Atomics.wait slices under ONE total deadline (deadlineMs, measured once
+ *  2. The MAIN THREAD (owner 0) never sleeps on the lock: when the word is busy it retries the compare-exchange for at most
+ *     MAIN_RETRY_MS (a quarter of a millisecond: a live section is a few shared-memory operations, so it ends well inside that)
+ *     and then throws an error named AdmissionLockTimeout (Atomics.wait is not allowed on the main thread and a longer loop
+ *     would stop the event loop). A single compare-exchange turned every meeting with the checkpointer's section into an ERROR
+ *     line and a refused admission (q1022 upgrade catch-up: 1 or 2 such lines per 10 minutes on a healthy server). A holder that
+ *     is paused, swapped out or dead still gives the timeout. A worker thread may wait in Atomics.wait slices under ONE total deadline (deadlineMs, measured once
  *     at entry, independent of token changes or owner progress) and then throws the same error. Every caller fails closed
- *     (see io-budget.ts for the main thread and wal-maintenance.ts for the worker) and retries on its normal next tick.
+ *     (see io-budget.ts for the main thread and wal-maintenance.ts for the worker) and retries on its normal next tick. A main-thread miss
+ *     backs io-budget's admission refresh off (250 ms doubling to 2 s, reset when a section takes the lock) and is a rate-limited WARN, an ERROR only
+ *     once misses persist past 60 s (IDLECPU-1022 cause 3), so a busy word never drives a 25 ms retry loop that collides again.
  *  3. Recovery is conservative: the ledger is marked POISONED (slot 15) instead of trusting counters the dead thread may have
  *     left half updated. While poisoned no copy is admitted; rebuild recomputes the shared counters from the owner's real state.
  *  4. (D6) A worker's in-flight reservation is an OWNED entry in a table of TABLE_N entries (slots 18..29, three slots each:
@@ -21,12 +26,22 @@
  *     a covered release (a valid continuous post-exit measurement shows the bytes) or a charge to the current minute.
  *     Reservations are live work, not per-minute: rotate() no longer zeroes slots 5/6.
  * Slots: 0 lock, 1 minute, 2 bg used, 3 total, 4 debt, 5 bg reserved, 6 writes reserved, 7 idle, 8 settled charge, 9/10 base,
+ * 32 planned share of the total this minute (io-budget.ts plannedWrites: recall upkeep, seed budgets and the owed captures' settled
+ *    bytes up to the BG minute ceiling; absent in a 32-slot buffer = 0),
  * 11 observed, 12/13 last reading, 14 recoveries, 15 poison, 16 table-full count, 17 reconcile count (16 and 17 are diagnostic,
- * never in a sum), 18..29 owner table, 30/31 zero. A torn minute rotation is redone (the minute is written last). */
+ * never in a sum), 18..29 owner table, 30 recall-reclaim bucket bytes this minute, 31 reclaim copy request (minute + 1, 0 = none).
+ * A torn minute rotation is redone (the minute is written last).
+ *  5. (Fable BLOCK bb30fb1d03, owner: the recallcap racer) The strict idle rule (about 1 MB a minute while idle) refuses every log copy
+ *     while other writes run, so a log the recall reclaimer filled to its gate only reset around owner turns. A copy the reclaimer asked
+ *     for in THIS minute (slot 31, set by IoBudget.requestReclaimCopy when it is held at the log gate) that the idle rule refuses is
+ *     admitted under the reclaimer's own 700 MB/min bucket (slot 30: its slices' charges plus such copies), never past it; one copy per
+ *     request. Poison, the table and every other copy keep their rules. */
 export function isAdmissionLockTimeout(error:unknown):boolean {return error instanceof Error&&error.name==="AdmissionLockTimeout";}
 export function checkpointLedger(buffer:SharedArrayBuffer,owner=0,deadlineMs=2000,opts?:{gen?:number}) {
  const slots=new BigInt64Array(buffer);
- const LOCK_SPINS=2048,mainThread=owner===0,TABLE_N=4,TABLE_AT=18;
+ const LOCK_SPINS=2048,MAIN_RETRY_MS=0.25,mainThread=owner===0,TABLE_N=4,TABLE_AT=18;
+ // Self-contained (the worker evaluates this function's source): equal to io-budget RECALL_RECLAIM_BYTES_PER_MINUTE, pinned by a test.
+ const RECLAIM_BUCKET=700_000_000n;
  const me=(BigInt(owner)<<32n)|BigInt((opts?.gen??0)>>>0);
  let seq=0n,held=0n;
  const lock=()=>{
@@ -37,6 +52,7 @@ export function checkpointLedger(buffer:SharedArrayBuffer,owner=0,deadlineMs=200
   for(;;){
    if(Atomics.compareExchange(slots,0,0n,mine)===0n){held=mine;return;}
    if(mainThread){
+    if(performance.now()-t0<MAIN_RETRY_MS)continue;
     const error=new Error("ADMISSION_LOCK_TIMEOUT: the ledger lock is held (the main thread never waits for it)");
     error.name="AdmissionLockTimeout";
     throw error;
@@ -121,7 +137,8 @@ export function checkpointLedger(buffer:SharedArrayBuffer,owner=0,deadlineMs=200
   const minute=BigInt(Math.floor(now/60_000));
   if(Atomics.load(slots,1)!==minute){
    // 5/6 (reservations) are live work and stay: they are released by their own settlement or reconcile.
-   for(const n of [2,3,8,11])Atomics.store(slots,n,0n);
+   for(const n of [2,3,8,11,30])Atomics.store(slots,n,0n);
+   if(slots.length>32)Atomics.store(slots,32,0n);
    Atomics.store(slots,9,Atomics.load(slots,12));Atomics.store(slots,10,Atomics.load(slots,13));
    // Slot 7 (idle) is the owner's verdict, republished at every owner reading. A rotation seen first by the checkpointer thread must
    // NOT overwrite it with "idle".
@@ -135,37 +152,55 @@ export function checkpointLedger(buffer:SharedArrayBuffer,owner=0,deadlineMs=200
    if(poisoned())return null;
    rotate(now);
    const total=Number(Atomics.load(slots,3)),reserved=Number(Atomics.load(slots,6));
+   // MAIN-RULING 2026-11-22 idle-capture: the idle allowance is judged without the minute's planned share (slot 32, io-budget publishPlanned).
+   const planned=slots.length>32?Number(Atomics.load(slots,32)):0;
    const idle=Atomics.load(slots,7)!==0n;
-   if(idle&&(now%60_000>55_000||total+reserved+ceiling>1024*1024-65536))return null;
+   const minute=Atomics.load(slots,1);
+   const c=BigInt(ceiling);
+   let reclaim=false;
+   if(idle&&(now%60_000>55_000||Math.max(0,total-planned)+reserved+ceiling>1024*1024-65536)){
+    // Rule 5: only a copy the reclaimer asked for this minute, and only inside what is left of its bucket.
+    if(Atomics.load(slots,31)!==minute+1n||Atomics.load(slots,30)+c>RECLAIM_BUCKET)return null;
+    reclaim=true;
+   }
    let own=-1,empty=-1;
    for(let i=0;i<TABLE_N;i++){const o=Atomics.load(slots,TABLE_AT+i*3);if(me!==0n&&o===me){own=i;break;}if(o===0n&&empty<0)empty=i;}
    if(own<0&&empty<0){Atomics.add(slots,16,1n);return null;}
-   const minute=Atomics.load(slots,1);
-   const c=BigInt(ceiling);
+   if(reclaim){Atomics.add(slots,30,c);Atomics.store(slots,31,0n);}
    if(own>=0){
     const b=TABLE_AT+own*3;
     Atomics.store(slots,b+2,minute); // conservative: the entry is as young as its newest bytes
     Atomics.add(slots,b+1,c);Atomics.add(slots,6,c);
-    return {minute:Number(minute),ceiling,observed:Number(Atomics.load(slots,11)),slot:own};
+    return {minute:Number(minute),ceiling,observed:Number(Atomics.load(slots,11)),slot:own,reclaim};
    }
    const b=TABLE_AT+empty*3;
    Atomics.store(slots,b+1,0n);Atomics.store(slots,b+2,minute); // c1: owner 0 means the entry is ignored
    Atomics.store(slots,b,me);                                   // c2
    Atomics.add(slots,b+1,c);                                    // c3
    Atomics.add(slots,6,c);                                      // c4
-   return {minute:Number(minute),ceiling,observed:Number(Atomics.load(slots,11)),slot:empty};
+   return {minute:Number(minute),ceiling,observed:Number(Atomics.load(slots,11)),slot:empty,reclaim};
   }finally{unlock();}
  };
- const endCopy=(ticket:{minute:number;ceiling:number;observed?:number;slot?:number},used:number,raw=0,reading?:{os:number;meter:number},now?:number)=>{
+ /** Main thread (the recall reclaimer, held at the log gate): asks for one log copy under its bucket in this minute (rule 5). One word, no lock. */
+ const requestReclaimCopy=(now:number)=>{Atomics.store(slots,31,BigInt(Math.floor(now/60_000))+1n);};
+ /** Main thread: a reclaim slice's charge to the shared bucket. Charged only into the ledger's current minute (a rotation zeroes slot 30). */
+ const chargeReclaim=(bytes:number,now:number)=>{
+  if(!(bytes>0)||Atomics.load(slots,1)!==BigInt(Math.floor(now/60_000)))return;
+  Atomics.add(slots,30,BigInt(Math.ceil(bytes)));
+ };
+ const endCopy=(ticket:{minute:number;ceiling:number;observed?:number;slot?:number;reclaim?:boolean},used:number,raw=0,reading?:{os:number;meter:number},now?:number)=>{
   lock();
   try{
    // The worker always passes its clock. Without one the ledger's current minute is kept (no rotation): the charge lands where it is.
    rotate(now??Number(Atomics.load(slots,1))*60_000);
    const b=TABLE_AT+(ticket.slot??0)*3,c=BigInt(ticket.ceiling);
+   // Rule 5: a reclaim copy's bucket charge is its ceiling until it ends; in the same minute it keeps only what it used.
+   if(ticket.reclaim&&ticket.minute===Number(Atomics.load(slots,1))){const back=c-BigInt(Math.max(0,Math.min(ticket.ceiling,Math.ceil(used))));const cur=Atomics.load(slots,30);Atomics.sub(slots,30,back>cur?cur:back);}
    const mineEntry=Atomics.load(slots,b)===me;
    if(mineEntry){const cur=Atomics.load(slots,6);Atomics.sub(slots,6,c>cur?cur:c);} // r1
    if(reading){
-    const observed=Math.max(0,reading.os-Number(slots[9]),reading.meter-Number(slots[10]));
+    // 1.0.21 B1/I8: the OS counter is stored for the watchdog line only; the meter alone is observed.
+    const observed=Math.max(0,reading.meter-Number(slots[10]));
     Atomics.store(slots,11,BigInt(Math.max(Number(slots[11]),observed)));
     Atomics.store(slots,12,BigInt(reading.os));Atomics.store(slots,13,BigInt(reading.meter));
    }
@@ -178,5 +213,5 @@ export function checkpointLedger(buffer:SharedArrayBuffer,owner=0,deadlineMs=200
    }
   }finally{unlock();}
  };
- return {slots,lock,unlock,rotate,beginCopy,endCopy,recoverAfterExit,poison,poisoned,rebuild,rebuildLocked,recoveries,reconcileEntry,reconcileDead,entries,tableFullCount,ownerWord:me};
+ return {slots,lock,unlock,rotate,beginCopy,endCopy,requestReclaimCopy,chargeReclaim,recoverAfterExit,poison,poisoned,rebuild,rebuildLocked,recoveries,reconcileEntry,reconcileDead,entries,tableFullCount,ownerWord:me};
 }

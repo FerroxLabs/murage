@@ -11,12 +11,14 @@ import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
 import { CallOverlaySlot } from "@/components/CallControls";
 import { BotCallRing } from "@/components/BotCallRing";
-import { initAnalytics } from "@/lib/analytics";
+import { startupPrivacy } from "@/lib/legacy-analytics-cleanup";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { preloadConnectedApps } from "@/lib/connected-apps-preload";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { StarPrompt } from "@/components/StarPrompt";
 import { UpdateStaleNotice } from "@/components/UpdateStaleNotice";
+import { HighLevelMovedNotice } from "@/components/HighLevelMovedNotice";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { LazyMemoryIntegrityStrip } from "@/components/MemoryIntegrityStripLazy";
 import { CloudUnreachableBanner } from "@/components/cloud/CloudUnreachableBanner";
@@ -36,7 +38,7 @@ import { FirstRunWelcome } from "@/components/FirstRunWelcome";
 import { StartupPictureWriter } from "@/components/StartupPictureWriter";
 import { pictureHeld } from "@/lib/startup-picture-schedule";
 import { useRefreshSetupOnBotChange, useSetupView } from "@/components/FirstRunChrome";
-import { firstRunOwnsMainView } from "@/lib/first-run";
+import { firstRunActive, firstRunOwnsMainView } from "@/lib/first-run";
 import { settleSendKeyForUpgrade } from "@/lib/send-key";
 import { BotListDrawerProvider, PhoneBotListBar, useBotListDrawer } from "@/components/OpenBotListButton";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
@@ -481,12 +483,16 @@ function Shell() {
       {desktop === true && cloudBrowser && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
       {/* The saved Flux key is not one, or Flux refused it: say so, with the fix. */}
       {desktop === true && <FluxKeyProblemBanner />}
+      {/* A connected app to sign in again: a band with the rest, so it never covers the rail or the composer. It can be put away (ReconnectAppsBanner.tsx). */}
+      <ReconnectAppsBanner enabled />
       {/* Only after the door itself said 401 (lib/session-check.ts). */}
       {state.signedOut && <SignedOutCard />}
       {/* UX 1.0.13 band slot: no internet on this device. Bots on the computer keep working; it says what waits. */}
       <OfflineBand connectivity={connectivity} desktop={desktop} />
       {/* The update pop-up is mounted in App, beside the terms gate. */}
       <UpdateStaleNotice />
+      {/* Once, for an owner who had Murage's own HighLevel screen: it now connects through Connected apps. Desktop app only, after the first run. */}
+      <HighLevelMovedNotice ready={desktop === true && !isCloudHome() && Boolean(setupView) && !firstRunActive(setupView) && !setupOwnsView} />
       {/* The first run's phases, as a band ABOVE whatever is in the main view
           rather than on top of it or beside it. It owns its own visibility
           (src/lib/first-run.ts): the server's `view.firstRun` offers it, and
@@ -607,7 +613,6 @@ function Shell() {
             <SettingsModal />
         </LazyOverlay>
       )}
-      <div className="fixed bottom-4 left-4 z-40 max-w-sm"><ReconnectAppsBanner enabled /></div>
       {state.reconnectIncidentId && <ConnectorReconnectDialog key={state.reconnectIncidentId} incidentId={state.reconnectIncidentId} />}
       <NewBotSignInStep />
       {state.pluginsOpen && <LazyOverlay name="plugins" kind="window" covers="always" onRetry={PluginsPanelLazy.retry} onDismiss={() => dispatch({ type: "togglePlugins", open: false })}><PluginsPanel /></LazyOverlay>}
@@ -672,8 +677,10 @@ export default function App() {
   // Its answer is the server's `view.firstRun`, which no phone's empty
   // localStorage can get wrong, and it is still withheld on `undefined`.
   const desktop = useDesktopSurface();
+  // Murage sends no usage analytics; an upgraded install drops what the old
+  // client stored (src/lib/legacy-analytics-cleanup.ts).
   useEffect(() => {
-    initAnalytics();
+    startupPrivacy();
   }, []);
   // One listener for the whole app: publishes --vvh/--kb/data-keyboard on
   // <html> so #root tracks the visual viewport instead of the layout viewport.
@@ -692,6 +699,8 @@ export default function App() {
         {/* The update pop-up (above the sidebar footer once it mounts; a top-layer popover inside an open modal window). Beside the gate, not behind it: an update that downloads
             while the terms screen is up still shows, and it sends nothing. It renders nothing without the updater bridge. */}
         <UpdateBanner />
+        {/* A quiet ask for a GitHub star: local counts only, owner's own computer only (lib/star-prompt.ts). */}
+        <StarPrompt />
         {/* A CONFIRMED remote surface only. The desktop app is already an app;
             `undefined` renders nothing, the same neutral answer the welcome
             gate above takes. */}

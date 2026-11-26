@@ -50,6 +50,9 @@ files:
   # and left out. scripts/check-packaged-shared-imports.mjs now proves the list
   # matches the imports.
   - shared/backup-age-pins.mjs
+  - shared/cua-host-messages.mjs
+  - shared/cua-driver-identity.mjs
+  - shared/cua-driver-windows-pins.mjs
   - shared/path-identity.mjs
   - shared/stored-root-path.mjs
   - shared/agy-oauth-link.mjs
@@ -90,6 +93,7 @@ files:
   - shared/provider-secret-mask.mjs
   - shared/notify-surfaces.mjs
   - shared/outside-limits.mjs
+  - shared/data-version-marker.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
@@ -327,6 +331,12 @@ win:
       arch: x64
   icon: build/icon.ico
   extraResources:
+    # Windows computer-use driver (DESIGN 1022-cua-windows D2): exactly two per-file entries, never the folder: a folder
+    # copy is re-signed with Murage's certificate under forceCodeSigning and breaks the pinned bytes.
+    - from: dist-native/cua-win32-x64/cua-driver.exe
+      to: cua-win32-x64/cua-driver.exe
+    - from: dist-native/cua-win32-x64/cua-cursor-theme.exe
+      to: cua-win32-x64/cua-cursor-theme.exe
     # The beforePack hook removes the tree AND individual EXEs for null G0.
     - from: dist-native/signal-runtime/win32-x64
       to: signal-runtime

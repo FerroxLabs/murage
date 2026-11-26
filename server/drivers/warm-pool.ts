@@ -52,6 +52,14 @@ export function pastWarmMaxAge(spawnedAt: number | undefined, now: number = Date
 
 export type WarmEngine = "claude" | "codex" | "acp";
 const DEFAULT_ACTIVITY_WINDOW_MS = 15 * 60_000;
+/** The bucket of an engine whose thread's last user turn was a non-owner's: no owner turn ever wakes it. */
+const NON_OWNER_BUCKET = "\u0000non-owner";
+/** Idle owner engines kept per engine kind across active bots (E1; MURAGE_WARM_SPARES 1..3 for tests). */
+export const DEFAULT_WARM_SPARES = 3;
+export function warmSpares(env: NodeJS.ProcessEnv = process.env): number {
+  const v = Number(env.MURAGE_WARM_SPARES);
+  return Number.isInteger(v) && v >= 1 && v <= DEFAULT_WARM_SPARES ? v : DEFAULT_WARM_SPARES;
+}
 export interface WarmMember {
   engine: WarmEngine;
   threadId: string;
@@ -67,12 +75,28 @@ export interface WarmMember {
   /** The engine was started on intent (prewarm), not by a turn: hold it for one
    * activity window, and release it if no send follows. */
   hold?: boolean;
+  /** A focus or typing hold cannot outlive this member's bot activity window. */
+  ownerActivityOnly?: boolean;
   /** When the engine process was spawned (epoch ms): an idle engine past the
    * warm max age is closed with reason max-age. */
   spawnedAt?: number;
   /** The engine home this process was started on (scope kind and bot): a login split on that scope drains it. */
   scope?: { kind: string; bot: string | null };
+  /** The bot whose thread this engine serves. Unset: the bot of the thread's last owner turn (noteUserActivity). */
+  bot?: string;
 }
+
+/** How long an unclaimed prewarm (and an asleep bot's focus or typing hold) is held after the owner's last open, focus or
+ * typing beat on its thread (designs/WARM-W1-1022-presence.md P-PRE 5, Q-PR2; MAIN-RULING warm1022-driver-D2). An active
+ * bot's hold keeps the activity window. MURAGE_WARM_PREWARM_HOLD_MS (1 s..120 s) is for tests only. */
+export const PREWARM_HOLD_MS = 120_000;
+export function prewarmHoldMs(env: NodeJS.ProcessEnv = process.env): number {
+  const v = Number(env.MURAGE_WARM_PREWARM_HOLD_MS);
+  return Number.isFinite(v) && v >= 1_000 && v <= PREWARM_HOLD_MS ? v : PREWARM_HOLD_MS;
+}
+/** Prewarm start limits (P-PRE 3): one per thread per minute, three across all bots in any rolling minute. */
+const PREWARM_RATE_WINDOW_MS = 60_000;
+const PREWARM_STARTS_PER_WINDOW = 3;
 
 /** How long a send waits for a prewarm that is still starting the same thread's engine. */
 export const PREWARM_WAIT_MS = 20_000;
@@ -93,9 +117,12 @@ export const TAKEOVER_FAILED_MESSAGE = "The engine that was starting for this co
 /** The in-flight prewarms of one driver instance, so a send that arrives meanwhile
  * waits for the engine being started instead of failing as "already running". */
 export function createPrewarmGate() {
-  const pending = new Map<string, { done: Promise<void>; finish: () => void; token: object }>();
+  const pending = new Map<string, { done: Promise<void>; finish: () => void; token: object; startedAt: number }>();
+  const abandonedTokens = new WeakSet<object>();
   return {
     has: (threadId: string) => pending.has(threadId),
+    /** Every thread whose prewarm is still starting (none of them is claimed yet: a claim only waits on the entry). */
+    threads: (): string[] => [...pending.keys()],
     /** The current prewarm's token, or undefined. */
     token: (threadId: string): object | undefined => pending.get(threadId)?.token,
     /** True while `token` is still this thread's prewarm. */
@@ -106,7 +133,7 @@ export function createPrewarmGate() {
       let finish = () => {};
       const done = new Promise<void>((resolve) => { finish = resolve; });
       const token = {};
-      pending.set(threadId, { done, finish, token });
+      pending.set(threadId, { done, finish, token, startedAt: Date.now() });
       return token;
     },
     /** Ends the prewarm. With a token, only if it is still the current one (a stale end leaves a newer prewarm alone). */
@@ -117,6 +144,19 @@ export function createPrewarmGate() {
       pending.delete(threadId);
       entry.finish();
     },
+    /** P-FENCE 2: a send found this thread's prewarm hung (or the owner went away while it started). The entry ends NOW, so
+     * `has()` is false and every waiter goes on; the token is marked abandoned, so the prewarm's late spawn, park or end never
+     * writes back into the thread's slots, the pool or this gate (the driver checks `abandoned(token)`). */
+    abandon(threadId: string): object | undefined {
+      const entry = pending.get(threadId);
+      if (!entry) return undefined;
+      abandonedTokens.add(entry.token);
+      pending.delete(threadId);
+      entry.finish();
+      return entry.token;
+    },
+    /** True once `token`'s prewarm was abandoned, or when there is no token (a prewarm that never held the gate keeps nothing). */
+    abandoned: (token: object | undefined): boolean => token === undefined || abandonedTokens.has(token),
     /** Ends when this thread's prewarm has really ended, however long that takes. */
     settled: (threadId: string): Promise<void> => pending.get(threadId)?.done ?? Promise.resolve(),
     /** A send's wait for the prewarm ran out: cancel it and wait for it to end and free
@@ -153,6 +193,13 @@ export function createPrewarmGate() {
         await Promise.race([terminate(child).catch(() => false), sleep(deadline - Date.now())]);
       }
       return waitSettled(deadline);
+    },
+    /** A send's claim of the prewarm starting its thread's engine (presence P-FENCE 3): it waits until that prewarm is ready
+     * or failed, bounded only against a hang, PREWARM_WAIT_MS counted from the PREWARM's own start, not from the send. */
+    claim(threadId: string, ms: number = prewarmWaitMs()): Promise<boolean> {
+      const entry = pending.get(threadId);
+      if (!entry) return Promise.resolve(true);
+      return this.wait(threadId, Math.max(0, entry.startedAt + ms - Date.now()));
     },
     /** True when no prewarm is (or was) starting, or it ended within `ms`. */
     async wait(threadId: string, ms: number = prewarmWaitMs()): Promise<boolean> {
@@ -285,7 +332,7 @@ function sampleDarwinAvailable(): Promise<void> {
 }
 
 const defaults = (): WarmPoolDeps => ({
-  now: Date.now, totalmem: osTotalmem, freemem: () => darwinAvailable ?? osFreemem(), sampleFree: sampleDarwinAvailable, measure: psMeasure, env: process.env,
+  now: () => Date.now(), totalmem: osTotalmem, freemem: () => darwinAvailable ?? osFreemem(), sampleFree: sampleDarwinAvailable, measure: psMeasure, env: process.env,
   log: (line) => console.info(line), timer: true,
   schedule: (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); },
 });
@@ -298,25 +345,87 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
   let lastMeasure = -Infinity;
   let lastSummary = -Infinity;
   let running: Promise<void> | null = null;
-  let lastActivity = -Infinity;
+  /** MAIN-RULING warm-active-only: when each bot last had an owner turn. A bot with none in the activity
+   * window keeps no engine (asleep), an active bot keeps at most one. "" = turns that name no bot. */
+  const botActivity = new Map<string, number>();
+  /** The bot of each thread's last owner turn, for members that do not name their bot. */
+  const threadBots = new Map<string, string>();
+  /** Threads whose last user turn was a non-owner's (channel audience), with when it began: that engine is in no
+   * bot's bucket, so it never takes (or evicts) the owner's one engine of that bot. */
+  const nonOwnerThreads = new Map<string, number>();
   let windowTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Threads whose engine the owner is about to use (focus, typing): their idle engine is held, not spared out. */
-  const intents = new Map<string, number>();
+  /** Threads whose engine the owner is about to use (focus, typing), with when the last open, focus or typing beat landed: their
+   * idle engine is held, not spared out, for holdFor() from that beat (also its keep-order position). */
+  const intentAt = new Map<string, number>();
+  /** Owner presence (designs/WARM-W1-1022-presence.md P-AWAY): unset = present (unit tests that do not wire it). */
+  let presentNow: () => boolean = () => true;
+  /** Bumped by every away edge: an unclaimed prewarm admitted before it is closed when it parks (P-FENCE 1). */
+  let presenceEpoch = 0;
+  /** P-FENCE 2: each driver instance's detach-all hook, called by ownerAway (onOwnerAway). */
+  const awayDetachers = new Set<(cause: string) => number>();
+  const admittedEpoch = new Map<string, number>();
+  /** Admitted prewarm starts not yet parked or given back, with when admitted. Only a LOST entry lapses after PREWARM_RATE_WINDOW_MS
+   * (a caller that admitted and never reported back): a start its driver still reports running (answering, or given back past its
+   * wait) stays in flight until that driver says it ended, however long it runs (ASTRA 08c6017e2c). While
+   * one is in flight, a pressure check closes only unclaimed engines: the pressure may be that start's own, and an owner engine never
+   * pays for a prewarm (MAIN 2026-11-22 19:53Z; Astra r6 pass 1). */
+  const inflightStarts = new Map<string, number>();
+  /** Starts the driver reported still running after it answered false (Codex past its wait): the give-back keeps them in flight. */
+  const runningAfterGiveBack = new Set<string>();
+  /** Starts whose driver call has not answered yet (admitAndPrewarm: from the admission to the answer). */
+  const answering = new Set<string>();
+  const startsInFlight = (): number => {
+    const now = d.now();
+    for (const [t, at] of inflightStarts) if (now - at >= PREWARM_RATE_WINDOW_MS && !runningAfterGiveBack.has(t) && !answering.has(t)) inflightStarts.delete(t);
+    return inflightStarts.size;
+  };
+  /** Prewarm starts admitted, per thread and across bots (P-PRE 3). */
+  const startsByThread = new Map<string, number>();
+  let recentStarts: number[] = [];
   /** Threads whose warm engine this pool closed, so the next spawn is a known cold wake. */
   const coldWakes = new Set<string>();
+  /** Engines that already settled an owner turn, with the order they last did so.
+   * A background turn that borrows one hands it back: it never closes it, and never moves it up the keep order. */
+  const ownerOrder = new WeakMap<object, number>();
+  let ownerSeq = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
 
   const windowMs = (): number => {
     const v = Number(d.env.MURAGE_WARM_ACTIVITY_WINDOW_MS);
     return Number.isFinite(v) && v > 0 ? v : DEFAULT_ACTIVITY_WINDOW_MS;
   };
-  const active = () => d.now() - lastActivity < windowMs();
+  const botOf = (m: WarmMember): string => m.bot ?? (nonOwnerThreads.has(m.threadId) ? NON_OWNER_BUCKET : threadBots.get(m.threadId) ?? "");
+  const botActiveAt = (m: WarmMember): number => botActivity.get(botOf(m)) ?? -Infinity;
+  const botActive = (m: WarmMember): boolean => d.now() - botActiveAt(m) < windowMs();
+  /** Judged now, not at the beat: a hold taken while the bot was active ends 120 s after the beat once the bot is asleep. */
   const intentHeld = (threadId: string) => {
-    const until = intents.get(threadId);
-    if (until === undefined) return false;
-    if (until <= d.now()) { intents.delete(threadId); return false; }
+    const at = intentAt.get(threadId);
+    if (at === undefined) return false;
+    if (d.now() - at >= holdFor(threadId)) { clearIntent(threadId); return false; }
     return true;
   };
+  /** How recently the owner used this engine's bot: its last owner turn, or the owner's intent hold on its thread. */
+  const recentAt = (m: WarmMember): number => Math.max(botActiveAt(m), !m.ownerActivityOnly && intentHeld(m.threadId) ? intentAt.get(m.threadId) ?? -Infinity : -Infinity);
+  /** A prewarm no send has claimed yet (speculative: it never makes room for itself by evicting an owner engine). */
+  const unclaimed = (key: object, m: WarmMember): boolean => m.hold === true && !ownerOrder.has(key);
+  /** How long a beat on this thread holds it: while its bot is active, the window; once asleep (or for a bot with no owner turn),
+   * the 120 s prewarm hold, never longer than the window (MAIN-RULING warm1022-driver-D2). */
+  const holdFor = (threadId: string): number => {
+    const bot = threadBots.get(threadId);
+    return bot !== undefined && !nonOwnerThreads.has(threadId) && d.now() - (botActivity.get(bot) ?? -Infinity) < windowMs() ? windowMs() : Math.min(prewarmHoldMs(d.env), windowMs());
+  };
+  /** Each hold's own end is checked when it lapses, not at the next 30 s tick (real timers only; unit tests tick themselves). */
+  const holdTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const setIntent = (threadId: string) => {
+    const len = Math.min(holdFor(threadId), prewarmHoldMs(d.env));
+    intentAt.set(threadId, d.now());
+    clearTimeout(holdTimers.get(threadId));
+    if (!d.timer) return;
+    const t = setTimeout(() => { holdTimers.delete(threadId); if (idle.size) checkSoon(); }, len + 1);
+    t.unref?.();
+    holdTimers.set(threadId, t);
+  };
+  const clearIntent = (threadId: string) => { intentAt.delete(threadId); clearTimeout(holdTimers.get(threadId)); holdTimers.delete(threadId); };
   const budgetBytes = (): number => {
     const override = Number(d.env.MURAGE_WARM_POOL_BUDGET_MB);
     if (Number.isFinite(override) && override > 0) return override * MB;
@@ -416,15 +525,26 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
     try { member.close(reason); } catch {}
     return true;
   };
+  /** Pressure retires the least recently active bot's engine first (MAIN-RULING warm-active-only (4));
+   * within one bot, the least recently used. */
   const evictOldest = (reason: string): boolean => {
-    for (const key of [...idle.keys()]) if (evictKey(key, reason)) return true;
+    if (startsInFlight() > 0) {
+      const spare = [...idle].find(([key, m]) => unclaimed(key, m));
+      return spare ? evictKey(spare[0], reason) : false;
+    }
+    // an unclaimed prewarm goes before any engine that settled an owner turn (owner always wins, MAIN 2026-11-22 19:53Z)
+    const order = [...idle].map(([key, m], i) => ({ key, at: recentAt(m), i, spec: unclaimed(key, m) ? 0 : 1 })).sort((a, b) => a.spec - b.spec || a.at - b.at || a.i - b.i);
+    for (const { key } of order) if (evictKey(key, reason)) return true;
     return false;
   };
-  /** An intent hold counts toward the one-spare-per-kind limit: the new hold
-   * replaces the previous idle spare of its kind. */
+  /** An intent hold counts toward its bot's one-engine limit: a CLAIMED hold replaces that bot's previous idle spare of its
+   * kind (other bots keep theirs). An UNCLAIMED prewarm only moves other unclaimed prewarms (at most one per engine kind): an
+   * engine that settled an owner turn is never closed by opening another chat, of its own bot or another (presence P-PRE 3, 6;
+   * MAIN 2026-11-22 19:53Z "a prewarm never evicts the owner engine", MAIN 2026-11-23 warm1022-presence-r6 same-bot path). */
   const moveIntent = (member: object, info: WarmMember) => {
+    const speculative = unclaimed(member, info);
     for (const [key, m] of [...idle]) {
-      if (key !== member && m.engine === info.engine && m.threadId !== info.threadId) evictKey(key, "intent-moved");
+      if (key !== member && m.engine === info.engine && m.threadId !== info.threadId && ((botOf(m) === botOf(info) && !speculative) || unclaimed(key, m))) evictKey(key, "intent-moved");
     }
   };
 
@@ -465,23 +585,41 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
   };
 
   const enforce = () => {
+    // P-AWAY: while the owner is away nothing idle survives a check
+    if (!presentNow()) for (const key of [...idle.keys()]) evictKey(key, "owner away");
     // past the warm max age: an idle engine is at a turn boundary, so retire it now
     for (const [key, m] of [...idle]) if (pastWarmMaxAge(m.spawnedAt, d.now(), d.env)) evictKey(key, "max-age");
-    // idle past the window: back to zero (an intent hold keeps its own thread)
-    if (!active()) {
-      for (const [key, m] of [...idle]) if (!intentHeld(m.threadId)) evictKey(key, "activity window");
-    } else {
-      // while active: at most one idle spare per engine kind, the most recently used
-      // (an intent-held process counts, and is the one kept when there is one)
-      for (const engine of ["claude", "codex", "acp"] as const) {
-        const mine = [...idle].filter(([, m]) => m.engine === engine);
-        const held = mine.filter(([, m]) => intentHeld(m.threadId));
-        const keep = (held.length ? held : mine).at(-1)?.[0];
-        for (const [key] of mine) if (key !== keep) evictKey(key, "spare limit");
-      }
+    // MAIN-RULING warm-active-only: a bot with no owner turn in the window is asleep, so its engines go. The one
+    // exception is the owner's own intent hold (focus, typing) on that thread: kept for the hold's window only.
+    for (const [key, m] of [...idle]) if (!botActive(m) && (m.ownerActivityOnly || !intentHeld(m.threadId))) evictKey(key, unclaimed(key, m) ? "prewarm unused" : "activity window");
+    // forget bots and threads that are past the window and own no idle engine
+    const now = d.now(), live = new Set([...idle.values()].map(botOf));
+    for (const [b, at] of botActivity) if (now - at >= windowMs() && !live.has(b)) botActivity.delete(b);
+    const idleThreads = new Set([...idle.values()].map((m) => m.threadId));
+    for (const [t, b] of threadBots) if (!botActivity.has(b) && !idleThreads.has(t) && !intentAt.has(t)) threadBots.delete(t);
+    for (const [t, at] of startsByThread) if (now - at >= PREWARM_RATE_WINDOW_MS) startsByThread.delete(t);
+    for (const [t, at] of nonOwnerThreads) if (now - at >= windowMs() && !idleThreads.has(t)) nonOwnerThreads.delete(t);
+    // at most one idle engine per active bot: one that settled an owner turn before an unclaimed prewarm (owner always wins);
+    // among those, the intent-held one, else the most recently used
+    const byBot = new Map<string, [object, WarmMember][]>();
+    for (const e of idle) { const b = botOf(e[1]); byBot.set(b, [...(byBot.get(b) ?? []), e]); }
+    for (const mine of byBot.values()) {
+      const owned = mine.filter(([key, m]) => !unclaimed(key, m));
+      const pick = owned.length ? owned : mine;
+      const held = pick.filter(([, m]) => intentHeld(m.threadId));
+      const keep = (held.length ? held : pick).at(-1)?.[0];
+      for (const [key] of mine) if (key !== keep) evictKey(key, "spare limit");
+    }
+    // at most warmSpares() (3) idle engines per engine kind across bots: the most recently active bots keep theirs
+    for (const engine of ["claude", "codex", "acp"] as const) {
+      const mine = [...idle].filter(([, m]) => m.engine === engine).map(([key, m], i) => ({ key, at: recentAt(m), i, spec: unclaimed(key, m) ? 1 : 0 }));
+      // unclaimed prewarms go first under the cap: another bot's engine that settled an owner turn is never closed to keep one (P-PRE 3, 6)
+      mine.sort((a, b) => a.spec - b.spec || b.at - a.at || b.i - a.i);
+      for (const { key } of mine.slice(warmSpares(d.env))) evictKey(key, "spare limit");
     }
     const budget = budgetBytes();
-    while (idle.size && budgetPoolBytes() > budget) evictOldest("pool budget");
+    // stops when nothing more may be closed (a prewarm start in flight protects owner engines): never a loop without progress
+    while (idle.size && budgetPoolBytes() > budget) if (!evictOldest("pool budget")) break;
     // free memory does not move until the kill lands: one engine per check
     if (idle.size && d.freemem() < minFreeBytes()) evictOldest("low memory");
   };
@@ -528,7 +666,7 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
     return at !== undefined && !(info.spawnedAt !== undefined && info.spawnedAt > at);
   };
 
-  return {
+  const api = {
     /** The scope's login split: close every idle engine started on it, and any started before now when it settles. */
     drainScope(scope: { kind: string; bot: string | null }, reason = "login-split"): number {
       drained.set(scopeId(scope), d.now());
@@ -541,16 +679,48 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
     /** An engine settled and is idle now (also refreshes its LRU position). */
     markIdle(member: object, info: WarmMember): Promise<void> {
       idle.delete(member);
+      if (info.hold) inflightStarts.delete(info.threadId);
       if (staleScope(info)) { sizes.delete(member); cancelEarly(member); try { info.close("login-split"); } catch {} return Promise.resolve(); }
-      if (info.hold && !info.background) intents.set(info.threadId, d.now() + windowMs());
-      else intents.delete(info.threadId);
-      if (info.background) {
+      // P-AWAY: while away every engine closes as it settles (owner, borrowed, background, prewarm). P-FENCE 1: an unclaimed
+      // prewarm admitted before the newest away edge closes too, even if he is present again by now.
+      const stale = info.hold === true && !ownerOrder.has(member) && (admittedEpoch.get(info.threadId) ?? presenceEpoch) < presenceEpoch;
+      if (!presentNow() || stale) {
+        if (info.hold) { admittedEpoch.delete(info.threadId); clearIntent(info.threadId); }
+        idle.set(member, info);
+        evictKey(member, "owner away");
+        return Promise.resolve();
+      }
+      if (info.ownerActivityOnly && !botActive(info)) {
+        idle.set(member, info);
+        evictKey(member, "activity window");
+        return Promise.resolve();
+      }
+      // A background turn (routine, schedule, card continuation) on the owner's own thread runs on the
+      // owner's hot engine. That engine is the owner's: it goes back where it was, with the thread's hold as it was.
+      const borrowed = info.background === true && ownerOrder.has(member);
+      if (!borrowed) {
+        if (info.hold && !info.background) setIntent(info.threadId);
+        else clearIntent(info.threadId);
+      }
+      if (info.background && !borrowed) {
         sizes.delete(member);
         idle.set(member, info);
         evictKey(member, "background turn");
         return Promise.resolve();
       }
-      idle.set(member, info);
+      if (borrowed) {
+        // back at its owner-use position: engines the owner used later stay ahead of it
+        const mine = ownerOrder.get(member)!;
+        const later = [...idle].filter(([key]) => (ownerOrder.get(key) ?? Infinity) > mine);
+        for (const [key] of later) idle.delete(key);
+        idle.set(member, { ...info, background: false });
+        for (const [key, m] of later) idle.set(key, m);
+        d.log(`warm pool keep engine=${info.engine} thread=${info.threadId} reason=owner engine after a background turn`);
+      } else {
+        // a prewarm no send has reached yet is not the owner's engine: a background turn that takes it still releases it
+        if (!info.hold) ownerOrder.set(member, ++ownerSeq);
+        idle.set(member, info);
+      }
       if (!firstSeen.has(member)) firstSeen.set(member, d.now());
       if (info.hold) moveIntent(member, info);
       startTimer();
@@ -558,19 +728,36 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
       run.then(() => scheduleEarly(member), () => {});
       return run;
     },
-    /** A USER turn from any surface began. Routines, schedules and memory work never call this. */
-    noteUserActivity() {
-      lastActivity = d.now();
+    /** A USER turn from any surface began on this bot's thread. Routines, schedules and memory work never call this. */
+    noteUserActivity(botId?: string, threadId?: string) {
+      botActivity.set(botId ?? "", d.now());
+      // a turn that names no bot never moves a thread off the bot it is known to belong to
+      if (threadId !== undefined && (botId !== undefined || !threadBots.has(threadId))) threadBots.set(threadId, botId ?? "");
       if (!d.timer) return;
       if (windowTimer) clearTimeout(windowTimer);
       windowTimer = setTimeout(() => { windowTimer = null; if (!running) running = check(true); }, windowMs() + 1_000);
       windowTimer.unref?.();
     },
+    /** A user turn began on this thread (every driver calls this at send; background turns never do). MAIN-RULING
+     * warm-active-only: an owner turn wakes its bot; a non-owner (channel audience) turn wakes no bot and marks the
+     * thread, so its engine never takes that bot's one slot. A turn with no identity counts as an owner turn of "". */
+    noteTurn(identity: { botId: string; audience: "owner" | "non-owner" } | undefined, threadId: string): void {
+      if (identity?.audience === "non-owner") { nonOwnerThreads.set(threadId, d.now()); return; }
+      nonOwnerThreads.delete(threadId);
+      api.noteUserActivity(identity?.botId, threadId);
+    },
+    /** What the pool knows of a thread's last user turn: its bot, whether that bot is awake, and whether it was a non-owner's. */
+    activityFor(threadId: string): { bot: string | undefined; active: boolean; nonOwner: boolean } {
+      const bot = threadBots.get(threadId), nonOwner = nonOwnerThreads.has(threadId);
+      return { bot, active: !nonOwner && bot !== undefined && d.now() - (botActivity.get(bot) ?? -Infinity) < windowMs(), nonOwner };
+    },
     /** Warm on intent (window focus, composer typing): hold this thread's idle engine
      * for one window; it is released if no send follows. */
-    warmIntent(threadId: string) {
-      intents.set(threadId, d.now() + windowMs());
-      for (const [key, m] of [...idle]) if (m.threadId === threadId) moveIntent(key, m);
+    warmIntent(threadId: string, botId?: string) {
+      if (botId !== undefined) threadBots.set(threadId, botId);
+      // MAIN-RULING warm1022-driver-D2: an asleep bot's hold is the 120 s prewarm hold; an active bot keeps the window
+      setIntent(threadId);
+      for (const [key, m] of [...idle]) if (m.threadId === threadId && (!m.ownerActivityOnly || botActive(m))) moveIntent(key, m);
       if (d.timer) startTimer();
     },
     /** True once if this pool closed the thread's engine, so the next spawn is a cold wake. */
@@ -581,23 +768,114 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
      * engine is idle again. */
     release(member: object) { idle.delete(member); sizes.delete(member); cancelEarly(member); },
     /** A send reached the thread: its intent hold has done its job. */
-    sent(threadId: string) { intents.delete(threadId); },
+    sent(threadId: string) { clearIntent(threadId); admittedEpoch.delete(threadId); },
+    /** Wire owner presence (index.ts): while it reads false nothing idle is kept. */
+    setPresence(present: () => boolean) { presentNow = present; },
+    /** P-AWAY: the owner went away at an edge (lock, sleep). Every hold is cleared and every idle engine is retired now;
+     * busy engines finish their turn and close at settle. An unclaimed prewarm still starting closes when it parks (epoch). */
+    ownerAway(cause: string): number {
+      presenceEpoch++;
+      for (const t of [...intentAt.keys()]) clearIntent(t);
+      let closed = 0;
+      for (const key of [...idle.keys()]) if (evictKey(key, `owner away ${cause}`)) closed++;
+      // P-FENCE 2 (W-PR6 a): every unclaimed prewarm still starting is abandoned now, on every driver instance, never left to park
+      for (const detach of [...awayDetachers]) { try { closed += detach(cause); } catch {} }
+      return closed;
+    },
+    /** A driver instance's hook for ownerAway: it abandons every prewarm of its own still starting and returns how many. The
+     * returned function unregisters it (dispose). */
+    onOwnerAway(detach: (cause: string) => number): () => void {
+      awayDetachers.add(detach);
+      return () => { awayDetachers.delete(detach); };
+    },
+    /** The driver started nothing for an admitted prewarm (a no-op): its start is given back. Its admission epoch stays: a driver
+     * that answers false while its start goes on (Codex, past its wait) still parks later, and P-FENCE 1 must judge that park. */
+    /** The driver answered false but its start goes on (Codex past its wait): it stays in flight until it parks or ends. */
+    startStillRunning(threadId: string) { runningAfterGiveBack.add(threadId); },
+    /** That start ended (parked, failed or abandoned). */
+    startEnded(threadId: string) { runningAfterGiveBack.delete(threadId); if (!answering.has(threadId)) inflightStarts.delete(threadId); },
+    /** The driver's start call began (admitAndPrewarm): it is in flight, without a lapse, until startAnswered. */
+    startAnswering(threadId: string) { if (inflightStarts.has(threadId)) answering.add(threadId); },
+    /** The driver's start call answered. True: its engine parked (or a send claimed it), the start is over. False: unadmitPrewarm
+     * follows, which keeps a start the driver reported still running. */
+    startAnswered(threadId: string, started: boolean) { answering.delete(threadId); if (started) inflightStarts.delete(threadId); },
+    unadmitPrewarm(threadId: string) {
+      if (!runningAfterGiveBack.has(threadId)) inflightStarts.delete(threadId);
+      const at = startsByThread.get(threadId);
+      if (at === undefined) return;
+      startsByThread.delete(threadId);
+      const i = recentStarts.lastIndexOf(at);
+      if (i >= 0) recentStarts.splice(i, 1);
+    },
+    /** P-PRE 2-4: may a prewarm start on this thread now? Records its admission (epoch, rate) when it may. */
+    admitPrewarm(threadId: string): { ok: true } | { ok: false; reason: "away" | "warm" | "rate" | "budget" } {
+      if (!presentNow()) return { ok: false, reason: "away" };
+      if ([...idle.values()].some((m) => m.threadId === threadId)) return { ok: false, reason: "warm" };
+      const now = d.now();
+      recentStarts = recentStarts.filter((at) => now - at < PREWARM_RATE_WINDOW_MS);
+      const last = startsByThread.get(threadId);
+      if ((last !== undefined && now - last < PREWARM_RATE_WINDOW_MS) || recentStarts.length >= PREWARM_STARTS_PER_WINDOW) return { ok: false, reason: "rate" };
+      // speculative: only unclaimed prewarms make room, never an engine that settled an owner turn
+      const budget = budgetBytes();
+      // room for the engine it is about to start, in the pool budget AND above the free-memory floor: a start that would push free
+      // memory under the floor is refused here, so no pressure check before its park ever closes an owner engine for it
+      const over = () => poolBytes() + averageBytes() * (1 + startsInFlight()) > budget || d.freemem() - averageBytes() * (1 + startsInFlight()) < minFreeBytes();
+      while (over()) {
+        const spare = [...idle].find(([key, m]) => unclaimed(key, m));
+        if (!spare || !evictKey(spare[0], "intent-moved")) break;
+      }
+      if (over()) return { ok: false, reason: "budget" };
+      startsByThread.set(threadId, now);
+      recentStarts.push(now);
+      inflightStarts.set(threadId, now);
+      // a given-back start of this thread may still be running and park later: it keeps the older epoch (ASTRA 4ee774eaee retry race)
+      admittedEpoch.set(threadId, Math.min(admittedEpoch.get(threadId) ?? presenceEpoch, presenceEpoch));
+      return { ok: true };
+    },
     /** Make headroom for one more engine before a spawn. Never refuses the spawn: it
      * evicts idle engines instead. A measuring engine counts its provisional size here
-     * (no grace on admission), and the free-memory backstop runs on a fresh sample. */
-    async beforeSpawn(): Promise<void> {
+     * (no grace on admission), and the free-memory backstop runs on a fresh sample. A `speculative` spawn (a prewarm) makes room
+     * only from unclaimed prewarms, never from an engine that settled an owner turn (P-PRE 4: owner always wins). */
+    async beforeSpawn(opts?: { speculative?: boolean }): Promise<void> {
       if (!idle.size) return;
       await running?.catch(() => {});
       await refresh(false);
       await d.sampleFree().catch(() => {});
       const budget = budgetBytes();
-      if (idle.size && poolBytes() + averageBytes() > budget) evictOldest("pool reserve");
-      if (idle.size && d.freemem() < minFreeBytes()) evictOldest("low memory");
+      const evict = (reason: string) => {
+        if (!opts?.speculative) return evictOldest(reason);
+        const spare = [...idle].find(([key, m]) => unclaimed(key, m));
+        return spare ? evictKey(spare[0], reason) : false;
+      };
+      if (idle.size && poolBytes() + averageBytes() > budget) evict("pool reserve");
+      if (idle.size && d.freemem() - (opts?.speculative ? averageBytes() : 0) < minFreeBytes()) evict("low memory");
     },
     idleCount: () => idle.size,
     poolBytes,
     budgetBytes,
   };
+  return api;
 }
 
 export const warmPool = createWarmPool();
+
+/** warmThread's admission, start and give-back (server/index.ts), shared so its witness drives the production wiring: P-PRE 2-4
+ * admission (records the presence epoch before the driver's first await, P-FENCE 1), then the driver's start; a start that answers
+ * false (a no-op, or Codex past its wait while it still runs) is given back, keeping its admission epoch. */
+export function admitAndPrewarm(
+  pool: Pick<ReturnType<typeof createWarmPool>, "admitPrewarm" | "unadmitPrewarm"> & Partial<Pick<ReturnType<typeof createWarmPool>, "startAnswering" | "startAnswered">>,
+  threadId: string,
+  start: () => Promise<boolean>,
+): Promise<{ admitted: false; reason: "away" | "warm" | "rate" | "budget" } | { admitted: true; started: boolean }> {
+  const admission = pool.admitPrewarm(threadId);
+  if (!admission.ok) return Promise.resolve({ admitted: false, reason: admission.reason });
+  // the driver's start runs now, in the same tick as the admission (its gate entry registers before any away edge can land)
+  let starting: Promise<boolean>;
+  pool.startAnswering?.(threadId);
+  try { starting = start(); } catch { starting = Promise.resolve(false); }
+  return starting.catch(() => false).then((started) => {
+    pool.startAnswered?.(threadId, started);
+    if (!started) pool.unadmitPrewarm(threadId);
+    return { admitted: true as const, started };
+  });
+}

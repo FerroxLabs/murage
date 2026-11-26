@@ -25,7 +25,10 @@ export interface McpSecretsInput {
 export type McpBridgeError =
   | "desktop-only" | "storage" | "not-found" | "invalid" | "stale" | "busy" | "headless"
   | "not-sign-in" | "no-registration" | "no-sign-in-details" | "refused" | "cancelled" | "denied" | "timeout"
-  | "port" | "browser" | "network" | "token" | "unknown";
+  | "port" | "port-busy" | "bad-client" | "own-app-changed" | "browser" | "network" | "token" | "unknown";
+
+export const canUseOwnMcpApp = (error: McpBridgeError) =>
+  error === "no-registration" || error === "own-app-changed" || error === "port-busy" || error === "bad-client";
 
 export type McpBridgeResult = { ok: true } | { ok: false; error: McpBridgeError; message: string };
 export type McpSignOutResult = { ok: true; revoked: boolean; message: string } | { ok: false; error: McpBridgeError; message: string };
@@ -36,6 +39,8 @@ export interface McpBridge {
   mode(): Promise<"desktop" | "local-config">;
   saveSecrets(name: string, input: McpSecretsInput): Promise<McpBridgeResult>;
   signIn(name: string): Promise<McpBridgeResult>;
+  /** B98: save the owner's own app (main only); resolves the redirect address to paste into it. */
+  useOwnApp(name: string, input: { clientId: string; clientSecret?: string }): Promise<{ ok: true; redirectUri: string; tokenHost: string } | { ok: false; error: McpBridgeError; message: string }>;
   cancelSignIn(name: string): Promise<boolean>;
   signOut(name: string): Promise<McpSignOutResult>;
   remove(name: string): Promise<McpRemoveResult>;

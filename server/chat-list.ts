@@ -1,3 +1,4 @@
+import { MAILBOX_PLACEHOLDER } from "./mailbox/projection.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -86,6 +87,7 @@ export interface ChatFilters {
 }
 
 export interface ChatSource {
+  mailboxSealed?(threadId: string): boolean;
   bots: readonly ChatSourceBot[];
   groups: readonly ChatSourceGroup[];
   /** newest message time of a thread (Store.lastActivityAt: an in-memory map, read once per thread) */
@@ -254,7 +256,7 @@ function visitChats(source: ChatSource, consider: (row: ChatRow) => void): void 
       const place = placeOf(desk?.groupId);
       consider({
         threadId: task.threadId,
-        title: task.title,
+        title: source.mailboxSealed?.(task.threadId) ? MAILBOX_PLACEHOLDER : task.title,
         createdAt: task.createdAt,
         botId: bot.id,
         ...(place ? { place } : {}),
@@ -275,7 +277,7 @@ function visitChats(source: ChatSource, consider: (row: ChatRow) => void): void 
       const routine = source.routineOf(task.threadId, { groupId: group.id });
       consider({
         threadId: task.threadId,
-        title: task.title,
+        title: source.mailboxSealed?.(task.threadId) ? MAILBOX_PLACEHOLDER : task.title,
         createdAt: task.createdAt,
         groupId: group.id,
         ...(place ? { place } : {}),

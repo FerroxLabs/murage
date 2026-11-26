@@ -48,7 +48,7 @@ export type FluxOutcome<T = Record<string, unknown>> = (
   | { kind: "ok"; status: number; body: T; keyId: string; costUsd?: string }
   | { kind: "held"; status: 202; body: T; keyId: string }
   | { kind: "refused"; status: number; code: string; message: string; error: FluxErrorBody; keyId: string }
-  | { kind: "local_refused"; code: "owner_unproven" | "owner_mismatch"; keyId?: undefined }
+  | { kind: "local_refused"; code: "owner_unproven" | "owner_mismatch" | "bot_archived"; keyId?: undefined }
   | { kind: "uncertain"; status?: number; reason: "network" | "timeout" | "server" | "idempotency_in_progress" | "idempotency_mismatch" | "bad_body" | "no_credential" | "owner_changed"; keyId?: string }
 ) & {
   /** r5 F1: on an owner-kind call, the owner ref of the credential that made it (never set when no request was made). */
@@ -70,6 +70,8 @@ export interface FluxEmailClientOptions {
   observe?: (ref: CredentialRef, outcome: FluxOutcome<unknown>) => void;
   /** Section 8 outage backoff: an answer to give instead of calling Flux while that credential waits (null = call). */
   gate?: (ref: CredentialRef) => FluxOutcome<never> | null;
+  /** fprod3 N5: true when the bot the call is made for is archived or being archived; a dispatch-class call is then refused locally, with no request */
+  botFenced?: (botId: string) => boolean;
   /** Accepted restore outcomes survive a client/runtime restart. Keys contain the owner key id, never its token. */
   restoreOutcomes?: { read(id: string): StoredRestoreOutcome | null; write(id: string, value: StoredRestoreOutcome): void };
 }
@@ -210,6 +212,8 @@ export class FluxEmailClient {
           (method === "GET" && /\/(?:messages|threads)(?:\/[^/]+)?$/.test(path) && !init.query?.client_reference)) {
         await authorizeFluxDispatch(init.spendKey ?? credential.token);
       }
+      // N5, after the last await (spend authorisation) and immediately before the request: an archived bot's send, approve or reply never leaves
+      if (init.botId && this.options.botFenced?.(init.botId) && method === "POST" && (/\/messages(?:\/[^/]+\/reply)?$/.test(path) || /\/(?:approve|send)$/.test(path))) return { kind: "local_refused", code: "bot_archived" };
       const response = await this.options.fetch(url.toString(), { method, headers, body: init.body === undefined ? undefined : JSON.stringify(init.body), signal: controller.signal, redirect: "error" });
       let text = "";
       try { text = await response.text(); } catch { return { kind: "uncertain", status: response.status, reason: timedOut ? "timeout" : "network", keyId: credential.keyId }; }

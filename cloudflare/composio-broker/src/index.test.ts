@@ -931,6 +931,62 @@ describe("the gate's place in the route table", () => {
     }
   });
 
+  it("says the connected-apps answer is incomplete when the account sweep fails, so a save never trusts the omitted accounts", async () => {
+    const { env, ctx } = routeEnv(installRow());
+    let sweepFails = false;
+    vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/connected_accounts")) return sweepFails ? new Response("{}", { status: 500 }) : Response.json({ items: [] });
+      if (url.includes("/toolkits")) return Response.json({ items: [] });
+      return Response.json(session("trs_multi", "murage_stable"));
+    });
+    const read = async () => (await route(new Request("https://broker.test/v1/connectors/connected", { headers: authorized }), env as never, ctx as never)).json();
+    await expect(read()).resolves.toMatchObject({ complete: true });
+    sweepFails = true;
+    await expect(read()).resolves.toMatchObject({ complete: false });
+  });
+
+  it("refuses a looping account cursor instead of reporting the rows so far as the whole inventory", async () => {
+    const { env, ctx } = routeEnv(installRow());
+    const accountCursors: Array<string | null> = [];
+    vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/connected_accounts")) {
+        const cursor = /[?&]cursor=([^&]+)/.exec(url)?.[1] ?? null;
+        accountCursors.push(cursor);
+        // Page 1 -> loop-a -> loop-b -> loop-a again: the walk never ends on its own.
+        const next = cursor === "loop-a" ? "loop-b" : "loop-a";
+        return Response.json({ items: [{ id: `ca_${accountCursors.length}`, toolkit: { slug: "gmail" }, status: "ACTIVE" }], next_cursor: next });
+      }
+      if (url.includes("/toolkits")) return Response.json({ items: [] });
+      return Response.json(session("trs_multi", "murage_stable"));
+    });
+    const list = await route(new Request("https://broker.test/v1/connectors/connected", { headers: authorized }), env as never, ctx as never);
+    expect(list.status).toBe(200);
+    await expect(list.json()).resolves.toMatchObject({ complete: false });
+    expect(accountCursors).toEqual([null, "loop-a", "loop-b"]);
+
+    // The write paths that need the whole inventory refuse rather than act on a partial list.
+    const link = await route(new Request("https://broker.test/v1/connectors/gmail/authorize", { method: "POST", headers: authorized, body: "{}" }), env as never, ctx as never);
+    expect(link.status).toBe(503);
+  });
+
+  it("marks the connected-apps answer incomplete when the toolkit cursor loops, keeping the rows for views", async () => {
+    const { env, ctx } = routeEnv(installRow());
+    vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/connected_accounts")) return Response.json({ items: [] });
+      if (url.includes("/toolkits")) {
+        const cursor = /[?&]cursor=([^&]+)/.exec(url)?.[1] ?? null;
+        return Response.json({ items: [{ slug: cursor ? "notion" : "gmail", is_no_auth: true }], next_cursor: cursor ? cursor : "again" });
+      }
+      return Response.json(session("trs_multi", "murage_stable"));
+    });
+    const body = await (await route(new Request("https://broker.test/v1/connectors/connected", { headers: authorized }), env as never, ctx as never)).json() as { complete: boolean; services: Record<string, unknown> };
+    expect(body.complete).toBe(false);
+    expect(Object.keys(body.services).sort()).toEqual(["gmail", "notion"]);
+  });
+
   // Upstream #1602: Composio prefixes slugs that would otherwise lead with a
   // digit, so 1Password is `_1password` and 21RISK is `_21risk`. The catalog
   // lists them, but the connector routes demanded [a-z0-9] first and sent

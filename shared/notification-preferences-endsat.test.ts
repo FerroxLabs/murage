@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { quietHoursEndsAt } from "./notification-preferences.ts";
+import { quietHoursEndsAt, quietStartsIn } from "./notification-preferences.ts";
 
 const prefs = (start: string, end: string, timeZone = "UTC", enabled = true) => ({ quietHours: { enabled, start, end, timeZone } });
 
@@ -36,4 +36,11 @@ describe("quietHoursEndsAt", () => {
   it("handles a nearly all-day window", () => {
     expect(quietHoursEndsAt(prefs("00:01", "00:00"), new Date("2026-11-09T12:00:00Z"))).toBe(Date.parse("2026-11-10T00:00:00Z"));
   });
+});
+
+it("R7: recovery receives a relative quiet start on the minute boundary", () => {
+  const schedule = prefs("22:00", "07:00");
+  expect(quietStartsIn(schedule, new Date("2026-11-09T21:59:30Z"))).toBe(30_000);
+  expect(quietStartsIn(schedule, new Date("2026-11-09T22:00:00Z"))).toBe(0);
+  expect(quietStartsIn(prefs("22:00", "07:00", "UTC", false), new Date("2026-11-09T21:59:30Z"))).toBeNull();
 });

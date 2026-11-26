@@ -1,3 +1,4 @@
+import { evidencePath } from '../evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // node --test: the T30A renderers write non-empty PNGs, and the mock copy passes the copy rules.
 // The render test needs a browser (CFT_PATH); without one it is skipped, so plain runs stay offline.
@@ -33,7 +34,7 @@ test('every contrast pair the variants rely on clears its floor', () => {
 });
 
 test('renderers write the variant screenshots', { skip: !process.env.CFT_PATH && 'set CFT_PATH to run' , timeout: 600000 }, async () => {
-  const outDir = process.env.T30A_OUT || path.resolve(here, '../../lanes/chrome-t30a/shots');
+  const outDir = process.env.T30A_OUT || evidencePath('lanes/chrome-t30a/shots');
   const { written } = await renderAll({ outDir });
   assert.ok(written.length >= 60, `expected 60+ files, got ${written.length}`);
   for (const f of written) { assert.ok(existsSync(f), f); assert.ok((await stat(f)).size > 1000, `${f} empty`); }

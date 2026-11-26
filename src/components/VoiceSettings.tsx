@@ -72,7 +72,7 @@ export function VoiceSettings({
   const hostPlatform = capabilities.host.platform;
   // Each bot picks its own voice service; without a choice it uses the
   // workspace's. So a room of bots can mix xAI, OpenAI and ElevenLabs.
-  const provider = bot.voiceProvider ?? tts?.provider ?? "elevenlabs";
+  const provider = bot.voiceProvider ?? tts?.provider;
   const xaiAvailable = Boolean(tts?.available?.xai);
   // xAI's voices are in the Flux list; their own engine is for an owner
   // with an xAI key of their own, or a bot already saved on it.
@@ -85,8 +85,8 @@ export function VoiceSettings({
   // executed by a test: a node-environment suite cannot render this component,
   // so a rule written inline here could only ever be checked by grepping the
   // file for a string. shared/system-voices.test.ts runs this instead.
-  const offer = systemVoiceOffer(hostPlatform, provider);
-  const systemVoicesAvailable = offer.available;
+  const offer = provider && systemVoiceOffer(hostPlatform, provider);
+  const systemVoicesAvailable = offer?.available === true;
   // whether THIS bot's service can speak (the workspace's `configured`
   // describes the workspace's own service)
   const configured =
@@ -106,7 +106,7 @@ export function VoiceSettings({
   }, [provider]);
 
   useEffect(() => {
-    if (!configured) {
+    if (!provider || !configured) {
       setVoices([]);
       return;
     }
@@ -201,6 +201,7 @@ export function VoiceSettings({
   }, [bot.id]);
 
   if (!tts) return null;
+  if (!offer) return <p role="status" className="text-[13px] text-ink-secondary">{t("settings.voiceProviderUnavailable")}</p>;
 
   // The voice the app assigned is a Flux-list voice: where this bot speaks
   // another way, it is not shown as chosen.

@@ -1,3 +1,4 @@
+import { evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {cpSync,mkdtempSync,readdirSync,symlinkSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -6,7 +7,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {safeWipeSync} from '../server/testing/safe-wipe.mjs';
 if(process.env.CI!=='1')throw Error('Requires isolated container');
-const source=process.cwd(),out=resolve('evidence/nolim-sql-r3');mkdirSync(out,{recursive:true});
+const source=process.cwd(),out=resolve(evidencePath('evidence/nolim-sql-r3'));mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'nolim-sql-r3-baseline-'));
 const files=['server/no-limits-review-fix.test.ts','server/full-access.test.ts','server/auto-approve.test.ts','server/decision/no-limits-x2-full-access.test.ts','scripts/no-limits-live/ruling-1019.test.mjs'];
 const report={base:'a887f3e470b42caf99969f505f41db8d4b3a1dda',verdict:'FAIL',sourceSha256:Object.fromEntries(['server/no-limits-wipe.ts','server/no-limits-wipe-sql.ts','server/no-limits-database-input.ts'].map(file=>[file,createHash('sha256').update(readFileSync(file)).digest('hex')]))};

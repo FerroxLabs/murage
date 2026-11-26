@@ -258,6 +258,10 @@ const featureConfigSchema = z.object({
   botsSharedAcrossTeams: z.boolean().optional(),
   /** 1.0.9 phone tools. Off unless explicitly true; also needs a desktop host, the launch proof and an unshared workspace (server/phones/offered.ts). */
   phoneTools: z.boolean().optional(),
+  /** WARM W1 D1 flag `warm.s2r`: mounted Claude S2-R + Codex reuse. Off unless explicitly true (server/drivers/warm-s2r-flag.ts). */
+  warmS2r: z.boolean().optional(),
+  /** grokwarm flag `warm.acpReuse`: prompt-scoped ACP reuse. Off unless explicitly true (server/drivers/warm-acp-reuse-flag.ts). */
+  warmAcpReuse: z.boolean().optional(),
   /** 1.0.9 share and ask. Its own flag, independent of phoneTools; same host conditions (server/phones/offered.ts shareAskOffered). */
   phoneShareAsk: z.boolean().optional(),
   /** Unset: on when a Flux key is present (index.ts learningDefaultOn); an explicit false keeps the activation hold. */
@@ -372,8 +376,9 @@ const appConfigSchema = z.object({
   /** Optional external search credentials are write-only workspace state.
    * Absent keeps engine search. Only desktop Murage-specific key variables
    * are imported; ambient engine/MCP provider credentials remain separate. */
-  webSearch: z.object({ provider: z.enum(["engine", "auto", "flux", "tavily", "exa", "firecrawl", "off"]).optional(), tavilyApiKey: optionalText, exaApiKey: optionalText, firecrawlApiKey: optionalText }).strict().optional(),
-  /** Native HighLevel (HL-S2): the owner's Private Integration token. Write-only workspace state kept in the secret
+  webSearch: z.object({ provider: z.enum(["engine", "auto", "flux", "tavily", "exa", "firecrawl", "off"]).optional(), readEnabled: z.boolean().optional(), tavilyApiKey: optionalText, exaApiKey: optionalText, firecrawlApiKey: optionalText }).strict().optional(),
+  /** Murage's own HighLevel (removed in 1.0.20): the section stays in the schema only so a save never drops the owner's
+   *  stored token from disk (cleanup is a 1.0.21 row, with consent). Nothing reads it. Was: the owner's Private Integration token. Write-only workspace state kept in the secret
    * store (credentials.bin / the Cloud supervisor); a location is live only after the owner checks and confirms it. */
   highlevel: z.object({ privateToken: optionalText }).strict().optional(),
   /** Flux Router key. Workspace-scoped on purpose: FLUX_API_KEY is listed in
@@ -481,7 +486,7 @@ export interface AppConfig {
   imageGen?: { key?: string; enabled?: boolean; connectionId?: string; model?: string;
     /** Check the default image model once a day with one small render (off by default). */
     dailyProbe?: boolean };
-  webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
+  webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; readEnabled?: boolean; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   highlevel?: { privateToken?: string };
   flux?: { apiKey?: string; memory?: { enabled?: boolean; inject?: boolean; owner?: boolean; spaces?: boolean; external?: boolean }; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
   decider?: { enabled?: boolean; provider?: "flux"; jobs?: { roomRouting?: boolean }; byoKey?: string; baseUrl?: string };
@@ -494,6 +499,8 @@ export interface AppConfig {
   features?: {
     botsSharedAcrossTeams?: boolean;
     phoneTools?: boolean;
+    warmS2r?: boolean;
+    warmAcpReuse?: boolean;
     phoneShareAsk?: boolean;
     learningDefaultOn?: boolean;
     projectsLead?: boolean; projectsGoals?: boolean; projectsBudgets?: boolean; projectsWorkProfile?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; skillRecorder?: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; cloudBoxComputers?: boolean; browser?: boolean; catalogFeaturedOnly?: boolean;
@@ -788,7 +795,6 @@ function loadConfigWithoutOverlay(): AppConfig {
     if (process.env.MURAGE_EXA_SEARCH_KEY !== undefined) cfg.webSearch.exaApiKey = process.env.MURAGE_EXA_SEARCH_KEY;
     if (process.env.MURAGE_FIRECRAWL_SEARCH_KEY !== undefined) cfg.webSearch.firecrawlApiKey = process.env.MURAGE_FIRECRAWL_SEARCH_KEY;
   }
-  if (process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN !== undefined) cfg.highlevel = { ...cfg.highlevel, privateToken: process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN };
   cfg.flux = { ...cfg.flux };
   if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
   if (process.env.MURAGE_FLUX_CONNECTION_ALIASES !== undefined) cfg.flux.connectionAliases = appConfigSchema.shape.flux.unwrap().shape.connectionAliases.parse(JSON.parse(process.env.MURAGE_FLUX_CONNECTION_ALIASES));
@@ -827,7 +833,6 @@ export function syncCredentialEnv(patch: ConfigWritePatch): void {
     [patch.webSearch?.tavilyApiKey, "MURAGE_TAVILY_SEARCH_KEY"],
     [patch.webSearch?.exaApiKey, "MURAGE_EXA_SEARCH_KEY"],
     [patch.webSearch?.firecrawlApiKey, "MURAGE_FIRECRAWL_SEARCH_KEY"],
-    [patch.highlevel?.privateToken, "MURAGE_HIGHLEVEL_PRIVATE_TOKEN"],
     [patch.flux?.apiKey, "FLUX_API_KEY"],
   ];
   for (const [value, name] of secrets) {
@@ -886,8 +891,6 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "MURAGE_TAVILY_SEARCH_KEY",
   "MURAGE_EXA_SEARCH_KEY",
   "MURAGE_FIRECRAWL_SEARCH_KEY",
-  // The owner's HighLevel Private Integration token: only the harness's native HighLevel client sends it.
-  "MURAGE_HIGHLEVEL_PRIVATE_TOKEN",
   // Flux Router. The whole point of listing it: the raw workspace key must
   // never ride into a spawned CLI's env. Routing injects it post-strip.
   "FLUX_API_KEY",
@@ -952,6 +955,9 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "CURSOR_AUTH_TOKEN",
   "CLINE_API_KEY",
   "META_API_KEY",
+  "COMMAND_CODE_API_KEY",
+  "KIRO_API_KEY",
+  "WINDSURF_API_KEY",
 ] as const;
 
 /** Strip every credential from the env of a pre-save CLI probe or a Claude
@@ -1349,6 +1355,10 @@ export function allInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
     cline: { driver: "clineAgent" },
     muse: { driver: "museCode" },
     pi: { driver: "piAgent" },
+    commandCode: { driver: "commandCodeAgent" },
+    kiro: { driver: "kiroAgent" },
+    omp: { driver: "ompAgent" },
+    devin: { driver: "devinAgent" },
     deepseek: { driver: "deepseekAgent" },
     githubCopilot: { driver: "copilotAgent" },
   } as const;

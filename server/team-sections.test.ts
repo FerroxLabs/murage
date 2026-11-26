@@ -53,6 +53,9 @@ function setup() {
   return { store, chief, lead, member, archived, loose, salesLead, salesMember, channel, other, deps, revision };
 }
 
+const reviewed = (store: Store, section: string) =>
+  Object.fromEntries(describeTeam(store, section).members.map((member) => [member.id, member.accessRevision]));
+
 const teamScopes = () =>
   database().prepare("SELECT owner_key FROM memory_scopes WHERE kind='team' ORDER BY owner_key").all().map((row) => String(row.owner_key));
 
@@ -222,7 +225,7 @@ describe("deleteTeam", () => {
     const { store, lead, member, archived, channel, other, deps, revision } = setup();
     store.appendMessage(channel.threadId, { role: "user", kind: "text", text: "channel history" });
     writeSectionContext("Operations", "Brief");
-    const result = deleteTeam(store, { section: "Operations", revision: revision(), bots: "keep" }, deps);
+    const result = deleteTeam(store, { section: "Operations", revision: revision(), bots: "keep", accessRevisions: reviewed(store, "Operations") }, deps);
     expect(result).toMatchObject({ bots: 3, channels: 2 });
     for (const bot of [lead, member, archived]) expect(sectionKey(store.bot(bot.id)?.section)).toBe("");
     expect(store.bot(lead.id)).toMatchObject({ chiefOfStaff: false });
@@ -244,7 +247,7 @@ describe("deleteTeam", () => {
     const { store, chief, lead, member, channel, other, deps } = setup();
     store.setBotsSection([chief.id], "Operations");
     const revision = describeTeam(store, "Operations").revision;
-    deleteTeam(store, { section: "Operations", revision, bots: "archive" }, deps);
+    deleteTeam(store, { section: "Operations", revision, bots: "archive", accessRevisions: reviewed(store, "Operations") }, deps);
     expect(store.bot(lead.id)).toMatchObject({ hidden: true, chiefOfStaff: false });
     expect(store.bot(member.id)?.hidden).toBe(true);
     expect(store.bot(chief.id)).toMatchObject({ chiefOfStaff: true, chiefScope: "workspace" });
@@ -258,10 +261,10 @@ describe("deleteTeam", () => {
   it("will not archive a team while one of its bots or channels is working", () => {
     const { store, member, deps, revision } = setup();
     store.patchBot(member.id, { busy: true });
-    expect(() => deleteTeam(store, { section: "Operations", revision: revision(), bots: "archive" }, deps)).toThrow(/Ben is working/);
+    expect(() => deleteTeam(store, { section: "Operations", revision: revision(), bots: "archive", accessRevisions: reviewed(store, "Operations") }, deps)).toThrow(/Ben is working/);
     store.patchBot(member.id, { busy: false });
     const working = { ...deps, groupWorking: () => true };
-    expect(() => deleteTeam(store, { section: "Operations", revision: revision(), bots: "archive" }, working)).toThrow(/working/);
+    expect(() => deleteTeam(store, { section: "Operations", revision: revision(), bots: "archive", accessRevisions: reviewed(store, "Operations") }, working)).toThrow(/working/);
     expect(store.bot(member.id)?.section).toBe("Operations");
   });
 
@@ -269,10 +272,10 @@ describe("deleteTeam", () => {
     const { store, loose, deps, revision } = setup();
     const stale = revision();
     store.setBotsSection([loose.id], "Operations");
-    expect(() => deleteTeam(store, { section: "Operations", revision: stale, bots: "keep" }, deps)).toThrow(
+    expect(() => deleteTeam(store, { section: "Operations", revision: stale, bots: "keep", accessRevisions: reviewed(store, "Operations") }, deps)).toThrow(
       expect.objectContaining({ status: 409 }),
     );
-    expect(() => deleteTeam(store, { section: "Operations", revision: revision(), bots: "delete" }, deps)).toThrow(
+    expect(() => deleteTeam(store, { section: "Operations", revision: revision(), bots: "delete", accessRevisions: reviewed(store, "Operations") }, deps)).toThrow(
       expect.objectContaining({ status: 400 }),
     );
   });

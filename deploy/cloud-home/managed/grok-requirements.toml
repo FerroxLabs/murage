@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # xai-org/grok-build: config_requirements.rs, CliRequirements.
-# Cap matches reviewed source 2bdd1d6a, pager Cargo.toml (1.0.45).
-# No Grok artifact is installed here; B2b verifies its artifact against this cap.
+# The cap equals grok_version in deploy/cloud-home/build-image.sh (a test compares them).
+# The build runs bin/grok --version with this file in /etc/grok and stops if it is refused.
 [cli]
 auto_update = false
-maximum_version = "1.0.45"
+maximum_version = "1.0.52"

@@ -16,9 +16,9 @@ const team: TeamView = {
   revision: "r".repeat(64),
   leadId: "ava",
   members: [
-    { id: "ava", name: "Ava", lead: true, chief: false, archived: false },
-    { id: "ben", name: "Ben", lead: false, chief: false, archived: false },
-    { id: "old", name: "Old", lead: false, chief: false, archived: true },
+    { id: "ava", name: "Ava", lead: true, chief: false, archived: false, accessRevision: 0, choices: { saved: false, mode: "unrestricted", allowWrites: true, apps: [] } },
+    { id: "ben", name: "Ben", lead: false, chief: false, archived: false, accessRevision: 2, choices: { saved: true, mode: "restricted", allowWrites: false, apps: ["mail", "calendar"] } },
+    { id: "old", name: "Old", lead: false, chief: false, archived: true, accessRevision: 1, choices: { saved: true, mode: "restricted", allowWrites: false, apps: [] } },
   ],
   channels: [{ id: "ch", name: "Operations", archived: false }],
   hasInstructions: false,

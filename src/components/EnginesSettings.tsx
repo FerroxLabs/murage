@@ -21,7 +21,6 @@ import { localEngineSupport } from "../../shared/local-models";
 import { cn } from "@/lib/cn";
 import { Card, InAdvanced } from "./SettingsPrimitives";
 import { EngineRow } from "./EngineRow";
-import { useSettingsMode } from "@/lib/settings-mode";
 import { routeState, type RouteFixAction } from "@/lib/route-state";
 import { creditFromHealth } from "@/lib/flux-credit";
 import { useEngineHealthAnswer } from "@/components/today/use-engine-health";
@@ -228,10 +227,8 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
   );
 }
 
-function EngineBlock({ instance, settingControl }: { instance: InstanceInfo; settingControl?: string }) {
+function EngineBlock({ instance, settingControl, commandInAdvanced = false }: { instance: InstanceInfo; settingControl?: string; commandInAdvanced?: boolean }) {
   const { refreshInstances, dispatch } = useStore();
-  // File paths and command details are for Advanced; Simple shows the engine, its state and its one fix.
-  const mode = useSettingsMode();
   // One place, one name (spec UX rule): this link is the same destination the
   // picker's empty Local rail row uses.
   const openLocalModels = () => {
@@ -291,15 +288,9 @@ function EngineBlock({ instance, settingControl }: { instance: InstanceInfo; set
         <span className={cn("size-1.5 shrink-0 rounded-full", instance.cli ? "bg-accent" : "bg-raised-hover")} />
         <InstanceProviderMark instance={instance} size={14} />
         <EngineRow name={instance.displayName} state={route} onFix={onFix} className="min-w-0 flex-1">
-        {mode !== "advanced" ? null : instance.cli ? (
-          <span className="truncate font-mono text-[11.5px] text-accent" title={instance.cli}>
-            {instance.cli}
-          </span>
-        ) : (
-          instance.cliDefault && (
-            <span className="truncate text-[11px] text-ink-secondary">{instance.cliDefault} · default</span>
-          )
-        )}
+        {/* 1.0.21: no file path on the row, in any mode (the command lines in Advanced show where each engine runs from).
+            Hide and Disable sit together at the row's end. */}
+        <span className="ml-auto flex shrink-0 items-center gap-3">
         {instance.driverKind !== "fuigoAgent" && (
           <button
             type="button"
@@ -321,6 +312,7 @@ function EngineBlock({ instance, settingControl }: { instance: InstanceInfo; set
         >
           {instance.enabled === false ? "Enable" : "Disable"}
         </button>
+        </span>
         </EngineRow>
       </div>
       {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
@@ -352,7 +344,7 @@ function EngineBlock({ instance, settingControl }: { instance: InstanceInfo; set
         </p>
       )}
       {instance.enabled !== false && instance.install && (needsCli(instance) || needsSignIn(instance)) && (
-        <div data-engine-fix-target tabIndex={-1} className="outline-none"><EngineSetup instance={instance} className="mt-2" /></div>
+        <div data-engine-fix-target tabIndex={-1} className="outline-none"><EngineSetup instance={instance} className="mt-2" commandInAdvanced={commandInAdvanced} /></div>
       )}
       {instance.enabled !== false && !instance.install && instance.snapshot.renewSignIn !== true && instance.snapshot.reason && (route.state === "signIn" || route.state === "install" || route.state === "repair") && (
         <p role="status" data-engine-fix-target tabIndex={-1} className="mt-1 text-[12px] text-ink outline-none">{instance.snapshot.reason}</p>
@@ -548,6 +540,22 @@ export function HiddenEnginesList({ hidden, busy, error, saved = null, onUnhide,
   );
 }
 
+type EngineFamily = { primary: InstanceInfo; members: InstanceInfo[] };
+/** Not on this computer: no program found, no path the owner chose, nothing installed to repair or update. Fuigo is
+ *  built in and never counts. */
+export function engineNotInstalled(instance: InstanceInfo): boolean {
+  return instance.driverKind !== "fuigoAgent" && instance.snapshot.state !== "available" && instance.snapshot.setupAction !== "repair"
+    && !instance.cli && !instance.snapshot.version;
+}
+/** Fuigo first, then the installed engines in the server's order; a family whose every member is not installed goes to "More engines". */
+export function splitEngineFamilies(families: EngineFamily[]): { shown: EngineFamily[]; more: EngineFamily[] } {
+  const ordered = [...families.filter(({ primary }) => primary.driverKind === "fuigoAgent"), ...families.filter(({ primary }) => primary.driverKind !== "fuigoAgent")];
+  return {
+    shown: ordered.filter(({ members }) => !members.every(engineNotInstalled)),
+    more: ordered.filter(({ members }) => members.every(engineNotInstalled)),
+  };
+}
+
 export function EnginesSettings() {
   const { state, refreshInstances } = useStore();
   // every KNOWN-driver instance has cliDefault; unknown-driver shadows have
@@ -557,6 +565,22 @@ export function EnginesSettings() {
   const shellLine = shellEnvironmentLine(state.shellEnvironment);
   // Engine copies of deleted conversations Murage is still removing: one quiet line, no action (it retries by itself).
   const owedLines = owedSettingsLines(state.owedNote);
+  // 1.0.21 (Sean's live 1.0.20 walk): Fuigo leads, then every engine that is on this computer; the ones that are not
+  // installed wait behind one "More engines" row, closed, so a dozen install commands never fill the first screen.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const { shown, more } = splitEngineFamilies(engineFamilies(rows));
+  const claudeShown = shown.some(({ primary }) => primary.driverKind === "claudeAgent") || (moreOpen && more.some(({ primary }) => primary.driverKind === "claudeAgent"));
+  const familyCard = ({ primary, members }: EngineFamily, familyIndex: number, folded: boolean) => <section key={primary.driverKind} className="rounded-xl border border-hairline/40 bg-card p-4">
+    {/* The card's own border is the section boundary; the eyebrow is only
+        worth its line when it groups more than one connection. For a
+        family of one it repeated the row directly beneath it word for
+        word — the same doubling the model picker's engine list had
+        (engineFamilyHeader, the one rule both surfaces use). */}
+    {engineFamilyHeader(primary,members)&&<EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>}
+    <EngineBlock instance={primary} settingControl={!folded && familyIndex === 0 ? "engines-heading" : undefined} commandInAdvanced={folded}/>
+    {members.length>1&&<div className="mt-3 border-t border-hairline/30 pt-2"><p className="text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</p><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineBlock instance={i} commandInAdvanced={folded}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">{t("ux.lcopyb.engines.sameApp")}</p>}</div>)}</div></div>}
+    {primary.driverKind === "claudeAgent" && <InAdvanced part="models.claude-accounts"><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
+  </section>;
 
   return (
     <div className="flex flex-col gap-5">
@@ -577,18 +601,16 @@ export function EnginesSettings() {
       {rows.length === 0 && (
         <div className="text-[13px] text-ink-secondary">{t("ux.lcopyb.engines.noneFound")}</div>
       )}
-      {engineFamilies(rows).map(({primary,members},familyIndex)=><section key={primary.driverKind} className="rounded-xl border border-hairline/40 bg-card p-4">
-        {/* The card's own border is the section boundary; the eyebrow is only
-            worth its line when it groups more than one connection. For a
-            family of one it repeated the row directly beneath it word for
-            word — the same doubling the model picker's engine list had
-            (engineFamilyHeader, the one rule both surfaces use). */}
-        {engineFamilyHeader(primary,members)&&<EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>}
-        <EngineBlock instance={primary} settingControl={familyIndex === 0 ? "engines-heading" : undefined}/>
-        {members.length>1&&<div className="mt-3 border-t border-hairline/30 pt-2"><p className="text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</p><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineBlock instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">{t("ux.lcopyb.engines.sameApp")}</p>}</div>)}</div></div>}
-        {primary.driverKind === "claudeAgent" && <InAdvanced part="models.claude-accounts"><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
-      </section>)}
-      {!rows.some(instance => instance.driverKind === "claudeAgent") && <InAdvanced part="models.claude-accounts"><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
+      {shown.map((family, familyIndex) => familyCard(family, familyIndex, false))}
+      {more.length > 0 && (
+        <button type="button" data-more-engines={more.length} aria-expanded={moreOpen} onClick={() => setMoreOpen(open => !open)}
+          className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-hairline/40 bg-card px-4 py-2 text-left text-[13px] text-ink hover:bg-raised-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          <span><span className="font-medium">More engines</span><span className="ml-2 text-[12px] text-ink-secondary">{more.length} not installed on this computer</span></span>
+          <ChevronDown size={14} aria-hidden="true" className={cn("shrink-0 text-ink-secondary transition-transform", moreOpen && "rotate-180")} />
+        </button>
+      )}
+      {moreOpen && more.map((family, familyIndex) => familyCard(family, familyIndex, true))}
+      {!claudeShown && <InAdvanced part="models.claude-accounts"><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
       {/* Folded under Advanced: Settings holds no fold of its own outside it (SettingsShell.test.ts). */}
       <InAdvanced part="models.engines-more"><HiddenEngines /></InAdvanced>
       <InAdvanced part="models.command-lines"><EngineCommandLines rows={rows} /></InAdvanced>

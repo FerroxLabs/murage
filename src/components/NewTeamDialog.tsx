@@ -1,6 +1,7 @@
 // "New Team" from the sidebar's + menu: a name, the bots, an optional lead and
 // optional instructions, in one dialog. The rules and the create sequence live
 // in lib/new-team.ts; this draws them and owns the draft.
+import { imeComposing } from "@/lib/composer-enter";
 import { useFocusTrap } from "@/lib/focus-trap";
 import { LayerSurface } from "@/components/LayerSurface";
 import { useMemo, useRef, useState } from "react";
@@ -88,6 +89,7 @@ export function NewTeamDialogBody({ dialogRef,
         value={draft.name}
         onChange={(e) => onName(e.target.value)}
         onKeyDown={(e) => {
+          if (imeComposing(e.nativeEvent)) return;
           if (e.key === "Enter" && !disabled) onCreate();
         }}
         placeholder="Team name (for example, Operations)"

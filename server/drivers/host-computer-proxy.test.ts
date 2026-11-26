@@ -44,9 +44,11 @@ describe("host computer proxy", () => {
       req.on("data", (c) => (body += c));
       req.on("end", () => {
         received += 1;
+        const request = JSON.parse(body);
+        if (request.params?.name === "disconnect") { res.destroy(); return; }
         const timer = setTimeout(() => {
           res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify(listReply ?? { content: [{ type: "text", text: `done ${JSON.parse(body).method}` }] }));
+          res.end(JSON.stringify(listReply ?? { content: [{ type: "text", text: `done ${request.method}` }] }));
         }, delayMs);
         res.on("close", () => {
           clearTimeout(timer);
@@ -114,7 +116,7 @@ describe("host computer proxy", () => {
     await exited(child);
   }, 20_000);
 
-  it("Stop (MCP cancel) withdraws the action at once and answers nothing", async () => {
+  it("MCP cancel withdraws the action at once and answers nothing", async () => {
     delayMs = 60_000;
     const before = closed.length;
     const { child, results, rpc } = await start();
@@ -123,13 +125,29 @@ describe("host computer proxy", () => {
     await expect.poll(() => received, { timeout: 10_000 }).toBe(seen + 1);
     rpc({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 2 } });
     await expect.poll(() => closed.length, { timeout: 5_000 }).toBe(before + 1);
-    await new Promise((r) => setTimeout(r, 300));
-    expect(results.has(2)).toBe(false);
-    await exited(child);
-    // Design 12.1, lines 399–401: cancellation seals before teardown. An
-    // already terminated child has signalCode, not necessarily exitCode.
-    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86: also require the authenticated fixed terminal receipt.
-    expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
+    try {
+      rpc({ jsonrpc: "2.0", id: 4, method: "ping" });
+      expect(await waitFor(results, 4)).toMatchObject({ result: {} });
+      expect(results.has(2)).toBe(false);
+      expect(boundProxyState(child)).toMatchObject({ sealed: false, refusals: 0 });
+    } finally {
+      child.stdin!.end();
+      await exited(child);
+    }
+  }, 20_000);
+
+  it("a lost harness transport seals the mount with one authenticated terminal receipt", async () => {
+    const { child, results, rpc } = await start();
+    try {
+      rpc({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "disconnect", arguments: {} } });
+      await exited(child);
+      expect(results.has(5)).toBe(false);
+      // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86.
+      expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
+    } finally {
+      child.stdin!.end();
+      await exited(child);
+    }
   }, 20_000);
 
   it("c11-cancel hostComputer: a cancelled tools/list gets no answer and its chain leaves the active set, so the next list certifies", async () => {
@@ -163,5 +181,6 @@ describe("host computer proxy", () => {
     await exited(child);
     expect(Date.now() - t0).toBeLessThan(5_000);
     await expect.poll(() => closed.length, { timeout: 5_000 }).toBe(before + 1);
+    expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
   }, 20_000);
 });

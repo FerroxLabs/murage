@@ -12,6 +12,7 @@ afterEach(() => {
   process.argv = originalArgv; process.exitCode = originalExitCode;
   vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); syncBuiltinESMExports(); vi.clearAllMocks();
 });
+const FORMER_BYTE_CAP = 64 * 1024 * 1024;
 async function fixture(crossing: boolean) {
   vi.resetModules(); vi.useFakeTimers();
   const budgets = await import("../memory/release-budget.ts").catch(() => null);
@@ -21,7 +22,11 @@ async function fixture(crossing: boolean) {
   const frame = JSON.stringify({ jsonrpc: "2.0", id: "é😀", result: {} });
   const bytes = Buffer.from(frame);
   // The outer bridge charges the raw stdio frame, including its delimiter.
-  counter.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - bytes.length - 1 + (crossing ? 1 : 0) });
+  // MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn. Before: the budget was
+  // pre-charged to one byte under/at the 64 MiB byte cap so the frame crossed it. Now: the control pre-charges the former cap (the frame
+  // goes past it and is delivered); the refusal case seals the budget first (a work-limit crossing) so the frame's charge refuses.
+  if (crossing) expect(() => counter.charge({ work: budgets!.RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
+  else counter.charge({ bytes: FORMER_BYTE_CAP });
   let finish!: () => void;
   const finished = new Promise<void>(resolve => { finish = resolve; });
   const socket = Object.assign(new EventEmitter(), { pause: vi.fn(), resume: vi.fn(), terminate: vi.fn(finish), send: vi.fn(), close: vi.fn() });
@@ -60,8 +65,10 @@ async function fixture(crossing: boolean) {
       await finished;
     });
   } finally { stdout.mockRestore(); }
-  return { budgets: budgets!, counter, other, stop, socket, frame };
+  return { budgets: budgets!, counter, other, stop, socket, frame, bytes };
 }
+// MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, this crossed the byte cap,
+// now the budget is sealed first and the frame's charge is the refused one (same property: no release, no reconnect or retry).
 // red-at-4df086541: the WS callback converted/forwarded unreserved input and
 // could release a crossing frame; cancellation must not reconnect or retry.
 it("T-UPSTREAM-BUDGET VPS relay frames crossing", async () => {
@@ -71,11 +78,13 @@ it("T-UPSTREAM-BUDGET VPS relay frames crossing", async () => {
   expect(transport.opened).toHaveBeenCalledTimes(1); expect(f.socket.send).not.toHaveBeenCalled();
   expect(f.other.counts.bytes).toBe(0);
 });
+// MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the frame landed exactly
+// on the 64 MiB byte cap; now it goes past the former cap, is delivered and counted.
 // control: fragmented RawData is joined only after paying; UTF-8 is preserved.
 it("T-UPSTREAM-BUDGET VPS relay frames split UTF-8 exact cap", async () => {
   const f = await fixture(false);
   expect(transport.release).toHaveBeenCalledExactlyOnceWith("vpsRelayMcp", f.frame);
-  expect(f.counter.counts.bytes).toBe(f.budgets.RELEASE_LIMITS.bytes); expect(f.other.counts.bytes).toBe(0);
+  expect(f.counter.counts.bytes).toBe(FORMER_BYTE_CAP + f.bytes.length + 1); expect(f.other.counts.bytes).toBe(0);
   expect(f.stop).not.toHaveBeenCalled(); expect(f.socket.terminate).not.toHaveBeenCalled();
   expect(transport.opened).toHaveBeenCalledTimes(1);
 });

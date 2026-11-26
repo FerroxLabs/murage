@@ -108,7 +108,7 @@ describe("full-screen sheets on a phone", () => {
   });
 
   it("pads each panel that covers the chat below md", () => {
-    for (const file of ["components/SettingsPanel.tsx", "components/InspectorPanel.tsx", "components/ComputerPanel.tsx"]) {
+    for (const file of ["components/bot-pages/BotPanel.tsx", "components/InspectorPanel.tsx", "components/ComputerPanel.tsx"]) {
       const source = read(file);
       expect(source, file).toContain('"max-md:absolute max-md:inset-0 max-md:z-40 max-md:w-full",\n        // Covering the chat');
       expect(source, file).toContain('"max-md:pt-[var(--inset-top)] max-md:pb-[var(--inset-bottom)]"');

@@ -18,12 +18,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { MESSAGE_TEXT_MAX_BYTES } from "../../shared/message-limits";
+import { FUIGO_PENDING_SEND_LINE, isFuigoPendingRefusal } from "../../shared/fuigo-pending";
 import { ComposerSendNotice, composerSendNoticeText } from "./ComposerSendNotice";
 
 const COMPONENTS_DIR = dirname(fileURLToPath(import.meta.url));
 const composerSource = readFileSync(join(COMPONENTS_DIR, "Composer.tsx"), "utf8");
 
 describe("ComposerSendNotice", () => {
+  it("shows the shared ready line when the server refuses a pending Fuigo send", () => {
+    expect(isFuigoPendingRefusal({ status: 409, body: { code: "fuigo_pending" } })).toBe(true);
+    expect(isFuigoPendingRefusal({ status: 409, body: { code: "bot_staged" } })).toBe(false);
+    const html = renderToStaticMarkup(createElement(ComposerSendNotice, {
+      id: "composer-notice", notice: { kind: "fuigo-pending" }, onDismiss: vi.fn(),
+    }));
+    expect(html).toContain(FUIGO_PENDING_SEND_LINE);
+    expect(composerSource).toContain("refusedForSize(error) || refusedPending(error)");
+  });
+
   it("renders nothing when the last send was not refused", () => {
     expect(renderToStaticMarkup(createElement(ComposerSendNotice, { id: "n", notice: null, onDismiss: vi.fn() }))).toBe("");
   });

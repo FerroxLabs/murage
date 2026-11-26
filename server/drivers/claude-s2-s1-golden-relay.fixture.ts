@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import type { ChildProcess } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, statSync, unlinkSync } from "node:fs";
@@ -18,6 +19,7 @@ import { CHAT_MCP_FRAME_CAP_BYTES, CHAT_MCP_MAX_FRAMES, ChatMcpDescendants, chat
 /** Shared by ChatMcpConnection and the CLI relay. One immutable admission owns
  * all stdin, stdout, IPC and transport failure for this child. */
 export class RelayedMount {
+  declare readonly engineTransport: true;
   #parts: Buffer[] = [];
   #bytes = 0;
   #frames = 0;
@@ -54,7 +56,7 @@ export class RelayedMount {
     if (this.stopping) return;
     try {
       if (!this.child.stdin || this.child.stdin.writableNeedDrain || this.child.stdin.destroyed) throw new Error("MEMORY_CONTEXT_REVOKED");
-      this.mount.ingress.request(frame, () => { this.child.stdin!.write(frame + "\n"); });
+      NotModelRequest("Golden parity fixture emits synthetic local MCP relay frames.", this.mount.ingress.request(frame, () => { NotModelRequest("Golden parity fixture emits synthetic local MCP relay frames.", this.child.stdin!.write(frame + "\n")); }));
     } catch { this.fail(); }
   }
   data(chunk: Buffer): void {
@@ -75,7 +77,7 @@ export class RelayedMount {
         this.accepted();
         if (envelope) {
           if (!this.child.connected || !this.child.send) throw new Error("MEMORY_CONTEXT_REVOKED");
-          this.child.send({ type: "turn-release-ack", instanceId: envelope.instanceId, sequence: envelope.sequence }, error => { if (error) this.fail(); });
+          NotModelRequest("Golden parity fixture emits synthetic local MCP relay frames.", this.child.send({ type: "turn-release-ack", instanceId: envelope.instanceId, sequence: envelope.sequence }, error => { if (error) this.fail(); }));
         }
       }
     } catch { this.fail(); }
@@ -173,7 +175,7 @@ export class CliMountRelay {
         const transport = new RelayedMount(child, admittedMcpMount(entry), frame => {
           const socket = relay.#connections.get(name);
           if (!socket || socket.destroyed || socket.writableNeedDrain) throw new Error("MEMORY_CONTEXT_REVOKED");
-          socket.write(frame + "\n");
+          NotModelRequest("Golden parity fixture emits synthetic local MCP relay frames.", socket.write(frame + "\n"));
         }, () => relay.seal(), () => descendants.track());
         relay.mounts.set(name, transport); relay.#children.push({ transport, descendants, teardown });
         descendants.track();
@@ -214,7 +216,7 @@ export class CliMountRelay {
             if (this.#connections.has(auth.server)) { this.seal(); socket.destroy(); return; }
             name = auth.server as string; this.#connections.set(name, socket); clearTimeout(timer);
           } catch { socket.destroy(); return; }
-        } else this.mounts.get(name)!.request(line);
+        } else NotModelRequest("Golden parity fixture emits synthetic local MCP relay frames.", this.mounts.get(name)!.request(line));
       }
     });
   }

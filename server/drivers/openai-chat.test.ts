@@ -13,11 +13,11 @@ import { ensureDirs } from "../config.ts";
 import { installFluxStartGate } from "../flux-start-gate.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
-import { createOpenAIChatRuntime as unboundRuntime, appendBounded, MAX_RESPONSE_BYTES, MAX_SSE_LINE_BYTES } from "./openai-chat.ts";
+import { createOpenAIChatRuntime as unboundRuntime, appendBounded } from "./openai-chat.ts";
 const boundFixture = await import("../testing/bound-openai-fixture.ts").catch(() => null);
-const createOpenAIChatRuntime: typeof unboundRuntime = options => {
+const createOpenAIChatRuntime = (options: Parameters<typeof unboundRuntime>[0], ownerTurn = false) => {
   expect(boundFixture, "T-UPSTREAM-BUDGET: provider turns need generation-owned upstream accounting").not.toBeNull();
-  return boundFixture!.createOpenAIChatRuntime(options);
+  return ownerTurn ? boundFixture!.bindOpenAIFixture(unboundRuntime(options), { ownerTurn }) : boundFixture!.createOpenAIChatRuntime(options);
 };
 
 const SECRET = "sk-openai-chat-test-secret";
@@ -29,7 +29,10 @@ const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
 const contentFrame = (content: string, finishReason?: string) =>
   frame({ choices: [{ delta: { content }, ...(finishReason ? { finish_reason: finishReason } : {}) }] });
 const DONE = "data: [DONE]\n\n";
-const TOO_LARGE = "The model server sent a reply too large to read, so Murage kept what arrived before it.";
+// The reply and line caps MAIN-RULING cause22-no-transport-caps (1.0.21) deleted: rows that asserted a turn ending on them now
+// assert the reply is read whole and the turn completes.
+const OLD_SSE_LINE_CAP = 1024 * 1024;
+const OLD_RESPONSE_CAP = 32 * 1024 * 1024;
 
 /** Count only bytes requested by the reader, without stream prefetch. */
 const measuredBody = (chunks: Uint8Array[], status = 200) => {
@@ -106,7 +109,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     for (const instance of instances.splice(0)) await instance.dispose();
   });
 
-  const create = (overrides: { retryScale?: number; reasoning?: boolean; timeoutMs?: number | undefined; apiKey?: string; apiUrl?: string } = {}) => {
+  const create = ({ ownerTurn, ...overrides }: { retryScale?: number; reasoning?: boolean; timeoutMs?: number | undefined; apiKey?: string; apiUrl?: string; ownerTurn?: boolean } = {}) => {
     const instance = createOpenAIChatRuntime({
       input: { instanceId: "chat-test", displayName: "Chat test", environment: {}, enabled: true, config: {} },
       driverKind: "openai-chat-test",
@@ -125,7 +128,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
         incoming: ({ text, usage }) => ({ text, usage }),
       },
       ...overrides,
-    });
+    }, ownerTurn);
     instances.push(instance);
     return instance;
   };
@@ -137,7 +140,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
   const runTurn = async (
     threadId: string,
     next: Responder[],
-    overrides: { retryScale?: number; reasoning?: boolean; apiUrl?: string } = {},
+    overrides: { retryScale?: number; reasoning?: boolean; apiUrl?: string; ownerTurn?: boolean } = {},
   ) => {
     responders = next;
     const instance = create(overrides);
@@ -148,22 +151,24 @@ describe("createOpenAIChatRuntime stream contract", () => {
     return { completed, events: recorder.events, instance };
   };
 
-  // red-at-4df086541: the shared event cap seals instead of returning partial content.
-  it("bounds a long unterminated line without returning a refused reply", async () => {
+  // The owner's own turn (the production owner path; a non-owner turn's upstream event mark is release-budget.ts, GROUP D).
+  // The answer's tail sits after the 16 MiB padding in the same line, so it is shown only when the line is read whole.
+  it("reads a 16 MiB stream line whole (no line cap) and the turn completes", async () => {
     const first = encoder.encode(contentFrame("partial answer"));
-    const chunk = encoder.encode("x".repeat(1024 * 1024));
-    const { response, observed } = measuredBody([first, ...Array<Uint8Array>(16).fill(chunk)]);
-    const { completed, events } = await runTurn("t-line-cap", [() => response]);
+    const line = encoder.encode(frame({ padding: "y".repeat(16 * OLD_SSE_LINE_CAP), choices: [{ delta: { content: " and the tail" }, finish_reason: "stop" }] }));
+    const chunks = [first];
+    for (let at = 0; at < line.byteLength; at += OLD_SSE_LINE_CAP) chunks.push(line.subarray(at, at + OLD_SSE_LINE_CAP));
+    const { response } = measuredBody([...chunks, encoder.encode(DONE)]);
+    const { completed, events } = await runTurn("t-line-cap", [() => response], { ownerTurn: true });
 
-    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
-    expect(replies(events)).toEqual(["partial answer"]);
-    expect(errors(events)).toEqual(["The model server sent a reply too large to read, so Murage kept what arrived before it."]);
-    expect(errorDetails(events)).toEqual(["TestProvider stream line exceeded 1048576 bytes"]);
-    expect(observed.cancelled).toBe(true);
-    expect(observed.pulled - first.byteLength).toBeLessThanOrEqual(MAX_SSE_LINE_BYTES + chunk.byteLength);
+    expect(completed, `a stream line over the old 1 MiB cap ends nothing: ${JSON.stringify(completed)} ${JSON.stringify(errorDetails(events))}`).toMatchObject({ ok: true });
+    expect(errors(events)).toEqual([]);
+    expect(replies(events)).toEqual(["partial answer and the tail"]);
     expect(calls).toBe(1);
-  });
+  }, 60_000);
 
+  // MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the budget was filled to the 64 MiB byte cap so the first
+  // body chunk crossed it. Now the budget is sealed as the first chunk is pulled, so that chunk's charge is the (uncounted) refusal.
   // red-at-4df086541: concrete error and nonstream readers must propagate a
   // generation crossing as terminal, without unsupported-tools/retry fallback.
   it.each([200, 400, 500])("T-UPSTREAM-BUDGET OpenAI body status %i refuses the crossing chunk", async status => {
@@ -173,9 +178,12 @@ describe("createOpenAIChatRuntime stream contract", () => {
     const f = consumingFixture(undefined, { empty: true }), cancel = vi.fn();
     const instance = create();
     const recorder = recordEvents(instance.adapter);
+    let sealedAt = -1;
     responders = [() => {
-      f.budget.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - f.budget.counts.bytes });
-      return new Response(new ReadableStream({ pull(c) { c.enqueue(Buffer.from('{"error":"unsupported tools 🙂"}')); }, cancel }, { highWaterMark: 0 }),
+      return new Response(new ReadableStream({ pull(c) {
+        if (sealedAt < 0) { sealedAt = f.budget.counts.bytes; expect(() => f.budget.charge({ work: budgets!.RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED"); }
+        c.enqueue(Buffer.from('{"error":"unsupported tools 🙂"}'));
+      }, cancel }, { highWaterMark: 0 }),
         { status, headers: { "content-type": "application/json" } });
     }];
     try {
@@ -183,10 +191,12 @@ describe("createOpenAIChatRuntime stream contract", () => {
       expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "memory-refused" });
       expect(replies(recorder.events)).toEqual([]); expect(errors(recorder.events)).toEqual([]);
       expect(calls).toBe(1); expect(cancel).toHaveBeenCalledTimes(1); expect(f.refusals).toBe(1);
-      expect(f.budget.counts.bytes).toBe(budgets!.RELEASE_LIMITS.bytes);
+      expect(sealedAt).toBeGreaterThanOrEqual(0); expect(f.budget.counts.bytes).toBe(sealedAt);
     } finally { recorder.stop(); await instance.dispose(); instances.splice(instances.indexOf(instance), 1); f.close(); }
   });
 
+  // MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the body landed exactly on the 64 MiB byte cap.
+  // Now the body goes past the former cap, is decoded whole and every byte is counted.
   // control: nonstream provider decoding preserves byte-split UTF-8 at the
   // exact remaining generation cap after the serialized request was charged.
   it("T-UPSTREAM-BUDGET OpenAI nonstream split UTF-8 exact cap", async () => {
@@ -196,8 +206,9 @@ describe("createOpenAIChatRuntime stream contract", () => {
     const f = consumingFixture(undefined, { empty: true }), instance = create();
     const recorder = recordEvents(instance.adapter);
     const body = Buffer.from(JSON.stringify({ choices: [{ message: { content: "🙂" }, finish_reason: "stop" }] }));
+    let owed = -1;
     responders = [() => {
-      f.budget.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - f.budget.counts.bytes - body.length });
+      f.budget.charge({ bytes: 64 * 1024 * 1024 }); owed = f.budget.counts.bytes + body.length;
       return new Response(new ReadableStream({ start(c) { for (const byte of body) c.enqueue(Uint8Array.of(byte)); c.close(); } }),
         { headers: { "content-type": "application/json" } });
     }];
@@ -205,10 +216,12 @@ describe("createOpenAIChatRuntime stream contract", () => {
       await instance.adapter.sendTurn({ threadId: "T", text: "fixture", cwd: fixtureBotFolder(), releaseBinding: f.binding });
       expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
       expect(replies(recorder.events)).toEqual(["🙂"]); expect(errors(recorder.events)).toEqual([]);
-      expect(calls).toBe(1); expect(f.refusals).toBe(0); expect(f.budget.counts.bytes).toBe(budgets!.RELEASE_LIMITS.bytes);
+      expect(calls).toBe(1); expect(f.refusals).toBe(0); expect(f.budget.counts.bytes).toBe(owed);
     } finally { recorder.stop(); await instance.dispose(); instances.splice(instances.indexOf(instance), 1); f.close(); }
   });
 
+  // MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the budget was filled to the 64 MiB byte cap so the first
+  // body chunk crossed it. Now the budget is sealed as the first chunk is pulled; the refusal stays terminal (no retry, no new request).
   // red-at-4df086541: the actual nonstream helper uses readBoundedBody rather
   // than the whole-JSON fallback in the streaming turn path.
   it.each([200, 400, 500])("T-UPSTREAM-BUDGET OpenAI nonstream helper status %i preserves terminal refusal", async status => {
@@ -218,9 +231,12 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(readers?.withUpstreamOwner, "nonstream helpers must capture the consuming owner").toBeTypeOf("function");
     const stop = vi.fn(), counter = new budgets!.ReleaseBudget(stop), other = new budgets!.ReleaseBudget(vi.fn()), cancel = vi.fn();
     const refuse = (): never => { throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" }); };
+    let sealed = false;
     responders = [() => {
-      counter.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - counter.counts.bytes });
-      return new Response(new ReadableStream({ pull(c) { c.enqueue(Buffer.from('{"error":"🙂"}')); }, cancel }, { highWaterMark: 0 }), { status });
+      return new Response(new ReadableStream({ pull(c) {
+        if (!sealed) { sealed = true; expect(() => counter.charge({ work: budgets!.RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED"); }
+        c.enqueue(Buffer.from('{"error":"🙂"}'));
+      }, cancel }, { highWaterMark: 0 }), { status });
     }];
     const instance = create();
     const pending = readers!.withUpstreamOwner({ budgets: [counter], refuse }, () => instance.generateText!("fixture"));
@@ -230,6 +246,8 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(calls).toBe(1); expect(stop).toHaveBeenCalledTimes(1);
   });
 
+  // MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the body landed exactly on the 64 MiB byte cap.
+  // Now the body goes past the former cap, is decoded whole and every byte is counted.
   // control: readBoundedBody, independently of the streaming fallback, keeps
   // UTF-8 bytes split one at a time exactly at the generation cap.
   it("T-UPSTREAM-BUDGET OpenAI nonstream helper split UTF-8 exact cap", async () => {
@@ -239,28 +257,29 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(readers?.withUpstreamOwner, "nonstream helpers must capture the consuming owner").toBeTypeOf("function");
     const stop = vi.fn(), counter = new budgets!.ReleaseBudget(stop);
     const body = Buffer.from(JSON.stringify({ choices: [{ message: { content: "🙂" }, finish_reason: "stop" }] }));
+    let owed = -1;
     responders = [() => {
-      counter.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - counter.counts.bytes - body.length });
+      counter.charge({ bytes: 64 * 1024 * 1024 }); owed = counter.counts.bytes + body.length;
       return new Response(new ReadableStream({ start(c) { for (const byte of body) c.enqueue(Uint8Array.of(byte)); c.close(); } }));
     }];
     const instance = create();
     await expect(readers!.withUpstreamOwner({ budgets: [counter], refuse: () => { throw new Error("MEMORY_CONTEXT_REVOKED"); } },
       () => instance.generateText!("fixture"))).resolves.toBe("🙂");
-    expect(counter.counts.bytes).toBe(budgets!.RELEASE_LIMITS.bytes); expect(stop).not.toHaveBeenCalled(); expect(calls).toBe(1);
+    expect(counter.counts.bytes).toBe(owed); expect(stop).not.toHaveBeenCalled(); expect(calls).toBe(1);
   });
 
-  it("keeps the diagnostic prefix within its byte cap for one large chunk", async () => {
+  it("keeps the diagnostic prefix within its byte cap for one large chunk, and reads a whole completion past it", async () => {
     const chunk = "x".repeat(1024 * 1024);
     expect(appendBounded("", chunk, 64_000)).toHaveLength(64_000);
     expect(appendBounded("prefix", chunk, 64_000)).toHaveLength(64_000);
     expect(Buffer.byteLength(appendBounded("a", "🙂".repeat(64_000), 64_000))).toBeLessThanOrEqual(64_000);
 
-    // A whole completion whose content extends beyond the diagnostic prefix.
+    // A whole completion whose content extends beyond the diagnostic prefix is read whole (it was clipped and refused before).
     const whole = JSON.stringify({ choices: [{ message: { content: "x".repeat(64_000) }, finish_reason: "stop" }] });
     const { completed, events } = await runTurn("t-diagnostic-cap", [() => sse([whole.padEnd(1024 * 1024, " ")])]);
-    expect(completed).toMatchObject({ ok: false, stopReason: "invalid_body" });
-    expect(replies(events)).toEqual([]);
-    expect(errors(events)).toEqual(["That address answered, but not with a model reply. Check that it points at your model server."]);
+    expect(completed).toMatchObject({ ok: true });
+    expect(replies(events)).toEqual(["x".repeat(64_000)]);
+    expect(errors(events)).toEqual([]);
   });
 
   it("stops an HTTP error body at the diagnostic cap and retains its provider error", async () => {
@@ -274,44 +293,48 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(observed.pulled).toBeLessThanOrEqual(64_000 + chunk.byteLength);
   });
 
-  // red-at-4df086541: shared scanning work now stops before the larger transport byte cap.
-  it("bounds short valid stream lines by generation work without returning a refused reply", async () => {
+  // MAIN-RULING cause22-openai-chat-test (2026-11-22T16:51Z): with the transport caps deleted (group B) and SSE scanning no longer
+  // charged per byte (group D), no non-size generation-work bound is left on this path, so a long valid stream completes.
+  it("reads a long valid stream past the old 32 MiB cap to its end and completes the reply", async () => {
     const first = encoder.encode(contentFrame("partial answer"));
     const chunk = encoder.encode(frame({ choices: [], padding: "x".repeat(1000) }).repeat(16));
-    const count = Math.ceil(MAX_RESPONSE_BYTES / chunk.byteLength) + 4;
-    const { response, observed } = measuredBody([first, ...Array<Uint8Array>(count).fill(chunk), encoder.encode(DONE)]);
+    const count = Math.ceil(OLD_RESPONSE_CAP / chunk.byteLength) + 4;
+    const done = encoder.encode(DONE);
+    const { response, observed } = measuredBody([first, ...Array<Uint8Array>(count).fill(chunk), done]);
     const { completed, events } = await runTurn("t-response-cap", [() => response]);
-    expect(completed).toMatchObject({ ok: false, stopReason: "memory-refused" });
-    expect(replies(events)).toEqual([]);
+    expect(completed, "a long valid stream is not refused or cut").toMatchObject({ ok: true, stopReason: null });
+    expect(replies(events)).toEqual(["partial answer"]);
     expect(errors(events)).toEqual([]);
     expect(errorDetails(events)).toEqual([]);
-    expect(observed.cancelled).toBe(true);
-    expect(observed.pulled).toBeGreaterThan(first.byteLength);
-    expect(observed.pulled).toBeLessThanOrEqual(16_777_216 + chunk.byteLength);
+    expect(observed.pulled, "every byte past the old cap is read").toBe(first.byteLength + count * chunk.byteLength + done.byteLength);
     expect(calls).toBe(1);
   });
 
-  it("bounds a non-streamed success body before parsing it", async () => {
+  it("reads a non-streamed success body over the old 32 MiB cap whole", async () => {
     const chunk = encoder.encode(" ".repeat(1024 * 1024));
     const whole = encoder.encode(JSON.stringify({ choices: [{ message: { content: "answer" } }] }));
     const { response, observed } = measuredBody([...Array<Uint8Array>(33).fill(chunk), whole]);
     responders = [() => response];
-    await expect(create().generateText!("hello")).rejects.toThrow(TOO_LARGE);
-    expect(observed.cancelled).toBe(true);
-    expect(observed.pulled).toBeLessThanOrEqual(MAX_RESPONSE_BYTES + chunk.byteLength);
-  });
+    await expect(create().generateText!("hello"), "a body over the old 32 MiB cap is parsed, not refused").resolves.toBe("answer");
+    expect(observed.pulled).toBe(33 * chunk.byteLength + whole.byteLength);
+  }, 60_000);
 
   // 7C P2b control: the Stop-wins rule (D 9.6) must not turn a genuine fence refusal into cancelled; with no Stop it stays memory-refused.
   // The kill proof for Stop-wins itself is openai-chat-tools 10c/10e.
+  // MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the budget was filled to the 64 MiB byte cap (now undefined:
+  // the test passed only on an invalid NaN cost). Now the budget is sealed as the first chunk is pulled.
   it("STOP-WINS control: a fence refusal with no Stop settles memory-refused", async () => {
     const budgets = await import("../memory/release-budget.ts");
     const { consumingFixture } = await import("../testing/consuming-fixture.ts");
     const f = consumingFixture(undefined, { empty: true }), cancel = vi.fn();
     const instance = create();
     const recorder = recordEvents(instance.adapter);
+    let sealed = false;
     responders = [() => {
-      f.budget.charge({ bytes: budgets.RELEASE_LIMITS.bytes - f.budget.counts.bytes });
-      return new Response(new ReadableStream({ pull(c) { c.enqueue(Buffer.from(contentFrame("partial"))); }, cancel }, { highWaterMark: 0 }),
+      return new Response(new ReadableStream({ pull(c) {
+        if (!sealed) { sealed = true; expect(() => f.budget.charge({ work: budgets.RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED"); }
+        c.enqueue(Buffer.from(contentFrame("partial")));
+      }, cancel }, { highWaterMark: 0 }),
         { status: 200, headers: { "content-type": "text/event-stream" } });
     }];
     try {
@@ -323,23 +346,33 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
   it("accepts a large chunk made of short lines", async () => {
     const chunk = frame({ choices: [], padding: "x".repeat(1000) }).repeat(1100);
-    expect(encoder.encode(chunk).byteLength).toBeGreaterThan(MAX_SSE_LINE_BYTES);
+    expect(encoder.encode(chunk).byteLength).toBeGreaterThan(OLD_SSE_LINE_CAP);
     const { completed, events } = await runTurn("t-many-short-lines", [() => sse([chunk + contentFrame("answer", "stop") + DONE])]);
     expect(completed).toMatchObject({ ok: true });
     expect(replies(events)).toEqual(["answer"]);
   });
 
-  // red-at-4df086541: UTF-8 crossing bytes cannot become a partial-content fallback.
-  it("counts multibyte line content by bytes", async () => {
+  it("reads a multibyte line over the old 1 MiB cap whole and the turn completes", async () => {
     const first = encoder.encode(contentFrame("partial answer"));
-    const chunk = encoder.encode("🙂".repeat(MAX_SSE_LINE_BYTES / 4));
-    const { response, observed } = measuredBody([first, chunk, encoder.encode("🙂"), encoder.encode(DONE)]);
-    const { completed, events } = await runTurn("t-line-byte-cap", [() => response]);
-    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
-    expect(errors(events)).toEqual(["The model server sent a reply too large to read, so Murage kept what arrived before it."]);
-    expect(replies(events)).toEqual(["partial answer"]);
-    expect(observed.cancelled).toBe(true);
-    expect(observed.pulled).toBe(first.byteLength + MAX_SSE_LINE_BYTES + 4);
+    const text = frame({ padding: "🙂".repeat(OLD_SSE_LINE_CAP / 4 + 1), choices: [{ delta: { content: " 🙂 tail" }, finish_reason: "stop" }] });
+    const line = encoder.encode(text);
+    // Split inside the last padding letter (4 bytes), past the old cap, so the line crosses it mid-character.
+    const cut = encoder.encode(text.slice(0, text.lastIndexOf("🙂\""))).byteLength + 2;
+    expect(cut).toBeGreaterThan(OLD_SSE_LINE_CAP);
+    const { response } = measuredBody([first, line.subarray(0, cut), line.subarray(cut), encoder.encode(DONE)]);
+    const { completed, events } = await runTurn("t-line-byte-cap", [() => response], { ownerTurn: true });
+    expect(completed, `${JSON.stringify(completed)} ${JSON.stringify(errorDetails(events))}`).toMatchObject({ ok: true });
+    expect(errors(events)).toEqual([]);
+    expect(replies(events)).toEqual(["partial answer 🙂 tail"]);
+  });
+
+  it("cause22: reasoning details over the old 256,000-character cap are read whole and the turn completes", async () => {
+    const details = [{ type: "reasoning.text", text: "r".repeat(300_000) }];
+    const { completed, events } = await runTurn("t-reasoning-details", [() => sse([
+      frame({ choices: [{ delta: { reasoning_details: details } }] }), contentFrame("answer", "stop"), DONE])]);
+    expect(completed, `${JSON.stringify(completed)} ${JSON.stringify(errorDetails(events))}`).toMatchObject({ ok: true });
+    expect(errors(events)).toEqual([]);
+    expect(replies(events)).toEqual(["answer"]);
   });
 
   it("banks two per-turn totals and the provider reported cost once each", async () => {
@@ -400,11 +433,41 @@ describe("createOpenAIChatRuntime stream contract", () => {
   });
 
   it("fails an empty stream that closes without any frame", async () => {
-    const { completed, events, instance } = await runTurn("t-empty-eof", [() => sse([])]);
+    const { completed, events, instance } = await runTurn("t-empty-eof", [() => sse([]), () => sse([])], { retryScale: 0.001 });
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
     expect(replies(events)).toEqual([]);
     expect(errors(events)).toEqual(['The model server stopped before it finished this answer.']);
     expect(instance.adapter.hasSession("t-empty-eof")).toBe(false);
+  });
+
+  it("resends an unfinished empty stream once by default", async () => {
+    const { completed, events } = await runTurn("t-empty-resend", [
+      () => sse([frame({ choices: [{ delta: { role: "assistant" } }] })]),
+      () => sse([contentFrame("recovered", "stop"), DONE]),
+    ]);
+    expect(completed).toMatchObject({ ok: true });
+    expect(replies(events)).toEqual(["recovered"]);
+    expect(calls).toBe(2);
+    expect(events.filter(event => event.type === "turn.retrying")).toHaveLength(1);
+  });
+
+  it("stops after one resend when the empty stream keeps closing", async () => {
+    const { completed, events } = await runTurn("t-empty-resend-cap", [
+      () => sse([]), () => sse([]), () => sse([contentFrame("unexpected", "stop"), DONE]),
+    ], { retryScale: 0.001 });
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(calls).toBe(2);
+    expect(events.filter(event => event.type === "turn.retrying")).toHaveLength(1);
+  });
+
+  it.each(["eof", "error"])("never resends after a tool delta before %s", async end => {
+    const { completed, events } = await runTurn("t-call-no-resend", [
+      () => sse([frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_fixture", type: "function", function: { name: "echo", arguments: "{}" } }] } }] })], end === "error" ? new Error("socket hang up") : undefined),
+      () => sse([contentFrame("unexpected", "stop"), DONE]),
+    ], { retryScale: 0.001 });
+    expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
+    expect(calls).toBe(1);
+    expect(events.some(event => event.type === "turn.retrying")).toBe(false);
   });
 
   it("surfaces an in-band error after output, keeps the partial and never replays it", async () => {
@@ -441,6 +504,33 @@ describe("createOpenAIChatRuntime stream contract", () => {
       expect.objectContaining({ attempt: 1, reason: "overloaded" }),
     ]);
     expect(calls).toBe(2);
+  });
+
+  it.each([
+    { firstUsage: { prompt_tokens: 6, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 3 }, cost_usd: 0.1 }, expected: { input: 16, output: 7, cachedInput: 11, inputComplete: true, cacheComplete: true }, charge: 0.30000000000000004 },
+    { firstUsage: undefined, expected: { input: 10, output: 5, cachedInput: 8, inputComplete: false, cacheComplete: false }, charge: 0.2 },
+  ])("accounts for both issued attempts when a stream retries before output ($expected.inputComplete)", async ({ firstUsage, expected, charge }) => {
+    const { completed, events } = await runTurn("t-retry-usage", [
+      () => sse([
+        ...(firstUsage ? [frame({ choices: [], usage: firstUsage })] : []),
+        frame({ error: { message: "The server is overloaded" } }),
+      ]),
+      () => sse([
+        contentFrame("recovered", "stop"),
+        frame({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 8 }, cost_usd: 0.2 } }),
+        DONE,
+      ]),
+    ], { retryScale: 0.001 });
+
+    const { inputComplete, cacheComplete, ...counts } = expected;
+    const usage = { ...counts, usageAccounting: { version: 1, inputComplete, cacheComplete } };
+    expect(calls).toBe(2);
+    expect(replies(events)).toEqual(["recovered"]);
+    expect(events.filter(event => event.type === "turn.retrying")).toHaveLength(1);
+    expect(events.filter(event => event.type === "thread.token-usage.updated").at(-1)).toMatchObject(usage);
+    expect(completed).toMatchObject({ ok: true, usage, charge });
+    if (firstUsage) expect(completed).not.toHaveProperty("chargePartial");
+    else expect(completed).toMatchObject({ chargePartial: true });
   });
 
   it("1.0.18 (f): a Flux free_cap_reached 429 is sent exactly once, and its code travels on the error", async () => {

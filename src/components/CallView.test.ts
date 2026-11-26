@@ -816,7 +816,8 @@ describe("a spoken yes goes through fresh authentication (SEC-006 Decision 7)", 
   });
 
   it("a cancel is spoken kindly with no error toast, and a refusal is spoken in plain words", () => {
-    expect(spoken).toMatch(/onError: \(error: string, code\?: FreshAuthCode\)/);
+    // undelivered-card-1021: the answer's code may be a delivery code; only a fresh-auth code is spoken as one
+    expect(spoken).toMatch(/onError: \(error: string, answerCode\?: FreshAuthCode \| DeliveryCode\) => \{\s*const code = freshAuthCodeOf\(answerCode\);/);
     expect(spoken).toMatch(/freshAuthSpoken\(code\)/);
     expect(spoken).toMatch(/pending\.submitted = false/);
     expect(spoken).not.toMatch(/showError|toast/i);

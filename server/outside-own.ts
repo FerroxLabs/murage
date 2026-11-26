@@ -15,7 +15,6 @@ import type { PermissionSetting } from './permission-inheritance.ts';
 //   (c) a writer on a marked turn records an ownWrite key (data only) off the old lane and at No limits.
 // Pure over external-marks.ts: no Murage server imports, so the unit rows drive it directly.
 import { decide } from './outside-authority.ts';
-import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_FAMILY_TOOLS } from "../shared/highlevel.ts";
 import { PHONE_TOOL_NAMES } from "../shared/phone-jobs-contract.ts";
 import { TextBudget, type DownloadRegistry, type FsHooks } from "./download-registry.ts";
 import { anyOwnWrite, downloadRegistry, markTurnOutside, ownWrite, ownWritten, turnOutsideRead, type OutsideSource } from "./email/external-marks.ts";
@@ -56,8 +55,6 @@ export const OWN_MARKS_TOOLS: readonly string[] = [
   "memory_search", "memory_get", "thread_search", "thread_list", "thread_read",
   "check_delegation", "wait_delegation", "skills_list", "tool_result_read", "project_read_messages", "venue_read_messages",
   "email_list", "email_read", "dweb_repo_status", "dweb_opencode_models", ...PHONE_TOOL_NAMES,
-  // Family calls can return CRM records; each marks the turn. The HighLevel host separately checks every operation and write approval.
-  ...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES,
 ];
 const READ_CLEAN = new Set(OWN_READ_CLEAN_TOOLS);
 /** 1.0.19 4.2 r3: the recall tools and the saved-result read never mark at the gate; each marks at its release, by what it
@@ -85,7 +82,7 @@ export function ownToolMark(tool: string): OutsideSource | null {
   // Skill management files a local proposal; it does not read outside words
   // or activate the proposed skill. Its managed approval and clean-settle
   // checks still govern activation, and an existing outside mark stays put.
-  if (tool === "skill_manage") return null;
+  if (tool === "skill_manage" || tool === "skill_switch") return null;
   if (F1_READERS.has(tool) && anyOwnWrite()) return "earlier turn";
   if (READ_CLEAN.has(tool)) return null;
   if (RELEASE_JUDGED.has(tool)) return null;
@@ -113,7 +110,7 @@ const POSTS: Readonly<Record<string, string>> = {
   "/api/internal/ask-user": "ask_user", "/api/internal/voice-note": "send_voice_note", "/api/internal/stop-line-allowance": "allow_for_task",
   "/api/internal/generate-image": "generate_image", "/api/internal/resolve-image-reference": "resolve_image_reference",
   "/api/internal/register-artifact": "register_artifact", "/api/internal/publish-site": "publish_site", "/api/internal/take-down-site": "take_down_site",
-  "/api/internal/web-search": "web_search", "/api/internal/skills/stage": "skill_manage", "/api/internal/venue/read-messages": "venue_read_messages",
+  "/api/internal/web-search": "web_search", "/api/internal/skills/stage": "skill_manage", "/api/internal/skills/switch": "skill_switch", "/api/internal/venue/read-messages": "venue_read_messages",
   "/api/internal/venue/post": "venue_post",
   "/api/internal/needs-owner-now": "needs_owner_now",
   "/api/internal/room-share/ask": "ask_owner_to_share", "/api/internal/connectors/request": "connectors_request",

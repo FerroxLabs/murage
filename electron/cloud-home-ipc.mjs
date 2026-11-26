@@ -12,6 +12,9 @@
 //        only, so a door link or its ticket never crosses IPC in either direction.
 //   cloud-home:list-bots                                         local-only   the bots of a paired home, id and name only:
 //        a per-bot engine sign-in (CLOUD-ENGINES-DESIGN.md r8 R4) names the bot it is for.
+//   cloud-home:list-engines                                      local-only   E1/S1 (PARITYFIX): which sign-in engines the
+//        home has installed and signed in, from its /api/instances `cloud` field. Engine names and two booleans only;
+//        null when the home does not say (an older home), and the Connect panel then offers every sign-in as before.
 //        Pairing runs in the local window on purpose: the Cloud window is served by the home's partition and must never
 //        be able to pair, unpair or open another home.
 //   cloud-home:reachable                                         cloud-only    the Cloud window's "is my home answering".
@@ -28,6 +31,28 @@ const GENERIC = "Something went wrong. Try again.";
 export const NOT_LIVE = "Cloud isn't available yet.";
 /** The bot id shape the home's launcher accepts (server/cloud-home/engine-login.ts). */
 const BOT_ID = /^[\w-]{1,64}$/;
+/** The engines the Connect panel can sign in on a home (EngineLoginEngine). */
+const CONNECT_ENGINES = Object.freeze(["claudeAgent", "codex", "grokAgent", "kimiAgent", "antigravityAgent", "opencodeGo"]);
+
+/**
+ * S1 consumer (contract owner of the field: L2, server/index.ts GET /api/instances on a home). Each instance keeps its
+ * `driverKind` and carries `cloud: { installed: boolean, signedIn: boolean }`. An engine is installed when any of its
+ * instances says so, and signed in when any installed one is. No instance with a `cloud` object: null (the home cannot say).
+ */
+export function cloudEngineInventory(body) {
+  const instances = Array.isArray(body?.instances) ? body.instances : [];
+  const reported = instances.filter((item) => item && typeof item === "object" && item.cloud && typeof item.cloud === "object"
+    && typeof item.cloud.installed === "boolean" && typeof item.cloud.signedIn === "boolean");
+  if (reported.length === 0) return null;
+  return CONNECT_ENGINES.map((engine) => {
+    const mine = reported.filter((item) => item.driverKind === engine);
+    const installed = mine.some((item) => item.cloud.installed === true);
+    return { engine, installed, signedIn: installed && mine.some((item) => item.cloud.installed === true && item.cloud.signedIn === true) };
+  });
+}
+
+/** The engines a Cloud window may ask this computer to sign in (the local Connect panel offers each). */
+const SIGN_IN_ENGINES = Object.freeze(["claudeAgent", "codex", "grokAgent", "kimiAgent", "opencodeGo"]);
 const SIGN_IN = "Sign in to your Murage account first, then try again.";
 
 /** What a person may read. CloudHomeError carries plain copy already; anything else is hidden behind a generic line. */
@@ -59,8 +84,13 @@ export function registerCloudHomeIpc(rawGate, { cloudHome, getCpToken, cpEnviron
   // before any work runs. The one exception is `continuing`: a channel an ALREADY-OPEN Cloud window uses for the task it is
   // in the middle of (going not-live never closes that window, so it must keep working until the person closes it).
   const fromOpenCloudWindow = (event) => { try { return typeof cloudHome.senderHomeId === "function" && cloudHome.senderHomeId(event) !== null; } catch { return false; } };
-  const gate = { handle: (channel, fn, { continuing = false } = {}) => rawGate.handle(channel, (event, ...args) => {
-    if (!active() && !(continuing && fromOpenCloudWindow(event))) throw new Error(NOT_LIVE);
+  // `notLive` answers a read-only channel quietly while Cloud is not live (cloud-home:state is polled on every Home render;
+  // throwing there filled the log with "Error occurred in handler" and told the person nothing).
+  const gate = { handle: (channel, fn, { continuing = false, notLive } = {}) => rawGate.handle(channel, (event, ...args) => {
+    if (!active() && !(continuing && fromOpenCloudWindow(event))) {
+      if (notLive) return (async () => notLive(args))();
+      throw new Error(NOT_LIVE);
+    }
     return fn(event, ...args);
   }) };
   /** Back to the Connect panel: the Cloud window closes, the local window shows Connect. */
@@ -75,7 +105,7 @@ export function registerCloudHomeIpc(rawGate, { cloudHome, getCpToken, cpEnviron
   gate.handle("cloud-home:state", (_event, ...args) => guard(async () => {
     noArgs(args);
     return { enabled: true, cpSignedIn: Boolean(getCpToken()), paired: await client.pairedHomes() };
-  }));
+  }), { notLive: (args) => { noArgs(args); return { enabled: false }; } });
 
   gate.handle("cloud-home:list-homes", (_event, ...args) => guard(async () => {
     noArgs(args);
@@ -147,15 +177,35 @@ export function registerCloudHomeIpc(rawGate, { cloudHome, getCpToken, cpEnviron
       .map((bot) => ({ id: bot.id, name: typeof bot.name === "string" && bot.name.trim() ? bot.name.slice(0, 120) : bot.id }));
   }));
 
+  gate.handle("cloud-home:list-engines", (_event, ...args) => guard(async () => {
+    const homeId = homeIdArg(args);
+    const response = await client.fetch(homeId, "/api/instances");
+    if (response.status !== 200) throw plain(GENERIC);
+    let body;
+    try { body = await response.json(); } catch { throw plain(GENERIC); }
+    return cloudEngineInventory(body);
+  }));
+
   gate.handle("cloud-home:request-sign-in", (event, ...args) => guard(async () => {
     const request = args[0];
-    const engines = ["claudeAgent", "codex", "grokAgent", "kimiAgent", "opencodeGo"];
     if (args.length !== 1 || !request || typeof request !== "object" || Array.isArray(request)
       || Object.keys(request).some(key => key !== "bot" && key !== "engine")
-      || typeof request.bot !== "string" || !BOT_ID.test(request.bot) || !engines.includes(request.engine)) throw plain("Invalid request.");
+      || typeof request.bot !== "string" || !BOT_ID.test(request.bot) || !SIGN_IN_ENGINES.includes(request.engine)) throw plain("Invalid request.");
     const homeId = cloudHome.senderHomeId(event);
     if (typeof homeId !== "string" || !HOME_ID.test(homeId)) throw plain("Invalid request.");
     if (typeof showSignIn !== "function" || !await showSignIn({ homeId, bot: request.bot, engine: request.engine })) {
+      throw plain("Open Murage on this computer, then try signing in again.");
+    }
+    return { requested: true };
+  }));
+
+  // S2 (PARITYFIX): the Cloud window's setup card asks for an engine's sign-in. One engine name; the home is the sender's.
+  gate.handle("cloud-home:open-engine-sign-in", (event, ...args) => guard(async () => {
+    const engine = args[0];
+    if (args.length !== 1 || typeof engine !== "string" || !SIGN_IN_ENGINES.includes(engine)) throw plain("Invalid request.");
+    const homeId = cloudHome.senderHomeId(event);
+    if (typeof homeId !== "string" || !HOME_ID.test(homeId)) throw plain("Invalid request.");
+    if (typeof showSignIn !== "function" || !await showSignIn({ homeId, engine })) {
       throw plain("Open Murage on this computer, then try signing in again.");
     }
     return { requested: true };

@@ -1,11 +1,43 @@
 {
  "sinks": [
   {
-   "file": "server/atomic.ts",
-   "fn": "writeFileAtomicInner",
-   "anchor": "writeFileSync",
+   "file": "server/sentinel/io-meter.ts",
+   "fn": "writeFileSync",
+   "anchor": "fs.writeFileSync(file,data,options)",
    "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Scanner-only counted filesystem primitive; no application or learning imports. Scanner metadata filesystem wrapper; keep all callers inventoried, including aliases."
+  },
+  {
+   "file": "server/sentinel/win-acl.ts",
+   "fn": "defaultRunner",
+   "anchor": "execFileSync(file,[...args],{encoding:\"utf8\",windowsHide:true,timeout:2_000,stdio:[\"ignore\",\"pipe\",\"ignore\"]})",
+   "kind": "spawn",
    "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/paths.ts",
+   "fn": "writeDescriptor",
+   "anchor": "writeFileSync(temp,`${JSON.stringify(valid.value)}\\n`,{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Sentinel metadata publication uses the counted filesystem wrapper; descriptor, bounded health view or scan-failure metadata only, with no learning payload."
+  },
+  {
+   "file": "server/meter-copy-cleanup.ts",
+   "fn": "writeCopyMarker",
+   "anchor": "writeSync(fd,JSON.stringify(marker))",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "note": "Writes the private meter copy owner marker {v,pid,start} (O_EXCL, 0600); process identity only, no conversation, prompt or retained learning bytes."
+  },
+  {
+   "file": "server/read-only-start.ts",
+   "fn": "ensureReserve",
+   "anchor": "writeSync(fd,chunk)",
+   "kind": "fs-write",
+   "reason": "fixed-text",
+   "review": "Allocates a low-disk reserve with a fixed space-filled buffer."
   },
   {
    "file": "server/env-path.ts",
@@ -87,6 +119,14 @@
   {
    "file": "server/procs.ts",
    "fn": "spawnCli",
+   "anchor": "child.stdin?.write(launcherFrame(opts.env,typeofopts.cwd===\"string\"?opts.cwd:opts.cwd?.toString(),proxyIpc))",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "Launcher environment/control frame precedes the driver prompt; it contains no learning text."
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "spawnCli",
    "anchor": "child.stdin?.end()",
    "kind": "stdin",
    "reason": "not-learning"
@@ -141,19 +181,35 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/procs.ts",
-   "fn": "spawnCli",
-   "anchor": "child.stdin?.write(launcherFrame(opts.env,typeofopts.cwd===\"string\"?opts.cwd:opts.cwd?.toString(),proxyIpc))",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "Launcher environment/control frame precedes the driver prompt; it contains no learning text."
+   "file": "server/channels/signal/windows-security-runner.ts",
+   "fn": "defaultSecurityRunner",
+   "anchor": "execFileSync(file,[...args],withHideInherit({...options,encoding:'utf8',windowsHide:true,maxBuffer:32*1024*1024,stdio:['pipe','pipe','pipe']}))",
+   "kind": "spawn",
+   "reason": "not-learning"
   },
   {
-   "file": "server/fuigo-turn-logs.ts",
-   "fn": "copyRegular",
-   "anchor": "copyFileSync(from,to)",
+   "file": "server/channels/signal/windows-security-runner.ts",
+   "fn": "defaultAsyncSecurityRunner",
+   "anchor": "execFile(file,[...args],withHideInherit({env:options.env,encoding:'utf8',windowsHide:true,timeout:options.timeout,killSignal:'SIGKILL',maxBuffer:1024*1024}),(er",
+   "kind": "spawn",
+   "reason": "not-learning",
+   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
+  },
+  {
+   "file": "server/channels/signal/windows-security-runner.ts",
+   "fn": "defaultAsyncSecurityRunner",
+   "anchor": "child.stdin?.end(options.input)",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
+  },
+  {
+   "file": "server/windows-private-directory.ts",
+   "fn": "persist",
+   "anchor": "fs.writeFileSync(temp,JSON.stringify({version:1,root:{dev:String(state.identity.dev),ino:String(state.identity.ino)},directories}),{flag:'wx',mode:0o600})",
    "kind": "fs-write",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
   },
   {
    "file": "server/cloud-home/flux-home-gate.ts",
@@ -170,24 +226,31 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/provider-routing.ts",
-   "fn": "applyProviderRoute",
-   "anchor": "writeFileSync(join(home,\"config.yaml\"),config,{mode:0o600})",
-   "kind": "fs-write",
+   "file": "server/flux-limits.ts",
+   "fn": "fetchFluxLimits",
+   "anchor": "fetch",
+   "kind": "fetch",
    "reason": "not-learning"
   },
   {
-   "file": "server/provider-routing.ts",
-   "fn": "applyProviderRoute",
-   "anchor": "writeFileSync(join(home,\"config.toml\"),fuigoConfig,{mode:0o600})",
-   "kind": "fs-write",
+   "file": "server/spend-gate.ts",
+   "fn": "createAccountReader",
+   "anchor": "fetch",
+   "kind": "fetch",
    "reason": "not-learning"
   },
   {
-   "file": "server/provider-routing.ts",
-   "fn": "applyProviderRoute",
-   "anchor": "writeFileSync(join(home,\"config.toml\"),permission,{flag:\"a\",mode:0o600})",
-   "kind": "fs-write",
+   "file": "server/email/flux-email-client.ts",
+   "fn": "exchange",
+   "anchor": "this.options.fetch(url.toString(),{method,headers,body:init.body===undefined?undefined:JSON.stringify(init.body),signal:controller.signal,redirect:\"error\"})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/hook-canon.ts",
+   "fn": "reparseTag",
+   "anchor": "execFileSync",
+   "kind": "spawn",
    "reason": "not-learning"
   },
   {
@@ -195,50 +258,6 @@
    "fn": "writeRecord",
    "anchor": "fs.writeFileSync(temp,`${JSON.stringify(this.record,null,2)}\\n`,{mode:0o600,flag:\"wx\"})",
    "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/local-inject.ts",
-   "fn": "probeLocalHost",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/local-inject.ts",
-   "fn": "probeLocalHosts",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/local-inject.ts",
-   "fn": "probeLocalInjects",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/local-inject.ts",
-   "fn": "mergeLocalInject",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/approval-delivery.ts",
-   "fn": "write",
-   "anchor": "stream.write(wire,error=>report(error,true))",
-   "kind": "stream-write",
-   "reason": "adapter-write",
-   "admittedBy": "server/drivers/acp/core.ts fencedSubmit -> release forwarding -> writeAcpResponse -> stream.write",
-   "review": "Physical learning enqueue; chain and bounded callback dispatcher are checked."
-  },
-  {
-   "file": "server/hook-canon.ts",
-   "fn": "reparseTag",
-   "anchor": "execFileSync",
-   "kind": "spawn",
    "reason": "not-learning"
   },
   {
@@ -285,6 +304,20 @@
   },
   {
    "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "mergeSharedDirectory",
+   "anchor": "copyFileSync(source,dest,fsConstants.COPYFILE_EXCL)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "reason": "not-learning",
+   "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "mergeSharedDirectory",
+   "anchor": "writeFileSync(conflict,bytes,{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write"
+  },
+  {
+   "file": "server/drivers/scoped-cli-home.ts",
    "fn": "replaceGenerated",
    "anchor": "writeFileSync(temporary,text,{mode:0o600})",
    "kind": "fs-write",
@@ -312,11 +345,41 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/codex-hook.ts",
-   "fn": "warmHookRunner",
-   "anchor": "spawn(runtime,[\"-e\",\"\"],withHideInherit({env,stdio:\"ignore\",windowsHide:true}))",
-   "kind": "spawn",
+   "file": "server/health/publisher.ts",
+   "fn": "loadTokenKey",
+   "anchor": "writeSync(fd,`${randomBytes(32).toString(\"hex\")}\\n`)",
+   "kind": "fs-write",
    "reason": "not-learning"
+  },
+  {
+   "file": "server/health/publisher.ts",
+   "fn": "replaceManifest",
+   "anchor": "writeSync(fd,bytes)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/health/publisher.ts",
+   "fn": "append",
+   "anchor": "handle.write(line)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/consuming-turn-response.ts",
+   "fn": "write",
+   "anchor": "raw.write(data!,encoding??\"utf8\",done)",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Consuming HTTP response egress; captured binding owns the connected writer, not a learning prompt enqueue."
+  },
+  {
+   "file": "server/consuming-turn-response.ts",
+   "fn": "pipeConsumingStream",
+   "anchor": "writer.write(bytes.subarray(at,at+65536))",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Consuming HTTP response egress; captured binding owns the connected writer, not a learning prompt enqueue."
   },
   {
    "file": "server/settle-copy.ts",
@@ -348,32 +411,138 @@
    "admittedBy": "child:spawn(command.executable,"
   },
   {
-   "file": "server/sentinel/win-acl.ts",
-   "fn": "defaultRunner",
-   "anchor": "execFileSync(file,[...args],{encoding:\"utf8\",windowsHide:true,timeout:2_000,stdio:[\"ignore\",\"pipe\",\"ignore\"]})",
+   "file": "server/sentinel/publication.ts",
+   "fn": "publishView",
+   "anchor": "writeFileSync(temp,text,{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Sentinel metadata publication uses the counted filesystem wrapper; descriptor, bounded health view or scan-failure metadata only, with no learning payload."
+  },
+  {
+   "file": "server/drivers/local-inject.ts",
+   "fn": "probeLocalHost",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/local-inject.ts",
+   "fn": "probeLocalHosts",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/local-inject.ts",
+   "fn": "probeLocalInjects",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/local-inject.ts",
+   "fn": "mergeLocalInject",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/native.ts",
+   "fn": "capExisting",
+   "anchor": "writeFileSync(file,encoded,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/native.ts",
+   "fn": "writeRecord",
+   "anchor": "writeFileSync(current,marker(\"native_trace_retention\",{reason:\"rotated;onlycurrentandprevioussegmentsareretained\",segmentLimitBytes:SEGMENT_BYTES}),{mode:0o600}",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/native.ts",
+   "fn": "writeRecord",
+   "anchor": "appendFileSync(current,encoded,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/engine-input.ts",
+   "fn": "recordFencedRefusal",
+   "anchor": "appendNative(rec.threadId,{dir:\"lifecycle\",source:\"murage.fence-refusal\",msg:{...rec}})",
+   "kind": "native-log",
+   "reason": "log-excluded",
+   "review": "Logs refusal metadata from the stop and release contract; no engine prompt or reply bytes."
+  },
+  {
+   "file": "server/drivers/engine-input.ts",
+   "fn": "publish",
+   "anchor": "appendNative(R.threadId,{dir:\"lifecycle\",source:\"murage.fence-refusal\",msg:{engine:R.engine,site:R.site,kind:R.kind,generation:R.generation,dispatchGeneration:R",
+   "kind": "native-log",
+   "reason": "log-excluded",
+   "review": "Logs the refusal kind, generation and lease presence; no engine prompt or reply bytes."
+  },
+  {
+   "file": "server/drivers/engine-input.ts",
+   "fn": "sendBuiltTurn",
+   "anchor": "adapter.sendTurn(fencedTurnInput(input,fence))",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex-hook.ts",
+   "fn": "warmHookRunner",
+   "anchor": "spawn(runtime,[\"-e\",\"\"],withHideInherit({env,stdio:\"ignore\",windowsHide:true}))",
    "kind": "spawn",
    "reason": "not-learning"
   },
   {
-   "file": "server/health/publisher.ts",
-   "fn": "loadTokenKey",
-   "anchor": "writeSync(fd,`${randomBytes(32).toString(\"hex\")}\\n`)",
+   "file": "server/drivers/murage-exec.ts",
+   "fn": "installWipeGuardShim",
+   "anchor": "cpSync(source,target,{recursive:true,dereference:true})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "note": "Copies the fixed packaged wipe shim into a private executable directory; no conversation, prompt or retained learning bytes."
+  },
+  {
+   "file": "server/drivers/murage-exec.ts",
+   "fn": "installWipeGuardShim",
+   "anchor": "copyFileSync(join(target,\"guard.sh\"),join(target,tool))",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "note": "Copies the fixed guard wrapper for a validated mkfs alias; no conversation, prompt or retained learning bytes."
+  },
+  {
+   "file": "server/drivers/murage-exec.ts",
+   "fn": "writeOnce",
+   "anchor": "writeFileSync(temp,text,{mode})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "note": "Writes the fixed packaged wrapper source and its fixed W5 shape list (installMurageExec via writeOnce); no conversation, prompt or retained learning bytes."
+  },
+  {
+   "file": "server/drivers/murage-exec.ts",
+   "fn": "writeExecEnvFile",
+   "anchor": "writeFileSync(temp,execEnvFileText(env,cwd,shell,proven),{mode:0o600})",
    "kind": "fs-write",
    "reason": "not-learning"
   },
   {
-   "file": "server/health/publisher.ts",
-   "fn": "replaceManifest",
-   "anchor": "writeSync(fd,bytes)",
+   "file": "server/wipe-guard/guard-file.ts",
+   "fn": "writeGuardFile",
+   "anchor": "writeFileSync(fd,text)",
    "kind": "fs-write",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "note": "Exclusive private guard configuration contains socket, token, thread ID, root paths and fixed client/tool paths; no prompt, message or learning content."
   },
   {
-   "file": "server/health/publisher.ts",
-   "fn": "append",
-   "anchor": "handle.write(line)",
-   "kind": "fs-write",
-   "reason": "not-learning"
+   "file": "server/wipe-guard/server.ts",
+   "fn": "secureWindowsGuardPipe",
+   "anchor": "execFileSync(win32.join(root,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(WINDOWS_PIPE_",
+   "kind": "spawn",
+   "reason": "not-learning",
+   "note": "Fixed encoded ACL restriction program receives only the named-pipe path; no prompt, message or learning content."
   },
   {
    "file": "server/decision-log.ts",
@@ -383,17 +552,10 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/flux-limits.ts",
-   "fn": "fetchFluxLimits",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/spend-gate.ts",
-   "fn": "createAccountReader",
-   "anchor": "fetch",
-   "kind": "fetch",
+   "file": "server/memory/index-wal.ts",
+   "fn": "writeSidecar",
+   "anchor": "writeSync(fd,data,0,data.length,0)",
+   "kind": "fs-write",
    "reason": "not-learning"
   },
   {
@@ -446,10 +608,46 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/routine-runs-journal.ts",
+   "fn": "writeAll",
+   "anchor": "writeSync(fd,buffer,offset,buffer.length-offset,null)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
+  },
+  {
    "file": "server/flux-key-health.ts",
    "fn": "checkFluxKey",
    "anchor": "fetch",
    "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/upgrade-status.ts",
+   "fn": "writeNote",
+   "anchor": "writeFileSync(temp,JSON.stringify(status),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/email/restore-job-effects.ts",
+   "fn": "stage",
+   "anchor": "copyFileSync(join(o.archivesDir,j.archiveId,\"messages.db\"),tmp)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/email/restore-job.ts",
+   "fn": "writeRecordAtomic",
+   "anchor": "fh.writeFile(data)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/upgrade-overall.ts",
+   "fn": "overallWriter",
+   "anchor": "writeFileSync(temp,JSON.stringify({v:1,schema,overall,at}),{mode:0o600})",
+   "kind": "fs-write",
    "reason": "not-learning"
   },
   {
@@ -467,18 +665,44 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/win-process-table.ts",
-   "fn": "tasklistMemory",
-   "anchor": "execFile(join(root,\"System32\",\"tasklist.exe\"),[\"/FO\",\"CSV\",\"/NH\"],{timeout:TASKLIST_TIMEOUT_MS,killSignal:\"SIGKILL\",maxBuffer:16*1024*1024,windowsHide:true,enco",
-   "kind": "spawn",
-   "reason": "not-learning"
+   "file": "server/drivers/cli-stdin-eof.ts",
+   "fn": "cliStdinEnd",
+   "anchor": "s.child.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "Argument-free EOF; carries no prompt bytes."
   },
   {
-   "file": "server/memory/pip-reaper.ts",
-   "fn": "run",
-   "anchor": "execFile(cmd,[...args],withHideInherit({timeout:10_000,encoding:\"utf8\",windowsHide:true,...(abort?{signal:abort}:{})}),(e,out)=>done(abort?.aborted?{ok:false,co",
-   "kind": "spawn",
-   "reason": "not-learning"
+   "file": "server/proxy-turn-release.ts",
+   "fn": "verdict",
+   "anchor": "fetch(newURL(TURN_RELEASE_VERDICT_PATH,base),{method:\"POST\",redirect:\"error\",signal,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\"},b",
+   "kind": "fetch",
+   "reason": "not-learning",
+   "review": "Proxy verdict/upstream/envelope transport for tool results; consuming response authority is separate from learning prompt admission."
+  },
+  {
+   "file": "server/proxy-turn-release.ts",
+   "fn": "envelope",
+   "anchor": "process.stdout.write(serialized,error=>{if(error)lost(\"stdout-write\");})",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Forwards a consuming-turn tool result to the parent over the release protocol and reports transport loss."
+  },
+  {
+   "file": "server/proxy-turn-release.ts",
+   "fn": "proxyFetch",
+   "anchor": "fetch(input,init)",
+   "kind": "fetch",
+   "reason": "not-learning",
+   "review": "Proxy verdict/upstream/envelope transport for tool results; consuming response authority is separate from learning prompt admission."
+  },
+  {
+   "file": "server/proxy-turn-release.ts",
+   "fn": "reserveProxyUpstream",
+   "anchor": "fetch(newURL(TURN_RELEASE_VERDICT_PATH,base),{method:\"POST\",redirect:\"error\",signal:AbortSignal.timeout(5000),headers:{authorization:`Bearer${token}`,\"content-t",
+   "kind": "fetch",
+   "reason": "not-learning",
+   "review": "Proxy verdict/upstream/envelope transport for tool results; consuming response authority is separate from learning prompt admission."
   },
   {
    "file": "server/connector-cache.ts",
@@ -509,104 +733,10 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/folder-trust-seed.ts",
-   "fn": "writeFuigoSeed",
-   "anchor": "writeSync(fd,bytes,at)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/mcp-listed.ts",
-   "fn": "markMcpListedAfterFlush",
-   "anchor": "process.stdout.write(\"\",()=>{try{writeFileSync(path,String(Date.now()),{mode:0o600});}catch{/*thedriverfallsbacktoitsbound*/}})",
-   "kind": "stream-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/mcp-listed.ts",
-   "fn": "markMcpListedAfterFlush",
-   "anchor": "writeFileSync(path,String(Date.now()),{mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/mcp-listed.ts",
-   "fn": "logCatalog",
-   "anchor": "process.stderr.write(`[mcp-catalog]${text}\\n`)",
-   "kind": "stream-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/mcp-listed.ts",
-   "fn": "attempt",
-   "anchor": "fetch(endpoint,{method:\"POST\",headers:{\"content-type\":\"application/json\",authorization:`Bearer${token??\"\"}`},body:JSON.stringify(doc),signal:AbortSignal.timeout",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/mcp-listed.ts",
-   "fn": "writeCatalogDocument",
-   "anchor": "writeFileSync(temp,JSON.stringify(doc),{mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/mcp-listed.ts",
-   "fn": "write",
-   "anchor": "output.write(line,done)",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "MCP catalogue/result output; releaseRole uses releaseProxyFrame before this unbound output fallback."
-  },
-  {
-   "file": "server/drivers/cli-memory-learning.ts",
-   "fn": "hiddenTurnRunner",
-   "anchor": "adapter.sendTurn({threadId,text:prompt,sessionReset:true,cwd,stopLine:true,proposalOnly:true,background:true,usageFeature:\"memory\",beforePrepare,...(fencedWrite",
-   "kind": "sendTurn",
-   "reason": "learning-path",
-   "admittedBy": "fence:fencedWrite",
-   "review": "Hidden learning input carries fencedWrite; beforePrepare is check-only."
-  },
-  {
-   "file": "server/drivers/native.ts",
-   "fn": "capExisting",
-   "anchor": "writeFileSync(file,encoded,{mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/native.ts",
-   "fn": "writeRecord",
-   "anchor": "writeFileSync(current,marker(\"native_trace_retention\",{reason:\"rotated;onlycurrentandprevioussegmentsareretained\",segmentLimitBytes:SEGMENT_BYTES}),{mode:0o600}",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/native.ts",
-   "fn": "writeRecord",
-   "anchor": "appendFileSync(current,encoded,{mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/lifecycle-diagnostic.ts",
-   "fn": "createLifecycleRecorder",
-   "anchor": "appendNative(threadId,entry)",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/container-computer.ts",
-   "fn": "<module>",
-   "anchor": "promisify(execFile)",
+   "file": "server/drivers/win-process-table.ts",
+   "fn": "tasklistMemory",
+   "anchor": "execFile(join(root,\"System32\",\"tasklist.exe\"),[\"/FO\",\"CSV\",\"/NH\"],{timeout:TASKLIST_TIMEOUT_MS,killSignal:\"SIGKILL\",maxBuffer:16*1024*1024,windowsHide:true,enco",
    "kind": "spawn",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/container-computer.ts",
-   "fn": "prepareManagedImage",
-   "anchor": "writeFile(join(context,\"Dockerfile\"),managedImageDockerfile(),{mode:0o600})",
-   "kind": "fs-write",
    "reason": "not-learning"
   },
   {
@@ -652,186 +782,110 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/warm-pool.ts",
-   "fn": "psMeasure",
-   "anchor": "execFile(\"ps\",[\"-A\",\"-o\",\"pid=,ppid=,rss=\"],{timeout:3_000,killSignal:\"SIGKILL\",maxBuffer:16*MB},(error,stdout)=>{if(error&&!stdout)returnresolve(null);resolve(",
-   "kind": "spawn",
+   "reason": "not-learning",
+   "review": "MCP tool child launch or exact cancellation frame, not the hidden learning prompt.",
+   "file": "server/drivers/chat-mcp-client.ts",
+   "fn": "defaultSpawn",
+   "anchor": "spawnCli(command,args,{cwd,windowsHide:true,stdio:[\"pipe\",\"pipe\",\"pipe\"],env},engineJob())",
+   "kind": "spawn"
+  },
+  {
+   "reason": "not-learning",
+   "review": "MCP tool child launch or exact cancellation frame, not the hidden learning prompt.",
+   "file": "server/drivers/chat-mcp-client.ts",
+   "fn": "defaultSpawn",
+   "anchor": "spawnCli(command,args,{cwd,windowsHide:true,stdio:[\"pipe\",\"pipe\",\"pipe\",\"ipc\"],env},engineJob())",
+   "kind": "spawn"
+  },
+  {
+   "file": "server/drivers/chat-mcp-client.ts",
+   "fn": "kill",
+   "anchor": "child.stdin?.end()",
+   "kind": "stdin",
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/warm-pool.ts",
-   "fn": "sampleDarwinAvailable",
-   "anchor": "execFile(\"vm_stat\",[],{timeout:3_000,killSignal:\"SIGKILL\"},(error,stdout)=>{if(!error){consttext=String(stdout);constpage=Number(/pagesizeof(\\d+)bytes/.exec(tex",
-   "kind": "spawn",
+   "file": "server/drivers/chat-mcp-client.ts",
+   "fn": "stop",
+   "anchor": "this.#child.stdin?.write(frame+\"\\n\")",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "MCP tool child launch or exact cancellation frame, not the hidden learning prompt."
+  },
+  {
+   "file": "server/drivers/chat-mcp-client.ts",
+   "fn": "openChatMcpServers",
+   "anchor": "launchMcp(launch.command,launch.args,chatMcpChildEnv(launch.env),cwd)",
+   "kind": "alias-call",
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "writeTo",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:nativeLogMessage(obj)})",
-   "kind": "native-log",
-   "reason": "log-excluded"
+   "file": "server/drivers/cli-mount-relay.ts",
+   "fn": "request",
+   "anchor": "this.child.stdin!.write(frame+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
   },
   {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "fenceFrame",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{acpForeignFrame:{method:msg.method,request:msg.id!==undefined}}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "closeProcess",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"close\",reason:why}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "onOverflow",
-   "anchor": "appendNative(proc.owner.threadId,{dir:\"in\",source:SOURCE,msg:{frameOverflow:overflow}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "openProcess",
-   "anchor": "appendNative(proc.owner.threadId,{dir:\"in\",source:SOURCE,msg:{acpPool:\"exited\",code,signal}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "idleLine",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:idleLogged},idleLogged===msg?{rawChars:line.length}:undefined)",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "parkProcess",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"park\"}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "noteAskStopTool",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{askStop:\"ran\",kind}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "budgetLog",
-   "anchor": "appendNative(threadId,{dir:\"lifecycle\",source:\"murage.opencode-budget\",msg:{type:\"opencode_tool_budget\",stage,outcome,...(reason?{reason}:{}),limit:budgetRecord",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "send",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:nativeLogMessage(obj)})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "persistEngineStderr",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{engineStderr:{stopReason,lineCount:kept.length,truncated:stderrDiagnosticTruncated||kept.length<lines.length,",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "markFolderTrustUnfit",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"unfit\",reason}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "handleServerRequest",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{askStop:\"refused\",kind:kind||null}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "noteFallback",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{fuigoInterjection:event,...extra}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "fireFuigoWatch",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{fuigoSilenceWatch:rule}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "handleOverflow",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{frameOverflow:overflow}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "handleStdoutLine",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:logged},logged===msg?{rawChars:line.length}:undefined)",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "close",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:`${SOURCE}.stderr`,msg:{type:\"engine_stderr\",turnId,processGeneration:lifecycle.generation,chars:diagnostic.length}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "close",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:`${SOURCE}.stderr`,msg:{type:\"engine_stderr_truncated\",turnId,limitChars:STDERR_DIAGNOSTIC_CHARS}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "spawnFresh",
-   "anchor": "spawnCli(launchCli,argv,{cwd,env:spawnEnv,stdio:[\"pipe\",\"pipe\",\"pipe\"],},engineJob(hostPowerOptions),undefined,threadId)",
+   "file": "server/drivers/cli-mount-relay.ts",
+   "fn": "spawnMount",
+   "anchor": "spawnCli(command,args,{cwd,env,stdio:env.MURAGE_RELEASE_INSTANCE?[\"pipe\",\"pipe\",\"pipe\",\"ipc\"]:[\"pipe\",\"pipe\",\"pipe\"]},engineJob({posixHostPower:!env.MURAGE_RELE",
    "kind": "spawn",
+   "reason": "not-learning",
+   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
+  },
+  {
+   "file": "server/drivers/cli-mount-relay.ts",
+   "fn": "build",
+   "anchor": "socket.write(frame)",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
+  },
+  {
+   "file": "server/drivers/cli-mount-relay.ts",
+   "fn": "stopGeneration",
+   "anchor": "transport.child.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
+  },
+  {
+   "file": "server/drivers/cli-mount-relay.ts",
+   "fn": "settle",
+   "anchor": "transport.child.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
+  },
+  {
+   "file": "server/fuigo-turn-logs.ts",
+   "fn": "copyRegular",
+   "anchor": "copyFileSync(from,to)",
+   "kind": "fs-write",
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"reuse\",...(crossThread?{crossThread:true}:{})}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
+   "file": "server/provider-routing.ts",
+   "fn": "applyProviderRoute",
+   "anchor": "writeFileSync(join(home,\"config.yaml\"),config,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
   },
   {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"reestablish_failed\"}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
+   "file": "server/provider-routing.ts",
+   "fn": "applyProviderRoute",
+   "anchor": "writeFileSync(join(home,\"config.toml\"),fuigoConfig,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
   },
   {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:tree.leftover===\"mcp-ready-timeout\"?\"mcp_ready_timeout\":\"pre_prompt_leftover\"}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "logGate",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{mcpGate:line}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
+   "file": "server/provider-routing.ts",
+   "fn": "applyProviderRoute",
+   "anchor": "writeFileSync(join(home,\"config.toml\"),permission,{flag:\"a\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
   },
   {
    "file": "server/drivers/acp/kimi.ts",
@@ -960,6 +1014,365 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/memory/pip-reaper.ts",
+   "fn": "run",
+   "anchor": "execFile(cmd,[...args],withHideInherit({timeout:10_000,encoding:\"utf8\",windowsHide:true,...(abort?{signal:abort}:{})}),(e,out)=>done(abort?.aborted?{ok:false,co",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/opencode-destination.ts",
+   "fn": "probeCliDestination",
+   "anchor": "spawnCli(ctx.cli,args,{cwd:ctx.cwd,env:ctx.env,stdio:[\"pipe\",\"pipe\",\"pipe\"]},engineJob({posixHostPower:true}))",
+   "kind": "spawn",
+   "reason": "not-learning",
+   "review": "Existing native destination/config diagnostic moved to shared probeCliDestination; no turn prompt is sent. Bounded owned native configuration probe; shared OpenCode/DeepSeek helper (3e21303a24), no learning payload."
+  },
+  {
+   "file": "server/opencode-destination.ts",
+   "fn": "probeCliDestination",
+   "anchor": "child.stdin.end()",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "Existing native destination/config diagnostic moved to shared probeCliDestination; no turn prompt is sent. Bounded owned native configuration probe; shared OpenCode/DeepSeek helper (3e21303a24), no learning payload."
+  },
+  {
+   "reason": "not-learning",
+   "file": "server/cloud-home/bot-state.ts",
+   "fn": "spawnCloudLauncher",
+   "anchor": "spawn(\"/usr/bin/sudo\",[\"-n\",\"-C\",\"4\",\"--\",TURN_LAUNCHER],withHideInherit({env:{PATH:\"/usr/bin:/bin\"},cwd:\"/\",detached:true,stdio:[\"pipe\",\"pipe\",\"pipe\",\"pipe\"],}",
+   "kind": "spawn"
+  },
+  {
+   "reason": "not-learning",
+   "file": "server/cloud-home/bot-state.ts",
+   "fn": "spawnCloudLauncher",
+   "anchor": "spawn(\"/usr/bin/sudo\",[\"-n\",\"-C\",\"5\",\"--\",TURN_LAUNCHER],withHideInherit({env:{PATH:\"/usr/bin:/bin\"},cwd:\"/\",detached:true,stdio:[\"pipe\",\"pipe\",\"pipe\",\"pipe\",\"p",
+   "kind": "spawn"
+  },
+  {
+   "file": "server/drivers/acp/approval-delivery.ts",
+   "fn": "write",
+   "anchor": "stream.write(wire,error=>report(error,true))",
+   "kind": "stream-write",
+   "reason": "adapter-write",
+   "admittedBy": "server/drivers/acp/core.ts fencedSubmit -> release forwarding -> writeAcpResponse -> stream.write",
+   "review": "Physical learning enqueue; chain and bounded callback dispatcher are checked."
+  },
+  {
+   "file": "server/folder-trust-seed.ts",
+   "fn": "writeFuigoSeedDurable",
+   "anchor": "writeSync(fd,bytes,at)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-listed.ts",
+   "fn": "markMcpListedAfterFlush",
+   "anchor": "process.stdout.write(\"\",()=>{try{writeFileSync(path,String(Date.now()),{mode:0o600});}catch{/*thedriverfallsbacktoitsbound*/}})",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-listed.ts",
+   "fn": "markMcpListedAfterFlush",
+   "anchor": "writeFileSync(path,String(Date.now()),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-listed.ts",
+   "fn": "logCatalog",
+   "anchor": "process.stderr.write(`[mcp-catalog]${text}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-listed.ts",
+   "fn": "attempt",
+   "anchor": "fetch(endpoint,{method:\"POST\",headers:{\"content-type\":\"application/json\",authorization:`Bearer${token??\"\"}`},body:JSON.stringify(doc),signal:AbortSignal.timeout",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-listed.ts",
+   "fn": "write",
+   "anchor": "output.write(line,done)",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "MCP catalogue/result output; releaseRole uses releaseProxyFrame before this unbound output fallback."
+  },
+  {
+   "file": "server/mcp-listed.ts",
+   "fn": "writeCatalogDocument",
+   "anchor": "writeFileSync(temp,JSON.stringify(doc),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/cli-memory-learning.ts",
+   "fn": "hiddenTurnRunner",
+   "anchor": "adapter.sendTurn({threadId,text:prompt,sessionReset:true,cwd,stopLine:true,proposalOnly:true,background:true,usageFeature:\"memory\",beforePrepare,...(fencedWrite",
+   "kind": "sendTurn",
+   "reason": "learning-path",
+   "admittedBy": "fence:fencedWrite",
+   "review": "Hidden learning input carries fencedWrite; beforePrepare is check-only."
+  },
+  {
+   "file": "server/drivers/no-limits-state.ts",
+   "fn": "linkNoLimitsState",
+   "anchor": "cpSync(saved,source,{recursive:true,force:false,errorOnExist:false,dereference:true})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "note": "Local native-session migration, preserving colliding state files. Session data can contain chats, but this filesystem copy does not send extraction bytes to a model or Flux."
+  },
+  {
+   "file": "server/drivers/lifecycle-diagnostic.ts",
+   "fn": "createLifecycleRecorder",
+   "anchor": "appendNative(threadId,entry)",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/warm-pool.ts",
+   "fn": "psMeasure",
+   "anchor": "execFile(\"ps\",[\"-A\",\"-o\",\"pid=,ppid=,rss=\"],{timeout:3_000,killSignal:\"SIGKILL\",maxBuffer:16*MB},(error,stdout)=>{if(error&&!stdout)returnresolve(null);resolve(",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/warm-pool.ts",
+   "fn": "sampleDarwinAvailable",
+   "anchor": "execFile(\"vm_stat\",[],{timeout:3_000,killSignal:\"SIGKILL\"},(error,stdout)=>{if(!error){consttext=String(stdout);constpage=Number(/pagesizeof(\\d+)bytes/.exec(tex",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "writeTo",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:nativeLogMessage(obj)})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "fenceFrame",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{acpForeignFrame:{method:msg.method,request:msg.id!==undefined}}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "closeProcess",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"close\",reason:why}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "onOverflow",
+   "anchor": "appendNative(proc.owner.threadId,{dir:\"in\",source:SOURCE,msg:{frameOverflow:overflow}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "openProcess",
+   "anchor": "appendNative(proc.owner.threadId,{dir:\"in\",source:SOURCE,msg:{acpPool:\"exited\",code,signal}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "idleLine",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:idleLogged},idleLogged===msg?{rawChars:line.length}:undefined)",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "parkProcess",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"park\"}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "noteAskStopTool",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{askStop:\"ran\",kind}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "budgetLog",
+   "anchor": "appendNative(threadId,{dir:\"lifecycle\",source:\"murage.opencode-budget\",msg:{type:\"opencode_tool_budget\",stage,outcome,...(reason?{reason}:{}),limit:budgetRecord",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "sendTurnFenced",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"folder-config-seed\",reason:seedGate===undefined?\"seed-suppressed\":\"seed-present\",outcome:folderTrus",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "send",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:nativeLogMessage(obj)})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "persistEngineStderr",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{engineStderr:{stopReason,lineCount:kept.length,truncated:stderrDiagnosticTruncated||kept.length<lines.length,",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "reason": "log-excluded",
+   "file": "server/drivers/acp/core.ts",
+   "fn": "finishTurn",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"close\",reason:proc.unfit}})",
+   "kind": "native-log"
+  },
+  {
+   "reason": "log-excluded",
+   "file": "server/drivers/acp/core.ts",
+   "fn": "finishTurn",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"close\",reason:\"native-no-barrier\"}})",
+   "kind": "native-log"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "markFolderTrustUnfit",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"unfit\",reason}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleServerRequest",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{askStop:\"refused\",kind:kind||null}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "noteFallback",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{fuigoInterjection:event,...extra}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "reason": "log-excluded",
+   "file": "server/drivers/acp/core.ts",
+   "fn": "pscopeIntercepted",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"frame-stale-prompt\",method:logMethodName(msg.method),generation:reused?\"reused\":\"first\"}})",
+   "kind": "native-log"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "fireFuigoWatch",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{fuigoSilenceWatch:rule}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleOverflow",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{frameOverflow:overflow}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleStdoutLine",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:logged},logged===msg?{rawChars}:undefined)",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "close",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:`${SOURCE}.stderr`,msg:{type:\"engine_stderr\",turnId,processGeneration:lifecycle.generation,chars:diagnostic.length}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "close",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:`${SOURCE}.stderr`,msg:{type:\"engine_stderr_truncated\",turnId,limitChars:STDERR_DIAGNOSTIC_CHARS}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "spawnFresh",
+   "anchor": "spawnCli(launchCli,argv,{cwd,env:spawnEnv,stdio:[\"pipe\",\"pipe\",\"pipe\"],},engineJob(hostPowerOptions),undefined,threadId)",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"reuse\",...(crossThread?{crossThread:true}:{})}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "acpSetupBoundary",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"reestablish_failed\"}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "acpSetupBoundary",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:tree.leftover===\"mcp-ready-timeout\"?\"mcp_ready_timeout\":\"pre_prompt_leftover\"}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "logGate",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{mcpGate:line}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/memory/upstream-reader.ts",
+   "fn": "accountedFetch",
+   "anchor": "fetch(input,init)",
+   "kind": "fetch",
+   "reason": "not-learning",
+   "review": "Accounted connector HTTP helper, used by composio.ts; learning HTTP transports own gate.send at their own request boundary."
+  },
+  {
+   "file": "server/box-relay.ts",
+   "fn": "relayBoxCall",
+   "anchor": "doFetch(target,{method:route.method,//Onlythis:thecaller'sheaders(Authorization,cookies,hop-by-hop)areneverforwarded.headers:{...(sameOrigin?{authorization:`Bea",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/container-computer.ts",
+   "fn": "<module>",
+   "anchor": "promisify(execFile)",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/container-computer.ts",
+   "fn": "prepareManagedImage",
+   "anchor": "writeFile(join(context,\"Dockerfile\"),managedImageDockerfile(),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/engine-fs.ts",
    "fn": "pwriteRaw",
    "anchor": "writeSync(fd,bytes,0,bytes.length,position)",
@@ -1004,6 +1417,14 @@
   {
    "file": "server/harness/event-log.ts",
    "fn": "markSessionsPending",
+   "anchor": "appendFileSync(sessionsPendingMark(dir,threadId),compact+\"\\n\",{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "note": "Private restart cleanup journal persists only compact session.started identity fields selected by compactSession; no messages, prompts or learning payload."
+  },
+  {
+   "file": "server/harness/event-log.ts",
+   "fn": "markSessionsPending",
    "anchor": "writeFileSync(sessionsPendingMark(dir,threadId),\"\",{mode:0o600})",
    "kind": "fs-write",
    "reason": "not-learning"
@@ -1037,38 +1458,349 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/memory/upgrade-status.ts",
-   "fn": "writeNote",
-   "anchor": "writeFileSync(temp,JSON.stringify(status),{mode:0o600})",
+   "file": "server/engine-exclusion.ts",
+   "fn": "privateCopy",
+   "anchor": "writeSync(out,bytes,at,bytes.length-at,at)",
    "kind": "fs-write",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "note": "Copies an engine's own file into the private meter copy for read-back measurement; the bytes never leave the machine and are not sent to any engine or service."
   },
   {
-   "file": "server/memory/upgrade-overall.ts",
-   "fn": "overallWriter",
-   "anchor": "writeFileSync(temp,JSON.stringify({v:1,schema,overall,at}),{mode:0o600})",
+   "file": "server/counted-fs-promises.ts",
+   "fn": "writeFile",
+   "anchor": "write(b,at,b.length-at,null)",
    "kind": "fs-write",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
   },
   {
-   "file": "server/drivers/engine-input.ts",
-   "fn": "sendBuiltTurn",
-   "anchor": "adapter.sendTurn(fencedTurnInput(input,fence))",
-   "kind": "sendTurn",
-   "reason": "not-learning"
+   "file": "server/counted-fs-promises.ts",
+   "fn": "get",
+   "anchor": "write",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
   },
   {
-   "file": "server/box-relay.ts",
-   "fn": "relayBoxCall",
-   "anchor": "doFetch(target,{method:route.method,//Onlythis:thecaller'sheaders(Authorization,cookies,hop-by-hop)areneverforwarded.headers:{...(sameOrigin?{authorization:`Bea",
-   "kind": "alias-call",
-   "reason": "not-learning"
+   "file": "server/counted-fs-promises.ts",
+   "fn": "get",
+   "anchor": "writev",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
   },
   {
-   "file": "server/email/flux-email-client.ts",
-   "fn": "exchange",
-   "anchor": "this.options.fetch(url.toString(),{method,headers,body:init.body===undefined?undefined:JSON.stringify(init.body),signal:controller.signal,redirect:\"error\"})",
-   "kind": "fetch",
+   "file": "server/counted-fs-promises.ts",
+   "fn": "get",
+   "anchor": "writeFile",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "<module>",
+   "anchor": "fs.writeFile(path,data,options)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "<module>",
+   "anchor": "handle.writeFile(data,opts)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "<module>",
+   "anchor": "fs.appendFile(path,data,options)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "<module>",
+   "anchor": "writeFile(path,data,{...opts,flag:opts.flag??\"a\"})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "copyFile",
+   "anchor": "nativeFs.copyFile(...args)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Exact physical counted filesystem wrapper; caller inventory retains all learning paths. Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "cp",
+   "anchor": "nativeFs.cp(...args)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Exact physical counted filesystem wrapper; caller inventory retains all learning paths. Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "<module>",
+   "anchor": "writeFile",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "<module>",
+   "anchor": "appendFile",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "<module>",
+   "anchor": "copyFile",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs-promises.ts",
+   "fn": "<module>",
+   "anchor": "cp",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "fs.writeFileSync(path,data,options)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "fs.writeFileSync(path,data,options)",
+   "kind": "fs-write",
+   "n": 1,
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "writeSync(fd,bytes,at,bytes.length-at)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "fs.appendFileSync(path,data,options)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "writeFileSync(path,data,{...opts,flag:opts.flag??\"a\"})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "fs.createWriteStream(path,options)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "fs.createWriteStream(path,{...opts,fs:{open:original?.open??fs.open,close:original?.close??fs.close,write:countWrite(original?.write??fs.write),writev:countWrit",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "write",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "writev",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "copyFileSync",
+   "anchor": "nativeFs.copyFileSync(...args)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Exact physical counted filesystem wrapper; caller inventory retains all learning paths. Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "Reflect.apply(promiseWriteFile,undefined,args)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "Reflect.apply(promiseAppendFile,undefined,args)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "cpSync",
+   "anchor": "nativeFs.cpSync(...args)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Exact physical counted filesystem wrapper; caller inventory retains all learning paths. Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "Reflect.apply(promiseCp,undefined,args)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "writeSync",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "write",
+   "kind": "fs-write",
+   "n": 1,
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "writevSync",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "writev",
+   "kind": "fs-write",
+   "n": 1,
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "writeFileSync",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "appendFileSync",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "writeFile",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "appendFile",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "createWriteStream",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "copyFileSync",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "copyFile",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "cpSync",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/counted-fs.ts",
+   "fn": "<module>",
+   "anchor": "cp",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
+  },
+  {
+   "file": "server/atomic.ts",
+   "fn": "writeFileAtomicInner",
+   "anchor": "writeFileSync",
+   "kind": "fs-write",
    "reason": "not-learning"
   },
   {
@@ -1121,18 +1853,12 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/email/restore-job-effects.ts",
-   "fn": "stage",
-   "anchor": "copyFileSync(join(o.archivesDir,j.archiveId,\"messages.db\"),tmp)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/email/restore-job.ts",
-   "fn": "writeRecordAtomic",
-   "anchor": "fh.writeFile(data)",
-   "kind": "fs-write",
-   "reason": "not-learning"
+   "file": "server/channels/boot-id.ts",
+   "fn": "bootId",
+   "anchor": "execFileSync(\"/usr/sbin/sysctl\",[\"-n\",\"kern.bootsessionuuid\"],{encoding:\"utf8\",timeout:2000})",
+   "kind": "spawn",
+   "reason": "not-learning",
+   "review": "Reads the platform boot identifier with a fixed sysctl command and arguments."
   },
   {
    "file": "server/installation-database-snapshot.ts",
@@ -1258,13 +1984,6 @@
    "fn": "sendTurn",
    "anchor": "original.sendTurn(draftOnlyTurnInput(input,judged.surface))",
    "kind": "sendTurn",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/client.ts",
-   "fn": "<module>",
-   "anchor": "fetch",
-   "kind": "fetch",
    "reason": "not-learning"
   },
   {
@@ -1500,6 +2219,14 @@
   },
   {
    "file": "server/mcp-bridge.ts",
+   "fn": "runMcpBridge",
+   "anchor": "spawn(resolved.command,[...resolved.args],withHideInherit({shell:false,env:{...childEnv,...options.childEnv},stdio:[\"pipe\",\"pipe\",\"pipe\"],}))",
+   "kind": "spawn",
+   "reason": "not-learning",
+   "review": "Tool bridge child setup or fixed diagnostic count, no learning prompt."
+  },
+  {
+   "file": "server/mcp-bridge.ts",
    "fn": "onRetire",
    "anchor": "process.stderr.write(`${options.label}bridgerevokedananswerthatwaswaitingtobewritten\\n`)",
    "kind": "stream-write",
@@ -1529,14 +2256,6 @@
   },
   {
    "file": "server/mcp-bridge.ts",
-   "fn": "runMcpBridge",
-   "anchor": "spawn(resolved.command,[...resolved.args],withHideInherit({shell:false,env:{...childEnv,...options.childEnv},stdio:[\"pipe\",\"pipe\",\"pipe\"],}))",
-   "kind": "spawn",
-   "reason": "not-learning",
-   "review": "Tool bridge child setup or fixed diagnostic count, no learning prompt."
-  },
-  {
-   "file": "server/mcp-bridge.ts",
    "fn": "onDead",
    "anchor": "process.stderr.write(\"bridgetimeouts=1\\n\",)",
    "kind": "stream-write",
@@ -1546,10 +2265,10 @@
   {
    "file": "server/mcp-bridge.ts",
    "fn": "runMcpBridge",
-   "anchor": "process.stderr.write(\"bridgefailures=1\\n\")",
+   "anchor": "process.stderr.write(`bridgefailures=1code=${String(error?.code??\"-\").slice(0,32)}syscall=${String(error?.syscall??\"-\").split(\"\")[0]!.slice(0,32)}command=${comm",
    "kind": "stream-write",
    "reason": "not-learning",
-   "review": "Tool bridge child setup or fixed diagnostic count, no learning prompt."
+   "review": "Writes a child setup failure count and bounded diagnostic fields to stderr."
   },
   {
    "file": "server/mcp-bridge.ts",
@@ -1666,6 +2385,13 @@
    "reason": "not-learning"
   },
   {
+   "reason": "not-learning",
+   "file": "server/browser-extension-approvals.ts",
+   "fn": "save",
+   "anchor": "countedWriteFileSync(temp,JSON.stringify(content),{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write"
+  },
+  {
    "file": "server/browser-extension-broker.ts",
    "fn": "onConnection",
    "anchor": "socket.write(encodeFrame({type:'host.authenticated',version:1,proof:authProof(token,'broker',nonce,auth.nonce)}))",
@@ -1678,6 +2404,13 @@
    "anchor": "socket.write(encodeFrame({type:'host.challenge',version:1,nonce}))",
    "kind": "stream-write",
    "reason": "not-learning"
+  },
+  {
+   "reason": "not-learning",
+   "file": "server/browser-extension-broker.ts",
+   "fn": "startBrowserExtensionBroker",
+   "anchor": "countedWriteFile(instanceConfigPath,JSON.stringify({version:1,instance,socketPath,token}),{mode:0o600,flag:'wx'})",
+   "kind": "fs-write"
   },
   {
    "file": "server/browser-extension-broker.ts",
@@ -1694,10 +2427,38 @@
    "reason": "not-learning"
   },
   {
+   "reason": "not-learning",
+   "file": "server/browser-extension-service.ts",
+   "fn": "persist",
+   "anchor": "countedWriteFile(temp,content,{mode:0o600,flag:'wx'})",
+   "kind": "fs-write"
+  },
+  {
+   "reason": "not-learning",
+   "file": "server/browser-extension-service.ts",
+   "fn": "markUnconfirmed",
+   "anchor": "countedWriteFile(unconfirmedFile,'1',{mode:0o600})",
+   "kind": "fs-write"
+  },
+  {
    "file": "server/workspace-revision.ts",
    "fn": "probeVolumeClock",
    "anchor": "writeSync(fd,\"muragevolumeclockprobe\\n\")",
    "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "reason": "not-learning",
+   "file": "server/browser-extension-sites.ts",
+   "fn": "save",
+   "anchor": "countedWriteFileSync(temp,JSON.stringify(content),{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write"
+  },
+  {
+   "file": "server/browser-open-chrome.ts",
+   "fn": "openOwnerChrome",
+   "anchor": "spawn(command,[...args],withHideInherit({detached:true,stdio:'ignore',windowsHide:true}))",
+   "kind": "spawn",
    "reason": "not-learning"
   },
   {
@@ -1935,6 +2696,13 @@
    "review": "Fixed/count-only connector diagnostics."
   },
   {
+   "reason": "not-learning",
+   "file": "server/channels/signal/park-fs.ts",
+   "fn": "write",
+   "anchor": "countedWriteFileSync(fd,data)",
+   "kind": "fs-write"
+  },
+  {
    "file": "server/container-mcp.ts",
    "fn": "<module>",
    "anchor": "process.stderr.write(\"bridgerefusals=1\\n\")",
@@ -2092,6 +2860,20 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/flux-memory-capture.ts",
+   "fn": "send",
+   "anchor": "doFetch(url,{method:\"POST\",headers:{authorization:`Bearer${key}`,\"content-type\":\"application/json\",\"idempotency-key\":id,[FLUX_MEMORY_APP_HEADER]:FLUX_MEMORY_APP",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/flux-memory-forget.ts",
+   "fn": "request",
+   "anchor": "doFetch(url,{method,headers:{authorization:`Bearer${key}`,[FLUX_MEMORY_APP_HEADER]:FLUX_MEMORY_APP,...fluxUsageHeaders({feature:\"memory\",botId:row?.botId,thread",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/free-web-search.ts",
    "fn": "request",
    "anchor": "fetcher(url,{...init,signal,redirect:\"error\"})",
@@ -2204,17 +2986,18 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/channels/signal/process-host.ts",
-   "fn": "open",
-   "anchor": "nodeSpawn(file,[...argv],withHideInherit(opts))",
-   "kind": "spawn",
-   "reason": "not-learning"
+   "file": "server/io-child-meter.ts",
+   "fn": "reportChildIoCensus",
+   "anchor": "writeSync(2,\"[io-census]\"+JSON.stringify(childIoCensusSnapshot())+\"\\n\")",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Fixed io-census diagnostic to stderr; no engine input. Diagnostic stderr census of owned child metadata only."
   },
   {
-   "file": "server/channels/signal/process-host.ts",
-   "fn": "write",
-   "anchor": "s.child.stdin.write(line,(error)=>{if(error&&s.pending.has(wireId))fail(\"broken-pipe\");})",
-   "kind": "stdin",
+   "file": "server/telegram-transport.ts",
+   "fn": "<module>",
+   "anchor": "fetch",
+   "kind": "fetch",
    "reason": "not-learning"
   },
   {
@@ -2230,6 +3013,22 @@
    "anchor": "appendFileSync(fd,`${JSON.stringify({k:\"open\",runId,threadId,instanceId,at,...binding})}\\n`)",
    "kind": "fs-write",
    "reason": "not-learning"
+  },
+  {
+   "file": "server/io-proxy-receipts.ts",
+   "fn": "send",
+   "anchor": "socket.write(JSON.stringify({type:\"ack\",message})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Private child-I/O metering control channel; receipts never enter MCP stdout. Private receipt acknowledgement transport; no model or learning payload."
+  },
+  {
+   "file": "server/io-proxy-receipts.ts",
+   "fn": "endpoint",
+   "anchor": "socket.write('{\"type\":\"ready\"}\\n')",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Private child-I/O metering control channel; receipts never enter MCP stdout. Fixed private receipt transport readiness frame."
   },
   {
    "file": "server/drivers/claude-signin-answers.ts",
@@ -2261,19 +3060,13 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/murage-exec.ts",
-   "fn": "writeOnce",
-   "anchor": "writeFileSync(temp,text,{mode})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "note": "Writes the fixed packaged wrapper source and its fixed W5 shape list (installMurageExec via writeOnce); no conversation, prompt or retained learning bytes."
-  },
-  {
-   "file": "server/drivers/murage-exec.ts",
-   "fn": "writeExecEnvFile",
-   "anchor": "writeFileSync(temp,execEnvFileText(env,cwd,shell,proven),{mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning"
+   "file": "server/drivers/claude.ts",
+   "fn": "write",
+   "anchor": "s.child.stdin.write(wire,done)",
+   "kind": "stdin",
+   "reason": "adapter-write",
+   "admittedBy": "server/drivers/claude.ts gate.send -> cliStdinWrite -> s.child.stdin.write",
+   "review": "Physical learning enqueue; chain and bounded callback dispatcher are checked."
   },
   {
    "file": "server/drivers/claude.ts",
@@ -2309,6 +3102,14 @@
    "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.session\",msg:{close:why}})",
    "kind": "native-log",
    "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "done",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.sdk.message\",msg:images?.length?{...promptMsg,message:{role:\"user\",content:[{type:\"text\",text},...images.map((im",
+   "kind": "native-log",
+   "reason": "log-excluded",
+   "review": "Existing native debug log moved with serialized wire accounting."
   },
   {
    "file": "server/drivers/claude.ts",
@@ -2388,23 +3189,6 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/claude.ts",
-   "fn": "write",
-   "anchor": "s.child.stdin.write(wire,done)",
-   "kind": "stdin",
-   "reason": "adapter-write",
-   "admittedBy": "server/drivers/claude.ts gate.send -> cliStdinWrite -> s.child.stdin.write",
-   "review": "Physical learning enqueue; chain and bounded callback dispatcher are checked."
-  },
-  {
-   "file": "server/drivers/claude.ts",
-   "fn": "done",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.sdk.message\",msg:images?.length?{...promptMsg,message:{role:\"user\",content:[{type:\"text\",text},...images.map((im",
-   "kind": "native-log",
-   "reason": "log-excluded",
-   "review": "Existing native debug log moved with serialized wire accounting."
-  },
-  {
    "file": "server/cloud-home/control-state.ts",
    "fn": "run",
    "anchor": "execFileSync(helper,[],withHideInherit({timeout:CLOCK_HELPER_TIMEOUT_MS,maxBuffer:4096,encoding:\"utf8\",env:{},stdio:[\"ignore\",\"pipe\",\"ignore\"]}))",
@@ -2431,6 +3215,13 @@
    "anchor": "execFile(\"tasklist\",[\"/FO\",\"CSV\",\"/NH\"],{windowsHide:true,timeout:INSTALLER_TIMEOUT_MS,maxBuffer:4*1024*1024},(error,stdout)=>resolve(error?\"\":String(stdout)))",
    "kind": "spawn",
    "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-login.ts",
+   "fn": "answerReady",
+   "anchor": "channel?.write(\"commit\\n\")",
+   "kind": "stream-write",
+   "reason": "fixed-text"
   },
   {
    "file": "server/cloud-home/engine-login.ts",
@@ -2504,13 +3295,6 @@
    "review": "MCP request transport under the captured mount ingress, not a learning prompt."
   },
   {
-   "file": "server/cloud-home/agy-signin-start.ts",
-   "fn": "onData",
-   "anchor": "stdin.write(bytes)",
-   "kind": "stdin",
-   "reason": "not-learning"
-  },
-  {
    "file": "server/cloud-home/signin-offers.ts",
    "fn": "write",
    "anchor": "writeFileSync(temp,JSON.stringify(value),{mode:0o600})",
@@ -2546,11 +3330,12 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/model-gateway.ts",
-   "fn": "write",
-   "anchor": "res.write(`data:${JSON.stringify(piece)}\\n\\n`)",
-   "kind": "stream-write",
-   "reason": "not-learning"
+   "file": "server/cloud-home/supervisor-port.ts",
+   "fn": "lifecycleTransport",
+   "anchor": "send(url,init)",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "note": "Composio broker lifecycle calls (connection status and revocation) built by the broker client; no owner turn, prompt or retained learning text."
   },
   {
    "file": "server/model-gateway.ts",
@@ -2577,6 +3362,13 @@
    "review": "Native model gateway request/response; its connected request dispatcher uses consuming authority."
   },
   {
+   "file": "server/model-gateway.ts",
+   "fn": "write",
+   "anchor": "res.write(`data:${JSON.stringify(piece)}\\n\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/email/caps-file.ts",
    "fn": "writeCapsFile",
    "anchor": "writeFileSync(tmp,JSON.stringify({v:1,accountRef:entry.accountRef,caps:entry.caps,readAt:entry.readAt}),{mode:0o600})",
@@ -2596,70 +3388,6 @@
    "anchor": "fork(SPAWNED_PROXIES.memoryWorker,[],withHideInherit({execArgv:[\"--experimental-strip-types\"],stdio:[\"ignore\",\"ignore\",\"pipe\",\"ipc\"],env:{ELECTRON_RUN_AS_NODE:\"",
    "kind": "spawn",
    "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/approval-journal-storage.ts",
-   "fn": "assertJournalStorage",
-   "anchor": "execFileSync(\"/sbin/mount\",[],{encoding:\"utf8\",timeout:15000})",
-   "kind": "spawn",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/approval-idempotency.ts",
-   "fn": "#publish",
-   "anchor": "writeFileSync(fd,bytes)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/rpc-approval-replay.ts",
-   "fn": "bindRpc",
-   "anchor": "writeFileSync(fd,canonicalBindingJson(record))",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/opportunity-recovery-plan.ts",
-   "fn": "saveOpportunityPlan",
-   "anchor": "writeFileSync(fd,bytes)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/journal-file.ts",
-   "fn": "#append",
-   "anchor": "writeSync(fd,`${JSON.stringify(line)}\\n`)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/journal-file.ts",
-   "fn": "#compactIfLong",
-   "anchor": "writeSync(fd,body?`${body}\\n`:\"\")",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/private-token.ts",
-   "fn": "<module>",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/private-token.ts",
-   "fn": "writeAtomic",
-   "anchor": "writeFileSync(temp,text,{mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/credential-connection.ts",
-   "fn": "<module>",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning",
-   "note": "Default fetch dependency for the fixed-origin CRM credential broker. Requests carry enrollment, grant, connection epoch and signed credential lifecycle metadata for begin, complete, lease and disconnect; no chat text, learning extraction, model prompt or deferred learning hook payload is dispatched."
   },
   {
    "file": "server/mcp-access.ts",
@@ -2882,6 +3610,27 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/drivers/acp/custom-model-catalog.ts",
+   "fn": "stopDiscovery",
+   "anchor": "child.stdin.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/custom-model-catalog.ts",
+   "fn": "send",
+   "anchor": "child?.stdin.write(`${JSON.stringify(message)}\\n`)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/custom-model-catalog.ts",
+   "fn": "discoverAcpModels",
+   "anchor": "spawnCli(cli,args,{cwd,env,stdio:[\"pipe\",\"pipe\",\"pipe\"]},engineJob())",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/drivers/antigravity-scope.ts",
    "fn": "copyFile",
    "anchor": "copyFileSync(from,to)",
@@ -2961,6 +3710,14 @@
   },
   {
    "file": "server/drivers/antigravity.ts",
+   "fn": "writePrompt",
+   "anchor": "child.stdin.end(wire)",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "Driver exposes no withCliMemoryLearning adapter; native prompt remains fencedSubmit/StopGate-owned."
+  },
+  {
+   "file": "server/drivers/antigravity.ts",
    "fn": "generateTextNow",
    "anchor": "spawnCli(config.cli,[\"--input-format\",\"stream-json\",\"--output-format\",\"stream-json\",\"--model\",\"gemini-3.8-flash-low\",],//Thiscall'scopyofthescopedtextenvironmen",
    "kind": "spawn",
@@ -2974,26 +3731,41 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/antigravity.ts",
-   "fn": "writePrompt",
-   "anchor": "child.stdin.end(wire)",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "Driver exposes no withCliMemoryLearning adapter; native prompt remains fencedSubmit/StopGate-owned."
-  },
-  {
    "file": "server/drivers/boxagent.ts",
    "fn": "api",
-   "anchor": "fetch(`${BOX_API}${path}`,{...opts,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",...opts.headers,...(fluxRouteFor(`${BOX_API}${path}",
+   "anchor": "fetch(fluxRouteFor(`${BOX_API}${path}`).requestUrl,{...opts,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",...opts.headers,...(fluxRo",
    "kind": "fetch",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Computer driver API request through the selected Flux route; this adapter exposes no learning extraction transport."
   },
   {
    "file": "server/drivers/boxagent.ts",
    "fn": "post",
-   "anchor": "fetch(`${BOX_API}/boxes/${boxId}/prompt`,{method:\"POST\",headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",...(fluxRouteFor(`${BOX_API}/b",
+   "anchor": "fetch(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).requestUrl,{method:\"POST\",headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",...(f",
    "kind": "fetch",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Computer driver prompt for its active Box turn through Flux routing; no hidden extraction turn uses this adapter."
+  },
+  {
+   "reason": "log-excluded",
+   "file": "server/drivers/boxagent.ts",
+   "fn": "sendTurnCaptured",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"box.prompt\",msg:{model,prompt,response:started}})",
+   "kind": "native-log"
+  },
+  {
+   "reason": "log-excluded",
+   "file": "server/drivers/boxagent.ts",
+   "fn": "sendTurnCaptured",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"box.events\",msg:ev})",
+   "kind": "native-log"
+  },
+  {
+   "reason": "log-excluded",
+   "file": "server/drivers/boxagent.ts",
+   "fn": "sendTurnCaptured",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"box.prompt.status\",msg:status})",
+   "kind": "native-log"
   },
   {
    "file": "server/drivers/codex-catalog.ts",
@@ -3047,20 +3819,6 @@
   },
   {
    "file": "server/drivers/codex.ts",
-   "fn": "conn.onOverflow",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:\"codex.app-server\",msg:{frameOverflow:overflow}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/codex.ts",
-   "fn": "handleStdoutLine",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:\"codex.app-server\",msg:loggedMessage},loggedMessage===msg?{rawChars:line.length}:undefined)",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/codex.ts",
    "fn": "write",
    "anchor": "child.stdin.write(wire,error=>completed(!error))",
    "kind": "stdin",
@@ -3078,33 +3836,33 @@
   },
   {
    "file": "server/drivers/codex.ts",
-   "fn": "cancelNativeRequest",
-   "anchor": "child.stdin.write(wire)",
+   "fn": "conn.onOverflow",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"codex.app-server\",msg:{frameOverflow:overflow}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "handleStdoutLine",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"codex.app-server\",msg:loggedMessage},loggedMessage===msg?{rawChars:line.length}:undefined)",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "nativeRequestCanceller",
+   "anchor": "child.stdin.write(wire,error=>resolve(!error))",
    "kind": "stdin",
    "reason": "not-learning",
-   "review": "Exact idle-refusal control frame; contains no prompt text."
+   "review": "Writes a native request cancellation frame and observes delivery; the frame contains no learning text."
   },
   {
-   "file": "server/drivers/chat-mcp-client.ts",
-   "fn": "kill",
-   "anchor": "child.stdin?.end()",
-   "kind": "stdin",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/chat-mcp-client.ts",
-   "fn": "openChatMcpServers",
-   "anchor": "launchMcp(launch.command,launch.args,chatMcpChildEnv(launch.env),cwd)",
-   "kind": "alias-call",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/chat-mcp-client.ts",
-   "fn": "stop",
-   "anchor": "this.#child.stdin?.write(frame+\"\\n\")",
-   "kind": "stdin",
+   "file": "server/drivers/openai-chat.ts",
+   "fn": "completeWithin",
+   "anchor": "fetch(fluxRouteFor(endpoint).requestUrl,requestInit)",
+   "kind": "fetch",
    "reason": "not-learning",
-   "review": "MCP tool child launch or exact cancellation frame, not the hidden learning prompt."
+   "review": "Native chat request; learning HTTP transport uses its own gate.send path."
   },
   {
    "file": "server/drivers/openai-chat.ts",
@@ -3119,22 +3877,6 @@
    "anchor": "appendNative(threadId,{dir:\"out\",source:options.nativeLog.source,msg:null},{rawChars:floor})",
    "kind": "native-log",
    "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/openai-chat.ts",
-   "fn": "completeWithin",
-   "anchor": "fetch(fluxRouteFor(endpoint).requestUrl,requestInit)",
-   "kind": "fetch",
-   "reason": "not-learning",
-   "review": "Native chat request; learning HTTP transport uses its own gate.send path."
-  },
-  {
-   "file": "server/drivers/no-limits-state.ts",
-   "fn": "linkNoLimitsState",
-   "anchor": "cpSync(saved,source,{recursive:true,force:false,errorOnExist:false,dereference:true})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "note": "Local native-session migration, preserving colliding state files. Session data can contain chats, but this filesystem copy does not send extraction bytes to a model or Flux."
   },
   {
    "file": "server/drivers/acp/fuigo.ts",
@@ -3222,27 +3964,6 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/acp/custom-model-catalog.ts",
-   "fn": "stopDiscovery",
-   "anchor": "child.stdin.end()",
-   "kind": "stdin",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/custom-model-catalog.ts",
-   "fn": "send",
-   "anchor": "child?.stdin.write(`${JSON.stringify(message)}\\n`)",
-   "kind": "stdin",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/custom-model-catalog.ts",
-   "fn": "discoverAcpModels",
-   "anchor": "spawnCli(cli,args,{cwd,env,stdio:[\"pipe\",\"pipe\",\"pipe\"]},engineJob())",
-   "kind": "spawn",
-   "reason": "not-learning"
-  },
-  {
    "file": "server/drivers/muse-code.ts",
    "fn": "writePrompt",
    "anchor": "child.stdin.write(bytes,\"utf8\",onWritten)",
@@ -3317,6 +4038,14 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/drivers/pi-permission-gate.ts",
+   "fn": "refusePiFilter",
+   "anchor": "writeFileSync(statusFile,\"refuse.pi.filter\",{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Fixed refusal status file."
+  },
+  {
    "file": "server/drivers/pi.ts",
    "fn": "applyPiLocalCatalog",
    "anchor": "fetch",
@@ -3354,10 +4083,26 @@
   {
    "file": "server/drivers/pi.ts",
    "fn": "runTurn",
+   "anchor": "writeFileSync(gateModeFile,\"MODE=bound\\n\",{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Fixed gate mode file or native Pi frame; Pi exposes no withCliMemoryLearning adapter."
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "runTurn",
    "anchor": "writeFileSync(join(mcpTempDir,\"mcp.json\"),JSON.stringify({mcpServers:stampMcpServers(turn,mcpServers,gateSecret!==null)}),{mode:0o600})",
    "kind": "fs-write",
    "reason": "not-learning",
    "note": "Child arguments configure the RPC process, cwd and extensions. The added power-session option contains booleans, not prompt text; turn messages remain on the existing fenced stdin path."
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "runTurn",
+   "anchor": "writeFileSync(wipeContextFile,JSON.stringify({context:{project:context.project,home:context.home,dataDir:context.dataDir},inventoryPath:inventoryPath()}),{mode:",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "// MAIN RULING INT-CONFLICT-DEFAULT 3facefc99e a39360909c; MAIN RULING 1114-PI-ROOTS-PUBLISH-ON-CHANGE: constant-size wipe context paths and shared inventory path only; no learning payload."
   },
   {
    "file": "server/drivers/pi.ts",
@@ -3374,6 +4119,22 @@
    "kind": "spawn",
    "reason": "not-learning",
    "note": "Child arguments configure the RPC process, cwd and extensions. The added power-session option contains booleans, not prompt text; turn messages remain on the existing fenced stdin path."
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "enqueue",
+   "anchor": "child.stdin.write(wire,error=>complete(!error))",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "Fixed gate mode file or native Pi frame; Pi exposes no withCliMemoryLearning adapter."
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "send",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"pi.rpc\",msg:obj},{rawChars:wire.length-1})",
+   "kind": "native-log",
+   "reason": "log-excluded",
+   "review": "Existing native debug log moved with serialized wire accounting."
   },
   {
    "file": "server/drivers/pi.ts",
@@ -3404,36 +4165,18 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/pi.ts",
-   "fn": "runTurn",
-   "anchor": "writeFileSync(wipeContextFile,JSON.stringify({context:{project:context.project,home:context.home,dataDir:context.dataDir},inventoryPath:inventoryPath()}),{mode:",
+   "file": "server/host/custody.ts",
+   "fn": "appendCustodyRecord",
+   "anchor": "writeSync(fd,`${JSON.stringify(record)}\\n`)",
    "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "// MAIN RULING INT-CONFLICT-DEFAULT 3facefc99e a39360909c; MAIN RULING 1114-PI-ROOTS-PUBLISH-ON-CHANGE: constant-size wipe context paths and shared inventory path only; no learning payload."
+   "reason": "not-learning"
   },
   {
-   "file": "server/drivers/pi.ts",
-   "fn": "runTurn",
-   "anchor": "writeFileSync(gateModeFile,\"MODE=bound\\n\",{mode:0o600})",
+   "file": "server/host/custody.ts",
+   "fn": "reapCustody",
+   "anchor": "writeSync(fd,open.map(record=>`${JSON.stringify(record)}\\n`).join(\"\"))",
    "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Fixed gate mode file or native Pi frame; Pi exposes no withCliMemoryLearning adapter."
-  },
-  {
-   "file": "server/drivers/pi.ts",
-   "fn": "enqueue",
-   "anchor": "child.stdin.write(wire,error=>complete(!error))",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "Fixed gate mode file or native Pi frame; Pi exposes no withCliMemoryLearning adapter."
-  },
-  {
-   "file": "server/drivers/pi.ts",
-   "fn": "send",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:\"pi.rpc\",msg:obj},{rawChars:wire.length-1})",
-   "kind": "native-log",
-   "reason": "log-excluded",
-   "review": "Existing native debug log moved with serialized wire accounting."
+   "reason": "not-learning"
   },
   {
    "file": "server/harness/bus.ts",
@@ -3496,13 +4239,6 @@
    "fn": "createVoiceNote",
    "anchor": "writeFileSync(partial,bytes,{mode:0o600,flag:\"wx\"})",
    "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/telegram-transport.ts",
-   "fn": "<module>",
-   "anchor": "fetch",
-   "kind": "fetch",
    "reason": "not-learning"
   },
   {
@@ -3647,6 +4383,27 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/channels/signal/private-writer.ts",
+   "fn": "append",
+   "anchor": "fs.writeFileSync(fd,data)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/channels/signal/process-host.ts",
+   "fn": "open",
+   "anchor": "nodeSpawn(file,[...argv],withHideInherit(opts))",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/channels/signal/process-host.ts",
+   "fn": "write",
+   "anchor": "s.child.stdin.write(line,(error)=>{if(error&&s.pending.has(wireId))fail(\"broken-pipe\");})",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/channels/whatsapp/auth-key-source.ts",
    "fn": "fileAuthKey",
    "anchor": "writeFileSync(fd,`${randomBytes(32).toString(\"hex\")}\\n`)",
@@ -3696,8 +4453,22 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/host/host-launch.ts",
+   "fn": "launchHostedHost",
+   "anchor": "spawn(process.execPath,[HOST_ENTRY],withHideInherit({//Thehostleadsitsowngroupsothereapcanprovethewholegroupgone;noparent-deathsignal(D1.6).detached:true,window",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/host/host-launch.ts",
+   "fn": "onMessage",
+   "anchor": "stdin.end(pulse)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/index.ts",
-   "fn": "fetchImpl",
+   "fn": "startPhoneCalls",
    "anchor": "fetch(url,init)",
    "kind": "fetch",
    "reason": "not-learning"
@@ -3731,6 +4502,22 @@
    "anchor": "process.stderr.write(\"Packageimportrecoverycouldnotestablishaconsistentinstallation.Muragestopped;therecoveryjournalandoriginalcopieswereretained.\\n\")",
    "kind": "stream-write",
    "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "shown",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "review": "current() alias classification: captured lineage/dispatch identity checks in project-memory attribution, not a prompt transport."
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "read",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "review": "current() alias classification: captured lineage/dispatch identity checks in project-memory attribution, not a prompt transport."
   },
   {
    "file": "server/index.ts",
@@ -3822,22 +4609,6 @@
    "anchor": "res.write(value)",
    "kind": "stream-write",
    "reason": "not-learning"
-  },
-  {
-   "file": "server/index.ts",
-   "fn": "shown",
-   "anchor": "current()",
-   "kind": "alias-call",
-   "reason": "not-learning",
-   "review": "current() alias classification: captured lineage/dispatch identity checks in project-memory attribution, not a prompt transport."
-  },
-  {
-   "file": "server/index.ts",
-   "fn": "read",
-   "anchor": "current()",
-   "kind": "alias-call",
-   "reason": "not-learning",
-   "review": "current() alias classification: captured lineage/dispatch identity checks in project-memory attribution, not a prompt transport."
   },
   {
    "file": "server/installation-archive.ts",
@@ -3939,6 +4710,22 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/restore-prep-core.ts",
+   "fn": "writeRestoreJsonAtomic",
+   "anchor": "writeFileSync(temp,JSON.stringify(value)+\"\\n\",{mode:0o600,flush:true})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
+  },
+  {
+   "file": "server/restore-prep-core.ts",
+   "fn": "prepareRestoredDatabase",
+   "anchor": "writeFileSync(destination,JSON.stringify(evidence)+\"\\n\",{mode:0o600,flush:true})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
+  },
+  {
    "file": "server/installation-restore-preparation.ts",
    "fn": "materializeOwnerEntries",
    "anchor": "copyFileSync(inside(copy.from),inside(copy.path),constants.COPYFILE_EXCL)",
@@ -3990,6 +4777,22 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/io-proxy-launcher.ts",
+   "fn": "send",
+   "anchor": "socket.write(JSON.stringify(message)+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Owned MCP child bootstrap and private I/O census control channel; prompt stdin remains in the driver chains. Private child I/O receipt transport, separate from MCP stdio."
+  },
+  {
+   "file": "server/io-proxy-launcher.ts",
+   "fn": "<module>",
+   "anchor": "spawn(process.execPath,[`--import=${preload}`,...process.argv.slice(2)],withHideInherit({env,stdio:[\"pipe\",\"pipe\",\"pipe\",\"ipc\"]}))",
+   "kind": "spawn",
+   "reason": "not-learning",
+   "review": "// MAIN RULING INT-CONFLICT-DEFAULT a587265f6e / 99f4720b22: exact reviewed Windows-hide/argument-copy expression; Owned MCP child bootstrap and private I/O census control channel; prompt stdin remains in the driver chains. Owned proxy launcher adds metering preload and private IPC; underlying bound MCP proxy owns its payload admission."
+  },
+  {
    "file": "server/job-launcher.ts",
    "fn": "report",
    "anchor": "writeSync(3,`${JSON.stringify(line)}\\n`)",
@@ -4021,13 +4824,6 @@
   },
   {
    "file": "server/permission-proxy.ts",
-   "fn": "handle",
-   "anchor": "conn.write(JSON.stringify(ask)+\"\\n\")",
-   "kind": "stream-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/permission-proxy.ts",
    "fn": "<module>",
    "anchor": "writeSync(2,\"permissionrefusals=1\\n\")",
    "kind": "fs-write",
@@ -4051,11 +4847,34 @@
    "review": "Fixed diagnostic count; permission responses use proxy release transport."
   },
   {
+   "file": "server/permission-proxy.ts",
+   "fn": "handle",
+   "anchor": "conn.write(JSON.stringify(ask)+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/test-support/restore-path-scan.ts",
    "fn": "walk",
    "anchor": "spawnSync(\"python3\",[\"-c\",script],{input:text,encoding:\"utf8\"})",
    "kind": "spawn",
    "reason": "not-learning"
+  },
+  {
+   "file": "server/session-proof-world.ts",
+   "fn": "login",
+   "anchor": "fetch(`${fixture.info.url}/api/desktop-secret`)",
+   "kind": "fetch",
+   "reason": "not-learning",
+   "note": "Test-support launcher for the session proof fixtures; talks only to its own loopback verification server."
+  },
+  {
+   "file": "server/session-proof-world.ts",
+   "fn": "api",
+   "anchor": "fetch(fixture.info.url+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)})",
+   "kind": "fetch",
+   "reason": "not-learning",
+   "note": "Test-support launcher for the session proof fixtures; talks only to its own loopback verification server."
   },
   {
    "file": "server/vps-container-mcp.ts",
@@ -4064,6 +4883,30 @@
    "kind": "stream-write",
    "reason": "not-learning",
    "review": "Fixed bridge refusal diagnostic."
+  },
+  {
+   "file": "server/channels/delivery-kill-child.fixture.ts",
+   "fn": "send",
+   "anchor": "writeSync(3,`${input.deliveryId}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Writes only the isolated kill-test delivery ID to its acknowledgement pipe."
+  },
+  {
+   "file": "server/channels/delivery-ledger-test-support.ts",
+   "fn": "writeV1",
+   "anchor": "writeFileSync(`${file}.${page.name}`,page.bytes)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Writes old-format ledger pages or the root for migration fixtures only."
+  },
+  {
+   "file": "server/channels/delivery-ledger-test-support.ts",
+   "fn": "writeV1",
+   "anchor": "writeFileSync(file,plan.rootBytes)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Writes old-format ledger pages or the root for migration fixtures only."
   },
   {
    "file": "server/channels/whatsapp/core/auth-store.ts",
@@ -4091,6 +4934,13 @@
    "fn": "save",
    "anchor": "writeSync(fd,chunk)",
    "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/agy-signin-start.ts",
+   "fn": "onData",
+   "anchor": "stdin.write(bytes)",
+   "kind": "stdin",
    "reason": "not-learning"
   },
   {
@@ -4194,6 +5044,14 @@
    "review": "Fixed relay failure count."
   },
   {
+   "file": "server/cloud-home/vps-relay-mcp.ts",
+   "fn": "<module>",
+   "anchor": "process.stdout.write(line+\"\\n\",error=>error?reject(error):resolve())",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Outer consuming MCP proxy output owns release admission; raw relay intake does not duplicate upstream reservations. Raw computer relay child only; outer runMcpBridge owns intake charging and final consuming release (MAIN item 4; tri3-g5)."
+  },
+  {
    "file": "server/drivers/browser-extension-mcp.ts",
    "fn": "<module>",
    "anchor": "process.stderr.write(\"browsermcpfailures=1\\n\")",
@@ -4217,11 +5075,132 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/drivers/highlevel-proxy.ts",
-   "fn": "post",
-   "anchor": "httpRequest(url,{method:\"POST\",signal,agent:false,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",\"content-length\":Buffer.byteLength(b",
-   "kind": "alias-call",
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "fixture",
+   "anchor": "writeFileSync(script,mountSource)",
+   "kind": "fs-write",
    "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "fixture",
+   "anchor": "writeFileSync(generation,\"1\")",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "setGeneration",
+   "anchor": "writeFileSync(generation,String(n))",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "releaseGeneration",
+   "anchor": "writeFileSync(`${release}-${n}`,\"release\")",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "<module>",
+   "anchor": "x.instance.adapter.sendTurn(x.turn(1))",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "<module>",
+   "anchor": "x.instance.adapter.sendTurn(x.turn(2))",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "<module>",
+   "anchor": "writeFileSync(join(output,\"latency.json\"),JSON.stringify(timing,null,2)+\"\\n\")",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "<module>",
+   "anchor": "x.instance.adapter.sendTurn(x.turn(1))",
+   "kind": "sendTurn",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "<module>",
+   "anchor": "x.instance.adapter.sendTurn(x.turn(2))",
+   "kind": "sendTurn",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "<module>",
+   "anchor": "stale.write(JSON.stringify({server:Object.keys(x.relays[1]!.servers)[0],ticket:oldTicket})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-s2-platform.qualification.ts",
+   "fn": "<module>",
+   "anchor": "x.instance.adapter.sendTurn(x.turn(1))",
+   "kind": "sendTurn",
+   "reason": "not-learning",
+   "n": 2
+  },
+  {
+   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
+   "fn": "request",
+   "anchor": "this.child.stdin!.write(frame+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
+  },
+  {
+   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
+   "fn": "spawnMount",
+   "anchor": "spawnCli(command,args,{env,stdio:env.MURAGE_RELEASE_INSTANCE?[\"pipe\",\"pipe\",\"pipe\",\"ipc\"]:[\"pipe\",\"pipe\",\"pipe\"]},engineJob({posixHostPower:!env.MURAGE_RELEASE_",
+   "kind": "spawn",
+   "reason": "not-learning",
+   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
+  },
+  {
+   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
+   "fn": "create",
+   "anchor": "socket.write(frame+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
+  },
+  {
+   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
+   "fn": "settle",
+   "anchor": "transport.child.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
+  },
+  {
+   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
+   "fn": "settle",
+   "anchor": "cli.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning",
+   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
+  },
+  {
+   "file": "server/drivers/cli-mount-shim.ts",
+   "fn": "<module>",
+   "anchor": "socket.write(JSON.stringify({ticket,server})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Fixed mount ticket/server handshake; subsequent MCP frames use admitted relay."
   },
   {
    "file": "server/drivers/host-computer-proxy.ts",
@@ -4268,6 +5247,14 @@
    "review": "// MAIN RULING INT-CONFLICT-DEFAULT a587265f6e / 99f4720b22: exact reviewed Windows-hide/argument-copy expression; ADB tool subprocess; learning prompts never use the phone proxy."
   },
   {
+   "file": "server/drivers/unified-browser-proxy.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(`[browser-proxy]startfailedclass=${String(shape?.name??typeoferror).slice(0,40)}code=${String(shape?.code??\"-\").slice(0,40)}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "review": "Writes a bounded startup failure class and code to stderr."
+  },
+  {
    "file": "server/drivers/acp/stop-fence-harness.ts",
    "fn": "makeFakeEngine",
    "anchor": "writeFileSync(cli,`#!/usr/bin/envnodeimport{appendFileSync,existsSync,writeFileSync}from\"node:fs\";import{createInterface}from\"node:readline\";constR=${JSON.strin",
@@ -4282,9 +5269,24 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/email/migration-fixture.gen.ts",
+   "fn": "<module>",
+   "anchor": "writeFileSync(`${out}/credentials.json`,JSON.stringify(doc,null,2))",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
+  },
+  {
    "file": "server/email/restore-backup-gate-j4-child.ts",
    "fn": "captureOffline",
    "anchor": "writeFileSync(ready,\"capturing\")",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/email/restore-job-j3-child.ts",
+   "fn": "die",
+   "anchor": "writeSync(1,JSON.stringify({killAt,pid:process.pid})+\"\\n\")",
    "kind": "fs-write",
    "reason": "not-learning"
   },
@@ -4300,6 +5302,43 @@
    "fn": "<module>",
    "anchor": "process.stdout.write(JSON.stringify({action,state:store.state(),windowOpen:store.windowOpen(),aborts})+\"\\n\")",
    "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-setup-readers/fixture.ts",
+   "fn": "put",
+   "anchor": "writeFileSync(absolute,data)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/scan.ts",
+   "fn": "recordScanFailure",
+   "anchor": "writeFileSync(temp,JSON.stringify({failures}),{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "review": "Sentinel metadata publication uses the counted filesystem wrapper; descriptor, bounded health view or scan-failure metadata only, with no learning payload."
+  },
+  {
+   "file": "server/sentinel/supervisor.ts",
+   "fn": "defaultSpawn",
+   "anchor": "spawn(spec.execPath,[...spec.args],withHideInherit({env:spec.env,stdio:[\"ignore\",\"ignore\",\"ignore\",\"ipc\"],windowsHide:true,detached:false}satisfiesSpawnOptions)",
+   "kind": "spawn",
+   "reason": "not-learning",
+   "review": "Scanner-only supervised process with IPC metering; no bot prompt."
+  },
+  {
+   "file": "server/sentinel/cli.ts",
+   "fn": "main",
+   "anchor": "scannerWriteFileSync(1,`${line}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/host/host-main.ts",
+   "fn": "<module>",
+   "anchor": "spawn(process.execPath,[gate,\"--\",process.execPath,\"-e\",PROBE_SCRIPT],withHideInherit({cwd:\"/\",env:launcherEnvironment(),detached:true,stdio:[\"pipe\",\"pipe\",\"ign",
+   "kind": "spawn",
    "reason": "not-learning"
   },
   {
@@ -4320,13 +5359,6 @@
    "file": "server/memory/field-policy.fixture.ts",
    "fn": "recordField",
    "anchor": "appendFileSync(report,JSON.stringify(row)+'\\n')",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/memory/index-wal.ts",
-   "fn": "writeSidecar",
-   "anchor": "writeSync(fd,data,0,data.length,0)",
    "kind": "fs-write",
    "reason": "not-learning"
   },
@@ -4501,1001 +5533,6 @@
    "anchor": "writeFileSync(join(root,\"server/installation-database-snapshot.export.ts\"),source)",
    "kind": "fs-write",
    "reason": "not-learning"
-  },
-  {
-   "file": "server/channels/signal/windows-security-runner.ts",
-   "fn": "defaultSecurityRunner",
-   "anchor": "execFileSync(file,[...args],withHideInherit({...options,encoding:'utf8',windowsHide:true,maxBuffer:32*1024*1024,stdio:['pipe','pipe','pipe']}))",
-   "kind": "spawn",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/scoped-cli-home.ts",
-   "fn": "mergeSharedDirectory",
-   "anchor": "copyFileSync(source,dest,fsConstants.COPYFILE_EXCL)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/browser-open-chrome.ts",
-   "fn": "openOwnerChrome",
-   "anchor": "spawn(command,[...args],withHideInherit({detached:true,stdio:'ignore',windowsHide:true}))",
-   "kind": "spawn",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/channels/durable-delivery.ts",
-   "fn": "writeLedger",
-   "anchor": "publish(`${file}.${root.overflow![i-1]}`,serialized[i])",
-   "kind": "alias-call",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/flux-memory-capture.ts",
-   "fn": "send",
-   "anchor": "doFetch(url,{method:\"POST\",headers:{authorization:`Bearer${key}`,\"content-type\":\"application/json\",\"idempotency-key\":id,[FLUX_MEMORY_APP_HEADER]:FLUX_MEMORY_APP",
-   "kind": "alias-call",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/channels/durable-delivery.ts",
-   "fn": "writeLedger",
-   "anchor": "publish(file,serialized[0])",
-   "kind": "alias-call",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/channels/signal/private-writer.ts",
-   "fn": "append",
-   "anchor": "fs.writeFileSync(fd,data)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/email/restore-job-j3-child.ts",
-   "fn": "die",
-   "anchor": "writeSync(1,JSON.stringify({killAt,pid:process.pid})+\"\\n\")",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/consuming-turn-response.ts",
-   "fn": "write",
-   "anchor": "raw.write(data!,encoding??\"utf8\",done)",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Consuming HTTP response egress; captured binding owns the connected writer, not a learning prompt enqueue."
-  },
-  {
-   "file": "server/consuming-turn-response.ts",
-   "fn": "pipeConsumingStream",
-   "anchor": "writer.write(bytes.subarray(at,at+65536))",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Consuming HTTP response egress; captured binding owns the connected writer, not a learning prompt enqueue."
-  },
-  {
-   "file": "server/drivers/cli-stdin-eof.ts",
-   "fn": "cliStdinEnd",
-   "anchor": "s.child.stdin?.end()",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "Argument-free EOF; carries no prompt bytes."
-  },
-  {
-   "file": "server/drivers/cli-mount-relay.ts",
-   "fn": "request",
-   "anchor": "this.child.stdin!.write(frame+\"\\n\")",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
-  },
-  {
-   "file": "server/drivers/cli-mount-relay.ts",
-   "fn": "spawnMount",
-   "anchor": "spawnCli(command,args,{cwd,env,stdio:env.MURAGE_RELEASE_INSTANCE?[\"pipe\",\"pipe\",\"pipe\",\"ipc\"]:[\"pipe\",\"pipe\",\"pipe\"]},engineJob({posixHostPower:!env.MURAGE_RELE",
-   "kind": "spawn",
-   "reason": "not-learning",
-   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
-  },
-  {
-   "file": "server/drivers/cli-mount-relay.ts",
-   "fn": "build",
-   "anchor": "socket.write(frame)",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
-  },
-  {
-   "file": "server/drivers/cli-mount-relay.ts",
-   "fn": "stopGeneration",
-   "anchor": "transport.child.stdin?.end()",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
-  },
-  {
-   "file": "server/drivers/cli-mount-relay.ts",
-   "fn": "settle",
-   "anchor": "transport.child.stdin?.end()",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "MCP mount request/reply transport owns ingress or teardown EOF; hidden learning prompts use driver stdin."
-  },
-  {
-   "file": "server/proxy-turn-release.ts",
-   "fn": "verdict",
-   "anchor": "fetch(newURL(TURN_RELEASE_VERDICT_PATH,base),{method:\"POST\",redirect:\"error\",signal,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\"},b",
-   "kind": "fetch",
-   "reason": "not-learning",
-   "review": "Proxy verdict/upstream/envelope transport for tool results; consuming response authority is separate from learning prompt admission."
-  },
-  {
-   "file": "server/proxy-turn-release.ts",
-   "fn": "envelope",
-   "anchor": "process.stdout.write(serialized,error=>{if(error)lost();})",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Proxy verdict/upstream/envelope transport for tool results; consuming response authority is separate from learning prompt admission."
-  },
-  {
-   "file": "server/proxy-turn-release.ts",
-   "fn": "proxyFetch",
-   "anchor": "fetch(input,init)",
-   "kind": "fetch",
-   "reason": "not-learning",
-   "review": "Proxy verdict/upstream/envelope transport for tool results; consuming response authority is separate from learning prompt admission."
-  },
-  {
-   "file": "server/proxy-turn-release.ts",
-   "fn": "reserveProxyUpstream",
-   "anchor": "fetch(newURL(TURN_RELEASE_VERDICT_PATH,base),{method:\"POST\",redirect:\"error\",signal:AbortSignal.timeout(5000),headers:{authorization:`Bearer${token}`,\"content-t",
-   "kind": "fetch",
-   "reason": "not-learning",
-   "review": "Proxy verdict/upstream/envelope transport for tool results; consuming response authority is separate from learning prompt admission."
-  },
-  {
-   "file": "server/memory/upstream-reader.ts",
-   "fn": "accountedFetch",
-   "anchor": "fetch(input,init)",
-   "kind": "fetch",
-   "reason": "not-learning",
-   "review": "Accounted connector HTTP helper, used by composio.ts; learning HTTP transports own gate.send at their own request boundary."
-  },
-  {
-   "file": "server/drivers/pi-permission-gate.ts",
-   "fn": "refusePiFilter",
-   "anchor": "writeFileSync(statusFile,\"refuse.pi.filter\",{mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Fixed refusal status file."
-  },
-  {
-   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
-   "fn": "request",
-   "anchor": "this.child.stdin!.write(frame+\"\\n\")",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
-  },
-  {
-   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
-   "fn": "spawnMount",
-   "anchor": "spawnCli(command,args,{env,stdio:env.MURAGE_RELEASE_INSTANCE?[\"pipe\",\"pipe\",\"pipe\",\"ipc\"]:[\"pipe\",\"pipe\",\"pipe\"]},engineJob({posixHostPower:!env.MURAGE_RELEASE_",
-   "kind": "spawn",
-   "reason": "not-learning",
-   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
-  },
-  {
-   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
-   "fn": "create",
-   "anchor": "socket.write(frame+\"\\n\")",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
-  },
-  {
-   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
-   "fn": "settle",
-   "anchor": "transport.child.stdin?.end()",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
-  },
-  {
-   "file": "server/drivers/claude-s2-s1-golden-relay.fixture.ts",
-   "fn": "settle",
-   "anchor": "cli.stdin?.end()",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "Retained S1 golden fixture mount transport/EOF; never a production learning runner."
-  },
-  {
-   "file": "server/drivers/cli-mount-shim.ts",
-   "fn": "<module>",
-   "anchor": "socket.write(JSON.stringify({ticket,server})+\"\\n\")",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Fixed mount ticket/server handshake; subsequent MCP frames use admitted relay."
-  },
-  {
-   "file": "server/flux-memory-forget.ts",
-   "fn": "request",
-   "anchor": "doFetch(url,{method,headers:{authorization:`Bearer${key}`,[FLUX_MEMORY_APP_HEADER]:FLUX_MEMORY_APP,...fluxUsageHeaders({feature:\"memory\",botId:row?.botId,thread",
-   "kind": "alias-call",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/cloud-home/engine-login.ts",
-   "fn": "answerReady",
-   "anchor": "channel?.write(\"commit\\n\")",
-   "kind": "stream-write",
-   "reason": "fixed-text"
-  },
-  {
-   "file": "server/channels/signal/windows-security-runner.ts",
-   "fn": "defaultAsyncSecurityRunner",
-   "anchor": "execFile(file,[...args],withHideInherit({env:options.env,encoding:'utf8',windowsHide:true,timeout:options.timeout,killSignal:'SIGKILL',maxBuffer:1024*1024}),(er",
-   "kind": "spawn",
-   "reason": "not-learning",
-   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
-  },
-  {
-   "file": "server/channels/signal/windows-security-runner.ts",
-   "fn": "defaultAsyncSecurityRunner",
-   "anchor": "child.stdin?.end(options.input)",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
-  },
-  {
-   "file": "server/windows-private-directory.ts",
-   "fn": "persist",
-   "anchor": "fs.writeFileSync(temp,JSON.stringify({version:1,root:{dev:String(state.identity.dev),ino:String(state.identity.ino)},directories}),{flag:'wx',mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/drivers/scoped-cli-home.ts",
-   "fn": "mergeSharedDirectory",
-   "anchor": "writeFileSync(conflict,bytes,{flag:\"wx\",mode:0o600})",
-   "kind": "fs-write"
-  },
-  {
-   "reason": "not-learning",
-   "review": "MCP tool child launch or exact cancellation frame, not the hidden learning prompt.",
-   "file": "server/drivers/chat-mcp-client.ts",
-   "fn": "defaultSpawn",
-   "anchor": "spawnCli(command,args,{cwd,windowsHide:true,stdio:[\"pipe\",\"pipe\",\"pipe\"],env},engineJob())",
-   "kind": "spawn"
-  },
-  {
-   "reason": "not-learning",
-   "review": "MCP tool child launch or exact cancellation frame, not the hidden learning prompt.",
-   "file": "server/drivers/chat-mcp-client.ts",
-   "fn": "defaultSpawn",
-   "anchor": "spawnCli(command,args,{cwd,windowsHide:true,stdio:[\"pipe\",\"pipe\",\"pipe\",\"ipc\"],env},engineJob())",
-   "kind": "spawn"
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/cloud-home/bot-state.ts",
-   "fn": "spawnCloudLauncher",
-   "anchor": "spawn(\"/usr/bin/sudo\",[\"-n\",\"-C\",\"4\",\"--\",TURN_LAUNCHER],withHideInherit({env:{PATH:\"/usr/bin:/bin\"},cwd:\"/\",detached:true,stdio:[\"pipe\",\"pipe\",\"pipe\",\"pipe\"],}",
-   "kind": "spawn"
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/cloud-home/bot-state.ts",
-   "fn": "spawnCloudLauncher",
-   "anchor": "spawn(\"/usr/bin/sudo\",[\"-n\",\"-C\",\"5\",\"--\",TURN_LAUNCHER],withHideInherit({env:{PATH:\"/usr/bin:/bin\"},cwd:\"/\",detached:true,stdio:[\"pipe\",\"pipe\",\"pipe\",\"pipe\",\"p",
-   "kind": "spawn"
-  },
-  {
-   "reason": "log-excluded",
-   "file": "server/drivers/acp/core.ts",
-   "fn": "finishTurn",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"close\",reason:proc.unfit}})",
-   "kind": "native-log"
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "writeFile",
-   "anchor": "write(b,at,b.length-at,null)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "get",
-   "anchor": "write",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "get",
-   "anchor": "writev",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "get",
-   "anchor": "writeFile",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "<module>",
-   "anchor": "fs.writeFile(path,data,options)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "<module>",
-   "anchor": "handle.writeFile(data,opts)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "<module>",
-   "anchor": "fs.appendFile(path,data,options)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "<module>",
-   "anchor": "writeFile(path,data,{...opts,flag:opts.flag??\"a\"})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "<module>",
-   "anchor": "writeFile",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "<module>",
-   "anchor": "appendFile",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "<module>",
-   "anchor": "copyFile",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "<module>",
-   "anchor": "cp",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "fs.writeFileSync(path,data,options)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "fs.writeFileSync(path,data,options)",
-   "kind": "fs-write",
-   "n": 1,
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "writeSync(fd,bytes,at,bytes.length-at)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "fs.appendFileSync(path,data,options)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "writeFileSync(path,data,{...opts,flag:opts.flag??\"a\"})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "fs.createWriteStream(path,options)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "fs.createWriteStream(path,{...opts,fs:{open:original?.open??fs.open,close:original?.close??fs.close,write:countWrite(original?.write??fs.write),writev:countWrit",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "write",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "writev",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "Reflect.apply(promiseWriteFile,undefined,args)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "Reflect.apply(promiseAppendFile,undefined,args)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "Reflect.apply(promiseCp,undefined,args)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "writeSync",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "write",
-   "kind": "fs-write",
-   "n": 1,
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "writevSync",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "writev",
-   "kind": "fs-write",
-   "n": 1,
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "writeFileSync",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "appendFileSync",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "writeFile",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "appendFile",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "createWriteStream",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "copyFileSync",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "copyFile",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "cpSync",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "<module>",
-   "anchor": "cp",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/routine-runs-journal.ts",
-   "fn": "writeAll",
-   "anchor": "writeSync(fd,buffer,offset,buffer.length-offset,null)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/browser-extension-approvals.ts",
-   "fn": "save",
-   "anchor": "countedWriteFileSync(temp,JSON.stringify(content),{mode:0o600,flag:\"wx\"})",
-   "kind": "fs-write"
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/browser-extension-broker.ts",
-   "fn": "startBrowserExtensionBroker",
-   "anchor": "countedWriteFile(instanceConfigPath,JSON.stringify({version:1,instance,socketPath,token}),{mode:0o600,flag:'wx'})",
-   "kind": "fs-write"
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/browser-extension-service.ts",
-   "fn": "persist",
-   "anchor": "countedWriteFile(temp,content,{mode:0o600,flag:'wx'})",
-   "kind": "fs-write"
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/browser-extension-service.ts",
-   "fn": "markUnconfirmed",
-   "anchor": "countedWriteFile(unconfirmedFile,'1',{mode:0o600})",
-   "kind": "fs-write"
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/browser-extension-sites.ts",
-   "fn": "save",
-   "anchor": "countedWriteFileSync(temp,JSON.stringify(content),{mode:0o600,flag:\"wx\"})",
-   "kind": "fs-write"
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/channels/signal/park-fs.ts",
-   "fn": "write",
-   "anchor": "countedWriteFileSync(fd,data)",
-   "kind": "fs-write"
-  },
-  {
-   "reason": "log-excluded",
-   "file": "server/drivers/boxagent.ts",
-   "fn": "sendTurnCaptured",
-   "anchor": "appendNative(threadId,{dir:\"out\",source:\"box.prompt\",msg:{model,prompt,response:started}})",
-   "kind": "native-log"
-  },
-  {
-   "reason": "log-excluded",
-   "file": "server/drivers/boxagent.ts",
-   "fn": "sendTurnCaptured",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:\"box.events\",msg:ev})",
-   "kind": "native-log"
-  },
-  {
-   "reason": "log-excluded",
-   "file": "server/drivers/boxagent.ts",
-   "fn": "sendTurnCaptured",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:\"box.prompt.status\",msg:status})",
-   "kind": "native-log"
-  },
-  {
-   "file": "server/restore-prep-core.ts",
-   "fn": "writeRestoreJsonAtomic",
-   "anchor": "writeFileSync(temp,JSON.stringify(value)+\"\\n\",{mode:0o600,flush:true})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
-  },
-  {
-   "file": "server/restore-prep-core.ts",
-   "fn": "prepareRestoredDatabase",
-   "anchor": "writeFileSync(destination,JSON.stringify(evidence)+\"\\n\",{mode:0o600,flush:true})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
-  },
-  {
-   "file": "server/email/migration-fixture.gen.ts",
-   "fn": "<module>",
-   "anchor": "writeFileSync(`${out}/credentials.json`,JSON.stringify(doc,null,2))",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Local fixture, ACL metadata, restore staging or process plumbing; no hidden learning prompt. Exact call site retained."
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "fixture",
-   "anchor": "writeFileSync(script,mountSource)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "fixture",
-   "anchor": "writeFileSync(generation,\"1\")",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "setGeneration",
-   "anchor": "writeFileSync(generation,String(n))",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "releaseGeneration",
-   "anchor": "writeFileSync(`${release}-${n}`,\"release\")",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "<module>",
-   "anchor": "x.instance.adapter.sendTurn(x.turn(1))",
-   "kind": "sendTurn",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "<module>",
-   "anchor": "x.instance.adapter.sendTurn(x.turn(2))",
-   "kind": "sendTurn",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "<module>",
-   "anchor": "writeFileSync(join(output,\"latency.json\"),JSON.stringify(timing,null,2)+\"\\n\")",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "<module>",
-   "anchor": "x.instance.adapter.sendTurn(x.turn(1))",
-   "kind": "sendTurn",
-   "reason": "not-learning",
-   "n": 1
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "<module>",
-   "anchor": "x.instance.adapter.sendTurn(x.turn(2))",
-   "kind": "sendTurn",
-   "reason": "not-learning",
-   "n": 1
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "<module>",
-   "anchor": "stale.write(JSON.stringify({server:Object.keys(x.relays[1]!.servers)[0],ticket:oldTicket})+\"\\n\")",
-   "kind": "stream-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/claude-s2-platform.qualification.ts",
-   "fn": "<module>",
-   "anchor": "x.instance.adapter.sendTurn(x.turn(1))",
-   "kind": "sendTurn",
-   "reason": "not-learning",
-   "n": 2
-  },
-  {
-   "file": "server/sentinel/io-meter.ts",
-   "fn": "writeFileSync",
-   "anchor": "fs.writeFileSync(file,data,options)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Scanner-only counted filesystem primitive; no application or learning imports. Scanner metadata filesystem wrapper; keep all callers inventoried, including aliases."
-  },
-  {
-   "file": "server/opencode-destination.ts",
-   "fn": "probeCliDestination",
-   "anchor": "spawnCli(ctx.cli,args,{cwd:ctx.cwd,env:ctx.env,stdio:[\"pipe\",\"pipe\",\"pipe\"]},engineJob({posixHostPower:true}))",
-   "kind": "spawn",
-   "reason": "not-learning",
-   "review": "Existing native destination/config diagnostic moved to shared probeCliDestination; no turn prompt is sent. Bounded owned native configuration probe; shared OpenCode/DeepSeek helper (3e21303a24), no learning payload."
-  },
-  {
-   "file": "server/opencode-destination.ts",
-   "fn": "probeCliDestination",
-   "anchor": "child.stdin.end()",
-   "kind": "stdin",
-   "reason": "not-learning",
-   "review": "Existing native destination/config diagnostic moved to shared probeCliDestination; no turn prompt is sent. Bounded owned native configuration probe; shared OpenCode/DeepSeek helper (3e21303a24), no learning payload."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "copyFile",
-   "anchor": "nativeFs.copyFile(...args)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Exact physical counted filesystem wrapper; caller inventory retains all learning paths. Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs-promises.ts",
-   "fn": "cp",
-   "anchor": "nativeFs.cp(...args)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Exact physical counted filesystem wrapper; caller inventory retains all learning paths. Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "copyFileSync",
-   "anchor": "nativeFs.copyFileSync(...args)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Exact physical counted filesystem wrapper; caller inventory retains all learning paths. Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/counted-fs.ts",
-   "fn": "cpSync",
-   "anchor": "nativeFs.cpSync(...args)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Exact physical counted filesystem wrapper; caller inventory retains all learning paths. Metered filesystem adapter; every caller remains inventoried as a filesystem sink, including aliases."
-  },
-  {
-   "file": "server/io-child-meter.ts",
-   "fn": "reportChildIoCensus",
-   "anchor": "writeSync(2,\"[io-census]\"+JSON.stringify(childIoCensusSnapshot())+\"\\n\")",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Fixed io-census diagnostic to stderr; no engine input. Diagnostic stderr census of owned child metadata only."
-  },
-  {
-   "file": "server/io-proxy-receipts.ts",
-   "fn": "send",
-   "anchor": "socket.write(JSON.stringify({type:\"ack\",message})+\"\\n\")",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Private child-I/O metering control channel; receipts never enter MCP stdout. Private receipt acknowledgement transport; no model or learning payload."
-  },
-  {
-   "file": "server/io-proxy-receipts.ts",
-   "fn": "endpoint",
-   "anchor": "socket.write('{\"type\":\"ready\"}\\n')",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Private child-I/O metering control channel; receipts never enter MCP stdout. Fixed private receipt transport readiness frame."
-  },
-  {
-   "file": "server/io-proxy-launcher.ts",
-   "fn": "send",
-   "anchor": "socket.write(JSON.stringify(message)+\"\\n\")",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Owned MCP child bootstrap and private I/O census control channel; prompt stdin remains in the driver chains. Private child I/O receipt transport, separate from MCP stdio."
-  },
-  {
-   "file": "server/io-proxy-launcher.ts",
-   "fn": "<module>",
-   "anchor": "spawn(process.execPath,[`--import=${preload}`,...process.argv.slice(2)],withHideInherit({env,stdio:[\"pipe\",\"pipe\",\"pipe\",\"ipc\"]}))",
-   "kind": "spawn",
-   "reason": "not-learning",
-   "review": "// MAIN RULING INT-CONFLICT-DEFAULT a587265f6e / 99f4720b22: exact reviewed Windows-hide/argument-copy expression; Owned MCP child bootstrap and private I/O census control channel; prompt stdin remains in the driver chains. Owned proxy launcher adds metering preload and private IPC; underlying bound MCP proxy owns its payload admission."
-  },
-  {
-   "file": "server/cloud-home/vps-relay-mcp.ts",
-   "fn": "<module>",
-   "anchor": "process.stdout.write(line+\"\\n\",error=>error?reject(error):resolve())",
-   "kind": "stream-write",
-   "reason": "not-learning",
-   "review": "Outer consuming MCP proxy output owns release admission; raw relay intake does not duplicate upstream reservations. Raw computer relay child only; outer runMcpBridge owns intake charging and final consuming release (MAIN item 4; tri3-g5)."
-  },
-  {
-   "file": "server/sentinel/supervisor.ts",
-   "fn": "defaultSpawn",
-   "anchor": "spawn(spec.execPath,[...spec.args],withHideInherit({env:spec.env,stdio:[\"ignore\",\"ignore\",\"ignore\",\"ipc\"],windowsHide:true,detached:false}satisfiesSpawnOptions)",
-   "kind": "spawn",
-   "reason": "not-learning",
-   "review": "Scanner-only supervised process with IPC metering; no bot prompt."
-  },
-  {
-   "file": "server/sentinel/cli.ts",
-   "fn": "main",
-   "anchor": "scannerWriteFileSync(1,`${line}\\n`)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/sentinel/paths.ts",
-   "fn": "writeDescriptor",
-   "anchor": "writeFileSync(temp,`${JSON.stringify(valid.value)}\\n`,{mode:0o600,flag:\"wx\"})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Sentinel metadata publication uses the counted filesystem wrapper; descriptor, bounded health view or scan-failure metadata only, with no learning payload."
-  },
-  {
-   "file": "server/sentinel/publication.ts",
-   "fn": "publishView",
-   "anchor": "writeFileSync(temp,text,{mode:0o600,flag:\"wx\"})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Sentinel metadata publication uses the counted filesystem wrapper; descriptor, bounded health view or scan-failure metadata only, with no learning payload."
-  },
-  {
-   "file": "server/sentinel/scan.ts",
-   "fn": "recordScanFailure",
-   "anchor": "writeFileSync(temp,JSON.stringify({failures}),{mode:0o600,flag:\"wx\"})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "review": "Sentinel metadata publication uses the counted filesystem wrapper; descriptor, bounded health view or scan-failure metadata only, with no learning payload."
-  },
-  {
-   "file": "server/drivers/murage-exec.ts",
-   "fn": "installWipeGuardShim",
-   "anchor": "cpSync(source,target,{recursive:true,dereference:true})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "note": "Copies the fixed packaged wipe shim into a private executable directory; no conversation, prompt or retained learning bytes."
-  },
-  {
-   "file": "server/drivers/murage-exec.ts",
-   "fn": "installWipeGuardShim",
-   "anchor": "copyFileSync(join(target,\"guard.sh\"),join(target,tool))",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "note": "Copies the fixed guard wrapper for a validated mkfs alias; no conversation, prompt or retained learning bytes."
-  },
-  {
-   "file": "server/wipe-guard/guard-file.ts",
-   "fn": "writeGuardFile",
-   "anchor": "writeFileSync(fd,text)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "note": "Exclusive private guard configuration contains socket, token, thread ID, root paths and fixed client/tool paths; no prompt, message or learning content."
-  },
-  {
-   "file": "server/wipe-guard/server.ts",
-   "fn": "secureWindowsGuardPipe",
-   "anchor": "execFileSync(win32.join(root,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(WINDOWS_PIPE_",
-   "kind": "spawn",
-   "reason": "not-learning",
-   "note": "Fixed encoded ACL restriction program receives only the named-pipe path; no prompt, message or learning content."
-  },
-  {
-   "file": "server/harness/event-log.ts",
-   "fn": "markSessionsPending",
-   "anchor": "appendFileSync(sessionsPendingMark(dir,threadId),compact+\"\\n\",{mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "note": "Private restart cleanup journal persists only compact session.started identity fields selected by compactSession; no messages, prompts or learning payload."
-  },
-  {
-   "file": "server/meter-copy-cleanup.ts",
-   "fn": "writeCopyMarker",
-   "anchor": "writeSync(fd,JSON.stringify(marker))",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "note": "Writes the private meter copy owner marker {v,pid,start} (O_EXCL, 0600); process identity only, no conversation, prompt or retained learning bytes."
-  },
-  {
-   "file": "server/engine-exclusion.ts",
-   "fn": "privateCopy",
-   "anchor": "writeSync(out,bytes,at,bytes.length-at,at)",
-   "kind": "fs-write",
-   "reason": "not-learning",
-   "note": "Copies an engine's own file into the private meter copy for read-back measurement; the bytes never leave the machine and are not sent to any engine or service."
-  },
-  {
-   "file": "server/cloud-home/supervisor-port.ts",
-   "fn": "lifecycleTransport",
-   "anchor": "send(url,init)",
-   "kind": "alias-call",
-   "reason": "not-learning",
-   "note": "Composio broker lifecycle calls (connection status and revocation) built by the broker client; no owner turn, prompt or retained learning text."
-  },
-  {
-   "file": "server/session-proof-world.ts",
-   "fn": "login",
-   "anchor": "fetch(`${fixture.info.url}/api/desktop-secret`)",
-   "kind": "fetch",
-   "reason": "not-learning",
-   "note": "Test-support launcher for the session proof fixtures; talks only to its own loopback verification server."
-  },
-  {
-   "file": "server/session-proof-world.ts",
-   "fn": "api",
-   "anchor": "fetch(fixture.info.url+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)})",
-   "kind": "fetch",
-   "reason": "not-learning",
-   "note": "Test-support launcher for the session proof fixtures; talks only to its own loopback verification server."
   }
  ],
  "callers": [
@@ -5524,16 +5561,26 @@
   {
    "file": "server/drivers/acp/core.ts",
    "fn": "stopHookRepair",
-   "anchor": "send({jsonrpc:\"2.0\",method:\"session/cancel\",params:{sessionId}})",
+   "anchor": "send({jsonrpc:\"2.0\",method:\"session/cancel\",params:{sessionId}},error=>{if(error)acpFenced(error,\"acp.cancel.hookrepair\",cancelProcess,{method:\"session/cancel\"}",
    "callee": "send",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Cancels the active ACP session after hook repair fails; the callback records refusal metadata."
   },
   {
    "file": "server/drivers/acp/core.ts",
    "fn": "tripTool",
-   "anchor": "send({jsonrpc:\"2.0\",method:\"session/cancel\",params:{sessionId}})",
+   "anchor": "send({jsonrpc:\"2.0\",method:\"session/cancel\",params:{sessionId}},error=>{if(error)acpFenced(error,\"acp.cancel.tripwire\",cancelProcess,{method:\"session/cancel\"});",
    "callee": "send",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Cancels the active ACP session at the tool tripwire; the callback records refusal metadata."
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "send",
+   "anchor": "writeTo(threadId,proc,obj,done,requestUrl,turn.releaseBinding,beforeWrite,release)",
+   "callee": "writeTo",
+   "reason": "learning-path",
+   "admittedBy": "chain:acp"
   },
   {
    "file": "server/drivers/acp/core.ts",
@@ -5545,52 +5592,59 @@
   },
   {
    "file": "server/drivers/acp/core.ts",
-   "fn": "handleQuestionRequest",
-   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:cancelled})",
+   "fn": "request",
+   "anchor": "send({jsonrpc:\"2.0\",id,method,params},error=>{if(!error)return;if(timer)clearTimeout(timer);if(idleTimer)clearTimeout(idleTimer);rpcPending.delete(id);//Theprom",
    "callee": "send",
-   "reason": "not-learning"
+   "reason": "learning-path",
+   "admittedBy": "chain:acp",
+   "review": "Shared ACP RPC writer remains on the checked ACP learning chain; the write callback settles the rejected request."
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleQuestionRequest",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:cancelled},error=>{if(error)acpFenced(error,\"acp.reply.control.a\",requestProcess,{requestId:msg.id,method:msg.method});})",
+   "callee": "send",
+   "reason": "not-learning",
+   "review": "Sends a cancelled elicitation response and records write refusal."
   },
   {
    "file": "server/drivers/acp/core.ts",
    "fn": "finish",
-   "anchor": "send({jsonrpc:'2.0',id:msg.id,result},error=>resolve(!error))",
+   "anchor": "send({jsonrpc:'2.0',id:msg.id,result},error=>isMemoryRefusal(error)?reject(error):resolve(!error))",
    "callee": "send",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Delivers the native answer or permission decision and settles its delivery result."
   },
   {
    "file": "server/drivers/acp/core.ts",
    "fn": "reply",
-   "anchor": "send({jsonrpc:'2.0',id,result:decision==='trust'?{outcome:'trust',scope:'configAndCommands',...(processOnly?{duration:\"process\"}:{})}:{outcome:'reject'}},error=",
+   "anchor": "send({jsonrpc:'2.0',id,result},error=>{if(error){acpFenced(error,site,requestProcess,{requestId:idasstring|number|null,method:\"fuigo/folder_trust/request\"});if(",
    "callee": "send",
    "reason": "not-learning"
   },
   {
    "file": "server/drivers/acp/core.ts",
    "fn": "handleFolderTrustV2",
-   "anchor": "send({jsonrpc:\"2.0\",id,result:processReply?{outcome:\"trust\",scope:\"configAndCommands\",duration:\"process\"}:{outcome:\"trust\",scope:\"configAndCommands\"}})",
+   "anchor": "send({jsonrpc:\"2.0\",id,result:processReply?{outcome:\"trust\",scope:\"configAndCommands\",duration:\"process\"}:{outcome:\"trust\",scope:\"configAndCommands\"}},error=>{t",
    "callee": "send",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "handleFolderTrustV2",
-   "anchor": "send({jsonrpc:\"2.0\",id,result:{outcome:\"trust\",scope:\"configAndCommands\",duration:\"process\"}})",
-   "callee": "send",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Sends only the folder-trust decision and scope with a refusal callback."
   },
   {
    "file": "server/drivers/acp/core.ts",
    "fn": "reply",
-   "anchor": "send({jsonrpc:'2.0',id:msg.id,result:{outcome:decision==='trust'?'trust':'reject'}},error=>resolve(!error))",
+   "anchor": "send({jsonrpc:'2.0',id:msg.id,result:{outcome:decision==='trust'?'trust':'reject'}},error=>{//thecard'sownrefusalhook(deliverNative`refused`)claimsapropagatedre",
    "callee": "send",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Sends the native folder-trust decision and observes write refusal."
   },
   {
    "file": "server/drivers/acp/core.ts",
    "fn": "sendUnknownRequest",
-   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,error:{code:-32601,message:\"methodnotfound\"}})",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,error:{code:-32601,message:\"methodnotfound\"}},error=>{if(error)acpFenced(error,\"acp.reply.unknown\",requestProcess,{requestId:msg.i",
    "callee": "send",
-   "reason": "not-learning"
+   "reason": "not-learning",
+   "review": "Sends the fixed JSON-RPC method-not-found response and observes write refusal."
   },
   {
    "file": "server/drivers/acp/core.ts",
@@ -5623,140 +5677,58 @@
   {
    "file": "server/drivers/acp/core.ts",
    "fn": "handleServerRequest",
-   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:reject?{outcome:{outcome:\"selected\",optionId:reject}}:cancelled})",
-   "callee": "sendPermission",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "handleServerRequest",
-   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:cancelled})",
-   "callee": "sendPermission",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "handleServerRequest",
-   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:{outcome:{outcome:\"selected\",optionId:allow}}})",
-   "callee": "sendPermission",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "handleServerRequest",
-   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:reject?{outcome:{outcome:\"selected\",optionId:reject}}:cancelled})",
-   "callee": "sendPermission",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:{outcome:{outcome:\"cancelled\"}}})",
+   "callee": "send",
    "reason": "not-learning",
    "n": 1
   },
   {
    "file": "server/drivers/acp/core.ts",
-   "fn": "handleServerRequest",
-   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:allow?{outcome:{outcome:\"selected\",optionId:allow}}:cancelled,})",
-   "callee": "sendPermission",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "finish",
-   "anchor": "sendPermission(response,(error,accepted=true)=>{confirm(!error);current.uncertain=!!error&&accepted;if(!error)clearAsk();elseif(expired&&behavior===\"allow\")curr",
-   "callee": "sendPermission",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "onRetryState",
-   "anchor": "send({jsonrpc:\"2.0\",method:\"session/cancel\",params:{sessionId}})",
+   "fn": "sendPermission",
+   "anchor": "send(response,(error,accepted)=>{if(error||accepted===false){retireAllow?.();if(hermes)tripTool();}done(error,accepted);})",
    "callee": "send",
    "reason": "not-learning",
-   "note": "server/drivers/acp/core.ts:4001 sends only the JSON-RPC method session/cancel and the engine's sessionId: no user, memory or provider text."
+   "review": "Delivers the permission response, retiring an undelivered allow and tripping Hermes when required."
   },
   {
    "file": "server/drivers/acp/core.ts",
-   "fn": "attempt",
-   "anchor": "send({jsonrpc:'2.0',method:'session/cancel',params:{sessionId}})",
-   "callee": "send",
-   "reason": "not-learning"
+   "fn": "handleServerRequest",
+   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:reject?{outcome:{outcome:\"selected\",optionId:reject}}:cancelled},autoDone(\"hooks\"))",
+   "callee": "sendPermission",
+   "reason": "not-learning",
+   "review": "Sends a native permission selection or cancellation response and tracks delivery."
   },
   {
    "file": "server/drivers/acp/core.ts",
-   "fn": "readStates",
-   "anchor": "request(support.mcpListMethod,{sessionId},timeoutMs)",
-   "callee": "request",
-   "reason": "not-learning"
+   "fn": "handleServerRequest",
+   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:cancelled},autoDone(\"outside\"))",
+   "callee": "sendPermission",
+   "reason": "not-learning",
+   "review": "Sends a native permission selection or cancellation response and tracks delivery."
   },
   {
    "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"initialize\",{protocolVersion:1,//formandURLelicitationareadvertisedbecausebothbecome//questioncards(ASK3);aURLisshown,neverfetched.Anengine//thatgatesf",
-   "callee": "request",
-   "reason": "not-learning"
+   "fn": "handleServerRequest",
+   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:{outcome:{outcome:\"selected\",optionId:allow}}},autoDone(\"memory\"))",
+   "callee": "sendPermission",
+   "reason": "not-learning",
+   "review": "Sends a native permission selection or cancellation response and tracks delivery."
   },
   {
    "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"authenticate\",{methodId},INIT_TIMEOUT)",
-   "callee": "request",
-   "reason": "not-learning"
+   "fn": "handleServerRequest",
+   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:reject?{outcome:{outcome:\"selected\",optionId:reject}}:cancelled},autoDone(\"askstop\"))",
+   "callee": "sendPermission",
+   "reason": "not-learning",
+   "review": "Sends a native permission selection or cancellation response and tracks delivery."
   },
   {
    "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(method,params,timeout,undefined,undefined,undefined,receive)",
-   "callee": "request",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "call",
-   "anchor": "request(method,params,timeout,undefined,undefined,undefined,receive)",
-   "callee": "request",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"session/set_config_option\",{sessionId,configId:option.configId,value:cliTurn.variant},INIT_TIMEOUT,undefined,undefined,undefined,response=>modelControl",
-   "callee": "request",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "request",
-   "anchor": "request(method,params,timeoutMs??SESSION_CONFIG_TIMEOUT)",
-   "callee": "request",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"session/prompt\",registerBusyloopRequestSite(fluxRouteFor(requestUrl),{sessionId,prompt:[{type:\"text\",text},...(turn.images??[]).map(image=>({type:\"imag",
-   "callee": "request",
-   "reason": "learning-path",
-   "admittedBy": "chain:acp"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"session/prompt\",{sessionId,prompt:[{type:\"text\",text:POSTURE_CONTINUATION}]},undefined,promptIdleMs)",
-   "callee": "request",
-   "reason": "fixed-text"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "send",
-   "anchor": "writeTo(threadId,proc,obj,done,requestUrl,turn.releaseBinding,beforeWrite,release)",
-   "callee": "writeTo",
-   "reason": "learning-path",
-   "admittedBy": "chain:acp"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "request",
-   "anchor": "send({jsonrpc:\"2.0\",id,method,params},error=>{if(!error)return;if(timer)clearTimeout(timer);if(idleTimer)clearTimeout(idleTimer);rpcPending.delete(id);reject(er",
-   "callee": "send",
-   "reason": "learning-path",
-   "admittedBy": "chain:acp"
+   "fn": "handleServerRequest",
+   "anchor": "sendPermission({jsonrpc:\"2.0\",id:msg.id,result:allow?{outcome:{outcome:\"selected\",optionId:allow}}:cancelled,},autoDone(\"allow\"))",
+   "callee": "sendPermission",
+   "reason": "not-learning",
+   "review": "Sends a native permission selection or cancellation response and tracks delivery."
   },
   {
    "file": "server/drivers/acp/core.ts",
@@ -5774,6 +5746,31 @@
   },
   {
    "file": "server/drivers/acp/core.ts",
+   "fn": "finish",
+   "anchor": "sendPermission(response,(error,accepted=true)=>{if(error)acpFenced(error,\"acp.permission.answer\",requestProcess,{requestId,method:\"session/request_permission\"})",
+   "callee": "sendPermission",
+   "reason": "not-learning",
+   "review": "Delivers the native answer or permission decision and settles its delivery result."
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "onRetryState",
+   "anchor": "send({jsonrpc:\"2.0\",method:\"session/cancel\",params:{sessionId}},error=>{if(error)acpFenced(error,\"acp.cancel.flux\",cancelProcess,{method:\"session/cancel\"});})",
+   "callee": "send",
+   "reason": "not-learning",
+   "note": "server/drivers/acp/core.ts:4001 sends only the JSON-RPC method session/cancel and the engine's sessionId: no user, memory or provider text.",
+   "review": "Cancels the ACP session on the Flux retry transition and observes write refusal."
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "pscopeIntercepted",
+   "anchor": "send(msg.method===\"session/request_permission\"?{jsonrpc:\"2.0\",id:msg.id,result:{outcome:{outcome:\"cancelled\"}}}:{jsonrpc:\"2.0\",id:msg.id,error:{code:-32800,mess",
+   "callee": "send",
+   "reason": "not-learning",
+   "note": "The ACP pool answers a stale-prompt frame with a fixed cancelled or -32800 reply; it carries no learning text."
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
    "fn": "interrupt",
    "anchor": "writeTo(threadId,proc,{jsonrpc:\"2.0\",method:\"session/cancel\",params:{sessionId}})",
    "callee": "writeTo",
@@ -5781,10 +5778,97 @@
   },
   {
    "file": "server/drivers/acp/core.ts",
+   "fn": "send",
+   "anchor": "request(\"session/prompt\",{sessionId,prompt:[{type:\"text\",text}],...(pscope.on?promptMetaOf():{})},undefined,acpPromptIdleTimeoutMs(),undefined,undefined,undefin",
+   "callee": "request",
+   "reason": "not-learning",
+   "note": "The ACP steer arm sends the owner's own mid-turn text as session/prompt, like the pinned interject request: no hidden learning prompt. Its release refuses without the caller's beforeWrite (MEMORY_CONTEXT_REVOKED) and checks Stop first."
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
    "fn": "interject",
    "anchor": "request(support.interjection!.method,{sessionId,text,interjectionId},ackMs,undefined,undefined,undefined,undefined,beforeWrite)",
    "callee": "request",
    "reason": "not-learning"
+  },
+  {
+   "reason": "not-learning",
+   "file": "server/drivers/acp/core.ts",
+   "fn": "request",
+   "anchor": "request(method===\"session/load\"&&support.resumeMethod===\"resume\"?\"session/resume\":method,sessionParams(params),timeoutMs,undefined,undefined,undefined,receive)",
+   "callee": "request"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "attempt",
+   "anchor": "send({jsonrpc:'2.0',method:'session/cancel',params:{sessionId}},error=>{if(error)acpFenced(error,\"acp.cancel.posture\",old,{method:\"session/cancel\"});})",
+   "callee": "send",
+   "reason": "not-learning",
+   "review": "Cancels the old ACP session during the posture change and observes write refusal."
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "readStates",
+   "anchor": "request(support.mcpListMethod,{sessionId},timeoutMs)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "acpSetupBoundary",
+   "anchor": "request(\"initialize\",{protocolVersion:1,//formandURLelicitationareadvertisedbecausebothbecome//questioncards(ASK3);aURLisshown,neverfetched.Anengine//thatgatesf",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "acpSetupBoundary",
+   "anchor": "request(\"authenticate\",{methodId},INIT_TIMEOUT)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "acpSetupBoundary",
+   "anchor": "request(method,params,timeout,undefined,undefined,undefined,receive)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "call",
+   "anchor": "request(method,params,timeout,undefined,undefined,undefined,receive)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "acpSetupBoundary",
+   "anchor": "request(\"session/set_config_option\",{sessionId,configId:option.configId,value:cliTurn.variant},INIT_TIMEOUT,undefined,undefined,undefined,response=>modelControl",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "request",
+   "anchor": "request(method,params,timeoutMs??SESSION_CONFIG_TIMEOUT)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "afterSetup",
+   "anchor": "request(\"session/prompt\",registerBusyloopRequestSite(fluxRouteFor(requestUrl),{sessionId,prompt:[{type:\"text\",text},...(turn.images??[]).map(image=>({type:\"imag",
+   "callee": "request",
+   "reason": "learning-path",
+   "admittedBy": "chain:acp"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "afterSetup",
+   "anchor": "request(\"session/prompt\",{sessionId,prompt:[{type:\"text\",text:POSTURE_CONTINUATION}],...(pscope.on?promptMetaOf():{})},undefined,promptIdleMs)",
+   "callee": "request",
+   "reason": "fixed-text"
   },
   {
    "file": "server/drivers/codex.ts",
@@ -5828,51 +5912,51 @@
   },
   {
    "file": "server/drivers/codex.ts",
-   "fn": "handleServerRequest",
+   "fn": "handleServerRequestBody",
    "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:isMcpElicitation?{action:\"decline\"}:{decision:legacy?\"denied\":\"decline\"}})",
    "callee": "send",
    "reason": "not-learning",
-   "review": "Codex native protocol initialization, cancellation or tool approval; no learning prompt payload."
+   "review": "Sends a native Codex answer, denial or cancellation through the request-body owner; no learning prompt."
   },
   {
    "file": "server/drivers/codex.ts",
-   "fn": "handleServerRequest",
+   "fn": "handleServerRequestBody",
    "anchor": "send({jsonrpc:'2.0',id:msg.id,result:isMcpElicitation?{action:'decline'}:{decision:legacy?'denied':'decline'}})",
    "callee": "send",
    "reason": "not-learning",
-   "review": "Codex native protocol initialization, cancellation or tool approval; no learning prompt payload."
+   "review": "Sends a native Codex answer, denial or cancellation through the request-body owner; no learning prompt."
   },
   {
    "file": "server/drivers/codex.ts",
-   "fn": "handleServerRequest",
+   "fn": "handleServerRequestBody",
    "anchor": "send(frame)",
    "callee": "send",
    "reason": "not-learning",
-   "review": "Codex native protocol initialization, cancellation or tool approval; no learning prompt payload."
+   "review": "Sends a native Codex answer, denial or cancellation through the request-body owner; no learning prompt."
   },
   {
    "file": "server/drivers/codex.ts",
-   "fn": "handleServerRequest",
+   "fn": "handleServerRequestBody",
    "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:isMcpElicitation?{action:accept?\"accept\":\"decline\",...(accept?{content:{}}:{})}:{decision:accept?(legacy?\"approved\":\"accept",
    "callee": "send",
    "reason": "not-learning",
-   "review": "Codex native protocol initialization, cancellation or tool approval; no learning prompt payload."
+   "review": "Sends a native Codex answer, denial or cancellation through the request-body owner; no learning prompt."
   },
   {
    "file": "server/drivers/codex.ts",
-   "fn": "handleServerRequest",
+   "fn": "handleServerRequestBody",
    "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:isMcpElicitation?{action:\"accept\",content:{}}:{decision:legacy?\"approved\":\"accept\"},})",
    "callee": "send",
    "reason": "not-learning",
-   "review": "Codex native protocol initialization, cancellation or tool approval; no learning prompt payload."
+   "review": "Sends a native Codex answer, denial or cancellation through the request-body owner; no learning prompt."
   },
   {
    "file": "server/drivers/codex.ts",
-   "fn": "handleServerRequest",
+   "fn": "handleServerRequestBody",
    "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:isUserInput?{answers:{}}:{action:\"cancel\"},})",
    "callee": "send",
    "reason": "not-learning",
-   "review": "Codex native protocol initialization, cancellation or tool approval; no learning prompt payload."
+   "review": "Sends a native Codex answer, denial or cancellation through the request-body owner; no learning prompt."
   },
   {
    "file": "server/drivers/codex.ts",
@@ -5929,28 +6013,6 @@
    "callee": "request",
    "reason": "learning-path",
    "admittedBy": "chain:codex"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "sendPermission",
-   "anchor": "send(response,(error,accepted)=>{if(error||accepted===false){retireAllow?.();if(hermes)tripTool();}done?.(error,accepted);})",
-   "callee": "send",
-   "reason": "not-learning"
-  },
-  {
-   "reason": "not-learning",
-   "file": "server/drivers/acp/core.ts",
-   "fn": "request",
-   "anchor": "request(method===\"session/load\"&&support.resumeMethod===\"resume\"?\"session/resume\":method,sessionParams(params),timeoutMs,undefined,undefined,undefined,receive)",
-   "callee": "request"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "send",
-   "anchor": "request(\"session/prompt\",{sessionId,prompt:[{type:\"text\",text}]},undefined,acpPromptIdleTimeoutMs(),undefined,undefined,undefined,beforeWrite,true)",
-   "callee": "request",
-   "reason": "not-learning",
-   "note": "The ACP steer arm sends the owner's own mid-turn text as session/prompt, like the pinned interject request: no hidden learning prompt. Its release refuses without the caller's beforeWrite (MEMORY_CONTEXT_REVOKED) and checks Stop first."
   }
  ],
  "chains": [

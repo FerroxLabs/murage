@@ -1,3 +1,4 @@
+// Server digest producer and client review consumer: both owned by the skills build lane.
 /** What the owner reviews on an approval card, reduced to one SHA-256.
  * The page digests the card it rendered; the harness digests the live card.
  * A proof signs the harness's digest, so an Allow is bound to exactly what
@@ -59,6 +60,7 @@ export function approvalDigestInput(threadId: string, requestId: string, card: D
     card.toolInputTruncated === true, text(card.approvalScope), text(card.taskAllowKey),
     skillField(card, "source"), skillField(card, "preview"), skillField(card, "sha256"),
     skillField(card, "name"), skillField(card, "action"), skillWarnings(card), routineOperation(card),
+    ...(['turn_on','turn_off','delete'].includes(String(skillValue(card,'action'))) ? [[text(skillValue(card,'verdictHash'))]] : []),
     ...(email ? [email] : []),
     ...(writer ? [[text(writer.holdId), writer.stateRevision, text(writer.bodyHash)]] : []),
   ]);

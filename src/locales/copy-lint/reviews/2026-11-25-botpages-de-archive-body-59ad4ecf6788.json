@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "botpages-copyrev",
+    "account": "claude subagent, independent read-only copy review of the bot pages Archive or delete strings (not their author)"
+  },
+  "author": "sv10-botpages-rb1124-r4 (Sonnet 5.5)",
+  "date": "2026-11-25",
+  "base": "b2f0153862",
+  "scope": "de ux.botpages.archive.body placeholder fix",
+  "strings": {
+    "de:ux.botpages.archive.body": {
+      "text": "Blendet {name} aus und stoppt die Routinen. Chats, Erinnerungen, Routinen und Dateien bleiben erhalten, und du kannst den Bot über Bots zurückholen. Die gespeicherte App-Auswahl bleibt nicht erhalten: {name} kommt mit „Nur ausgewählte Apps“ und ohne Apps zurück.",
+      "en": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "verdict": "pass",
+      "note": "independent review: placeholders [name,name], du-form, meaning faithful"
+    }
+  },
+  "files": {}
+}

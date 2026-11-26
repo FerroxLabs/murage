@@ -183,6 +183,8 @@ type SkillRecordingPayload = {
       homeId: string;
       platform: NodeJS.Platform;
       setUnreadCount(count: number): void;
+      /** Seam S2 (provider MAIN): focus the main window's sign-in row for this engine. Absent until it lands. */
+      openEngineSignIn?(engine: string): Promise<unknown> | void;
       /** S3R session, offers, display hand-off and payload acknowledgements over cloud-attention:*; main derives the home. */
       attention?: import("@/lib/attention-offer").AttentionBridge;
       approvalNotifications: {
@@ -200,6 +202,8 @@ type SkillRecordingPayload = {
     muragebox?: {
       platform: NodeJS.Platform;
       arch?: string;
+      /** True in the Mac App Store and Windows Store builds. */
+      storeBuild?: boolean;
       /** Write text to the system clipboard from the desktop process. Write-only, capped at 1 MB; there is no read. */
       copyText?(text: string): Promise<boolean>;
       backup?: {
@@ -264,11 +268,13 @@ type SkillRecordingPayload = {
         listHomes(): Promise<{ id: string; name: string; status: string; reachable: boolean; paired: boolean }[]>;
         /** The bots of a paired home (id and name only): a per-bot engine sign-in names one. */
         /** `signIn`: the engine the bot uses and whether it is signed in (F4 C2); absent when the home cannot say. `uses` is Claude's: the home-wide or the bot's own. */
+        /** E1/S1: the sign-in engines the home has installed and signed in; null when the home cannot say. */
+        listEngines?(homeId: string): Promise<{ engine: string; installed: boolean; signedIn: boolean }[] | null>;
         listBots(homeId: string): Promise<{ id: string; name: string; signIn?: { engine: string; label: string; signedIn: boolean; uses: "home" | "own" | null; signedInEngines?: string[]; dismissed?: string[] } }[]>;
         /** "Not now" on a sign-in offer, kept on the home for good. */
         dismissOffer?(homeId: string, bot: string, engine: string): Promise<{ dismissed: true }>;
         /** main -> this window: a Cloud window asked for a bot's engine sign-in (names only). */
-        onSignInRequested?(callback: (request: { homeId: string; bot: string; engine: string }) => void): () => void;
+        onSignInRequested?(callback: (request: { homeId: string; bot?: string; engine: string }) => void): () => void;
         /** Fires when Cloud goes live (true) or stops being live (false); the entry appears or disappears without a restart. */
         onLive(callback: (live: boolean) => void): () => void;
         /** Door v2: Connect from the browser. connectStart opens the system browser; the window then carries on by itself. */
@@ -327,6 +333,10 @@ type SkillRecordingPayload = {
         onData(listener: (payload: { id: string; data: Uint8Array }) => void): () => void;
         onClosed(listener: (payload: { id: string; reason: string }) => void): () => void;
       };
+      /** The launch id this launch's engine puts in every answer (x-murage-launch); "" when main has none. */
+      serverLaunch?: string;
+      /** The chat on screen, so a window that follows a restarted engine reopens it. */
+      reportOpenChat?(threadId: string): void;
       getCapabilities(): Promise<DesktopCapabilities>;
       onCapabilitiesChanged(cb: (capabilities: DesktopCapabilities) => void): () => void;
       /** Whether the engine is alive, and whether it is coming back. A dead
@@ -519,10 +529,6 @@ type SkillRecordingPayload = {
         submitCode(provider: import("../../shared/provider-connections").SignInPreset, code: string): Promise<boolean>;
         signOut(provider: import("../../shared/provider-connections").SignInPreset): Promise<import("../../shared/model-signin").SignInResult>;
       };
-      /** Confirm a source-staged HighLevel flow. IDs enter; no secret values leave main. */
-      highlevel?: {
-        commit(intent: { flowId: string; versionId: string }): Promise<{ ok: true } | { ok: false; error: "storage" | "invalid_request" | "outcome_unknown" | "unavailable" }>;
-      };
       /** The owner's own MCP servers (MCP-LINK T11). Desktop only; every
        * result is value-free. See lanes/mcplink/API-T11.md for the sequencing. */
       mcpServers?: {
@@ -532,6 +538,8 @@ type SkillRecordingPayload = {
         /** Call only after the entry exists (POST answered 201, or after a PUT). */
         saveSecrets(name: string, input: McpSecretsInput): Promise<McpBridgeResult>;
         signIn(name: string): Promise<McpBridgeResult>;
+        /** B98: save the owner's own app (main only); resolves the redirect address to paste into it. */
+        useOwnApp(name: string, input: { clientId: string; clientSecret?: string }): Promise<{ ok: true; redirectUri: string; tokenHost: string } | { ok: false; error: McpBridgeError; message: string }>;
         cancelSignIn(name: string): Promise<boolean>;
         signOut(name: string): Promise<McpSignOutResult>;
         /** Revokes first when signed in, drops every secret, then deletes the entry. */
@@ -542,7 +550,7 @@ type SkillRecordingPayload = {
       /** Reconnect connected apps here after another computer took over. */
       reconnectConnectedApps?(): Promise<{ reconnected: boolean; outcome?: "held" | "completed" | "deferred" | "failed"; reason?: string; retryAt?: number; attempted?: boolean; status?: number }>;
       setCredential?(
-        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "highlevelPrivateToken" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
+        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
@@ -578,7 +586,7 @@ export interface McpSecretsInput {
 export type McpBridgeError =
   | "desktop-only" | "storage" | "not-found" | "invalid" | "stale" | "busy" | "headless"
   | "not-sign-in" | "no-registration" | "no-sign-in-details" | "refused" | "cancelled" | "denied" | "timeout"
-  | "port" | "browser" | "network" | "token" | "unknown";
+  | "port" | "port-busy" | "bad-client" | "own-app-changed" | "browser" | "network" | "token" | "unknown";
 
 /** `message` is a plain sentence ready to show. */
 export type McpBridgeResult = { ok: true } | { ok: false; error: McpBridgeError; message: string };

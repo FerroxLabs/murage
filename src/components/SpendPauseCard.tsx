@@ -3,6 +3,7 @@ import { useMonthReading } from "./today/MonthCard";
 import { useState } from "react";
 import { api } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { opensPurchasePages } from "@/lib/native-shell";
 import { actionReason } from "@/lib/use-action";
 import { pauseActions, pauseLines } from "@/lib/spend-pause";
 import type { SpendPauseStatus } from "../../shared/spend-pause";
@@ -40,7 +41,7 @@ export function SpendPauseCard({ status, onOpenUsage, onRefresh }: { status: Spe
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {actions.includes("raise") && <button type="button" className={index === 0 ? primary : secondary} onClick={onOpenUsage}>{t("ux.l2c.pause.raise")}</button>}
           <button type="button" className={index === 0 && actions[0] === "check" ? primary : secondary} disabled={pending} onClick={() => void act("/api/spend/check")}>{t(pending ? "common.checking" : "ux.l2c.pause.check")}</button>
-          {actions.includes("openFlux") && <a className={secondary} href="https://fluxrouter.ai" target="_blank" rel="noreferrer">{t("ux.l2c.pause.openFlux")}</a>}
+          {opensPurchasePages() && actions.includes("openFlux") && <a className={secondary} href="https://fluxrouter.ai" target="_blank" rel="noreferrer">{t("ux.l2c.pause.openFlux")}</a>}
         </div>
       </div>;
     })}

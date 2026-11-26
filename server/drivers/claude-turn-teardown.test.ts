@@ -2,10 +2,10 @@
 // Proof producer: tri3-g1 (Claude); durable consumer: tri3-g2 (server).
 // The durable completion listener asks for the exact lease before sendTurn
 // returns. Every process and mount belongs to this isolated fixture.
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { stripTypeScriptTypes } from "node:module";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderInstance, ProviderStopResult } from "../contracts.ts";
@@ -19,6 +19,7 @@ import * as gates from "./stop-gate.ts";
 import * as processTree from "./process-tree.ts";
 import { CliMountRelay } from "./cli-mount-relay.ts";
 import { ClaudeDriver, resetClaudeMcpReadinessForTests } from "./claude.ts";
+import { execEnvFilePath } from "./murage-exec.ts";
 // Use the same isolated qualification receipt as the S2 protocol fixtures.
 vi.mock("./claude-s2-qualification.ts", async original => {
   const api = await original<typeof import("./claude-s2-qualification.ts")>();
@@ -144,6 +145,41 @@ it.each([false, true])("confirms stopped setup only after its unlaunched dispatc
     await closed;
     if (pendingClose) { await pendingClose; expect(earlyClosed).toBe(true); }
   } finally { release(); await sending; off(); recorded.stop(); probe.mockRestore(); spawned.mockRestore(); gateSpy.mockRestore(); }
+});
+
+it.skipIf(process.platform === "win32")("a Stop during the exec version lookup prevents writing the thread's exec environment", async () => {
+  ensureDirs(); root = mkdtempSync(join(tmpdir(), "claude-exec-stop-"));
+  const threadId = basename(root);
+  const execFile = execEnvFilePath(threadId);
+  instance = await ClaudeDriver.create({ instanceId: "exec-stop", displayName: "Fixture", enabled: true,
+    config: { cli, permissionMode: "bypassPermissions" }, environment: { HOME: root, USERPROFILE: root, CLAUDE_CONFIG_DIR: root } });
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const version = claudeGuards.knownClaudeCliVersion;
+  const probe = vi.spyOn(claudeGuards, "knownClaudeCliVersion")
+    .mockImplementationOnce(version)
+    .mockImplementationOnce(async () => { enter(); await held; return version(cli); });
+  vi.stubEnv("TMPDIR", root);
+  const sending = instance.adapter.sendTurn(fixtureMountTurn({ threadId, cwd: root, text: "fixture" }));
+  try {
+    // If the driver exits setup early, propagate the failure instead of waiting for a lookup that will never run.
+    await Promise.race([entered, sending.then(() => { throw new Error("exec lookup was not reached"); })]);
+    const mcpConfigs = readdirSync(root).filter(name => name.startsWith("murage-mcp-"));
+    expect(mcpConfigs).toHaveLength(1);
+    const stopped = instance.adapter.interruptTurn(threadId);
+    release();
+    await sending;
+    expect(existsSync(execFile)).toBe(false);
+    expect(existsSync(join(root, mcpConfigs[0]!))).toBe(false);
+    expect(await stopped).toEqual({ closeConfirmed: true });
+  } finally {
+    release();
+    await sending.catch(() => undefined);
+    probe.mockRestore();
+    vi.unstubAllEnvs();
+    rmSync(execFile, { force: true });
+  }
 });
 
 it("a setup Stop that is never unwound reads unconfirmed at the caller deadline", async () => {
@@ -325,7 +361,7 @@ it.each(["empty", "child-started", "unknown"])("a waiting setup inherits the war
   const stopped = new Error("stopped");
   const run = new Function("relaunch", "prewarming", "threadId", "turnId", "stopGate", "e", "active", "setupEnds",
     "return (async () => {" + stripTypeScriptTypes(source.slice(from, to)) + "})();");
-  await expect(run(false, { has: () => true, wait: async () => { warm.mcp = state === "child-started"; } }, "thread", "waiting",
+  await expect(run(false, { has: () => true, claim: async () => { warm.mcp = state === "child-started"; return true; } }, "thread", "waiting",
     { step: async (_entry: unknown, pending: Promise<void>) => { await pending; throw stopped; } }, {},
     new Map([["thread", { turnId: "warm" }]]), records)).rejects.toBe(stopped);
   expect(waiting.mcp).toBe(state !== "empty");

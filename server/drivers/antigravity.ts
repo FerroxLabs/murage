@@ -2,7 +2,7 @@ import { askExecWipe, deliverWipeGuardTerminal, wipeGuardTurnEnvironment } from 
 import { resolveModelLabel } from "../../shared/model-label.ts";
 import { connectedAppsServerName } from '../../shared/connected-app-names.ts';
 import { guardEngineRelease } from '../decision/provider-release.ts';
-import { noLimitsPowerFallbackActive, takeNoLimitsPowerFallbackNotice } from "../host-power.ts";
+import { noLimitsPowerRetry, SEATBELT_LAUNCH_ATTEMPTS, takeNoLimitsPowerFallbackNotice } from "../host-power.ts";
 import { deliverNative, type NativeAskSlot } from './native-ask.ts';
 import { RequestTransport } from './request-transport.ts';
 import { withRequestDelivery } from "./request-delivery.ts";
@@ -18,7 +18,7 @@ import { engineJsonLine } from "./engine-wire.ts";
 import { composeClose, fencedOf, fencedRefusalRegistry, fencedSubmit, isMemoryRefusal, refusalFor, type CloseResult, type FencedRefusal, type RefusalOwner } from "./engine-input.ts";
 import { DENY_TIMEOUT_NOTE } from "./hook-control.ts";
 import { EngineInputRevoked } from "./engine-input.ts";
-import { refuseConsumingTurn } from "../consuming-turn-response.ts";
+import { ENGINE_OWN_REFUSAL, refuseEngineOwnTurn } from "../consuming-turn-response.ts";
 import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
 import { CliMountRelay, mountedTurn, assertRelayAvailable } from "./cli-mount-relay.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -596,7 +596,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     // A rejection with no mark stays a rejection (a fence refusal, a folder that cannot be scoped); no verdict comes from a throw.
     const classify: Classify = () => null;
 
-    const startTurn = async (turn: SendTurnInput, entry: GateEntry, turnId: string, relayAttempt = 0, powerRetried = false): Promise<{ turnId: string }> => {
+    const startTurn = async (turn: SendTurnInput, entry: GateEntry, turnId: string, relayAttempt = 0, powerRetries = 0): Promise<{ turnId: string }> => {
       const originalTurn = turn;
       assertNativeIngressAdmission(turn, "antigravity");
       const boundMounted = (turn.releaseBinding ?? null) !== null && mountedTurn(turn);
@@ -616,12 +616,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       let engineLaunched = false;
       /** LLD-agy: a bound turn the driver refuses directly has no process to claim, so the refusal is registered with a null target and
        * the lease takes the close at once (the lease's interrupt then finds its closer; interruptTurn below is its fallback). */
+      // 1.0.20 busy-engines: the driver's own refusal (workspace hooks, no relay, hook never loaded) carries ENGINE_OWN_REFUSAL, so a
+      // direct turn whose context is still current ends here at once instead of being rebuilt into the same refusal.
       const refuseBoundAsk = (site: 684 | 889 | 908 | 937 | 1335): never => {
         pending.delete(turn.threadId);
-        refusalFor(new EngineInputRevoked({ state: "checking", reason: "not-built" }), `agy.direct.${site}`, { engine: ENGINE, threadId: turn.threadId, binding: turn.releaseBinding, target: null, kind: "turn" });
+        refusalFor(new EngineInputRevoked(ENGINE_OWN_REFUSAL), `agy.direct.${site}`, { engine: ENGINE, threadId: turn.threadId, binding: turn.releaseBinding, target: null, kind: "turn" });
         if (!engineLaunched) turn.admissionNotLaunched?.();
-        if (turn.releaseBinding) refuseConsumingTurn(turn.releaseBinding);
-        throw new EngineInputRevoked({ state: "checking", reason: "not-built" });
+        if (turn.releaseBinding) refuseEngineOwnTurn(turn.releaseBinding);
+        throw new EngineInputRevoked(ENGINE_OWN_REFUSAL);
       };
       let askFromFolderHooks = false;
       let relayUnavailable = false;
@@ -771,6 +773,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           entry.finish({ ok: false, stopReason: "memory-refused", final: true, leaseMode: true, releaseAfter: fenced.teardown });
           return;
         }
+        if (ok && !stopRequested) mountRelay?.reportUnavailable(() => base(threadId, turnId), emit);
         // the one ending: an asked Stop is the stopped pair, a dispose nobody asked is the engine closing, read at emission
         entry.finish({
           ok,
@@ -1290,11 +1293,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           } else if (!settled && askStopHalted) {
           // The process ended because the Ask stop halted it: the turn ends, with the note, and no error card.
           settle(true, ANTIGRAVITY_ASK_STOP_REASON, null, keptUsage);
-          } else if (!settled && hostPowerRefused(child) && noLimits() && !powerRetried && noLimitsPowerFallbackActive(powerSession)) {
+          } else if (!settled && hostPowerRefused(child) && noLimits() && powerRetries < SEATBELT_LAUNCH_ATTEMPTS && noLimitsPowerRetry(powerSession, child.pid)) {
             retryingRelay = true; // the old startup must never settle the replacement
             active.delete(threadId); pending.add(threadId);
             entry.live = false; entry.stopLive = undefined;
-            gate.handoff(entry, async () => { await gate.step(entry, startTurn(originalTurn, entry, turnId, relayAttempt, true)); }, classify);
+            gate.handoff(entry, async () => { await gate.step(entry, startTurn(originalTurn, entry, turnId, relayAttempt, powerRetries + 1)); }, classify);
           } else if (!settled && hostPowerRefused(child)) {
           // S4 power (design sections 2 and 8): the wrapper refused before the engine ran; the prompt was not delivered.
           turn.notWritten?.();

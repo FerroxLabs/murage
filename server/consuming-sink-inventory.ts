@@ -29,11 +29,12 @@ export interface SinkInventoryEntry {
 // they cannot inherit a successful route's provenance classification.
 export const INTERNAL_HTTP_ROUTES = Object.freeze([
   ["POST", "project/propose", "ChiefProposalTurns", "23605"],
+  ...["phone_call_place", "phone_call_result"].map(name => ["POST", `phone/${name}`, "servePhoneTool", "phone tool dispatch"]),
   ...["thread-search", "thread-list", "thread-read"].map(name => ["POST", `memory/${name}`, "threadRecallRoute", "23649"]),
   ...["search", "get", "save", "propose-correction"].map(name => ["POST", `memory/${name}`, "memoryAgentRoute", "23663"]),
   ...["register-artifact", "needs-owner-now", "voice-note", "stop-line-allowance", "publish-site", "take-down-site", "generate-image", "web-read", "web-search",
-    "resolve-image-reference", "device/call", "highlevel/mcp", "host-computer", "unified-browser", "headless-browser", "venue/read-messages", "venue/post", "room-share/ask",
-    "bot-management", "access-request", "permission-status", "outcome-proposals", "routine-requests", "skills/stage", "ask-bot", "delegate-bot", "create-bot",
+    "resolve-image-reference", "device/call", "host-computer", "unified-browser", "headless-browser", "venue/read-messages", "venue/post", "room-share/ask",
+    "bot-management", "access-request", "permission-status", "outcome-proposals", "routine-requests", "skills/stage", "skills/switch", "ask-bot", "delegate-bot", "create-bot",
     "request-browser-connection", "mcp-servers", "ask-user", "show-widget", "update-widget", "request-credential", "connectors/mcp", "computer-activity", "connectors/request"]
     .map(name => ["POST", name, "internal dispatch", "23589–25056"]),
   ...["image-models", "image-prompt-block", "agents", "routines", "skills"].map(name => ["GET", name, "internal dispatch", "23589–25056"]),
@@ -59,7 +60,6 @@ entry("gateway:headers", "headers", "model gateway HTTP response", "gateway prov
 entry("gateway:json-error-limit-done", "body", "model gateway HTTP response", "gateway provider response", "server/model-gateway.ts:55,65,275", "sendJson/handleGatewayRequest");
 entry("gateway:sse", "chunk", "model gateway HTTP response", "gateway provider response", "server/model-gateway.ts:240,254", "handleGatewayRequest");
 entry("gateway:upstream-request", "request", "provider HTTP request", "serialized provider request", "server/model-gateway.ts:120", "handleGatewayRequest");
-entry("highlevel:rpc-response", "body", "HighLevelHost.handle JSON-RPC return", "HighLevel external service and local protocol replies", "server/highlevel/host.ts:125", "HighLevelHost.handle");
 for (const mode of ["headers", "body", "chunk"] as const) entry(`outer:response:${mode}`, mode,
   "request-owned internal busy/exception response", "static busy or exception outcome", "server/index.ts:22183,32795", "busyJson/outer catch");
 export const NATIVE_FINAL_SINKS = Object.freeze([
@@ -158,14 +158,6 @@ export const reviewedBoundaryRows = Object.freeze([
       "inventory" : "REG",
       "name" : "panelAvatarEncoder",
       "role" : "NOT A SINK"
-   },
-   {
-      "b17" : "server/drivers/highlevel-proxy.ts; shared/spawned-proxies.mjs:36",
-      "contract" : "§12.1",
-      "destination" : "server/drivers/highlevel-proxy.ts runHighLevelProxy writeMcpLine",
-      "inventory" : "REG",
-      "name" : "highlevel",
-      "role" : "SINK"
    },
    {
       "b17": "new: server/consuming-turn-ingress.ts (§12.1)",
@@ -534,22 +526,6 @@ export const reviewedBoundaryRows = Object.freeze([
       "inventory" : "FILE",
       "name" : "server/gepa-worker.ts",
       "role" : "NOT A SINK"
-   },
-   {
-      "b17" : "137",
-      "contract" : "§9.1 at consuming caller",
-      "destination" : "HighLevel request restriction parsing, not engine delivery; server/highlevel/access.ts:137",
-      "inventory" : "FILE",
-      "name" : "server/highlevel/access.ts",
-      "role" : "NOT A SINK"
-   },
-   {
-      "b17" : "125",
-      "contract" : "§9.1, §12.6",
-      "destination" : "Synthesizes JSON-RPC tool replies; every consuming return must reach E, unknown HTTP path refuses; server/highlevel/host.ts:125",
-      "inventory" : "FILE",
-      "name" : "server/highlevel/host.ts",
-      "role" : "SINK"
    },
    {
       "b17" : "26, 27, 28, 48",
@@ -1206,7 +1182,6 @@ export const CONSUMING_UPSTREAM_READERS = Object.freeze([
   ["server/drivers/dweb-proxy.ts", "proxyFetch"],
   ["server/drivers/host-computer-proxy.ts", "collectProxyUpstream"],
   ["server/drivers/phone-jobs-proxy.ts", "collectProxyUpstream"],
-  ["server/drivers/highlevel-proxy.ts", "collectProxyUpstream"],
   ["server/drivers/unified-browser-proxy.ts", "proxyFetch"],
   ["server/drivers/headless-browser-proxy.ts", "proxyUpstreamResponse"],
   ["server/drivers/browser-extension-mcp.ts", "proxyUpstreamResponse"],

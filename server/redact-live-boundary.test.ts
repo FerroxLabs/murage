@@ -35,7 +35,11 @@ it('split items stay masked in actual SSE, stored transcript and logs while exec
     expect((await api('POST',`/api/bots/${bot.id}/messages`,{threadId:bot.threadId,text:'Show the split fixture.'})).status).toBe(202);
     await stream.until(frame=>frame.kind==='runtime'&&frame.event.type==='turn.completed'&&frame.event.threadId===bot.threadId,30_000);
     const page=(await api('GET',`/api/threads/${bot.threadId}/messages?limit=100`)).body;
-    expect(JSON.stringify(page)).toContain('redacted');
+    const replies = page.messages.filter((row: { role: string; kind: string; provenance?: string }) =>
+      row.role === 'bot' && row.kind === 'text' && row.provenance === 'provider');
+    expect(replies.map((row: { text: string }) => row.text)).toEqual(Array(2).fill(
+      "Murage held back this message because it may repeat something that must stay hidden.",
+    ));
     expect(JSON.stringify({frames:stream.frames,page})).not.toMatch(/hunter2|TAILSECRET/);
     expect(readFileSync(join(fixture.info.dataDir,'execution.txt'),'utf8')).toContain('hunter2\nTAILSECRET');
     expect(readFileSync(join(fixture.info.dataDir,'events',`${bot.threadId}.ndjson`),'utf8')).not.toMatch(/hunter2|TAILSECRET/);

@@ -2,11 +2,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {fieldRows} from './scenarios.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 test('every standalone workflow binding and field self-test must pass',{timeout:300000},()=>{
  const out=mkdtempSync(join(tmpdir(),'gnl-ci-workflows-'));
  const env={...process.env};delete env.NODE_TEST_CONTEXT;
@@ -18,5 +19,5 @@ test('every standalone workflow binding and field self-test must pass',{timeout:
   assert.deepEqual(report.rows.map(r=>r.id).sort(),['two-questions','question-with-instruction','queued-owner-drain','email-subject-rm','routine-wake','project-room-routine','project-routine-owner-room','deny-app-denied','deny-app-revoked','webhook-in-owner-room'].sort());
   assert.ok(report.rows.every(r=>r.status==='PASS'));
   assert.deepEqual(report.fields.map(r=>r.id).sort(),fieldRows.map(r=>r.id).sort());assert.ok(report.fields.every(r=>r.verdict==='PASS'));
- }finally{rmSync(out,{recursive:true,force:true});}
+ }finally{safeWipeSync(out);}
 });

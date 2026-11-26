@@ -3,12 +3,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { TRANSFORM_MARKER, transformWalSource } from "./testing/wal-transform.mjs";
+import { safeWipeSync } from "./testing/safe-wipe.mjs";
 
 const PROD = ["server/wal-maintenance.ts", "server/io-budget.ts", "server/admission-shared.ts"];
 const sha = (b) => createHash("sha256").update(b).digest("hex");
@@ -54,5 +55,5 @@ test("W-prod-untouched writable target (node:test adapter)", () => {
     const transformed = transformWalSource(file, source);
     assert.ok(transformed.includes(`/*${TRANSFORM_MARKER}*/`), "the target was transformed");
     assert.equal(sha(readFileSync(file)), sha(source), "the writable input stayed byte-identical after transformation");
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { safeWipeSync(dir); }
 });

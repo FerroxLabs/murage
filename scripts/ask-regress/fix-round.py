@@ -1,11 +1,15 @@
 """Qualify one archived fix source and require real assertion kills for both review blockers."""
 import hashlib, json, os, pathlib, subprocess, sys, tarfile, time
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from evidence_path import evidence_path, external_evidence_path
+
 
 work = pathlib.Path('/work')
 assert sys.argv[1:] in [[], ['mutants'], ['core']]
 mutants_only = sys.argv[1:] == ['mutants']
 core_only = sys.argv[1:] == ['core']
-inputs = work / os.environ.get('ASK_FIX_EVIDENCE_ROOT', 'evidence/ask-regress-fix/raw')
+override = os.environ.get('ASK_FIX_EVIDENCE_ROOT')
+inputs = external_evidence_path(override) if override else evidence_path('evidence/ask-regress-fix/raw')
 out = inputs / ('mutants' if mutants_only else 'core' if core_only else 'qualification')
 out.mkdir(parents=True, exist_ok=True)
 root = pathlib.Path('/tmp/ask-fix-qualified-source')

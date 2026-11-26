@@ -1,9 +1,10 @@
 // Inert host action behind the candidate's real capability-mount predicate.
 // The target is a new fixture file. No screen, browser or provider is touched.
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { judgeScenario, machineSummary } from './counts.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const out = resolve(process.argv[2]); mkdirSync(out, { recursive: true });
 const root = mkdtempSync(join(tmpdir(), 'gnl-feature-off-'));
 const home = join(root, 'home'), data = join(root, 'data'), target = join(root, 'action.done');
@@ -30,7 +31,7 @@ try {
   report.verdict = report.rows.every(r => r.verdict === 'PASS') ? 'PASS' : 'FAIL';
 } catch (e) { report.errors.push(e.message); }
 finally {
-  rmSync(root, { recursive: true, force: true });
+  safeWipeSync(root);
   writeFileSync(join(out, 'verdict.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(machineSummary(report)); process.exitCode = report.verdict === 'PASS' ? 0 : 1;
 }

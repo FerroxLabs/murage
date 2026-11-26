@@ -40,8 +40,6 @@ export function buildMcpServers(turn: SendTurnInput, options: { askBeforeCustom?
   if (turn.integrations?.phone) servers.phone = { ...turn.integrations.phone };
   // 1.0.9 S13b: the owner's phone; asks on every call like any non-listed own mount.
   if (turn.integrations?.phoneJobs) servers.phoneJobs = { ...turn.integrations.phoneJobs };
-  // native HighLevel (HL-S2, read only): its read tools are pre-allowed; the host grant is the gate and lists no change tool.
-  if (turn.integrations?.highlevel) servers.highlevel = { ...turn.integrations.highlevel };
   if (turn.integrations?.browser) servers.browser = { ...turn.integrations.browser };
   if (turn.integrations?.dweb) {
     servers.dweb = {
@@ -76,8 +74,6 @@ export function piMountRecords(turn: SendTurnInput, servers: Record<string, unkn
   if (turn.integrations?.browser) own.set("browser", "own:browser");
   // only a turn that mounts the phone owns that name; no other server may claim `own:phoneJobs`
   if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
-  // likewise only a turn that mounts native HighLevel owns `own:highlevel`; an owner's own server of that name stays custom
-  if (turn.integrations?.highlevel) own.set("highlevel", "own:highlevel");
   if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
   const records: McpMountRecord[] = [];
   for (const name of Object.keys(servers ?? {})) {
@@ -89,13 +85,16 @@ export function piMountRecords(turn: SendTurnInput, servers: Record<string, unkn
   return records;
 }
 
-import { assertConsumingBinding, refuseConsumingTurn, registerConsumingDescriptor, type ConsumingTurnBinding } from "../consuming-turn-response.ts";
+import { assertConsumingBinding, refuseConsumingTurn, refuseEngineOwnTurn, registerConsumingDescriptor, type ConsumingTurnBinding } from "../consuming-turn-response.ts";
 import { createProxyReleaseAuthority, createConsumingIngress } from "../consuming-turn-ingress.ts";
 import type { ReleaseEnvelope } from "../consuming-turn-ingress.ts";
+import { deferringPendingFence, isPendingFenceDeferral } from "../memory/send-fence.ts";
 export interface AdmittedMcpMount {
   readonly ingress: ReturnType<typeof createConsumingIngress>;
   readonly enveloped: boolean;
   accept(line: string, write: (frame: string) => void, delimiter?: "\n"): ReleaseEnvelope | undefined;
+  /** 1.0.20 revkill2: void a reply that met a pending check (see accept); nothing of it is released. Returns the id of the call it answered. */
+  drop?(): string | number | undefined;
   close(): void;
 }
 const admittedMounts = new WeakMap<object, AdmittedMcpMount>();
@@ -124,20 +123,21 @@ export function createMcpMountAdmission(binding: ConsumingTurnBinding, authority
     dispose() { if (disposed) return; disposed = true; for (const dispose of disposals) dispose(); disposals.clear(); },
     mount(entry: Record<string, unknown>) {
     assertConsumingBinding(binding);
-    if (disposed || disposals.size >= 64) refuseConsumingTurn(binding);
+    // No count of mounts refuses the turn (MAIN-RULING cause22-no-transport-caps); a disposed admission still does.
+    if (disposed) refuseConsumingTurn(binding);
     if (!entry || typeof entry.command !== "string" || !entry.command
       || (entry.args !== undefined && (!Array.isArray(entry.args) || !entry.args.every(arg => typeof arg === "string")))
       || (entry.env !== undefined && (!entry.env || typeof entry.env !== "object" || Array.isArray(entry.env)
-        || Object.values(entry.env).some(value => typeof value !== "string")))) refuseConsumingTurn(binding);
+        || Object.values(entry.env).some(value => typeof value !== "string")))) refuseEngineOwnTurn(binding);
     const args = entry.args as string[] | undefined;
     const role = entry.command === process.execPath ? Object.entries(SPAWNED_PROXIES).find(([, path]) => args?.[0] === path)?.[0] : undefined;
     // External Pi and the nested VPS pipe have no same-process final acceptance.
-    if (role === "cliMountShim" || role === "vpsRelayMcp" || role === "piMcpExtension" || role === "piPermissionGate") refuseConsumingTurn(binding);
+    if (role === "cliMountShim" || role === "vpsRelayMcp" || role === "piMcpExtension" || role === "piPermissionGate") refuseEngineOwnTurn(binding);
     let descriptor: ReturnType<typeof registerConsumingDescriptor>;
     try { descriptor = registerConsumingDescriptor(`proxy:${role ?? "custom"}:frame`, "body"); }
     catch {
       console.warn(`[memory] mount admission refused cause=unregistered-descriptor role=${role ?? "custom"}`);
-      return refuseConsumingTurn(binding);
+      return refuseEngineOwnTurn(binding);
     }
     // Internal stored-content routes have already staged provenance in Area A;
     // external MCP output has no Murage stored-source refs. No child supplies refs.
@@ -148,17 +148,29 @@ export function createMcpMountAdmission(binding: ConsumingTurnBinding, authority
       MURAGE_RELEASE_INSTANCE: instance.instanceId, MURAGE_RELEASE_TOKEN: instance.token, MURAGE_RELEASE_URL: url,
     } : {}) };
     const result = Object.freeze({ ...entry, args: Object.freeze([...(args ?? [])]), env: Object.freeze(env) });
-    admittedMounts.set(result, Object.freeze({ ingress: instance.ingress, enveloped: Boolean(role), close: instance.dispose, accept(line: string, write: (frame: string) => void, delimiter?: "\n") {
-      if (role) {
-        const envelope = decodeReleaseEnvelope(line);
-        instance.ingress.deliver(envelope, write, delimiter);
-        return envelope;
-      }
-      // Third-party stdout ends at this server-owned acceptance callback. It
-      // cannot receive a raw passthrough to a CLI or mint its own permit.
-      const envelope = instance.ingress.issue({ instanceId: instance.instanceId, sequence: ++sequence, frame: line, descriptor, refs: [] });
-      instance.ingress.deliver(envelope, write, delimiter);
-      return undefined;
+    // 1.0.20 revkill2: a frame that met held context still checking:pending keeps its envelope; the relay offers the same line once more.
+    let held: { line: string; envelope: ReleaseEnvelope } | undefined;
+    // 1.0.21 revkill3: the frame (a raw line, or an envelope's checked frame) that last met a pending check, whether issue or deliver deferred it.
+    let deferred: string | undefined;
+    admittedMounts.set(result, Object.freeze({ ingress: instance.ingress, enveloped: Boolean(role), close: instance.dispose,
+      drop() { const frame = deferred; held = undefined; deferred = undefined; return instance.ingress.drop() ?? replyId(frame); },
+      accept(line: string, write: (frame: string) => void, delimiter?: "\n") {
+      return deferringPendingFence(() => {
+        const retry = held?.line === line ? held.envelope : undefined;
+        held = undefined; deferred = undefined;
+        let frame: string | undefined = role ? undefined : line;
+        try {
+          // Third-party stdout ends at this server-owned acceptance callback. It
+          // cannot receive a raw passthrough to a CLI or mint its own permit.
+          const envelope = retry ?? (role ? decodeReleaseEnvelope(line, instance.ingress.ownerTurn)
+            : instance.ingress.issue({ instanceId: instance.instanceId, sequence: sequence + 1, frame: line, descriptor, refs: [] }));
+          frame = envelope.frame;
+          if (!role) sequence = envelope.sequence;
+          try { instance.ingress.deliver(envelope, write, delimiter); }
+          catch (error) { if (isPendingFenceDeferral(error) && !instance.ingress.sealed) held = { line, envelope }; throw error; }
+          return role ? envelope : undefined;
+        } catch (error) { if (isPendingFenceDeferral(error)) deferred = frame; throw error; }
+      });
     } }));
     return result;
   } });
@@ -172,6 +184,12 @@ export function createMcpMountAdmission(binding: ConsumingTurnBinding, authority
   return admission;
 }
 import { decodeReleaseEnvelope } from "../consuming-turn-ingress.ts";
+/** The id of the engine call a reply frame answers (a request or notification answers none). */
+function replyId(frame: string | undefined): string | number | undefined {
+  if (frame === undefined) return undefined;
+  try { const rpc = JSON.parse(frame) as { id?: unknown; method?: unknown }; return rpc.method === undefined && (typeof rpc.id === "string" || typeof rpc.id === "number") ? rpc.id : undefined; }
+  catch { return undefined; }
+}
 export function admittedMcpMount(entry: unknown): AdmittedMcpMount {
   const admitted = entry && typeof entry === "object" ? admittedMounts.get(entry) : undefined;
   if (!admitted) throw new Error("MEMORY_CONTEXT_REVOKED");

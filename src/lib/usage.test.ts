@@ -243,3 +243,12 @@ describe("this month by bot", () => {
     expect(usageCsv(rows.map((r) => ({ name: r.bot.name, replies: r.replies, tokens: r.tokens })))).toBe('Bot,Replies,Tokens\n"Bo, the ""second""",5,5500\nAda,3,500\n');
   });
 });
+
+it("W7 counts only fresh input and output on the usage chip over three turns", () => {
+  const cachedInput = 60_000;
+  const cacheCreation = 20_000;
+  const turn = { input: 20_000 + cachedInput + cacheCreation, cachedInput, output: 1_000, costUsd: null, turns: 1 };
+  const task = sumUsage([turn, turn, turn]);
+  expect(freshTokens(task)).toBe(123_000);
+  expect(usageChip(task)).toBe("123k tok");
+});

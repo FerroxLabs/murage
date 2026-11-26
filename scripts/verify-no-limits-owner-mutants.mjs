@@ -1,7 +1,8 @@
+import { evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {mkdirSync,readFileSync,writeFileSync,statSync,utimesSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
-const directory='evidence/nlsym-A2/C5-mutants';mkdirSync(directory,{recursive:true});
+const directory=evidencePath('evidence/nlsym-A2/C5-mutants');mkdirSync(directory,{recursive:true});
 const mutants=[
  ['M-NL-S1-destination-strings','server/decision/action.ts','decisions.push(...inspection.decisions.map(structuredOwnerDecision));', 'void inspection;'],
  ['M-NL-owner-class-reclassified','server/decision/action.ts','inspection.decisions.map(structuredOwnerDecision)', 'inspection.decisions.filter(d=>protectedClass(d.lexical)).map(structuredOwnerDecision)'],

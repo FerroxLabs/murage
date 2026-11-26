@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Container only. Every shard gets its own source snapshot and fixture state.
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { resolve, join, relative } from 'node:path';
+import { safeWipeSync } from '../server/testing/safe-wipe.mjs';
 const root = resolve('.'), out = resolve(process.argv[2]), candidateOnly = process.argv[3] === 'candidate';
 const scratch = mkdtempSync(join(tmpdir(), 'release-r6-paired-'));
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -43,6 +44,6 @@ try {
   run('candidate', selected);
 } finally {
   writeFileSync(join(out, candidateOnly ? 'candidate-receipt.json' : 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
-  rmSync(scratch, { recursive: true, force: true });
+  safeWipeSync(scratch);
 }
 console.log(JSON.stringify(receipt.runs));

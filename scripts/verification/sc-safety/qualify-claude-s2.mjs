@@ -1,9 +1,10 @@
 // Runner owner: MAIN dispatches T2 (Windows) and T3 (macOS).
 // Receipt reviewer owner: MAIN; this runner never updates the production table.
 import { spawn, execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { safeWipe } from "../../../server/testing/safe-wipe.mjs";
 
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
 const values = new Map();
@@ -71,4 +72,4 @@ try {
   }, null, 2) + "\n");
   process.stdout.write(`S2 qualification ${pass ? "PASS" : "FAIL"}; candidate requires MAIN review before production admission.\n`);
   if (!pass) process.exitCode = 1;
-} finally { await rm(scratch, { recursive: true, force: true }); }
+} finally { await safeWipe(scratch, { within: output }); }

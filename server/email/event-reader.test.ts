@@ -262,3 +262,27 @@ describe("what the bot sees of filtered and held mail (5.2)", () => {
     expect(isFilteredMail({ direction: "outbound", spam: true })).toBe(false);
   });
 });
+
+describe("1.0.22 idle: an empty long-poll writes nothing (q1022-idlerest W-EMAIL-CURSOR-IDLE)", () => {
+  beforeEach(() => bind());
+  it("ten idle minutes of empty 25 s polls make 0 cursor writes; an event still advances the cursor", async () => {
+    fake.on("GET", /\/v1\/email\/events$/, page([received("eev_1", "alex@example.com")], "c_1"));
+    expect(await reader.pollOnce()).toBe("ok");
+    expect(store.getCursor(EVENT_CURSOR_SCOPE)).toBe("c_1");
+    const stamp = () => store.db.prepare("SELECT updated_at FROM email_event_cursor WHERE scope=?").get(EVENT_CURSOR_SCOPE)?.updated_at;
+    const changes = () => Number(store.db.prepare("SELECT total_changes() AS n").get()!.n);
+    const before = { stamp: stamp(), changes: changes() };
+    fake.on("GET", /\/v1\/email\/events$/, page([], "c_1"), 24);
+    for (let polls = 0; polls < 24; polls++) { clock += 25_000; expect(await reader.pollOnce()).toBe("ok"); }
+    expect(fake.calls("GET", /\/v1\/email\/events$/).length).toBe(25);
+    expect({ stamp: stamp(), writes: changes() - before.changes }).toEqual({ stamp: before.stamp, writes: 0 });
+    // the effect is kept: a moved cursor on an empty page and a real event are both still written
+    fake.on("GET", /\/v1\/email\/events$/, page([], "c_2"));
+    clock += 25_000; expect(await reader.pollOnce()).toBe("ok");
+    expect(store.getCursor(EVENT_CURSOR_SCOPE)).toBe("c_2");
+    fake.on("GET", /\/v1\/email\/events$/, page([received("eev_2", "sam@example.org")], "c_3"));
+    clock += 25_000; expect(await reader.pollOnce()).toBe("ok");
+    expect(store.getCursor(EVENT_CURSOR_SCOPE)).toBe("c_3");
+    expect(store.hasEvent("eev_2")).toBe(true);
+  });
+});

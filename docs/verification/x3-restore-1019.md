@@ -121,7 +121,7 @@ no production No limits code changed. Each retired diagnostic maps as follows:
 | --- | --- | --- |
 | `~/.qwen/settings.json` | No limits with `held=` | Allowed, No limits, no hold rule |
 | `/home/Jane Doe/.pi/agent/models.json` | No limits with `held=` | Allowed, No limits, no hold rule |
-| `C:/home/Jane Doe/.gemini/config/mcp_config.json` | No limits with `held=` | Allowed, No limits, no hold rule |
+| `C:/Users/Jane Doe/.gemini/config/mcp_config.json` | No limits with `held=` | Allowed, No limits, no hold rule |
 | `$KIMI_CODE_HOME/credentials/kimi-code.json` | No limits with `held=` | Allowed, No limits, no hold rule |
 | `~/.agent-browser/sessions/work.json.enc` | No limits with `held=` | Allowed, No limits, no hold rule |
 

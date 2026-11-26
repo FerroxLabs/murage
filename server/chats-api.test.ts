@@ -17,6 +17,37 @@ const writeDb = () => {
 };
 
 describe("GET /api/chats", () => {
+  it.each(["pending", "complete"])("projects stale mailbox chat previews while seal is %s", async state => {
+    const title = "fixture sealed title";
+    const snippet = "fixture sealed preview";
+    const lastFrom = "fixture sealed sender";
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    try {
+      const task = (await desktopApi("POST", `/api/bots/${bot.id}/tasks`, { title })).body.task;
+      const pinned = state === "complete";
+      if (pinned) expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${task.threadId}`, { pinned })).status).toBe(200);
+      using db = writeDb();
+      db.prepare("INSERT INTO thread_summary(thread_id,last_role,last_from,snippet) VALUES(?,'user',?,?)").run(task.threadId, lastFrom, snippet);
+      const read = async () => {
+        const answer = await phoneApi("GET", `/api/chats?bot=${bot.id}`);
+        expect(answer.status).toBe(200);
+        return answer.body;
+      };
+      const selected = (page: { chats: Array<{ threadId: string }>; pinned?: Array<{ threadId: string }> }) =>
+        (pinned ? page.pinned : page.chats)?.find(row => row.threadId === task.threadId);
+      expect(selected(await read())).toMatchObject({ title, snippet, lastFrom });
+
+      db.prepare("INSERT INTO mailbox_sealed_threads(thread_id,generation,state) VALUES(?,(SELECT COALESCE(MAX(generation),0)+1 FROM mailbox_sealed_threads),?)").run(task.threadId, state);
+
+      const answer = await read();
+      expect(selected(answer)).toMatchObject({ title: "Email conversation", snippet: "Email conversation" });
+      expect(selected(answer)).not.toHaveProperty("lastFrom");
+      for (const value of [title, snippet, lastFrom]) expect(JSON.stringify(answer)).not.toContain(value);
+    } finally {
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("lists the owner's chats newest first with paging and filters, archived ones only under their filter", async () => {
     const ember = (await desktopApi("POST", "/api/bots")).body.bot;
     const sage = (await desktopApi("POST", "/api/bots")).body.bot;

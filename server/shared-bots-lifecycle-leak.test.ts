@@ -12,7 +12,7 @@ import { getOrCreateChannel } from "./comms-visibility.ts";
 import { continuationResultsForThread, requestReturnsTo } from "./partition-sources.ts";
 import { botMessages, botViewer } from "./bot-read.ts";
 import { backgroundMemoryScopes, ensureScope } from "./memory/policy.ts";
-import { renameTeam, deleteTeam, teamRevision } from "./team-sections.ts";
+import { renameTeam, deleteTeam, teamRevision, describeTeam } from "./team-sections.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { repairRestoredSharing } from "./sharing-restore.ts";
 import { roomRequest } from "./room-requests.ts";
@@ -33,7 +33,7 @@ it.each(["live","revoked","renamed","deleted","restored"])("Sales remains unreac
  const pairA=getOrCreateChannel(f.store,f.iris,f.zed,f.a.targetThreadId!,tag(f.sales)),pairB=getOrCreateChannel(f.store,f.iris,f.zed,f.b.targetThreadId!,tag(f.support));expect(pairA.id).not.toBe(pairB.id);
  if(phase==="revoked")changeSharing(f.store,f.iris.id,{mode:"list",teams:[{id:f.support,name:"Support"}]},"stop",{now:10});
  if(phase==="renamed")renameTeam(f.store,{section:"Sales",name:"Revenue",revision:teamRevision(f.store)},deps);
- if(phase==="deleted")deleteTeam(f.store,{section:"Sales",bots:"keep",revision:teamRevision(f.store)},deps);
+ if(phase==="deleted")deleteTeam(f.store,{section:"Sales",bots:"keep",revision:teamRevision(f.store),accessRevisions:Object.fromEntries(describeTeam(f.store,"Sales").members.map(m=>[m.id,m.accessRevision]))},deps);
  if(phase==="restored")repairRestoredSharing(f.store.bots as unknown as Record<string,unknown>[],f.store.groups as unknown as Record<string,unknown>[],10);
  expect(backgroundMemoryScopes(f.iris.id,f.b.targetThreadId!,f.store)).not.toContain(scope);
  expect(threadPartition(f.iris,pairA.threadId)).not.toEqual(threadPartition(f.iris,pairB.threadId));

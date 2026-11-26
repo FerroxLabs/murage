@@ -91,5 +91,5 @@ if __name__=='__main__':
         lines += ['- '+row['id'], '  - Baseline: '+str(row['baseline'].get('rawTitle')), '  - Final: '+str(row['final'].get('rawTitle'))]
     report='\n'.join(lines)+'\n'
     (OUT/'NEW-IDS.md').write_text(report)
-    Path('/work/build/gnl-prod-r5/NEW-IDS.md').write_text(report)
+    Path('/root/fuigo-builds/swarm-b/gnl-prod-r5/NEW-IDS.md').write_text(report)
     print(json.dumps(summary))

@@ -91,14 +91,17 @@ export class Presence {
   }
 }
 
-export function parsePresenceBody(value: unknown): { clientId: string; visible: boolean; seq?: number } | null {
+export function parsePresenceBody(value: unknown): { clientId: string; visible: boolean; seq?: number; state?: "locked" | "asleep" } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const body = value as Record<string, unknown>;
   const keys = Object.keys(body).sort().join(",");
-  if (keys !== "clientId,visible" && keys !== "clientId,seq,visible") return null;
+  // `state` (warm presence P-SIG 3a): the desktop's lock or sleep edge, only with visible false
+  if (keys !== "clientId,visible" && keys !== "clientId,seq,visible" && keys !== "clientId,seq,state,visible") return null;
   if (typeof body.clientId !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(body.clientId) || typeof body.visible !== "boolean") return null;
   if (!("seq" in body)) return { clientId: body.clientId, visible: body.visible };
   const seq = body.seq;
   if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 1 || seq > PRESENCE_MAX_SEQ) return null;
-  return { clientId: body.clientId, visible: body.visible, seq };
+  if (!("state" in body)) return { clientId: body.clientId, visible: body.visible, seq };
+  if ((body.state !== "locked" && body.state !== "asleep") || body.visible !== false) return null;
+  return { clientId: body.clientId, visible: false, seq, state: body.state };
 }

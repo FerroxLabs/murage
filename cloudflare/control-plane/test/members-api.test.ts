@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Members-area routes (src/members-api.ts): order reconciliation, deletion receipt, Finish checkout, plan change and the resize job.
-// Real workerd + D1, real-shaped Supabase tokens (ES256 JWKS), Stripe and build host as injected fakes. No network.
+// Real workerd + D1, real-shaped Supabase tokens (ES256 JWKS), Stripe and Hetzner as injected fakes. No network.
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";

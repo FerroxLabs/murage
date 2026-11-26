@@ -52,19 +52,19 @@ export function phoneToolDefinitions(names: readonly PhoneToolName[]): Array<{ n
 /** One loopback POST with no clock; `signal` withdraws it. At most 4 MB back. */
 export function post(url: URL, token: string, body: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
-      void collectProxyUpstream("phoneJobs", res, 4 * 1024 * 1024).then(body => resolve({ status: res.statusCode ?? 0, body: body.toString() }), reject);
+    const req = NotModelRequest("Sends a phone jobs tool request to the owned harness.", httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
+      void collectProxyUpstream("phoneJobs", res).then(body => resolve({ status: res.statusCode ?? 0, body: body.toString() }), reject);
       res.on("error", error => { proxyTransportLost("phoneJobs"); reject(error); });
-    });
+    }));
     req.on("error", error => { proxyTransportLost("phoneJobs"); reject(error); });
-    req.end(body);
+    NotModelRequest("Serializes the phone jobs tool request to the same local harness.", req.end(body));
   });
 }
 
 const UNAVAILABLE = "That phone tool is not available in this conversation.";
 
 export async function runPhoneJobsProxy(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  const catalog = createMcpCatalogWriter(env, process.stdout, "phoneJobs");
+  const catalog = NotModelRequest("MCP catalog observer emits local tool discovery metadata to child stdout.", createMcpCatalogWriter(env, process.stdout, "phoneJobs"));
   const base = new URL(env.MURAGE_CONTROL_URL!);
   if (base.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(base.hostname) || !turnSecretWired("MURAGE_CONTROL_TOKEN", env)) throw new Error("Missing phone authority");
   const url = new URL("/api/internal/device/call", base);
@@ -113,10 +113,10 @@ export async function runPhoneJobsProxy(env: NodeJS.ProcessEnv = process.env): P
     }
     const withdrawn = new AbortController();
     withdrawable.set(key(rpc.id), withdrawn);
-    const req = guardHandle(catalog.observeRequest(rpc), (error) => { process.stderr.write(`phone-jobs proxy output failed: ${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
+    const req = guardHandle(catalog.observeRequest(rpc), (error) => { NotModelRequest("Local phone jobs proxy diagnostic to stderr.", process.stderr.write(`phone-jobs proxy output failed: ${error instanceof Error ? error.message : String(error)}\n`)); process.exitCode = 1; });
     const request = { ...rpc, id: rpc.id };
-    queue = queue.then(() => call(request, withdrawn, req)).catch((error) => { process.stderr.write(`phone-jobs proxy output failed: ${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
-  }, 64 * 1024);
+    queue = queue.then(() => call(request, withdrawn, req)).catch((error) => { NotModelRequest("Local phone jobs proxy diagnostic to stderr.", process.stderr.write(`phone-jobs proxy output failed: ${error instanceof Error ? error.message : String(error)}\n`)); process.exitCode = 1; });
+  });
   for await (const chunk of process.stdin) splitter.push(chunk);
   splitter.flush();
   for (const withdrawn of withdrawable.values()) withdrawn.abort();

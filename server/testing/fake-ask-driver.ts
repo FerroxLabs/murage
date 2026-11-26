@@ -85,7 +85,7 @@ export function makeAskDriver(kind: string = ASK_DRIVER_KIND): AnyProviderDriver
           emit({ type: "turn.started", threadId: turn.threadId, turnId });
           if (dir && existsSync(join(dir, "limit"))) {
             // A provider limit is one attempted turn; ordinary turns are recorded only at prompt ingress below.
-            note({ turnId, threadId: turn.threadId, text: turn.text, system: turn.system ?? "", ...(turn.integrations?.phoneJobs ? { phoneJobs: { tools: turn.integrations.phoneJobs.env.MURAGE_PHONE_TOOLS ?? "", hasToken: Boolean(turn.integrations.phoneJobs.env.MURAGE_CONTROL_TOKEN) } } : {}), ...(turn.integrations?.highlevel ? { highlevel: true } : {}) });
+            note({ turnId, threadId: turn.threadId, text: turn.text, system: turn.system ?? "", ...(turn.integrations?.phoneJobs ? { phoneJobs: { tools: turn.integrations.phoneJobs.env.MURAGE_PHONE_TOOLS ?? "", hasToken: Boolean(turn.integrations.phoneJobs.env.MURAGE_CONTROL_TOKEN) } } : {}) });
             rmSync(join(dir, "limit"), { force: true });
             active.delete(turn.threadId);
             emit({ type: "turn.completed", ok: false, stopReason: "usage limit reached", threadId: turn.threadId, turnId });
@@ -98,7 +98,7 @@ export function makeAskDriver(kind: string = ASK_DRIVER_KIND): AnyProviderDriver
             // This append is the fixture engine's actual prompt ingress. A receipt
             // follows its synchronous acceptance, never allocation or validation.
             enteredWrite = true;
-            note({ turnId, threadId: turn.threadId, text: turn.text, system: turn.system ?? "", ...(turn.integrations?.phoneJobs ? { phoneJobs: { tools: turn.integrations.phoneJobs.env.MURAGE_PHONE_TOOLS ?? "", hasToken: Boolean(turn.integrations.phoneJobs.env.MURAGE_CONTROL_TOKEN) } } : {}), ...(turn.integrations?.highlevel ? { highlevel: true } : {}) });
+            note({ turnId, threadId: turn.threadId, text: turn.text, system: turn.system ?? "", ...(turn.integrations?.phoneJobs ? { phoneJobs: { tools: turn.integrations.phoneJobs.env.MURAGE_PHONE_TOOLS ?? "", hasToken: Boolean(turn.integrations.phoneJobs.env.MURAGE_CONTROL_TOKEN) } } : {}) });
             if (nativeTrace) appendNative(turn.threadId, { dir: "out", source: "fakeAsk", msg: { type: "user", prompt: turn.text, turnId } });
             turn.attemptWritten?.(attempt);
             turn.onEngineWrite?.();

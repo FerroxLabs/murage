@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { peerContactHint } from "@/lib/permission-mode";
 import { en } from "@/locales";
+import { settingsPanelSource } from "./components/bot-pages/panel-source";
 
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -37,7 +38,7 @@ describe("0.1.60 copy flags", () => {
 
   it("Review ordinary approvals never says safe", () => {
     // The card's copy lives in the language pack (settings.bot.review.*).
-    const panel = source("./components/SettingsPanel.tsx");
+    const panel = settingsPanelSource();
     expect(panel).toContain('t("settings.bot.review.title")');
     expect(panel).toContain('t("settings.bot.review.unsupported")');
     const block = Object.entries(en).filter(([key]) => key.startsWith("settings.bot.review.")).map(([, value]) => value);

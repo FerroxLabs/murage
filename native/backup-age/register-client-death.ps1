@@ -1,15 +1,7 @@
+param([Parameter(Mandatory=$true)][string]$Account,[Parameter(Mandatory=$true)][string]$DesktopSid,[Parameter(Mandatory=$true)][string]$ProfileRoot,[Parameter(Mandatory=$true)][string]$ProbeSha256,[Parameter(Mandatory=$true)][string]$HelperSha256)
 $ErrorActionPreference = 'Stop'
-$scratch = 'C:\Users\fixture-user\AppData\Local\Temp\murage-b20-dirguard-20260913-154251'
-$taskName = 'Murage-B20-ClientDeath-20260913-161500'
-if ((Get-CimInstance Win32_ComputerSystem).UserName -ne 'FIXTURE-PC\fixture-user') { throw 'Expected interactive account unavailable' }
-if (Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue) { throw 'Task already exists' }
-if (Test-Path "$scratch\client-death-invoked.txt") { throw 'Already invoked' }
-$arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -Command "& ''{0}\native-probe.exe'' --limited-session *> ''{0}\client-death.log''; exit $LASTEXITCODE"' -f $scratch
-$action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Argument $arguments -WorkingDirectory $scratch
-$principal = New-ScheduledTaskPrincipal -UserId 'FIXTURE-PC\fixture-user' -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName $taskName -TaskPath '\' -InputObject (New-ScheduledTask -Action $action -Principal $principal -Settings $settings) | Out-Null
-Export-ScheduledTask -TaskName $taskName -TaskPath '\' | Set-Content -LiteralPath "$scratch\client-death-task.xml"
-[DateTime]::UtcNow.ToString('o') | Set-Content -LiteralPath "$scratch\client-death-invoked.txt"
-Start-ScheduledTask -TaskName $taskName -TaskPath '\'
-[pscustomobject]@{task=$taskName;startedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress
+. (Join-Path $PSScriptRoot 'real-main-qualification\qualification-identity.ps1')
+. (Join-Path $PSScriptRoot 'real-main-qualification\qualification-paths.ps1')
+. (Join-Path $PSScriptRoot 'real-main-qualification\qualification-run.ps1')
+$ProfileRoot=Confirm-QualificationProfile $Account $DesktopSid $ProfileRoot
+Invoke-QualificationSibling -Account $Account -DesktopSid $DesktopSid -ProfileRoot $ProfileRoot -RepoRoot $PSScriptRoot -Scratch 'murage-b20-dirguard-20260913-154251' -TaskName 'Murage-B20-ClientDeath-20260913-161500' -Mode '--limited-session' -Log 'client-death.log' -Xml 'client-death-task.xml' -Invoked 'client-death-invoked.txt' -Lease 'client-death-lease.txt' -LimitMinutes 10 -ProbeSha256 $ProbeSha256 -HelperSha256 $HelperSha256

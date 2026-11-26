@@ -21,7 +21,7 @@ for await (const line of createInterface({input:process.stdin})) { const rpc=JSO
 const result=rpc.method==='initialize'?{protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:rpc.method==='tools/list'?{tools:[{name:'fixture_ping',inputSchema:{type:'object'}}]}:{content:[{type:'text',text:'gnl-host-pong'}]};
 process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:rpc.id,result})+'\\\\n');}\`);
 fs.chmodSync(driver, 0o755);
-fs.writeFileSync(path.join(process.env.MURAGE_DATA_DIR, 'cua-connection.json'), JSON.stringify({mode:'embedded',status:'ready',socketPath:path.join(process.env.MURAGE_DATA_DIR,'fake.sock'),mcpCommand:driver,mcpArgs:['mcp'],mcpEnv:{}}));
+fs.writeFileSync(path.join(process.env.MURAGE_DATA_DIR, 'cua-connection.json'), JSON.stringify({mode:'embedded',status:'ready',socketPath:path.join(process.env.MURAGE_DATA_DIR,'fake.sock'),mcpCommand:driver,mcpArgs:['mcp'],mcpEnv:{CUA_DRIVER_RS_TELEMETRY_ENABLED:'0',CUA_DRIVER_RS_UPDATE_CHECK:'false'}}));
 const {registerHooks}=await import('node:module');
 registerHooks({load(url,context,next){
  if(url.endsWith('/server/local-routing.ts') || url.endsWith('/server/host-computer-consent.ts') || url.endsWith('/server/local-computer.ts')) {

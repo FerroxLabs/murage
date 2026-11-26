@@ -22,7 +22,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { openSidebar } from "./fixtures.ts";
+import { dismissFirstRunWelcome, openSidebar } from "./fixtures.ts";
 import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE } from "../../shared/memory.ts";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
@@ -122,6 +122,10 @@ async function openApp(page: Page) {
   const engines = page.waitForResponse((response) => /\/api\/instances(\?|$)/.test(response.url()) && response.ok(), { timeout: 60_000 });
   await page.goto(origin);
   await expect(page.getByRole("complementary", { name: "Bots and navigation" }).or(page.getByRole("button", { name: "Open bot list" }))).toBeVisible();
+  const welcome = page.getByRole("dialog", { name: "Welcome to Murage", exact: true });
+  await expect(welcome, "a fresh install opens the first-run welcome").toBeVisible();
+  await dismissFirstRunWelcome(page);
+  await expect(welcome, "the first-run welcome is dismissed before the first action").toBeHidden();
   await engines;
 }
 const composer = (page: Page, name: string) => page.getByRole("textbox", { name: `Message ${name}`, exact: true });

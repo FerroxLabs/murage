@@ -158,9 +158,20 @@ it.each(["closing-chat", "finch-desk", "finch-direct"])("retains failed tool evi
   expect(() => saveMemoryCandidate("The delegation completed", [{ sourceId: `message:${threadId}:failed-tool`, revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "failed-fact", access("finch", threadId))).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
 });
 
+/** memv2-E E2: a tool outcome's (or legacy activity's) capture job is now born complete and owes its checkpoint at once. The rows below
+ * stand for what an older build left on the owner's file, which queued that job pending and published it through a lease: the fixture
+ * puts the job back as that build wrote it (pending, no debt marker yet), so the claim and publish that follow are the older build's. */
+function asOlderBuildQueued(sourceId: string) {
+  const job = database().prepare("SELECT id,status FROM memory_jobs WHERE source_id=?").get(sourceId) as { id: string; status: string };
+  expect(job.status, "born complete (E2)").toBe("complete");
+  database().prepare("UPDATE memory_jobs SET status='pending',cursor=0,coverage='[]' WHERE id=?").run(job.id);
+  database().prepare("DELETE FROM memory_scope_bindings WHERE id=?").run(`checkpoint-debt:${job.id}`);
+}
+
 it("does not carry a previously captured failed tool into a checkpoint", () => {
   reconcileMemoryRoster(roster); setMemoryMode("capture");
   captureSource(database(), { id: "legacy-tool", threadId: "closing-chat", kind: "tool-outcome", speaker: "tool", outcome: "completed", text: "delegate_bot Failed to parse arguments: Tool not found" });
+  asOlderBuildQueued("legacy-tool");
   const work = claimMemoryJob("pf-checkpoint")!;
   publishMemoryWork(work, "pf-checkpoint", captureWork(work));
   // A stored row from before PF, whose failed outcome was kept in memory.
@@ -179,6 +190,7 @@ it("retains the simulation's legacy activity only for learning",()=>{
 it("removes the simulation's assistant-inference failed activity from checkpoint evidence",()=>{
  reconcileMemoryRoster(roster); setMemoryMode("capture");
  captureSource(database(),{id:"sim-legacy",threadId:"closing-chat",kind:"activity",speaker:"assistant",outcome:"completed",text:simulationFailure});
+ asOlderBuildQueued("sim-legacy");
  const work=claimMemoryJob("sim-replay")!;
  // From 1.0.15 a legacy activity is a tool's outcome and its capture writes no source record (MEMORY-TOOL-NAME-JUNK); a record an older
  // build wrote is still on the owner's file, so it is made here the way those builds made it (the same work published as a reply line).
@@ -192,6 +204,7 @@ it("removes the simulation's assistant-inference failed activity from checkpoint
 it.each(["recall", "extraction"])("withholds legacy failed activity from %s while retaining learning evidence", async path => {
   reconcileMemoryRoster(roster); setMemoryMode("capture");
   captureSource(database(), { id: "legacy-recall", threadId: "closing-chat", kind: "activity", speaker: "assistant", outcome: "completed", text: simulationFailure });
+  asOlderBuildQueued("legacy-recall");
   const work = claimMemoryJob("legacy-recall")!;
   // a record an older build wrote for a legacy activity (from 1.0.15 its capture writes none): made the way those builds made it
   publishMemoryWork({ ...work, kind: "text" }, "legacy-recall", captureWork(work));
@@ -206,6 +219,7 @@ it.each(["recall", "extraction"])("withholds legacy failed activity from %s whil
 it("refuses a legacy failed tool outcome through lane D's learnable-source gate", async () => {
   reconcileMemoryRoster(roster); setMemoryMode("capture");
   captureSource(database(), { id: "legacy-failed-tool", threadId: "closing-chat", kind: "tool-outcome", speaker: "tool", outcome: "completed", text: "delegate_bot Failed to parse arguments: Tool not found" });
+  asOlderBuildQueued("legacy-failed-tool");
   const work = claimMemoryJob("legacy-failed-tool")!;
   publishMemoryWork(work, "legacy-failed-tool", captureWork(work));
   database().prepare("UPDATE memory_sources SET outcome='failed' WHERE id='legacy-failed-tool'").run();

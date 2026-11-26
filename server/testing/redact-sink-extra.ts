@@ -298,7 +298,7 @@ export const extraSinkWitnesses: Record<string, () => unknown> = {
         const { readGrokRosterNames } = await import('../move-in-found.ts');
         const cache = join('/fixture', '.config', 'Grok Bot', 'sand-client-persistence'), name = base32('sand.client.slice.account.fixture.roster.last-roster') + '.blob';
         const raw = JSON.stringify({ schemaVersion: 1, value: { rows: [{ name: 'Fixture' }, { name: 'api_key=' + key }] } });
-        const names = readGrokRosterNames({ home: () => '/fixture', realDir: () => true, list: dir => dir === cache ? [name] : [], size: () => Buffer.byteLength(raw), read: () => raw });
+        const names = await readGrokRosterNames({ home: () => '/fixture', realDir: () => true, list: dir => dir === cache ? [name] : [], size: () => Buffer.byteLength(raw), read: () => raw });
         expect(names).toEqual(['Fixture']);
         output(names);
     },

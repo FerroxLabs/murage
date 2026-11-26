@@ -140,7 +140,8 @@ describe("PIP kind list", () => {
     // MAIN RULING 1115-RECALL-R7 (GrokBuild)
     expect(counts).toEqual({
       "memory/recall-view.ts": 3,
-      "memory/recall-view-index.ts": 2,
+      // q1022-recallperf item 3: +1, VIEW_UNTERMED_PAGE_SQL's point lookup of a newer checkpoint version (I-15: it names its kinds and excludes PIP kinds).
+      "memory/recall-view-index.ts": 3,
       "memory/checkpoint-schema.ts": 2,
       "memory/recall-readiness.ts": 2,
       // Integration census: existing queued-approval point reads in authority (+4) and routes (+2)
@@ -166,7 +167,7 @@ describe("PIP kind list", () => {
       // +3 MEM-QUEUED-LEARNING-FENCE (r1 H1): the send gate re-checks each held `current` row by id and version (state, latest
       // version, and the text only to compare its digest under the write lock); point lookups; nothing read goes to a model or the owner
       "memory/learning-send.ts": 3,
-      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 12, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 6, "memory/procedure-review.ts": 3,
+      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/owner-list.ts": 12, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 6, "memory/procedure-review.ts": 3,
       // record-keys +1 (682a98a44a): the bounded predecessor probe reads a creation time and age key, no text;
       // this is administrative key allocation, never a model or owner record reader.
       // record-keys +1 (io-hotpath): the rebuild start log reads max(rowid) only, an administrative count with no row, kind or text

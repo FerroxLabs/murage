@@ -25,6 +25,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 import { check, configGateRunners, deriveOses, nodeGateFiles, readLists, select } from "./ci-test-tiers.mjs";
+import NightlySequencer from "./nightly-sequencer.mjs";
 
 describe("WhatsApp final release evidence", () => {
   const jobs = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")).jobs;
@@ -138,7 +139,7 @@ describe("Linux Vitest cage preparation", () => {
     // nightly-perf.yml is private: the public tree's scrub removes it (pub/v100/scrub.sh), so it is expected only where it exists
     expect(covered).toEqual(expect.arrayContaining([
       "ci.yml:quality", "ci.yml:vitest", "ci.yml:extended", "ci.yml:control-plane", "ci.yml:mobile",
-      "ci.yml:human", "ci.yml:human-confirmation", "nightly.yml:slow", ...(existsSync(join(workflows, "nightly-perf.yml")) ? ["nightly-perf.yml:perf-budget"] : []), "package-linux.yml:package",
+      "ci.yml:human", "ci.yml:human-confirmation", "nightly.yml:slow", "nightly.yml:nightly-scale", ...(existsSync(join(workflows, "nightly-perf.yml")) ? ["nightly-perf.yml:perf-budget"] : []), "package-linux.yml:package",
       "memory-timing-nightly.yml:timing", "memory-timing-nightly.yml:wasm-parity", "flux-contract-daily.yml:contract",
     ]));
     for (const name of readdirSync(join(repo, "actions"))) {
@@ -672,7 +673,8 @@ describe("release.yml provenance gates (audit C8)", () => {
 
   it("the x64 smoke runs natively on an Intel runner with one retry", () => {
     const job = release.jobs["mac-x64"];
-    expect(job["runs-on"]).toBe("macos-15-intel");
+    expect(job["runs-on"]).toBe("${{ vars.MURAGE_MAC_INTEL_RELEASE_RUNNER || 'macos-15-intel' }}");
+    expect(release.jobs.mac["runs-on"]).toBe("${{ vars.MURAGE_MAC_RELEASE_RUNNER || 'macos-15-xlarge' }}");
     const smoke = stepBy("mac-x64", "Qualify packaged WhatsApp (darwin-x64)");
     expect(smoke.run).toContain("for attempt in 1 2");
     expect(smoke.run).not.toContain("arch -x86_64");
@@ -701,11 +703,43 @@ describe("release.yml provenance gates (audit C8)", () => {
     expect(release.jobs.linux.steps.some(item => String(item.uses ?? "").startsWith("actions/attest-build-provenance@"))).toBe(false);
   });
 
-  it("assembly requires the signature whenever one was made, and never lets a stray file through", () => {
+  it("staging always requires the Linux checksum signature and an exact asset count", () => {
     const gate = release.jobs.stage.steps.find(step => String(step.name).startsWith("Refuse an incomplete installer"));
-    expect(gate.run).toContain("SHA256SUMS-ubuntu-x64.txt.asc");
-    expect(gate.run).toContain("required+=(");
+    expect(gate.run).toMatch(/^\s*SHA256SUMS-ubuntu-x64\.txt\.asc\s*$/m);
     expect(gate.run).toContain('"${#required[@]}"');
+  });
+
+  it("staging admits the complete signed installer set and refuses missing or stray assets", () => {
+    const gate = stepBy("stage", "Refuse an incomplete installer");
+    const version = "1.0.20";
+    const signature = "SHA256SUMS-ubuntu-x64.txt.asc";
+    const files = [
+      "latest-linux.yml", "latest-mac.yml", "latest.yml",
+      ...["amd64.deb", "arm64.dmg", "arm64.dmg.blockmap", "arm64.zip", "arm64.zip.blockmap",
+        "setup.exe", "setup.exe.blockmap", "x64.dmg", "x64.dmg.blockmap", "x64.zip",
+        "x64.zip.blockmap", "x86_64.AppImage"].map(suffix => `Murage-${version}-${suffix}`),
+      "Murage-amd64.deb", "Murage-intel.dmg", "Murage-setup.exe", "Murage.AppImage", "Murage.dmg",
+      "SHA256SUMS-ubuntu-x64.txt", signature, `capability-db-${version}.json`,
+    ];
+    function verify(names) {
+      const dir = mkdtempSync(join(tmpdir(), "release-stage-"));
+      try {
+        mkdirSync(join(dir, "assets"));
+        for (const name of names) writeFileSync(join(dir, "assets", name), "fixture");
+        return spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", gate.run], {
+          cwd: dir, env: { ...process.env, VERSION: version }, encoding: "utf8",
+        });
+      } finally {
+        removeTempDirSync(dir);
+      }
+    }
+    expect(verify(files).status).toBe(0);
+    const stray = verify([...files, "stray.txt"]);
+    expect(stray.status).toBe(1);
+    expect(stray.stdout).toContain("unexpected release asset set");
+    const missing = verify(files.filter(name => name !== signature));
+    expect(missing.status).toBe(1);
+    expect(missing.stdout).toContain(`missing or empty release asset: ${signature}`);
   });
 });
 
@@ -752,7 +786,7 @@ describe("tests CI's shards leave out still run (nightly.yml)", () => {
     expect(slow.strategy.matrix.os).toEqual(["macos-latest", "ubuntu-24.04", "windows-latest"]);
     expect(slow.steps.some(step => step.uses === "./.github/actions/vitest-runtime")).toBe(true);
     expect(slow.steps.find(step => step.name === "Run the nightly tests").run).toContain("--tags-filter=nightly");
-    expect(slow.steps.find(step => step.name === "Run the whole-file scale tests").run).toContain("ci-test-tiers.mjs list --tier nightly");
+    expect(nightly.jobs["nightly-scale"].steps.find(step => step.name === "Run the whole-file scale tests").run).toContain("ci-test-tiers.mjs list --tier nightly");
     // The perf-budget job needs host and SSH secrets, so it lives in a private-only workflow that the public
     // scrub removes (scrub.sh). Public nightly.yml must never hold it; when the private file exists, check it.
     expect(nightly.jobs).not.toHaveProperty("perf-budget");
@@ -768,11 +802,92 @@ describe("tests CI's shards leave out still run (nightly.yml)", () => {
     expect(triggers(nightly).schedule?.length).toBeGreaterThan(0);
     expect(triggers(nightly)).toHaveProperty("workflow_dispatch");
     // MAIN RULING INT-CONFLICT-DEFAULT c24d4d9fef 619386c4b7: both slow tests and portal journeys block nightly.
-    expect(nightly.jobs.nightly.needs).toEqual(["slow", "cloud-portal"]);
+    expect(nightly.jobs.nightly.needs).toEqual(["slow", "nightly-scale", "cloud-portal", "real-engine-package", "real-engine"]);
     expect(nightly.jobs.nightly.steps[0].env.CLOUD_PORTAL).toBe("${{ needs.cloud-portal.result }}");
     expect(nightly.jobs.nightly.steps[0].run).toContain('test "$CLOUD_PORTAL" = success');
     expect(nightly.jobs.nightly.if).toBe("${{ always() }}");
     expect(nightly.jobs.nightly.steps[0].run).toContain('test "$SLOW" = success');
+  });
+
+  it("runs whole-file scale separately on every OS and requires its result", () => {
+    const { slow, "nightly-scale": scale, nightly: aggregate } = nightly.jobs;
+    expect(aggregate.needs).toEqual(expect.arrayContaining(["slow", "nightly-scale"]));
+    for (const [id, job] of Object.entries(nightly.jobs)) {
+      if (job.steps?.some(step => /--tags-filter=nightly|ci-test-tiers\.mjs list --tier nightly/.test(step.run ?? ""))) {
+        expect(aggregate.needs, id).toContain(id);
+      }
+    }
+    expect(slow.steps.some(step => step.run?.includes("ci-test-tiers.mjs list --tier nightly"))).toBe(false);
+    expect(slow.strategy.matrix.shard).toEqual([1, 2, 3]);
+    expect(slow.steps.find(step => step.name === "Run the nightly tests").run).toContain("--config vitest.nightly.config.ts --shard=${{ matrix.shard }}/3");
+    expect(scale.strategy.matrix.os).toEqual(slow.strategy.matrix.os);
+    expect(Object.keys(scale.strategy.matrix)).toEqual(["os"]);
+    expect(scale["runs-on"]).toBe("${{ matrix.os }}");
+    expect(scale.if).toBeUndefined();
+    expect(scale["continue-on-error"]).toBeUndefined();
+    expect(scale.steps.some(step => step.uses === "./.github/actions/vitest-runtime")).toBe(true);
+    const run = scale.steps.find(step => step.name === "Run the whole-file scale tests");
+    expect(run.if).toBeUndefined();
+    expect(run["continue-on-error"]).toBeUndefined();
+    expect(run.run.trimEnd().split("\n").at(-1)).toBe('node node_modules/vitest/vitest.mjs run "${args[@]}"');
+    expect(aggregate.steps[0].env.SCALE).toBe("${{ needs.nightly-scale.result }}");
+    expect(aggregate.steps[0].run.split("\n")).toContain('test "$SCALE" = success');
+  });
+
+  it("balances measured heavy files and includes untimed files exactly once", async () => {
+    const heavy = ["server/memory/testing/b34-extractor-adapter.test.ts", "server/memory/msearch-r6.test.ts"]
+      .map(file => ({ moduleId: join(root, file) }));
+    const untimed = ["a", "b", "c"].map(file => ({ moduleId: join(root, `${file}.test.ts`) }));
+    const files = [...untimed, ...heavy];
+    const shard = index => new NightlySequencer({ config: { root, shard: { index, count: 2 } } }).shard(files);
+    const [first, second] = await Promise.all([shard(1), shard(2)]);
+    expect(first).toEqual([heavy[0]]);
+    expect(second).toEqual([heavy[1], ...untimed]);
+  });
+
+  it("assigns files through the production nightly config: `vitest run --shard` uses the weighted sequencer", async () => {
+    // Real entry point: the `vitest run --config vitest.nightly.config.ts --shard=N/3` command nightly.yml runs. The file filters
+    // keep it to the timed files and -t matches no test, so each shard only reports which files it was assigned.
+    const timed = [...readFileSync(new URL("./nightly-sequencer.mjs", import.meta.url), "utf8").matchAll(/^  "(server\/[^"]+)"/gm)].map(match => match[1]);
+    expect(timed.length).toBeGreaterThan(20);
+    const assigned = index => {
+      const out = spawnSync(process.execPath, [join(root, "node_modules/vitest/vitest.mjs"), "run", "--config", "vitest.nightly.config.ts",
+        `--shard=${index}/3`, "-t", "no-test-matches-this", "--reporter=json", ...timed], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28, timeout: 240000 });
+      const report = JSON.parse(out.stdout.slice(out.stdout.indexOf("{")));
+      return report.testResults.map(result => result.name);
+    };
+    const shards = [1, 2, 3].map(assigned);
+    const all = shards.flat();
+    expect(all.length).toBe(timed.length);
+    expect(new Set(all).size).toBe(timed.length);
+    const expected = await Promise.all([1, 2, 3].map(index => new NightlySequencer({ config: { root, shard: { index, count: 3 } } })
+      .shard(all.map(moduleId => ({ moduleId })))));
+    for (const index of [0, 1, 2]) expect(shards[index].slice().sort()).toEqual(expected[index].map(file => file.moduleId).sort());
+    const heavy = ["server/memory/testing/b34-extractor-adapter.test.ts", "server/memory/msearch-r6.test.ts", "server/memory/writetime-differential.test.ts"]
+      .map(file => shards.findIndex(files => files.some(name => name.replaceAll("\\", "/").endsWith(`/${file}`))));
+    expect(heavy).toEqual([0, 1, 2]);
+  }, 300000);
+
+  it("requires both the engine package and matrix to succeed before nightly passes", () => {
+    const aggregate = nightly.jobs.nightly;
+    const step = aggregate.steps[0];
+    const env = {
+      ...process.env,
+      ...Object.fromEntries(Object.keys(step.env).map(name => [name, "success"])),
+      REAL_ENGINE_PACKAGE: "success",
+      REAL_ENGINE: "success",
+    };
+    const status = (overrides = {}) => spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step.run], {
+      env: { ...env, ...overrides },
+    }).status;
+    expect(status()).toBe(0);
+    for (const [name, job] of [["REAL_ENGINE_PACKAGE", "real-engine-package"], ["REAL_ENGINE", "real-engine"]]) {
+      for (const result of ["skipped", "failure", "cancelled", ""]) {
+        expect(status({ [name]: result }), `${job}: ${result || "missing"}`).toBe(1);
+      }
+      expect(aggregate.needs).toContain(job);
+      expect(step.env[name]).toBe(`\${{ needs.${job}.result }}`);
+    }
   });
 
   it("the release gate reads this workflow", () => {
@@ -803,6 +918,12 @@ describe("only GATE tests block CI (ci/gate-tests.txt)", () => {
     const count = os => (os === "windows" ? 12 : 10);
     const shards = os => Array.from({ length: count(os) }, (_, i) => select({ tier: "gate", os, shard: `${i + 1}/${count(os)}` }).files).flat();
     const all = new Set(["linux", "mac", "windows"].flatMap(shards));
+    for (const config of configGateRunners()) {
+      const runner = load("ci.yml").jobs.vitest.steps.find(step => step.run?.includes(config) && step.run.includes("--config"));
+      expect(runner, `${config} needs a blocking runner on the Vitest OS matrix`).toBeDefined();
+      expect(runner["continue-on-error"]).toBeUndefined();
+      expect(runner.if).toBe("${{ !cancelled() && inputs.vitest_file == '' && matrix.vitest_shard == 1 }}");
+    }
     // Node GATE files run in quality, not in Vitest shards. Prove that
     // runner is blocking and covers every declared OS before counting them.
     const quality = load("ci.yml").jobs.quality;
@@ -1011,5 +1132,26 @@ describe("workflow env blocks only use contexts GitHub allows there", () => {
     expect(offenders({ R: "${{ runner.temp }}/windows-pe-sources.json" }, "jobs.windows.env")).toEqual(["jobs.windows.env R"]);
     expect(offenders({ S: "${{ steps.x.outputs.y }}", J: "${{ job.status }}", E: "${{ env.A }}" }, "env")).toEqual(["env S", "env J", "env E"]);
     expect(offenders({ OK: "${{ vars.X }} ${{ github.workspace }}/a ${{ needs.prepare.outputs.sha }} ${{ matrix.os }} ${{ secrets.Y }} ${{ inputs.ref }}" }, "env")).toEqual([]);
+  });
+});
+
+describe('Fuigo current release qualification', () => {
+  it('T-TRUST-F06-workflow: every release checks final packages independently before staging can succeed', () => {
+    const { stage, assemble } = load('release.yml').jobs;
+    const gate = stage.steps.find(step => step.run === 'node scripts/fuigo-trust-release.mjs');
+    expect(gate).toBeDefined();
+    expect(gate.if).toBeUndefined(); expect(gate['continue-on-error']).toBeUndefined();
+    expect(gate.env).toEqual({
+      SHA: '${{ needs.prepare.outputs.sha }}',
+      MURAGE_TRUST_EXPECTED_RELEASE: '${{ vars.MURAGE_TRUST_EXPECTED_RELEASE }}',
+      MURAGE_TRUST_RECEIPT: '${{ vars.MURAGE_TRUST_RECEIPT }}',
+      MURAGE_TRUST_CAPTURES: '${{ vars.MURAGE_TRUST_CAPTURES }}',
+    });
+    expect(stage.if).toBe("needs.prepare.outputs.should_release == 'true'");
+    expect(stage['continue-on-error']).toBeUndefined();
+    expect(stage.steps.indexOf(gate)).toBeLessThan(stage.steps.findIndex(step => step.with?.name === 'release-staged-assets-${{ github.run_attempt }}'));
+    const wait = assemble.steps.findIndex(step => step.run === 'node scripts/release-guard.mjs wait-stage');
+    expect(wait).toBeGreaterThan(-1);
+    expect(wait).toBeLessThan(assemble.steps.findIndex(step => step.run === 'node scripts/release-guard.mjs publish-prepared'));
   });
 });

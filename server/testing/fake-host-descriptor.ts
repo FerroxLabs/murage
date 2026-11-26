@@ -55,8 +55,8 @@ export function fakeHostDescriptorSource({ driverSource, driverEnv }: {
     fs.writeFileSync(path.join(dataDir, 'cua-connection.json'), JSON.stringify({
       schemaVersion: 1, mode: 'linux-x11-supervised', platform: 'linux', session: 'x11', enabled: true, status: 'ready',
       ownerPid: process.pid, generation: randomUUID(),
-      driver: { path: driver, version: '0.19.3', source: 'path', manifestSchema: '1', fileIdentity },
-      daemon: { socketPath, pid: process.pid, contractVersion: '0.6.0', toolsListSchemaVersion: '1', capabilityVersion: '1', mcpProtocolVersion: '2025-06-18' },
+      driver: { path: driver, version: '0.55.0', source: 'path', manifestSchema: '1', fileIdentity },
+      daemon: { socketPath, pid: process.pid, contractVersion: '0.9.0', toolsListSchemaVersion: '1', capabilityVersion: '1', mcpProtocolVersion: '2025-06-18' },
       mcp: { command: driver, args: ['mcp', '--embedded', '--socket', socketPath], env: { CUA_DRIVER_EMBEDDED: '1', CUA_DRIVER_HOST_BUNDLE_ID: 'com.murage.app', CUA_DRIVER_RS_UPDATE_CHECK: 'false', CUA_DRIVER_RS_TELEMETRY_ENABLED: 'false' } },
       toolNames: ['click', 'get_window_state', 'list_apps', 'type_text'], doctorWarnings: [],
     }), { mode: 0o600 });
@@ -66,7 +66,7 @@ export function fakeHostDescriptorSource({ driverSource, driverEnv }: {
     const driver = path.join(dataDir, 'fake-host-driver.mjs');
     fs.writeFileSync(driver, '#!' + process.execPath + String.fromCharCode(10) + driverSource);
     fs.chmodSync(driver, 0o755);
-    fs.writeFileSync(path.join(dataDir, 'cua-connection.json'), JSON.stringify({ mode: 'embedded', status: 'ready', socketPath: path.join(dataDir, 'cua.sock'), mcpCommand: driver, mcpArgs: ['mcp'], mcpEnv: driverEnv }));
+    fs.writeFileSync(path.join(dataDir, 'cua-connection.json'), JSON.stringify({ mode: 'embedded', status: 'ready', socketPath: path.join(dataDir, 'cua.sock'), mcpCommand: driver, mcpArgs: ['mcp'], mcpEnv: { ...driverEnv, CUA_DRIVER_RS_TELEMETRY_ENABLED: '0', CUA_DRIVER_RS_UPDATE_CHECK: 'false' } }));
   }
 }
 `;

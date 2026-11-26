@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { guardTurnDispatch, TurnSubmissionBoundary } from "./turn-dispatch-guard.ts";
 const api = existsSync(new URL("./ledger-refusal.ts", import.meta.url)) ? await import("./ledger-refusal.ts") : undefined;
 const LEDGER_REFUSAL_LINE = "I stopped this turn because some of its context is no longer available.";
+const BUDGET_REFUSAL_LINE = "I stopped this turn because it grew past a safety limit. Nothing was removed from memory.";
 const createLedgerRefusal: typeof import("./ledger-refusal.ts").createLedgerRefusal = (...args) => {
   expect(api?.createLedgerRefusal, "T-LEDGER-STOP requires the admission-owned once-only refusal lifecycle").toBeTypeOf("function");
   expect(api?.createLedgerRefusal, "BUILD-FIX 21 requires a generation-bound seal/interrupt/settlement latch").toBeTypeOf("function");
@@ -242,7 +243,8 @@ it("T-LEDGER-STOP quarantines exactly at the unconfirmed-stop deadline", async (
       seal: vi.fn(), interrupt: () => new Promise(() => {}), settle, present, quarantine,
     });
     handler.onLedgerRefused({ state: "checking", reason: "retained-budget" });
-    expect(settle).toHaveBeenCalledOnce(); expect(present).toHaveBeenCalledExactlyOnceWith(LEDGER_REFUSAL_LINE);
+    // 1.0.21 cause22 row 4: this verdict is the release budget (bookkeeping); it is told with the budget line, never the context line
+    expect(settle).toHaveBeenCalledOnce(); expect(present).toHaveBeenCalledExactlyOnceWith(BUDGET_REFUSAL_LINE);
     await vi.advanceTimersByTimeAsync(4999); expect(quarantine).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1); expect(quarantine).toHaveBeenCalledOnce();
     expect(handler.quarantined).toBe(true); expect(settle).toHaveBeenCalledOnce();
@@ -272,7 +274,8 @@ it("keeps the first verdict and quarantines once even when teardown ports throw"
   expect(handler.state).toBe("settled"); expect(handler.quarantined).toBe(true);
   expect(handler.verdict).toEqual({ state: "checking", reason: "retained-budget" });
   expect(interrupt).toHaveBeenCalledTimes(1); expect(quarantine).toHaveBeenCalledTimes(1);
-  expect(settle).toHaveBeenCalledTimes(1); expect(present).toHaveBeenCalledExactlyOnceWith(LEDGER_REFUSAL_LINE);
+  // 1.0.21 cause22 row 4: the first verdict (the release budget) picks the line; a later verdict never changes it
+  expect(settle).toHaveBeenCalledTimes(1); expect(present).toHaveBeenCalledExactlyOnceWith(BUDGET_REFUSAL_LINE);
 });
 
 // red-at-4df086541: no admitted immutable lease survived asynchronous provider hand-back.

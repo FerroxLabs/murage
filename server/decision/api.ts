@@ -1,3 +1,5 @@
+// Settlement issuer/caller owner: skills lane. Decision delivery/receipt owner: decision lane.
+import type { Settlement } from '../skill-switch-settlement.ts';
 import type * as T from './types.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Frozen public contract; S1 owns the delegated implementation.
@@ -12,7 +14,9 @@ export function openRequest(_source: RequestSource): RequestHandle { return impl
 export function decide(_handle: RequestHandle, _base: BaseVerdictFn): Outcome { return implementation.decide(_handle, _base); }
 export function presentApproval(_ref: ApprovalRef, _view: ApprovalView): Promise<void> { return implementation.presentApproval(_ref, _view); }
 export function attachQueue(_ref: ApprovalRef, _queue: QueueAttachment): void { return implementation.attachQueue(_ref, _queue); }
-export function answerApproval(_ref: ApprovalRef, _answer: ApprovalAnswer): Promise<void> { return implementation.answerApproval(_ref, _answer); }
+export function answerApproval(_ref: ApprovalRef, _answer: ApprovalAnswer, settlement?: Settlement): Promise<void> { return implementation.answerApproval(_ref, _answer, settlement); }
+/** 1021 Retry (RETRY-DESIGN-r2): re-send the stored answer of a delivery-failed engine card through the release gate. */
+export function retryDelivery(_ref: ApprovalRef): Promise<Awaited<ReturnType<typeof implementation.retryDelivery>>> { return implementation.retryDelivery(_ref); }
 export function onLevelChange(_botId: string): Promise<void> { return implementation.onLevelChange(_botId); }
 export function installProvenanceReader(_reader: ProvenanceReader): void { return implementation.installProvenanceReader(_reader); }
 export function installDenySources(_sources: DenySources): void { return implementation.installDenySources(_sources); }
@@ -115,7 +119,7 @@ export function presentApprovalSync(ref: ApprovalRef, view: ApprovalView): void 
 /** Additional synchronous capability on the installed live queue instances. */
 export function installSynchronousQueueDeliveries(deliveries: readonly import('./types.ts').SynchronousQueueDelivery[]): () => void { return implementation.installSynchronousQueueDeliveries(deliveries); }
 /** Persist answerId and pending before synchronous transport; never accept a Promise. */
-export function answerApprovalSync(ref: ApprovalRef, answer: ApprovalAnswer): import('../contracts.ts').RequestDelivery { return implementation.answerApprovalSync(ref, answer); }
+export function answerApprovalSync(ref: ApprovalRef, answer: ApprovalAnswer, settlement?: Settlement): import('../contracts.ts').RequestDelivery { return implementation.answerApprovalSync(ref, answer, settlement); }
 /** Canonical and legacy successful answer labels only; failed/restart labels are excluded. */
 export function isAllowedAnswer(answer: unknown): boolean { return implementation.isAllowedAnswer(answer); }
 

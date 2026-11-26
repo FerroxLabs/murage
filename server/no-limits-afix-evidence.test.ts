@@ -1,3 +1,4 @@
+import { archivedEvidencePath } from '../scripts/evidence-path.mjs';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect, it } from 'vitest';
@@ -5,11 +6,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
 it('Medium: C3 qualification maps every baseline probe to a pinned starting-commit assertion failure', () => {
-  const qualification = JSON.parse(readFileSync('evidence/nlsym-build-B/C3-QUALIFICATION.json', 'utf8'));
+  const qualification = JSON.parse(readFileSync(archivedEvidencePath('evidence/nlsym-build-B/C3-QUALIFICATION.json'), 'utf8'));
   expect(qualification.startingCommitRed).toBeDefined();
-  const mapping = JSON.parse(readFileSync(qualification.startingCommitRed.mapping, 'utf8'));
+  const mapping = JSON.parse(readFileSync(archivedEvidencePath(qualification.startingCommitRed.mapping), 'utf8'));
   expect(mapping.baseline).toBe('ff106a925d56be3bbeb06f4d57528f470063d454');
-  const harness = readFileSync(mapping.harness);
+  const harness = readFileSync(archivedEvidencePath(mapping.harness));
   expect(createHash('sha256').update(harness).digest('hex')).toBe(mapping.harnessSha256);
   expect(mapping.rows.length).toBeGreaterThanOrEqual(40);
   expect(new Set(mapping.rows.map((row: any) => row.id)).size).toBe(mapping.rows.length);
@@ -20,11 +21,11 @@ it('Medium: C3 qualification maps every baseline probe to a pinned starting-comm
     expect(row.assertion, row.id).toBeTruthy();
     expect(row.designRows.length, row.id).toBeGreaterThan(0);
   }
-  expect(existsSync(qualification.startingCommitRed.log)).toBe(true);
+  expect(existsSync(archivedEvidencePath(qualification.startingCommitRed.log))).toBe(true);
 });
 
 it('Low: the C3 report inventories the added presentation and diagnostic English strings', () => {
-  const report = readFileSync('evidence/nlsym-build-B/C3-REPORT.md', 'utf8');
+  const report = readFileSync(archivedEvidencePath('evidence/nlsym-build-B/C3-REPORT.md'), 'utf8');
   for (const text of ['This writes a protected path.', 'executable inspection overflow', 'code inspection overflow', 'shell inspection overflow', 'fork bomb']) {
     expect(report).toContain('`' + text + '`');
   }
@@ -32,7 +33,7 @@ it('Low: the C3 report inventories the added presentation and diagnostic English
 });
 
 it('B3 Medium pins protected A01/A04 hazards, destination anchors and independent archive effects', () => {
-  const mapping = JSON.parse(readFileSync('evidence/nlsym-build-B/afix/starting-commit-mapping.json', 'utf8'));
+  const mapping = JSON.parse(readFileSync(archivedEvidencePath('evidence/nlsym-build-B/afix/starting-commit-mapping.json'), 'utf8'));
   const rows = new Map<string, any>(mapping.rows.map((row: any) => [row.id, row]));
   for (const [id, design, anchor] of [
     ['A01-no-clobber-hazard', 'A01', 'moved'],

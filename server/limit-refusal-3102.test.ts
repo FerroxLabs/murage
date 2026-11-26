@@ -38,9 +38,21 @@ describe("U15 #3102 Codex try-again time", () => {
     expect(iso(limitRefusal("codex", { text: said("1:20 AM") }, Date.parse("2026-11-01T05:40:00Z"))?.resetsAt)).toBe("2026-11-01T06:20:00.000Z");
     // both instants still ahead: the words cannot say which, so the later one
     expect(iso(limitRefusal("codex", { text: said("1:50 AM") }, Date.parse("2026-11-01T05:30:00Z"))?.resetsAt)).toBe("2026-11-01T06:50:00.000Z");
-    expect(iso(limitRefusal("codex", { text: said("Nov 1st, 2026 1:50 AM") }, Date.parse("2026-10-31T20:00:00Z"))?.resetsAt)).toBe("2026-11-01T06:50:00.000Z");
     // an hour no DST change repeats is unchanged
     expect(iso(limitRefusal("codex", { text: said("2:30 AM") }, Date.parse("2026-11-01T05:30:00Z"))?.resetsAt)).toBe("2026-11-01T07:30:00.000Z");
+  });
+
+  it("holds a dated fall-back reset to the later instant", () => {
+    process.env.TZ = "America/New_York";
+    expect(iso(limitRefusal("codex", { text: said("Nov 1st, 2026 1:50 AM") }, Date.parse("2026-10-31T20:00:00Z"))?.resetsAt)).toBe("2026-11-01T06:50:00.000Z");
+  });
+
+  it.each([
+    ["2:30 AM", "2026-03-08T06:30:00Z"],
+    ["Mar 8th, 2026 2:30 AM", "2026-03-07T20:00:00Z"],
+  ])("moves spring-forward gap reset %s to 3:30 AM", (time, now) => {
+    process.env.TZ = "America/New_York";
+    expect(iso(limitRefusal("codex", { text: said(time) }, Date.parse(now))?.resetsAt)).toBe("2026-03-08T07:30:00.000Z");
   });
 
   it("a structured reset time still wins over the prose", () => {
@@ -53,5 +65,19 @@ describe("U15 #3102 Codex try-again time", () => {
     expect(limitRefusal("claude", { text: "5-hour limit reached ∙ resets 3pm" }, minute + 20_000)?.resetsAt).toBe(minute + 59_999);
     // an hour past is still tomorrow, as before
     expect(limitRefusal("claude", { text: "5-hour limit reached ∙ resets 3pm" }, minute + 3_600_000)?.resetsAt).toBe(minute + 86_400_000);
+  });
+
+  // The generic "resets 1:50am" reads the owner's clock the same way: a repeated hour holds to the later instant, and
+  // "tomorrow" is tomorrow's clock time, not 24 hours on, so a 25-hour or 23-hour night moves no hold by an hour.
+  it.each([
+    ["1:50am", "2026-11-01T05:30:00Z", "2026-11-01T06:50:00.000Z"], // both instants ahead
+    ["1:50am", "2026-11-01T06:30:00Z", "2026-11-01T06:50:00.000Z"], // the first has passed: the second, never tomorrow
+    ["1:50am", "2026-10-31T06:00:00Z", "2026-11-01T06:50:00.000Z"], // tomorrow's 1:50 AM is itself a repeated hour
+    ["3pm", "2026-10-31T20:00:00Z", "2026-11-01T20:00:00.000Z"], // tomorrow's 3 PM after the fall-back night
+    ["3pm", "2026-03-07T21:00:00Z", "2026-03-08T19:00:00.000Z"], // tomorrow's 3 PM after the spring-forward night
+    ["2:30am", "2026-03-08T06:30:00Z", "2026-03-08T07:30:00.000Z"], // a skipped time is 3:30 AM
+  ])("a generic 'resets %s' at %s holds until %s", (time, now, resetsAt) => {
+    process.env.TZ = "America/New_York";
+    expect(iso(limitRefusal("claude", { text: `5-hour limit reached ∙ resets ${time}` }, Date.parse(now))?.resetsAt)).toBe(resetsAt);
   });
 });
