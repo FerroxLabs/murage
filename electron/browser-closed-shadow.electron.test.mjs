@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const electron = require("electron");
 const fixture = fileURLToPath(new URL("./fixtures/browser-closed-shadow.cjs", import.meta.url));
 const xvfb = process.platform === "linux" && !process.env.DISPLAY
   ? spawnSync("which", ["xvfb-run"], { windowsHide: true, encoding: "utf8" }).stdout.trim()
@@ -183,6 +182,7 @@ it("finds hardlinked Windows Electron files that missed the inherited sandbox AC
 });
 
 it.runIf(canRunRealElectronFixture)("protects closed-shadow values and revalidates real Electron ref actions", async () => {
+  const electron = require("electron");
   const sandboxAclDiagnostics = prepareWindowsElectronSandbox(electron);
   const command = xvfb || electron;
   const args = xvfb

@@ -25,7 +25,7 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()); })));
   fixtures.splice(0).forEach(f => f.close());
 });
-async function rig(over: { binding?: VpsMcpBinding | null; max?: number; pingMs?: number; spawnFail?: boolean } = {}) {
+async function rig(over: { binding?: VpsMcpBinding | null; pingMs?: number; spawnFail?: boolean } = {}) {
   const f = consumingFixture(); fixtures.push(f);
   const caps = new InternalCapabilities(), generation = f.binding.identity.dispatchGeneration;
   caps.begin("B", "T", generation);
@@ -41,7 +41,7 @@ async function rig(over: { binding?: VpsMcpBinding | null; max?: number; pingMs?
     resolveClaim: header => caps.resolve(header), isActive: claim => caps.isActive(claim), boundContainer: () => container,
     admit: claim => claim.botId === "B" && container ? { binding, downstream, instanceId: "fixture-relay", container } : undefined,
     spawn: (command, args) => { if (over.spawnFail) throw new Error(`private ${ALIAS} ${token}`); const child = new FakeChild(); children.push(child); spawned.push({ command, args }); return child as unknown as VpsMcpChild; },
-    log: line => logs.push(line), maxMessageBytes: over.max ?? 1024, pingMs: over.pingMs ?? 30, killGraceMs: 10,
+    log: line => logs.push(line), pingMs: over.pingMs ?? 30, killGraceMs: 10,
   });
   const server = createServer();
   server.on("upgrade", (req, socket, head) => { void handler(req, socket, head, new URL(req.url ?? "/", "http://localhost")); });
@@ -86,14 +86,16 @@ it.each(["socket", "child"])("kills and seals on %s closure", async mode => {
   if (mode === "socket") ws.close(); else t.children[0]!.emit("exit", 0);
   await done; await tick(); expect(t.children[0]!.killed).toContain("SIGTERM"); expect(t.f.refusals).toBe(1);
 });
-// red-at-4df086541: malformed input and overflow are bound terminal failures.
-it.each(["binary", "multiline", "oversize-input", "oversize-output"])("closes on %s", async mode => {
-  const t = await rig({ max: 64 }), { ws } = await t.connect(t.token), done = closed(ws);
+// red-at-4df086541: malformed input and overflow were bound terminal failures (superseded below by cause22-no-transport-caps).
+// MAIN-RULING cause22-no-transport-caps (2026-11-22T14:29:39Z): "NO transport size or count caps at all ... DELETE MAX_REQUEST_BYTES ..."; the
+// relay's 8 MiB message/line cap is deleted, so "oversize-input" and "oversize-output" no longer close (cause22-cli-caps-witness-1021 V1/V2).
+// The same ruling: "Keep all error handling, so a malformed line still gets a JSON-RPC error and the hop lives" (was: closes on %s).
+it.each(["binary", "multiline"])("answers %s with a JSON-RPC error and stays open", async mode => {
+  const t = await rig(), { ws } = await t.connect(t.token), answer = nextMessage(ws);
   if (mode === "binary") ws.send(Buffer.from([1, 2, 3]), { binary: true });
   if (mode === "multiline") ws.send("{}\n{}");
-  if (mode === "oversize-input") ws.send("x".repeat(200));
-  if (mode === "oversize-output") t.children[0]!.stdout.write("x".repeat(200) + "\n");
-  expect([1008, 1009]).toContain((await done).code); expect(t.f.refusals).toBe(1);
+  expect(JSON.parse(await answer).error.code).toBe(-32700);
+  expect(ws.readyState).toBe(WebSocket.OPEN); expect(t.children[0]!.killed).toEqual([]); expect(t.f.refusals).toBe(0);
 });
 // control migration: ping/pong stays context-free, but generation liveness is additional authority.
 it("pings when idle and ends a relay whose turn is gone", async () => {

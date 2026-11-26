@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
 import { checkWindowsHide } from './check-windows-hide.mjs';
 import { inspectChildEntries } from './check-windows-hide-entries.mjs';
+import { safeWipeSync } from '../server/testing/safe-wipe.mjs';
 
 // MAIN RULING 1115-IOMETER (GrokBuild).
 const file = 'server/io-child-meter.ts';
@@ -20,7 +21,7 @@ function lintFailures(code, name = file) {
     execFileSync('git', ['add', '--', name], { cwd: root, windowsHide: true });
     return checkWindowsHide(root).failures;
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    safeWipeSync(root);
   }
 }
 const mutant = (from, to) => {

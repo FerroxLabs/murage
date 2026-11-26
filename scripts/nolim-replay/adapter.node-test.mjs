@@ -1,15 +1,16 @@
 // Data-only policy replay in a fresh fixture, never the user's app.
 import {test,after} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const root=mkdtempSync(join(tmpdir(),'gnl-adapter-')),home=join(root,'home'),data=join(root,'data');
 mkdirSync(home);mkdirSync(data);writeFileSync(join(data,'config.json'),'{}');
 Object.assign(process.env,{HOME:home,USERPROFILE:home,MURAGE_DATA_DIR:data,NODE_ENV:'test'});
 const {productionAdapter}=await import('./production.mjs');
 const adapter=await productionAdapter({dataDir:data,home,platform:process.platform});
-after(async()=>{await adapter.close();rmSync(root,{recursive:true,force:true});});
+after(async()=>{await adapter.close();safeWipeSync(root);});
 const row=(patch={})=>({id:'saved',tool:'Bash',fullToolInput:{command:'printf fixture'},label:{independent:true,kind:'permission-rule',actor:'owner',denySource:'deny-browser-never'},denySnapshot:{evidence:[{kind:'deny',class:'stored',ruleId:'deny-browser-never',span:'printf fixture'}]},...patch});
 test('stored-deny adapter rejects missing or mismatched saved rules and proves installation and execution',async()=>{
  for(const denySnapshot of [undefined,{evidence:[]},{evidence:[{kind:'deny',class:'stored',ruleId:'different-rule',span:'printf fixture'}]}])

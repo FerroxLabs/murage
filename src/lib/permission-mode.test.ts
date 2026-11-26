@@ -2,8 +2,6 @@
 // Full access. The server refuses with the same bare 404 it gives every
 // desktop-only setting (server/full-access.ts), which on screen read "not
 // found" / "no such route" beside a control that looked switched on.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 // S1 owns the shared calculation; this slice verifies the UI's consumption.
 vi.mock('../../shared/owner-routine-level.ts',()=>({ownerRoutineLevel:vi.fn((_bot,base,draft)=>draft?'ask':base)}));
@@ -11,6 +9,7 @@ import {routineSheetModel} from './routine-sheet-model';
 import {ownerRoutineLevel} from '../../shared/owner-routine-level.ts';
 
 import { routineEffectiveMode, routineOfConversation, FULL_ACCESS_DESKTOP_ONLY, FULL_ACCESS_OPTIONS_DESKTOP_ONLY, fullAccessRefusalMessage, PEER_CONTACT_LABEL, peerContactHint } from "./permission-mode";
+import { settingsPanelSource } from "../components/bot-pages/panel-source";
 
 const refused = (status: number, message = "not found") => Object.assign(new Error(message), { status });
 
@@ -67,7 +66,7 @@ describe("Ask me before contacting other bots: label and description agree", () 
   });
 
   it("is the label and description Bot Settings shows, side by side", () => {
-    const source = readFileSync(fileURLToPath(new URL("../components/SettingsPanel.tsx", import.meta.url)), "utf8");
+    const source = settingsPanelSource();
     const label = source.indexOf("{PEER_CONTACT_LABEL}");
     expect(label).toBeGreaterThan(-1);
     // MAIN RULING SEAN 11-12 / 11-14 inherited No limits: Settings shows the effective bot level.

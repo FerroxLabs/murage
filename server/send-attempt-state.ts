@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS turn_cleanup_owed (
   attempt_id TEXT, provider_turn_id TEXT, terminal_revision INTEGER, status TEXT NOT NULL,
   PRIMARY KEY(thread_id,generation,kind)
 );
+CREATE INDEX IF NOT EXISTS turn_cleanup_owner_stop ON turn_cleanup_owed(thread_id,generation)
+  WHERE kind='publication' AND status='owner_stop';
 CREATE TABLE IF NOT EXISTS send_retirement_keys (
   key_id TEXT PRIMARY KEY NOT NULL, digest_version INTEGER NOT NULL,
   installation_scope TEXT NOT NULL, key_bytes TEXT NOT NULL, active INTEGER NOT NULL CHECK(active IN (0,1))
@@ -87,7 +89,7 @@ CREATE TABLE IF NOT EXISTS retired_send_ids (
 /** PROVISIONAL INTERFACE: initializeSendAttempts names the unnamed §3.1
  * initializer. §3.1 does not specify key_bytes encoding or cleanup status
  * values. key_bytes is hex-encoded key material in TEXT; cleanup status is
- * owned/pending/done/superseded. Initializing the schema mints no key or receipt. */
+ * owned/pending/done/superseded, plus owner_stop for a confirmed Stop line. Initializing the schema mints no key or receipt. */
 export function initializeSendAttempts(db: DatabaseSync): void {
   beginWrite(db, "send_attempt_schema");
   try {
@@ -382,6 +384,22 @@ export class SendAttemptStore {
       for (const [name, item] of Object.entries(row)) value[name.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())] = item;
       return value as unknown as CleanupEffect;
     });
+  }
+  oweOwnerStop(threadId: string, generation: string): void {
+    this.db.prepare(`INSERT INTO turn_cleanup_owed (thread_id,generation,kind,status) VALUES (?,?,'publication','owner_stop')
+      ON CONFLICT(thread_id,generation,kind) DO UPDATE SET status='owner_stop'`).run(threadId, generation);
+  }
+  ownerStopOwed(threadId: string, generation: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM turn_cleanup_owed WHERE thread_id=? AND generation=? AND kind='publication' AND status='owner_stop'")
+      .get(threadId, generation));
+  }
+  owedOwnerStops(): Array<{ threadId: string; generation: string }> {
+    return this.db.prepare("SELECT thread_id AS threadId, generation FROM turn_cleanup_owed WHERE kind='publication' AND status='owner_stop'")
+      .all() as Array<{ threadId: string; generation: string }>;
+  }
+  finishOwnerStop(threadId: string, generation: string): void {
+    this.db.prepare("DELETE FROM turn_cleanup_owed WHERE thread_id=? AND generation=? AND kind='publication' AND status='owner_stop'")
+      .run(threadId, generation);
   }
   /** Receivers use (thread,generation,kind,terminalRevision) as their idempotency
    * key. Publication includes the attempt/revision explanation key. A false

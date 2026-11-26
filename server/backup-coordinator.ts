@@ -56,6 +56,12 @@ const versionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
 const installerOfferSchema = z.object({handoffId:backupHandoffSchema.shape.id,candidateId:candidateIdSchema,version:versionSchema,reason:z.literal("install-requested"),at:z.number().int().nonnegative()}).strict();
 const landedHopSchema = z.object({version:versionSchema,automaticSpent:z.boolean(),explicitCount:z.number().int().nonnegative().safe(),explicitActionIds:z.array(z.uuid())}).strict().refine(hop => hop.explicitActionIds.length === hop.explicitCount && new Set(hop.explicitActionIds).size === hop.explicitCount);
 const landedHopsSchema = z.record(candidateIdSchema,landedHopSchema);
+/** HB (settings v10): the schedule changes this coordinator committed, newest last. They live in their own file, written BEFORE the state save and counted only up to
+ *  the saved revision, so a build older than this one still reads the strict state file (a new key there made v1.0.20 answer BACKUP_COORDINATOR_STATE_INVALID after a rollback). */
+const CHANGE_RECEIPTS_MAX=32;
+const changeIdSchema=z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/);
+const changeReceiptSchema=z.object({changeId:changeIdSchema,revision:z.number().int().nonnegative(),at:z.number().int().nonnegative(),input:z.string().regex(/^[a-f0-9]{64}$/).optional()}).strict();
+const changeReceiptsFileSchema=z.object({version:z.literal(1),receipts:z.array(changeReceiptSchema).max(CHANGE_RECEIPTS_MAX)}).strict();
 const stateSchema = z.object({ version:z.literal(1),revision:z.number().int().nonnegative(),configuredAt:z.number().int().nonnegative(),schedule:backupScheduleSchema,
   installerOffer:installerOfferSchema.optional(),landedHops:landedHopsSchema.optional(),
   job:jobSchema.optional(),seen:z.array(z.string().max(200)).max(256),watermark:z.number().int().nonnegative(),lastVerified:backupReceiptSchema.optional(),lastClosedResult:backupClosedResultSchema.optional(),
@@ -357,8 +363,24 @@ export class BackupCoordinator {
     restoreDeferred:s.schedule.enabled&&this.restoreOpen(),
     lastSkipped:this.lastSkipped(s.lastVerified?.jobId),
     message:s.job?.phase==="waiting-backup-mode"?"Due, waiting for Backup mode":s.job?.phase==="waiting-idle"?"Due, waiting for idle":s.job?.phase==="needs-review"?"Interrupted backup needs review; it will not run again automatically":undefined};}
-  configure(expectedRevision:number,input:unknown){
-    const lease=this.lease();try{const s=this.read();if(s.revision!==expectedRevision)throw new Error("BACKUP_SCHEDULE_CHANGED");
+  /** The committed schedule changes, newest last (at most 32). Read by the host's journal log; a lookup by `changeId` never reads a display list. */
+  changeReceipts(){const s=this.read();return this.appliedReceipts(s);}
+  private receiptsFile(){return join(this.options.stateDirectory,"backup-change-receipts.json");}
+  private storedReceipts(){
+    try{const stat=lstatSync(this.receiptsFile());if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>128*1024)return [];
+      const parsed=changeReceiptsFileSchema.safeParse(JSON.parse(readFileSync(this.receiptsFile(),"utf8")));return parsed.success?parsed.data.receipts:[];}catch{return [];}
+  }
+  /** A receipt counts only for a change the state has really saved: below the saved revision, or at it with the same time stamp the save wrote. */
+  private appliedReceipts(s:State){return this.storedReceipts().filter(r=>r.revision<s.revision||(r.revision===s.revision&&r.at===s.configuredAt));}
+  private writeReceipts(receipts:z.infer<typeof changeReceiptSchema>[]){mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});writeFileAtomic(this.receiptsFile(),JSON.stringify({version:1,receipts}),{mode:0o600,syncDir:true});}
+  configure(expectedRevision:number,input:unknown,changeId?:string){
+    const id=changeId===undefined?undefined:changeIdSchema.parse(changeId);
+    const lease=this.lease();try{const s=this.read();
+      // A change this coordinator already committed is answered from its stored receipt, before the revision check: its reply or log row was lost, not the change.
+      const known=id===undefined?undefined:this.appliedReceipts(s).find(r=>r.changeId===id);
+      // The same id with other input is a client bug, not a retry: it is refused, never answered as if that input had been applied.
+      if(known){if(known.input!==undefined&&known.input!==hash([input]))throw new Error("BACKUP_CHANGE_ID_REUSED");return this.status();}
+      if(s.revision!==expectedRevision)throw new Error("BACKUP_SCHEDULE_CHANGED");
       const schedule=backupScheduleSchema.parse(input);const unresolved=!this.readContext().wait&&s.job&&["claiming","capturing","needs-review","handoff-prepared","handoff-armed","offline-claimed","return-pending","install-requested"].includes(s.job.phase);
       if(unresolved&&(schedule.enabled||hash({...schedule,enabled:false})!==hash({...s.schedule,enabled:false})))throw new Error("BACKUP_REVIEW_REQUIRED");
       // A receipt proves a backup of THIS folder with THIS key. A schedule
@@ -366,7 +388,13 @@ export class BackupCoordinator {
       // checked backup lands; turning backups off keeps the refs, and the receipt.
       const {lastVerified,...rest}=s;
       const receiptCurrent=Boolean(lastVerified&&lastVerified.installationRef===schedule.installationRef&&lastVerified.destinationRef===schedule.destinationRef&&s.schedule.recoveryRef===schedule.recoveryRef);
-      this.save({...rest,revision:s.revision+1,configuredAt:this.now(),schedule,job:unresolved?s.job:undefined,...(receiptCurrent?{lastVerified}:{})});return this.status();
+      const revision=s.revision+1,at=this.now();
+      // The id is durable before the revision is: a death between the two leaves a receipt above the saved revision, which no reader counts and the next change prunes.
+      // Receipts above the saved revision belong to a change that never saved: they go before any commit, with or without an id, so no later change inherits their revision.
+      const kept=this.appliedReceipts(s);
+      if(id!==undefined)this.writeReceipts([...kept.filter(r=>r.changeId!==id),{changeId:id,revision,at,input:hash([input])}].slice(-CHANGE_RECEIPTS_MAX));
+      else if(this.storedReceipts().length!==kept.length)this.writeReceipts(kept);
+      this.save({...rest,revision,configuredAt:at,schedule,job:unresolved?s.job:undefined,...(receiptCurrent?{lastVerified}:{})});return this.status();
     }finally{lease.release();}
   }
   /** H3 (J4): a backup is under way, scheduled or manual, in this process or in another one (the desktop host's coordinator is not the server's), or died mid-capture

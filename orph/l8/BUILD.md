@@ -9,7 +9,7 @@ Port onto `c12aaad9341e8f87126a193f35b5c2768f0aa66f`. Recover L4B code from `571
 
 The original F7 review is recovered verbatim in `evidence/F7-review-original.md`; `evidence/l8-provenance.md` maps all six High and eight Medium/Low findings to the binding ruling and named tests. M2 r1.3 remains rejected. Ruling R1 supersedes the missing-review prerequisite, R2 the resend compatibility contract, R3 retained-context downgrade, R4 the separate schema Slice I0, and R5 the seating order.
 
-The first build-job test execution is the entire `src/e2e/help-ask-fixture.human.spec.ts`, including 7b, with its matching fixture/config, against a packaged help-fixture Electron app under xvfb in a build host container. A launch failure is blocked baseline, not behavioral RED. Record source/package/config identities. L13 rows 5/8 remain NOT FIXED until the final combined-head proof is reviewed.
+The first build-job test execution is the entire `src/e2e/help-ask-fixture.human.spec.ts`, including 7b, with its matching fixture/config, against a packaged help-fixture Electron app under xvfb in a Hetzner container. A launch failure is blocked baseline, not behavioral RED. Record source/package/config identities. L13 rows 5/8 remain NOT FIXED until the final combined-head proof is reviewed.
 
 One integration owner owns every shared schema edit and `server/index.ts`. Parallel seats are future builder allocations, not agents launched during this design job. The following test matrix and final slices are reproduced from DESIGN-r2 for a self-contained builder handoff; contract sections referenced below are in DESIGN-r2.
 
@@ -65,7 +65,7 @@ Frozen interfaces: F1 = §3 receipt/BindingKey/CAS/terminal effects; F2 = §3.2 
 
 Owner I. Exact files: `src/e2e/help-ask-fixture.human.spec.ts`, `src/e2e/help-ask-fixture.config.ts`, `src/components/help/help-ask-fixture.ts`, `src/components/help/help-ask-fixture.test.ts`, `src/components/help/help-ask-port.ts`, `src/components/help/help-ask-build.test.ts`, `scripts/check-help-fixture-absent.mjs`, `playwright.config.ts`, recovered matching package/fixture wiring in `src/components/help/HelpAsk.tsx`, `package.json`; design-only manifests `DESIGN-r2.md`, `BUILD.md`, `evidence/l8-provenance.md`, `evidence/l8-baseline.md`, `evidence/F7-review-original.md`. Recover source wiring via the historical diff; do not substitute current product fixes before baseline. Build package from the matching recovered historical tree in an isolated workspace, with its recorded config.
 
-Depends on F7 and header reviews/MAIN seating, exact historical source identities, recovery of F7 original review with all six High/eight Medium/Low mappings. First test execution: entire **`src/e2e/help-ask-fixture.human.spec.ts`**, including 7b, in a build host container against packaged Electron under xvfb. Preserve both L13 reports. A failed launch blocks baseline; it is not RED. After baseline, separate Slice I0 lands shared `shared/help-turn-state.ts` and schema contract stubs; Slice 0 does not edit those files. Exit: source/package/config hashes and observed baseline recorded; rows 5/8 still NOT FIXED pending final proof.
+Depends on F7 and header reviews/MAIN seating, exact historical source identities, recovery of F7 original review with all six High/eight Medium/Low mappings. First test execution: entire **`src/e2e/help-ask-fixture.human.spec.ts`**, including 7b, in a Hetzner container against packaged Electron under xvfb. Preserve both L13 reports. A failed launch blocks baseline; it is not RED. After baseline, separate Slice I0 lands shared `shared/help-turn-state.ts` and schema contract stubs; Slice 0 does not edit those files. Exit: source/package/config hashes and observed baseline recorded; rows 5/8 still NOT FIXED pending final proof.
 
 ### Slice A1 — parallel wave A, durable lifecycle and isolation (L, 2–2.5 sessions)
 
@@ -276,7 +276,7 @@ A1 and A2 then own the bodies of their modules; DDL changes after I0 go to I as 
 
 Serial prerequisite, then parallel A1/A2/A3, then parallel B1/B2/B3, then serial integration, as the review confirmed:
 
-1. **Slice 0** (serial, owner I, 0.5 to 1 session): DESIGN-r2 Slice 0 plus write `evidence/F7-review-original.md` from Appendix A and the F7-ML1 to F7-ML8 manifest. First test execution remains the full packaged `src/e2e/help-ask-fixture.human.spec.ts` including 7b, under xvfb in a build host container. L13 rows 5 and 8 stay NOT FIXED until final proof.
+1. **Slice 0** (serial, owner I, 0.5 to 1 session): DESIGN-r2 Slice 0 plus write `evidence/F7-review-original.md` from Appendix A and the F7-ML1 to F7-ML8 manifest. First test execution remains the full packaged `src/e2e/help-ask-fixture.human.spec.ts` including 7b, under xvfb in a Hetzner container. L13 rows 5 and 8 stay NOT FIXED until final proof.
 2. **Slice I0** (serial, owner I, 0.25 session): R4.
 3. **Wave A, parallel:**
    - A1 (2.5 to 3 sessions): DESIGN-r2 files plus `server/channel-queue.ts`, `server/channel-queue.test.ts` and the `clearRetainedContextForAmbiguousAttempts` body in `server/send-attempt-compat.ts`. RED first: DESIGN-r2 A1 list plus F7-ML1, F7-ML2, F7-ML5, F7-ML6, F7-ML8, and the server half of F7-ML3 and the legacy resend tests.

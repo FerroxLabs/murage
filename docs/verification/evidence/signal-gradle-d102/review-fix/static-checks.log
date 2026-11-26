@@ -1,3 +1,0 @@
-gradle/verification-metadata.xml: OK
-gradle/verification-keyring.keys: OK
-ok: 4182 Vitest files; 2639 gate, 1549 extended

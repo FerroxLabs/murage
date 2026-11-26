@@ -30,7 +30,7 @@
       "sha256": "7db917b80f072f22d0fcfde227d56d42773ef45158e1c808461c820b59c8f679"
     }
   },
-  "command": "docker run --rm --network none --cpus 2 --name bfix-busyloop-capture -v /work/build/busyloop-capture:/cap -w /cap node:22-bookworm bash run-capture.sh <scenario> <repeat>",
+  "command": "docker run --rm --network none --cpus 2 --name bfix-busyloop-capture -v /root/fuigo-builds/swarm-b/busyloop-capture:/cap -w /cap node:22-bookworm bash run-capture.sh <scenario> <repeat>",
   "image_note": "node:22-bookworm includes Python for http.server; slim image does not",
   "scripts": {
     "run-capture.sh": "6c42dd5dc170017909c7edf621ed64bac68c60e4ce09b0532a837e477e7c17c5",

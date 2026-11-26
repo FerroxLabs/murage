@@ -1,3 +1,4 @@
+import { evidencePath } from './evidence-path.mjs';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Run only inside the networkless job container. Payloads stay inert.
@@ -7,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-const root=resolve('.'), evidence=resolve('evidence/bld7-toolid-s4b');
+const root=resolve('.'), evidence=resolve(evidencePath('evidence/bld7-toolid-s4b'));
 mkdirSync(evidence,{recursive:true});
 const scratch=mkdtempSync(join(tmpdir(),'toolid-r13b-mutants-'));
 const mutations=[

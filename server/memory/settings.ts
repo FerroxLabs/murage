@@ -12,6 +12,7 @@ import { reflectionStatus, retryReflection, setReflectExcluded } from "./pip-ref
 import { supportsNativeMemoryModel } from "./embeddings.ts";
 import { bundledModelState } from "./model-location.ts";
 import { rebuildSearchIndex, semanticIndexStatus } from "./model-adoption.ts";
+import { startModelAdoption } from "./recall-producers.ts";
 import { archiveMemoryRecord, restoreArchivedMemoryRecord, memoryRetentionStatus } from "./retention.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
@@ -128,7 +129,11 @@ const actions=z.discriminatedUnion("action",[
   // Learn about me: one kept line, the exact words the owner saw, and where they came from (a label only)
   z.object({action:z.literal("remember"),actionId,text:z.string().min(1).max(REMEMBER_TEXT_MAX),origin:z.object({provider:z.enum(LAM_PROVIDERS),date:z.string().regex(/^\d{4}(-\d{2}(-\d{2})?)?$/).optional()}).strict().optional()}).strict(),
   z.object({action:z.literal("promote"),id,version,scopeId:id}).strict(),
-  z.object({action:z.literal("forget"),kind:z.enum(["source","record"]),id,revision:z.number().int().nonnegative().optional()}).strict(),
+  z.object({action:z.literal("forget"),kind:z.enum(["source","record"]),id,revision:z.number().int().nonnegative().optional(),expectedHead:z.discriminatedUnion("state",[
+    z.object({state:z.literal("record"),recordId:id,version:z.number().int().positive()}).strict(),
+    z.object({state:z.literal("active"),familyId:id,recordId:id,version:z.number().int().positive()}).strict(),
+    z.object({state:z.literal("archived"),familyId:id,sequence:z.number().int().positive(),memberRecordId:id,memberVersion:z.number().int().positive()}).strict(),
+  ]).optional()}).strict(),
   z.object({action:z.literal("forget-pip"),id,expectedVersion:z.number().int().positive()}).strict(),
   z.object({action:z.literal("bind"),scopeId:id,...subject}).strict(),
   z.object({action:z.literal("project"),path:z.string().min(1).max(4096),...subject}).strict(),
@@ -337,7 +342,10 @@ async function downloadModel(options:MemoryOwnerOptions){
       if((await stat(part)).size!==asset.bytes||await fileHash(part)!==asset.sha256){rmSync(part,{force:true});throw new Error("MEMORY_MODEL_HASH_MISMATCH");}
       renameSync(part,target);download.bytesDownloaded+=asset.bytes;
     }
-    database().prepare("UPDATE memory_projection_receipts SET lexical_status='pending',embedding_status='pending' WHERE embedding_status='unavailable' AND lexical_status='indexed'").run();
+    // memv2 lane A (A10): the receipts indexed without a model are owed again in pages of at most 256, each one transaction and one journal
+    // range row, the producer waiting for the recall applier between pages; a store of one page is adopted before this returns, a longer one
+    // goes on in the background and is finished by the next start if the process dies (recall-producers.ts, marker memory-v2:model-adoption).
+    startModelAdoption(database());
     await options.onModelReady?.();download.state="ready";
   } catch(error){download.state="failed";download.error=error instanceof Error&&/^MEMORY_MODEL_/.test(error.message)?error.message:"MEMORY_MODEL_DOWNLOAD_FAILED";}
 }

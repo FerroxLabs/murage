@@ -1,3 +1,4 @@
+import { assertExternalEvidencePath, evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Run only in the network-disabled test container. Mutations touch a fresh
 // temporary source copy, never the checkout or a running Murage installation.
@@ -10,7 +11,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {safeWipeSync} from '../server/testing/safe-wipe.mjs';
 
 if(process.env.CI!=='1')throw Error('Use the isolated test container');
-const source=process.cwd(),out=resolve(process.argv[2]??'evidence/nolim-merge/mutants');
+const source=process.cwd(),out=assertExternalEvidencePath(resolve(process.argv[2]??evidencePath('evidence/nolim-merge/mutants')));
 mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'nolim-merge-mutants-'));
 const skip=/^(?:node_modules|\.git|\.nolim|evidence$|dist|build$|\.cache$)/;

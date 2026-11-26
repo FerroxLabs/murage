@@ -17,13 +17,13 @@ export const ROWS_PER_NODE = 16;
 /** Lineage work one turn may spend in all: its setup (index.ts startTurn) holds one allowance, whatever checks it makes. */
 export const TURN_LINEAGE_NODES = 3000;
 let turnNodesOverride: number | null = null;
-/** Wall-clock time one turn's lineage reads may take in all (1.0.2 lineage-cold r3, the 48 GB rig): 3,000 nodes bound the count of reads, not
- * their time (a few ms of SQL each on an overloaded machine is seconds). Past it the checks stop as when the nodes run out ("checking"). */
+/** Was the wall-clock time one turn's lineage reads could take (1.0.2 lineage-cold r3). 1.0.22 (mem-strict): no allowance uses it; a loaded
+ * box left recall and the owner's brief out daily. Kept for the time tests' fixtures and the warm-path proofs that name it. */
 export const TURN_LINEAGE_MS = 50;
 /** 1.0.18 TURNSTART r14 1E / r14.1 X2: the half of a turn's nodes the warm confirm leaves to the turn's overlapped recall. The confirm
  * charges exactly this (spend) before E1, so E1 is proven at the least room a turn within the contract can have. */
 export const RECALL_RESERVE = TURN_LINEAGE_NODES / 2;
-/** A check made outside a turn's setup (a bot's own memory tool, a route) on the same thread. */
+/** Was the time of a check made outside a turn's setup (a bot's own memory tool, a route; the continuity brief). 1.0.22: unused, see above. */
 export const TOOL_LINEAGE_MS = 100;
 /** The time of a resume check's one second look (designs/RESUME-SECOND-LOOK-1013.md). A check that ran out of time on the coldest read of
  * a process, the first turn after a start, is unfinished, not failed: this bounds the check that finishes it. Used only where the cost
@@ -34,6 +34,9 @@ let timeOverride: number | null | undefined;
  * existing suites prove; the time tests set it. */
 export function setLineageTimeBudgetForTest(ms: number | null | undefined): void { timeOverride = ms; }
 const defaultMs = (ms: number): number => timeOverride !== undefined ? (timeOverride ?? Infinity) : process.env.VITEST ? Infinity : ms;
+/** 1.0.22 (mem-strict): the turn, room, tool and steer allowances have no wall-clock budget; the node bound (TURN_LINEAGE_NODES) alone
+ * stops them. A test may still set one (setLineageTimeBudgetForTest) to reach the limit path. */
+const untimed = (): number => timeOverride !== undefined ? (timeOverride ?? Infinity) : Infinity;
 /** Tests lower the allowance to reach the warming path; null is the real one. */
 export function setTurnLineageNodesForTest(nodes: number | null): void { turnNodesOverride = nodes; }
 
@@ -83,17 +86,17 @@ export class LineageAllowance {
   }
   private static nodes(nodes?: number): number { return nodes ?? turnNodesOverride ?? TURN_LINEAGE_NODES; }
   /** A direct turn's setup (startTurn): one allowance for working context, replay, recall, the continuation check and output roots. */
-  static turn(nodes?: number): LineageAllowance { return new LineageAllowance("turn", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? defaultMs(TURN_LINEAGE_MS) : Infinity); }
+  static turn(nodes?: number): LineageAllowance { return new LineageAllowance("turn", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? untimed() : Infinity); }
   /** A room member's turn (runGroupMemberTurn). */
-  static room(nodes?: number): LineageAllowance { return new LineageAllowance("room", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? defaultMs(TURN_LINEAGE_MS) : Infinity); }
+  static room(nodes?: number): LineageAllowance { return new LineageAllowance("room", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? untimed() : Infinity); }
   /** A check made outside a turn (a tool, a route, a procedure check, consolidation, skills). */
-  static tool(nodes?: number): LineageAllowance { return new LineageAllowance("tool", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? defaultMs(TOOL_LINEAGE_MS) : Infinity); }
+  static tool(nodes?: number): LineageAllowance { return new LineageAllowance("tool", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? untimed() : Infinity); }
   /** A memory search's own hydration (1.0.7 memory-recall-hydration D3): the nodes of a tool check, and the search's own hydration limit as
    * its time (search.ts recallHydrationLimitMs), so the search stops on its own limit, partial with what it proved, never on a stricter
    * hidden one (TOOL_LINEAGE_MS is charged for each WHOLE record read: a hundred candidates outlast it). */
   static search(ms: number): LineageAllowance { return new LineageAllowance("tool", LineageAllowance.nodes(), undefined, defaultMs(ms)); }
   /** A steer folded into a running turn. */
-  static steer(nodes?: number): LineageAllowance { return new LineageAllowance("steer", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? defaultMs(TURN_LINEAGE_MS) : Infinity); }
+  static steer(nodes?: number): LineageAllowance { return new LineageAllowance("steer", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? untimed() : Infinity); }
   /** One slice of the warmer; `ms` is its wall-clock budget (r14 1E: the confirm's turn-shaped half; none by default). */
   static warm(nodes: number, ms = Infinity): LineageAllowance { return new LineageAllowance("warm", nodes, undefined, ms); }
   /** For the writers that record what a turn was shown: they read ONE stored root set whole, and a stored set is never past the

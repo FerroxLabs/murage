@@ -127,6 +127,7 @@ export const RESTORE_FENCED_STORES: readonly RestoreFencedStore[] = [
 /** Tables with a state/status/stage column that hold no pending or resumable work, with the reason. */
 export const RESTORE_NOT_PENDING_WORK: Readonly<Record<string, string>> = Object.freeze({
   restore_holds: "the fence's own record",
+  push_removal_receipts: "a phone removal's receipt (mobile-push-store.ts): a record read by Check again; the relay removal it describes is owed in push_relay_removals, which is fenced above",
   send_restore_generation: "the current restore token",
   owner_deleted_threads: "a deletion record",
   flux_mem_owed: "Flux Memory forgets owed for conversations and bots the owner deleted (flux-memory-forget.ts): each row names a deleted conversation or bot, so the worker resumes it after a restore; it starts no bot work",

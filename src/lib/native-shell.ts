@@ -154,6 +154,14 @@ export function opensPurchasePages(): boolean {
   return !inNativeShell();
 }
 
+/** Activate a purchase page only where this build may show one. The check runs at the click, not only when the action was created,
+ * so a stale action in a Store build opens nothing. Returns whether `open` ran. */
+export async function openPurchasePage(open: () => Promise<void>): Promise<boolean> {
+  if (!opensPurchasePages()) return false;
+  await open();
+  return true;
+}
+
 let greeting: NativeHello | null = null;
 let pendingHello: Promise<NativeHello | null> | null = null;
 

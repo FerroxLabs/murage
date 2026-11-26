@@ -14,10 +14,10 @@ nightly green result is not a C6 receipt.
 
 Run `bash scripts/gate/perf-quiet-host.sh` from a prepared candidate checkout in
 an isolated Linux test container on the quiet host. Install the locked
-dependencies and the usual test runtime first. Make the host's `/work/memwq`
+dependencies and the usual test runtime first. Make the host's `/root/memwq`
 directory available at the same container path, writable and traversable by the
 test user. Every timing leg must share that host directory, not a private lock.
-The wrapper holds `flock /work/memwq/timing.lock` across the load check and entire
+The wrapper holds `flock /root/memwq/timing.lock` across the load check and entire
 serial perf-budget run. It accepts no filters. It checks load again at completion
 and validates the JSON report: every collected perf-budget test must pass and
 carry enforcement metadata. Empty runs, hook failures, and skipped bounds fail.

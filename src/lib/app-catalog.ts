@@ -16,6 +16,8 @@ export interface AppCard extends CatalogCardIdentity {
   slug: string;
   label: string;
   blurb: string;
+  /** The full description when `blurb` was cut at a word; shown on hover. */
+  blurbFull?: string;
   logo: string | null;
   noAuth?: boolean;
   domain: string | null;

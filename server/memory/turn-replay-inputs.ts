@@ -11,6 +11,7 @@ import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { botMessages, botViewer } from "../bot-read.ts";
 import { database } from "../database.ts";
 import { promptRows } from "../external-context-delivery.ts";
+import { isMurageVoice } from "../murage-voice.ts";
 import type { Message } from "../store.ts";
 import { replayWindow, type ReplayWindowOptions } from "./disclosures.ts";
 import { captureSendReplayProof, replayCopyRoots, type SendReplayProof } from "./replay-lineage.ts";
@@ -72,6 +73,7 @@ export interface TurnReplayInputs {
   activeMessages: Message[];
   tailIds: Set<string>;
   heldReplayIds: Set<string>;
+  doorOmittedEarlier: boolean;
   replayFloor: ReplayFloor;
   replayableMessages: Message[];
   replayedMessages: Message[];
@@ -101,6 +103,7 @@ function* replayInputSteps(args: TurnReplayInputsArgs): Generator<void, TurnRepl
   const headSlot = args.headSlot ?? 0;
   const maxLines = Math.min(replayOptions.maxLines ?? REPLAY_LINES_MAX, REPLAY_LINES_MAX);
   let replayMore = false;
+  let doorOmittedEarlier = false;
   let branchMessages: Message[] = [], activeMessages: Message[] = [], tailIds = new Set<string>(), heldReplayIds = new Set<string>();
   let replayFloor: ReplayFloor;
   let replayableMessages: Message[] = [], replayedMessages: Message[] = [];
@@ -128,6 +131,9 @@ function* replayInputSteps(args: TurnReplayInputsArgs): Generator<void, TurnRepl
     // for a turn that is not the owner's) instead of coming back raw. A thread that never used memory is read as it is (undefined).
     replayFloor = undefined;
     if (floor) {
+      const admitted = new Set(branchMessages.map(row => row.id));
+      doorOmittedEarlier = branchTail.messages.some(row => row.kind === "text" && row.text
+        && !skip.has(row.id) && !isMurageVoice(row) && !admitted.has(row.id));
       const messages: Message[] = [];
       for (let start = 0; start < activeMessages.length; start += REPLAY_SLICE_LINES) {
         yield;
@@ -151,5 +157,5 @@ function* replayInputSteps(args: TurnReplayInputsArgs): Generator<void, TurnRepl
   }
   const finalSkip = new Set(skip);
   for (const id of heldReplayIds) finalSkip.add(id);
-  return { replayProof, replayRevision: replayProof.revision, window, exact: exactWindows.every(Boolean), exactWindows, replayMore, branchMessages, activeMessages, tailIds, heldReplayIds, replayFloor, replayableMessages, replayedMessages, skip: finalSkip };
+  return { replayProof, replayRevision: replayProof.revision, window, exact: exactWindows.every(Boolean), exactWindows, replayMore, branchMessages, activeMessages, tailIds, heldReplayIds, doorOmittedEarlier, replayFloor, replayableMessages, replayedMessages, skip: finalSkip };
 }

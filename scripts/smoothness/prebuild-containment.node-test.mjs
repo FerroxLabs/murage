@@ -1,12 +1,13 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, rmSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const cli = fileURLToPath(new URL("./prebuild-index.mjs", import.meta.url));
 const snapshots = ["messages.pre-memory-v2.db", "messages.pre-memory-v3.db", "messages.pre-memory-v4.db"];
@@ -60,5 +61,5 @@ for (const scenario of cases) test(`containment refuses ${scenario.name} before 
       assert.deepEqual(readdirSync(outside), ["untouched"]);
       assert.deepEqual(readdirSync(dir).sort(), entries);
     }
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });

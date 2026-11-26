@@ -15,7 +15,7 @@ import { isWithoutMemoryNote, WithoutMemoryNoteRow } from "./WithoutMemoryNote";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 // memory/dispatch.ts turnRefusedLine("Claude", "without-memory"), checked against its source below
-const line = "Memory changed while Claude was starting, so this reply ran without remembered context.";
+const line = "This reply went ahead without remembered context after memory changed.";
 const note = (id: string, at: number): Message => ({ id, at, role: "bot", kind: "activity", memoryNote: "without-memory", tool: { name: line, ok: true } } as Message);
 const step = (id: string, at: number): Message => ({ id, at, role: "bot", kind: "activity", tool: { name: "Read file", ok: true } } as Message);
 
@@ -24,9 +24,16 @@ describe("the without-memory note", () => {
     const markup = renderToStaticMarkup(createElement(WithoutMemoryNoteRow, { text: line }));
     expect(markup).toContain('role="status"');
     expect(markup).toContain('data-testid="without-memory-note"');
-    expect(markup).toContain("ran without remembered context");
+    expect(markup).toContain(line);
     expect(markup).not.toContain("break-all");
     expect(line).not.toMatch(/[–—]|\bsafe/);
+  });
+
+  it("shows the same copy for an older stored notice", () => {
+    const legacy = "Memory changed while Claude was starting, so this reply ran without remembered context.";
+    const markup = renderToStaticMarkup(createElement(WithoutMemoryNoteRow, { text: legacy }));
+    expect(markup).toContain(line);
+    expect(markup).not.toContain("Claude");
   });
 
   it("is told by its mark, never by a tool row's name", () => {
@@ -56,7 +63,7 @@ describe("the without-memory note", () => {
   });
 
   it("both server rows carry the mark", () => {
-    expect(read("../../server/memory/dispatch.ts")).toContain("`Memory changed while ${engine} was starting, so this reply ran without remembered context.`");
+    expect(read("../../server/memory/dispatch.ts")).toContain('kind === "without-memory" ? REPLY_MEMORY_CHANGED');
     const index = read("../../server/index.ts");
     expect(index).toMatch(/\{ name: line, ok: true \}, \.\.\.\(kind === "without-memory" \? \{ memoryNote: "without-memory" as const \} : \{\}\)/);
     // Revoke-fence journals both paths through the same marked, idempotent release.

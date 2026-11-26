@@ -5,7 +5,7 @@ import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { assertMemoryAccess, ensureScope, persistMemoryRoster, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { assertMemoryAccess, ensureScope, persistMemoryRoster, reconcileMemoryRoster, revalidateMemoryAccess, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { correctMemory, ownerMemoryTicket, pinMemory, saveMemoryCandidate, renameMemoryTeam } from "./authority.ts";
 import { buildMemoryBundle, assertMemoryBundle } from "./bundle.ts";
@@ -17,13 +17,44 @@ import { LineageAllowance } from "./lineage-allowance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR,{recursive:true}); });
+/** MAIN RULING 2026-11-17T19:46Z Q3 (privacy wins; recall-adm DECISIONS A2): a scope added to the roster moves the authority epoch, so the
+ * OLD handle refuses; the live reader continues only through revalidation, bounded by its original grant (no scope is gained). */
+function revalidated(access: MemoryAccess): MemoryAccess {
+  expect(() => assertMemoryAccess(access)).toThrow("MEMORY_CONTEXT_REVOKED");
+  const renewed = revalidateMemoryAccess(access);
+  expect(renewed).not.toBe(access);
+  expect([...renewed.scopeIds].sort()).toEqual([...access.scopeIds].sort());
+  expect(() => assertMemoryAccess(renewed)).not.toThrow();
+  return renewed;
+}
+/** A removal in the same write: the revalidated reader keeps a subset of its original scopes, without the withdrawn one. */
+function narrowed(access: MemoryAccess, withdrawn: string): MemoryAccess {
+  expect(() => assertMemoryAccess(access)).toThrow("MEMORY_CONTEXT_REVOKED");
+  const renewed = revalidateMemoryAccess(access);
+  expect(renewed.scopeIds.length).toBeGreaterThan(0);
+  for (const scope of renewed.scopeIds) expect(access.scopeIds).toContain(scope);
+  expect(access.scopeIds).toContain(withdrawn);
+  expect(renewed.scopeIds).not.toContain(withdrawn);
+  expect(() => assertMemoryAccess(renewed)).not.toThrow();
+  return renewed;
+}
+/** thrust-recall DESIGN.md state machine: a database reopen fences every live reader, so the old handle refuses as a typed view loss
+ * (RecallViewLost); the reader issued after durable reconciliation keeps every original scope (recall-adm DECISIONS A2). */
+function reissuedAfterReopen(access: MemoryAccess, reissue: () => MemoryAccess): void {
+  expect(() => assertMemoryAccess(access)).toThrow("MEMORY_SCOPE_DENIED");
+  // A fresh issuance reads the current roster, so it keeps every original scope (it may add a scope the roster added since).
+  const next = reissue();
+  for (const scope of access.scopeIds) expect(next.scopeIds).toContain(scope);
+  expect(() => assertMemoryAccess(next)).not.toThrow();
+}
 function fixture(thread = "private-a", humanPrincipal?: ReturnType<typeof resolveHumanBinding>) {
   const roster: MemoryRoster = {bots:[{id:"a",threadId:"private-a",section:"alpha"},{id:"b",threadId:"private-b",section:"beta"}],groups:[{id:"room",threadId:"room-thread",memberIds:["a","b"]}]};
   reconcileMemoryRoster(roster);
   const registry = new InternalCapabilities(); registry.begin("a",thread,"generation",humanPrincipal);
   const token = registry.mint({botId:"a",threadId:thread,generation:"generation",depth:100,kind:"memory",skillAuthoring:false,...humanPrincipal?{humanPrincipal}:{}});
   const access = memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);
-  return {roster,registry,access};
+  const reissue = () => memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);
+  return {roster,registry,access,reissue};
 }
 it("separates private, room and team scopes even at deep delegation", () => {
   const f = fixture("room-thread");
@@ -90,7 +121,8 @@ it("keeps an in-flight private bundle authorized when new peer rooms are added",
   const f = fixture();
   const before = memoryState().policyRevision;
   const scopes = [...f.access.scopeIds];
-  const bundle = await buildMemoryBundle("delegated work", f.access, {
+  // The epoch moved under the build, so the build on the old handle refuses (DECISIONS A2); the revalidated reader keeps exactly its scopes.
+  await expect(buildMemoryBundle("delegated work", f.access, {
     async search() {
       // The real worker await allows another helper's new channel to persist.
       for (let index = 0; index < 8; index++) {
@@ -100,11 +132,14 @@ it("keeps an in-flight private bundle authorized when new peer rooms are added",
       }
       return {hits:[],vectorRows:0};
     },
-  }, {allowance: LineageAllowance.tool(1_000_000_000)});
+  }, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
   expect(memoryState().policyRevision).toBe(before);
   expect(f.access.scopeIds).toEqual(scopes);
-  expect(() => assertMemoryBundle(bundle, f.access)).not.toThrow();
+  const renewed = revalidated(f.access);
+  const bundle = await buildMemoryBundle("delegated work", renewed, {search:async()=>({hits:[],vectorRows:0})}, {allowance: LineageAllowance.tool(1_000_000_000)});
+  expect(() => assertMemoryBundle(bundle, renewed)).not.toThrow();
   expect(() => assertMemoryAccess(f.access, ensureScope("room", "peer-0"))).toThrow("MEMORY_SCOPE_DENIED");
+  expect(() => assertMemoryAccess(renewed, ensureScope("room", "peer-0"))).toThrow("MEMORY_SCOPE_DENIED");
 });
 
 it.each(["private-thread", "bot-task", "room-thread", "room-task", "new-room-task"])(
@@ -148,8 +183,9 @@ it.each(["removal", "existing-task"])("scopes a %s bundled with an independent r
   if (change === "existing-task") next.bots[0].tasks = [{threadId:"added-private-task"}];
   persistMemoryRoster(next, () => { Object.assign(f.roster, next); });
   expect(memoryState().policyRevision).toBe(before);
-  expect(() => assertMemoryAccess(f.access)).not.toThrow();
+  const renewed = change === "removal" ? narrowed(f.access, ensureScope("room","room")) : revalidated(f.access);
   if (change === "removal") expect(() => assertMemoryAccess(f.access, ensureScope("room","room"))).toThrow("MEMORY_SCOPE_DENIED");
+  if (change === "removal") expect(() => assertMemoryAccess(renewed, ensureScope("room","room"))).toThrow("MEMORY_SCOPE_DENIED");
 });
 
 it("fails closed for a legacy hash-only roster snapshot", () => {
@@ -180,7 +216,8 @@ function taskNavigationFixture(kind: "bot" | "room") {
   reconcileMemoryRoster(f.roster);
   const registry=new InternalCapabilities(),generation=registry.begin("a",background);
   const token=registry.mint({botId:"a",threadId:background,generation,depth:0,kind:"memory",skillAuthoring:false});
-  return {roster:f.roster,subject,background,access:memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>f.roster)};
+  const reissue=()=>memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>f.roster);
+  return {roster:f.roster,subject,background,access:reissue(),reissue};
 }
 
 it.each(["bot", "room"] as const)("opening another existing %s task preserves background authority and disclosures",async kind=>{
@@ -197,7 +234,7 @@ it.each(["bot", "room"] as const)("opening another existing %s task preserves ba
   // Durable reconciliation uses the same set regardless of the selected task.
   closeDatabase();reconcileMemoryRoster(f.roster);
   expect(memoryState().policyRevision).toBe(before);
-  expect(()=>assertMemoryAccess(f.access)).not.toThrow();
+  reissuedAfterReopen(f.access,f.reissue);
 });
 
 it.each(["membership", "team"])("task navigation still revokes a real %s restriction",change=>{
@@ -229,11 +266,11 @@ it("adding a collision-free room task preserves unrelated original access and du
   next.groups[0].tasks=[{threadId:"room-thread"},{threadId:"new-scheduled-thread"}];
   persistMemoryRoster(next,()=>Object.assign(f.roster,next));
   expect(memoryState().policyRevision).toBe(before);
-  expect(()=>assertMemoryAccess(f.access)).not.toThrow();
+  revalidated(f.access);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
   closeDatabase();reconcileMemoryRoster(f.roster);
   expect(memoryState().policyRevision).toBe(before);
-  expect(()=>assertMemoryAccess(f.access)).not.toThrow();
+  reissuedAfterReopen(f.access,f.reissue);
 });
 
 it.each(["private-alias","other-room-alias","membership"])("room task additions still revoke %s changes",change=>{
@@ -263,9 +300,10 @@ it("adding a fresh independent owner task preserves prior access and grant epoch
   prepareMemoryDisclosure(bundle,f.access,"fixture");deliverMemoryDisclosure(bundle.bundleId,f.access);
   const next=structuredClone(f.roster);next.bots[0].tasks=[{threadId:"private-a"},{threadId:"fresh-owner-task"}];
   persistMemoryRoster(next,()=>Object.assign(f.roster,next));
-  expect(memoryState().policyRevision).toBe(before);expect(()=>assertMemoryAccess(f.access)).not.toThrow();
+  expect(memoryState().policyRevision).toBe(before);const renewed=revalidated(f.access);
   expect(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)?.state).toBe("delivered");
   expect(f.access.scopeIds).not.toContain(ensureScope("conversation","fresh-owner-task"));
+  expect(renewed.scopeIds).not.toContain(ensureScope("conversation","fresh-owner-task"));
   closeDatabase();reconcileMemoryRoster(f.roster);expect(memoryState().policyRevision).toBe(before);
 });
 

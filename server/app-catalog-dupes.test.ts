@@ -124,3 +124,32 @@ describe("looking an app up by slug is unchanged", () => {
     expect(knownApps(backend(), ["market_twin"]).market_twin).toMatchObject({ label: "Market Twin US" });
   });
 });
+
+// 1.0.21 polish (Sean's live 1.0.20 walk): the vendor's old "twitter" toolkit, with an encyclopedia description, sat
+// beside the curated "X (Twitter)" card. A renamed app is one card; the slug the person knows wins.
+describe("a renamed app listed under its old slug is one card", () => {
+  const ENCYCLOPEDIA = "Twitter, Inc. was an American social media company based in San Francisco, California, which operated";
+  function useRenamed() {
+    const apps = fakeCatalogApps();
+    apps.splice(1, 0, { slug: "twitter", name: "Twitter", blurb: ENCYCLOPEDIA, logo: "https://logos.example.test/twitter.png", noAuth: false, managed: true, rank: 1 });
+    vi.stubGlobal("fetch", fakeCatalogBroker(apps).fetch);
+    setManagedBrokerAccess({ url: "https://broker.example.test", token: "a".repeat(64) });
+  }
+  it("featured first paint shows X (Twitter) once and no Twitter, Inc. card", async () => {
+    useRenamed();
+    const view = await listToolkits(managed());
+    const slugs = view.featured.map((card) => card.slug);
+    expect(slugs).toContain("x");
+    expect(slugs).not.toContain("twitter");
+    expect(view.featured.some((card) => card.blurb.startsWith("Twitter, Inc."))).toBe(false);
+  });
+  it("collapses the pair everywhere, and keeps the old slug only when the person is connected on it", () => {
+    const pair = [
+      { slug: "twitter", label: "Twitter", blurb: ENCYCLOPEDIA },
+      { slug: "x", label: "X (Twitter)", blurb: "Post and read on X" },
+    ];
+    expect(collapseDuplicates(pair).map((card) => card.slug)).toEqual(["x"]);
+    expect(collapseDuplicates(pair, new Set(["twitter"])).map((card) => card.slug)).toEqual(["twitter"]);
+    expect(collapseDuplicates(pair, null).map((card) => card.slug)).toEqual(["twitter", "x"]);
+  });
+});

@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import { messageSizeLabels } from "../../shared/message-limits";
+import { FUIGO_PENDING_SEND_LINE } from "../../shared/fuigo-pending";
 
 /** Why the composer kept a message instead of sending it, or changed it.
  *
@@ -32,7 +33,9 @@ export type ComposerSendNoticeState =
   /** U36: an earlier send of these words, before they were edited, already reached the bot. */
   | { kind: "earlier-arrived" }
   /** U36: whether an earlier send arrived could not be checked, so this press waits for the next one. */
-  | { kind: "check-failed" };
+  | { kind: "check-failed" }
+  /** CLOUD-FUIGO-FIRST: the server answered 409 fuigo_pending (Fuigo is still getting ready on this Cloud home); the words stay. */
+  | { kind: "fuigo-pending" };
 
 export function composerSendNoticeText(notice: ComposerSendNoticeState): string {
   if (notice.kind === "flux-key-saved") return FIRST_RUN_COPY.pastedKey.saved;
@@ -41,6 +44,7 @@ export function composerSendNoticeText(notice: ComposerSendNoticeState): string 
   if (notice.kind === "not-saved") return t("send.notSaved");
   if (notice.kind === "earlier-arrived") return t("send.earlierArrived");
   if (notice.kind === "check-failed") return t("send.checkFailed");
+  if (notice.kind === "fuigo-pending") return FUIGO_PENDING_SEND_LINE;
   const { size, limit } = messageSizeLabels(notice.sizeBytes);
   return notice.kind === "too-large"
     ? t("composer.tooLarge", { size, limit })
@@ -51,7 +55,7 @@ export function composerSendNoticeText(notice: ComposerSendNoticeState): string 
  *  not look the same. Waiting on an upload is neither: nothing went wrong and
  *  nothing was lost, so it reads as a status rather than an alarm. */
 function noticeIsFailure(notice: ComposerSendNoticeState): boolean {
-  return notice.kind !== "flux-key-saved" && notice.kind !== "upload-pending" && notice.kind !== "earlier-arrived";
+  return notice.kind !== "flux-key-saved" && notice.kind !== "upload-pending" && notice.kind !== "earlier-arrived" && notice.kind !== "fuigo-pending";
 }
 
 /** The inline explanation beside the composer. It is an alert, so a screen

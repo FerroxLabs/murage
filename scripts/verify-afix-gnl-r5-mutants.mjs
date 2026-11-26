@@ -1,17 +1,18 @@
+import { archivedEvidencePath, assertExternalEvidencePath, evidencePath } from './evidence-path.mjs';
 // Production and fixture reversions, confined to copied source and disposable data.
 import {cpSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync,symlinkSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-const source=process.cwd(),out=resolve(process.env.GNL_MUTANTS_OUT??'evidence/afix-gnl-prod-r5/mutants');mkdirSync(out,{recursive:true});
+const source=process.cwd(),out=assertExternalEvidencePath(resolve(process.env.GNL_MUTANTS_OUT??evidencePath('evidence/afix-gnl-prod-r5/mutants')));mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'afix-gnl-mutants-')),hash=s=>createHash('sha256').update(s).digest('hex');
 const only=process.argv[2];
 const results=only&&existsSync(join(out,'results.json'))?JSON.parse(readFileSync(join(out,'results.json'))):[];
 try{
  for(const name of ['server','scripts','shared','src','electron','extensions','companion','tools','cloudflare','apps','package.json','pnpm-lock.yaml','pnpm-workspace.yaml','vite.config.ts','tsconfig.json'])cpSync(name,join(root,name),{recursive:true});
  symlinkSync(join(source,'node_modules'),join(root,'node_modules'),'dir');
- cpSync('evidence/gnl-prod',join(root,'evidence/gnl-prod'),{recursive:true});
+ // The child inherits MURAGE_EVIDENCE_ARCHIVE; no private reports enter its source copy.
  const specs=[
   {id:'muse-unconfirmed-retirement',file:'server/drivers/muse-code.ts',test:'server/drivers/muse-code.test.ts',pattern:'P-MUSE missing strict|P-MUSE strict|P-MUSE acknowledged',bad:1,good:4,mutate:s=>s.replace('const settlement = nativeConfirmed ? answerTransport.deliverySettled(threadId, requestId) : Promise.resolve();','const settlement = answerTransport.deliverySettled(threadId, requestId);')},
   {id:'muse-strict-receipt',file:'server/drivers/request-delivery.ts',test:'server/drivers/muse-code.test.ts',pattern:'P-MUSE strict|P-MUSE acknowledged',bad:2,good:2,mutate:s=>s.replace('if(transport)transport.onDeliverySettled=(t,r)=>open.get(key(t,r))?.delivery?.then(()=>{})??Promise.resolve();','if(transport)transport.onDeliverySettled=()=>Promise.resolve();')},
@@ -20,7 +21,7 @@ try{
   {id:'project-request',file:'server/index.ts',test:'server/product-project-routine-policy-api.test.ts',bad:3,good:1,mutate:s=>s.replace('  const decisionRoomRequest = roomLineageRow;','  const decisionRoomRequest = roomTurnRequest ? roomRequest(database(), roomTurnRequest.requestId) : undefined;')},
   {id:'project-wait',file:'server/index.ts',test:'server/decision-wiring/actor-wiring.test.ts',pattern:'H-workflow project routine authority|actual live reader accepts',bad:1,good:4,mutate:s=>s.replace("!['running', 'waiting_owner'].includes(request.state) || request.toBotId !== provenance.botId","request.state !== 'running' || request.toBotId !== provenance.botId")},
   {id:'muse-browser',file:'server/drivers/muse-code.ts',test:'server/drivers/muse-code.test.ts',pattern:'H-workflow Muse|P-MUSE acknowledged',bad:1,good:2,mutate:s=>s.replace('        browserMcp: true,\n','')},
-  {id:'browser-plan',file:'scripts/no-limits-live/fakes/release-plan.mjs',node:true,pattern:'long page reads|plain browser calls',bad:1,good:1,mutate:()=>JSON.parse(readFileSync('evidence/afix-gnl-prod-r5/plan-mutant.json')).bytes},
+  {id:'browser-plan',file:'scripts/no-limits-live/fakes/release-plan.mjs',node:true,pattern:'long page reads|plain browser calls',bad:1,good:1,mutate:()=>JSON.parse(readFileSync(archivedEvidencePath('evidence/afix-gnl-prod-r5/plan-mutant.json'))).bytes},
   {id:'hermes-order',file:'scripts/no-limits-live/fakes/acp.mjs',node:true,pattern:'Hermes fixture|plain browser calls',bad:2,good:1,mutate:s=>s.replace("const checkedFirst=process.env.GNL_FAKE_KIND==='hermesAgent'","const checkedFirst=false")},
   {id:'native-declarations',file:'scripts/no-limits-live/declared-requests.mjs',node:true,pattern:'native empty-shell|plain browser calls',bad:1,good:1,mutate:s=>s.replace("if(engine.driver==='antigravityAgent'&&step.tool==='Bash'&&!Object.hasOwn(step.input,'command')&&cwd)requests.push({engine:engine.driver,tool:'run_command',inputHash:hashInput({cwd}),class:cls});",'')},
  ];

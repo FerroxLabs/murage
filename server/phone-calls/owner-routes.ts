@@ -66,8 +66,14 @@ export async function phoneOwnerRoute(service: () => PhoneCallService, req: Phon
     catch (error) { return { status: 502, body: { error: (error as { code?: string }).code ?? "vendor_unavailable" } }; }
   }
   if (path === PHONE_OWNER_PREFIX && method === "GET") { const s = service(); await s.refreshOwnerCalls(); return { status: 200, body: { calls: s.recentOwnerCards(50) } }; }
-  const action = method === "POST" ? path.match(/^\/api\/phone-calls\/([A-Za-z0-9_-]{1,80})\/(cancel|share)$/) : null;
+  const action = method === "POST" ? path.match(/^\/api\/phone-calls\/([A-Za-z0-9_-]{1,80})\/(cancel|share|keep)$/) : null;
   if (action) {
+    const held = action[2] === "cancel" ? service().ownerCard(action[1]!)?.held : undefined;
+    // A cancelled held call stays on decideHeld so a retried Cancel can confirm its replacement's stop.
+    if (action[2] === "keep" || held === "held" || held === "cancelled") {
+      const decided = await service().decideHeld(action[1]!, action[2] === "keep" ? "keep" : "cancel");
+      return decided.ok ? { status: 200, body: decided.value } : { status: decided.error === "not_found" ? 404 : 502, body: { error: decided.error } };
+    }
     if (action[2] === "cancel") {
       const status = await service().cancel(action[1]!);
       return status === "not_found" ? { status: 404, body: { error: "not_found" } } : { status: 200, body: { status } };

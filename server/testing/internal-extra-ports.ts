@@ -8,9 +8,6 @@ import { createBackupRestartAdmission } from "../backup-restart-admission.ts";
 import { ChiefProposalTurns } from "../project-proposal-engines.ts";
 import { createCloudEmailAvailability } from "../cloud-home/email-signin-availability.ts";
 import { FluxMemoryForget, type FluxForgetDeps } from "../flux-memory-forget.ts";
-import { HighLevelReviewCards } from "../highlevel/review-cards.ts";
-import { highlevelDecisionReview } from "../highlevel/decision-review.ts";
-import type { HighLevelRuntime } from "../highlevel/runtime.ts";
 import { createOwnerZoneReconciler } from "../owner-zone-reconcile.ts";
 import { createPushWarn } from "../mobile-push-hooks.ts";
 import { createReplySpeakerTurns } from "../reply-speaker-guard.ts";
@@ -50,7 +47,7 @@ import { extractFunction, type StatePort } from "./source-extract.ts";
 import { registerPortConstructor } from "./port-integrity.ts";
 
 // Capture imported constructor and ancestor methods before any case hook.
-for (const Constructor of [ChiefProposalTurns, FluxMemoryForget, HighLevelReviewCards, RestoreJobStore, TaskAllowances, TeamIncidentLedger, BrowserCheckTurns, FluxMemoryCapture, BrowserCleanupCoordinator, TelegramService, TelegramTransport, PushOutbox, PushStore, RowSink]) if (typeof Constructor === "function") registerPortConstructor(Constructor);
+for (const Constructor of [ChiefProposalTurns, FluxMemoryForget, RestoreJobStore, TaskAllowances, TeamIncidentLedger, BrowserCheckTurns, FluxMemoryCapture, BrowserCleanupCoordinator, TelegramService, TelegramTransport, PushOutbox, PushStore, RowSink]) if (typeof Constructor === "function") registerPortConstructor(Constructor);
 
 type Fn = (...args: any[]) => any;
 type PushOptions = ConstructorParameters<typeof PushOutbox>[0];
@@ -140,21 +137,6 @@ export function extraFixturePorts(context: InternalPortContext): StatePort[] {
       dispatcher: production<NonNullable<FluxForgetDeps["dispatcher"]>>("fluxMemoryForget.dispatcher"),
       fetch: failClosedProviderFetch,
     }), value => value.stop()),
-    port("highlevelReviewBridge", () => highlevelDecisionReview({
-      store: context.store,
-      actions: required<HighLevelRuntime>("highlevel").actions,
-      authority: production<Parameters<typeof highlevelDecisionReview>[0]["authority"]>("highlevelReviewBridge.authority"),
-    })),
-    port("highlevelCards", () => {
-      const bridge = required<ReturnType<typeof highlevelDecisionReview>>("highlevelReviewBridge");
-      return new HighLevelReviewCards({
-        store: context.store,
-        actions: required<HighLevelRuntime>("highlevel").actions,
-        present: bridge.present,
-        closed: bridge.closed,
-        waiting: production<ConstructorParameters<typeof HighLevelReviewCards>[0]["waiting"]>("highlevelCards.waiting"),
-      });
-    }),
 
     port("browserCheckTurns", () => new BrowserCheckTurns({
       patch: production<BrowserCheckNotes["patch"]>("browserCheckTurns.patch"),

@@ -55,8 +55,8 @@ import time
 import urllib.request
 
 PINS = {
-    "claudeAgent": ("https://downloads.claude.ai/claude-code-releases/2.1.292/linux-x64/claude", "a967e7b1d8b4e47ee421d5433027880347952b0c0857abf880e2c942a4ec93b3", None),
-    "codex": ("https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-x86_64-unknown-linux-musl.tar.gz", "86f268d81b898f3e144c5ecff2ad2fda2c5802e042d6195b72538fe0fa125057", "codex-x86_64-unknown-linux-musl"),
+    "claudeAgent": ("https://downloads.claude.ai/claude-code-releases/2.1.323/linux-x64/claude", "604d29a6869409106b6a1110bdadcc8b72e8654a5a865d23258f938a696e348e", None),
+    "codex": ("https://github.com/openai/codex/releases/download/rust-v0.171.0/codex-x86_64-unknown-linux-musl.tar.gz", "01baa2e47809f8597be5b2f8abd4e4dfe3fb5bcb6e504c2fbaaad97056c15e8d", "codex-x86_64-unknown-linux-musl"),
     "grokAgent": ("https://x.ai/cli/grok-1.0.52-linux-x86_64", "1668414b047e1050a96d25fe17dfc3efe63190fbf66d8cc1c3de8633caf50d11", None),
     "kimiAgent": ("https://code.kimi.com/kimi-code/binaries/2.2.0/kimi-code-linux-x64", "8ee7405d82958f0a50a3aab0773aba9e01057978bad93ba379eaf89e5b6111af", None),
     "opencodeGo": ("https://registry.npmjs.org/opencode-linux-x64-baseline/-/opencode-linux-x64-baseline-1.19.0.tgz", "6bdf946045ebfa5773811d0037c1ca8c8a3831880434289b9e4a40c2f1fe8432", "package/bin/opencode"),
@@ -166,7 +166,7 @@ BOT = "start-check"
 KEPT = {
     "claudeAgent": {".claude/.claude.json": '{"hasCompletedOnboarding": true, "mcpServers": {"evil": {"command": "/bin/true"}}, "projects": {"/x": {"allowedTools": ["Bash"]}}}'},
     "codex": {".codex/sessions/2026/10/16/rollout-2026-10-16T00-00-00-" + RESUME_ID + ".jsonl":
-              '{"timestamp": "2026-10-16T00:00:00Z", "type": "session_meta", "payload": {"id": "' + RESUME_ID + '", "timestamp": "2026-10-16T00:00:00Z", "cwd": "/x", "originator": "codex", "cli_version": "0.162.1"}}\n'},
+              '{"timestamp": "2026-10-16T00:00:00Z", "type": "session_meta", "payload": {"id": "' + RESUME_ID + '", "timestamp": "2026-10-16T00:00:00Z", "cwd": "/x", "originator": "codex", "cli_version": "0.171.0"}}\n'},
 }
 # The r2 H race: planted after the plan is built and before bwrap runs, inside cwd. The names must be ones the
 # launcher itself never renders (it renders .kimi-code/local.toml, .opencode/opencode.json and .fuigo/config.toml

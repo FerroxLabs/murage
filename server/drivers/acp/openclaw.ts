@@ -260,7 +260,7 @@ export const openclawSupport: AcpSupport = {
     if (!existsSync(configPath)) return "unknown";
     try {
       if (statSync(configPath).size > 1024 * 1024) return "unknown";
-      const saved = JSON.parse(readFileSync(configPath, "utf8"));
+      const saved = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(configPath, "utf8")));
       if (saved.gateway?.mode === "remote" || saved.gateway?.remote?.url || env.OPENCLAW_GATEWAY_URL) return "unknown";
     } catch { return "unknown"; }
     return configFilesReach([configPath, join(openclawStateDir(env), "agents", openclawAgentOf(config), "agent", "models.json")]);

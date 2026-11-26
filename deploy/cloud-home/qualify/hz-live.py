@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""REAL build host Cloud qualification driver for Murage Cloud B1 (stdlib only).
+"""REAL Hetzner Cloud qualification driver for Murage Cloud B1 (stdlib only).
 
 Safety model: every resource it creates is named mcq-* and labelled mcq=1;
 every delete path refuses anything lacking BOTH. The API token is read once,
@@ -118,7 +118,7 @@ CHANNEL_URL = re.compile(r"https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]*)?")
 PROD_KEY_DIR = "~/.config/murage-prod"
 PROD_RELEASE_PUBLIC_B64 = "MCowBQYDK2VwAyEAAu65BN00px2IYJzVXjLOjdyXh2mjRAm1zckEO09fmDc="
 PROD_RELEASE_CHANNEL = "https://releases.murage.ai/cloud-home"
-# The quarantine firewall that exists only in the murage-live build host project: a token that can see it is the prod project's token.
+# The quarantine firewall that exists only in the murage-live Hetzner project: a token that can see it is the prod project's token.
 PROD_PROJECT_FIREWALL = "murage-live-quarantine"
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 
@@ -137,7 +137,7 @@ IMAGE_DISK_GB = 40
 
 
 def builder_arch(lane, typ):
-    """x86_64 or aarch64 for the builder, from its lane and cross-checked against its server type (build host CAX is arm64). A builder with
+    """x86_64 or aarch64 for the builder, from its lane and cross-checked against its server type (Hetzner CAX is arm64). A builder with
     under 8 GB is refused before any server is created."""
     if str(typ).lower() not in BUILDER_TYPES:
         raise QualError("--type %s cannot build the image (needs 8 GB RAM): use cx33 (x86_64) or cax21 (arm64), or larger (%s)" % (typ, ", ".join(BUILDER_TYPES)))
@@ -795,7 +795,7 @@ class Driver:
 
     def cmd_verify_image(self, image_id, ssh_key, typ=None, location="fsn1"):
         """Release gate on the EXACT published snapshot id. A throwaway server is created from the snapshot and booted into
-        build host RESCUE (the image's own sshd is never needed); image-disk-check.sh judges the disk layout and mounts the root READ-ONLY
+        Hetzner RESCUE (the image's own sshd is never needed); image-disk-check.sh judges the disk layout and mounts the root READ-ONLY
         (the journal is never skipped, root chosen by grub UUID), and image-release-check.sh runs on the mounted tree; the server is deleted by exact id in a finally block. Only a PASS writes the snapshot labels
         murage/image-kind=customer, murage/verified-at, murage/check-version and murage/verified-by: the kind label is a RESULT
         of this check, never an input from the build step."""
@@ -993,7 +993,7 @@ class Driver:
                     self.c.wait_action(self.c.request("POST", "/servers/%s/actions/change_type" % builder["id"], {"server_type": typ, "upgrade_disk": False})["action"], timeout=900)
                     break
                 except QualError as e:
-                    # build host answers 412 resource_unavailable while a location is short of the type
+                    # Hetzner answers 412 resource_unavailable while a location is short of the type
                     if "resource_unavailable" not in str(e) or attempt == 5:
                         raise
                     self.c.sleep(60)
@@ -1002,7 +1002,7 @@ class Driver:
             if builder.get("status") != "running":
                 raise QualError("builder not running: %s" % builder.get("status"))
             ip = builder["public_net"]["ipv4"]["ip"]
-            # build host reuses IPs; a fresh known_hosts per server keeps
+            # Hetzner reuses IPs; a fresh known_hosts per server keeps
             # accept-new from refusing a recycled address's new host key.
             known = self.evidence / ("known_hosts-%s" % builder["id"])
             ssh = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=" + str(known), "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"] + ssh_jump() + ["root@" + ip]
@@ -1139,7 +1139,7 @@ class Driver:
                                    {"type": "snapshot", "description": snap_desc, "labels": dict({"mcq": "1", "murage/build": revision, "murage/role": "image", "murage/image-kind": image_kind, "murage/env": env}, **({"lane": lane} if lane else {}))})
             image = idata["image"]
             self.ledger.create("snapshot", image["id"], snap_desc, "snapshot", location, self.snapshot_hourly(float(image.get("image_size") or 20)), cur)
-            # build host has taken over 10 min for a 4 GB snapshot (2026-10-14); a timeout
+            # Hetzner has taken over 10 min for a 4 GB snapshot (2026-10-14); a timeout
             # here deletes the builder and the half-made snapshot with it, so wait long.
             self.c.wait_action(idata.get("action"), timeout=3600, interval=10)
             made = self.c.request("GET", "/images/%s" % image["id"]).get("image", {})
@@ -1159,7 +1159,7 @@ def build_parser():
     # No default path: the token file is named by the operator (flag, or MURAGE_HZ_TOKEN_FILE).
     common.add_argument("--token-file", default=os.environ.get("MURAGE_HZ_TOKEN_FILE"),
                         required=not os.environ.get("MURAGE_HZ_TOKEN_FILE"),
-                        help="file holding the build host API token (or set MURAGE_HZ_TOKEN_FILE)")
+                        help="file holding the Hetzner API token (or set MURAGE_HZ_TOKEN_FILE)")
     common.add_argument("--evidence", default="qualification-evidence")
     common.add_argument("--cap", type=float, default=250.0)
     p = argparse.ArgumentParser(description=__doc__)

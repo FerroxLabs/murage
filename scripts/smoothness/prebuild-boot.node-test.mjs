@@ -3,13 +3,14 @@
 // Run in a network-none container. All databases and homes are disposable.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 const cli = fileURLToPath(new URL("./prebuild-index.mjs", import.meta.url));
 const seedUrl = new URL("./prebuild-fixture.mjs", import.meta.url).href;
@@ -57,6 +58,8 @@ async function explainDifferences(product, version, differences, prebuildFile, b
   await import(url("server/message-id-index.ts"));
   await import(url("server/transcript-seq.ts"));
   const { OPTIONAL_INDEXES } = await import(url("server/memory/optional-index.ts"));
+  const { recallExternalObjects } = await import(url("server/memory/recall-view-schema.ts"));
+  const externalRecall = recallExternalObjects();
   const eager = new Set(["memory_details_identity", "memory_records_canon", "memory_records_waiting_review", "memory_tombstones_forgets"]);
   const appTables = {
     flux_capture_hold: "server/message-tables.ts",
@@ -86,6 +89,11 @@ async function explainDifferences(product, version, differences, prebuildFile, b
         diff.explanation = {
           reason: "Product downgrade removed this app table; product boot recreates it empty outside memory migration.",
           source: [ref(file, `CREATE TABLE IF NOT EXISTS ${object.name}`), ref("server/memory/upgrade-app-tables.ts", `"${object.name}"`)],
+        };
+      } else if (object.type === "trigger" && externalRecall.get(object.name)?.sql === object.sql && externalRecall.get(object.name)?.tbl_name === object.tbl_name) {
+        diff.explanation = {
+          reason: "Product app-table initialization adds the recall epoch triggers on external tables at every open, after memory migration.",
+          source: [ref("server/database.ts", "initializeTeamIdentityTables(db); ensureExternalRecallEpoch(db);"), ref("server/memory/recall-view-schema.ts", "export const RECALL_EXTERNAL_SCHEMA")],
         };
       } else if (object.name === "sqlite_autoindex_project_routine_authority_1" && object.type === "index" && object.tbl_name === "project_routine_authority" && object.sql === null) {
         diff.explanation = {
@@ -202,6 +210,6 @@ for (const productArg of process.env.PREBUILD_TEST_PRODUCTS?.split(":") ?? ["."]
       }
       console.log(JSON.stringify({ product, version, tables: Object.keys(expected.tables).length, differences }));
       assert.deepEqual(unexplained, [], "every boot/prebuild difference requires a product-line explanation");
-    } finally { rmSync(root, { recursive: true, force: true }); }
+    } finally { safeWipeSync(root); }
   });
 }

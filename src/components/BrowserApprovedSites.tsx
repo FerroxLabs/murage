@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Approved sites per bot per browser profile (spec 2.3, 9.9). Desktop edits everything; the phone may only Revoke.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type Bot } from "@/state/store";
 import { isPhoneClient } from "@/lib/phone-client";
 import { categoryFor, type SiteCategory } from "../../shared/browser-site-categories";
@@ -75,9 +75,10 @@ export function BrowserApprovedSitesView({ botName, sites, phone, pending, error
   </section>;
 }
 
-export function BrowserApprovedSites({ bot, profileId, phone = isPhoneClient(), endedBindingIds = [], sitesLowered = false }: { bot: Pick<Bot, "id" | "name">; profileId?: string; phone?: boolean; endedBindingIds?: string[]; /** The status poll says a failed save turned Allow always sites back to Ask: shown without opening the list. */ sitesLowered?: boolean }) {
+export function BrowserApprovedSites({ bot, profileId, phone = isPhoneClient(), endedBindingIds = [], sitesLowered = false, connectionError = "" }: { bot: Pick<Bot, "id" | "name">; profileId?: string; phone?: boolean; endedBindingIds?: string[]; /** The status poll says a failed save turned Allow always sites back to Ask: shown without opening the list. */ sitesLowered?: boolean; connectionError?: string }) {
   const [sites, setSites] = useState<ApprovedSite[]>([]);
-  const [error, setError] = useState("");
+  const [readError, setReadError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [pending, setPending] = useState(false);
   const [lowering, setLowering] = useState<string | null>(null);
   const [lift, setLift] = useState<{ origin: string; rule: "ask" | "allow" } | null>(null);
@@ -97,12 +98,36 @@ export function BrowserApprovedSites({ bot, profileId, phone = isPhoneClient(), 
   const dismiss = (origin: string) => { const next = [...dismissed, origin]; setDismissed(next); try { localStorage.setItem(`murage.browserExt.offerDismissed.${bot.id}`, JSON.stringify(next)); } catch { /* no storage */ } };
   const base = `/api/bots/${encodeURIComponent(bot.id)}/browser-extension/sites`;
   const query = profileId ? `?profileId=${encodeURIComponent(profileId)}` : "";
-  const load = useCallback(async () => { try { const result = await api(base + query); setSites(Array.isArray(result.sites) ? result.sites : []); if (result.sitesLowered === true) setLoweredNote(true); } catch (cause) { setError(cause instanceof Error ? cause.message : ""); } }, [base, query]);
-  useEffect(() => { void load(); }, [load]);
+  const url = base + query;
+  const unavailable = !!connectionError;
+  const readTarget = useRef({ url: "", unavailable: false });
+  const readVersion = useRef(0);
+  const load = useCallback(async () => {
+    if (readTarget.current.url !== url) return;
+    const version = ++readVersion.current;
+    try {
+      const result = await api(url);
+      if (version !== readVersion.current) return;
+      setSites(Array.isArray(result.sites) ? result.sites : []);
+      setReadError("");
+      if (result.sitesLowered === true) setLoweredNote(true);
+    } catch (cause) {
+      if (version === readVersion.current) setReadError(cause instanceof Error ? cause.message : "");
+    }
+  }, [url]);
+  useLayoutEffect(() => {
+    const previous = readTarget.current;
+    readTarget.current = { url, unavailable };
+    if (previous.url === url && (!previous.unavailable || unavailable)) return;
+    // Clear the old read alert before the recovered panel is painted.
+    setReadError("");
+    void load();
+  }, [load, unavailable, url]);
   const set = async (origin: string, rule: SiteRule, lowered?: boolean) => {
-    setPending(true); setError("");
+    setPending(true); setSaveError("");
     try { await api(base, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(profileId ? { profileId } : {}), origin, rule, ...(lowered ? { lowered } : {}) }) }); setLowering(null); setLift(null); await load(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : ""); } finally { setPending(false); }
+    catch (cause) { setSaveError(cause instanceof Error ? cause.message : ""); } finally { setPending(false); }
   };
-  return <BrowserApprovedSitesView botName={bot.name} sites={sites} phone={phone} pending={pending} error={error} lowering={lowering} onSet={(o, r, l) => void set(o, r, l)} onLowerAsk={setLowering} onLowerKeep={() => setLowering(null)} liftTarget={lift} onLiftAsk={(origin, rule) => setLift({ origin, rule })} onLiftKeep={() => setLift(null)} offers={used.filter(origin => !dismissed.includes(origin))} onDismissOffer={dismiss} loweredNote={loweredNote} onDismissLowered={() => setLoweredNote(false)} />;
+  const siteReadError = readError === connectionError ? "" : readError;
+  return <BrowserApprovedSitesView botName={bot.name} sites={sites} phone={phone} pending={pending} error={saveError || siteReadError} lowering={lowering} onSet={(o, r, l) => void set(o, r, l)} onLowerAsk={setLowering} onLowerKeep={() => setLowering(null)} liftTarget={lift} onLiftAsk={(origin, rule) => setLift({ origin, rule })} onLiftKeep={() => setLift(null)} offers={used.filter(origin => !dismissed.includes(origin))} onDismissOffer={dismiss} loweredNote={loweredNote} onDismissLowered={() => setLoweredNote(false)} />;
 }

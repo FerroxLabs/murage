@@ -13,7 +13,7 @@ export type UnsignedPePin = { bytes: number; sha256: string; checksum: number };
 const bundle = browserBundleSpec("win32-x64");
 export const WINDOWS_BROWSER_IMAGE_PINS = {
   engine: { bytes: bundle.engine.bytes, sha256: bundle.engine.sha256, checksum: 13893729 },
-  chrome: { bytes: 209473024, sha256: bundle.chrome.executableSha256, checksum: 0 },
+  chrome: { bytes: 222840320, sha256: bundle.chrome.executableSha256, checksum: 0 },
 } satisfies Record<string, UnsignedPePin>;
 
 export function verifyWindowsBrowserImage(bytes: Buffer, pin: UnsignedPePin): { signed: boolean } {

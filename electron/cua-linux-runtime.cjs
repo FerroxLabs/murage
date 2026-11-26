@@ -20,7 +20,7 @@ const CONNECTION_SCHEMA_VERSION = 1;
 // opt-in versioned makes a newer build unable to arm an older installed copy.
 const SETTINGS_SCHEMA_VERSION = 2;
 const HOST_BUNDLE_ID = "com.murage.app";
-const CERTIFIED_CONTRACT_VERSION = "0.6.0";
+const CERTIFIED_CONTRACT_VERSION = "0.9.0";
 const CERTIFIED_TOOLS_LIST_SCHEMA_VERSION = "1";
 const CERTIFIED_CAPABILITY_VERSION = "1";
 const CERTIFIED_MCP_PROTOCOL_VERSION = "2025-06-18";

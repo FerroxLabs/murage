@@ -1,15 +1,14 @@
 import type { AppAccessDenial } from "./decision/index.ts";
 import { ProducerApprovalQueue, producerBase, type ServiceAuthority } from "./narrow-denials.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { isNativeHighLevelName } from "../shared/highlevel.ts";
-import { highlevelRelayRefusal } from "./highlevel/access.ts";
-import { isComposioHighLevelId, nativeHighLevelGranted, nativeWinsCallRefused, nativeWinsRefusalText, nativeWinsStoredRefused } from "./highlevel/native-wins.ts";
 import { z } from "zod";
 import { ACCESS_REQUEST_TTL_MS, accessRequestExpired, CONNECTED_APP_TOOLS, accessGrantSchema, connectedAppAccessSchema, type AccessGrant } from "../shared/bot-access.ts";
 import { connectedAppToolId, isConnectedAppStatusTool } from "../shared/connected-app-calls.ts";
 import { classifyConnectedAppCall } from "../shared/connected-app-readonly.ts";
 import { accessRoleBinding, botAccessPolicy as baseBotAccessPolicy } from "./bot-access-role.ts";
 import { isWorkspaceChief, sectionKey, type BotRecord, type Store } from "./store.ts";
+import { admission, admittedKnownSlugs, appAccessFor, assertLevelsCall, assertLevelsStored, commitAccess, fullyOpen, levelsOf } from "./bot-access-levels.ts";
+import type { InventoryServices } from "./connected-inventory.ts";
 /** Refusals outlive role-binding changes; only a matching later owner grant
  * clears them. The existing role checker still determines all positive grants. */
 export function readAppAccessDenials(bot:BotRecord) {
@@ -60,13 +59,13 @@ export function requestBotAccess(store:Store,sender:BotRecord,input:unknown,now=
   if(current.revision!==frozen.revision)fail('Access changed. Read the current status and request again.',409);
   const next={...current,revision:current.revision+1,mode:'restricted' as const,allowWrites:frozen.allowWrites,grants:frozen.grants,denials:clearGrantedDenials(current.denials,frozen.grants,frozen.allowWrites),requests:[]};
   next.roleBinding=accessRoleBinding({...target!,composio:true,accessRoleEpoch:(target!.accessRoleEpoch??0)+(target!.composio===false?1:0)});
-  store.patchBot(target!.id,{composio:true,connectedAppAccess:next});return next.revision;
+  commitAccess(store,target!,next,null,{requestId:pending.id,behavior:'allow',revision:next.revision},{composio:true});return next.revision;
  });
  if(result.kind==='executed')return {requestId:'',expiresAt:now,status:'Applied',revision:result.value};
  if(result.kind==='refuse')fail(result.message,409);
  approvals.stage(opened,result.ref);
  // Both the durable source call and the original proposal retain exact ids.
- store.patchBot(target!.id,{connectedAppAccess:{...policy,revision:policy.revision+1,requests:[...liveRequests,pending]}});
+ commitAccess(store,target!,{...policy,revision:policy.revision+1,requests:[...liveRequests,pending]},"carry");
  approvals.presentNow(opened,result.ref);
  return {requestId:pending.id,expiresAt:pending.expiresAt,status:'Waiting for owner review',revision:botAccessPolicy(target!).revision};
 }
@@ -88,7 +87,7 @@ export function botAccessApprovalQueue(store:Store):ProducerApprovalQueue {
   // The fsynced queue is the proposal source across the queue-first crash gap.
   // Rebuild only at the original revision with the original ids and lifetime.
   if(!policy.requests.some(request=>request.id===item.ref)&&policy.revision===call.revision&&call.proposal?.id===item.ref){
-   store.patchBot(target.id,{connectedAppAccess:{...policy,revision:policy.revision+1,requests:[...policy.requests,call.proposal]}});
+   commitAccess(store,target,{...policy,revision:policy.revision+1,requests:[...policy.requests,call.proposal]},"carry");
    policy=botAccessPolicy(target);
   }
   const request=policy.requests.find(request=>request.id===item.ref);
@@ -181,7 +180,9 @@ function prepareBotAccessReview(store:Store,botId:string,input:unknown,accounts:
 }
 function applyBotAccessReview(store:Store,botId:string,input:unknown,accounts:ReadonlyArray<{toolkit:string;accountId:string}>,now=Date.now()) {
  const {bot,next,enable}=prepareBotAccessReview(store,botId,input,accounts,now);
- store.patchBot(bot.id,{...(enable?{composio:true}:{}),connectedAppAccess:next});
+ // configure and approve replace the bot's choices (levels off); deny keeps them (AG0 4.5).
+ const action=ownerAction.parse(input);
+ commitAccess(store,bot,next,action.action==="deny"?"carry":null,action.action==="configure"?undefined:{requestId:action.requestId,behavior:action.action==="approve"?"allow":"deny",revision:next.revision},enable?{composio:true}:{});
  return accessOwnerView(bot);
 }
 /** One denial per catalog operation and exact account. A write toggle never
@@ -207,15 +208,12 @@ function forbiddenAuthArguments(value:unknown):boolean {
  * Discovery/workbench/proxy meta-tools can reveal other accounts or execute
  * dynamic code, so restricted mode exposes only the finite approved path.
  */
-export function assertConnectedAppCall(bot:BotRecord,input:unknown,highlevel:{connectionActive?:boolean;noLimits?:boolean}={}):void {
+export function assertConnectedAppCall(bot:BotRecord,input:unknown,options:{noLimits?:boolean;inventory?:InventoryServices|null}={}):void {
  if(bot.hidden||bot.staged||bot.composio===false)fail("Connected apps are off for this bot; enable them in Settings → Connections → Connected apps.");
- if(highlevel.noLimits)return;
+ if(options.noLimits)return;
  if(bot.draftOnly)assertDraftOnlyCall(input);
- // Native HighLevel names run only on Murage's own HighLevel host, in every mode (GAP-HIGHLEVEL-109 section 7).
- const nativeRefusal=highlevelRelayRefusal(input);if(nativeRefusal)fail(nativeRefusal);
- // NATIVE WINS (HL-S2-WRITES (e)): a native-granted bot never reaches Composio HighLevel, the workbench or remote bash
- // here, in any mode. COMPOSIO_PROXY_EXECUTE needs a live account lookup: the relay route runs nativeWinsProxyRefused.
- if(nativeHighLevelGranted(bot)&&nativeWinsCallRefused(input))fail(nativeWinsRefusalText(highlevel.connectionActive!==false));
+ const levels=levelsOf(bot);
+ if(levels)return assertLevelsCall(bot,levels,input,options.inventory,(args,toolkit)=>forbiddenAuthArguments(args)||toolkit==="gmail"&&args.user_id!==undefined&&args.user_id!=="me");
  const policy=botAccessPolicy(bot);
  if(policy.mode==="unrestricted")return;
  if(!object(input))fail("Restricted connected-app access requires one explicit tool request.");
@@ -270,11 +268,11 @@ export function assertDraftOnlyCall(input:unknown):void {
  * every tool and account the action used is still granted. A restricted bot is
  * never handed a stored result whose provenance is incomplete or empty: when
  * nothing says what the action needed, nothing says the bot may see it. */
-export function assertStoredConnectedAppAccess(bot:BotRecord,used:{requirements:ReadonlyArray<{tool:string;account?:string}>;complete:boolean},highlevel:{connectionActive?:boolean;noLimits?:boolean}={}):void {
+export function assertStoredConnectedAppAccess(bot:BotRecord,used:{requirements:ReadonlyArray<{tool:string;account?:string}>;complete:boolean},options:{noLimits?:boolean;inventory?:InventoryServices|null}={}):void {
  if(bot.hidden||bot.staged||bot.composio===false)fail("Connected apps are off for this bot; enable them in Settings → Connections → Connected apps.");
- if(highlevel.noLimits)return;
- // NATIVE WINS: before the unrestricted shortcut, on every look (before and after any wait).
- if(nativeHighLevelGranted(bot)&&nativeWinsStoredRefused(used))fail(nativeWinsRefusalText(highlevel.connectionActive!==false));
+ if(options.noLimits)return;
+ const levels=levelsOf(bot);
+ if(levels)return assertLevelsStored(levels,used,options.inventory);
  const policy=botAccessPolicy(bot);
  if(policy.mode==="unrestricted")return;
  if(!used.complete||!used.requirements.length)fail("This stored result cannot be matched to approved tools for this bot.");
@@ -288,12 +286,13 @@ export function assertStoredConnectedAppAccess(bot:BotRecord,used:{requirements:
 
 /** Restricted bots receive only the concrete execution shape and approved IDs.
  * Do not relay tools/list to an upstream catalog that may describe other accounts. */
-export function restrictedConnectorTools(bot:BotRecord,id:unknown,noLimits=false) {
+export function restrictedConnectorTools(bot:BotRecord,id:unknown,noLimits=false,inventory?:InventoryServices|null) {
  if(noLimits)return null;
+ const levels=levelsOf(bot);
+ if(levels)return fullyOpen(levels)?null:levelsConnectorTools(levels,id,inventory);
  const stored=botAccessPolicy(bot);if(stored.mode!=="restricted")return null;
- // NATIVE WINS: a native-granted bot is never offered a Composio HighLevel grant.
- const policy=nativeHighLevelGranted(bot)?{...stored,grants:stored.grants.filter(grant=>!isComposioHighLevelId(grant.toolkit)&&!grant.tools.some(isComposioHighLevelId))}:stored;
- const approved=policy.grants.flatMap(grant=>grant.tools.filter(name=>!isNativeHighLevelName(name)&&CONNECTED_APP_TOOLS.some(tool=>tool.tool===name&&(!tool.writes||policy.allowWrites))));
+ const policy=stored;
+ const approved=policy.grants.flatMap(grant=>grant.tools.filter(name=>CONNECTED_APP_TOOLS.some(tool=>tool.tool===name&&(!tool.writes||policy.allowWrites))));
  return {jsonrpc:"2.0",id,result:{tools:approved.length?[{name:"COMPOSIO_MULTI_EXECUTE_TOOL",description:"Run only owner-approved connected-app tools. Each tool must include its exact approved connected-account ID. Approved scopes: "+JSON.stringify(policy.grants.map(grant=>({...grant,tools:[...new Set(grant.tools)]}))),inputSchema:{type:"object",properties:{tools:{type:"array",minItems:1,maxItems:50,items:{type:"object",properties:{tool_slug:{type:"string",enum:[...new Set(approved)]},account:{type:"string",enum:[...new Set(policy.grants.map(grant=>grant.accountId))]},arguments:{type:"object"}},required:["tool_slug","account","arguments"],additionalProperties:false}},sync_response_to_workbench:{type:"boolean",const:false}},required:["tools"],additionalProperties:false}}]:[]}};
 }
 
@@ -302,7 +301,17 @@ export function restrictedConnectorTools(bot:BotRecord,id:unknown,noLimits=false
  * changes it, including an account being disconnected or signed out, which
  * arrives as `connectionEpoch`; pending requests do not), and for a restricted bot the list it is
  * first shown, so a slow mount never offers it unapproved accounts. */
-export function connectedAppsListScope(bot:BotRecord,connectionEpoch=0,noLimits=false):{revision:string;initialTools?:unknown[]} {
+export function connectedAppsListScope(bot:BotRecord,connectionEpoch=0,noLimits=false,inventory?:InventoryServices|null):{revision:string;initialTools?:unknown[]} {
+ const levels=noLimits?null:levelsOf(bot);
+ if(levels){
+  // AG0 6.4: levels bots hash the rule, switches, entries, floors and the admitted ACTIVE IDs.
+  const access=appAccessFor(bot);
+  const entries=[...levels.accounts].map(entry=>JSON.stringify(entry)).sort();
+  const admitted=inventory?admittedAccounts(levels,inventory).map(item=>item.toolkit+"\0"+item.accountId).sort():"loading";
+  const effective={rule:"levels",kind:access.kind,enabled:bot.composio!==false,hidden:!!bot.hidden,newAccounts:levels.newAccounts,allowWrites:levels.allowWrites,entries,floors:levels.newAccountFloors??[],admitted,connectionEpoch};
+  const initial=restrictedConnectorTools(bot,null,false,inventory);
+  return {revision:createHash("sha256").update(JSON.stringify(effective)).digest("hex").slice(0,32),...(initial?{initialTools:initial.result.tools as unknown[]}:{})};
+ }
  const saved=botAccessPolicy(bot);
  const policy=noLimits?{...saved,mode:"unrestricted" as const}:saved;
  // EFFECTIVE access only: what this bot may see and call, normalized (order and
@@ -312,9 +321,20 @@ export function connectedAppsListScope(bot:BotRecord,connectionEpoch=0,noLimits=
  // leftover grants and write switch have no effect and are left out too.
  const restricted=!noLimits&&policy.mode==="restricted";
  const grantsNormalized=restricted?policy.grants.map(grant=>({toolkit:grant.toolkit,accountId:grant.accountId,tools:[...new Set(grant.tools)].sort()})).sort((a,b)=>(a.toolkit+"\0"+a.accountId).localeCompare(b.toolkit+"\0"+b.accountId)):[];
- // The native-granted bit (NATIVE WINS) is added only when set, so a bot with no native grant keeps its revision.
- const effective={enabled:bot.composio!==false,hidden:!!bot.hidden,mode:noLimits?"unrestricted":policy.mode,allowWrites:restricted?policy.allowWrites:null,grants:grantsNormalized,connectionEpoch,...(nativeHighLevelGranted(bot)?{highlevelNative:true}:{})};
+ const effective={enabled:bot.composio!==false,hidden:!!bot.hidden,mode:noLimits?"unrestricted":policy.mode,allowWrites:restricted?policy.allowWrites:null,grants:grantsNormalized,connectionEpoch};
  const revision=createHash("sha256").update(JSON.stringify(effective)).digest("hex").slice(0,32);
  const initial=restrictedConnectorTools(bot,null,noLimits);
  return {revision,...(initial?{initialTools:initial.result.tools as unknown[]}:{})};
+}
+
+/** ACTIVE accounts a limited levels bot is admitted to (anything at all), each filed under one app. */
+function admittedAccounts(levels:NonNullable<ReturnType<typeof levelsOf>>,inventory:InventoryServices){
+ return Object.entries(inventory).flatMap(([toolkit,service])=>service.accounts.filter(account=>account.status.toUpperCase()==="ACTIVE"&&Object.values(inventory).filter(other=>other.accounts.some(item=>item.id===account.id)).length===1).map(account=>({toolkit,accountId:account.id,granted:admission(levels,toolkit,account.id)}))).filter(item=>item.granted.change||item.granted.tools==="any"||item.granted.tools.size>0);
+}
+/** AG0 6.2: a limited levels bot sees the execute tool naming admitted account IDs only. */
+function levelsConnectorTools(levels:NonNullable<ReturnType<typeof levelsOf>>,id:unknown,inventory:InventoryServices|null|undefined){
+ const accounts=inventory?admittedAccounts(levels,inventory):[];
+ const scopes=accounts.map(item=>({toolkit:item.toolkit,account:item.accountId,level:item.granted.change?"full":"read",...(item.granted.tools==="any"?{}:{tools:[...item.granted.tools].sort()})}));
+ const description=!inventory?"Connected apps are still loading.":"Run only the app operations the owner chose. Every row names its account ID. Accounts: "+JSON.stringify(scopes);
+ return {jsonrpc:"2.0",id,result:{tools:accounts.length||!inventory?[{name:"COMPOSIO_MULTI_EXECUTE_TOOL",description,inputSchema:{type:"object",properties:{tools:{type:"array",minItems:1,maxItems:50,items:{type:"object",properties:{tool_slug:{type:"string",enum:[...new Set(accounts.flatMap(item=>admittedKnownSlugs(levels,item.toolkit,item.accountId)))].sort()},account:{type:"string",enum:[...new Set(accounts.map(item=>item.accountId))]},arguments:{type:"object"}},required:["tool_slug","account","arguments"],additionalProperties:false}},sync_response_to_workbench:{type:"boolean",const:false}},required:["tools"],additionalProperties:false}}]:[]}};
 }

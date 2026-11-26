@@ -44,6 +44,7 @@
   "phoneCalls.error.badSettings": "使えない設定があります。確認して、もう一度保存してください。",
   "phoneCalls.error.notSetUp": "先に Vapi のプライベートキーを保存してください。",
   "phoneCalls.error.generic": "問題が起きました。もう一度お試しください。",
+  "phoneCalls.error.store": "Murage は通話履歴を開けませんでした。Murage を再起動してください。問題が続く場合は、ディスクの空き容量を確認してください。",
   "phoneCalls.older.one": "予約済みの通話 1 件が古い設定を使っています",
   "phoneCalls.older.many": "予約済みの通話 {count} 件が古い設定を使っています",
   "phoneCalls.cancel": "キャンセル",

@@ -475,10 +475,10 @@ describe("18a: raw reads of stored rows only in the allowlist", () => {
 const statusRow = (id: string, murage: unknown, at = 1): Message => ({ id, role: "bot", kind: "activity", tool: { name: `stored secret words ${id}`, ok: true }, actorKind: "murage", murage, at } as Message);
 
 describe("rule 14: BOT_VISIBLE_STATUS", () => {
-  it("is exactly the eleven keys, and a row can keep every one of them", () => {
-    expect([...BOT_VISIBLE_STATUS].sort()).toEqual(["call_ended", "card_result_line", "checking", "criteria_claim_corrected", "email_outcome", "no_answer_check_timed_out", "no_answer_checking", "request_finished", "result_unavailable", "setup_confirmed", "withheld"]);
+  it("is exactly the twelve keys, and a row can keep every one of them", () => {
+    expect([...BOT_VISIBLE_STATUS].sort()).toEqual(["call_ended", "card_result_line", "checking", "criteria_claim_corrected", "email_outcome", "no_answer_check_timed_out", "no_answer_checking", "reply_not_ready", "request_finished", "result_unavailable", "setup_confirmed", "withheld"]);
     const made: Record<string, ReturnType<typeof status>> = {
-      withheld: status("withheld"), checking: status("checking"), no_answer_checking: status("no_answer_checking"), request_finished: status("request_finished"), result_unavailable: status("result_unavailable"),
+      withheld: status("withheld"), checking: status("checking"), no_answer_checking: status("no_answer_checking"), reply_not_ready: status("reply_not_ready"), request_finished: status("request_finished"), result_unavailable: status("result_unavailable"),
       card_result_line: status("card_result_line", { desk: botName({ name: "Desk" }), lead: botName({ name: "Lead" }), card: cardTitle({ title: "Card" }) }),
       criteria_claim_corrected: status("criteria_claim_corrected", { met: 2, total: 3 }), call_ended: status("call_ended", { minutes: 4 }), setup_confirmed: status("setup_confirmed"),
       no_answer_check_timed_out: status("no_answer_check_timed_out", { name: botName({ name: "Worker" }) }),

@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installBindings } from './bindings.mjs';
 import { readPolicyAccounting } from './policy-accounting.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 test('release accounting reads actual durable stores without invented tap files or UI endpoints',async()=>{
   const dataDir=mkdtempSync(join(tmpdir(),'gnl-accounting-'));const db=new DatabaseSync(join(dataDir,'messages.db'));
   db.exec(`CREATE TABLE messages(thread_id TEXT,id TEXT,at INTEGER,kind TEXT,json TEXT);
@@ -27,5 +28,5 @@ test('release accounting reads actual durable stores without invented tap files 
     db.prepare("UPDATE approval_records SET why='wipe'").run();
     assert.equal((await policy({spec:{...spec,expected:'CARD',why:'wipe'},threadIds:['t']})).verdict,'PASS');
     assert.equal((await policy({spec:{...spec,expected:'RUN'},threadIds:['t']})).verdict,'FAIL','candidate wipe label cannot authorize a non-wipe action');
-  }finally{db.close();rmSync(dataDir,{recursive:true,force:true});}
+  }finally{db.close();safeWipeSync(dataDir);}
 });

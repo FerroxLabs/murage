@@ -131,6 +131,7 @@ describe("phone calls owner routes", () => {
     expect(phoneErrorKey(failing(502, "vendor_refused"))).toBe("phoneCalls.error.vendor");
     expect(phoneErrorKey(failing(502, "vendor_unreachable"))).toBe("phoneCalls.error.unreachable");
     expect(phoneErrorKey(failing(502, "settings_pending"))).toBe("phoneCalls.error.pending");
+    expect(phoneErrorKey(failing(503, "store_unavailable"))).toBe("phoneCalls.error.store");
     expect(phoneErrorKey(failing(400, "bad_settings"))).toBe("phoneCalls.error.badSettings");
     expect(phoneErrorKey(failing(409, "not_set_up"))).toBe("phoneCalls.error.notSetUp");
     expect(phoneErrorKey(failing(502, "Vapi says: card declined"))).toBe("phoneCalls.error.generic");
@@ -181,9 +182,10 @@ describe("phone calls and the first paint", () => {
   const src = (file: string) => readFileSync(join(ROOT, "src", file), "utf8");
 
   it("loads the screen only behind import(), and its words only with it", () => {
-    // The screen loads from the Connections page now that the settings pages live outside SettingsModal.
-    expect(src("components/settings/pages/ConnectionsPage.tsx")).toContain('retryableLazy(() => import("../../PhoneCallsSettings"))');
-    for (const file of ["components/SettingsModal.tsx", "components/settings/pages/ConnectionsPage.tsx"]) {
+    // The screen loads from the Calls page, its only home: Connected apps no longer mounts it, only links to it.
+    expect(src("components/settings/pages/CallsPage.tsx")).toContain('retryableLazy(() => import("../../PhoneCallsSettings"))');
+    expect(src("components/settings/pages/ConnectionsPage.tsx")).not.toMatch(/PhoneCallsSettings|["']connections\.phone-calls["']/);
+    for (const file of ["components/SettingsModal.tsx", "components/settings/pages/ConnectionsPage.tsx", "components/settings/pages/CallsPage.tsx"]) {
       const page = src(file);
       expect(page, file).not.toMatch(/^import[^\n]*PhoneCallsSettings/m);
       expect(page, file).not.toMatch(/^import[^\n]*lib\/phone-calls/m);
@@ -225,16 +227,90 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   screenMocks.api.mockReset();
 });
-async function mountPhoneScreen(read: (init?: RequestInit) => Promise<unknown>) {
-  Object.defineProperty(window, "muragebox", { configurable: true, value: { phoneKey: { save: vi.fn(), remove: vi.fn() } } });
+async function mountPhoneScreen(read: (init?: RequestInit) => Promise<unknown>, status = async () => ({ supported: true, keyPresent: true })) {
+  vi.stubGlobal("muragebox", { phoneKey: { save: vi.fn(), remove: vi.fn() } });
   screenMocks.api.mockImplementation((path: string, init?: RequestInit) => path === "/api/phone-calls"
-    ? read(init) : Promise.resolve({ supported: true, keyPresent: true, active: null, olderScheduled: [] }));
+    ? read(init) : status());
   const node = document.createElement("div");
   document.body.append(node);
   screenRoot = createRoot(node);
   await act(async () => screenRoot!.render(createElement(PhoneCallsSettings)));
 }
 const liveCard = { id: "c-1", status: "ringing", to: "+15550123456", dashboard: "https://dashboard.vapi.ai/calls/v-1" };
+
+it("mounted connections carries no phone calls card, only the link to Calls", async () => {
+  const Page = (await import("../components/settings/pages/ConnectionsPage")).default;
+  screenMocks.api.mockImplementation(async () => ({}));
+  const node = document.createElement("div");
+  document.body.append(node);
+  screenRoot = createRoot(node);
+  await act(async () => screenRoot!.render(createElement(Page, { page: "connections", mode: "advanced", desktop: true, cloud: false, anchor: null })));
+  await act(async () => { await vi.dynamicImportSettled(); });
+  expect(node.querySelector("#phone-calls-heading")).toBeNull();
+  expect(node.querySelector('[data-setting-control="phone-calls-heading"]')).toBeNull();
+  expect(screenMocks.api.mock.calls.some(([path]) => String(path).startsWith("/api/phone-calls"))).toBe(false);
+  const mainEn = JSON.parse(readFileSync(join(ROOT, "src", "locales", "en.json"), "utf8")) as Record<string, string>;
+  const link = [...node.querySelectorAll("button")].find(b => b.textContent === mainEn["settings.l1.card.connections.phone-calls"]);
+  screenMocks.dispatch.mockClear();
+  await act(async () => link!.click());
+  expect(screenMocks.dispatch).toHaveBeenCalledWith({ type: "toggleAppSettings", open: true, section: "calls", anchor: "phone-calls-heading" });
+});
+
+it.each(["calls"] as const)("mounted %s offers quiet setup and can reconnect after removing a key", async (page) => {
+  const Page = (await import("../components/settings/pages/CallsPage")).default;
+  let keyPresent = false;
+  const save = vi.fn(async () => { keyPresent = true; return { ok: true }; });
+  const remove = vi.fn(async () => { keyPresent = false; return { ok: true }; });
+  vi.stubGlobal("muragebox", { phoneKey: { save, remove } });
+  screenMocks.api.mockImplementation(async (path: string) => path === "/api/phone-calls/status"
+    ? { supported: true, keyPresent, active: null, olderScheduled: [] }
+    : {});
+  const node = document.createElement("div");
+  document.body.append(node);
+  screenRoot = createRoot(node);
+  await act(async () => screenRoot!.render(createElement(Page, { page, mode: "advanced", desktop: true, cloud: false, anchor: null })));
+  await act(async () => { await vi.dynamicImportSettled(); });
+  const card = () => node.querySelector('[data-setting-control="phone-calls-heading"]');
+  const keyField = () => node.querySelector<HTMLInputElement>('#phone-calls-heading details[open] input[type="password"]');
+  const entry = () => node.querySelector<HTMLElement>("#phone-calls-heading details:not([open]) > summary");
+  const button = (label: string) => [...node.querySelectorAll("button")].find(b => b.textContent === en[label]);
+
+  expect(card()).toBeNull();
+  expect(keyField()).toBeNull();
+  expect(entry()?.textContent).toBe(en["phoneCalls.title"]);
+  await act(async () => entry()!.click());
+  const field = keyField()!;
+  expect(field.getAttribute("aria-label")).toBe(en["phoneCalls.key.label"]);
+  expect(button("phoneCalls.key.save")?.disabled).toBe(true);
+  vi.useFakeTimers();
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "fixture");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(button("phoneCalls.key.save")?.disabled).toBe(false);
+  await act(async () => button("phoneCalls.key.save")!.click());
+  expect(save).toHaveBeenCalledWith("fixture");
+  expect(card()).not.toBeNull();
+  await act(async () => button("phoneCalls.key.remove")!.click());
+  expect(remove).toHaveBeenCalledTimes(1);
+  expect(card()).toBeNull();
+  expect(keyField()).toBeNull();
+  await act(async () => entry()!.click());
+  expect(keyField()).not.toBeNull();
+  expect(button("phoneCalls.key.save")?.disabled).toBe(true);
+});
+
+it("mounted phone setup shows a failed status read and retries without exposing key entry early", async () => {
+  const status = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ supported: true, keyPresent: false });
+  await mountPhoneScreen(vi.fn(), status);
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe(en["phoneCalls.error.generic"]);
+  expect(document.querySelector('input[type="password"]')).toBeNull();
+  const retry = document.querySelector("button")!;
+  await act(async () => retry.click());
+  expect(status).toHaveBeenCalledTimes(2);
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.querySelector("details:not([open]) > summary")?.textContent).toBe(en["phoneCalls.title"]);
+});
 
 it("mounted cards refresh completion and transcript at a bounded cadence", async () => {
   vi.useFakeTimers();

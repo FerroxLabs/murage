@@ -74,7 +74,7 @@ describe("G3 environment policy: table test, each field taken from the other env
     ["opsSshFrom", { B5_PROVISIONER_CONFIG: JSON.stringify({ images: { hetzner: {}, vultr: {} }, opsSshFrom: ["203.0.113.0/24"] }) }],
     ["opsSshFrom not an array", { B5_PROVISIONER_CONFIG: JSON.stringify({ opsSshFrom: "x" }) }],
     ["Vultr images", { B5_PROVISIONER_CONFIG: JSON.stringify({ images: { hetzner: {}, vultr: { x86: "snap" } } }) }],
-    ["a staging build host image id", { B5_PROVISIONER_CONFIG: JSON.stringify({ images: IMAGES }) }],
+    ["a staging Hetzner image id", { B5_PROVISIONER_CONFIG: JSON.stringify({ images: IMAGES }) }],
     ["unparseable provisioner config", { B5_PROVISIONER_CONFIG: "{" }],
     ["staging KMS key", { AWS_KMS_KEY_ARN: STAGING_KMS_ARN }],
     ["a KMS key that is neither", { AWS_KMS_KEY_ARN: "arn:aws:kms:eu-west-1:149471050106:key/b79b4dba" }],
@@ -97,8 +97,8 @@ describe("G3 environment policy: table test, each field taken from the other env
     ["SENDLANE_WRITES on", { SENDLANE_WRITES: "on" }],
     ["SENDLANE_WRITES true", { SENDLANE_WRITES: "true" }],
     ["SENDLANE_WRITES empty", { SENDLANE_WRITES: "" }],
-    ["a build host image id that is not approved", { B5_PROVISIONER_CONFIG: JSON.stringify({ images: { hetzner: { x86: "1" } } }) }],
-    ["a build host image block of the wrong shape", { B5_PROVISIONER_CONFIG: JSON.stringify({ images: { hetzner: [] } }) }],
+    ["a Hetzner image id that is not approved", { B5_PROVISIONER_CONFIG: JSON.stringify({ images: { hetzner: { x86: "1" } } }) }],
+    ["a Hetzner image block of the wrong shape", { B5_PROVISIONER_CONFIG: JSON.stringify({ images: { hetzner: [] } }) }],
     ["unparseable provisioner config", { B5_PROVISIONER_CONFIG: "[1]" }],
   ];
   for (const [name, change] of liveCases) it(`live refuses ${name}`, () => { expect(problems({ ...LIVE_OK, ...change }).length, name).toBeGreaterThan(0); });
@@ -200,7 +200,7 @@ describe("G3 signing key check: the private key must be the one behind the pin",
   });
 });
 
-describe("G3 build host image check: only a 200 for an approved available snapshot passes", () => {
+describe("G3 Hetzner image check: only a 200 for an approved available snapshot passes", () => {
   const stagingEnv = (extra: Record<string, unknown> = {}) => ({ ...env, MURAGE_ENV: "staging", ...extra }) as unknown as Env;
   const config = { images: IMAGES };
   const image = (id: string, extra: Record<string, unknown> = {}) => ({ image: { id: Number(id), type: "snapshot", status: "available", ...extra } });
@@ -313,23 +313,23 @@ describe("G3 check-deploy runs the same policy over the resolved wrangler.jsonc,
   });
   it("production approves only the pinned production images", () => {
     const withImages = (x86: string, arm: string) => (b: Record<string, any>) => { b.vars.B5_PROVISIONER_CONFIG = JSON.stringify({ images: { hetzner: { x86, arm }, vultr: {} } }); };
-    expect(policy("production", withImages("555000001", "555000002"), PINNED).problems.filter((p) => p.includes("build host image"))).toEqual([]);
-    expect(policy("production", withImages("555000001", "555000009"), PINNED).problems.join()).toContain("build host image");
-    expect(policy("production", withImages("555000001", "555000002"), null).problems.join()).toContain("build host image");
+    expect(policy("production", withImages("555000001", "555000002"), PINNED).problems.filter((p) => p.includes("Hetzner image"))).toEqual([]);
+    expect(policy("production", withImages("555000001", "555000009"), PINNED).problems.join()).toContain("Hetzner image");
+    expect(policy("production", withImages("555000001", "555000002"), null).problems.join()).toContain("Hetzner image");
   });
   it("production approves the INTERSECTION of the pinned images and the run-time live set; empty fails closed", () => {
     const withImages = (x86: string, arm: string) => (b: Record<string, any>) => { b.vars.B5_PROVISIONER_CONFIG = JSON.stringify({ images: { hetzner: { x86, arm }, vultr: {} } }); };
     const run = (home: typeof PINNED | null, runtime: string[], x86: string, arm: string) =>
       environmentPolicy(block("production", withImages(x86, arm)), "production", { homeImages: home, runtimeApprovedLive: runtime });
     expect(run(PINNED, ["555000001", "555000002"], "555000001", "555000002").problems.filter((p) => p.includes("image"))).toEqual([]);
-    expect(run(PINNED, ["555000001"], "555000001", "555000002").problems.join()).toContain("build host image");
-    expect(run(PINNED, ["555000001", "555000002", "555000003"], "555000003", "555000001").problems.join()).toContain("build host image");
-    expect(run(PINNED, [], "555000001", "555000002").problems.join()).toContain("no build host image is both pinned");
-    expect(run(null, ["555000001", "555000002"], "555000001", "555000002").problems.join()).toContain("no build host image is both pinned");
-    expect(run(PINNED, ["555000009"], "555000001", "555000002").problems.join()).toContain("no build host image is both pinned");
+    expect(run(PINNED, ["555000001"], "555000001", "555000002").problems.join()).toContain("Hetzner image");
+    expect(run(PINNED, ["555000001", "555000002", "555000003"], "555000003", "555000001").problems.join()).toContain("Hetzner image");
+    expect(run(PINNED, [], "555000001", "555000002").problems.join()).toContain("no Hetzner image is both pinned");
+    expect(run(null, ["555000001", "555000002"], "555000001", "555000002").problems.join()).toContain("no Hetzner image is both pinned");
+    expect(run(PINNED, ["555000009"], "555000001", "555000002").problems.join()).toContain("no Hetzner image is both pinned");
     // the checked-in block with the real pins and the real live set passes; an empty run-time set still fails closed
-    expect(environmentPolicy(block("production"), "production", {}).problems.filter((p) => p.includes("build host image"))).toEqual([]);
-    expect(environmentPolicy(block("production"), "production", { runtimeApprovedLive: [] }).problems.join()).toContain("no build host image is both pinned");
+    expect(environmentPolicy(block("production"), "production", {}).problems.filter((p) => p.includes("Hetzner image"))).toEqual([]);
+    expect(environmentPolicy(block("production"), "production", { runtimeApprovedLive: [] }).problems.join()).toContain("no Hetzner image is both pinned");
   });
   it("the run-time approved set for live holds the pinned production images plus the previous prod pair kept for rebuilds (empty while they are not pinned)", () => {
     expect(PRODUCTION_HOME_IMAGES).not.toBeNull();

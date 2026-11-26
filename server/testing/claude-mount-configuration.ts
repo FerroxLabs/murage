@@ -1,5 +1,5 @@
 // control: real configuration producers without external adapter admission.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect } from "vitest";
@@ -9,6 +9,7 @@ import type { SendTurnInput } from "../contracts.ts";
 import { claudeShellServers } from "../drivers/claude.ts";
 import { newExecNonce } from "../drivers/murage-exec.ts";
 import { bindCredentialPath, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "../drivers/turn-credentials.ts";
+import { safeWipeSync } from "./safe-wipe.mjs";
 
 function mountUnit() {
   const source = ts.createSourceFile("claude.ts", readFileSync(new URL("../drivers/claude.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -67,5 +68,5 @@ export function claudeMountConfiguration(turn: SendTurnInput, retainedCredential
       credFile: credential ? { path: credential.path, content: JSON.parse(readFileSync(credential.path, "utf8")) } : null };
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(mcpConfig);
     return result;
-  } finally { if (!retainedCredential) credential?.dispose(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { if (!retainedCredential) credential?.dispose(); safeWipeSync(dir); }
 }

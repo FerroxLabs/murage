@@ -63,9 +63,13 @@ describe("the reason line", () => {
   it("names the Cloud home, the shared workspace or the launch proof while the flag is on and not offered", () => {
     expect(previewReason("phoneTools", answer({ flag: true, blocked: "cloud-home" }))).toBe(PREVIEW_BLOCKED_LINE["cloud-home"]);
     expect(previewReason("phoneTools", answer({ flag: true, blocked: "shared-workspace" }))).toBe(PREVIEW_BLOCKED_LINE["shared-workspace"]);
-    expect(PREVIEW_BLOCKED_LINE["shared-workspace"]).toBe("On, but off for now: a bot on this computer is, or was, shared with other people, and phone previews stay off while that is true.");
+    // 1.0.21 polish (Sean's live walk): "On, but off for now" contradicted itself; the line says paused, never on-and-off.
+    expect(PREVIEW_BLOCKED_LINE["shared-workspace"]).toBe("Paused on this computer: a bot here is, or was, shared with other people, and phone previews stay paused while that is true.");
     expect(previewReason("phoneShareAsk", answer({ shareAskFlag: true, blocked: "launch-proof" }))).toBe(PREVIEW_BLOCKED_LINE["launch-proof"]);
     expect(previewReason("phoneShareAsk", answer({ shareAskFlag: true }))).toBe(PREVIEW_BLOCKED_LINE.unknown);
+  });
+  it("1.0.21 polish: no reason line says on and off at once", () => {
+    for (const line of Object.values(PREVIEW_BLOCKED_LINE)) expect(line).not.toMatch(/\boff\b/i);
   });
   it("follows each switch's own offer: phone tools offered does not clear share and ask's line", () => {
     const a = answer({ flag: true, offered: true, shareAskFlag: true, shareAsk: false, blocked: null });

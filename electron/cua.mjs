@@ -39,6 +39,10 @@ const {
   stageAppImageCuaBundle,
 } = require("./cua-linux-bundle.cjs");
 const { linuxLocalControlSupport } = require("./capabilities.cjs");
+const { createWindowsCuaPreferenceStore, createWindowsCuaRuntime, windowsProductionDeps } = require("./cua-windows-runtime.cjs");
+const { requestSocket } = require("./cua-linux-runtime.cjs");
+import { windowsNative } from "./windows-native.mjs";
+import { WINDOWS_CURSOR_SHA256, WINDOWS_DRIVER_SHA256 } from "../shared/cua-driver-windows-pins.mjs";
 
 const INSTALLED_DRIVER = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
 const STANDALONE_SOCKET = path.join(
@@ -46,8 +50,11 @@ const STANDALONE_SOCKET = path.join(
   "Library/Caches/cua-driver/cua-driver.sock",
 );
 const HOST_BUNDLE_ID = "com.murage.app";
-const CUA_ENV = { CUA_DRIVER_RS_TELEMETRY_ENABLED: "0" };
-process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ??= "0";
+// 0.55.0 sends product telemetry by default and checks GitHub for updates at
+// startup; both stay off for every driver process we start or embed.
+const CUA_ENV = { CUA_DRIVER_RS_TELEMETRY_ENABLED: "0", CUA_DRIVER_RS_UPDATE_CHECK: "false" };
+process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED = "0";
+process.env.CUA_DRIVER_RS_UPDATE_CHECK = "false";
 
 let embeddedHost = null; // EmbeddedCuaDriverHost | null
 let startup = null;
@@ -58,6 +65,8 @@ let macRetry = null;
 let cleanupFailure = null;
 const commands = new Map();
 let linuxRuntime = null;
+let windowsRuntime = null;
+let windowsHarnessPort = null;
 let linuxBundleStage = null;
 let stateListener = () => {};
 const connectionStore = createCuaConnectionStore({
@@ -109,6 +118,43 @@ function ensureLinuxRuntime() {
     }
   }
   return linuxRuntime;
+}
+
+/** DESIGN 1022-cua-windows: the supervised driver daemon on win32, created once. Messages to the harness go to the
+ * server process main last named (setCuaHarnessPort); a gone harness never delays a stop (the runtime wraps posts). */
+function ensureWindowsRuntime() {
+  if (!windowsRuntime) {
+    const userData = app.getPath("userData");
+    const preferenceStore = createWindowsCuaPreferenceStore({ getUserData: () => userData });
+    windowsRuntime = createWindowsCuaRuntime({
+      resourcesPath: process.resourcesPath,
+      runtimeDir: path.join(userData, "cua-runtime"),
+      preferenceStore,
+      port: { postMessage: (message) => windowsHarnessPort?.postMessage(message) },
+      native: windowsNative() ?? {},
+      arm64: async () => app.runningUnderARM64Translation === true,
+      pins: { driver: WINDOWS_DRIVER_SHA256, cursor: WINDOWS_CURSOR_SHA256 },
+      ...windowsProductionDeps({ userData, requestPipe: (pipe, request) => requestSocket(pipe, request) }),
+      onChange: (status) => stateListener({ mode: status.available ? "windows-supervised" : "unavailable", platform: "win32", ...status }),
+    });
+  }
+  return windowsRuntime;
+}
+
+/** main names the server process the Windows runtime talks to (every server start). */
+export function setCuaHarnessPort(proc) {
+  // No resend of `live` here: a new harness asks with -ready and is answered under the one-harness rule (D20).
+  windowsHarnessPort = proc ?? null;
+}
+
+/** main's proc.on("message") routes murage:cua-stuck / murage:cua-integrity / murage:host-desktop-ready here (D16, D20). */
+export function onCuaHarnessMessage(message, proc) {
+  return process.platform === "win32" && windowsRuntime ? windowsRuntime.onHarnessMessage(message, proc) : false;
+}
+
+/** The harness process ended (D20): a stop of a live or starting generation, cause restart. */
+export function onCuaHarnessExit(proc) {
+  if (process.platform === "win32" && windowsRuntime) windowsRuntime.onHarnessExit(proc);
 }
 
 export function setCuaStateListener(listener) {
@@ -265,6 +311,7 @@ async function startEmbedded(binary, signal) {
 
 export async function startCua() {
   if (process.platform === "linux") return ensureLinuxRuntime().initialize();
+  if (process.platform === "win32") return ensureWindowsRuntime().initialize();
   if (stopping) await stopping;
   if (cleanupFailure) throw cleanupFailure;
   if (startup) return startup;
@@ -349,7 +396,11 @@ export async function cuaPermissionsStatus() {
   }
 }
 
-export async function stopCua() {
+export async function stopCua(cause = "quit") {
+  if (windowsRuntime) {
+    await windowsRuntime.shutdown(cause);
+    return;
+  }
   if (linuxRuntime) {
     await linuxRuntime.shutdown();
     if (linuxBundleStage) {
@@ -390,9 +441,13 @@ export function registerCuaIpc(ipcMain = electronIpcMain) {
       ? ensureLinuxRuntime().getStatus()
       : process.platform === "darwin"
         ? macLocalControlStatus(connectionStore.get())
-        : { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" },
+        : process.platform === "win32"
+          ? ensureWindowsRuntime().getStatus()
+          : { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" },
   );
   ipcMain.handle("cua:linux-enable", async () => {
+    // win32: errors reach the card (D17 d: a failed save is told, the stop has already happened)
+    if (process.platform === "win32") return ensureWindowsRuntime().enable();
     if (process.platform !== "linux") {
       return { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" };
     }
@@ -404,6 +459,8 @@ export function registerCuaIpc(ipcMain = electronIpcMain) {
     return ensureLinuxRuntime().getStatus();
   });
   ipcMain.handle("cua:linux-disable", async () => {
+    // win32: errors reach the card (D17 d: a failed save is told, the stop has already happened)
+    if (process.platform === "win32") return ensureWindowsRuntime().disable();
     if (process.platform !== "linux") {
       return { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" };
     }
@@ -443,6 +500,7 @@ export function registerCuaIpc(ipcMain = electronIpcMain) {
       })().finally(() => { macRetry = null; });
       return macRetry;
     }
+    if (process.platform === "win32") return ensureWindowsRuntime().retry();
     if (process.platform !== "linux") {
       return { enabled: false, status: "unavailable", reasonCode: "unsupported-platform" };
     }

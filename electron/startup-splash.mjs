@@ -208,6 +208,8 @@ window.__set = (state) => {
   if (state.kind === "show") { if (strip && !reduce) setElapsed(typeof state.elapsedMs === "number" ? state.elapsedMs : 0); return; }
   if (state.kind === "fade") { if (!reduce && dataset) dataset.fade = "1"; return; }
   if (state.kind === "stage") { setBar(state.pct); activity(typeof state.pct !== "number"); text("p", state.line); return; }
+  // the inner step a slow start is in (1.0.21 N2 bootprog), in the counter slot; an upgrade view (mode set) owns that slot
+  if (state.kind === "step") { if (!mode) text("c", typeof state.text === "string" ? state.text : ""); return; }
   if (state.kind === "bar") { setBar(state.pct); activity(false); if (counter && counter.kind === "count") { counter = { ...counter, done: counter.total }; shown = counter.total; paintCounter(); } return; }
   if (state.kind !== "upgrade") return;
   locale = state.locale || "en";
@@ -462,6 +464,13 @@ export function createStartupSplash({ BrowserWindow, dark = false, icon, note = 
       if (upgrading) { if (name === "ready") call({ kind: "bar", pct: 100 }); return true; }
       // a milestone is not a percentage of anything the owner can count on: only the end of start-up (ready) fills the bar
       call({ kind: "stage", pct: name === "ready" ? 100 : null, line: startupLine(language, entry.line) });
+      return true;
+    },
+    /** Name the inner step a slow start is in (boot-step-words.mjs bootStepLine; "" clears it). It has its own quiet line and never moves
+     * the bar; while an upgrade view is up that view owns the text, so it is ignored. */
+    step(text) {
+      if (!win || closing || upgrading || typeof text !== "string") return false;
+      call({ kind: "step", text: text.slice(0, 120) });
       return true;
     },
     /** Show an upgrade view (electron/upgrade-screen.mjs) in this same window. The first one makes the window larger, and, while the view says

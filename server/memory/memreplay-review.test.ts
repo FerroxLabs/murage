@@ -218,7 +218,7 @@ it("M2: a frame citing 256 replies of a 20,000-receipt session is checked in bou
   expect(kept).toContain("latest");
   // The work is pinned by rows read, not time: the reviewed build read every
   // (receipt, reply) pair, more than 10 million index entries here (28 s on
-  // build host). Bounded: the 20,000 receipts once, a pair count capped at the
+  // Hetzner). Bounded: the 20,000 receipts once, a pair count capped at the
   // pair limit, and a probe per cited reply.
   const rows = replayRowsRead();
   expect(rows).toBeLessThan(MAX_ROWS);

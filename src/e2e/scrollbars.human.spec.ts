@@ -10,6 +10,9 @@ import { fileURLToPath } from "node:url";
 import { Jimp, intToRGBA } from "jimp";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
+// These pixel checks use a fine pointer and CSS-pixel screenshots in both projects.
+test.use({ hasTouch: false, deviceScaleFactor: 1, launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] } });
+
 // Renderer-only fixture: the real stylesheet, compiled by Tailwind, with
 // ordinary scrollers, the opt-in class and native textareas in both skins.
 // No harness, provider or user data is involved.

@@ -1,3 +1,4 @@
+import { evidencePath, assertExternalEvidencePath } from '../scripts/evidence-path.mjs';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -33,7 +34,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => {
   if (fixture) {
-    const out = resolve(process.env.SC_MAIL_EVIDENCE_DIR ?? 'evidence/sc-mail-r2/approval-auth');
+    const out = resolve(assertExternalEvidencePath(process.env.SC_MAIL_EVIDENCE_DIR ?? evidencePath('evidence/sc-mail-r2/approval-auth')));
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, 'workflow.json'), JSON.stringify({ fixture: fixture.info, evidence }, null, 2));
     writeFileSync(join(out, 'server.log'), readFileSync(fixture.info.logPath));

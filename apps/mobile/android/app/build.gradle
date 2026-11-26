@@ -22,7 +22,7 @@ android {
         buildConfig = true
     }
     // Upload key for tester APKs and Play. Applies only when all three env vars
-    // are set (android-remote.sh sets them on the build host); otherwise release stays
+    // are set (android-hetzner.sh sets them on Hetzner); otherwise release stays
     // unsigned and debug builds are unchanged. The key itself is never committed.
     def uploadStore = System.getenv('MURAGE_UPLOAD_STORE')
     def uploadAlias = System.getenv('MURAGE_UPLOAD_ALIAS')
@@ -75,7 +75,7 @@ dependencies {
 
 apply from: 'capacitor.build.gradle'
 
-// FCM needs google-services.json, which android-remote.sh copies from
+// FCM needs google-services.json, which android-hetzner.sh copies from
 // ~/.config/murage-mobile/. Without it the app builds with push off.
 if (file('google-services.json').exists()) {
     apply plugin: 'com.google.gms.google-services'

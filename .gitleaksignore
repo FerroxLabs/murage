@@ -6,3 +6,24 @@ f82fb658358b6f00675d8445475d3d2b22e8df47:server/approval-attention-race.test.ts:
 # reserved .invalid host with a stubbed transport. Not a credential for any service.
 b9eb4626babdc40a53fa454454a5e1f15dbff688:server/drivers/nativecrash-openai-1019.test.ts:generic-api-key:63
 b9eb4626babdc40a53fa454454a5e1f15dbff688:server/drivers/nativecrash-openai-1019.test.ts:generic-api-key:85
+# Locale source hashes: each value is the sha256 of the English source string, filed under the reason code
+# folderTrust.reason.unsafe-key in the 7 language blocks of src/locales/source-hashes.json. Not a credential.
+f749f71c28ae2cb4582585e85a9c2a95e810aa20:src/locales/source-hashes.json:generic-api-key:5795
+f749f71c28ae2cb4582585e85a9c2a95e810aa20:src/locales/source-hashes.json:generic-api-key:11598
+f749f71c28ae2cb4582585e85a9c2a95e810aa20:src/locales/source-hashes.json:generic-api-key:17401
+f749f71c28ae2cb4582585e85a9c2a95e810aa20:src/locales/source-hashes.json:generic-api-key:23204
+f749f71c28ae2cb4582585e85a9c2a95e810aa20:src/locales/source-hashes.json:generic-api-key:29007
+f749f71c28ae2cb4582585e85a9c2a95e810aa20:src/locales/source-hashes.json:generic-api-key:34810
+f749f71c28ae2cb4582585e85a9c2a95e810aa20:src/locales/source-hashes.json:generic-api-key:40613
+# Test fixture: made-up HEADER_KEY / QUERY_KEY constants in the MCP relay echo-scrub test, scrubbed from
+# headers and query strings by the relay; no service accepts them (MAIN 2026-11-22T19:51:42Z checked).
+b5b1c0f3df6069093a6d4c4628d52b3d1936b2bd:server/cloud-home/mcp-echo-scrub.test.ts:generic-api-key:20
+b5b1c0f3df6069093a6d4c4628d52b3d1936b2bd:server/cloud-home/mcp-echo-scrub.test.ts:generic-api-key:21
+# cause22 history: a hyphenated placeholder key in an e2e test of an intermediate commit (removed before the lane tips).
+# Made up in the test against a stubbed transport; not a credential for any service.
+f08c112343dca2ffa2af7de3f02ad1f78547f107:server/cause22-owner-caps-1021.e2e.test.ts:generic-api-key:32
+# cause22 group E history: a made-up fixture key in a redact witness against a .invalid stub URL; not a credential.
+f51a9336707f2b3a3bb40e6fb876f6183bf1aaf4:server/drivers/cause22-redact-witness-1021.test.ts:generic-api-key:94
+e0f86183722531f380e13b792483543129a9da43:server/drivers/cause22-redact-witness-1021.test.ts:generic-api-key:94
+1c54b93f863ea18bdfcdadbcbd7a24723520e7ef:server/cause22-owner-caps-1021.e2e.test.ts:generic-api-key:32
+183729a4bc98b703ddbaa573948626aef06d6d51:server/masked-values-1022.test.ts:generic-api-key:354

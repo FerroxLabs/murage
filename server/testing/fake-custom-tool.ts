@@ -17,6 +17,7 @@
 //
 // Dependency-free apart from node built-ins: it runs inside the bare fakes.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 
 export interface CustomToolLaunch {
@@ -82,7 +83,12 @@ export function callFirstCustomTool(engine: string, name: string, launch: Custom
   // (drivers/turn-credentials.ts), read here at launch as the proxy reads them.
   let turnSecrets: Record<string, string> = {};
   try { if (env.MURAGE_CRED_FILE) turnSecrets = JSON.parse(readFileSync(env.MURAGE_CRED_FILE, "utf8"))[env.MURAGE_CRED_SERVER ?? ""] ?? {}; } catch { /* no file */ }
-  const done = (outcome: CustomToolOutcome): CustomToolOutcome => {
+  const done = (whole: CustomToolOutcome): CustomToolOutcome => {
+    // A very large tool text (cause22 caps witnesses: megabytes) is reported by its size and digest: the fake's reply, its tool_result
+    // line and this log then stay small, and the witness still proves every byte arrived. Anything up to 1 MiB is reported whole:
+    // an ordinary tool answer (the agents help text is over 8,192 characters) must reach the reply and the log as the tool gave it.
+    const large = whole.text.length > 1024 * 1024;
+    const outcome: CustomToolOutcome = large ? { ...whole, text: `${whole.text.slice(0, 64)} [${Buffer.byteLength(whole.text)} bytes sha256 ${createHash("sha256").update(whole.text).digest("hex")}]` } : whole;
     const log = process.env.FAKE_CUSTOM_TOOL_LOG;
     if (log) {
       // The fixture observes the admitted server separately from the actual

@@ -22,6 +22,7 @@ import "../shared/win-hide-child-process.mjs";
 //
 // Only node built-ins are imported, so it runs as a worker entry (bundled on
 // its own, scripts/bundle-server.mjs) and inline from inbox.ts alike.
+import { guardWriteSet } from "./memory/wake.ts";
 import { DatabaseSync } from "./sqlite-open.ts";
 import { parentPort, workerData } from "node:worker_threads";
 
@@ -121,6 +122,8 @@ if (parentPort && (workerData as { kind?: string } | null)?.kind === "inbox-fill
   const { file, sql, priorityOnly, maxHoldMs } = workerData as { file: string; sql: InboxDeferredSql; priorityOnly?: boolean; maxHoldMs?: number };
   try {
     const db = new DatabaseSync(file);
+    // MEMORY V2 W-WRITERS: this connection fills inbox tables only; a row write to any memory table is refused on it (TEMP, nothing persists)
+    db.exec("PRAGMA busy_timeout=5000"); guardWriteSet(db, "inbox-fill");
     // The paced WAL maintenance owner checkpoints messages.db. An automatic
     // checkpoint here can copy an entire large source during a projection commit.
     db.exec("PRAGMA busy_timeout=0; PRAGMA secure_delete=ON; PRAGMA wal_autocheckpoint=0;");

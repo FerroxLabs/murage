@@ -1,3 +1,4 @@
+// Proof-index producer owner: decision lane; continuation consumer owner: skills/decision build lane.
 import { trackProducerQueue } from '../decision/producer-bindings.ts';
 // Service producers share the queue protocol, never decision authority. Only
 // decision/index.ts can register a call, allocate a ref or authorize execution.
@@ -49,6 +50,7 @@ export class MemoryApprovalQueue {
   readonly kind: ServiceId;
   private readonly file: string;
   private entries = new Map<string, QueueEntry>();
+  private byProof = new Map<string,number>();
   private accepts = new Map<string, Accept>();
   private toolAccepts=new Map<string,Accept>();
   private toolAcceptsNow=new Map<string,(item:PendingQueueApproval,answer:ApprovalAnswer)=>void>();
@@ -71,8 +73,10 @@ export class MemoryApprovalQueue {
         this.entries.set(item.ref, entry);
       }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    trackProducerQueue(this);
+    this.indexProofs();trackProducerQueue(this);
   }
+  private indexProofs():void {this.byProof.clear();for(const entry of this.entries.values())if(!['accepted','cancelled'].includes(entry.state)){const key=JSON.stringify(entry.item.proof)??'';this.byProof.set(key,(this.byProof.get(key)??0)+1);}}
+  hasPendingProof(proof:unknown):boolean {return (this.byProof.get(JSON.stringify(proof)??'')??0)>0;}
   private commit(next: Map<string, QueueEntry>): void {
     const waiting = [...next.values()].filter(entry=>entry.state!=='accepted'&&entry.state!=='cancelled');
     if (waiting.length > 256) throw new Error('approval-queue-capacity');
@@ -83,6 +87,7 @@ export class MemoryApprovalQueue {
     mkdirSync(dirname(this.file), {recursive:true,mode:0o700});
     writeFileAtomic(this.file, serialized, {mode:0o600,syncDir:true});
     this.entries = new Map(entries.map(entry=>[entry.item.ref,entry]));
+    this.indexProofs();
   }
   private replace(entry: QueueEntry): void { const next = new Map(this.entries); next.set(entry.item.ref,entry); this.commit(next); }
   private exact(item: PendingQueueApproval): QueueEntry {

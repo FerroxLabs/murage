@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
@@ -20,7 +21,7 @@ const sidebar = read("./Sidebar.tsx");
 const skillsPanel = read("./BotSkillsPanel.tsx");
 const library = read("./TeamLibraryPanel.tsx");
 const chat = read("./ChatView.tsx");
-const settings = read("./SettingsPanel.tsx");
+const settings = settingsPanelSource();
 
 /** The bot row component alone, so an assertion cannot be satisfied by the
  *  room row — which already had keyboard access to its menu. */

@@ -22,6 +22,7 @@ export interface SignInConnectionSource {
  records(): ProviderConnectionRecord[];
  info(id: string): SignInConnectionInfo | undefined;
  bearer(id: string): { accessToken: string; accountId?: string } | null;
+ isPlanModelRefused?(revision: string, model: string): boolean;
 }
 
 const MAX_BYTES = 4 * 1024 * 1024, MAX_MODELS = 5000, CACHE_TTL = MODEL_CATALOG_REFRESH_MS;
@@ -51,6 +52,10 @@ function documentedVision(preset: string, id: string): true | undefined {
  return preset === "deepseek" && DEEPSEEK_FLASH_VISION.has(id) ? true : undefined;
 }
 function currentCachedModel(model: ProviderModel): ProviderModel {
+ if (model.preset === "flux") {
+  const label = resolveModelLabel(model.id, { catalogLabel: model.label });
+  return label === model.label ? model : { ...model, label };
+ }
  if (model.preset !== "deepseek") return model;
  // Old sparse catalogue rows lost their original payload; repair only the
  // exact unknown-output fallback, never override explicit media output.
@@ -122,7 +127,7 @@ export function normalizeProviderModels(connection: ProviderConnectionRecord, pa
   // that provider: GET /v1/models returns no `name`, so its copy of every Flux
   // row rendered as the literal `flux-auto` beside the engine catalog's
   // properly-labelled "Flux Auto" (Sean, 2026-09-18). resolveModelLabel is the
-  // one ordered rule — provider name, then the Flux tier table, then a
+  // one ordered rule — provider name, then bundled Flux labels, then a
   // title-cased id ("Flux Pinned Deepseek Flash Max").
   const catalogLabel=typeof row.name==="string"?row.name.slice(0,160):typeof row.display_name==="string"?row.display_name.slice(0,160):undefined;
   const model: ProviderModel={connectionId:connection.id,preset:connection.preset,id:row.id,label:resolveModelLabel(row.id,{catalogLabel}).slice(0,160),enabled:row.active!==false,chatEligible:chat,capabilities:{chat,...(tools===undefined?{}:{tools}),...(vision===undefined?{}:{vision}),...(reasoning===undefined?{}:{reasoning})},outputModalities:output.length?output:chat?["text"]:["unknown"]};
@@ -179,6 +184,11 @@ export class ProviderConnectionsService {
   if(process.env.MURAGE_CLOUD_ROLE==="home"&&(containsPrimaryFluxKey(row)||(row.preset!=="flux"&&containsHomeFluxKey(row.key))))return{...row,key:"",enabled:false,legacyError:cloudHomeCopy.fluxKeyMustBeHomeKey};
   return row;}),...(this.options.signIns?.records()??[])];}
  resolve(id:string){const found=this.records().find(row=>row.id===id)??this.options.resolveAlias?.(id);return found?{...presetInfo(found.preset),...found}:null;}
+ private present(connection: ProviderConnectionRecord, catalog: ProviderCatalog): ProviderCatalog {
+  const presented = presentCatalog(catalog);
+  if (connection.preset !== "chatgpt" || !this.options.signIns?.isPlanModelRefused) return presented;
+  return { ...presented, models: presented.models.filter(model => !this.options.signIns?.isPlanModelRefused?.(connection.revision, model.id)) };
+ }
  private readCache(connection:ProviderConnectionRecord):ProviderCatalog {
   if("legacyError" in connection && connection.legacyError)return{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only",error:{code:"unavailable",message:String(connection.legacyError)}};
   if(!this.cache.has(connection.id))try{
@@ -189,7 +199,7 @@ export class ProviderConnectionsService {
     if(parsed.data.revision===connection.revision&&parsed.data.catalog.connectionId===connection.id&&parsed.data.catalog.models.every(model=>model.connectionId===connection.id&&model.preset===connection.preset))this.cache.set(connection.id,parsed.data as Cached);
   }catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")this.cache.set(connection.id,{revision:connection.revision,catalog:{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only",error:{code:"invalid-catalog",message:"The saved catalog is unreadable. Refresh this provider; its key is preserved."}}});}
   const cached=this.cache.get(connection.id);if(!cached||cached.revision!==connection.revision)return{connectionId:connection.id,models:[],stale:false,assurance:"catalog-only"};
-  return{...cached.catalog,models:presentModels(cached.catalog.models),stale:cached.catalog.stale||!cached.catalog.fetchedAt||this.now()-cached.catalog.fetchedAt>CACHE_TTL};
+  return this.present(connection,{...cached.catalog,stale:cached.catalog.stale||!cached.catalog.fetchedAt||this.now()-cached.catalog.fetchedAt>CACHE_TTL});
  }
  getCatalog(id:string):ProviderCatalog {const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});if(this.options.resolveAlias?.(id)){const catalog=this.getCatalog("legacy-flux");return{...catalog,connectionId:id,models:catalog.models.map(model=>({...model,connectionId:id}))};}return this.readCache(connection);}
  list():PublicProviderConnection[]{return this.records().map(connection=>{const preset=presetInfo(connection.preset),catalog=this.readCache(connection),signIn=isSignInPreset(connection.preset)?this.options.signIns?.info(connection.id):undefined;return{id:connection.id,preset:connection.preset,label:connection.label,enabled:connection.enabled,revision:connection.revision,baseUrl:preset.baseUrl,protocol:preset.protocol,configured:true,...("legacy" in connection?{legacy:true,managedIn:connection.managedIn}:{}),state:catalog.error||signIn?.state==="needs-sign-in"?"needs-attention":catalog.fetchedAt?"catalog-ready":"saved",catalog,...(signIn?{signIn}:{})};});}
@@ -251,11 +261,11 @@ export class ProviderConnectionsService {
     if(connection.preset!=="anthropic"||!object(data)||data.has_more!==true){
      const catalog:ProviderCatalog={connectionId:id,models:all,fetchedAt:this.now(),stale:false,assurance:"catalog-only"};
      active();if(!this.mayPublish(id,token,evidence)){this.report(connection,"ok",undefined,evidence);return this.readCache(connection);}
-     mkdirSync(this.options.cacheDir,{recursive:true,mode:0o700});writeFileAtomic(join(this.options.cacheDir,id+".json"),JSON.stringify({revision:connection.revision,catalog}),{mode:0o600});this.cache.set(id,{revision:connection.revision,catalog});this.report(connection,"ok",undefined,evidence);return presentCatalog(catalog);
+     mkdirSync(this.options.cacheDir,{recursive:true,mode:0o700});writeFileAtomic(join(this.options.cacheDir,id+".json"),JSON.stringify({revision:connection.revision,catalog}),{mode:0o600});this.cache.set(id,{revision:connection.revision,catalog});this.report(connection,"ok",undefined,evidence);return this.present(connection,catalog);
     }
     if(typeof data.last_id!=="string"||!data.last_id||data.last_id.length>200||data.last_id===cursor)throw new CatalogFailure("invalid-catalog");cursor=data.last_id;
    }
    throw new CatalogFailure("invalid-catalog");
-  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";if(code==="unauthorized"||code==="forbidden")this.report(connection,"refused",code,evidence);const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code],...(error instanceof CatalogFailure&&error.httpStatus!==undefined?{httpStatus:error.httpStatus}:{})},assurance:"catalog-only"};if(!this.mayPublish(id,token,evidence))return this.readCache(connection);if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return presentCatalog(catalog);}
+  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";if(code==="unauthorized"||code==="forbidden")this.report(connection,"refused",code,evidence);const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code],...(error instanceof CatalogFailure&&error.httpStatus!==undefined?{httpStatus:error.httpStatus}:{})},assurance:"catalog-only"};if(!this.mayPublish(id,token,evidence))return this.readCache(connection);if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return this.present(connection,catalog);}
  }
 }

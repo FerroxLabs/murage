@@ -2,11 +2,12 @@
 // Owner: lane runner (same image, baseline archive, builds and isolated execution).
 // SC_BASE_DIR=/tmp/red/7c9ce6fe SC_OUT=/tmp/node-comparison node this-file.mjs
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, existsSync } from 'node:fs';
 import { resolve, join, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { JSDOM } from 'jsdom';
+import { safeWipeSync } from '../../../server/testing/safe-wipe.mjs';
 
 const root=resolve(fileURLToPath(new URL('../../../',import.meta.url)));
 const base=resolve(process.env.SC_BASE_DIR??'');
@@ -86,7 +87,7 @@ for(const [side,cwd]of [['base',base],['head',root]]){
     runs[side]={status:run.status,signal:run.signal,error:run.error?.message,elapsed:Date.now()-started,missingFiles,missingReports,rows};
     writeFileSync(join(out,`${side}-by-id.jsonl`),rows.map(row=>JSON.stringify(row)).join('\n')+'\n');
     writeFileSync(join(sideOut,'source-hashes.json'),JSON.stringify(hashes,null,2));
-  }finally{rmSync(scratch,{recursive:true,force:true});}
+  }finally{safeWipeSync(scratch, { within: out });}
 }
 const group=rows=>{const map=new Map();for(const row of rows)map.set(row.id,[...(map.get(row.id)??[]),row]);return map;};
 const baseline=group(runs.base.rows),head=group(runs.head.rows),newFailures=[],missing=[],nonexecution=[];

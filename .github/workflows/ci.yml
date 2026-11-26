@@ -120,10 +120,28 @@ jobs:
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-24.04' && 75 || 20 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/windows-ci-tools
         if: runner.os == 'Windows'
       - name: Reject private operational records in Git
-        run: node scripts/check-repository-custody.mjs
+        shell: bash
+        env:
+          CUSTODY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CUSTODY_DEFAULT_REF: origin/${{ github.event.repository.default_branch }}
+        run: |
+          base="$CUSTODY_BASE"
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            base="$CUSTODY_DEFAULT_REF"
+            if [[ "$(git rev-parse --verify "$base^{commit}")" == "$(git rev-parse HEAD)" ]]; then
+              base=HEAD^
+            fi
+          fi
+          node scripts/check-repository-custody.mjs --windows-private --added-since "$base"
+      - name: Every module the packaged main process imports is packaged
+        # Node built-ins only, so it runs before install and fails in seconds. 1.0.20 rehearsal: shared/data-version-marker.mjs
+        # was imported by electron/main.mjs but missing from electron-builder.yml, and the packaged app died on launch.
+        run: node scripts/check-packaged-shared-imports.mjs
       - name: Validate scoped CI confirmation input
         shell: bash
         env:
@@ -288,6 +306,12 @@ jobs:
           }
           for (const key of ['MURAGE_CFT_CHROME', 'CFT_PATH']) appendFileSync(process.env.GITHUB_ENV, `${key}=${chromium.executablePath()}\n`);
           EOF
+      - name: Restore archived qualification inputs for Node tests
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          archive=$(node scripts/prepare-evidence-test-inputs.mjs --allow-fetch)
+          echo "MURAGE_EVIDENCE_ARCHIVE=$archive" >> "$GITHUB_ENV"
       - name: Script and native protocol Node tests
         if: runner.os == 'Linux'
         env:
@@ -1046,14 +1070,16 @@ jobs:
       - name: Install package validation and native smoke tools
         run: >-
           sudo apt-get update && sudo apt-get install -y
-          at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
+          at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb xfwm4
           build-essential binutils libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
           pkg-config libseccomp-dev xz-utils python3 python3-pip git linux-libc-dev
       - run: pnpm install --frozen-lockfile
       - name: Stage the pinned CUA runtime
         run: pnpm build:cua:linux
       - name: Prove overlay-free X11 input routing
-        run: dbus-run-session -- xvfb-run -a pnpm smoke:cua-x11-input
+        # cua-driver 0.55.0 sends foreground input only after a window manager
+        # has made the target window active (_NET_ACTIVE_WINDOW).
+        run: dbus-run-session -- xvfb-run -a sh -c 'xfwm4 --compositor=off & sleep 2; exec pnpm smoke:cua-x11-input'
       # after-pack refuses a package without the GEPA runtime and its manifest
       # receipt (GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED); mirror package-linux.yml.
       - name: Build and verify pinned GEPA runtime
@@ -1062,7 +1088,9 @@ jobs:
           python3 -I native/gepa/build-linux.py "$RUNNER_TEMP/gepa-linux"
       - name: Package from the verified offline CUA stage
         env:
-          NODE_OPTIONS: --max-old-space-size=4300
+          # Same compiler headroom as the release jobs (1.0.20; split is a 1.0.21 item).
+          NODE_OPTIONS: --max-old-space-size=8192
+          MURAGE_TYPECHECK_CAP_MIB: "8192"
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"

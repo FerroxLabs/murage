@@ -99,7 +99,9 @@ it("(f) additive: words nobody proved are the owner's (unproven) plus a reader a
 // Astra F2: the rows above build their own refs and readers, so they cannot see the production call sites. These read index.ts (as
 // direct-replay-without-memory.test.ts does) and pin the owner-only tag at both producers and the reader at all three floors.
 const index = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
-it("(g) wiring: direct and room minimal prompts use only fresh human input, with stored replay removed", () => {
+it("(g) wiring: direct and room minimal prompts use only fresh human input; the only stored replay is the direct one named line by line (SABLE-IDENTITY-1020)", () => {
+  expect(index).toContain('? recentReplayPrompt(turnLineage, { rawHumanText,');
+  expect(index).toContain('if (!lastResortReplay) transcript = [];');
   expect(index).toContain('let directPrompt = memoryLastResort ? messageOnlyPrompt(turnLineage,');
   expect(index).toContain('let roomPrompt = roomLastResort ? messageOnlyPrompt(roomTurnLineage,');
   expect(index).not.toContain('ownReplayRefs(');

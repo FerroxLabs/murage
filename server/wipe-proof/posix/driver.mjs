@@ -3,11 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { here, tools, product, installPosix, shQuote as quote, shellFile, shellCanonicalFile, argvEqual, posixStatus } from '../adapter.mjs';
+import { here, tools, product, installPosix, shQuote as quote, shellFile, shellCanonicalFile, argvEqual, fastPathBlocks, medianBlock, posixStatus } from '../adapter.mjs';
 import { assertTempRoot, snapshot, equal, assertTarget } from '../safety.mjs';
 import { startApp } from '../app.mjs';
 import { proveDevices } from './device-proof.mjs';
 import { execute } from '../process.mjs';
+import { safeWipe } from '../../testing/safe-wipe.mjs';
 
 const options = process.argv.slice(2);
 const q = value => quote(shellFile(value));
@@ -61,7 +62,7 @@ try {
   delete baseEnv.UNSET; delete baseEnv.SHELLOPTS; delete baseEnv.BASHOPTS;
   await fs.mkdir(baseEnv.HOME);
   async function reset(variant = '') {
-    await assertTarget(sandbox, tree); await fs.rm(tree, { recursive: true, force: true });
+    await assertTarget(sandbox, tree); await safeWipe(tree);
     await fs.mkdir(protectedRoot, { recursive: true }); await fs.mkdir(benign);
     for (let i = 0; i < 10; i++) await fs.mkdir(path.join(protectedRoot, 'child' + i));
     await fs.writeFile(path.join(protectedRoot, 'child0', 'keep'), 'protected');
@@ -184,28 +185,33 @@ try {
   }
   await reset();
   const fastEnv = { ...baseEnv, WIPE_PROOF_FAST: '1' }, args = ['-f', path.join(benign, 'missing')];
-  const timings = { real: [], shim: [] }, requestStart = app.requests.length;
-  for (let i = 0; i < 45; i++) {
-    for (const kind of i % 2 ? ['shim', 'real'] : ['real', 'shim']) {
-      const start = performance.now();
-      const executable = kind === 'real' ? realTools.rm : path.join(shim, 'rm');
-      const outcome = process.platform === 'win32'
-        ? await execute(bootstrapShell, ['-c', [executable, ...args].map(q).join(' ')], fastEnv, tree)
-        : await execute(executable, args, fastEnv, tree);
-      if (outcome.code !== 0 || outcome.stdout || outcome.stderr) throw Error('fast-path-semantics');
-      if (i > 4) timings[kind].push(performance.now() - start);
-    }
-  }
   const median = xs => xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)];
-  const overheadMs = median(timings.shim) - median(timings.real);
+  // Each block discards its first 5 rounds and keeps its own medians; the row judges the median block (adapter.mjs).
+  const blocks = [], requestStart = app.requests.length;
+  for (let block = 0; block < fastPathBlocks; block++) {
+    const timings = { real: [], shim: [] };
+    for (let i = 0; i < 45; i++) {
+      for (const kind of i % 2 ? ['shim', 'real'] : ['real', 'shim']) {
+        const start = performance.now();
+        const executable = kind === 'real' ? realTools.rm : path.join(shim, 'rm');
+        const outcome = process.platform === 'win32'
+          ? await execute(bootstrapShell, ['-c', [executable, ...args].map(q).join(' ')], fastEnv, tree)
+          : await execute(executable, args, fastEnv, tree);
+        if (outcome.code !== 0 || outcome.stdout || outcome.stderr) throw Error('fast-path-semantics');
+        if (i > 4) timings[kind].push(performance.now() - start);
+      }
+    }
+    blocks.push({ timings, overheadMs: median(timings.shim) - median(timings.real) });
+  }
+  const { timings, overheadMs } = medianBlock(blocks);
   report('fast-path-under-5ms', overheadMs < 5 && app.requests.length === requestStart,
-    { overheadMs, realMedianMs: median(timings.real), shimMedianMs: median(timings.shim), samples: 40 });
+    { overheadMs, realMedianMs: median(timings.real), shimMedianMs: median(timings.shim), blockOverheadsMs: blocks.map(block => block.overheadMs), samples: 40 });
   report('outside-tree-unchanged', equal(outsideBefore, await snapshot(sandbox, [tree, control, socket])));
 } catch {
   report('fixture-setup-or-run', false);
 } finally {
   if (app) await app.close();
-  if (sandbox) { await assertTempRoot(sandbox); await fs.rm(sandbox, { recursive: true, force: true }); }
+  if (sandbox) { await assertTempRoot(sandbox); await safeWipe(sandbox); }
 }
 const summary = { kind: 'wipe-proof-posix', mode: stub ? 'contract-stub' : 'production-guard', platform: process.platform,
   passed: results.filter(x => x.ok).length, failed: results.filter(x => !x.ok).length, unavailable,

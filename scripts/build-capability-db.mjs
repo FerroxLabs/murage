@@ -57,7 +57,7 @@ const STATUS_SENTENCES = {
 /** Backend and vendor names customer text never carries. Seeded with the one
  * src/copy-rules.test.ts refuses (the connection service) and the services
  * behind Murage that a person never picks. */
-const BANNED_NAMES = ["Composio", "AgentMail", "Cua", "Help Scout", "build host", "Vercel", "Supabase", "Cloudflare", "Requesty"];
+const BANNED_NAMES = ["Composio", "AgentMail", "Cua", "Help Scout", "Hetzner", "Vercel", "Supabase", "Cloudflare", "Requesty"];
 const ROOTS = { settings: "Settings", bot: "Bot settings" };
 const ARROW = " → ";
 const ENTRY_KEYS = new Set(["id", "name", "status", "questions", "answer", "limits", "ask_your_bot", "settings_path", "platforms", "engines",
@@ -77,10 +77,10 @@ const PATH_CONTROLS = [
     proof: [["src/components/ModelsSettings.tsx", "<SubscriptionSignIn"], ["src/components/SubscriptionSignIn.tsx", "modelSignIn.heading"]] },
   // The Approvals block (the level new conversations start at) in a bot's Permissions section.
   { id: "permissions/approvals", root: "bot", section: "permissions", label: "Approvals",
-    proof: [["src/components/BotPermissionDefault.tsx", 'text-ink">Approvals</div>'], ["src/components/SettingsPanel.tsx", "<BotPermissionDefault"]] },
+    proof: [["src/components/BotPermissionDefault.tsx", 'text-ink">Approvals</div>'], ["src/components/bot-pages/BotPermissionsPage.tsx", "<BotPermissionDefault"]] },
   // The Name field in a bot's Identity & instructions section.
   { id: "identity/name", root: "bot", section: "identity", labelKey: "settings.bot.identity.name",
-    proof: [["src/components/SettingsPanel.tsx", 't("settings.bot.identity.name")']] },
+    proof: [["src/components/bot-pages/BotIdentityPage.tsx", 't("settings.bot.identity.name")']] },
 ];
 
 function sha256(text) { return createHash("sha256").update(text).digest("hex"); }

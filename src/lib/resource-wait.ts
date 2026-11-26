@@ -16,6 +16,9 @@ const KINDS = new Set<TaskResourceWait["resource"]>(["working-folder", "computer
 
 const PLACES = new Set(["one", "two", "few", "many", "other"]);
 
+/** No wait is put in minutes past an hour: the server sends none (BROWSERQ-1020), and a 1.0.19 server's figure that long was never a measurement. */
+export const WAIT_ESTIMATE_MAX_MS = 60 * 60_000;
+
 /** "2nd", in the app language's own ordinal form. */
 function place(position: number): string {
   let category = "other";
@@ -27,7 +30,7 @@ function place(position: number): string {
 /** The presence-row label for a waiting turn, or undefined when the task is
  * not waiting. Unknown kinds from a newer server read as "shared". A known
  * place in line reads "2nd in line for the working folder. Starts by itself
- * when the turns ahead finish.", with "About N min." once measured. */
+ * when the turns ahead finish.", with "About N min." once measured (never over an hour). */
 export function resourceWaitLabel(wait: TaskResourceWait | undefined | null): string | undefined {
   if (!wait || typeof wait !== "object") return undefined;
   const kind = KINDS.has(wait.resource) ? wait.resource : "shared";
@@ -35,7 +38,7 @@ export function resourceWaitLabel(wait: TaskResourceWait | undefined | null): st
   if (kind !== "thread-slot" && typeof position === "number" && Number.isSafeInteger(position) && position >= 1) {
     const line = t(`runtimeError.waiting.${kind as Exclude<TaskResourceWait["resource"], "thread-slot">}.inLine`, { place: place(position) });
     const estimate = wait.estimateMs;
-    if (typeof estimate !== "number" || !Number.isFinite(estimate) || estimate <= 0) return line;
+    if (typeof estimate !== "number" || !Number.isFinite(estimate) || estimate <= 0 || estimate > WAIT_ESTIMATE_MAX_MS) return line;
     const minutes = Math.round(estimate / 60_000);
     // Under half a minute rounds to nothing: say nothing rather than "About 1 min".
     return minutes >= 1 ? `${line} ${t("runtimeError.waiting.estimate", { minutes })}` : line;

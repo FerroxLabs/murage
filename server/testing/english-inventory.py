@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Read-only inventory of added English literals across the complete lane range."""
 from pathlib import Path
-import argparse, difflib, json, re, subprocess
+import argparse, difflib, json, re, subprocess, sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+from evidence_path import evidence_path, external_evidence_path
 parser = argparse.ArgumentParser()
 parser.add_argument('tip', nargs='?', default='HEAD')
 parser.add_argument('--base', default='b4dc27ea9')
-parser.add_argument('--output', default='evidence/r4/english-inventory.json')
+parser.add_argument('--output')
 args = parser.parse_args()
+output = external_evidence_path(args.output) if args.output else evidence_path('evidence/r4/english-inventory.json')
 def git(*argv): return subprocess.check_output(['git', *argv], text=True, stderr=subprocess.PIPE)
 diff = git('diff', '--no-ext-diff', '-U0', args.base, args.tip, '--', '.', ':!*.test.ts', ':!server/testing/**', ':!server/memory/testing/**')
 changes, removed, file, new_line, old_line = {}, {}, None, 0, 0
@@ -74,6 +77,6 @@ for file, added in changes.items():
   prefix=re.split(r'[\'"`]',current_line,1)[0].strip()
   changed=line in paired
   inventory.append({'file':file,'line':line,'literal':literal,'class':kind,'change':'CHANGED' if changed else 'NEW'})
-output=Path(args.output);output.parent.mkdir(parents=True,exist_ok=True)
+output.parent.mkdir(parents=True,exist_ok=True)
 output.write_text(json.dumps(inventory,indent=2,ensure_ascii=False)+'\n')
 print(json.dumps(inventory,indent=2,ensure_ascii=False))

@@ -1,3 +1,4 @@
+import { evidencePath } from './evidence-path.mjs';
 import {mkdtempSync,readFileSync,writeFileSync,cpSync,symlinkSync,mkdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
@@ -5,7 +6,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {safeWipeSync} from '../server/testing/safe-wipe.mjs';
 if(process.env.CI!=='1')throw Error('Requires isolated container');
-const out=resolve('evidence/afix-nolim-sql');
+const out=resolve(evidencePath('evidence/afix-nolim-sql'));
 const root=mkdtempSync(join(tmpdir(),'afix-base-'));
 const gate=['server/full-access.test.ts','server/auto-approve.test.ts','server/decision/no-limits-x2-full-access.test.ts','scripts/no-limits-live/ruling-1019.test.mjs'];
 const targeted=['server/no-limits-review-fix.test.ts','server/no-limits-wipe-r3.test.ts','server/no-limits-truly.test.ts','server/decision/no-limits-truly.test.ts','server/decision/no-limits-review-fixes.test.ts','server/decision/no-limits-release-rulings-1019.test.ts'];

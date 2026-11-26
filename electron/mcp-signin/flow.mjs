@@ -10,7 +10,7 @@ import { guardedRequest } from "../../shared/guarded-http.mjs";
 import { LIMITS } from "../../shared/remote-mcp-url.mjs";
 import { runLoopback } from "../oauth/loopback.mjs";
 import { createPkce } from "../oauth/pkce.mjs";
-import { registerClient, reusableClient } from "./register.mjs";
+import { preRegisteredClient, registerClient, reusableClient } from "./register.mjs";
 
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const SCOPE = /^[\x21\x23-\x5b\x5d-\x7e]+$/;
@@ -100,7 +100,14 @@ export async function runSignInFlow(input, deps) {
   const now = deps.now ?? Date.now;
   const pkce = createPkce({ verifierBytes: 32, stateBytes: 32 });
   const sameIssuer = isRecord(stored) && stored.issuer === discovery.issuer;
-  const ports = sameIssuer && Number.isInteger(stored.redirectPort) && stored.redirectPort > 0 ? [stored.redirectPort, 0] : [0];
+  // B98: an app the owner registered with the provider. Its redirect address was
+  // shown to the owner and pasted there, so only that exact port is tried.
+  const own = preRegisteredClient(stored, discovery);
+  // The owner's app was saved for other sign-in addresses: never fall back to a
+  // new registration (that would replace it), and never send its secret elsewhere.
+  if (isRecord(stored) && stored.preRegistered === true && !own) return { ok: false, error: "own-app-changed" };
+  const ports = own ? [own.redirectPort]
+    : sameIssuer && Number.isInteger(stored.redirectPort) && stored.redirectPort > 0 ? [stored.redirectPort, 0] : [0];
   let client = null, setupError = null, redirectUri = "";
   const outcome = await runLoopback({
     createServer: deps.createServer,
@@ -117,7 +124,8 @@ export async function runSignInFlow(input, deps) {
     },
     onListening: async (port) => {
       redirectUri = `http://127.0.0.1:${port}/callback`;
-      client = sameIssuer ? reusableClient(stored, discovery.issuer, port) : null;
+      client = own ? { clientId: own.clientId, ...(own.clientSecret ? { clientSecret: own.clientSecret } : {}) }
+        : sameIssuer ? reusableClient(stored, discovery.issuer, port) : null;
       if (!client) {
         if (!discovery.registrationEndpoint) { setupError = "no-registration"; throw new Error(setupError); }
         const registered = await registerClient({ registrationEndpoint: discovery.registrationEndpoint, redirectUri, local: target.local, request });
@@ -134,6 +142,7 @@ export async function runSignInFlow(input, deps) {
     if (outcome.error === "browser" && setupError) return { ok: false, error: setupError };
     if (outcome.error === "cancelled" && outcome.providerError) return { ok: false, error: "denied" };
     if (outcome.error === "rejected") return { ok: false, error: "refused" };
+    if (outcome.error === "port" && own) return { ok: false, error: "port-busy" };
     return { ok: false, error: outcome.error };
   }
   const exchanged = await postTokenForm({
@@ -151,7 +160,8 @@ export async function runSignInFlow(input, deps) {
       issuer: discovery.issuer,
       clientId: client.clientId,
       ...(client.clientSecret ? { clientSecret: client.clientSecret } : {}),
-      redirectPort: outcome.port,
+      redirectPort: own ? own.redirectPort : outcome.port,
+      ...(own ? { preRegistered: true, authorizationEndpoint: discovery.authorizationEndpoint, pinnedRevocationEndpoint: discovery.revocationEndpoint ?? null } : {}),
       resource: target.url,
       scope: tokens.scope ?? scope,
       tokenEndpoint: discovery.tokenEndpoint,

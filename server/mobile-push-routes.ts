@@ -1,3 +1,4 @@
+import {revokePhoneOwnerSettlementSession} from './owner-settlement-session.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -47,6 +48,16 @@ function removeNow(deps: PushRouteDeps, binding: Pick<PushBinding, "bindingId" |
     .catch(() => {});
 }
 
+/** The removal generation a companion sends (a non-negative safe integer (the companion uses epoch seconds, so a lost file cannot reuse a generation)); null when it sent none, "bad" for anything else. */
+function removalGeneration(body: unknown): number | null | "bad" {
+  if (body === null || body === undefined) return null;
+  if (typeof body !== "object" || Array.isArray(body)) return "bad";
+  const keys = Object.keys(body);
+  if (keys.length === 0) return null;
+  const value = (body as { generation?: unknown }).generation;
+  return keys.join() === "generation" && Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : "bad";
+}
+
 export async function mobilePushRoute(
   req: { method: string; path: string; headers: IncomingHttpHeaders; readBody: () => Promise<unknown> },
   deps: PushRouteDeps,
@@ -57,6 +68,7 @@ export async function mobilePushRoute(
   if (!DEVICE.test(device)) return NO_ROUTE;
   const rest = req.path.slice(PREFIX.length);
   const route = `${req.method} ${rest}`;
+  if(route==='POST revoke-device')revokePhoneOwnerSettlementSession(device);
   // Almost every route here writes (a token expiry, a binding, a delivery mark), GET included. They all wait, without
   // blocking the loop, while the revocation index build holds the writer lock; only the settings read does not.
   // The clock is read after the wait, so an expiry is counted from when it is written.
@@ -115,10 +127,35 @@ export async function mobilePushRoute(
     return binding ? { status: 200, body: { bindingId: binding.bindingId } } : { status: 404, body: { code: "not_enrolled" } };
   }
   if (route === "POST revoke-device") {
-    // Answered once the delete and its queued relay removal commit together.
-    const removed = deps.store.removeDevice(device, now);
+    // Answered once the delete, its queued relay removal and (with a generation) its receipt commit together.
+    let body: unknown = null;
+    try { body = await req.readBody(); } catch { return BAD_REQUEST; }
+    const generation = removalGeneration(body);
+    if (generation === "bad") return BAD_REQUEST;
+    // An older companion sends no generation: it keeps the plain answer and gets no receipt.
+    if (generation === null) {
+      const removed = deps.store.removeDevice(device, now);
+      if (removed) removeNow(deps, removed);
+      return { status: 200, body: { ok: true } };
+    }
+    // The same (device, generation) replays its receipt and changes nothing: a lost reply is not a second removal, and not "nothing".
+    const known = deps.store.removalReceipt(device, generation);
+    if (known) return { status: 200, body: { ok: true, ...known } };
+    const removed = deps.store.removeDevice(device, now, generation);
     if (removed) removeNow(deps, removed);
-    return { status: 200, body: { ok: true } };
+    return { status: 200, body: { ok: true, ...(deps.store.removalReceipt(device, generation) ?? { removalId: null, state: "nothing" }) } };
+  }
+  // The generation rides in the path, not a query: server/index.ts hands these routes url.pathname only.
+  const receiptAsk = /^GET removal\/([A-Za-z0-9_-]{1,128})\/(\d{1,15})$/.exec(route);
+  if (receiptAsk) {
+    // Check again: reads the receipt, writes nothing. The id in the path must be the device the door proved.
+    if (receiptAsk[1] !== device) return BAD_REQUEST;
+    const receipt = deps.store.removalReceipt(device, Number(receiptAsk[2]));
+    if (receipt) return { status: 200, body: receipt };
+    // No receipt is "nothing" only when no binding is left to remove. A live binding means the receipt was lost (a restore, a step back and
+    // forth): the companion must send the same generation again, never read that as Removed.
+    if (deps.store.bindingForDevice(device)) return { status: 409, body: { code: "binding_live" } };
+    return { status: 200, body: { removalId: null, state: "nothing" } };
   }
 
   // The bearer routes, exactly the ones the door forwards. The binding comes

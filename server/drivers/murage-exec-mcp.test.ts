@@ -7,9 +7,9 @@
 // REAL wrapper the way the CLI does.
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { claudeMcpLaunch } from "../testing/fake-custom-tool.ts";
@@ -70,6 +70,20 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
   afterEach(() => removeTempDirSync(proj));
   // Run the wrapper as Claude's shell does (through bash: a Windows file has no shebang to execute).
   const runWrapper = (command: string, env: Record<string, string>, script = wrapper) => spawnSync(BASH!, [WIN ? script.replace(/\\/g, "/") : script, command], { windowsHide: true, env: { ...winBase(), ...homeBase(), PATH: hostPath(), MURAGE_EXEC_ENV_FILE: envFile, ...env }, encoding: "utf8" });
+
+  it.skipIf(!WIN)("native Git Bash accepts the backslash launch and a same-file turn map", () => {
+    expect(wrapper).toContain("\\");
+    const alias = join(proj, basename(envFile));
+    linkSync(envFile, alias);
+    const out = spawnSync(BASH!, ["-p", wrapper, 'printf "%s|%s" "$SHARED" "$NEEDED"'], {
+      windowsHide: true,
+      env: { ...winBase(), PATH: hostPath(), MURAGE_EXEC_ENV_FILE: alias, [EXEC_NONCE]: NONCE, [EXEC_KEEP]: `${HEAD}NEEDED`, NEEDED: "server" },
+      encoding: "utf8",
+    });
+    expect(out.stderr).toBe("");
+    expect(out.status).toBe(0);
+    expect(out.stdout).toBe("turn|server");
+  });
 
   const hostile = `it's "here" $(touch /nonexistent) \`x\`\nsecond line`;
 
@@ -248,18 +262,20 @@ describe.skipIf(WIN)("murage-exec Git Bash branch (MSYS spellings, simulated)", 
     mkdirSync(bin);
     writeFileSync(join(bin, "uname"), "#!/bin/sh\necho MINGW64_NT-10.0-20348\n");
     // cygpath -u X | cygpath -u -p LIST: drop the W: marker; a list's ";" becomes ":"
-    writeFileSync(join(bin, "cygpath"), `#!/bin/sh\nlast=""; list=0\nfor a in "$@"; do case "$a" in -p) list=1 ;; -*) ;; *) last="$a" ;; esac; done\nif [ $list = 1 ]; then printf '%s\\n' "$last" | sed 's/;/:/g; s/W://g'; else printf '%s\\n' "$last" | sed 's/^W://'; fi\n`);
+    writeFileSync(join(bin, "cygpath"), `#!/bin/sh\nlast=""; list=0\nfor a in "$@"; do case "$a" in -p) list=1 ;; -*) ;; *) last="$a" ;; esac; done\nif [ $list = 1 ]; then printf '%s\\n' "$last" | sed 's/;/:/g; s/W://g'; else printf '%s\\n' "$last" | sed 's/^W://; s|\\\\|/|g'; fi\n`);
     chmodSync(join(bin, "uname"), 0o755);
     chmodSync(join(bin, "cygpath"), 0o755);
   });
   /** X3 W1: the wrapper sets PATH=/usr/bin:/bin first, so a stand-in on the caller's PATH is never used. The simulation runs a
    * fixture copy (beside the installed wrapper, so W2 holds) whose only difference is the stand-in folder in that line. */
-  const msysWrapper = (): string => {
+  const msysWrapper = (traceMap = false): string => {
     const installed = installMurageExec();
     const copy = join(dirname(installed), `msys-sim-${process.pid}-${Math.random().toString(16).slice(2, 8)}`);
     const source = readFileSync(installed, "utf8");
     expect(source.split("\nPATH=/usr/bin:/bin\n").length - 1).toBe(1);
-    writeFileSync(copy, source.replace("\nPATH=/usr/bin:/bin\n", `\nPATH=${bin}:/usr/bin:/bin\n`), { mode: 0o755 });
+    // Linux can report the actual pathname of the open descriptor, even when two hard links have the same inode.
+    const traceRead = traceMap ? 'read() { readlink /proc/self/fd/0 >> "$MAP_READ_PATH" || return; builtin read "$@"; }\n' : "";
+    writeFileSync(copy, source.replace("\nPATH=/usr/bin:/bin\n", `\nPATH=${bin}:/usr/bin:/bin\n${traceRead}`), { mode: 0o755 });
     writeFileSync(`${copy}.shapes`, readFileSync(`${installed}.shapes`, "utf8"));
     return copy;
   };
@@ -290,6 +306,101 @@ describe.skipIf(WIN)("murage-exec Git Bash branch (MSYS spellings, simulated)", 
     const bash = spawnSync("/bin/bash", [wrapperCopy, 'printf "%s|%s" "$PATH" "$PWD"'], { windowsHide: true, env: { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MURAGE_EXEC_ENV_FILE: envFile }, encoding: "utf8" });
     expect(bash.stderr).toBe("");
     expect(bash.stdout).toBe(`${[bin, ...hostDirs].join(":")}|${proj}`);
+  });
+
+  // 1.0.20 winmount (release blocker): on Windows Claude starts each stdio MCP server through cross-spawn, which resolves
+  // the prefix with path.resolve, unshifts it after the shebang's `bash -p` and runs `bash -p C:\\...\\murage-exec-<hash>
+  // "<line>"`. So the wrapper's $0 is the BACKSLASH spelling (a Bash call keeps the forward-slash prefix). W2 took the
+  // folder of $0 before converting it, found no "/", and refused every MCP server ("the turn environment is not Murage's"),
+  // so muragebox never connected and the first approval ended the CLI. Here the wrapper is opened under a file name that
+  // is its Windows backslash spelling ("W:\\tmp\\...", one name with no "/"), exactly the $0 cross-spawn hands bash.
+  it("an MCP server started with the wrapper's backslash spelling as $0 (cross-spawn) passes W2 and gets its env", () => {
+    const script = join(proj, "server.cjs");
+    writeFileSync(script, SERVER);
+    const hostDirs = (process.env.PATH ?? "/usr/bin:/bin").split(":").filter(Boolean);
+    const winPath = [bin, ...hostDirs].map((dir) => `W:${dir}`).join(";");
+    const envFile = writeExecEnvFile(`t-msys-bs-${process.pid}`, { ...homeBase(), PATH: winPath, SHARED: "turn" }, `W:${proj}`, "W:/bin/bash");
+    const servers = withExecKeep({ probe: { command: process.execPath, args: [script], env: { ELECTRON_RUN_AS_NODE: "1", NEEDED: "msys", SHARED: "server" } } }, NONCE) as Record<string, { command: string; args: string[]; env: Record<string, string> }>;
+    const wrapperCopy = msysWrapper();
+    const spelled = `W:${wrapperCopy.replace(/\//g, "\\")}`;
+    expect(spelled.includes("/")).toBe(false);
+    const launchDir = join(proj, "launch");
+    mkdirSync(launchDir);
+    symlinkSync(wrapperCopy, join(launchDir, spelled));
+    const line = [servers.probe!.command, ...servers.probe!.args].map((word) => `'${word.replace(/'/g, "'\\''")}'`).join(" ");
+    const out = spawnSync("/bin/bash", ["-p", spelled, line], {
+      windowsHide: true, cwd: launchDir,
+      env: { ...homeBase(), PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MURAGE_EXEC_ENV_FILE: envFile, [EXEC_NONCE]: NONCE, ...servers.probe!.env },
+      input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`,
+      encoding: "utf8",
+    });
+    expect(out.stderr).toBe("");
+    expect(out.status).toBe(0);
+    const reply = JSON.parse(out.stdout.trim()) as { result: { env: Record<string, string | null>; cwd: string } };
+    expect(reply.result.env).toMatchObject({ NEEDED: "msys", ELECTRON_RUN_AS_NODE: "1", SHARED: "server", MURAGE_EXEC_KEEP: null, MURAGE_EXEC_ENV_FILE: null });
+    expect(sameDir(reply.result.cwd, proj)).toBe(true);
+  });
+
+  it("W2 still refuses an environment file outside the wrapper's own folder when $0 is the backslash spelling", () => {
+    const envFile = writeExecEnvFile(`t-msys-bs-foreign-${process.pid}`, { PATH: "W:/usr/bin" }, `W:${proj}`, "W:/bin/bash");
+    const foreignDir = join(proj, "foreign", "env");
+    mkdirSync(foreignDir, { recursive: true });
+    const foreign = join(foreignDir, envFile.slice(envFile.lastIndexOf("/") + 1));
+    writeFileSync(foreign, readFileSync(envFile));
+    const wrapperCopy = msysWrapper();
+    const spelled = `W:${wrapperCopy.replace(/\//g, "\\")}`;
+    const launchDir = join(proj, "launch-foreign");
+    mkdirSync(launchDir);
+    symlinkSync(wrapperCopy, join(launchDir, spelled));
+    const out = spawnSync("/bin/bash", ["-p", spelled, "touch ran"], { windowsHide: true, cwd: launchDir, env: { PATH: `${bin}:/usr/bin:/bin`, MURAGE_EXEC_ENV_FILE: foreign }, encoding: "utf8" });
+    expect(out.status).toBe(126);
+    expect(out.stderr).toContain("the turn environment is not Murage's");
+    expect(existsSync(join(launchDir, "ran"))).toBe(false);
+  });
+
+  it.each(["POSIX", "Windows"])("W2 accepts a same-file %s alias of the turn map", (spelling) => {
+    const envFile = writeExecEnvFile(`t-msys-alias-${process.pid}`, { PATH: "W:/usr/bin", SHARED: "turn" }, `W:${proj}`, "W:/bin/bash");
+    const alias = join(proj, basename(envFile));
+    linkSync(envFile, alias);
+    const handed = spelling === "Windows" ? `W:${alias.replace(/\//g, "\\")}` : alias;
+    if (handed !== alias) linkSync(envFile, join(proj, handed));
+    const out = spawnSync("/bin/bash", ["-p", msysWrapper(), 'printf "%s" "$SHARED"'], {
+      cwd: proj, env: { MURAGE_EXEC_ENV_FILE: handed }, encoding: "utf8",
+    });
+    expect(out.status, out.stderr).toBe(0);
+    expect(out.stdout).toBe("turn");
+  });
+
+  it.skipIf(process.platform !== "linux").each(["matching", "alternate"])("W2 opens the wrapper-owned map for the %s spelling", (spelling) => {
+    const envFile = writeExecEnvFile(`t-msys-read-${process.pid}`, { PATH: "W:/usr/bin", SHARED: "turn" }, `W:${proj}`, "W:/bin/bash");
+    const translated = spelling === "matching" ? envFile : join(proj, basename(envFile));
+    if (translated !== envFile) linkSync(envFile, translated);
+    const handed = `W:${translated.replace(/\//g, "\\")}`;
+    linkSync(envFile, join(proj, handed));
+    const trace = join(proj, "map-read-path");
+    const out = spawnSync("/bin/bash", ["-p", msysWrapper(true), 'printf "%s" "$SHARED"'], {
+      cwd: proj, env: { MURAGE_EXEC_ENV_FILE: handed, MAP_READ_PATH: trace }, encoding: "utf8",
+    });
+    expect(out.status, out.stderr).toBe(0);
+    expect(out.stdout).toBe("turn");
+    // Every line the wrapper read came from the wrapper-owned file, never from the handed spelling.
+    expect([...new Set(readFileSync(trace, "utf8").trimEnd().split("\n"))]).toEqual([envFile]);
+  });
+
+  it("W2 refuses a map with an invalid name inside the wrapper's own folder", () => {
+    const envFile = writeExecEnvFile(`t-msys-invalid-${process.pid}`, { PATH: "W:/usr/bin" }, `W:${proj}`, "W:/bin/bash");
+    const invalid = `${envFile}.invalid`;
+    linkSync(envFile, invalid);
+    try {
+      const out = spawnSync("/bin/bash", ["-p", msysWrapper(), "touch ran"], {
+        cwd: proj, env: { MURAGE_EXEC_ENV_FILE: invalid }, encoding: "utf8",
+      });
+      expect(out.status).toBe(126);
+      expect(out.stderr).toContain("the turn environment is not Murage's");
+      expect(existsSync(join(proj, "ran"))).toBe(false);
+    } finally {
+      rmSync(invalid);
+    }
   });
 
   it("a Windows file with no cygpath on the wrapper's PATH stops with the reason, running nothing", () => {

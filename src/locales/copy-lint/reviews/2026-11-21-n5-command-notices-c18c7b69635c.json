@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "held1022b2-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 N5 command send notices"
+  },
+  "author": "held1022-b2",
+  "date": "2026-11-21",
+  "base": "6b0cb408e4",
+  "scope": "1.0.22 N5: the three engine-command send notices (compactNeedsSession, commandNeedsSession, commandModelChanged) in 8 languages, and the held1022b2-copyrev reviewer seat",
+  "strings": {
+    "en:sendNotice.compactNeedsSession": {
+      "text": "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+      "en": "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+      "verdict": "pass",
+      "note": "Clear and calm; it says why, what to do, and keeps /compact literal, matching the source in send-notice.ts."
+    },
+    "en:sendNotice.commandNeedsSession": {
+      "text": "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+      "en": "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+      "verdict": "pass",
+      "note": "Accurate and gives a plain next step that matches the compact variant."
+    },
+    "en:sendNotice.commandModelChanged": {
+      "text": "The model for this conversation changed. Send a message first, then run the command again.",
+      "en": "The model for this conversation changed. Send a message first, then run the command again.",
+      "verdict": "pass",
+      "note": "Short and plain, with the same 'Send a message first' step as its siblings."
+    },
+    "de:sendNotice.compactNeedsSession": {
+      "text": "Noch nichts zu komprimieren: Die Engine-Sitzung dieses Chats wird gerade aus der Unterhaltung neu aufgebaut. Sende zuerst eine Nachricht und versuche /compact dann erneut.",
+      "en": "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+      "verdict": "pass",
+      "note": "Accurate, uses informal du like the other de sendNotice strings, 'Engine-Sitzung' matches de term use, and /compact stays literal."
+    },
+    "de:sendNotice.commandNeedsSession": {
+      "text": "Dieser Befehl läuft in der aktuellen Sitzung der Engine, die gerade neu aufgebaut wird. Sende zuerst eine Nachricht und versuche es dann erneut.",
+      "en": "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, with du-form imperatives and 'erneut' consistent with the sibling strings."
+    },
+    "de:sendNotice.commandModelChanged": {
+      "text": "Das Modell für diese Unterhaltung hat sich geändert. Sende zuerst eine Nachricht und führe den Befehl dann erneut aus.",
+      "en": "The model for this conversation changed. Send a message first, then run the command again.",
+      "verdict": "pass",
+      "note": "Accurate and natural; 'führe den Befehl dann erneut aus' reads well in the du register."
+    },
+    "es:sendNotice.compactNeedsSession": {
+      "text": "Todavía no hay nada que compactar: la sesión del motor de este chat se está reconstruyendo a partir de la conversación. Envía primero un mensaje y luego vuelve a probar /compact.",
+      "en": "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+      "verdict": "pass",
+      "note": "Accurate, uses informal tú (Envía) like the other es strings, 'motor' is consistent, and /compact stays literal."
+    },
+    "es:sendNotice.commandNeedsSession": {
+      "text": "Ese comando se ejecuta en la sesión actual del motor, que se está reconstruyendo. Envía primero un mensaje y luego vuelve a intentarlo.",
+      "en": "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural; 'vuelve a intentarlo' fits the locale's tone."
+    },
+    "es:sendNotice.commandModelChanged": {
+      "text": "El modelo de esta conversación ha cambiado. Envía primero un mensaje y luego vuelve a ejecutar el comando.",
+      "en": "The model for this conversation changed. Send a message first, then run the command again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, with a consistent tú register."
+    },
+    "fr:sendNotice.compactNeedsSession": {
+      "text": "Rien à compacter pour l’instant : la session du moteur de ce chat est en cours de reconstruction à partir de la conversation. Envoie d’abord un message, puis réessaie /compact.",
+      "en": "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+      "verdict": "pass",
+      "note": "Accurate, uses tu like the other fr strings, 'moteur' is consistent, and /compact stays literal; the typographic apostrophes match toolTurnRefused."
+    },
+    "fr:sendNotice.commandNeedsSession": {
+      "text": "Cette commande s’exécute sur la session actuelle du moteur, qui est en cours de reconstruction. Envoie d’abord un message, puis réessaie.",
+      "en": "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural; 's'exécute sur la session' and 'réessaie' fit the tu register."
+    },
+    "fr:sendNotice.commandModelChanged": {
+      "text": "Le modèle de cette conversation a changé. Envoie d’abord un message, puis relance la commande.",
+      "en": "The model for this conversation changed. Send a message first, then run the command again.",
+      "verdict": "pass",
+      "note": "Accurate and idiomatic; 'relance la commande' is natural."
+    },
+    "hi:sendNotice.compactNeedsSession": {
+      "text": "अभी कॉम्पैक्ट करने के लिए कुछ नहीं है: इस चैट का इंजन सत्र बातचीत से फिर से बनाया जा रहा है। पहले एक संदेश भेजें, फिर /compact दोबारा आज़माएँ।",
+      "en": "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+      "verdict": "pass",
+      "note": "Accurate, uses the polite आप-form imperatives (भेजें, आज़माएँ) like the other hi strings, 'इंजन सत्र' is consistent, and /compact stays literal."
+    },
+    "hi:sendNotice.commandNeedsSession": {
+      "text": "यह कमांड इंजन के मौजूदा सत्र पर चलता है, जिसे फिर से बनाया जा रहा है। पहले एक संदेश भेजें, फिर इसे दोबारा आज़माएँ।",
+      "en": "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural; 'मौजूदा सत्र' is clear and the register matches."
+    },
+    "hi:sendNotice.commandModelChanged": {
+      "text": "इस बातचीत का मॉडल बदल गया है। पहले एक संदेश भेजें, फिर कमांड दोबारा चलाएँ।",
+      "en": "The model for this conversation changed. Send a message first, then run the command again.",
+      "verdict": "pass",
+      "note": "Accurate, concise, and natural."
+    },
+    "ja:sendNotice.compactNeedsSession": {
+      "text": "まだ圧縮できる内容がありません。このチャットのエンジンセッションは会話から再構築中です。先にメッセージを送信してから、もう一度 /compact をお試しください。",
+      "en": "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+      "verdict": "pass",
+      "note": "Accurate, polite です/ます style matching the ja strings ('お試しください' is also used in notRecorded), with /compact literal and correctly spaced."
+    },
+    "ja:sendNotice.commandNeedsSession": {
+      "text": "このコマンドはエンジンの現在のセッションで実行されますが、そのセッションは再構築中です。先にメッセージを送信してから、もう一度お試しください。",
+      "en": "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural; the ～ますが、そのセッションは clause carries the 'which is being rebuilt' meaning clearly."
+    },
+    "ja:sendNotice.commandModelChanged": {
+      "text": "この会話のモデルが変更されました。先にメッセージを送信してから、もう一度コマンドを実行してください。",
+      "en": "The model for this conversation changed. Send a message first, then run the command again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, in a consistent polite register."
+    },
+    "pt-br:sendNotice.compactNeedsSession": {
+      "text": "Ainda não há nada para compactar: a sessão do mecanismo deste chat está sendo reconstruída a partir da conversa. Envie uma mensagem primeiro e depois tente /compact de novo.",
+      "en": "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+      "verdict": "pass",
+      "note": "Accurate, uses 'você'-style imperatives (Envie) and 'de novo' like the other pt-br strings, 'mecanismo' matches the locale's existing term, and /compact stays literal."
+    },
+    "pt-br:sendNotice.commandNeedsSession": {
+      "text": "Esse comando é executado na sessão atual do mecanismo, que está sendo reconstruída. Envie uma mensagem primeiro e depois tente de novo.",
+      "en": "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, with a consistent register."
+    },
+    "pt-br:sendNotice.commandModelChanged": {
+      "text": "O modelo desta conversa mudou. Envie uma mensagem primeiro e depois execute o comando de novo.",
+      "en": "The model for this conversation changed. Send a message first, then run the command again.",
+      "verdict": "pass",
+      "note": "Accurate, concise, and natural."
+    },
+    "zh:sendNotice.compactNeedsSession": {
+      "text": "暂时没有可压缩的内容：此聊天的引擎会话正在根据对话重建。请先发送一条消息，然后再试一次 /compact。",
+      "en": "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+      "verdict": "pass",
+      "note": "Accurate, uses the polite 请 framing like the other zh strings, '引擎会话' is consistent, and /compact stays literal; '再试一次 /compact' is acceptable in UI copy."
+    },
+    "zh:sendNotice.commandNeedsSession": {
+      "text": "该命令在引擎的当前会话上运行，而该会话正在重建。请先发送一条消息，然后再试一次。",
+      "en": "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+      "verdict": "pass",
+      "note": "Accurate and natural; '而该会话正在重建' carries the 'which is being rebuilt' clause cleanly."
+    },
+    "zh:sendNotice.commandModelChanged": {
+      "text": "此对话的模型已更改。请先发送一条消息，然后再次运行该命令。",
+      "en": "The model for this conversation changed. Send a message first, then run the command again.",
+      "verdict": "pass",
+      "note": "Accurate and natural, in a consistent register."
+    }
+  },
+  "files": {}
+}

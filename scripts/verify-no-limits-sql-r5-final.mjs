@@ -1,9 +1,10 @@
+import { evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Scoped checks only, always invoked inside the network-none job container.
 import {spawnSync} from 'node:child_process';
 import {writeFileSync} from 'node:fs';
 if(process.env.CI!=='1')throw Error('Requires isolated container');
-const out='evidence/nolim-sql-r5';
+const out=evidencePath('evidence/nolim-sql-r5');
 const runs=[
  ['corpus',[ 'node_modules/vitest/vitest.mjs','run','server/no-limits-sql-r5.test.ts','server/no-limits-review-fix.test.ts','server/no-limits-wipe-cover.test.ts','--maxWorkers=5','--reporter=json','--outputFile='+out+'/final-corpus.json']],
  ['gates',['node_modules/vitest/vitest.mjs','run','server/no-limits-truly.test.ts','server/no-limits-inheritance.test.ts','server/decision/no-limits-truly.test.ts','server/full-access.test.ts','server/auto-approve.test.ts','scripts/no-limits-live/ruling-1019.test.mjs','--maxWorkers=5','--reporter=json','--outputFile='+out+'/final-gates.json']],

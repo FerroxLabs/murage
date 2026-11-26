@@ -2251,22 +2251,6 @@
       "disposition": "S1 ACP ask evidence; S5 migrates remaining native emitters/consumers; question-only emitters carry no permission identity."
     },
     {
-      "tag": "P4",
-      "file": "server/highlevel/engine-policy.ts",
-      "line": 41,
-      "source": "  const resolved = resolveCall({ toolCall: event.toolCall, toolIdentity: event.toolIdentity,",
-      "hash": "b217d9bde592d667114e4b507e4617cd9c39003e5c4e91f930ce5d4ffa0b9b83",
-      "disposition": "S1 ACP ask evidence; S5 migrates remaining native emitters/consumers; question-only emitters carry no permission identity."
-    },
-    {
-      "tag": "P4",
-      "file": "server/highlevel/engine-policy.ts",
-      "line": 64,
-      "source": "  return highlevelEngineAsk({ toolCall: event.toolCall, toolIdentity: event.toolIdentity, toolKind: event.toolKind,",
-      "hash": "20c80d78a410bc8ebbab8b07f2dbb66c56941c63c9d564ef094b870ba469008f",
-      "disposition": "S1 ACP ask evidence; S5 migrates remaining native emitters/consumers; question-only emitters carry no permission identity."
-    },
-    {
       "tag": "P5",
       "file": "server/drivers/acp/core.ts",
       "line": 3179,
@@ -2384,22 +2368,6 @@
       "line": 67,
       "source": "  const resolved = resolveCall(input.ask);",
       "hash": "b2ebf375bf1ff7099512f98181764ebe880806ee7bfbc82f80dd8ece9bca3cdf",
-      "disposition": "S5 policy migration: parsed identity and executable payload; unrelated call lifecycle methods retain their existing role."
-    },
-    {
-      "tag": "P6",
-      "file": "server/highlevel/engine-policy.ts",
-      "line": 26,
-      "source": "  const resolved = resolveCall(call);",
-      "hash": "52b0dcd0d513424d649dd02adb224426979922b65eb11afd5bdb5383464a8825",
-      "disposition": "S5 policy migration: parsed identity and executable payload; unrelated call lifecycle methods retain their existing role."
-    },
-    {
-      "tag": "P6",
-      "file": "server/highlevel/engine-policy.ts",
-      "line": 41,
-      "source": "  const resolved = resolveCall({ toolCall: event.toolCall, toolIdentity: event.toolIdentity,",
-      "hash": "a3ed7c4f406ed16d233aeb78596088f8ca9462f04e5619a639156c5fe73ec3e4",
       "disposition": "S5 policy migration: parsed identity and executable payload; unrelated call lifecycle methods retain their existing role."
     },
     {

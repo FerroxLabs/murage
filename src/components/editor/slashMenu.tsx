@@ -10,6 +10,7 @@
 // editor renders <SlashMenuPopup> from its own tree. That sidesteps the
 // React 19 / TipTap ReactRenderer problem where `.element` can be null when
 // the portal is appended.
+import { imeComposing } from "@/lib/composer-enter";
 import { Extension, type Editor, type Range } from "@tiptap/core";
 import Suggestion, { SuggestionPluginKey } from "@tiptap/suggestion";
 import {
@@ -182,6 +183,7 @@ export function SlashMenuPopup({ items, command, rect, keyHandleRef, onClose }: 
   useEffect(() => {
     keyHandleRef.current = {
       onKeyDown: event => {
+        if (imeComposing(event)) return false;
         if (items.length === 0) return false;
         if (event.key === "ArrowDown") { setSelected((current + 1) % items.length); return true; }
         if (event.key === "ArrowUp") { setSelected((current - 1 + items.length) % items.length); return true; }
@@ -249,37 +251,42 @@ export function createSlashCommand(
   return Extension.create({
     name: "slashCommand",
     addProseMirrorPlugins() {
-      return [
-        Suggestion<SlashItem>({
-          editor: this.editor,
-          char: "/",
-          startOfLine: false,
-          allowSpaces: false,
-          items: ({ query }) => filterSlashItems(query),
-          command: ({ editor, range, props }) => {
-            props.action({ editor, range });
-            setState(null);
+      const suggestion = Suggestion<SlashItem>({
+        editor: this.editor,
+        char: "/",
+        startOfLine: false,
+        allowSpaces: false,
+        items: ({ query }) => filterSlashItems(query),
+        command: ({ editor, range, props }) => {
+          props.action({ editor, range });
+          setState(null);
+        },
+        render: () => ({
+          onStart: props => setState({ items: props.items, command: props.command, rect: props.clientRect?.() ?? null }),
+          onUpdate: props => setState({ items: props.items, command: props.command, rect: props.clientRect?.() ?? null }),
+          onKeyDown: props => {
+            if (props.event.key === "Escape") { setState(null); return true; }
+            return keyRef.current?.onKeyDown(props.event) ?? false;
           },
-          render: () => ({
-            onStart: props => setState({ items: props.items, command: props.command, rect: props.clientRect?.() ?? null }),
-            onUpdate: props => setState({ items: props.items, command: props.command, rect: props.clientRect?.() ?? null }),
-            onKeyDown: props => {
-              if (props.event.key === "Escape") { setState(null); return true; }
-              return keyRef.current?.onKeyDown(props.event) ?? false;
-            },
-            // The drag handle's positioning transactions can make Suggestion
-            // report an exit a frame after it opens, so an exit is only
-            // trusted once the plugin itself says the "/" range is gone
-            // (deleted, or a space typed after it).
-            onExit: props => {
-              setTimeout(() => {
-                const plugin = props.editor.isDestroyed ? null : SuggestionPluginKey.getState(props.editor.state) as { active?: boolean } | undefined;
-                if (!plugin?.active) setState(null);
-              }, 30);
-            },
-          }),
+          // The drag handle's positioning transactions can make Suggestion
+          // report an exit a frame after it opens, so an exit is only
+          // trusted once the plugin itself says the "/" range is gone
+          // (deleted, or a space typed after it).
+          onExit: props => {
+            setTimeout(() => {
+              const plugin = props.editor.isDestroyed ? null : SuggestionPluginKey.getState(props.editor.state) as { active?: boolean } | undefined;
+              if (!plugin?.active) setState(null);
+            }, 30);
+          },
         }),
-      ];
+      });
+      const handleKeyDown = suggestion.props.handleKeyDown!;
+      suggestion.props.handleKeyDown = (view, event) => {
+        // Tiptap dismisses on Escape even when the renderer declines it.
+        if (imeComposing(event)) return false;
+        return handleKeyDown.call(suggestion, view, event);
+      };
+      return [suggestion];
     },
   });
 }

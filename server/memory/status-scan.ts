@@ -8,6 +8,19 @@
 // the status call reads the last finished value, stamped "as of" (PROPOSAL-v2 13, item 0.9).
 import type { DatabaseSync } from "node:sqlite";
 
+/** Every paged scan of this process (memv2 E6: the capture controller asks how long their minimum interval still holds). */
+const pagedScans = new Set<{ readonly waitMs: (now: number) => number }>();
+/** How long until every paged scan would run a pass that sees a write made now (0: all would at once). The write is measured then. */
+export function pagedScanWaitMs(now = Date.now()): number {
+  let wait = 0;
+  for (const scan of pagedScans) wait = Math.max(wait, scan.waitMs(now));
+  return wait;
+}
+/** Memory details asked for the figures (memv2 E6: they are measured for an ask, never because of a write alone). */
+const askedListeners = new Set<() => void>();
+/** The capture controller listens: it runs the pass the ask is the cause of, or, inside the interval, when the interval ends. */
+export function onStatusAsked(listener: () => void): () => void { askedListeners.add(listener); return () => { askedListeners.delete(listener); }; }
+export function noteStatusAsked(): void { for (const listener of askedListeners) { try { listener(); } catch { /* the listener's own */ } } }
 /** A scan that walks one table by rowid in small pages and keeps a running total. */
 export interface PagedScanSpec<Acc, Result> {
   init(): Acc;
@@ -28,6 +41,8 @@ export class PagedScan<Acc, Result> {
   private lastResult: Result | null = null;
   private lastAsOf: number | null = null;
   private nextScanAt = 0;
+  /** The last result was measured on the spot (a small store, set()): no background pass is waiting on the interval. */
+  private onSpot = false;
   /** The stamp read when the running pass started, and when the last finished one did. */
   private passStamp: string | null = null;
   private lastStamp: string | null = null;
@@ -37,6 +52,7 @@ export class PagedScan<Acc, Result> {
   /** The rows the next page reads (adaptive, SCAN_PAGE_MIN_ROWS to maxRows). */
   private rows: number;
   constructor(spec: PagedScanSpec<Acc, Result>, minIntervalMs: number, maxRows = 400) {
+    pagedScans.add(this);
     this.spec = spec; this.minIntervalMs = minIntervalMs;
     this.maxRows = Math.max(SCAN_PAGE_MIN_ROWS, Math.floor(maxRows));
     this.rows = Math.max(SCAN_PAGE_MIN_ROWS, Math.min(this.maxRows, 100));
@@ -47,8 +63,11 @@ export class PagedScan<Acc, Result> {
   get asOf(): number | null { return this.lastAsOf; }
   /** True while a pass is part-way. */
   get running(): boolean { return this.acc !== null; }
+  /** How long the minimum interval still holds off a pass that would see a write made now. A pass part-way read its stamp before that
+   * write and starts a full interval when it ends: at least that long. */
+  waitMs(now = Date.now()): number { return this.acc !== null ? this.minIntervalMs : this.onSpot ? 0 : Math.max(0, this.nextScanAt - now); }
   /** Publish a result computed some other way (a small store computes it in one go). */
-  set(result: Result, now = Date.now()): void { this.lastResult = result; this.lastAsOf = now; this.nextScanAt = now + this.minIntervalMs; this.acc = null; this.cursor = 0; this.lastStamp = null; }
+  set(result: Result, now = Date.now()): void { this.onSpot = true; this.lastResult = result; this.lastAsOf = now; this.nextScanAt = now + this.minIntervalMs; this.acc = null; this.cursor = 0; this.lastStamp = null; }
   /** Forget everything (a different database, a test). */
   clear(): void { this.acc = null; this.cursor = 0; this.lastResult = null; this.lastAsOf = null; this.nextScanAt = 0; this.passStamp = null; this.lastStamp = null; }
   /** Request a new pass as soon as the next step runs. */
@@ -60,7 +79,7 @@ export class PagedScan<Acc, Result> {
       const stamp = this.spec.stamp ? this.spec.stamp(db) : null;
       // Nothing was written since the last pass started: its figures still stand.
       if (stamp !== null && stamp === this.lastStamp && this.lastResult !== null) { this.nextScanAt = now + this.minIntervalMs; return false; }
-      this.passStamp = stamp;
+      this.passStamp = stamp; this.onSpot = false;
       this.acc = this.spec.init(); this.cursor = 0;
     }
     const until = performance.now() + budgetMs;
@@ -98,8 +117,10 @@ export function storeAtMost(db: DatabaseSync, tables: readonly string[], limit =
 }
 /** Every write this connection made, and every commit another connection made: equal readings mean nothing changed. */
 export function writeStampOf(db: DatabaseSync): string {
-  const row = db.prepare("SELECT total_changes() AS changes,(SELECT data_version FROM pragma_data_version) AS version").get();
-  return `${row?.changes}:${row?.version}`;
+  // data_version by the PRAGMA statement on this connection: the table-valued pragma_data_version resolves to a TEMP table or view of
+  // that name first, which could answer a constant and hide every other connection's commit (MAIN 11-21 DATA_VERSION READS)
+  const changes = db.prepare("SELECT total_changes() AS changes").get()?.changes, version = db.prepare("PRAGMA data_version").get()?.data_version;
+  return `${changes}:${version}`;
 }
 /** A stamp of the memory CONTENT the scans of `tables` read, not of every write (SELF-OVERLOAD-105 item 4): the write-time marker commits
  * dozens of times a second while a revoke walks, which moved writeStampOf and re-ran every status pass over the whole store each interval

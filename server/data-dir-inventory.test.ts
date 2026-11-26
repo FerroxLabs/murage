@@ -82,6 +82,7 @@ it("classifies the restore alert marker without changing its existing backup beh
 /** A scan hit that is not the Murage data folder: file -> joined name -> why. */
 const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
   "server/settle-copy.ts": { "<<name>>": "deletes only the fixed SEARCH_FILES family (search.db, search.db-wal, search.db-shm), all explicitly excluded; T-INVENTORY and per-family M16 tests cover each name" },
+  "server/memory/upgrade-copies.ts": { "<<name>>": "only the fixed UPGRADE_COPY_NAMES (messages.pre-memory-v2/v3/v4.db, all classified) and their -wal/-shm/-journal (q1022-disk)" },
   "server/data-roots.ts": { "<<name>>": "RootName is workspaces or providers, both classified top-level roots" },
   "server/cloud-home/home-volume-spec.ts": { "<<name>>": "Fixed root volume layout under /data (moved here from supervisor.ts for the root launcher); the application DATA_DIR is /data/home, not this volume root" },
   "server/setup-backup.ts": { "<<SETUP_BACKUP_FILE_NAME>>": "setup-backup.json (classified), the name shared/setup-backup-record.mjs exports" },
@@ -99,6 +100,7 @@ const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
   "server/index.ts": { "<<relative>>": "relative paths inside DATA_DIR/workspaces" },
   "electron/composio-admission-store.mjs": { "<<ADMISSION_FILE>>": "composio-admission.json (classified, owner-file): COMPOSIO_ADMISSION_FILE from electron/composio-release-config.mjs, pinned by the constant-resolution test below" },
   "electron/memory-upgrade-status.mjs": { "<<name>>": "deletes only memory-upgrade-status.json and its memory-upgrade-status.json.<pid>.tmp (both classified), matched by name before removal" },
+  "server/memory/selfheal-1021.ts": { "<<MEMORY_REPAIRS_FILE>>": "memory-repairs.json (classified): MEMORY_REPAIRS_FILE from memory/keepall-unwedge.ts, the repairs note this repair reads and writes" },
   "server/database.ts": { "<<UPGRADE_COUNTS_FILE>>": "memory-upgrade-counts.json (classified): the upgrade screen's cached counts", "<<MEMORY_PRE_V2_SNAPSHOT>>": "messages.pre-memory-v2.db, from memory/schema.ts", "<<MEMORY_PRE_V4_SNAPSHOT>>": "messages.pre-memory-v4.db, from memory/schema.ts", "<<MEMORY_PRE_V3_SNAPSHOT>>": "messages.pre-memory-v3.db, from memory/schema.ts" },
 };
 

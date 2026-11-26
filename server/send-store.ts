@@ -398,6 +398,8 @@ export function recoveredSteerLine(row: SendRow, steerId: string) {
     queueId: row.queueId,
     // a phone's line keeps its standing: without `via` the owner could edit it into an owner turn
     ...(row.via ? { via: row.via } : {}),
+    // the live steer line carries the send's origin (index.ts); a recovered one keeps it too, so the owner's words stay the owner's
+    ...(row.origin === "desktop" || row.origin === "companion" || row.origin === "unproven" ? { origin: row.origin as "desktop" | "companion" | "unproven" } : {}),
     steered: true, steerUnconfirmed: true, steerId,
     ...(row.turnId ? { dispatchedIn: row.turnId } : {}),
   };
@@ -890,6 +892,18 @@ export class SendStore {
     this.lateOpen.delete(seq);
     const row = this.bySeq(seq);
     if (row) this.notify(row.threadId);
+  }
+
+  /** A steered line whose running turn ended (stopped or failed) before the engine answered it: back to waiting, running from the
+   * transcript line it already has (never a second copy), with its words kept until it starts. Only a "delivered" row moves. */
+  requeueDelivered(seq: number, messageId: string, text: string): boolean {
+    const info = this.db().prepare("UPDATE owner_sends SET status='queued', dispatched=0, existing_message_id=?, text=?, updated_at=? WHERE seq=? AND status='delivered'")
+      .run(messageId, text, Date.now(), seq);
+    if (Number(info.changes) !== 1) return false;
+    this.lateOpen.delete(seq);
+    const row = this.bySeq(seq);
+    if (row) this.notify(row.threadId);
+    return true;
   }
 
   /**

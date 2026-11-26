@@ -42,12 +42,7 @@ const minutes = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value
 /** Whether the owner's quiet hours cover `now` (the one quiet-hours rule: notifications here, bot calls in
  * server/bot-calls-policy.ts). Off, or not set, is never quiet. */
 export function quietHoursActive(currentPrefs: unknown, now: Date): boolean {
-  const quiet = resolveNotificationPreferences(currentPrefs).quietHours;
-  if (!quiet?.enabled) return false;
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: quiet.timeZone, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(now);
-  const current = Number(parts.find(part => part.type === "hour")?.value) * 60 + Number(parts.find(part => part.type === "minute")?.value);
-  const start = minutes(quiet.start), end = minutes(quiet.end);
-  return start < end ? current >= start && current < end : current >= start || current < end;
+  return inQuietHours(resolveNotificationPreferences(currentPrefs), now);
 }
 /** When the quiet hours that cover `now` end (epoch ms, to the minute), or null when they are off or do not cover `now`. The router sets its
  * one wake-up timer from this, so main needs no quiet-hours code of its own. */
@@ -62,14 +57,34 @@ export function quietHoursEndsAt(currentPrefs: unknown, now: Date): number | nul
   return base + horizon * minute;
 }
 
+function quietWindow(prefs: NotificationPreferences): ((now: Date) => boolean) | null {
+  const quiet = prefs.quietHours;
+  if (!quiet?.enabled) return null;
+  const clock = new Intl.DateTimeFormat("en-GB", { timeZone: quiet.timeZone, hourCycle: "h23", hour: "2-digit", minute: "2-digit" });
+  const start = minutes(quiet.start), end = minutes(quiet.end);
+  return now => {
+    const parts = clock.formatToParts(now);
+    const current = Number(parts.find(part => part.type === "hour")?.value) * 60 + Number(parts.find(part => part.type === "minute")?.value);
+    return start < end ? current >= start && current < end : current >= start || current < end;
+  };
+}
+
 /** Whether `now` falls inside the owner's enabled quiet hours. */
 export function inQuietHours(prefs: NotificationPreferences, now: Date): boolean {
-  const quiet = prefs.quietHours;
-  if (!quiet?.enabled) return false;
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: quiet.timeZone, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).formatToParts(now);
-  const current = Number(parts.find(part => part.type === "hour")?.value) * 60 + Number(parts.find(part => part.type === "minute")?.value);
-  const start = minutes(quiet.start), end = minutes(quiet.end);
-  return start < end ? current >= start && current < end : current >= start || current < end;
+  return quietWindow(prefs)?.(now) ?? false;
+}
+
+/** Time before the next quiet instant, relative to the server's read. Scan real instants to account for clock changes. */
+export function quietStartsIn(currentPrefs: unknown, now: Date): number | null {
+  const inside = quietWindow(resolveNotificationPreferences(currentPrefs));
+  if (!inside) return null;
+  if (inside(now)) return 0;
+  const minute = 60_000, time = now.getTime(), base = Math.floor(time / minute) * minute;
+  for (let ahead = 1; ahead <= 25 * 60; ahead++) {
+    const next = base + ahead * minute;
+    if (inside(new Date(next))) return next - time;
+  }
+  return null;
 }
 
 /** The installation-scoped Health page (1.0.9 Sentinel, GAP-SENTINEL-109 section 8.2): no bot, no thread, and nothing

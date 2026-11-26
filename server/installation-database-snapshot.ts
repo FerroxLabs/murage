@@ -38,7 +38,9 @@ import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeAppTriggers } from "./app-trigger-store.ts";
 import { initializeTurnSourceHolds } from "./turn-source-holds.ts";
 import { initializeEmailTables } from "./email/email-store.ts";
+import { initializeMailboxCustody } from "./mailbox/custody.ts";
 import { RESTORE_JOB_MARKS_DDL, RESTORE_BOOT_WAIT_DDL } from "./email/restore-job-marks-ddl.ts";
+import { initializeFolderTrustActivity } from "./folder-trust-activity.ts";
 import { initializeVenuePosts } from "./venue-post-held.ts";
 import { initializeRoomShares } from "./room-shares-schema.ts";
 import { initializeReplySchema } from "./tts/reply-schema.ts";
@@ -87,7 +89,11 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   own_write_holds: { required: false, optional: [] },
   // seq: the per-thread sequence (transcript-seq.ts), new in 1.0.3; an archive from before it lacks the column and its index
   gh18_operations: { required: false, optional: [] },
+  // the bot create commit marker (bot-create-rollback.ts), new in 1.0.19: made at the first bot create and kept, empty, after it
+  bot_create_commits: { required: false, optional: [] },
   messages: { required: true, optional: ["seq", "turn_id"] },
+  mailbox_sealed_threads: { required: false, optional: [] },
+  mailbox_sealed_rows: { required: false, optional: [] },
   // L8/I0: optional for pre-1.0.19 archives; definitions come from the serving initializers.
   send_attempts: { required: false, optional: [] },
   send_attempt_bindings: { required: false, optional: [] },
@@ -204,6 +210,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   push_risk: { required: false, optional: ["revision"] },
   push_decisions: { required: false, optional: ["outcome"] },
   push_relay_removals: { required: false, optional: [] },
+  // P1 (settings v10): one receipt per (device, removal generation); an older archive lacks it
+  push_removal_receipts: { required: false, optional: [] },
   // routine provenance of shared requests (shared-provenance-schema.ts); an older archive lacks it
   shared_request_provenance: { required: false, optional: [] },
   // 1.0.19 appends the authenticated owner proof; earlier queues have no proof.
@@ -234,6 +242,11 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   // copy drops it (sanitizeStagedRestoreMarks), because a marker of THIS installation's restore means nothing in another installation.
   restore_job_marks: { required: false, optional: [] },
   restore_boot_wait: { required: false, optional: [] },
+  // Fuigo folder-trust activity (folder-trust-activity.ts, 1.0.21): the latest observation per thread, with its engine identity and
+  // destination, and the once-only notice claim. Accepted on the live source so a booted profile still backs up; the staged copy drops
+  // it (sanitizeStagedFolderTrustActivity) and restore preparation drops it again: folder execution authority needs fresh trust and is
+  // never restored (data-dir-inventory.ts TRUST). The identity columns were appended by ALTER.
+  thread_folder_trust_activity: { required: false, optional: ["instance_id", "generation", "destination"] },
   // Flux Memory spaces (server/flux-memory-spaces.ts), new in 1.0.6: the space salt, the keys Flux Memory is off for, the bot
   // space and thread tag each capture went to, the capture receipts, the forgets owed for deleted conversations and bots, the
   // tombstones of what is never captured again, the bot spaces at Flux's limit, and where a capture was accepted
@@ -268,6 +281,8 @@ function columnShape(db: DatabaseSync, table: string): string[] {
 let reference: Map<string, ReferenceObject> | undefined;
 /** APP_TABLES plus every table of APP_SCHEMA_102_ADDITIONS the initializers create: one list for what the downgrade drops and what a snapshot accepts. */
 let registeredTables: Map<string, { required: boolean; optional: string[] }> = APP_TABLES;
+/** The exact table bot-create-rollback.ts makes; a snapshot of a data dir where a bot was created holds it (red-audit B2). */
+const BOT_CREATE_COMMITS_DDL = "CREATE TABLE IF NOT EXISTS bot_create_commits(id TEXT PRIMARY KEY NOT NULL)";
 function appTables() { referenceSchema(); return registeredTables; }
 /** The definitions the harness's own initializers create, read back from a
  * fresh in-memory database rather than copied by hand, so an index or table
@@ -298,7 +313,10 @@ function referenceSchema(): Map<string, ReferenceObject> {
     ensureGH18Operations(db);
     db.exec(RESTORE_JOB_MARKS_DDL);
     db.exec(RESTORE_BOOT_WAIT_DDL);
+    initializeFolderTrustActivity(db);
+    initializeMailboxCustody(db);
     ensureIndexOverrun(db);
+    db.exec(BOT_CREATE_COMMITS_DDL);
     const objects = new Map<string, ReferenceObject>();
     const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
     const tables = new Map(APP_TABLES);
@@ -452,6 +470,9 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
     // The text matched; the columns SQLite built from it must match too.
     const actual = JSON.stringify(columnShape(db, table));
     if (!expected.get(table)!.columns.some(shape => JSON.stringify(shape) === actual)) fail("DATABASE_SCHEMA_UNSUPPORTED");
+    // M3 owns sealed-content omission and ledger restore. Keep populated custody on hold until then.
+    if ((table === "mailbox_sealed_threads" || table === "mailbox_sealed_rows") &&
+      db.prepare(`SELECT 1 FROM main."${table}" LIMIT 1`).get()) fail("DATABASE_SCHEMA_UNSUPPORTED");
   }
   const integrity = db.prepare("PRAGMA integrity_check").all();
   if (integrity.length !== 1 || Object.values(integrity[0])[0] !== "ok") throw new InstallationSnapshotError("DATABASE_INTEGRITY_FAILED");
@@ -479,6 +500,276 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
     messages: count(db, "SELECT COUNT(*) AS count FROM messages"),
     threads: count(db, "SELECT COUNT(*) AS count FROM thread_state"),
   };
+}
+
+/** The refusals of inspectInstallationDatabase that are about one conversation row, not about the file or its schema. */
+const ROW_REFUSALS: ReadonlySet<string> = new Set(["INVALID_MESSAGE_JSON", "INVALID_MESSAGE_IDENTITY", "INVALID_ACTIVE_BRANCH", "INVALID_MESSAGE_PARENT", "CYCLIC_MESSAGE_BRANCH", "INVALID_RESTORE_MESSAGE"]);
+/** One conversation row a backup left out, named for the backup's own list of what it left out. */
+export interface SetAsideRow { thread: string; id: string; reason: string }
+
+/** A backup of this installation's own database never stops at one row (1.0.22: a single row the reader could not parse refused every
+ * backup of that installation, and nothing the person could do cleared it). Runs on the STAGED private copy only, never the live file:
+ * each row inspectInstallationDatabase would refuse leaves the copy and is returned by name, and a conversation whose current message
+ * left with it points at its newest remaining message. The rules are the inspection's own, row by row, so what is set aside is exactly
+ * what would have refused the backup. The rows leave by a plain DELETE with the app's own triggers in place, so everything the app
+ * keeps about a message (routine links, copies, memory's change log) leaves with it exactly as when the app deletes one. The caller
+ * removes the Inbox projection first (discardInboxProjection, as a restore does): its triggers are not held to this build's text.
+ * A row with no parent of its own follows the row before it, the unreadable ones included, so a removal never decides which rows are
+ * on a loop: a row that a removal would chain into a loop it was not on keeps its own parent (the removed row's name, so it begins
+ * its branch as it did) and stays. Only rows that are refused on their own, or sit on a loop of the file as it is, leave.
+ * The inspection itself is unchanged and still runs on the result, and a restore runs it again. */
+export function setAsideUnreadableRows(db: DatabaseSync): SetAsideRow[] {
+  const label = (value: unknown) => String(value ?? "").slice(0, 160);
+  type Row = { rowid: number; thread_id: unknown; id: unknown; json: unknown };
+  class RowRefused extends Error { readonly code: string; constructor(code: string) { super(code); this.code = code; } }
+  const refuse = (code: string): never => { throw new RowRefused(code); };
+  /** One reading of every row by the inspection's rules: the rows it would refuse, by rowid, each loop by its rows, and for every row
+   * with no parent of its own the row it follows. */
+  const scan = () => {
+    const bad = new Map<number, SetAsideRow>(), loops: number[][] = [], follows = new Map<number, { rowid: number; id: string }>();
+    // every row of a conversation, read or not: the row before it, and each name's row
+    const prior = new Map<number, { rowid: number; id: string } | null>(), named = new Map<string, number>();
+    const mark = (row: { rowid: unknown; thread_id: unknown; id: unknown }, reason: string) => { const rowid = Number(row.rowid); if (!bad.has(rowid)) bad.set(rowid, { thread: label(row.thread_id), id: label(row.id), reason }); };
+    for (const row of db.prepare("SELECT rowid,thread_id,id FROM messages WHERE NOT json_valid(json)").all()) mark(row as Row, "INVALID_MESSAGE_JSON");
+    for (const row of db.prepare("SELECT rowid,thread_id,id FROM messages WHERE CASE WHEN json_valid(json) THEN json_type(json) != 'object' OR json_extract(json,'$.id') IS NOT id OR json_extract(json,'$.at') IS NOT at OR json_extract(json,'$.role') IS NOT role OR json_extract(json,'$.kind') IS NOT kind OR json_extract(json,'$.text') IS NOT text ELSE 0 END").all()) mark(row as Row, "INVALID_MESSAGE_IDENTITY");
+    let thread: unknown, graph = new InstallationTranscriptGraph(refuse), previous: string | null = null;
+    // a parent loop is found when the conversation ends, so each row is kept until then by its name only, never its payload
+  let parents = new Map<string, { parent: string | null; row: Pick<Row, "rowid" | "thread_id" | "id"> }>();
+    // the rows of one conversation that sit on a parent loop: the same walk InstallationTranscriptGraph.validate makes, keeping the names
+    const closeThread = () => {
+      const colors = new Map<string, number>();
+      for (const start of parents.keys()) {
+        if (colors.get(start) === 2) continue;
+        const path: string[] = [];
+        let current: string | null = start;
+        while (current !== null && parents.has(current) && colors.get(current) !== 2) {
+          if (colors.get(current) === 1) { const loop = path.slice(path.indexOf(current)).map(id => parents.get(id)!.row); for (const row of loop) mark(row, "CYCLIC_MESSAGE_BRANCH"); loops.push(loop.map(row => Number(row.rowid))); break; }
+          colors.set(current, 1); path.push(current);
+          current = parents.get(current)!.parent;
+        }
+        for (const visited of path) colors.set(visited, 2);
+      }
+    };
+    // the row before, read or not: a row with no parent of its own follows it in the file as it is, so skipping one never re-chains
+    let before: { rowid: number; id: string } | null = null;
+    for (const row of db.prepare("SELECT rowid,thread_id,id,json FROM messages ORDER BY thread_id,rowid").iterate() as Iterable<Row>) {
+      if (typeof row.thread_id !== "string" || !/^[\w-]{1,160}$/.test(row.thread_id)) { mark(row, "INVALID_RESTORE_MESSAGE"); continue; }
+      if (thread !== row.thread_id) { closeThread(); graph = new InstallationTranscriptGraph(refuse); parents = new Map(); previous = null; before = null; thread = row.thread_id; }
+      const self = { rowid: Number(row.rowid), id: String(row.id ?? "") };
+      prior.set(self.rowid, before); named.set(`${row.thread_id}\0${self.id}`, self.rowid);
+      try {
+        if (bad.has(self.rowid)) continue;
+        if (typeof row.json !== "string" || Buffer.byteLength(row.json) > 64 * 1024 ** 2) { mark(row, "INVALID_RESTORE_MESSAGE"); continue; }
+        const message = rowToMessage({ json: row.json }) as unknown as Record<string, unknown>;
+        graph.add(message);
+        const parent = message.parentId === undefined ? previous : message.parentId as string | null;
+        if (message.parentId === undefined && before) follows.set(self.rowid, before);
+        parents.set(message.id as string, { parent, row: { rowid: row.rowid, thread_id: row.thread_id, id: row.id } });
+      } catch (error) {
+        // the size limit of a whole conversation is not one row's fault: it stays a refusal
+        if (error instanceof RowRefused && !ROW_REFUSALS.has(error.code)) throw new InstallationSnapshotError(error.code);
+        mark(row, error instanceof RowRefused ? error.code : "INVALID_RESTORE_MESSAGE");
+      } finally {
+        // an unreadable row is followed by its name in the file (the graph keeps it as a parent outside the conversation: a root)
+        previous = self.id; before = self;
+      }
+    }
+    closeThread();
+    return { bad, loops, follows, prior, named };
+  };
+  const dangling = "active_leaf_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM messages AS m WHERE m.thread_id=thread_state.thread_id AND m.id=thread_state.active_leaf_id)";
+  const pointers = () => db.prepare(`SELECT thread_id,active_leaf_id AS id FROM thread_state WHERE ${dangling}`).all() as Array<{ thread_id: unknown; id: unknown }>;
+  const aside: SetAsideRow[] = [], before = pointers();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const remove = db.prepare("DELETE FROM messages WHERE rowid=?");
+    // the parent it had: the removed row's name, or a plain root when that name is not a message name or another row holds it
+    const pin = db.prepare("UPDATE messages SET json=json_set(json,'$.parentId',CASE WHEN ?1 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM messages AS m WHERE m.thread_id=messages.thread_id AND m.id=?1) THEN ?1 END) WHERE rowid=?2");
+    // A row with no parent of its own follows the row before it, so a removal re-chains its neighbours: the row that followed a
+    // removed one is named with it (by its first removed neighbour, the parent it had in the file), and the rows are read again until
+    // a reading finds nothing to refuse. A loop that holds such a row was made by the removal, not found in the file: that row keeps
+    // its own parent and nothing on the loop leaves. Bounded: every round removes or pins at least one row.
+    const rechained = new Map<number, string>();
+    const splice = db.prepare("UPDATE messages SET json=json_set(json,'$.parentId',?) WHERE rowid=?");
+    // A removed row's own parent, decided once and before anything is done with it. The stored value is decoded first, text or BLOB
+    // (UTF-8), as SQLite's own JSON functions read it for the app's branch index (branch-index.ts fillSlice), and then read by both
+    // of the app's readers: JSON.parse (transcript-seq.ts rowToMessage: of a repeated key the last counts) and SQLite's JSON
+    // functions (the first counts). Only what both read alike is known: a parent it names, no parent (a root), or no parent of its
+    // own (text neither reads as JSON included, as the branch index reads it: it followed the row before it). Anything else (bytes
+    // that are not UTF-8, readers that disagree, a parent that is not a message name) is not known, and nothing is attached on it.
+    const stored = db.prepare("SELECT json FROM messages WHERE rowid=?");
+    const sqlite = db.prepare("SELECT json_valid(?1) AS valid, CASE WHEN json_valid(?1) THEN json_type(?1,'$.parentId') END AS type, CASE WHEN json_valid(?1) AND json_type(?1,'$.parentId')='text' THEN json_extract(?1,'$.parentId') END AS parent");
+    type OwnParent = { known: false } | { known: true; explicit: false } | { known: true; explicit: true; parent: string | null };
+    const UNKNOWN: OwnParent = { known: false }, FOLLOWS: OwnParent = { known: true, explicit: false };
+    const ownParents = new Map<number, OwnParent>();
+    const readOwnParent = (rowid: number): OwnParent => {
+      const value = (stored.get(rowid) as { json?: unknown } | undefined)?.json;
+      let text: string;
+      if (typeof value === "string") text = value;
+      else if (value instanceof Uint8Array) { try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(value); } catch { return UNKNOWN; } }
+      else return UNKNOWN;
+      let parsed: unknown, readable = true;
+      try { parsed = JSON.parse(text); } catch { readable = false; }
+      let index: { valid?: unknown; type?: unknown; parent?: unknown } | undefined;
+      try { index = sqlite.get(text) as typeof index; } catch { return UNKNOWN; }
+      if (readable !== (Number(index?.valid) === 1)) return UNKNOWN;
+      if (!readable) return FOLLOWS;
+      const names = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && Object.hasOwn(parsed, "parentId");
+      if (!names) return index?.type === null ? FOLLOWS : UNKNOWN;
+      const parent = (parsed as { parentId: unknown }).parentId;
+      if (parent === null) return index?.type === "null" ? { known: true, explicit: true, parent: null } : UNKNOWN;
+      if (typeof parent !== "string" || !/^[\w-]{1,160}$/.test(parent) || index?.type !== "text" || index.parent !== parent) return UNKNOWN;
+      return { known: true, explicit: true, parent };
+    };
+    const parentOf = (rowid: number): OwnParent => { let own = ownParents.get(rowid); if (!own) ownParents.set(rowid, own = readOwnParent(rowid)); return own; };
+    const threadOf = db.prepare("SELECT thread_id FROM messages WHERE rowid=?");
+    const size = db.prepare("SELECT length(CAST(json AS BLOB)) AS bytes FROM messages WHERE rowid=?");
+    const tooLarge = (rowid: number) => Number((size.get(rowid) as { bytes?: unknown } | undefined)?.bytes ?? 0) > 64 * 1024 ** 2;
+    for (let round = 0; ; round++) {
+      const { bad, loops, follows, prior, named } = scan();
+      ownParents.clear();
+      if (!bad.size) break;
+      if (round >= 64) throw new InstallationSnapshotError([...bad.values()][0]!.reason);
+      let pinned = 0;
+      for (const loop of loops) {
+        const own = loop.filter(rowid => rechained.has(rowid));
+        if (!own.length) continue;
+        for (const rowid of own) {
+          pin.run(rechained.get(rowid) || null, rowid); rechained.delete(rowid); pinned++;
+          // the parent it keeps makes its text longer: a row the pin takes past the size a restore reads is never left out for it
+          if (tooLarge(rowid)) throw new InstallationSnapshotError("INVALID_RESTORE_MESSAGE");
+        }
+        for (const rowid of loop) bad.delete(rowid);
+      }
+      if (pinned) continue;
+      // The row that followed a removed one takes the removed row's own parent (through every removed row), as the file had it:
+      // a removed row that names its parent hands that parent on, and one with no parent of its own followed the row before it.
+      // Where a removed row's own parent is not known the walk stops: the follower keeps the parent it had, the removed row's
+      // name (it begins its branch there, a root), and is never attached to another row on a guess.
+      const thread = (rowid: number) => (threadOf.get(rowid) as { thread_id?: unknown } | undefined)?.thread_id;
+      const ancestor = (start: number, fallback: string | null): string | null => {
+        const seen = new Set<number>();
+        for (let rowid: number | undefined = start; rowid !== undefined && !seen.has(rowid);) {
+          seen.add(rowid);
+          const own = parentOf(rowid);
+          if (!own.known) return fallback;
+          let next: number | undefined;
+          if (own.explicit) {
+            if (own.parent === null) return null;
+            next = named.get(`${thread(rowid)}\0${own.parent}`);
+            if (next === undefined || !bad.has(next)) return own.parent;
+          } else {
+            const before = prior.get(rowid);
+            if (!before) return null;
+            if (!bad.has(before.rowid)) return before.id;
+            next = before.rowid;
+          }
+          rowid = next;
+        }
+        // the removed rows' own parents loop: it begins its branch at the removed row's name (a root)
+        return fallback;
+      };
+      const remaining = (rowid: number): string | null => { let before = prior.get(rowid); while (before && bad.has(before.rowid)) before = prior.get(before.rowid); return before?.id ?? null; };
+      for (const [rowid, row] of follows) {
+        if (bad.has(rowid) || !bad.has(row.rowid)) continue;
+        if (!rechained.has(rowid)) rechained.set(rowid, /^[\w-]{1,160}$/.test(row.id) ? row.id : "");
+        const parent = ancestor(row.rowid, /^[\w-]{1,160}$/.test(row.id) ? row.id : null);
+        if (parent === remaining(rowid)) continue;
+        splice.run(parent, rowid);
+        if (tooLarge(rowid)) throw new InstallationSnapshotError("INVALID_RESTORE_MESSAGE");
+      }
+      for (const rowid of bad.keys()) remove.run(rowid);
+      aside.push(...bad.values());
+    }
+    const moved = [...new Map([...before, ...pointers()].map(row => [String(row.thread_id), row])).values()];
+    if (moved.length) db.exec(`UPDATE thread_state SET active_leaf_id=(SELECT id FROM messages AS m WHERE m.thread_id=thread_state.thread_id ORDER BY m.rowid DESC LIMIT 1) WHERE ${dangling}`);
+    db.exec("COMMIT");
+    const removed = new Set(aside.map(row => `${row.thread}\0${row.id}`));
+    return [...aside, ...moved.filter(row => !removed.has(`${label(row.thread_id)}\0${label(row.id)}`)).map(row => ({ thread: label(row.thread_id), id: label(row.id), reason: "INVALID_ACTIVE_BRANCH" }))];
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* the first error is the one to report */ }
+    throw error;
+  }
+}
+
+/** The memory proofs whose failing rows can be named one by one (the proof's own query finds them), so a backup can leave exactly
+ * those rows out. Every other failed proof (a derived index that differs, a shape, a missing detail) still refuses the backup. */
+const MEMORY_ROW_PROOFS: ReadonlySet<string> = new Set(["INVALID_MEMORY_LESSON_EVENT", "INVALID_MEMORY_LEARNING_EVENT", "INVALID_MEMORY_REFERENCE"]);
+/** The tables holding a row whose reference names no row (PRAGMA foreign_key_check), one entry per such row. */
+function brokenReferences(db: DatabaseSync): Array<{ table: string; rowid: number | null }> {
+  return (db.prepare("PRAGMA foreign_key_check").all() as Array<{ table?: unknown; rowid?: unknown }>).map(row => ({ table: String(row.table), rowid: row.rowid === null || row.rowid === undefined ? null : Number(row.rowid) }));
+}
+
+/** Why this installation's memory fails its own proof while its schema is exactly this build's, or null. The app opens such a file and
+ * runs: its integrity pass sets memory aside (memory/integrity-pass.ts HOLD_MESSAGES: "Your chats work as usual and nothing was
+ * deleted") and tells the person to make a copy of their data. The backup's reader ran the same proofs and reported any failure as
+ * DATABASE_SCHEMA_UNSUPPORTED ("from a different version of Murage. Open this version of Murage normally once"), which no amount of
+ * opening could clear (1.0.22 owner report). Only a proof whose failing rows can be named counts (MEMORY_ROW_PROOFS): a schema this
+ * build does not write, any other failure, and a broken reference in a table that is not memory's all return null and still refuse. */
+export function memoryProofFailure(db: DatabaseSync): string | null {
+  let names: Set<string>;
+  try { names = validateMemorySchema(db, { structuralOnly: true }); } catch { return null; }
+  if (!names.size) return null;
+  let code: string;
+  try { validateMemorySchema(db); return null; }
+  catch (error) { code = String((error as Error)?.message ?? ""); }
+  if (!MEMORY_ROW_PROOFS.has(code)) return null;
+  // the reference sweep reads every table with a reference, memory's or not: only a fault inside memory is memory's to set aside
+  if (code === "INVALID_MEMORY_REFERENCE" && brokenReferences(db).some(row => !names.has(row.table) && !row.table.startsWith("memory_"))) return null;
+  return code;
+}
+
+/** A backup of this installation's own database never stops at one memory row either. On the STAGED private copy only, never the live
+ * file: the rows a nameable proof refuses (an active lesson with no ledger event, a ledger event that names no scope or record, a row
+ * whose reference names nothing) leave the copy and are returned by name; every other memory row stays. Each round runs memory's own
+ * full proof and removes exactly the rows the failed proof's own query finds, with the app's triggers in place, until the proof
+ * passes. A proof with no nameable rows, a fault outside memory's tables, or a round that removes nothing refuses the backup as
+ * before: nothing is ever left out wholesale. The unchanged inspection runs on the result, and a restore runs it again. */
+export function setAsideUnprovenMemoryRows(db: DatabaseSync): string[] {
+  const refused = () => new InstallationSnapshotError("DATABASE_SCHEMA_UNSUPPORTED");
+  let names: Set<string>;
+  try { names = validateMemorySchema(db, { structuralOnly: true }); } catch { throw refused(); }
+  const label = (value: unknown) => String(value ?? "").replace(/[^\w.:-]/g, "?").slice(0, 80);
+  const quoted = (name: string) => `"${name.replaceAll('"', '""')}"`;
+  const aside: string[] = [];
+  // a removed row's own children are found by the next round's reference sweep, not refused by enforcement in the middle of this one
+  const enforced = Number((db.prepare("PRAGMA foreign_keys").get() as { foreign_keys?: number } | undefined)?.foreign_keys ?? 0);
+  db.exec("PRAGMA foreign_keys=OFF");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (let round = 0; ; round++) {
+      let code: string;
+      try { validateMemorySchema(db); break; }
+      catch (error) { code = String((error as Error)?.message ?? ""); }
+      if (round >= 64 || !MEMORY_ROW_PROOFS.has(code)) throw refused();
+      let removed = 0;
+      if (code === "INVALID_MEMORY_LESSON_EVENT") {
+        for (const row of db.prepare("SELECT l.rowid AS rowid, l.id AS id FROM memory_lessons l WHERE l.state='active' AND (l.learning_event_id IS NULL OR NOT EXISTS(SELECT 1 FROM memory_learning_events e WHERE e.id=l.learning_event_id))").all()) {
+          removed += Number(db.prepare("DELETE FROM memory_lessons WHERE rowid=?").run(row.rowid as number).changes);
+          aside.push(`lesson ${label(row.id)}`);
+        }
+      } else if (code === "INVALID_MEMORY_LEARNING_EVENT") {
+        for (const row of db.prepare(`SELECT e.rowid AS rowid, e.id AS id FROM memory_learning_events e WHERE NOT EXISTS(SELECT 1 FROM memory_scopes s WHERE s.id=e.scope_id)
+          OR (e.record_id IS NOT NULL AND e.record_version IS NOT NULL AND NOT EXISTS(SELECT 1 FROM memory_records r WHERE r.id=e.record_id AND r.version=e.record_version))`).all()) {
+          removed += Number(db.prepare("DELETE FROM memory_learning_events WHERE rowid=?").run(row.rowid as number).changes);
+          aside.push(`learning event ${label(row.id)}`);
+        }
+      } else {
+        const broken = brokenReferences(db);
+        if (broken.some(row => row.rowid === null || (!names.has(row.table) && !row.table.startsWith("memory_")))) throw refused();
+        for (const row of new Map(broken.map(row => [`${row.table}\0${row.rowid}`, row])).values()) {
+          removed += Number(db.prepare(`DELETE FROM ${quoted(row.table)} WHERE rowid=?`).run(row.rowid!).changes);
+          aside.push(`${label(row.table)} row ${row.rowid}`);
+        }
+      }
+      if (!removed) throw refused();
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* the first error is the one to report */ }
+    throw error instanceof InstallationSnapshotError ? error : refused();
+  } finally { if (enforced) db.exec("PRAGMA foreign_keys=ON"); }
+  return aside;
 }
 
 function digestFile(path: string): string {
@@ -568,7 +859,19 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     const fd = openSync(staged, "wx", 0o600);closeSync(fd);
     source = new DatabaseSync(join(inputDirectory,component), { readOnly: true, timeout: 1000 });
     report("database-check");
-    inspect(source);
+    // A refusal about one conversation row does not stop this installation's own backup: the row is set aside in the staged copy
+    // below, and the unchanged inspection decides on that copy. Every other refusal (the file, its schema, its integrity) stops here.
+    let rowRefusal: string | undefined, memoryAside: string | undefined;
+    try { inspect(source); }
+    catch (error) {
+      if (component !== "messages.db" || !(error instanceof InstallationSnapshotError)) throw error;
+      // A memory row that fails its own proof inside a schema this build writes: the app runs on (memory set aside), and the backup
+      // leaves that row out of the staged copy below.
+      const unproven = error.code === "DATABASE_SCHEMA_UNSUPPORTED" ? memoryProofFailure(source) : null;
+      if (unproven) memoryAside = unproven;
+      else if (ROW_REFUSALS.has(error.code)) rowRefusal = error.code;
+      else throw error;
+    }
     report("database-copy",0,identity.size);
     await backup(source, staged, { rate: 128, progress: ({ totalPages, remainingPages }) => { if (totalPages > 0) report("database-copy", Math.round(identity.size * (1 - remainingPages / totalPages)), identity.size); } });
     noteWrittenFile("database-copy", staged); // its logical size: the only count of it on win32 (io-written.ts)
@@ -577,7 +880,21 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     report("database-clean");
     // Every staged messages.db settles itself (SMOOTH-FTS-MERGE R6 section 3): the search index's deleted postings, the email
     // rows of a backup and every freed page leave the staged file before inspect, digest and publish. One VACUUM, always.
-    if (component === "messages.db") settleFtsCopy(staged, { check: false, beforeVacuum: db => { sanitizeStagedEmailRows(db); sanitizeOwnWriteHoldsForRestore(db); sanitizeStagedRestoreMarks(db); } });
+    let setAside: SetAsideRow[] = [], memoryRows: string[] = [];
+    // The Inbox projection's triggers are the one kind whose text the inspection never compares (derived data, which a restore
+    // discards before anything runs): they leave every staged copy before its first delete (search intents, set-aside rows, index
+    // orphans, email rows), exactly as a restore removes them, so a delete fires only triggers whose text the inspection holds to
+    // this build's own, and no row the backup's list does not name can leave with it.
+    if (component === "messages.db") settleFtsCopy(staged, { check: false, beforeAny: discardInboxProjection, beforeIndex: db => {
+      // the first inspection stopped at the memory proof, before it read a conversation row: the rows are read here in that case too
+      if (rowRefusal || memoryAside) {
+        try {
+          if (memoryAside) memoryRows = setAsideUnprovenMemoryRows(db);
+          setAside = setAsideUnreadableRows(db);
+        } catch (error) { throw error instanceof InstallationSnapshotError ? error : new InstallationSnapshotError(rowRefusal ?? "DATABASE_SCHEMA_UNSUPPORTED", { cause: error }); }
+      }
+    }, beforeVacuum: db => {
+      sanitizeStagedEmailRows(db); sanitizeOwnWriteHoldsForRestore(db); sanitizeStagedRestoreMarks(db); sanitizeStagedFolderTrustActivity(db); } });
     report("database-verify");
     const copied = new DatabaseSync(staged, { readOnly: true, timeout: 1000 });
     let counts;
@@ -591,7 +908,7 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     const flush = openSync(staged, "r+"); // Windows FlushFileBuffers requires a writable handle.
     try { fsyncSync(flush); } finally { closeSync(flush); }
     publishNoReplace(staged, target);
-    return { status: "copied" as const, ...counts, bytes, sha256 };
+    return { status: "copied" as const, ...counts, bytes, sha256, ...(setAside.length ? { setAside } : {}), ...(memoryRows.length ? { memoryAside: memoryRows } : {}) };
   } catch (error) {
     if (error instanceof InstallationSnapshotError) throw error;
     // SQLite says a full disk its own way (errcode 13), and the copy of the file itself says ENOSPC.
@@ -645,6 +962,14 @@ export function sanitizeStagedRestoreMarks(db: DatabaseSync): void {
     db.exec("DELETE FROM send_replay_session_nodes");
   db.exec("DROP TABLE IF EXISTS restore_boot_wait");
   db.exec("DROP TABLE IF EXISTS restore_job_marks");
+}
+
+/** Folder-trust activity (MAIN ruling 1.0.21 fuigo-trust Q36/Q44) is left out of every backup format: the latest observation, its
+ * instance, generation and destination, and the once-only notice claim stay on this installation only. Dropped from the STAGED file on
+ * the settle's own connection, before its VACUUM, so no freed page keeps the rows; the live source keeps them. A restored install has
+ * no row, so the notice may show once more (it errs toward disclosure). Restore preparation drops the table too (restore-prep-core.ts). */
+export function sanitizeStagedFolderTrustActivity(db: DatabaseSync): void {
+  db.exec("DROP TABLE IF EXISTS thread_folder_trust_activity");
 }
 
 function snapshotDatabaseWhileOwned(dataDir: string, destination: string, onProgress?: BackupProgressReport) {

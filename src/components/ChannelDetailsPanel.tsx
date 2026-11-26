@@ -9,6 +9,7 @@
 // channel, Escape closes it, Tab stays inside it, and focus goes back to the
 // control that opened it — because a person should not have to learn two
 // different panels in the same header.
+import { imeComposing } from "@/lib/composer-enter";
 import { useFocusTrap } from "@/lib/focus-trap";
 import { LayerSurface } from "@/components/LayerSurface";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -212,6 +213,7 @@ function AboutSection({ group, members }: { group: Group; members: Bot[] }) {
           onChange={(event) => setInstructions(event.target.value)}
           onBlur={saveInstructions}
           onKeyDown={(event) => {
+            if (imeComposing(event.nativeEvent)) return;
             if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) saveInstructions();
           }}
           rows={7}

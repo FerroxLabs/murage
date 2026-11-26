@@ -938,3 +938,13 @@ it("H1-phone-refetch: the device byte pipe forwards chats.forgot and the browser
     expect(seen[1]["x-murage-companion"]).toBe("1");
   } finally { browserDoor.closeAllConnections(); relay.closeAllConnections(); upstream.closeAllConnections(); await Promise.all([new Promise<void>(done => browserDoor.close(() => done())),new Promise<void>(done => relay.close(() => done())), new Promise<void>(done => upstream.close(() => done()))]); }
 });
+
+describe("G43 a bot's MCP servers on the phone", () => {
+  it("admits the per-bot read to the phone app only, and keeps the settings list closed", () => {
+    expect(ask("GET", "/api/bots/b1/mcp-servers")).toBeNull();
+    expect(askBrowser("GET", "/api/bots/b1/mcp-servers")?.status).toBe(404);
+    expect(ask("PUT", "/api/bots/b1/mcp-servers")).not.toBeNull();
+    expect(ask("GET", "/api/mcp/servers")).not.toBeNull();
+    expect(ask("GET", "/api/bots/b1/mcp-servers", false)?.status).toBe(401);
+  });
+});

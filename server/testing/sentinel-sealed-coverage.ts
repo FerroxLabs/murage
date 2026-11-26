@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Fixture and receipt boundary owner: scperf-p2. Isolated process use only.
 import {createHash} from "node:crypto";
-import {mkdtempSync,mkdirSync,readFileSync,rmSync} from "node:fs";
+import {mkdtempSync,mkdirSync,readFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join,resolve} from "node:path";
 import {sentinelInstallationIdOf} from "../../shared/sentinel-installation.mjs";
@@ -9,6 +9,7 @@ import {defaultOutputRoot,sourcePaths,writeDescriptor,type SentinelDescriptor} f
 import {provisionFileReceipts,SentinelFileWriter} from "../sentinel/file-receipts.ts";
 import {scannerNative} from "../sentinel/io-meter.ts";
 import {sampleSentinelFileIo} from "../sentinel-file-sampling.ts";
+import { safeWipeSync } from "./safe-wipe.mjs";
 
 export function sealedCoverageFixture(){
  const root=mkdtempSync(join(tmpdir(),"sealed-coverage-")),data=join(root,"data");
@@ -25,5 +26,5 @@ export function sealedCoverageFixture(){
  const cycle=()=>{const writer=SentinelFileWriter.begin(descriptor,read);if(!writer?.finish(read,true))throw Error("FIXTURE_SEAL");};
  if(sampleSentinelFileIo(()=>null).snapshot.known)throw Error("FIXTURE_COLD");
  cycle();
- return {descriptor,cycle,close:()=>rmSync(root,{recursive:true,force:true})};
+ return {descriptor,cycle,close:()=>safeWipeSync(root)};
 }

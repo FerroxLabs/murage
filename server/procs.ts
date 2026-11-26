@@ -2,6 +2,7 @@ import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { redactSecretsInText } from "./redact.ts";
 import { probeFolder } from "./probe-folder.ts";
 import { botFolderOrThrow } from "./bot-folder.ts";
+import { launcherEnvironment } from "./launcher-environment.ts";
 import { cloudTurnLaunch } from "./cloud-home/turn-process.ts";
 import { enginePathFromEnv, noteEngineEnv, noteEnginePath } from "./outside-scan.ts";
 import { registerCloudTurnUnit } from "./cloud-home/cloud-process-hooks.ts";
@@ -38,13 +39,15 @@ import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { assignPipJob, closePipJob, createPipJob, PipJobRefusedError, stopWindowsJob } from "./memory/pip-job.ts";
 import { exclusionAddonBlockedByWindows, loadExclusionAddon, type NativeHandle } from "./engine-exclusion.ts";
 import {
-  closePowerFilter, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_MESSAGE_WINDOWS_BLOCKED, HOST_POWER_PROBE_RUN, hostPowerPlatform, hostPowerProbeDeps, hostPowerStubMessage, hostPowerTestUnwrapped, openPowerFilter, planHostPower, recordNoLimitsMacPowerRefusal,
+  closePowerFilter, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_MESSAGE_WINDOWS_BLOCKED, HOST_POWER_PROBE_RUN, hostPowerPlatform, hostPowerProbeDeps, hostPowerStubMessage, hostPowerTestUnwrapped, openPowerFilter, planHostPower, recordSeatbeltLaunchRefusal,
   reprobeHostPowerEnvironment, type ProbeResult, usernsDenied, wrapperRefusalText, wrapperEngineMissingText, bwrapEngineStarted, bwrapEarlyExitMessage, BWRAP_ARGS_FD, BWRAP_SECCOMP_FD, BWRAP_STATUS_FD,
 } from "./host-power.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { findCliCandidates, resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
 import { platformConfirmStopped, recordProcessHandle } from "./platform-process-hooks.ts";
 import { hostProcessExited, hostProcessGone, hostProcessIdentity, hostProcessIsChild, resolveBwrapProcesses, type HostProcessIdentity } from "./bwrap-process.ts";
+
+export { launcherEnvironment };
 
 export function resolveCli(cli: string, args: string[] = [], searchPath?: string): ResolvedSpawn {
   return resolveCliSpawn(cli, args, searchPath);
@@ -196,8 +199,11 @@ interface CliOwnership {
 // Evidence belongs to this exact spawn/handle, never a PID recovered after a
 // server restart. A retained live session is not stopped until requested.
 const cliOwnership = new WeakMap<ChildProcess, CliOwnership>();
-/** One diagnostic per failing Seatbelt executable until a successful launch; polling is not a new incident. */
+/** One diagnostic per failing Seatbelt launch (executable and its first argument) until that launch succeeds; polling is not a new
+ *  incident. Keyed by the first argument too: a `muse --version` probe that exits 0 says nothing about a refused `muse serve`, and
+ *  re-arming on it logged the same refusal at every status poll (1.0.19 macOS, once a minute). */
 const seatbeltRefusalLogged = new Set<string>();
+const seatbeltLaunchKey = (cli: string, args: readonly string[]): string => `${cli}\0${args[0] ?? ""}`;
 
 /** The Windows job a CLI runs in (PIP: Local\\murage-pip-<id>; an engine turn: Local\\murage-pip-eng-<uuid>, the PIP naming the
  *  addon accepts). U24 design R2/R3: on Windows a turn with a job runs on the job route or not at all. The job is created first,
@@ -205,9 +211,9 @@ const seatbeltRefusalLogged = new Set<string>();
  *  so the CLI and everything it ever starts are in the job before their first instruction. A launch that cannot be contained
  *  (no addon, no launcher file, the job could not be created, the launcher could not be assigned) is refused: PIP as before
  *  (PipJobRefusedError / cliJobRefused), an engine with a returned child whose `error` carries code ECONTAIN. */
-export interface CliJob { name: string; hostPower?: true; noLimitsSession?: object }
+export interface CliJob { name: string; hostPower?: true; noLimitsSession?: object; powerSession?: object }
 /** S4 power (design section 2): a Mac or Linux engine spawn under the block carries this marker and no job. */
-export interface HostPowerMark { name?: undefined; hostPower: true; noLimitsSession?: object }
+export interface HostPowerMark { name?: undefined; hostPower: true; noLimitsSession?: object; powerSession?: object }
 export type EngineSpawnJob = CliJob | HostPowerMark;
 
 /** The one sentence an engine gets when its launch could not be contained (the turn was not started). */
@@ -222,7 +228,7 @@ let containmentWarned = false;
  *  engines (no usable addon, no launcher file) says so once in the app log; its launches are refused by spawnCli, never run
  *  uncontained. */
 export function engineJob(options: { posixHostPower?: boolean; noLimits?: boolean; powerSession?: object } = {}): EngineSpawnJob | undefined {
-  if (process.platform !== "win32") return engineWrapsHostPower(options) ? { hostPower: true, ...(options.noLimits && options.powerSession ? { noLimitsSession: options.powerSession } : {}) } : undefined;
+  if (process.platform !== "win32") return engineWrapsHostPower(options) ? { hostPower: true, ...(options.powerSession ? { powerSession: options.powerSession } : {}), ...(options.noLimits && options.powerSession ? { noLimitsSession: options.powerSession } : {}) } : undefined;
   if (!containmentWarned && !containmentAvailable()) {
     containmentWarned = true;
     console.warn("[procs] engine turns on this Windows build cannot be contained (no usable engine-exclusion addon or job launcher) and will be refused");
@@ -283,14 +289,6 @@ function containmentAvailable(): boolean {
 function launcherPath(): string | null {
   const path = SPAWNED_PROXIES.jobLauncher;
   return existsSync(path) ? path : null;
-}
-
-/** The launcher's own environment (U24 design R2.1): fixed, built from nothing the turn controls, so no NODE_OPTIONS, loader or
- *  preload can run code before the launcher's gate. The turn's environment reaches the CLI through the frame, after assignment. */
-export function launcherEnvironment(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: "1" };
-  for (const key of ["SystemRoot", "SYSTEMDRIVE", "TEMP", "TMP"]) if (typeof base[key] === "string") env[key] = base[key];
-  return env;
 }
 
 /** The frame the server writes to the launcher's stdin once it is in the job: a length line, then that many bytes of JSON. */
@@ -435,7 +433,7 @@ export function spawnCli(
     return unstartedLaunch(command, launchArgs, hostPowerError(hostPowerMessage()));
   }
   const planned = hostPower && process.platform !== "win32" && hostPowerPlatform() !== null && !hostPowerTestUnwrapped()
-    ? planHostPower(command, launchArgs, opts.env, typeof opts.cwd === "string" ? opts.cwd : opts.cwd?.toString(), job?.noLimitsSession)
+    ? planHostPower(command, launchArgs, opts.env, typeof opts.cwd === "string" ? opts.cwd : opts.cwd?.toString(), job?.noLimitsSession, job?.powerSession)
     : null;
   // An environment gap (host-power.ts hostPowerGap: root, or a verified bwrap this computer refuses a user namespace): the engine
   // runs as an ordinary spawn under the access level, the never-list and the command reader. The cause was logged once.
@@ -638,18 +636,20 @@ export function spawnCli(
       if (prefix.length >= 1024) child.stderr.off("data", take);
     };
     child.stderr.on("data", take);
+    const refusalKey = seatbeltLaunchKey(cli, args);
     child.once("close", (code) => {
       child.stderr.off("data", take);
-      if (code === 0) seatbeltRefusalLogged.delete(cli);
+      if (code === 0) seatbeltRefusalLogged.delete(refusalKey);
       if (code !== 0 && wrapperEngineMissingText(prefix)) {
         ownership.engineMissing = true;
         noteEngineMissing(cli, opts.env, String(opts.cwd));
       } else if (code !== 0 && wrapperRefusalText(prefix)) {
         ownership.hostPowerRefused = true;
-        if (job?.noLimitsSession) {
-          recordNoLimitsMacPowerRefusal(job.noLimitsSession, `launch exit ${String(code)}: ${prefix}`);
-        } else if (!seatbeltRefusalLogged.has(cli)) {
-          seatbeltRefusalLogged.add(cli);
+        // The stderr text proves nothing about sandbox-exec once the engine runs (the engine and its tools write to it too), so
+        // it only asks for a re-probe of this exact profile; see recordSeatbeltLaunchRefusal.
+        if (posixPower.kind === "seatbelt") recordSeatbeltLaunchRefusal(posixPower.args[1]!, job?.powerSession ?? job?.noLimitsSession, `launch exit ${String(code)}: ${prefix}`);
+        if (!seatbeltRefusalLogged.has(refusalKey)) {
+          seatbeltRefusalLogged.add(refusalKey);
           const detail = redactSecretsInText(prefix).replace(/[\r\n\x00-\x1f]+/g, " ").trim();
           console.warn(`[procs] engine launch refused for ${cli}: sandbox-exec could not apply the power block: ${detail}`);
         }

@@ -2,6 +2,8 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { BOT_DESCRIPTION_PORTABLE_MAX } from "../shared/bot-profile.ts";
+import { ROUTINE_INSTRUCTIONS_MAX } from "../shared/routine-instructions.ts";
 import { schemaIssue, type JsonValue } from "./schema.ts";
 import type { EmberColor } from "./store.ts";
 import type { TeamManifestMember } from "./team-manifest.ts";
@@ -70,7 +72,7 @@ const packageSchema = z.object({
       key,
       name: requiredText(100),
       title: optionalText(200),
-      description: optionalText(4_000),
+      description: optionalText(BOT_DESCRIPTION_PORTABLE_MAX),
       /** Portable intent only; importing never grants coordination authority. */
       role: z.enum(["individual", "member", "leader", "chief"]).optional(),
       team: optionalText(200),
@@ -106,7 +108,7 @@ const packageSchema = z.object({
       key,
       name: requiredText(80),
       agent: key,
-      prompt: requiredText(20_000),
+      prompt: requiredText(ROUTINE_INSTRUCTIONS_MAX),
       runOn: z.enum(["ember", "cloud"]),
       schedule: z.discriminatedUnion("type", [
         z.object({ type: z.literal("once"), at: z.number().int() }),

@@ -2,7 +2,8 @@ import "../shared/win-hide-child-process.mjs";
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import type { Stats } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, win32 as winPath } from "node:path";
+import { WINDOWS_DRIVER_CONTRACT_VERSION, WINDOWS_DRIVER_SHA256, WINDOWS_DRIVER_VERSION } from "../shared/cua-driver-windows-pins.mjs";
 
 export const REQUIRED_LINUX_TOOLS = ["click", "get_window_state", "list_apps", "type_text"];
 // Keep this exact field set synchronized with DRIVER_FILE_IDENTITY_KEYS in
@@ -43,8 +44,10 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
   return Object.keys(value).length === expected.size && Object.keys(value).every((key) => expected.has(key));
 }
 
-function legacyPlatform(platform: NodeJS.Platform): "darwin" | "win32" | null {
-  if (platform === "darwin" || platform === "win32") return platform;
+// win32 never decodes a legacy descriptor: a legacy file names ANY command, and Windows runs only the
+// pinned, supervised driver (decodeWindowsDescriptor).
+function legacyPlatform(platform: NodeJS.Platform): "darwin" | null {
+  if (platform === "darwin") return platform;
   return null;
 }
 
@@ -81,7 +84,19 @@ function sameDriverFileIdentity(expected: unknown, actual: Record<string, string
   );
 }
 
-function decodeLegacyDescriptor(
+/** The cua-driver release and daemon contract this build mounts (shared with the Windows decoder, CONTRACT-REQ C1). */
+export const CUA_DRIVER_VERSION = "0.55.0";
+export const CUA_CONTRACT_VERSION = "0.9.0";
+
+/** 0.55.0 sends telemetry and checks for updates unless told not to; upstream reads "0" and "false" as off for telemetry. */
+function driverPhoneHomeOff(env: Record<string, unknown>): boolean {
+  return (
+    (env.CUA_DRIVER_RS_TELEMETRY_ENABLED === "0" || env.CUA_DRIVER_RS_TELEMETRY_ENABLED === "false") &&
+    env.CUA_DRIVER_RS_UPDATE_CHECK === "false"
+  );
+}
+
+export function decodeLegacyDescriptor(
   value: LegacyConnectionDescriptor,
   platform: NodeJS.Platform,
 ): LocalComputerConnection | null {
@@ -102,8 +117,12 @@ function decodeLegacyDescriptor(
   if (!value.mcpEnv || typeof value.mcpEnv !== "object" || Array.isArray(value.mcpEnv)) return null;
   const args: unknown[] = value.mcpArgs;
   if (!args.every((arg) => typeof arg === "string")) return null;
-  const env = value.mcpEnv;
+  const env = value.mcpEnv as Record<string, unknown>;
   if (!Object.values(env).every((entry) => typeof entry === "string")) return null;
+  // CONTRACT-REQ C2: the Mac app writes both off-keys into every driver
+  // process it starts (electron/cua.mjs CUA_ENV), so a darwin descriptor that
+  // lacks either, or turns either on, was not written by it and mounts nothing.
+  if (supportedPlatform === "darwin" && !driverPhoneHomeOff(env)) return null;
   return {
     command: value.mcpCommand,
     args,
@@ -177,7 +196,7 @@ export function decodeLinuxDescriptor(value: LinuxConnectionDescriptor): LocalCo
   if (
     typeof driver.path !== "string" ||
     !isAbsolute(driver.path) ||
-    driver.version !== "0.19.3" ||
+    driver.version !== CUA_DRIVER_VERSION ||
     !["bundled", "environment", "user-local", "path"].includes(String(driver.source)) ||
     driver.manifestSchema !== "1" ||
     !validDriverFileIdentity(driver.fileIdentity) ||
@@ -185,7 +204,7 @@ export function decodeLinuxDescriptor(value: LinuxConnectionDescriptor): LocalCo
     !isAbsolute(daemon.socketPath) ||
     !Number.isInteger(daemon.pid) ||
     (daemon.pid as number) <= 0 ||
-    daemon.contractVersion !== "0.6.0" ||
+    daemon.contractVersion !== CUA_CONTRACT_VERSION ||
     daemon.toolsListSchemaVersion !== "1" ||
     daemon.capabilityVersion !== "1" ||
     daemon.mcpProtocolVersion !== "2025-06-18" ||
@@ -246,6 +265,87 @@ export function decodeLinuxDescriptor(value: LinuxConnectionDescriptor): LocalCo
     platform: "linux",
     generation: value.generation,
     scope: "local-computer",
+  };
+}
+
+/** The Windows driver pin and the env every Windows driver process gets (DESIGN 1022-cua-windows D4/D5). */
+export const WINDOWS_DRIVER_PIN = Object.freeze({
+  version: WINDOWS_DRIVER_VERSION,
+  contractVersion: WINDOWS_DRIVER_CONTRACT_VERSION,
+  sha256: WINDOWS_DRIVER_SHA256,
+});
+export const WINDOWS_DRIVER_ENV = Object.freeze({
+  CUA_DRIVER_EMBEDDED: "1",
+  CUA_DRIVER_HOST_BUNDLE_ID: "com.murage.app",
+  CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
+  CUA_DRIVER_RS_UPDATE_CHECK: "false",
+  DO_NOT_TRACK: "1",
+});
+const WINDOWS_PIPE = /^\\\\\.\\pipe\\murage-cua-\d+-[0-9a-f]{12}$/;
+const WINDOWS_IDENTITY_KEYS = ["dev", "ino", "size", "mtimeNs", "ctimeNs"] as const;
+
+export function windowsDriverPath(resourcesPath: string): string {
+  return winPath.join(resourcesPath, "cua-win32-x64", "cua-driver.exe");
+}
+
+/** The only win32 descriptor that mounts anything (D5): exact keys, the pinned version and contract, the driver at
+ * `<resourcesPath>\cua-win32-x64\cua-driver.exe`, its sha256 equal to the server's OWN pin (never trusted from
+ * the file), the private pipe name, and exactly the D4 env. Anything else is null (unavailable). */
+export function decodeWindowsDescriptor(
+  value: Record<string, unknown>,
+  { resourcesPath, pin = WINDOWS_DRIVER_PIN }: { resourcesPath: string | undefined; pin?: { sha256: string; version?: string; contractVersion?: string } },
+): (LocalComputerConnection & { driverSha256: string; pipe: string }) | null {
+  if (!value || typeof value !== "object" || Array.isArray(value) || typeof resourcesPath !== "string" || !resourcesPath) return null;
+  const version = pin.version ?? WINDOWS_DRIVER_PIN.version;
+  const contractVersion = pin.contractVersion ?? WINDOWS_DRIVER_PIN.contractVersion;
+  if (
+    !exactKeys(value, ["mode", "platform", "schemaVersion", "status", "generation", "driver", "daemon", "mcp"]) ||
+    value.mode !== "windows-supervised" ||
+    value.platform !== "win32" ||
+    value.schemaVersion !== 1 ||
+    value.status !== "ready" ||
+    typeof value.generation !== "string" ||
+    !/^[0-9a-f]{12}$/.test(value.generation)
+  ) return null;
+  const driver = value.driver as Record<string, unknown>;
+  const daemon = value.daemon as Record<string, unknown>;
+  const mcp = value.mcp as Record<string, unknown>;
+  const plain = (entry: unknown): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry);
+  if (
+    !plain(driver) || !plain(daemon) || !plain(mcp) ||
+    !exactKeys(driver, ["path", "version", "source", "sha256", "fileIdentity"]) ||
+    !exactKeys(daemon, ["pipe", "pid", "contractVersion", "toolsListSchemaVersion", "capabilityVersion", "mcpProtocolVersion"]) ||
+    !exactKeys(mcp, ["command", "args", "env"])
+  ) return null;
+  const identity = driver.fileIdentity;
+  if (
+    driver.path !== windowsDriverPath(resourcesPath) ||
+    driver.version !== version ||
+    driver.source !== "bundled" ||
+    typeof pin.sha256 !== "string" || driver.sha256 !== pin.sha256 ||
+    !plain(identity) || !exactKeys(identity, WINDOWS_IDENTITY_KEYS) ||
+    !WINDOWS_IDENTITY_KEYS.every((key) => typeof identity[key] === "string" && /^\d+$/.test(identity[key] as string)) ||
+    typeof daemon.pipe !== "string" || !WINDOWS_PIPE.test(daemon.pipe) ||
+    !Number.isInteger(daemon.pid) || (daemon.pid as number) <= 0 ||
+    daemon.contractVersion !== contractVersion ||
+    daemon.toolsListSchemaVersion !== "1" ||
+    daemon.capabilityVersion !== "1" ||
+    daemon.mcpProtocolVersion !== "2025-06-18" ||
+    mcp.command !== driver.path ||
+    !Array.isArray(mcp.args) || mcp.args.length !== 4 ||
+    mcp.args[0] !== "mcp" || mcp.args[1] !== "--embedded" || mcp.args[2] !== "--socket" || mcp.args[3] !== daemon.pipe ||
+    !plain(mcp.env) || !exactKeys(mcp.env, Object.keys(WINDOWS_DRIVER_ENV)) ||
+    Object.entries(WINDOWS_DRIVER_ENV).some(([key, expected]) => (mcp.env as Record<string, unknown>)[key] !== expected)
+  ) return null;
+  return {
+    command: driver.path as string,
+    args: [...(mcp.args as string[])],
+    env: { ...WINDOWS_DRIVER_ENV },
+    platform: "win32",
+    generation: value.generation,
+    scope: "local-computer",
+    driverSha256: pin.sha256,
+    pipe: daemon.pipe,
   };
 }
 
@@ -352,12 +452,16 @@ export function readCuaConnection({
   home = homedir(),
   validateLinuxRuntime = validateLinuxDescriptorRuntime,
   validateLegacyRuntime = validateLegacyDescriptorRuntime,
+  resourcesPath = process.env.MURAGE_RESOURCES_PATH,
+  windowsPin = WINDOWS_DRIVER_PIN,
 }: {
   platform?: NodeJS.Platform;
   userData?: string;
   home?: string;
   validateLinuxRuntime?: (file: string, raw: LinuxConnectionDescriptor) => boolean;
   validateLegacyRuntime?: (file: string, platform: NodeJS.Platform) => boolean;
+  resourcesPath?: string;
+  windowsPin?: { sha256: string; version?: string; contractVersion?: string };
 } = {}): LocalComputerConnection | null {
   const candidates = userData ? [join(userData, "cua-connection.json")] : [];
   if (platform === "darwin" && !userData) {
@@ -374,6 +478,10 @@ export function readCuaConnection({
     if (platform === "linux") {
       const decoded = decodeLinuxDescriptor(raw);
       if (decoded && validateLinuxRuntime(file, raw)) return decoded;
+    } else if (platform === "win32") {
+      // Never the legacy decoder (D5): only the pinned, supervised shape.
+      const decoded = decodeWindowsDescriptor(raw, { resourcesPath, pin: windowsPin });
+      if (decoded && validateLegacyRuntime(file, platform)) return decoded;
     } else {
       const decoded = decodeLegacyDescriptor(raw, platform);
       if (decoded && validateLegacyRuntime(file, platform)) return decoded;

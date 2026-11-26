@@ -44,6 +44,7 @@
   "phoneCalls.error.badSettings": "Einige dieser Einstellungen können nicht genutzt werden. Prüfe sie und speichere erneut.",
   "phoneCalls.error.notSetUp": "Speichere zuerst deinen privaten Vapi-Schlüssel.",
   "phoneCalls.error.generic": "Etwas ist schiefgelaufen. Versuche es erneut.",
+  "phoneCalls.error.store": "Murage konnte den Anrufverlauf nicht öffnen. Starte Murage neu. Wenn das Problem erneut auftritt, prüfe den freien Speicherplatz.",
   "phoneCalls.older.one": "1 geplanter Anruf nutzt ältere Einstellungen",
   "phoneCalls.older.many": "{count} geplante Anrufe nutzen ältere Einstellungen",
   "phoneCalls.cancel": "Abbrechen",

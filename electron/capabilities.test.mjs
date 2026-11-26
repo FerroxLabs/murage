@@ -134,7 +134,7 @@ describe("desktop capabilities", () => {
       status: "ready",
       driver: {
         path: "/home/test/.local/bin/cua-driver",
-        version: "0.19.3",
+        version: "0.55.0",
         source: "user-local",
       },
     };
@@ -149,7 +149,7 @@ describe("desktop capabilities", () => {
       support: "limited",
       enabled: true,
       status: "ready",
-      driverVersion: "0.19.3",
+      driverVersion: "0.55.0",
       driverSource: "user-local",
     });
     expect(localComputerReady("linux", { ...connection, session: "wayland" })).toBe(false);
@@ -182,5 +182,21 @@ describe("desktop capabilities", () => {
       session: "wayland",
       compositor: "gnome-mutter",
     });
+  });
+});
+
+// DESIGN 1022-cua-windows P7: the Windows card reads the supervised runtime's own status, and names its reason.
+describe("win32 local control status", () => {
+  it("ready only for an enabled, ready windows-supervised status", () => {
+    const ready = desktopCapabilities({ platform: "win32", packaged: true, localConnection: { mode: "windows-supervised", platform: "win32", enabled: true, status: "ready", available: true } });
+    expect(ready.localComputer).toMatchObject({ available: true, enabled: true, status: "ready" });
+  });
+  it("an unavailable status carries the runtime's reason code to the card", () => {
+    const stuck = desktopCapabilities({ platform: "win32", packaged: true, localConnection: { mode: "unavailable", platform: "win32", enabled: true, status: "unavailable", reasonCode: "driver-stuck" } });
+    expect(stuck.localComputer).toMatchObject({ available: false, enabled: true, reasonCode: "driver-stuck" });
+  });
+  it("a build with no Windows runtime status is a platform reason", () => {
+    const none = desktopCapabilities({ platform: "win32", packaged: true, localConnection: { mode: "unavailable", reason: "unsupported-platform" } });
+    expect(none.localComputer).toMatchObject({ available: false, enabled: false, reasonCode: "unsupported-platform" });
   });
 });

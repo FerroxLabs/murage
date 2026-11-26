@@ -199,7 +199,11 @@ interface PendingProposal {
   /** Revokes the turn's capability generation; run once, at end(). */
   onEnd?: () => void;
   settled: boolean;
+  /** The Chief office epoch this turn was started under (ChiefOffice). */
+  officeEpoch: number;
 }
+/** Who holds the owner's Chief office and how many times the holder has changed (store.chiefOffice). */
+export interface ChiefOffice { holder: string | null; epoch: number }
 
 /** A proposal its tool sent, the turn's reply text (`partial`: the turn
  * failed or was stopped first), or nothing. */
@@ -209,6 +213,21 @@ export type ProposalTurnOutcome = ValidatedProposal | { text: string; partial?: 
  * drops them, and the owner's request has timed out by then anyway. */
 export class ChiefProposalTurns {
   readonly #turns = new Map<string, PendingProposal>();
+  readonly #office: () => ChiefOffice;
+  /** `office`: the live Chief office. Without one no turn is ever held (no draft is delivered). */
+  constructor(office: () => ChiefOffice = () => ({ holder: null, epoch: -1 })) { this.#office = office; }
+  /** propose-500: the grant. A proposal turn is held only while the bot that started it holds the Chief office in
+   * the same office epoch it started under: any loss of the office voids it for good, even if the office comes back. */
+  #held(turn: PendingProposal): boolean {
+    const office = this.#office();
+    return office.holder === turn.botId && office.epoch === turn.officeEpoch;
+  }
+  /** This exact proposal turn (thread, generation and Chief) is still waiting and still held. A sent proposal still counts, so
+   * a second call gets submit's "already sent" answer. */
+  holds(threadId: string, generation: string, botId: string): boolean {
+    const turn = this.#turns.get(threadId);
+    return Boolean(turn) && turn!.generation === generation && turn!.botId === botId && this.#held(turn!);
+  }
   readonly #bindings = new Map<string, ConsumingTurnBinding>();
   bind(threadId: string, generation: string, binding: ConsumingTurnBinding): void {
     const turn = this.#turns.get(threadId);
@@ -227,7 +246,7 @@ export class ChiefProposalTurns {
 
   begin(threadId: string, botId: string, generation: string, instanceId: string, validate: (raw: unknown) => ValidatedProposal, onEnd?: () => void): Promise<ProposalTurnOutcome> {
     return new Promise(resolve => {
-      this.#turns.set(threadId, { botId, generation, instanceId, validate, resolve, onEnd, settled: false });
+      this.#turns.set(threadId, { botId, generation, instanceId, validate, resolve, onEnd, settled: false, officeEpoch: this.#office().epoch });
     });
   }
 
@@ -242,6 +261,8 @@ export class ChiefProposalTurns {
   submit(threadId: string, generation: string, raw: unknown): { status: number; body: Record<string, unknown> } {
     const turn = this.#turns.get(threadId);
     if (!turn || turn.generation !== generation) return { status: 403, body: { error: 'This proposal turn has ended.' } };
+    // the one place a draft is delivered: a Chief that lost its office since the turn began delivers nothing
+    if (!this.#held(turn)) return { status: 403, body: { error: 'This proposal turn has ended.' } };
     if (turn.settled) return { status: 409, body: { error: 'not_allowed', reason: 'The proposal was already sent.' } };
     let result: ValidatedProposal;
     try { result = turn.validate(raw); }

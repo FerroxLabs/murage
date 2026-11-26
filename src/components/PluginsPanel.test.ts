@@ -377,8 +377,8 @@ describe("each FluxRouter key problem gets its own sentence", () => {
     expect(FLUXROUTER_BILLING_URL).toBe("https://fluxrouter.ai/auth/sign-in?return_to=%2Fdashboard%2Fbilling");
   });
 
-  it("opens the billing page through openExternalPage, so desktop, Cloud and phone reach the system browser", () => {
-    expect(panel).toMatch(/action === "billing"\) \{[\s\S]*?void openExternalPage\(FLUXROUTER_BILLING_URL, t\("modelSignIn.error.browser"\)\)\s*\.catch\(\(\) => setError\(t\("modelSignIn.error.browser"\)\)\)/);
+  it("opens the billing page through openExternalPage (behind the X1 purchase predicate), so desktop, Cloud and phone reach the system browser", () => {
+    expect(panel).toMatch(/action === "billing"\) \{[\s\S]*?void openPurchasePage\(\(\) => openExternalPage\(FLUXROUTER_BILLING_URL, t\("modelSignIn.error.browser"\)\)\)\s*\.catch\(\(\) => setError\(t\("modelSignIn.error.browser"\)\)\)/);
     expect(panel).not.toMatch(/window\.open\(FLUXROUTER_BILLING_URL/);
   });
 });

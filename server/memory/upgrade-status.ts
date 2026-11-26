@@ -31,7 +31,7 @@ export type MemoryUpgradeStatus = {
   /** The reading in the one shape every screen reads (shared/upgrade-contract.mjs); always present, with "unknown" for what is not known. */
   upgrade: UpgradeState;
   /** Set when blocked. */
-  code?: "MEMORY_MIGRATION_DISK_SPACE" | "MEMORY_SCHEMA_NEWER" | "MEMORY_MIGRATION_FAILED";
+  code?: "MEMORY_MIGRATION_DISK_SPACE" | "MEMORY_SCHEMA_NEWER" | "MEMORY_SCHEMA_UNSUPPORTED" | "MEMORY_MIGRATION_FAILED";
   phase?: MemoryMigrationPhase["phase"] | StartupStorageEvent["phase"] | RevocationIndexEvent["phase"] | "indexing" | "repairing";
   /** Root sets converted (phase "converting"), or receipts indexed (phase "indexing"), so far, of total. */
   done?: number;
@@ -142,7 +142,9 @@ export function memoryUpgradeReporter(dataDir: string, partialNameOf: (path: str
     blocked(error: unknown) {
       try {
         const known = error instanceof MemoryMigrationError ? error : null;
-        const code = known?.code ?? "MEMORY_MIGRATION_FAILED";
+        // A memory object this build does not know (validateMemorySchema): what a newer Murage left, so the shell says to install it.
+        const unknownSchema = !known && error instanceof Error && /^MEMORY_SCHEMA_UNSUPPORTED\b/.test(error.message);
+        const code = known?.code ?? (unknownSchema ? "MEMORY_SCHEMA_UNSUPPORTED" : "MEMORY_MIGRATION_FAILED");
         writeNote(dataDir, {
           v: 1, state: "blocked", code, pid: process.pid, startedAt, updatedAt: Date.now(), upgrade: blockedUpgradeState(code),
           ...(known?.needBytes !== undefined ? { needBytes: known.needBytes } : {}),

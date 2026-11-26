@@ -59,6 +59,7 @@ const BUSYLOOP_NON_FLUX_TURNS: Record<string, string> = {
   "drivers/pi.ts": "passes fetchImpl to local-inject catalog discovery; model turns delegate to the headless driver",
   "drivers/stop-gate.rules.config.ts": "source-expression fingerprints for tests; makes no request",
   "local-tool-probe.ts": "local-only model probes guarded by checkLocalServerUrl before each request",
+  "memory/upstream-reader.ts": "accounts the Composio transport response; composio-lifecycle.ts sets broker headers and tags before passing the request",
 };
 
 /** Files that mention Flux but make no Flux model request of their own, and why. */
@@ -130,6 +131,8 @@ describe("the connected-apps broker transport decides its Flux headers (composio
       expect(text(rel), rel).toMatch(/fluxFetch\(\s*"composio-broker"/);
       expect(text(rel), rel).toMatch(/isFluxHost\(/);
     }
+    const accounted = files.filter(file => /\bimport\s*\{[^}]*\baccountedFetch\b[^}]*\}\s*from\s*["'][^"']*upstream-reader\.ts["']/.test(stripComments(file.text)));
+    expect(accounted.map(file => file.rel)).toEqual(["composio-lifecycle.ts"]);
   });
 
   it("the transports no longer tag by hand: setFluxUsageHeaders alone would send the usage tag without the memory decision", () => {
@@ -191,7 +194,9 @@ describe("stays out of the browser bundle", () => {
     const imports = [...routing.matchAll(/^import[^;]*from\s+"([^"]+)"/gm)].map((match) => match[1]);
     // The Cloud home's pause and sign-in guards were moved out of the gate module so this file stays free of undici and
     // node:crypto (ea81de2a3); each may import only the copy table.
-    expect(imports.sort()).toEqual(["./cloud-home/engine-flux-guard.ts", "./cloud-home/flux-pause.ts", "./contracts.ts", "./flux-memory-wire.ts"]);
+    // ../shared/flux-route.ts decides the Flux host for every codex provider table; it imports nothing (checked below).
+    expect(imports.sort()).toEqual(["../shared/flux-route.ts", "./cloud-home/engine-flux-guard.ts", "./cloud-home/flux-pause.ts", "./contracts.ts", "./flux-memory-wire.ts"]);
+    expect(readFileSync(new URL("../shared/flux-route.ts", import.meta.url), "utf8")).not.toMatch(/^import|node:|require\(/m);
     for (const rel of ["cloud-home/engine-flux-guard.ts", "cloud-home/flux-pause.ts", "cloud-home/copy.ts"]) {
       const guard = stripComments(files.find((file) => file.rel === rel)!.text);
       expect(guard, rel).not.toMatch(/node:|require\(/);

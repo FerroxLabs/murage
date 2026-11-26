@@ -1,0 +1,16 @@
+ASTRA-CONV I20 (in-lane convergence, codex exec -m gpt-6-astra, read-only). Owners: designer lane conv-I20-r3; reviewer = in-lane Astra runs.
+
+== Round 1 on d132c40381 ==
+ASTRA-CONV-R1 I20 VERDICT: BLOCK 3
+Blocking: 1 lost end nudge delays placedPending to dial time (repeat Fable 1); 2 REVISABLE rows get no automatic reads; 3 downgrade probe misses debt when phone_calls is empty. Mediums 4-6, Low 7. Full text: /root/fuigo-builds/swarm-b/conv-I20-r3/astra1/last.txt
+Fixed in 5ce4de8f9b (CHANGES-r3.md, in-lane table).
+
+== Round 2 on 5ce4de8f9b ==
+ASTRA-CONV-R2 I20 VERDICT: BLOCK 1
+Blocking: 1 skipped vendor reads still advanced read_due (Astra 4 fairness). Mediums 2-3 (replay of recovered line; messageById index build), Low 4. Full text: /root/fuigo-builds/swarm-b/conv-I20-r3/astra2/last.txt
+Fixed in 4e6d8b377b.
+
+== Round 3 on 4e6d8b377b (final round) ==
+ASTRA-CONV-R3 I20 VERDICT: AGREE
+No Critical/High. Non-blocking: Medium 1 idle due, Medium 2 key save before scheduled time, Medium 3 append cost claim, Low 4 wording. Full text: /root/fuigo-builds/swarm-b/conv-I20-r3/astra3/last.txt
+All four folded in after AGREE (CHANGES-r3.md R3 rows); no further Astra round (cap 3).

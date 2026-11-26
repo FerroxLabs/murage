@@ -76,7 +76,7 @@ beforeAll(async () => {
       const match = req.method === "POST" ? (req.url ?? "").match(/^\/api\/internal\/phone\/(phone_call_place|phone_call_result)$/) : null;
       if (!match || req.headers.authorization !== `Bearer ${TOKEN}`) { res.writeHead(404, { "content-type": "application/json" }); return res.end("{}"); }
       const { fromBotId: _a, fromThreadId: _b, depth: _c, ...body } = JSON.parse(raw || "{}") as Record<string, unknown>;
-      const answer = await servePhoneTool(lazyService, match[1] as "phone_call_place" | "phone_call_result", claim, body);
+      const answer = await servePhoneTool(lazyService, match[1] as "phone_call_place" | "phone_call_result", claim, body, { botMayPhone: () => true });
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(answer));
     });
@@ -176,8 +176,8 @@ describe("hostile result through the desktop-shell harness (section 7)", () => {
     const adapter = new VapiAdapter(async (url, init) => (init.method === "GET" && new URL(url).pathname.startsWith("/call/") ? { status: 200, json: async () => hostile } : vendor.fetchImpl(url, init)));
     service = new PhoneCallService(adapter, new RevisionStore(), () => "en");
     await service.saveSettings(defaultSettings("pn-1", "Sam"));
-    const placed = await servePhoneTool(lazyService, "phone_call_place", OWNER, { to: "+15550123456", goal: "Book" });
-    const result = await servePhoneTool(lazyService, "phone_call_result", OWNER, { call: placed.call });
+    const placed = await servePhoneTool(lazyService, "phone_call_place", OWNER, { to: "+15550123456", goal: "Book" }, { botMayPhone: () => true });
+    const result = await servePhoneTool(lazyService, "phone_call_result", OWNER, { call: placed.call }, { botMayPhone: () => true });
     expect(result).not.toHaveProperty("outcome");
     expect(result).not.toHaveProperty("reason");
     expect(result).toMatchObject({ has_reference: true, time: "2026-11-06T20:00:00Z" });
@@ -188,7 +188,7 @@ describe("hostile result through the desktop-shell harness (section 7)", () => {
 describe("headless and non-owner runs (section 7 harness)", () => {
   it("an ordinary headless run registers no phone tools and never reaches the route", async () => {
     _resetPhoneSecretsForTest();
-    expect(phoneMount({ agentsMcp: true, ownerAudience: true })).toEqual({ mounted: false, line: null });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: true, botAllowed: true })).toEqual({ mounted: false, line: null });
     const p = await proxy(false);
     try {
       const list = await p.rpc("tools/list");
@@ -202,12 +202,12 @@ describe("headless and non-owner runs (section 7 harness)", () => {
   }, 60_000);
 
   it("index.ts route: the owner's turn calls; a notOwnerAudience turn and a run with no desktop shell get not_set_up and open nothing", async () => {
-    expect(await servePhoneTool(lazyService, "phone_call_place", OWNER, { to: "+15550123456", goal: "Book" })).toMatchObject({ call: expect.stringMatching(/^call_/) });
+    expect(await servePhoneTool(lazyService, "phone_call_place", OWNER, { to: "+15550123456", goal: "Book" }, { botMayPhone: () => true })).toMatchObject({ call: expect.stringMatching(/^call_/) });
     expect(opened).toBe(1);
-    expect(await servePhoneTool(lazyService, "phone_call_place", { ...OWNER, notOwnerAudience: true }, { to: "+15550123456", goal: "Book" })).toEqual({ error: "not_set_up" });
-    expect(await servePhoneTool(lazyService, "phone_call_result", { ...OWNER, notOwnerAudience: true }, { call: "call_x" })).toEqual({ error: "not_set_up" });
+    expect(await servePhoneTool(lazyService, "phone_call_place", { ...OWNER, notOwnerAudience: true }, { to: "+15550123456", goal: "Book" }, { botMayPhone: () => true })).toEqual({ error: "not_set_up" });
+    expect(await servePhoneTool(lazyService, "phone_call_result", { ...OWNER, notOwnerAudience: true }, { call: "call_x" }, { botMayPhone: () => true })).toEqual({ error: "not_set_up" });
     _resetPhoneSecretsForTest();
-    expect(await servePhoneTool(lazyService, "phone_call_place", OWNER, { to: "+15550123456", goal: "Book" })).toEqual({ error: "not_set_up" });
+    expect(await servePhoneTool(lazyService, "phone_call_place", OWNER, { to: "+15550123456", goal: "Book" }, { botMayPhone: () => true })).toEqual({ error: "not_set_up" });
     expect(opened).toBe(1);
     expect(vendor.placed()).toBe(1);
   });
@@ -226,10 +226,10 @@ describe("headless and non-owner runs (section 7 harness)", () => {
 });
 
 describe("every call is checked against the turn the phone mount admitted (3b)", () => {
-  const place = (c: PhoneToolClaim) => servePhoneTool(lazyService, "phone_call_place", c, { to: "+15550123456", goal: "Book" });
+  const place = (c: PhoneToolClaim) => servePhoneTool(lazyService, "phone_call_place", c, { to: "+15550123456", goal: "Book" }, { botMayPhone: () => true });
   it("an automation run or project-role turn holding an agents capability (no phone record) gets not_set_up and no call", async () => {
     expect(await place({ botId: "bot-1", threadId: "routine-thread", generation: "gen-auto" })).toEqual({ error: "not_set_up" });
-    expect(await servePhoneTool(lazyService, "phone_call_result", { botId: "bot-1", threadId: "routine-thread", generation: "gen-auto" }, { call: "call_x" })).toEqual({ error: "not_set_up" });
+    expect(await servePhoneTool(lazyService, "phone_call_result", { botId: "bot-1", threadId: "routine-thread", generation: "gen-auto" }, { call: "call_x" }, { botMayPhone: () => true })).toEqual({ error: "not_set_up" });
     expect(await place({})).toEqual({ error: "not_set_up" });
     expect(opened).toBe(0);
     expect(vendor.placed()).toBe(0);
@@ -259,8 +259,8 @@ describe("shared transcript (section 4, owner's choice)", () => {
     const adapter = new VapiAdapter(async (url, init) => (init.method === "GET" && new URL(url).pathname.startsWith("/call/") ? { status: 200, json: async () => hostile } : vendor.fetchImpl(url, init)));
     service = new PhoneCallService(adapter, new RevisionStore(), () => "en");
     await service.saveSettings(defaultSettings("pn-1", "Sam"));
-    const placed = await servePhoneTool(lazyService, "phone_call_place", OWNER, { to: "+15550123456", goal: "Book" });
-    await servePhoneTool(lazyService, "phone_call_result", OWNER, { call: placed.call });
+    const placed = await servePhoneTool(lazyService, "phone_call_place", OWNER, { to: "+15550123456", goal: "Book" }, { botMayPhone: () => true });
+    await servePhoneTool(lazyService, "phone_call_result", OWNER, { call: placed.call }, { botMayPhone: () => true });
     const shared = await phoneOwnerRoute(lazyService, { method: "POST", path: `/api/phone-calls/${placed.call as string}/share`, desktop: true, botCredential: false });
     expect(shared!.status).toBe(200);
     const text = (shared!.body as { attachment: { label: string; text: string } }).attachment.text;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ChatToolCalls } from "./openai-chat-protocol.ts";
+import { ChatReasoningDetails, ChatToolCalls } from "./openai-chat-protocol.ts";
 
 const completeCall = {
   id: "call_echo",
@@ -9,6 +9,44 @@ const completeCall = {
 };
 
 describe("streamed chat tool calls", () => {
+  it("keeps a Gemini thought signature and counts a repeated signature once", () => {
+    const calls = new ChatToolCalls();
+    const extra_content = { google: { thought_signature: "s".repeat(140_000) } };
+    calls.add([{ index: 0, ...completeCall, extra_content }], true);
+    calls.add([{ index: 0, extra_content }], true);
+    expect(calls.finish("tool_calls", false)).toEqual([{ ...completeCall, extra_content }]);
+  });
+
+  // rel/1023: MAIN-RULING cause22-no-transport-caps removes the 1.0.21 retained-signature bound (256,000 characters); the signatures are read whole.
+  it("reads signatures whole across calls and replacement chunks, with no size limit", () => {
+    const calls = new ChatToolCalls();
+    const first = { signature: "s".repeat(140_000) }, second = { signature: "t".repeat(140_000) };
+    calls.add([{ index: 0, ...completeCall, extra_content: first }], true);
+    calls.add([{ index: 1, ...completeCall, id: "second", extra_content: second }], true);
+    expect(calls.finish("tool_calls", false)).toEqual([{ ...completeCall, extra_content: first }, { ...completeCall, id: "second", extra_content: second }]);
+    const replacement = new ChatToolCalls();
+    const big = { signature: "u".repeat(256_001) };
+    replacement.add([{ index: 0, ...completeCall, extra_content: { signature: "first" } }], true);
+    replacement.add([{ index: 0, extra_content: big }], true);
+    expect(replacement.finish("tool_calls", false)).toEqual([{ ...completeCall, extra_content: big }]);
+  });
+
+  it("keeps whole-reply thought signatures", () => {
+    const calls = new ChatToolCalls();
+    const extra_content = { google: { thought_signature: "fixture-signature" } };
+    calls.add([{ ...completeCall, extra_content }], false);
+    expect(calls.finish("tool_calls", false)).toEqual([{ ...completeCall, extra_content }]);
+  });
+
+  it("treats a Qwen empty continuation id as absent, keeping other field checks", () => {
+    const calls = new ChatToolCalls();
+    calls.add([{ index: 0, ...completeCall, function: { name: "echo", arguments: "{" } }], true);
+    calls.add([{ index: 0, id: "", function: { arguments: "}" } }], true);
+    expect(calls.finish("tool_calls", false)).toEqual([completeCall]);
+    expect(() => new ChatToolCalls().add([{ ...completeCall, id: "" }], false)).toThrow();
+    expect(() => calls.add([{ index: 0, type: "" }], true)).toThrow(/unsupported/);
+  });
+
   it("treats explicit null continuation fields as absent", () => {
     const calls = new ChatToolCalls();
     calls.add([{ index: 0, ...completeCall, function: { ...completeCall.function, arguments: "" } }], true);
@@ -35,12 +73,44 @@ describe("streamed chat tool calls", () => {
     expect(() => calls.add([delta], true)).toThrow();
   });
 
-  it.each([
-    { id: "call_large_name", name: "n".repeat(65), arguments: "{}" },
-    { id: "call_large_args", name: "echo", arguments: "x".repeat(256_001) },
-  ])("preserves tool-call size limits", ({ id, name, arguments: args }) => {
+  it("keeps the 64-character tool-name rule", () => {
     const calls = new ChatToolCalls();
-    expect(() => calls.add([{ index: 0, id, function: { name, arguments: args } }], true)).toThrow(/size limit/);
+    expect(() => calls.add([{ index: 0, id: "call_large_name", function: { name: "n".repeat(65), arguments: "{}" } }], true)).toThrow(/size limit/);
+  });
+
+  // MAIN-RULING cause22-no-transport-caps: the old 256,000-character argument cap is deleted; a large call's arguments are kept whole.
+  it("keeps tool-call arguments over the old 256,000-character cap whole", () => {
+    const calls = new ChatToolCalls();
+    const args = JSON.stringify({ text: "x".repeat(300_000) });
+    expect(() => calls.add([{ index: 0, id: "call_large_args", function: { name: "echo", arguments: args } }], true), "no argument size cap").not.toThrow();
+    expect(calls.finish("tool_calls", false).map((call) => call.function.arguments)).toEqual([args]);
+  });
+
+  // MAIN-RULING cause22-no-transport-caps: the old 256,000-character reasoning-details cap is deleted; the blocks are kept whole.
+  it("keeps reasoning details over the old 256,000-character cap whole", () => {
+    const details = new ChatReasoningDetails();
+    const blocks = [{ type: "reasoning.text", text: "r".repeat(300_000) }, { type: "reasoning.text", text: "s".repeat(10) }];
+    let thrown: unknown;
+    try { for (const block of blocks) details.add([block]); } catch (error) { thrown = error; }
+    expect(thrown, "no reasoning-details size cap").toBeUndefined();
+    expect(details.blocks).toEqual(blocks);
+  });
+
+  // MAIN-RULING groupB-left (3) and 2026-11-23T02:48:33Z (row 3h restated): an id-only (Gemini-style) call was placed after Math.max(...slots), so a reply
+  // already holding 299,999 indexed calls threw a RangeError. Here the id-only call is placed after every indexed call and its continuation (same id,
+  // no index) lands on its own slot; the driver row openai-chat-tools.test.ts 3h reads the same reply through sendTurn.
+  it("places an id-only call after 299,999 indexed calls, and its continuation on the same slot", () => {
+    const calls = new ChatToolCalls();
+    const indexed = Array.from({ length: 299_999 }, (_, index) => ({ index, id: `c_${index}`, type: "function", function: { name: "echo", arguments: "{}" } }));
+    let thrown: unknown;
+    let placed: Array<{ id: string; arguments: string }> = [];
+    try {
+      calls.add(indexed, true);
+      calls.add([{ id: "c_idonly", type: "function", function: { name: "echo", arguments: '{"text":' } }], true);
+      calls.add([{ id: "c_idonly", function: { arguments: '"id only"}' } }], true);
+      placed = calls.finish("tool_calls", false).map((call) => ({ id: call.id, arguments: call.function.arguments }));
+    } catch (error) { thrown = error; }
+    expect([String(thrown ?? "no error"), placed.length, placed[0], placed.at(-1)], "all 300,000 calls placed, the id-only one last and whole").toEqual(["no error", 300_000, { id: "c_0", arguments: "{}" }, { id: "c_idonly", arguments: '{"text":"id only"}' }]);
   });
 });
 
@@ -89,11 +159,15 @@ describe("finish refusals", () => {
 });
 
 describe("tool calls per reply", () => {
-  it("accepts 32 calls in one reply and refuses a 33rd", () => {
+  // MAIN-RULING cause22-no-transport-caps: the old bound of 32 calls per reply is deleted; an index is still a non-negative integer.
+  it("keeps every call of a reply that carries more than the old 32-call bound", () => {
     const calls = new ChatToolCalls();
-    calls.add(Array.from({ length: 32 }, (_, index) => ({ index, ...completeCall, id: `call_${index}` })), true);
-    expect(calls.finish("tool_calls", false)).toHaveLength(32);
-    expect(() => new ChatToolCalls().add([{ index: 32, ...completeCall }], true)).toThrow(/invalid tool-call index/);
+    let thrown: unknown;
+    try { calls.add(Array.from({ length: 40 }, (_, index) => ({ index, ...completeCall, id: `call_${index}` })), true); } catch (error) { thrown = error; }
+    expect(thrown, "no call-count cap").toBeUndefined();
+    expect(calls.finish("tool_calls", false).map((call) => call.id)).toEqual(Array.from({ length: 40 }, (_, index) => `call_${index}`));
+    expect(() => new ChatToolCalls().add([{ index: -1, ...completeCall }], true)).toThrow(/invalid tool-call index/);
+    expect(() => new ChatToolCalls().add([{ index: 1.5, ...completeCall }], true)).toThrow(/invalid tool-call index/);
   });
 });
 

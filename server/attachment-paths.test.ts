@@ -21,7 +21,7 @@ const attachment = (path: string) => ({ kind: "image" as const, path, mime: "ima
 it("S5 site 14 migrates message attachment paths and their index while preserving text and shape", () => {
   setup();
   const path = join(old, "attachments", name), next = join(DATA_DIR, "attachments", name);
-  insertMessage("s5-14-a", { id: "a", role: "user", kind: "text", at: 1, text: path, attachments: [attachment(path)] });
+  insertMessage("s5-14-a", { id: "a", role: "user", kind: "text", at: 1, text: path, attachments: [attachment(path)] }); database().prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?").run(JSON.stringify({ id: "a", role: "user", kind: "text", at: 1, text: path, attachments: [attachment(path)] }), "s5-14-a", "a"); // the row as an older version wrote it before the move (writes now store current-root paths, MAIN-RULING STARTUP-1022 H2-sameKey)
   expect(rebaseMessageAttachmentPaths()).toBe(1);
   expect(readMessage("s5-14-a", "a")).toMatchObject({ text: path, attachments: [attachment(next)] });
   expect(rowsNamingImage("s5-14-a", next)).toHaveLength(1);

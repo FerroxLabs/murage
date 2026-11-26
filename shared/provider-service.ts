@@ -43,6 +43,10 @@ const ENGINE_SERVICE: Readonly<Record<string, Entry>> = {
   opencodeGo: { name: "OpenCode" },
   hermesAgent: { name: "Hermes" },
   clineAgent: { name: "Cline" },
+  commandCodeAgent: { name: "Command Code", account: "own-sign-in" },
+  kiroAgent: { name: "Kiro", account: "own-sign-in" },
+  ompAgent: { name: "OMP" },
+  devinAgent: { name: "Devin", account: "own-sign-in" },
   piAgent: { name: "pi" },
   minimax: { name: "MiniMax", account: "own-key" },
 };

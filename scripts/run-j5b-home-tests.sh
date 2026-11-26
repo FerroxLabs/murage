@@ -9,6 +9,7 @@ if (( $# > 1 )) || [[ "$group" != --all && "$group" != --ordinary && "$group" !=
 fi
 
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repo/scripts/safe-wipe.sh"
 image=${MURAGE_HOME_TEST_IMAGE:-node:24-bookworm}
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/murage-home-tests.XXXXXX")
 container=
@@ -16,7 +17,7 @@ cleanup() {
   if [[ -n "$container" ]] && docker container inspect "$container" > /dev/null 2>&1; then
     docker stop "$container" > /dev/null
   fi
-  rm -rf -- "${scratch:?}"
+  safe_wipe "${scratch:?}"
 }
 trap cleanup EXIT
 trap 'exit 130' INT

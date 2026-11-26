@@ -1,3 +1,4 @@
+import { evidencePath } from '../evidence-path.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {runNodeFixture} from './native-launcher.mjs';
@@ -9,7 +10,7 @@ assert.notEqual(mutant,original);
 try {
  writeFileSync(path,mutant);
  const result=runNodeFixture(['--test','--test-name-pattern=crev6 exact','scripts/windows/p11f.node-test.mjs'],{encoding:'utf8',timeout:60000});
- writeFileSync(new URL('evidence/cfix7-mutant-constructor.log',import.meta.url),result.stdout+result.stderr);
+ writeFileSync(evidencePath('scripts/windows/evidence/cfix7-mutant-constructor.log'),result.stdout+result.stderr);
  assert.equal(result.signal,null);
  assert.equal(result.status,1,'SURVIVED dropped constructor ban');
  assert.match(result.stdout+result.stderr,/AssertionError|ERR_ASSERTION/);

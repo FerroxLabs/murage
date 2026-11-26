@@ -393,13 +393,20 @@ export const engineText = (prompt: BuiltPrompt): string => prompt.text;
 /** The final writer captures the original prompt and generation. Caller hooks
  * and Stop run before acquiring its owner; all authority is checked inside. */
 function engineWriter(fence: EngineFence, prompt: BuiltPrompt, prior?: SendTurnInput["fencedWrite"], binding?: ConsumingTurnBinding): NonNullable<SendTurnInput["fencedWrite"]> {
-  return <R>(write: () => R, extra?: (context: ReleaseContext) => void, bytes?: number): R => {
+  return <R>(release: () => R, extra?: (context: ReleaseContext) => void, bytes?: number): R => {
     let entered = false;
     let ownerFailure = false;
     if (!fence.retained) throw new EngineInputRevoked({ state: "checking", reason: "not-built" });
     const members = checkedOpenTurns(fence.retained);
     const budgets = [...new Set(members.map(member => member.budget!))];
     const db = retainedTurnDatabase(fence.retained);
+    // 1.0.21 cause4: a frame the engine took is an accepted fenced release (release-budget.ts accepted). Counted here, after the
+    // caller's write returned, so emit below stays the reviewed final-write node (learning-send-boundary.test.ts lintWriterContracts).
+    const write = (): R => {
+      const taken = release();
+      for (const budget of budgets) budget.accepted();
+      return taken;
+    };
     let activeContext: ReleaseContext | undefined;
     const validate = (context: ReleaseContext) => {
       assertReleaseContext(context, db);
@@ -421,7 +428,7 @@ function engineWriter(fence: EngineFence, prompt: BuiltPrompt, prior?: SendTurnI
       return write();
     };
     try {
-      if (!Number.isSafeInteger(bytes) || bytes! < 0 || write.constructor.name === "AsyncFunction") throw new EngineInputRevoked({ state: "checking", reason: "not-built" });
+      if (!Number.isSafeInteger(bytes) || bytes! < 0 || release.constructor.name === "AsyncFunction") throw new EngineInputRevoked({ state: "checking", reason: "not-built" });
       if (fence.db && fence.db !== db) throw new EngineInputRevoked({ state: "checking", reason: "not-built" });
       return withReleaseBudgets(budgets, () => {
         checkReleaseAvailable(budgets, { attempts: 1, bytes: bytes! });

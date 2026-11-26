@@ -9,7 +9,7 @@ it('an accepted native question skip records once across concurrent clicks and r
   try {
     const ref = card(d.decide(f.open('accepted-skip', {}, { requestType: 'question', tool: 'AskUserQuestion', summary: 'Choose a format', choices: ['Short', 'Long'] }), baseCard));
     await d.presentApproval(ref, { title: 'Question', subtitle: 'Choose a format' });
-    expect(f.store.messageById('t', d.readApproval(ref.approvalId)!.chatMessageId)).toMatchObject({ kind: 'text', turnId: 'turn' });
+    expect(f.store.messageById('t', d.readApproval(ref.approvalId)!.chatMessageId)).toMatchObject({ kind: 'options', turnId: 'turn' });
     await Promise.all([d.answerApproval(ref, { behavior: 'deny' }), d.answerApproval(ref, { behavior: 'deny' })]);
     await d.answerApproval(ref, { behavior: 'deny' });
     await flushDecisionLog(DATA_DIR);

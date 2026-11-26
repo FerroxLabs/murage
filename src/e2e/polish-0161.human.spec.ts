@@ -71,23 +71,32 @@ const shot = async (page: Page, name: string, info: { outputPath: (name: string)
 
 for (const [width, height] of [[1280, 720], [1280, 560], [390, 844], [820, 1180], [1440, 900]] as const) test(`G3: every Settings section is reachable (${width}x${height})`, async ({ page }, info) => {
   await page.setViewportSize({ width, height });
+  await page.addInitScript(() => localStorage.setItem("murage.settings.mode", "advanced"));
   await page.goto(`${origin}/__settings`, { waitUntil: "domcontentloaded" });
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  const usage = dialog.getByRole("button", { name: "Usage", exact: true });
-  await expect(dialog.getByRole("button", { name: "Memory", exact: true })).toHaveCount(1);
-  const nav = dialog.locator("nav");
-  const fits = await nav.evaluate((el) => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1);
+  const nav = dialog.getByRole("navigation", { name: "Settings sections", exact: true });
+  await expect(nav).toHaveCount(1);
+  const section = nav.getByRole("combobox", { name: "Settings page", exact: true });
   if (width >= 768) {
+    await expect(nav.getByRole("button", { name: "Memory", exact: true })).toBeVisible();
+    const fits = await nav.evaluate((el) => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1);
     // Either the whole list fits, or it scrolls with a scrollbar the eye can see.
     if (!fits) expect(await nav.evaluate((el) => getComputedStyle(el).overflowY)).toBe("auto");
-    // 1.0.3: five group headings over twelve pages fit a 1440x900 window.
     if (width === 1440 && height === 900) expect(fits).toBe(true);
+  } else {
+    await expect(section).toBeVisible();
+    await expect(section.getByRole("option", { name: "Memory", exact: true })).toHaveCount(1);
   }
   await shot(page, `settings-${width}x${height}`, info);
-  await usage.scrollIntoViewIfNeeded();
-  await usage.click();
-  await expect(dialog.getByText("Usage", { exact: true }).first()).toBeVisible();
+  if (width >= 768) {
+    const usage = nav.getByRole("button", { name: "Usage", exact: true });
+    await usage.scrollIntoViewIfNeeded();
+    await usage.click();
+  } else {
+    await section.selectOption("usage");
+  }
+  await expect(dialog.locator("#usage-heading")).toBeVisible();
   await shot(page, `settings-usage-${width}x${height}`, info);
 });
 

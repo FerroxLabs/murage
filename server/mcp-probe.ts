@@ -1,4 +1,5 @@
 import { probeFolder } from "./probe-folder.ts";
+import type { TestRelease } from "./mcp-test-release.ts";
 import { augmentedPath } from "./env-path.ts";
 import {
   deleteEnvNames,
@@ -7,7 +8,8 @@ import {
 } from "./config.ts";
 import { createLineSplitter } from "./mcp-bridge.ts";
 import type { StoredMcpServer } from "./mcp-registry.ts";
-import { killCliTree, spawnCli } from "./procs.ts";
+import { engineJob, killCliTree, spawnCli } from "./procs.ts";
+import { chatMcpChildEnv } from "./drivers/chat-mcp-client.ts";
 
 export interface McpProbeTool {
   name: string;
@@ -20,7 +22,12 @@ export type McpProbeFailureReason =
   | "spawn" | "timeout" | "closed" | "cancelled" | "initialize" | "protocol" | "still-installing"
   | "needs-sign-in" | "needs-key" | "key-rejected" | "sign-in-ended" | "needs-more-access"
   | "not-found" | "unreachable" | "wrong-address" | "moved" | "https-required" | "local-confirm"
-  | "address-changed" | "blocked-address" | "server-error" | "no-answer" | "session-gone";
+  | "address-changed" | "blocked-address" | "server-error" | "no-answer" | "session-gone"
+  /** q1022-connparity: Test passed nothing because a chat would not mount this entry (mcp-chat-path-test.ts). */
+  | "not-in-chats"
+  /** q1023-connparity-fix: a legacy SSE server's stream ended or broke while a call waited on it for its answer
+   * (remote-mcp-sse-sessions.ts pump). The engine proxy treats it as every other mid-call stream break. */
+  | "stream-broke";
 
 /** What a server's list holds past the tools a probe keeps. */
 export interface McpToolsBeyondList {
@@ -81,7 +88,15 @@ export interface McpProbeOptions {
   patience?: "first-run";
   /** Tests only: override the installer windows. */
   installerWindowMs?: number;
+  /** q1022-connparity (MAIN-RULING CONNPARITY-1022): the process a chat spawns for this server (the wipe wrapper
+   * around the owner's command, built by the chat's own mount code) and this Test's release at the door. Started
+   * INSTEAD of the bare command; the wrapper's stdout is release envelopes, each acknowledged over its IPC channel as
+   * a chat's mount relay does. `server` stays the owner's entry (environment, redaction, installer patience). */
+  chat?: { command: string; args: readonly string[]; env: Record<string, string>; release: TestRelease };
 }
+
+/** The one line the wrapper writes to its own stderr when the owner's command could not be started (mcp-bridge.ts). */
+const WRAPPER_SPAWN_FAILED = /^bridge failures=1 code=\S+ syscall=spawn\b/m;
 
 function probeEnvironment(server: StoredMcpServer): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath() };
@@ -134,13 +149,25 @@ export function probeMcpServer(
       return;
     }
 
+    const chat = options.chat;
     let child: ReturnType<typeof spawnCli>;
     try {
-      child = spawnCli(server.command, server.args, {
-        cwd: probeFolder(),
-        env: probeEnvironment(server),
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      child = chat
+        ? spawnCli(chat.command, [...chat.args], {
+          cwd: probeFolder(),
+          // the environment a chat's relay gives the wrapper (chatMcpChildEnv: the system allowlist, PATH, then the
+          // mount's own values), never this server's whole environment; first-run patience reaches the wrapper too
+          env: chatMcpChildEnv({ ...server.env, ...chat.env, ...chat.release.env,
+            ...(installerWindow !== null ? { MURAGE_MCP_TEST_START_MS: String(Math.min(installerWindow + 5_000, 310_000)) } : {}) }),
+          stdio: ["pipe", "pipe", "pipe", "ipc"],
+          // started the way a chat's mount relay starts an admitted mount (cli-mount-relay.ts spawnMount): a
+          // server-owned child with its IPC channel, never an engine launch
+        }, engineJob({ posixHostPower: false }), { serverTool: "mcp" })
+        : spawnCli(server.command, server.args, {
+          cwd: probeFolder(),
+          env: probeEnvironment(server),
+          stdio: ["pipe", "pipe", "pipe"],
+        });
     } catch {
       resolve(fail("spawn"));
       return;
@@ -148,6 +175,7 @@ export function probeMcpServer(
 
     let settled = false;
     let stdoutBytes = 0;
+    let frameBytes = 0;
     let initialized = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const onAbort = () => finish(fail("cancelled"));
@@ -167,8 +195,20 @@ export function probeMcpServer(
         finish(fail("closed"));
       }
     };
+    // The wrapper's stdout: one release envelope per line. Only an envelope this Test's release issued is opened, and
+    // the wrapper is told so (it holds its next frame until then), exactly as a chat's mount relay does.
     const splitter = createLineSplitter((line) => {
       if (settled || !line.trim()) return;
+      if (!chat) return onFrame(line);
+      let opened: ReturnType<TestRelease["accept"]>;
+      try { opened = chat.release.accept(line); } catch { finish(fail("protocol")); return; }
+      try { child.send?.(opened.ack, (error) => { if (error) finish(fail("closed")); }); } catch { finish(fail("closed")); return; }
+      // the cap is on what the server said, as for a chat; the envelope around it is Murage's own
+      frameBytes += Buffer.byteLength(opened.frame);
+      if (frameBytes > MAX_STDOUT_BYTES) { finish(fail("protocol")); return; }
+      onFrame(opened.frame);
+    });
+    const onFrame = (line: string) => {
       let frame: unknown;
       try {
         frame = JSON.parse(line);
@@ -219,7 +259,7 @@ export function probeMcpServer(
         });
       }
       finish({ ok: true, tools, ...toolsBeyondList(result.tools, result.nextCursor, tools.length) });
-    });
+    };
 
     timer = setTimeout(() => {
       finish(fail(installerWindow !== null ? "still-installing" : "timeout"));
@@ -227,7 +267,7 @@ export function probeMcpServer(
     signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.byteLength;
-      if (stdoutBytes > MAX_STDOUT_BYTES) {
+      if (stdoutBytes > (chat ? 4 * MAX_STDOUT_BYTES : MAX_STDOUT_BYTES)) {
         finish(fail("protocol"));
         return;
       }
@@ -235,9 +275,22 @@ export function probeMcpServer(
     });
     // Drain without retaining it. Child stderr often contains secrets or
     // arbitrary native logs and is not part of the MCP protocol.
-    child.stderr.resume();
+    let wrapperSaid = "";
+    if (chat) {
+      // The wrapper never forwards the server's stderr; what arrives here is the wrapper's own fixed lines. Only the
+      // launch-failure line is looked for, and nothing of it is kept or shown.
+      child.stderr.on("data", (chunk: Buffer) => { if (wrapperSaid.length < 4096) wrapperSaid += chunk.toString("utf8").slice(0, 4096); });
+      child.on("message", (message: unknown) => {
+        const type = (message as { type?: unknown } | null)?.type;
+        // the owner's command exited or could not be started: give the wrapper's stderr line a moment to arrive
+        if (type === "mcp-server-unavailable") { const late = setTimeout(() => finish(fail(WRAPPER_SPAWN_FAILED.test(wrapperSaid) ? "spawn" : "closed")), 150); late.unref?.(); }
+        // the door refused the wrapper: nothing more of this server may be read
+        else if (type === "turn-release-terminal") finish(fail("protocol"));
+      });
+    } else child.stderr.resume();
     child.once("error", () => finish(fail("spawn")));
-    child.once("close", () => finish(fail("closed")));
+    // (the wrapper's stderr has ended by now, so its launch-failure line, if any, is in)
+    child.once("close", () => finish(fail(chat && WRAPPER_SPAWN_FAILED.test(wrapperSaid) ? "spawn" : "closed")));
     // Defensive hardening: asynchronous stdin errors are not caught by
     // write's try/catch. Settle the probe if one arrives. The fixture proves
     // a closed-stdin probe answers; it does not prove a reachable EPIPE crash.

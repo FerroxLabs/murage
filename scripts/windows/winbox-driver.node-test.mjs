@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {judgeWindows, verdict, driveWorkflow, waitUntil, phases} from './winbox-driver.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const executable='C:\\murage-ci\\results\\run\\fixture\\app\\Murage.exe';
 const proc=(pid,parent=0,birth=String(pid),imagePath=`C:\\test\\p${pid}.exe`)=>({pid,parent,birth,imagePath});
 const window=(pid,className='ConsoleWindowClass',extra={})=>({pid,birth:String(pid),hwnd:String(pid*100),className,visible:true,title:'test',...extra});
@@ -118,7 +119,7 @@ test('wait timeout is bounded and callback errors are not swallowed',async()=>{
 });
 
 test('CLI emits JSON verdict and separate offending-owner list with failure exit status',async()=>{
-  const {mkdtempSync,writeFileSync,readFileSync,rmSync}=await import('node:fs');
+  const {mkdtempSync,writeFileSync,readFileSync}=await import('node:fs');
   const {tmpdir}=await import('node:os');const {join}=await import('node:path');
   const {spawnSync}=await import('node:child_process');
   const dir=mkdtempSync(join(tmpdir(),'winbox-cli-'));
@@ -131,11 +132,11 @@ test('CLI emits JSON verdict and separate offending-owner list with failure exit
     const r=JSON.parse(readFileSync(join(dir,'verdict.json'),'utf8'));assert.equal(r.verdict,'FAIL');assert.equal(r.selfTestPassed,true);
     const offenders=JSON.parse(readFileSync(join(dir,'offending-windows.json'),'utf8'));assert.equal(offenders[0].commandLine,'cmd.exe /c start deliberate');
     assert.deepEqual(JSON.parse(result.stdout),r);
-  } finally {rmSync(dir,{recursive:true,force:true});}
+  } finally {safeWipeSync(dir);}
 });
 
 test('BLOCK 2 CLI: invalid later sample retains the offending-window artifact',async()=>{
-  const {mkdtempSync,writeFileSync,readFileSync,rmSync}=await import('node:fs');
+  const {mkdtempSync,writeFileSync,readFileSync}=await import('node:fs');
   const {tmpdir}=await import('node:os');const {join}=await import('node:path');
   const {spawnSync}=await import('node:child_process');
   const dir=mkdtempSync(join(tmpdir(),'winbox-invalid-'));
@@ -152,7 +153,7 @@ test('BLOCK 2 CLI: invalid later sample retains the offending-window artifact',a
     assert.equal(offenders.length,1);assert.equal(offenders[0].pid,40);
     assert.equal(offenders[0].commandLine,'cmd.exe /c start deliberate');
     assert.deepEqual(offenders,output.offendingWindows);
-  } finally {rmSync(dir,{recursive:true,force:true});}
+  } finally {safeWipeSync(dir);}
 });
 
 test('ROUND 3: malformed sample rows fail with counts and retain earlier and later detections',()=>{
@@ -168,7 +169,7 @@ test('ROUND 3: malformed sample rows fail with counts and retain earlier and lat
 });
 
 test('ROUND 3 CLI: later null JSONL row retains console metadata in both FAIL artifacts',async()=>{
-  const {mkdtempSync,writeFileSync,readFileSync,existsSync,rmSync}=await import('node:fs');
+  const {mkdtempSync,writeFileSync,readFileSync,existsSync}=await import('node:fs');
   const {tmpdir}=await import('node:os');const {join}=await import('node:path');
   const {spawnSync}=await import('node:child_process');
   const dir=mkdtempSync(join(tmpdir(),'winbox-null-'));
@@ -188,5 +189,5 @@ test('ROUND 3 CLI: later null JSONL row retains console metadata in both FAIL ar
     assert.equal(offenders[0].pid,40);assert.equal(offenders[0].imagePath,'C:\\test\\p40.exe');
     assert.equal(offenders[0].commandLine,'cmd.exe /c start deliberate');
     assert.deepEqual(JSON.parse(result.stdout),output);
-  } finally {rmSync(dir,{recursive:true,force:true});}
+  } finally {safeWipeSync(dir);}
 });

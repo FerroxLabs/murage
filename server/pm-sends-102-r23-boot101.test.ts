@@ -1,7 +1,7 @@
 // Astra r22 finding 5, closed: the REAL Murage 1.0.1 server (git archive d950cbf67, extracted into the gitignored .v101-ref directory) boots from the folder that
 // "Prepare to reinstall Murage 1.0.1" leaves behind while ANOTHER turn keeps the target busy during the first drain. A room hand-off whose start 1.0.2 had cut
 // short before the provider is exported as queued, and its request must be where 1.0.1 expects a waiting hand-off's: queued. Left running, 1.0.1's own boot sweep
-// marks it unknown and cancels the hand-off without ever running it. Test data only (fake engine, throwaway data folders). Run in the build host container (hz-test.sh).
+// marks it unknown and cancels the hand-off without ever running it. Test data only (fake engine, throwaway data folders). Run in the Hetzner container (hz-test.sh).
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";

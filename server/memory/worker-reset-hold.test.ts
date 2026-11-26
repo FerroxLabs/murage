@@ -19,7 +19,7 @@ vi.mock("./index.ts", async () => ({ MemoryIndex: class extends (await import(".
   override close(){ counts.closes++; }
   override async sealAndTruncate(){ counts.checkpoints++; return {truncated:true}; }
   async finishRewrite(){ counts.checkpoints++; return true; }
-  override async prepareExit(){ counts.checkpoints++; }
+  override async prepareExit(){ counts.checkpoints++; return "sealed" as const; }
 } }));
 
 async function fixture(run:(emit:(m:unknown)=>Promise<void>, sent:any[], file:string)=>Promise<void>, marker=true) {

@@ -31,6 +31,8 @@ const support: AcpSupport = {
   resolveModelsOnCreate: false,
   selectModel: { configId: "model", agentDefault: "agent-default", allowLegacy: true },
   modelVariants: true,
+  // The session must advertise /steer before the core sends it. No setup switch.
+  steer: true,
   defaultCli: "",
   nativeSource: "custom.acp",
   loginNote: CONFIGURE_HINT,

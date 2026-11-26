@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {releasePlan} from './fakes/release-plan.mjs';
@@ -11,6 +11,7 @@ import {shellActionProven} from './action-proof.mjs';
 import {releaseEngines} from './release-engines.mjs';
 import {engineSpecs} from './scenarios.mjs';
 import {parseArgs} from './run.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 test('H2 the full native catalogue partitions exactly once across matching CLI shards',()=>{
  const catalogue=releaseEngines(),seen=[];
@@ -62,7 +63,7 @@ test('H6 action proof needs exact private command, matching native completion an
   // Fresh paths avoid deliberately cached append-only fixture log readers.
   assert.equal(shellActionProven({...obs,threadIds:['another']},command,root,root),false);
   assert.equal(shellActionProven(obs,command,root,join(root,'absent')),false);
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });
 
 // A supported stop/change/retry may retire its exact initial BASE card, but

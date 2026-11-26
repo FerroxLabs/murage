@@ -51,18 +51,19 @@ import { runInNewContext } from "node:vm";
 import { transpileModule, ModuleKind } from "typescript";
 import { fuigoPolicyFailure, FUIGO_SESSION_POLICY_CONFLICT_LINE } from "./fuigo-policy.ts";
 import { openAcpSession } from "./open-session.ts";
+import { ACP_SETUP_HALTED } from "./setup-boundary.ts";
 const core = readFileSync(new URL("./core.ts", import.meta.url), "utf8");
 const openBlockStart = core.indexOf('        const openSession = (');
 if (openBlockStart < 0) throw new Error("The core session-open fixture anchor moved");
 const openBlock = core.slice(openBlockStart, core.indexOf('        /** support.hostComputerAskedByMurage', openBlockStart));
 // Extract the current recovery body and fail immediately if either boundary
 // moves; an empty slice must never masquerade as a successful recovery.
-const recoverStart = core.indexOf('            const cursor = postureResume ?? (grokBinding ?');
-const recoverEnd = core.indexOf('            proc!.sessionKey = sessionKey;', recoverStart);
+const recoverStart = core.indexOf('          const cursor = postureResume ?? (grokBinding ?');
+const recoverEnd = core.indexOf('          proc!.sessionKey = sessionKey;', recoverStart);
 if (recoverStart < 0 || recoverEnd <= recoverStart) throw new Error("The core session-recovery fixture anchors moved");
 const recoverBlock = core.slice(recoverStart, recoverEnd);
-async function coreFixture(options: { context?: ConstructorParameters<typeof FuigoResumeTurn>[0]; loadError?: unknown; newError?: unknown; calls?: string[] } = {}) {
-  const calls: string[] = options.calls ?? []; const events: unknown[] = []; const warnings: string[] = []; const received: unknown[] = [];
+async function coreFixture(options: { context?: ConstructorParameters<typeof FuigoResumeTurn>[0]; loadError?: unknown; newError?: unknown; calls?: string[]; events?: unknown[]; commandCursor?: string } = {}) {
+  const calls: string[] = options.calls ?? []; const events: unknown[] = options.events ?? []; const warnings: string[] = []; const received: unknown[] = [];
   const fuigoResume = new FuigoResumeTurn(options.context, "/new");
   const js = transpileModule(`(async () => {
     let sessionResult, sessionId = null, promptTurn;
@@ -72,8 +73,12 @@ async function coreFixture(options: { context?: ConstructorParameters<typeof Fui
   })()`, { compilerOptions: { target: 99, module: ModuleKind.ESNext } }).outputText;
   const result = await runInNewContext(js, {
     fuigoResume, FuigoPolicyError, FUIGO_SESSION_POLICY_CONFLICT_LINE,
+    commandCursor: options.commandCursor ?? null,
+    CommandNeedsSession: class CommandNeedsSession extends Error {},
     // ac1264dc5 moved openSession's body into open-session.ts (core.ts imports openAcpSession); the extracted block calls it, so the sandbox gets the real one.
     // 8d507d1c7 passes the process's owner binding into openAcpSession: with no process in this fixture there is none.
+    // O1M2-EXTRACT: the recovery block now lives in acpSetupBoundary (10-space indent) and its early ends return ACP_SETUP_HALTED.
+    ACP_SETUP_HALTED,
     openAcpSession, modelControls: { receive: (answer: unknown) => { received.push(answer); } }, proc: undefined,
     env: {}, NotModelRequest, postureResume: null, flushPendingStatus: () => {},
     // core.ts declares DestinationRefusal at module scope (line 7); the extracted block's rethrowPolicyFailure tests `instanceof` it, so the sandbox needs a class of that name.
@@ -96,6 +101,17 @@ async function coreFixture(options: { context?: ConstructorParameters<typeof Fui
   });
   return { result, calls, events, warnings, received };
 }
+it.each([false, true])("C6 a command does not renew a relocated Fuigo session (copied=%s)", async copied => {
+  const calls: string[] = [];
+  const events: unknown[] = [];
+  await expect(coreFixture({
+    context: { policy: record, relocation: { previous: "/old", copied } },
+    commandCursor: "old", loadError: raw, calls, events,
+  })).rejects.toMatchObject({ constructor: expect.objectContaining({ name: "CommandNeedsSession" }) });
+  expect(calls).toEqual(copied ? [] : ["session/load"]);
+  expect(events).toEqual([]);
+});
+
 it("T26a core recovery skips refusal, emits notice, opens new and replays", async () => {
   const got = await coreFixture({ context: { policy: record, relocation: { previous: "/old", copied: false } }, loadError: raw });
   expect(got.calls).toEqual(["session/load", "session/new"]);
@@ -171,6 +187,8 @@ it.each(["end_turn", "cancelled", "max_tokens", "reject"])("T26o/p core waits fo
     notePromptSent() {}, fuigoResume, restartReady: undefined, restartFailed: undefined,
     steering: undefined, posturePending: Promise.resolve(), postureContinuation: false, trustGeneration: 1,
     registerBusyloopRequestSite, fluxRouteFor, requestUrl: undefined, fluxRoutedTurn: false, isTerminal,
+    // design-1022-grokwarm B3: the prompt write now asks for its prompt id; flag OFF it is the bare `support.promptMeta` spread
+    promptMetaOf: () => ({}), pscope: { on: false },
   });
   expect(delivered).not.toHaveBeenCalled();
   if (reason === "reject") { reject(new Error("child exited or rejected")); await expect(pending).rejects.toThrow("child exited"); }
@@ -181,11 +199,12 @@ it.each(["end_turn", "cancelled", "max_tokens", "reject"])("T26o/p core waits fo
 it("T26j core records pending before setup failure and next load replays", async () => {
   const fuigoResume = new FuigoResumeTurn(); fuigoResume.renewed = true;
   const events: Array<{ sessionId: string; replayPending?: boolean }> = [];
-  const start = core.indexOf('            let selectedModel: string | null = null;');
-  const block = core.slice(start, core.indexOf('            // A stop while the session was being set up', start));
+  const start = core.indexOf('          let selectedModel: string | null = null;');
+  const block = core.slice(start, core.indexOf('          // A stop while the session was being set up', start));
   const js = transpileModule(`(async () => { ${block} })()`, { compilerOptions: { target: 99 } }).outputText;
   await expect(runInNewContext(js, {
-    fuigoResume, sessionId: "replacement", grokBinding: null, threadId: "thread", turnId: "turn", base: () => ({}),
+    fuigoResume, sessionId: "replacement", grokBinding: null, commandCursor: null, turn: {},
+    CommandNeedsSession: class CommandNeedsSession extends Error {}, threadId: "thread", turnId: "turn", base: () => ({}),
     emit: (e: typeof events[number]) => events.push(e), support: { configureSession: async () => { throw new Error("setup failed"); } },
     sessionResult: {}, turnConfig: {}, cliTurn: {}, env: {}, turnHalted: () => false,
     // d121dae1e: the block now also asks whether this turn resumed a session (a fresh one, here) before resetting a thinking variant.
@@ -195,8 +214,8 @@ it("T26j core records pending before setup failure and next load replays", async
   })).rejects.toThrow("setup failed");
   expect(events).toEqual([expect.objectContaining({ sessionId: "replacement", replayPending: true })]);
   const next = new FuigoResumeTurn({ pending: events[0].replayPending ? { cursor: events[0].sessionId } : undefined });
-  const replayStart = core.indexOf('            if (fuigoResume?.needsReplay(sessionId)');
-  const replay = core.slice(replayStart, core.indexOf("            // the owner's session is now known:", replayStart));
+  const replayStart = core.indexOf('          if (fuigoResume?.needsReplay(sessionId)');
+  const replay = core.slice(replayStart, core.indexOf("          // the owner's session is now known:", replayStart));
   const replayJs = transpileModule(`let promptTurn; ${replay}\npromptTurn`, { compilerOptions: { target: 99 } }).outputText;
   expect(runInNewContext(replayJs, { fuigoResume: next, sessionId: "replacement", turn: { transcript: ["history"] }, replayTurn: (p: string) => p + " history" })).toContain("history");
 });

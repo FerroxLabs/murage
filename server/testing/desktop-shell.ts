@@ -144,9 +144,6 @@ export async function startDesktopShell(options: DesktopShellOptions): Promise<D
       return;
     }
     privateMessages.push(structuredClone(frame));
-    if (frame.type === "murage:highlevel-bootstrap-request") {
-      child?.send({ type: "murage:highlevel-bootstrap", requestId: frame.requestId, error: "storage" });
-    }
     if (frame.type === "murage:mcp-token-rejected") void service.handleTokenRejected(frame.name);
     if (frame.type === "murage:mcp-secrets-stale") void service.handleSecretsStale(frame);
     if (frame.type === "murage:mcp-secrets-renamed") void service.handleSecretsRenamed(frame);

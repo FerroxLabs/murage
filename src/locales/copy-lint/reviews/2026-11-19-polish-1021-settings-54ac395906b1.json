@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "polish-1021-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.21 Settings polish strings"
+  },
+  "author": "polish-1021-n1b",
+  "date": "2026-11-19",
+  "base": "5e4a0e873f",
+  "scope": "1.0.21 Settings polish: Teach a skill copy names no slash command, and the Other search services row",
+  "strings": {
+    "en:searchSettings.otherServices": {
+      "text": "Other search services",
+      "en": "Other search services",
+      "verdict": "pass",
+      "note": "Matches the source; clear, plain label for the optional services button."
+    },
+    "en:settings.workspaceFeature.recorder.note": {
+      "text": "Record a workflow, or ask a bot in chat to learn a skill from what you show it. Every change waits for your review.",
+      "en": "Record a workflow, or ask a bot in chat to learn a skill from what you show it. Every change waits for your review.",
+      "verdict": "pass",
+      "note": "Matches the approved source; plain words, no slash commands."
+    },
+    "en:settings.stub.letsBots.skillRecorder": {
+      "text": "learn a skill from a recording or from chat",
+      "en": "learn a skill from a recording or from chat",
+      "verdict": "pass",
+      "note": "Matches the source and reads correctly in 'Off. Turn it on to let bots {letsBots}.'"
+    },
+    "de:searchSettings.otherServices": {
+      "text": "Andere Suchdienste",
+      "en": "Other search services",
+      "verdict": "pass",
+      "note": "Accurate and natural German for 'Other search services'."
+    },
+    "de:settings.workspaceFeature.recorder.note": {
+      "text": "Nimm einen Ablauf auf oder bitte einen Bot im Chat, eine Fähigkeit aus dem zu lernen, was du ihm zeigst. Jede Änderung wartet auf deine Prüfung.",
+      "en": "Record a workflow, or ask a bot in chat to learn a skill from what you show it. Every change waits for your review.",
+      "verdict": "pass",
+      "note": "Accurate, natural du register, no slash commands, and 'eine Fähigkeit' now matches the 'Fähigkeit beibringen' switch and the rest of German Settings."
+    },
+    "de:settings.stub.letsBots.skillRecorder": {
+      "text": "eine Fähigkeit aus einer Aufnahme oder im Chat lernen können",
+      "en": "learn a skill from a recording or from chat",
+      "verdict": "pass",
+      "note": "Reads correctly as 'Aus. Schalte es ein, damit Bots eine Fähigkeit aus einer Aufnahme oder im Chat lernen können.' and uses the pack's Settings term 'Fähigkeit'."
+    },
+    "es:searchSettings.otherServices": {
+      "text": "Otros servicios de búsqueda",
+      "en": "Other search services",
+      "verdict": "pass",
+      "note": "Accurate and natural Spanish for the label."
+    },
+    "es:settings.workspaceFeature.recorder.note": {
+      "text": "Graba un flujo de trabajo o pide a un bot en el chat que aprenda una habilidad de lo que le muestras. Cada cambio espera tu revisión.",
+      "en": "Record a workflow, or ask a bot in chat to learn a skill from what you show it. Every change waits for your review.",
+      "verdict": "pass",
+      "note": "Accurate, tú register, uses 'habilidad' like the rest of the pack, no slash commands."
+    },
+    "es:settings.stub.letsBots.skillRecorder": {
+      "text": "aprender una habilidad a partir de una grabación o en el chat",
+      "en": "learn a skill from a recording or from chat",
+      "verdict": "pass",
+      "note": "Infinitive fits 'Actívalo para que los bots puedan {letsBots}.' and matches the source meaning."
+    },
+    "fr:searchSettings.otherServices": {
+      "text": "Autres services de recherche",
+      "en": "Other search services",
+      "verdict": "pass",
+      "note": "Accurate and natural French for the label."
+    },
+    "fr:settings.workspaceFeature.recorder.note": {
+      "text": "Enregistre un flux de travail ou demande à un bot, dans le chat, d’apprendre une compétence à partir de ce que tu lui montres. Chaque changement attend ta relecture.",
+      "en": "Record a workflow, or ask a bot in chat to learn a skill from what you show it. Every change waits for your review.",
+      "verdict": "pass",
+      "note": "Accurate, tu register, uses 'compétence' like the rest of the pack, no slash commands."
+    },
+    "fr:settings.stub.letsBots.skillRecorder": {
+      "text": "apprendre une compétence à partir d’un enregistrement ou dans le chat",
+      "en": "learn a skill from a recording or from chat",
+      "verdict": "pass",
+      "note": "Infinitive fits 'Active-le pour que les bots puissent {letsBots}.' and matches the source meaning."
+    },
+    "hi:searchSettings.otherServices": {
+      "text": "अन्य खोज सेवाएँ",
+      "en": "Other search services",
+      "verdict": "pass",
+      "note": "Accurate and natural Hindi for the label."
+    },
+    "hi:settings.workspaceFeature.recorder.note": {
+      "text": "कोई वर्कफ़्लो रिकॉर्ड करें, या चैट में किसी बॉट से कहें कि आप जो दिखाते हैं उससे स्किल सीखे। हर बदलाव आपकी समीक्षा का इंतज़ार करता है।",
+      "en": "Record a workflow, or ask a bot in chat to learn a skill from what you show it. Every change waits for your review.",
+      "verdict": "pass",
+      "note": "Accurate, polite aap register and 'स्किल'/'बॉट' terms match the pack, no slash commands."
+    },
+    "hi:settings.stub.letsBots.skillRecorder": {
+      "text": "रिकॉर्डिंग या चैट से स्किल सीख सकें",
+      "en": "learn a skill from a recording or from chat",
+      "verdict": "pass",
+      "note": "Subjunctive 'सीख सकें' fits 'इसे चालू करें ताकि बॉट {letsBots}।' and matches the source meaning."
+    },
+    "ja:searchSettings.otherServices": {
+      "text": "その他の検索サービス",
+      "en": "Other search services",
+      "verdict": "pass",
+      "note": "Accurate and natural Japanese for the label."
+    },
+    "ja:settings.workspaceFeature.recorder.note": {
+      "text": "ワークフローを記録するか、チャットでボットに見せた内容からスキルを学ぶよう頼みます。どの変更もあなたの確認を待ちます。",
+      "en": "Record a workflow, or ask a bot in chat to learn a skill from what you show it. Every change waits for your review.",
+      "verdict": "pass",
+      "note": "Accurate and natural, uses 'スキル'/'ボット' like the pack, no slash commands."
+    },
+    "ja:settings.stub.letsBots.skillRecorder": {
+      "text": "録画やチャットからスキルを学べる",
+      "en": "learn a skill from a recording or from chat",
+      "verdict": "pass",
+      "note": "'学べる' fits 'ボットが{letsBots}ようになります。' and '録画' suits the screen-based recorder."
+    },
+    "pt-br:searchSettings.otherServices": {
+      "text": "Outros serviços de busca",
+      "en": "Other search services",
+      "verdict": "pass",
+      "note": "Accurate and natural Brazilian Portuguese for the label."
+    },
+    "pt-br:settings.workspaceFeature.recorder.note": {
+      "text": "Grave um fluxo de trabalho ou peça a um bot no chat para aprender uma habilidade com o que você mostra. Toda mudança espera a sua revisão.",
+      "en": "Record a workflow, or ask a bot in chat to learn a skill from what you show it. Every change waits for your review.",
+      "verdict": "pass",
+      "note": "Accurate, você register and 'habilidade' match the pack, no slash commands."
+    },
+    "pt-br:settings.stub.letsBots.skillRecorder": {
+      "text": "aprender uma habilidade a partir de uma gravação ou no chat",
+      "en": "learn a skill from a recording or from chat",
+      "verdict": "pass",
+      "note": "Infinitive fits 'Ative para permitir que os bots possam {letsBots}.' and matches the source meaning."
+    },
+    "zh:searchSettings.otherServices": {
+      "text": "其他搜索服务",
+      "en": "Other search services",
+      "verdict": "pass",
+      "note": "Accurate and natural Chinese for the label."
+    },
+    "zh:settings.workspaceFeature.recorder.note": {
+      "text": "录制一个工作流程，或在聊天中让机器人从你展示的内容学习技能。每项更改都会等你审核。",
+      "en": "Record a workflow, or ask a bot in chat to learn a skill from what you show it. Every change waits for your review.",
+      "verdict": "pass",
+      "note": "Accurate and natural, uses '技能'/'机器人' like the pack, no slash commands."
+    },
+    "zh:settings.stub.letsBots.skillRecorder": {
+      "text": "通过录制或聊天学习技能",
+      "en": "learn a skill from a recording or from chat",
+      "verdict": "pass",
+      "note": "Fits '开启后，机器人可以{letsBots}。' and matches the source meaning."
+    }
+  },
+  "files": {}
+}

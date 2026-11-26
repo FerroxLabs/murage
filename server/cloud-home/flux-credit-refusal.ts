@@ -12,6 +12,7 @@
 //      a held service is never described as used-up credits).
 //   3. 503 key_fence_unavailable: retryable and says nothing about credits.
 // A 402 is never retried (server/drivers/retry.ts classifies it as quota, not transient).
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { cloudHomeCopy } from "./copy.ts";
 import { FLUX_NOT_READY_COPY, FLUX_SERVICE_HOLD_COPY } from "../../shared/provider-error.ts";
 
@@ -55,7 +56,7 @@ function parseBody(body: unknown): unknown {
   if (typeof body !== "string") return body;
   const text = body.trim();
   if (!text || text.length > 65_536 || !/^[\[{]/.test(text)) return undefined;
-  try { return JSON.parse(text); } catch { return undefined; }
+  try { return registerBusyloopPayloadSite("read", JSON.parse(text)); } catch { return undefined; }
 }
 
 /** The first `provider_specific_fields` object anywhere near the top of the body. */

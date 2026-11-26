@@ -1,0 +1,76 @@
+{
+  "version": "0.55.0",
+  "source": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.55.0",
+  "sourceCommit": "8f484f30586eef722bede7a5ce315de1148cca96",
+  "registry": "https://registry.npmjs.org",
+  "verifiedAt": "2026-11-21",
+  "previousVersion": "0.28.2",
+  "installScriptsExecuted": false,
+  "nativeExecutablesRun": "linux-x86_64 binary only (--version, manifest, mcp tools/list, serve + MCP smoke under Xvfb); the macOS binaries were hashed and header-checked, never run",
+  "license": "MIT",
+  "telemetry": "default ON upstream; disabled by CUA_DRIVER_RS_TELEMETRY_ENABLED=false (verified: 'Telemetry: disabled (source: environment)')",
+  "macCodesignVerified": false,
+  "macCodesignToVerifyOnAMac": [
+    "codesign -dvv cua-driver  (expect Authority Developer ID Application: Cua AI, Inc. (YCK386LBJ7), flags runtime)",
+    "codesign --verify --strict cua-driver",
+    "cua-driver --version prints 'cua-driver 0.55.0'"
+  ],
+  "packages": [
+    {
+      "target": "release-asset-darwin-universal",
+      "name": "cua-driver-rs-0.55.0-darwin-universal-binary.tar.gz",
+      "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.55.0/cua-driver-rs-0.55.0-darwin-universal-binary.tar.gz",
+      "tarballSha256": "e6246d3da20abe019e2660e8b5f77e0c12cf9b386597a76393116994a36db6ce",
+      "archiveBytes": 43825788,
+      "checksumsTxtSha256": "5286f927241d1b2179063baa461e9355105aebc65a7254b9b72ad882ccb08336",
+      "members": ["cua-driver", "cua-cursor-theme", "libcua_driver_sdk.dylib", "cua_driver_node_runtime.node", "cua_driver_abi.h"],
+      "executable": {
+        "name": "cua-driver",
+        "sha256": "eebc22cb1251d9546ee6417eaa74dcf77899810c9dfe8f6dac60617bfa0ca451",
+        "bytes": 53103536,
+        "format": "Mach-O universal",
+        "architectures": ["x86_64", "arm64"]
+      }
+    },
+    {
+      "target": "wrapper",
+      "name": "@trycua/cua-driver",
+      "tarball": "https://registry.npmjs.org/@trycua/cua-driver/-/cua-driver-0.55.0.tgz",
+      "integrity": "sha512-d61MUXOajdspdClSvQ3w4CapVVMnHY73O3htmob8Sh7b0xQ6ROFdyMWdImJfB9qei3mL2YLVGMQPKfAepCGiwA==",
+      "shasum": "18fc05ffe67fc2ce206a8eb4d184c0c70d367cbe",
+      "dependencies": { "@ubjs/core": "0.31.0-3", "@ubjs/node": "0.31.0-3" },
+      "notes": "exports ./fleet removed vs 0.28.2 (unused by Murage); embedded.d.ts and electron.d.ts byte-identical to 0.28.2"
+    },
+    {
+      "target": "darwin-arm64",
+      "name": "@trycua/cua-driver-darwin-arm64",
+      "tarball": "https://registry.npmjs.org/@trycua/cua-driver-darwin-arm64/-/cua-driver-darwin-arm64-0.55.0.tgz",
+      "tarballSha256": "8a2d7199596ed64049bf2891669c660cffbf298fb262992a55afc56493a7ee46",
+      "integrity": "sha512-h5GjC5BPMiAp8WzXxircZpBSO74T54TQqLxEVf+QRD/bbRGojZMWg2QzJaGx2uYuj3G2MXJkBGP6vr4BvcEAYQ==",
+      "shasum": "e3330321353d554143701e4a63856125fa7bfcd5",
+      "files": [
+        { "name": "libcua_driver_sdk.dylib", "sha256": "60a87525e3a28aac96fc3dc875ccfeeda1952b2d7c1ad16fda177fae3af3cefa", "bytes": 42652752 },
+        { "name": "cua_driver_node_runtime.node", "sha256": "b5eec24cfbd0fa35d6ed2e6a815f83c46ad289caef84f7406c355943d0349218", "bytes": 1774880 }
+      ]
+    },
+    {
+      "target": "darwin-x64",
+      "name": "@trycua/cua-driver-darwin-x64",
+      "tarball": "https://registry.npmjs.org/@trycua/cua-driver-darwin-x64/-/cua-driver-darwin-x64-0.55.0.tgz",
+      "tarballSha256": "8a9092d6e85344fb6d4d7baaa3a32808c76221316c6bf1931f3d668334fd7a89",
+      "integrity": "sha512-mzUO982kZPgnYg9tekZLfNbeMP/ARGAh+FCo1f7Sj72d0865lcGq/qcOlYg7Ye1z9ALyV/GoeZ+7VpLkYz8LTw==",
+      "shasum": "8dffe2fadbc8fd9efa87e3c095207c6ee2a35ce5",
+      "files": [
+        { "name": "libcua_driver_sdk.dylib", "sha256": "60a87525e3a28aac96fc3dc875ccfeeda1952b2d7c1ad16fda177fae3af3cefa", "bytes": 42652752 },
+        { "name": "cua_driver_node_runtime.node", "sha256": "b5eec24cfbd0fa35d6ed2e6a815f83c46ad289caef84f7406c355943d0349218", "bytes": 1774880 }
+      ]
+    }
+  ],
+  "toolSurface": {
+    "toolCount": 65,
+    "present": ["click", "get_window_state", "type_text", "press_key", "list_apps", "list_windows", "scroll", "hotkey", "start_session", "get_session", "end_session", "list_sessions"],
+    "behaviourChange": "click/type_text/press_key by pixel refuse until get_window_state has read that window on the same connection; get_window_state accepts no session argument; arguments are strictly validated (unknown argument is an error)",
+    "contract": { "contract_version": "0.9.0", "tools_list_schema_version": "1", "capability_version": "1", "mcp_protocol_version": "2025-06-18" }
+  },
+  "status": "PASS_ASSET_AND_NPM_HASHES_LINUX_RUN__MAC_SIGNATURE_AND_RUN_PENDING"
+}

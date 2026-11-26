@@ -368,12 +368,13 @@ it("30: repeated reap failure keeps the run beyond cooldown and Try again until 
   }finally{r.close();}
 });
 
-it.each((["first","retry","probe"] as const).flatMap(kind=>(["before-charge-commit","after-charge-before-begin","after-spawn-before-commit","live-commit-failure","after-commit","refusal-before-refund"] as const).map(window=>({kind,window}))))("24: $kind paid cap at $window",async({kind,window})=>{
+it.each((["first","retry","probe"] as const).flatMap(kind=>(["before-charge-commit","after-charge-before-begin","after-commit-before-spawn","live-commit-failure","after-commit","refusal-before-refund"] as const).map(window=>({kind,window}))))("24: $kind paid cap at $window",async({kind,window})=>{
   const {mutateReflect}=await import("./pip-reflect.ts");
     closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});reconcileMemoryRoster(roster);setMemoryMode("active");
     const r=await rig(undefined,{probe:kind==="probe"}),original=r.deps.resolveRoute;
     const controller=new AbortController();
-    let injected=false,blockedBegins=0,initialized=false,spawns=0,refundBoundary=false;
+    let injected=false,blockedBegins=0,initialized=false,spawns=0,refundBoundary=false,inGateSend=false,failSpawn=false,gateCommitted=false;
+    let spawnsAtGateCommit:number|undefined;
     let crashState:string|undefined;
     const checkpoint=()=>{
       crashState=String(r.other.prepare("SELECT intent FROM memory_scope_bindings WHERE id='pip-reflect:moss'").get()!.intent);
@@ -382,12 +383,16 @@ it.each((["first","retry","probe"] as const).flatMap(kind=>(["before-charge-comm
     const durable=()=>{const row=r.other.prepare("SELECT intent FROM memory_scope_bindings WHERE id='pip-reflect:moss'").get();return row?JSON.parse(String(row.intent)).run?.families.lived?.paidCalls??0:0;};
     vi.mocked(awaitCliTreeStopped).mockImplementation(async child=>{queueMicrotask(()=>child.emit("close",0));return true;});
     vi.mocked(spawnCli).mockImplementation(()=>{
+      if(failSpawn){failSpawn=false;throw new Error("crash after commit before spawn");}
       spawns++;expect(durable()).toBeLessThanOrEqual(3);expect(durable()).toBe(kind==="retry"&&spawns===1?2:3);
       const child=Object.assign(new EventEmitter(),{pid:998877,stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough()});
       queueMicrotask(()=>{child.stdout.write(JSON.stringify({type:"system",subtype:"init",tools:[],mcp_servers:[]})+"\n"+JSON.stringify({type:"result",subtype:"success",is_error:false,result:"not JSON",usage:{input_tokens:10,output_tokens:5}})+"\n");child.emit("close",0);});return child as never;
     });
     r.deps.resolveRoute=async(...args)=>({...await original(...args),kind:"cli",textOnlyTurn:async input=>{
       const hooks=input.transport!.hooks!;
+      // Mark the learning gate's own transaction, so the windows below hit its release COMMIT and no later one.
+      const gate=input.transport!.gate!,send=gate.send.bind(gate);
+      gate.send=((emit,validate)=>{inGateSend=true;try{return send(emit,validate);}finally{inGateSend=false;}}) as typeof gate.send;
       return headlessTextOnlyTurn({...input,cwd:DATA_DIR,transport:{...input.transport,hooks:{...hooks,onIntent:async intent=>{
         await hooks.onIntent!(intent);
         if(!initialized){initialized=true;mutateReflect("moss",s=>{s.run!.families.lived.paidCalls=kind==="retry"?1:2;});}
@@ -406,25 +411,32 @@ it.each((["first","retry","probe"] as const).flatMap(kind=>(["before-charge-comm
         const staged=family()?.paidCalls??0;
         if(window==="before-charge-commit"&&staged===3&&durable()===2){checkpoint();injected=true;throw new Error("crash before charge commit");}
         if((window==="after-charge-before-begin"||window==="refusal-before-refund")&&staged===3&&durable()===2){const value=exec(sql);if(window==="after-charge-before-begin")checkpoint();injected=true;blockedBegins=window==="after-charge-before-begin"?1:2;return value;}
-        if((window==="after-spawn-before-commit"||window==="live-commit-failure")&&durable()===3&&spawns===(kind==="retry"?2:1)){checkpoint();injected=true;if(window==="after-spawn-before-commit")exec("ROLLBACK");throw new Error(window);}
+        // The gate's release COMMIT (the charge committed earlier, so durable is already 3). No process may exist yet:
+        // the gate commits first, then the prompt write and spawn follow (headless-text-only.ts:137, MAIN-RULING learning-send :56).
+        if((window==="live-commit-failure"||window==="after-commit-before-spawn"||window==="after-commit")&&inGateSend&&durable()===3&&!gateCommitted){
+          spawnsAtGateCommit=spawns;gateCommitted=true;
+          if(window==="live-commit-failure"){checkpoint();injected=true;throw new Error(window);}
+          const value=exec(sql);if(window==="after-commit-before-spawn"){checkpoint();injected=true;failSpawn=true;}return value;
+        }
       }
       const value=exec(sql);
-      if(window==="after-commit"&&!injected&&sql==="COMMIT"&&spawns===(kind==="retry"?2:1)&&durable()===3){
-        checkpoint();injected=true;
-      }
+      // after-commit replays the first committed state after the gate's COMMIT and the spawn (the child is recorded).
+      if(window==="after-commit"&&gateCommitted&&!injected&&sql==="COMMIT"&&spawns===(kind==="retry"?2:1)&&durable()===3){checkpoint();injected=true;}
       return value;
     });
     try{
       await runPipReflect(r.deps,undefined,controller.signal);
       expect(injected).toBe(true);
+      if(["live-commit-failure","after-commit-before-spawn","after-commit"].includes(window))expect(spawnsAtGateCommit).toBe(kind==="retry"?1:0);
+      if(window==="live-commit-failure")expect(spawns).toBe(kind==="retry"?1:0); // a failed release COMMIT launches nothing
       expect(crashState).toBeDefined();
       if(window==="refusal-before-refund")expect(refundBoundary).toBe(true);
       if(window==="after-charge-before-begin"){
         expect(durable()).toBe(2); // Only gate BEGIN failed; the refund committed.
         crashState=String(r.other.prepare("SELECT intent FROM memory_scope_bindings WHERE id='pip-reflect:moss'").get()!.intent);
       }
-      if(window==="live-commit-failure"||window==="after-spawn-before-commit"){expect(family()?.state).toBe("uncertain-transport");expect(family()?.transport).toBeDefined();}
-      const expected=(kind==="retry"?1:0)+(["before-charge-commit","after-charge-before-begin","refusal-before-refund"].includes(window)?0:1);
+      if(window==="live-commit-failure"||window==="after-commit-before-spawn"){expect(family()?.state).toBe("uncertain-transport");expect(family()?.transport).toBeDefined();}
+      const expected=(kind==="retry"?1:0)+(["before-charge-commit","after-charge-before-begin","refusal-before-refund","live-commit-failure","after-commit-before-spawn"].includes(window)?0:1);
       expect(spawns).toBe(expected);spy.mockRestore();
       // The live call can conclude and delete a terminal run. Replay the independently read,
       // committed crash-window state, not that later conclusion, when modelling restart.

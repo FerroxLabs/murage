@@ -1,3 +1,4 @@
+import { evidencePath } from '../scripts/evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {copyFileSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
@@ -29,9 +30,9 @@ beforeAll(async()=>{
  desktop={'x-murage-surface':'desktop','x-murage-surface-secret':(await api('GET','/api/desktop-secret')).body.secret};
 },90000);
 afterAll(async()=>{
- mkdirSync('evidence/gnl-apps-r2',{recursive:true});
- writeFileSync('evidence/gnl-apps-r2/preflight.json',JSON.stringify({fixture:fixture?.info,evidence},null,2));
- if(fixture)copyFileSync(fixture.info.logPath,'evidence/gnl-apps-r2/preflight-server.log');
+ mkdirSync(evidencePath('evidence/gnl-apps-r2'),{recursive:true});
+ writeFileSync(evidencePath('evidence/gnl-apps-r2/preflight.json'),JSON.stringify({fixture:fixture?.info,evidence},null,2));
+ if(fixture)copyFileSync(fixture.info.logPath,evidencePath('evidence/gnl-apps-r2/preflight-server.log'));
  await fixture?.close();
 });
 it.each(['direct','wrapped'] as const)('H1 preflight %s dispatches connected B while reporting disconnected A and C once without cards',async shape=>{

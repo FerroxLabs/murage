@@ -4,6 +4,8 @@
 // Pinned vendor schema revisions reviewed for BOT-CALLS-1020 (section 8). Recheck against the live reference before release.
 export const PINNED = {
   rest: { reference: "docs.vapi.ai/api-reference/calls/create", checked: "2026-11-05", cancelEndpoint: "DELETE /call/{id}", cancelEndedReason: "scheduled-call-deleted" },
+  // https://docs.vapi.ai/api-reference/calls/list
+  callList: { filters: ["createdAtGe", "createdAtLe", "limit"], limit: 100, maxLimit: 1000 },
   mcp: { source: "github.com/VapiAI/mcp-server src/schemas", checked: "2026-11-05", createCallOverrides: ["variableValues"] },
 } as const;
 

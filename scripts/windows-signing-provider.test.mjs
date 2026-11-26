@@ -100,7 +100,8 @@ it("RED both Windows workflows sign with one pinned Azure action before the only
     const pack = steps.findIndex(step => step.env?.AZURE_CLIENT_SECRET);
     expect(action).toBeGreaterThanOrEqual(0);
     expect(pack).toBeGreaterThan(action);
-    expect(steps[action].with["files-folder-filter"]).toBe("exe,dll,pyd");
+    // 1.0.20: an explicit list, so Microsoft's VC++ runtime is never re-signed (scripts/gepa-windows-signers.test.mjs).
+    expect(steps[action].with["files-catalog"]).toBe("${{ github.workspace }}/qualification-evidence/gepa-windows-sign-list.txt");
     expect(JSON.stringify(workflows[file])).not.toContain("windows-signing-provider.mjs");
     pins.push(steps[action].uses);
   }

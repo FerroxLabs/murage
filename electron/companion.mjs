@@ -11,6 +11,7 @@ import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // through here, which keeps the UI on one origin, avoids CORS, and means the
 // narrow list of things the renderer may ask for is written down in one
 // place rather than implied by whatever the control server happens to serve.
+import { controlOutcomeUncertain, removalStatusOf } from "./companion-removal.mjs";
 import { app, utilityProcess } from "electron";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -668,13 +669,24 @@ export async function companionPairing(open, expectedToken) {
   }
 }
 
-/** Unpair one device. Ignores an id the renderer should not have sent. */
+/** Unpair one device. Ignores an id the renderer should not have sent. The answer is the state plus `removal`: the recorded steps, `uncertain` when
+ * the request may have landed without a reply (P3). */
 export async function companionRevoke(deviceId) {
   if (!proc) return companionState();
   // the id came from the renderer, so it does not get to shape a path
   if (!/^[\w-]{1,64}$/.test(String(deviceId ?? ""))) return companionState();
-  await control("DELETE", `/devices/${deviceId}`).catch(() => {});
-  return companionState();
+  let recorded = null, uncertain = false;
+  try { recorded = (await control("DELETE", `/devices/${deviceId}`))?.removal ?? null; }
+  catch (error) { uncertain = controlOutcomeUncertain(error); }
+  return { ...(await companionState()), removal: removalStatusOf(recorded, { uncertain }) };
+}
+
+/** Check again: the recorded removal of one device, read only. Still answers once the device row is gone. */
+export async function companionRemovalStatus(deviceId) {
+  if (!proc) return removalStatusOf(null, { uncertain: true });
+  if (!/^[\w-]{1,64}$/.test(String(deviceId ?? ""))) return removalStatusOf(null);
+  try { return removalStatusOf(await control("GET", `/devices/${deviceId}/removal`)); }
+  catch (error) { return removalStatusOf(null, { uncertain: controlOutcomeUncertain(error) }); }
 }
 
 /** Switch share and ask on or off for one paired phone. Off waits for Murage to acknowledge before the state says so. */

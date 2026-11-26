@@ -9,7 +9,7 @@
 // engine-exclusion addon, upstream's DN/CN publisher rules) on the updater.
 import { createHash } from "node:crypto";
 
-export const WINDOWS_VERIFIER_VERSION = "6.8.9";
+export const WINDOWS_VERIFIER_VERSION = "6.8.11";
 export const WINDOWS_VERIFIER_SHA256 = "4738e446904710a2497fd3408fdf6416c5515d9177c0add0f2427bd725969c21";
 
 export function assertWindowsVerifierSource(version, source) {

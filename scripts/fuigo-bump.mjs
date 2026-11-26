@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { FUIGO_TARGET_OSES } from './prepare-fuigo.mjs';
+import { checkTrustV3 } from "./fuigo-trust-evidence-v3.mjs";
 // Release-gate step that moves the bundled Fuigo pin (FUIGO-TRUST-V2 N8 as amended by N10).
 // Runs on a disposable box only: refuses on darwin without MURAGE_GATE_BOX=1. Never runs a Fuigo binary, runs no
 // install scripts, and writes nothing in the repo unless every step passes.
@@ -6,7 +8,7 @@
 //   node scripts/fuigo-bump.mjs --version 1.0.37 --fuigo-checkout <path> --evidence <dir> --base <murage sha>
 //     --reviewed-hunks <file> [--murage-git <dir>] [--expected-hashes <FUIGO-1037-HASHES.md>] [--policy <file>]
 //     (--real-turns <dir with <os>.json and <os>/ per OS> | --real-turns-owed)
-//   node scripts/fuigo-bump.mjs --merge-check <bump-x.y.z.json>
+//   node scripts/fuigo-bump.mjs --merge-check <bump-x.y.z.json> --real-turns <dir> --expected-release <file>
 //
 // --real-turns-owed moves the pin on a branch and records real_turns: "owed". Build step 10 runs --merge-check on the
 // bump receipt before the merge: it refuses a receipt that still owes real turns.
@@ -264,6 +266,12 @@ const asked = (view, command, option) => {
 };
 const ranCat = (view, nonce) => view.completed.some((item) => item.text.includes(`note ${nonce}`));
 const ranLs = (view) => view.completed.some((item) => item.command === "ls" && item.text.includes("note.txt"));
+const trustedCommandPolicy = (ctx, view) => {
+  if (ctx.row.schema !== 3 || !ctx.want.policySha256 || view.proc.level !== "ask") return noPermissions(view);
+  const command = ranCat(view, ctx.nonce) ? "cat" : "ls", permission = asked(view, command, "allow-once");
+  must(view.completed.some(item => item.command?.includes(command) && item.seq > view.replyTo(permission)?.seq), "governed Ask command checked before execution");
+  must(view.msgs.some(record => record.msg.result?._meta?.[POLICY_ACK]?.sha256 === ctx.want.policySha256), "this governed Ask session acknowledges the policy");
+};
 const ran = (view, ctx) => must(ranCat(view, ctx.nonce) || ranLs(view), "the command ran");
 const initialized = (view) => {
   const caps = view.inits[0]?.msg.params?.clientCapabilities;
@@ -391,7 +399,7 @@ const STEP_PROOFS = {
     must(views.length >= 1, "needs a process");
     for (const view of views) {
       loaded(view);
-      noRequests(view); noPermissions(view); ran(view, ctx);
+      noRequests(view); trustedCommandPolicy(ctx, view); ran(view, ctx);
       const first = siblingOf(ctx, view, "t1");
       must(first, "its t1");
       answered(first, oneRequest(first), TRUST_REPLY);
@@ -413,7 +421,7 @@ const STEP_PROOFS = {
     answered(view, oneRequest(view), TRUST_REPLY);
     carded(ctx, view, "Trust");
     must(ranCat(view, ctx.nonce), "cat ran");
-    noPermissions(view);
+    trustedCommandPolicy(ctx, view);
     must(ctx.rows.find((row) => row.row === view.proc.row)?.trustGet?.records === 1, "trustGet records 1");
   },
   g3: (ctx, views) => {
@@ -536,7 +544,7 @@ const checkOsRun = (os, row, folder, want, stop, seen) => {
   if (row.fuigoVersion !== want.version) stop(`fuigoVersion is ${row.fuigoVersion}`);
   if (row.peeledTag !== want.peeledTag) stop("not this tag commit");
   if (!isHex(row.murageSha, 40) || row.murageSha !== want.murageSha) stop("not this Murage sha");
-  if (typeof row.target !== "string" || !row.target.startsWith(REAL_TURN_OSES[os]) || !Object.hasOwn(want.assets, row.target)) stop(`target ${row.target} is not a ${os} asset`);
+  if (FUIGO_TARGET_OSES[row.target] !== os || !Object.hasOwn(want.assets, row.target)) stop(`target ${row.target} is not a ${os} asset`);
   else if (row.binarySha256 !== want.assets[row.target].binarySha256) stop("the binary that ran is not the pinned asset");
   if ((row.policySha256 ?? null) !== want.policySha256) stop("policy sha differs");
   if (!isHex(row.nonce, 16)) stop("nonce is not 16 hex");
@@ -549,14 +557,27 @@ const checkOsRun = (os, row, folder, want, stop, seen) => {
   const others = isArray(list.other) ? list.other : [];
   const listed = [list.invocations, list.driver, list.version, ...transcripts, ...others];
   if (new Set(listed).size !== listed.length) stop("a file is listed twice");
+  // V3 adds independently pinned package resources and byte-equal before/after
+  // snapshots. These are intentionally reusable bytes, unlike raw captures.
+  const reusable = new Set();
+  if (row.schema === 3) {
+    try {
+      const manifest = JSON.parse(folder.get(row.trustV3.artifacts).toString("utf8"));
+      for (const artifact of Object.values(manifest.artifacts ?? {})) reusable.add(artifact.file);
+      for (const spec of Object.values(row.trustV3.cases ?? {})) for (const process of spec?.processes ?? [])
+        for (const pair of Object.values(process?.stores ?? {})) { reusable.add(pair.before); reusable.add(pair.after); }
+    } catch { stop("schema 3 resource table is unreadable"); }
+    const semanticRaw = Object.values(row.trustV3?.cases ?? {}).flatMap(spec => (spec?.processes ?? []).flatMap(process => [process?.transcript, process?.observation, process?.authority, process?.modelInputs]));
+    for (const file of [list.invocations, list.driver, list.version, ...transcripts, ...semanticRaw]) if (reusable.has(file)) stop("raw capture cannot be a reusable resource");
+  }
   for (const file of listed) {
     if (typeof file !== "string" || !folder.has(file)) { stop(`listed file missing: ${file}`); continue; }
     const bytes = folder.get(file);
     if (bytes === null) { stop(`${file} is not a plain file`); continue; }
     const digest = sha("sha256", bytes);
     if (row.sha256?.[file] !== digest) stop(`${file} does not match its sha256`);
-    if (seen.shas.has(digest)) stop(`${file} is the same bytes as ${seen.shas.get(digest)}`);
-    seen.shas.set(digest, `${os}/${file}`);
+    if (!reusable.has(file) && seen.shas.has(digest)) stop(`${file} is the same bytes as ${seen.shas.get(digest)}`);
+    if (!reusable.has(file)) seen.shas.set(digest, `${os}/${file}`);
   }
   for (const file of folder.keys()) if (!listed.includes(file)) stop(`unlisted file ${file}`);
   const parseJson = (file) => { try { return JSON.parse(folder.get(file).toString("utf8")); } catch { return undefined; } };
@@ -684,15 +705,21 @@ export const checkRealTurns = (files, want) => {
   const faults = [];
   const names = files.map((file) => file.name).sort();
   const wantNames = Object.keys(REAL_TURN_OSES).map((os) => `${os}.json`).sort();
-  if (names.join() !== wantNames.join()) faults.push(`need exactly ${wantNames.join(", ")}, found ${names.join(", ") || "nothing"}`);
+  const v3 = files.length > 0 && files.every(file => file.row?.schema === 3);
+  const extraTargets = v3 && new Set(files.map(file => file.row.os)).size === 3
+    && Object.keys(REAL_TURN_OSES).every(os => files.some(file => file.row.os === os))
+    && new Set(files.map(file => file.row.target)).size === files.length
+    && new Set(names).size === names.length
+    && files.every(file => FUIGO_TARGET_OSES[file.row.target] === file.row.os && [file.row.os, file.row.target].some(name => file.name === `${name}.json`));
+  if (!(v3 ? extraTargets : names.join() === wantNames.join())) faults.push(`need exactly ${wantNames.join(", ")}, found ${names.join(", ") || "nothing"}`);
   const receipts = [];
   const seen = { nonces: new Set(), shas: new Map() };
   let oneOs = false;
   for (const { name, row, folder } of files) {
     const stop = (text) => faults.push(`${name}: ${text}`);
-    const os = name.replace(/\.json$/, "");
+    const os = row?.schema === 3 && name === `${row.target}.json` ? FUIGO_TARGET_OSES[row.target] : name.replace(/\.json$/, "");
     if (!Object.hasOwn(REAL_TURN_OSES, os)) continue;
-    if (row?.schema !== 2) { stop("schema is not 2"); continue; }
+    if (row?.schema !== 2 && row?.schema !== 3) { stop("schema is not 2 or 3"); continue; }
     if (!(folder instanceof Map)) { stop("evidence folder missing"); continue; }
     const result = checkOsRun(os, row, folder, want, stop, seen);
     if (!result) continue;
@@ -705,7 +732,7 @@ export const checkRealTurns = (files, want) => {
 };
 
 /** The files of a --real-turns folder: each <os>.json with every entry of the folder <os>/ beside it. Nothing outside that folder is read. */
-export const readRealTurns = (dir) => readdirSync(dir).filter((name) => name.endsWith(".json")).map((name) => {
+export const readRealTurns = (dir) => readdirSync(dir).filter((name) => name.endsWith(".json")).sort().map((name) => {
   const row = JSON.parse(readFileSync(join(dir, name), "utf8"));
   const osDir = join(dir, name.replace(/\.json$/, ""));
   if (!existsSync(osDir)) return { name, row };
@@ -713,19 +740,51 @@ export const readRealTurns = (dir) => readdirSync(dir).filter((name) => name.end
   return { name, row, folder };
 });
 
-/** Step 10: a receipt with the real turns in hand, one row per OS. */
-export const mergeCheck = (receipt, files) => {
-  const oses = Array.isArray(receipt.real_turns) ? receipt.real_turns.map((row) => row.os).sort().join() : "";
-  if (oses !== Object.keys(REAL_TURN_OSES).sort().join()) throw new Error(`Fuigo ${receipt.fuigoVersion}: real turns are owed, this pin cannot merge`);
-  if (!Array.isArray(files)) throw new Error("Real-turn captures are required: pass --real-turns <evidence directory> to recheck the receipt.");
-  const want = { version: receipt.fuigoVersion, peeledTag: receipt.peeledTag, murageSha: receipt.murageSha,
-    packageVersion: receipt.packageVersion, assets: receipt.assets,
-    policySha256: typeof receipt.policySha256 === "string" && receipt.policySha256.startsWith("none:") ? null : receipt.policySha256 };
-  if (!isHex(want.murageSha, 40) || !isHex(want.peeledTag, 40) || typeof want.packageVersion !== "string" || !want.assets) {
-    throw new Error("The receipt is missing its source, package or asset binding; regenerate it from the real-turn evidence.");
+const receiptWant = receipt => ({ version: receipt.fuigoVersion, peeledTag: receipt.peeledTag, murageSha: receipt.murageSha,
+  packageVersion: receipt.packageVersion, assets: receipt.assets,
+  policySha256: typeof receipt.policySha256 === "string" && receipt.policySha256.startsWith("none:") ? null : receipt.policySha256 });
+const releaseAssets = (assets, files, expectedRelease) => {
+  const packaged = { ...assets };
+  for (const { row } of files) {
+    const artifact = expectedRelease?.targets?.[row.target];
+    const upstream = artifact?.binaryTransformation?.upstreamSha256 ?? artifact?.binary;
+    if (!artifact || !isHex(upstream, 64) || assets?.[row.target]?.binarySha256 !== upstream)
+      throw new Error("clause:artifact: expected package source differs from the exact Fuigo pin");
+    packaged[row.target] = { ...assets[row.target], binarySha256: artifact.binary };
   }
-  const checked = checkRealTurns(files, want);
+  return packaged;
+};
+
+/** Step 10: the integration gate supplies the identity independently of the receipt. */
+export const mergeCheck = (receipt, files, expectedRelease) => {
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) throw new Error("clause:schema: a receipt object is required");
+  const oses = Array.isArray(receipt.real_turns) ? [...new Set(receipt.real_turns.map(row => row?.os))].sort().join() : "";
+  if (oses !== Object.keys(REAL_TURN_OSES).sort().join()) throw new Error(`clause:owed: Fuigo ${receipt.fuigoVersion}: real turns are owed, this pin cannot merge`);
+  if (!Array.isArray(files)) throw new Error("Real-turn captures are required: pass --real-turns <evidence directory> to recheck the receipt.");
+  if (!expectedRelease || !isHex(expectedRelease.murageSha, 40)) throw new Error("clause:release-identity: independent expected release identity is required");
+  if (receipt.murageSha !== expectedRelease.murageSha || receipt.packageVersion !== expectedRelease.packageVersion)
+    throw new Error("clause:release-identity: independent expected release identity differs from the receipt");
+  if (receipt.schema !== 3 || files.some(file => file?.row?.schema !== 3)) throw new Error("clause:schema: schema 3 is mandatory for current release readiness");
+  if (receipt.peeledTag !== expectedRelease.sourceRevision)
+    throw new Error("clause:release-identity: expected source differs from the actual Fuigo pin");
+  if (!isDeepStrictEqual(Object.keys(expectedRelease.targets ?? {}).sort(), files.map(file => file.row.target).sort()))
+    throw new Error("clause:release-identity: every independently selected release target needs a whole packet");
+  for (const { row, folder } of files) checkTrustV3(row, folder, expectedRelease);
+  const want = receiptWant(receipt);
+  if (!isHex(want.murageSha, 40) || !isHex(want.peeledTag, 40) || typeof want.packageVersion !== "string" || !want.assets)
+    throw new Error("The receipt is missing its source, package or asset binding; regenerate it from the real-turn evidence.");
+  const checked = checkRealTurns(files, { ...want, assets: releaseAssets(want.assets, files, expectedRelease) });
   if (!isDeepStrictEqual(checked, receipt.real_turns)) throw new Error("The checked captures do not match the receipt's real-turn evidence.");
+};
+
+/** Draft-only owed receipts are readable; populated receipts must pass the same release gate. */
+export const buildTrustReceipt = (binding, files, expectedRelease) => {
+  const receipt = { ...binding, schema: 3, real_turns: "owed" };
+  if (files) {
+    receipt.real_turns = checkRealTurns(files, { ...receiptWant(receipt), assets: releaseAssets(receipt.assets, files, expectedRelease) });
+    mergeCheck(receipt, files, expectedRelease);
+  }
+  return receipt;
 };
 
 /** Writes every file or none: all staged beside their targets, then renamed; a failure puts back what was there. */
@@ -796,8 +855,16 @@ async function provenance(version, registry, targets, expected, checkoutHead) {
 
 async function main() {
   if (process.argv[2] === "--merge-check") {
-    const dir = process.argv[4] === "--real-turns" ? process.argv[5] : undefined;
-    return mergeCheck(JSON.parse(readFileSync(process.argv[3], "utf8")), dir ? readRealTurns(dir) : undefined);
+    const options = new Map();
+    for (let index = 4; index < process.argv.length; index += 2) {
+      const key = process.argv[index], value = process.argv[index + 1];
+      if (!["--real-turns", "--expected-release"].includes(key) || !value || value.startsWith("--") || options.has(key))
+        throw new Error("--merge-check requires --real-turns <dir> and --expected-release <file>");
+      options.set(key, value);
+    }
+    const dir = options.get("--real-turns"), expected = options.get("--expected-release");
+    return mergeCheck(JSON.parse(readFileSync(process.argv[3], "utf8")), dir ? readRealTurns(dir) : undefined,
+      expected ? JSON.parse(readFileSync(expected, "utf8")) : undefined);
   }
   if (process.platform === "darwin" && process.env.MURAGE_GATE_BOX !== "1") throw new Error("release gate only: set MURAGE_GATE_BOX=1 on a disposable box");
   const args = parseArgs(process.argv.slice(2));
@@ -850,14 +917,17 @@ async function main() {
   const assets = Object.fromEntries(packages.filter((row) => row.target !== "wrapper").map((row) => [row.target, { tarballSha256: row.tarballSha256, binarySha256: row.binarySha256 }]));
   const policySha256 = args.policy ? sha("sha256", readFileSync(args.policy)) : null;
   const packageVersion = JSON.parse(git(murageGit, "show", `${murageSha}:package.json`)).version;
-  const realTurns = args["real-turns"] ? checkRealTurns(readRealTurns(args["real-turns"]), { version, peeledTag: head, murageSha, packageVersion, assets, policySha256 }) : "owed";
+  const captures = args["real-turns"] ? readRealTurns(args["real-turns"]) : undefined;
+  const expectedRelease = args["expected-release"] ? JSON.parse(readFileSync(args["expected-release"], "utf8")) : undefined;
 
   // Step 5: everything passed; only now write, all or nothing.
   const proof = { version, source: head, registry: FUIGO_REGISTRY, verifiedAt: new Date().toISOString(), installScriptsExecuted: false, nativeExecutablesRun: false, packages };
   const moved = movePin(readFileSync(prepareFile, "utf8"), version, head, assets);
   const oldVersion = /export const FUIGO_VERSION = "([^"]+)"/.exec(readFileSync(prepareFile, "utf8"))[1];
   const proofText = `${JSON.stringify(proof, null, 2)}\n`;
-  const receipt = { murageSha, packageVersion, fuigoVersion: version, peeledTag: head, trustBase: baseHead, assets, wrapperTarballSha256: packages[0].tarballSha256, releaseManifestSha256: sha("sha256", manifestBytes), policySha256: policySha256 ?? (realTurns === "owed" ? "owed: real-turn step" : "none: this Murage launches no policy file"), real_turns: realTurns };
+  const receipt = buildTrustReceipt({ murageSha, packageVersion, fuigoVersion: version, peeledTag: head, trustBase: baseHead, assets,
+    wrapperTarballSha256: packages[0].tarballSha256, releaseManifestSha256: sha("sha256", manifestBytes),
+    policySha256: policySha256 ?? (captures ? "none: this Murage launches no policy file" : "owed: real-turn step") }, captures, expectedRelease);
   commitFiles([
     [join(evidenceDir, `fuigo-${version}-provenance.json`), proofText],
     [join(evidenceDir, "reviewed-hunks.txt"), readFileSync(args["reviewed-hunks"])],

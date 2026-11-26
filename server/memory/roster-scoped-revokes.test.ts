@@ -21,7 +21,7 @@ import { Store } from "../store.ts";
 import { captureWork } from "./chunks.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
-import { assertMemoryAccess, ensureScope, memoryAccess, persistMemoryRoster, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { assertMemoryAccess, ensureScope, memoryAccess, persistMemoryRoster, reconcileMemoryRoster, revalidateMemoryAccess, type MemoryRoster } from "./policy.ts";
 import { memoryState, setMemoryMode } from "./repository.ts";
 import { buildMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
@@ -200,6 +200,7 @@ function fixture(tasks: string[] = []) {
 it("removing a task ends its receipts only; the bot's other thread keeps its receipt, access and policy revision", async () => {
   const f = fixture(["private-a", "task-x"]), lines = revokeLines();
   const onX = await f.receipt("task-x"), onA = await f.receipt("private-a");
+  const taskScope = ensureScope("conversation", "task-x"), ownScope = ensureScope("conversation", "private-a");
   const before = policyRevision(), stamp = hard();
   const next = structuredClone(f.roster); next.bots[0].tasks = [{ threadId: "private-a" }];
   f.save(next);
@@ -210,7 +211,17 @@ it("removing a task ends its receipts only; the bot's other thread keeps its rec
   expect(lines.filter(line => line.includes("scope=global"))).toEqual([]);
   expect(lines.some(line => line.includes("scope=thread cause=roster-removed count=1"))).toBe(true);
   expect(() => assertMemoryAccess(onX.access)).toThrow("MEMORY_SCOPE_DENIED");
-  expect(() => assertMemoryAccess(onA.access)).not.toThrow();
+  // MAIN RULING 2026-11-17T19:46Z Q3 (recall-adm DECISIONS A2): the removal moved the authority epoch, so the old handle refuses and
+  // the other thread's live reader keeps its access by revalidating, with its original scopes minus the removed task's.
+  expect(() => assertMemoryAccess(onA.access)).toThrow("MEMORY_CONTEXT_REVOKED");
+  const renewedA = revalidateMemoryAccess(onA.access);
+  // The renewed scopes are the original ones minus the removed task's conversation; nothing is gained.
+  for (const scope of renewedA.scopeIds) expect(onA.access.scopeIds).toContain(scope);
+  expect(onA.access.scopeIds).toContain(taskScope);
+  expect(renewedA.scopeIds).not.toContain(taskScope);
+  expect(renewedA.scopeIds).toContain(ownScope);
+  expect(() => assertMemoryAccess(renewedA)).not.toThrow();
+  expect(() => assertMemoryAccess(renewedA, taskScope)).toThrow("MEMORY_SCOPE_DENIED");
   expect(database().prepare("SELECT state FROM memory_scope_bindings WHERE id='memory-roster-policy'").get()?.state).toBe("granted");
 });
 
@@ -265,10 +276,15 @@ it("removing a room ends the room threads' receipts; a member's direct access lo
   expect(receiptState(onA.bundle.bundleId)).toBe("delivered");
   expect(lines.filter(line => line.includes("scope=global"))).toEqual([]);
   expect(() => assertMemoryAccess(onA.access, ensureScope("room", "room"))).toThrow("MEMORY_SCOPE_DENIED");
-  expect(() => assertMemoryAccess(onA.access, ensureScope("conversation", "private-a"))).not.toThrow();
+  // MAIN RULING 2026-11-17T19:46Z Q3 (DECISIONS A2): the old handle refuses even its own scope; the revalidated reader keeps its own
+  // conversation and has lost the room.
+  expect(() => assertMemoryAccess(onA.access, ensureScope("conversation", "private-a"))).toThrow("MEMORY_CONTEXT_REVOKED");
+  const renewedA = revalidateMemoryAccess(onA.access);
+  expect(() => assertMemoryAccess(renewedA, ensureScope("conversation", "private-a"))).not.toThrow();
+  expect(() => assertMemoryAccess(renewedA, ensureScope("room", "room"))).toThrow("MEMORY_SCOPE_DENIED");
 });
 
-it.each(["section", "membership", "dm", "desk-retag", "desk-archived", "shared-work-quarantine", "partitioned", "partitioned-for", "thread-moved", "non-fresh-thread", "reused-bot", "reused-room", "desk-room-added"])(
+it.each(["membership", "dm", "desk-retag", "desk-archived", "shared-work-quarantine", "partitioned", "partitioned-for", "thread-moved", "non-fresh-thread", "reused-bot", "reused-room", "desk-room-added"])(
   "an audience change (%s) still ends every receipt under a new policy revision", async change => {
     const f = fixture(["private-a", "task-x"]);
     f.roster.bots[0].tasks![1] = { threadId: "task-x", channelProjectDesk: { groupId: change === "desk-room-added" ? "proj" : "room" } };
@@ -279,7 +295,6 @@ it.each(["section", "membership", "dm", "desk-retag", "desk-archived", "shared-w
     if (change === "non-fresh-thread") database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('orphan','m1',1,'user','text','x','{}')").run();
     const before = policyRevision();
     const next = structuredClone(f.roster);
-    if (change === "section") next.bots[0].section = "beta";
     if (change === "membership") next.groups[0].memberIds = ["a"];
     if (change === "dm") next.groups[0].dm = true;
     if (change === "desk-retag") next.bots[0].tasks![1].channelProjectDesk = { groupId: "other" };
@@ -299,6 +314,27 @@ it.each(["section", "membership", "dm", "desk-retag", "desk-archived", "shared-w
     expect(() => assertMemoryAccess(onA.access)).toThrow("MEMORY_CONTEXT_REVOKED");
   },
 );
+
+// 1020 ROSTER (Sean-reported, lane roster-1020): a bot's section or partition move is no longer a global audience change. It ends the moved
+// bot's own threads (this receipt is on its own thread) and its rooms, without a policy revision or a global revoke. A partition move stays
+// global (the "partitioned" row above; Astra 1020 fail-closed).
+it.each(["section"])("a bot %s move ends the moved bot's own receipt without a policy revision or a global revoke", async change => {
+  const lines = revokeLinesFor1020();
+  const f = fixture(["private-a", "task-x"]);
+  const onA = await f.receipt("private-a");
+  const before = policyRevision();
+  const next = structuredClone(f.roster);
+  next.bots[0].section = change === "section" ? "beta" : "";
+  f.save(next);
+  expect(policyRevision()).toBe(before);
+  expect(receiptState(onA.bundle.bundleId)).toBe("revoked");
+  expect(lines.filter(line => line.includes("scope=global"))).toEqual([]);
+});
+function revokeLinesFor1020() {
+  const out: string[] = [];
+  vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => { const line = args.map(String).join(" "); if (line.includes("memory receipts revoked")) out.push(line); });
+  return out;
+}
 
 it("a crash between the removal's transaction and the file write fails closed at boot; after the file write it settles without a revoke", async () => {
   const f = fixture(["private-a", "task-x"]);
@@ -365,7 +401,7 @@ it("a 1.0.3 binding (no partition facts) cannot vouch for desks or partitions: t
   expect(receiptState(onA2.bundle.bundleId)).toBe("delivered");
 });
 
-it("a first notebook import ends no receipt and moves no hold; a changed one still ends every receipt", async () => {
+it("a first notebook import ends no receipt and moves no hold; a changed one ends only the receipts citing what it withdrew", async () => {
   const roster: MemoryRoster = { memoryRosterRevision:1, bots: [{ id: "a", threadId: "thread-a" }, { id: "b", threadId: "thread-b" }], groups: [] };
   reconcileMemoryRoster(roster); database().exec("UPDATE memory_meta SET mode='active'");
   const lines = revokeLines();
@@ -394,16 +430,92 @@ it("a first notebook import ends no receipt and moves no hold; a changed one sti
   expect(policyRevision()).toBe(before);
   expect(receiptState(unrelated)).toBe("delivered");
   expect(judge("b", "thread-b", "session-b")).toBe(false);
-  // a changed notebook: every receipt, as before (SCOPED-REVOKES E10)
+  // 1.0.20 T5 (hunt-turnerr; this block asserted the old global revoke, `scope=global cause=import` and the unrelated receipt revoked, which
+  // is the defect: one changed notebook reset every warm session on the machine). A receipt that cites the notebook's chunk ends; the
+  // unrelated one holds, and so does its session.
+  const chunks = (database().prepare("SELECT id,version FROM memory_records WHERE id LIKE '%:chunk:%' AND state='active'").all() as Array<{ id: string; version: number }>);
+  expect(chunks.length).toBeGreaterThan(0);
+  const citing = "notebook-citing";
+  database().prepare("INSERT INTO memory_disclosures SELECT ?,'thread-a','fixture','session-a',?,'[]','[]',policy_revision,deletion_epoch,0,'delivered',? FROM memory_meta WHERE id=1")
+    .run(citing, JSON.stringify(chunks.map(chunk => ({ id: chunk.id, version: Number(chunk.version) }))), Date.now());
+  markSessionKnown("thread-a", "fixture", "session-a", "a");
+  // the live check a receipt's continuation runs on each record it cites (disclosures.ts revokedReason): null = still as shown
+  const shownStill = (id: string, version: number) => { try { hydrateDisclosedMemoryRecord(id, version, access("a", "thread-a"), { allowance: LineageAllowance.tool() }); return null; } catch (error) { return String((error as Error).message || error); } };
+  for (const chunk of chunks) expect(shownStill(chunk.id, Number(chunk.version))).toBe(null);
   writeFileSync(path, "The launch moved to the second Thursday.");
   commitMemoryImport(ticket, previewMemoryImport(ticket, [{ kind: "bot", botId: "a" }], roster).previewId, roster, true);
-  expect(lines.filter(line => line.includes("scope=global cause=import"))).toHaveLength(1);
-  expect(receiptState(unrelated)).toBe("revoked");
+  expect(lines.filter(line => line.includes("scope=global"))).toEqual([]);
+  expect(lines.length).toBeGreaterThan(0);
+  for (const line of lines) expect(line).toMatch(/scope=records cause=import/);
+  expect(receiptState(citing)).toBe("revoked");
+  expect(receiptState(unrelated)).toBe("delivered");
+  expect(judge("b", "thread-b", "session-b")).toBe(false);
+  // the write-time revoke names each chunk's EARLIER version, never every version (no version), so the replacement chunks, which share the
+  // id, are not withdrawn with it
+  const roots = (database().prepare("SELECT root FROM memory_revoke_jobs WHERE kind='memory'").all() as Array<{ root: string }>).map(row => JSON.parse(row.root))
+    .filter(root => root.ref?.kind === "record" && chunks.some(chunk => chunk.id === root.ref.id));
+  expect(roots.map(root => [root.ref.id, root.ref.version]).sort()).toEqual(chunks.map(chunk => [chunk.id, Number(chunk.version)]).sort());
+  expect(database().prepare("SELECT id,version FROM memory_records WHERE id LIKE '%:chunk:%' AND state='active'").all().length).toBeGreaterThan(0);
+  // fableclose T5 (b): the session that was shown the earlier chunk starts fresh at its next turn; the replacement chunk has the same id at
+  // a LATER version, and no write-time revoke names that version or every version (0 / none) of it, so the new text is not denied
+  expect(judge("a", "thread-a", "session-a")).toBe(true);
+  const chunkRoots = () => (database().prepare("SELECT root FROM memory_revoke_jobs WHERE kind='memory'").all() as Array<{ root: string }>).map(row => JSON.parse(row.root))
+    .filter(root => root.ref?.kind === "record" && String(root.ref.id).includes(":chunk:")).map(root => [root.ref.id, root.ref.version] as [string, number | undefined]);
+  const active = () => database().prepare("SELECT id,version FROM memory_records WHERE id LIKE '%:chunk:%' AND state='active'").all() as Array<{ id: string; version: number }>;
+  const replaced = active();
+  for (const chunk of chunks) expect(replaced.find(row => row.id === chunk.id)?.version).toBeGreaterThan(Number(chunk.version));
+  // the earlier version no longer reads as shown (so a receipt a deferred job has not reached yet still ends); the replacement does
+  for (const chunk of chunks) expect(shownStill(chunk.id, Number(chunk.version))).not.toBe(null);
+  for (const row of replaced) expect(shownStill(row.id, Number(row.version))).toBe(null);
+  for (const row of replaced) expect(chunkRoots().filter(([id, version]) => id === row.id && (!version || version === Number(row.version)))).toEqual([]);
+  // a third text: the revoke names the version withdrawn NOW (the second), never an older one in its place and never the new one
+  // (1.0.20 checkwin: an import revokes only a chunk something was shown, so a receipt is shown the second version first)
+  database().prepare("INSERT INTO memory_disclosures SELECT ?,'thread-a','fixture','session-a2',?,'[]','[]',policy_revision,deletion_epoch,0,'delivered',? FROM memory_meta WHERE id=1")
+    .run("notebook-citing-2", JSON.stringify(replaced.map(row => ({ id: row.id, version: Number(row.version) }))), Date.now());
+  writeFileSync(path, "The launch moved again, to the third Friday.");
+  commitMemoryImport(ticket, previewMemoryImport(ticket, [{ kind: "bot", botId: "a" }], roster).previewId, roster, true);
+  for (const row of replaced) {
+    expect(chunkRoots().filter(([id]) => id === row.id).map(([, version]) => version).sort()).toEqual(chunks.filter(chunk => chunk.id === row.id).map(chunk => Number(chunk.version)).concat(Number(row.version)).sort());
+    expect(active().find(next => next.id === row.id)?.version).toBeGreaterThan(Number(row.version));
+  }
+  expect(lines.filter(line => line.includes("scope=global"))).toEqual([]);
+  expect(receiptState(unrelated)).toBe("delivered");
 });
 
 import { DatabaseSync } from "node:sqlite";
 import * as searchCompatibility from "../testing/search-index-compat.ts";
 import { searchCleanupPending, searchIndexTestHooks, stopSearchIndex, syncMessageSearchRow, dropThreadSearchRows, messageSearchIndexReady } from "../testing/search-index-compat.ts";
+it("1.0.20 checkwin: a changed notebook no session was shown opens no checking window; one that was shown still withdraws", async () => {
+  const roster: MemoryRoster = { memoryRosterRevision:1, bots: [{ id: "a", threadId: "thread-a" }, { id: "b", threadId: "thread-b" }], groups: [] };
+  reconcileMemoryRoster(roster); database().exec("UPDATE memory_meta SET mode='active'");
+  const lines = revokeLines();
+  const root = ensureWorkspace("a"), path = join(root, "MEMORY.md"), ticket = ownerMemoryTicket();
+  const sync = (text: string) => { writeFileSync(path, text); commitMemoryImport(ticket, previewMemoryImport(ticket, [{ kind: "bot", botId: "a" }], roster).previewId, roster, true); };
+  const chunkJobs = () => (database().prepare("SELECT revoke_id,root FROM memory_revoke_jobs WHERE kind='memory'").all() as Array<{ revoke_id: number; root: string }>)
+    .filter(row => String(JSON.parse(row.root).ref?.id).includes(":chunk:"));
+  // the "checking" window every thread reads (deny-read.ts pendingWindows): the '*' rows a revoke opens until its marker closes it
+  const allThreadsWindow = (ids: number[]) => ids.length ? Number(database().prepare(`SELECT count(*) AS n FROM memory_deny_pending WHERE thread_id='*' AND revoke_id IN (${ids.join(",")})`).get()!.n)
+    + Number(database().prepare(`SELECT count(*) AS n FROM memory_deny_pending_scope WHERE scope_id='*' AND revoke_id IN (${ids.join(",")})`).get()!.n) : 0;
+  sync("The launch is on the first Tuesday.");
+  // the storm: the notebook changes again and again and nothing ever cited it (count=0 every time)
+  for (const text of ["second Thursday", "third Friday", "fourth Monday"]) sync(`The launch moved to the ${text}.`);
+  for (const line of lines) expect(line).toMatch(/scope=records cause=import count=0/);
+  expect(chunkJobs()).toEqual([]);
+  expect(allThreadsWindow(chunkJobs().map(row => row.revoke_id))).toBe(0);
+  // a real revoke of a shown chunk still withdraws it: its write-time revoke is committed and the receipt ends
+  const chunks = database().prepare("SELECT id,version FROM memory_records WHERE id LIKE '%:chunk:%' AND state='active'").all() as Array<{ id: string; version: number }>;
+  expect(chunks.length).toBeGreaterThan(0);
+  database().prepare("INSERT INTO memory_disclosures SELECT 'shown-chunk','thread-a','fixture','session-a',?,'[]','[]',policy_revision,deletion_epoch,0,'delivered',? FROM memory_meta WHERE id=1")
+    .run(JSON.stringify(chunks.map(chunk => ({ id: chunk.id, version: Number(chunk.version) }))), Date.now());
+  sync("The launch moved to the fifth Wednesday.");
+  expect(receiptState("shown-chunk")).toBe("revoked");
+  expect(chunkJobs().map(row => JSON.parse(row.root).ref.id).sort()).toEqual(chunks.map(chunk => chunk.id).sort());
+  // and after that the receipt's hold keeps it "shown" (fail closed): the next change revokes it again
+  const before = chunkJobs().length;
+  sync("The launch moved to the sixth Saturday.");
+  expect(chunkJobs().length).toBeGreaterThanOrEqual(before);
+});
+
 it("T-WARM / T-WARM-LIFECYCLE: 60 real worker commits preserve hard, stamp and a session beyond the cold ceiling",{timeout:180000},async()=>{
   const w=world();
   const wait=async()=>{const until=Date.now()+20000;while(searchCleanupPending(database())){if(Date.now()>until)throw Error("search drain timeout");await new Promise(r=>setTimeout(r,10));}};

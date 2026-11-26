@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {readFileSync} from 'node:fs';
 import {expect,it} from 'vitest';
 import * as modes from '../lib/permission-mode';
 import {LevelExamples} from './approval/LevelExamples';
 import {t} from '../lib/i18n';
 import {BotPermissionDefault,NO_LIMITS_TERMS_NOTE} from './BotPermissionDefault';
+import { settingsPanelSource } from "./bot-pages/panel-source";
 type Profile=Parameters<typeof BotPermissionDefault>[0]['bot'] & {permissionExplicit?:boolean;permissionRev?:number;draftOnly?:boolean};
 const chief={chiefOfStaff:true,chiefScope:'workspace' as const,autoApprove:true,fullAccess:true,noLimits:true};
 const effective=(bot:Profile,bots=[chief],level?:string)=>modes.ownerBotPermissions(bot,bots,level);
@@ -38,7 +38,7 @@ it('R3 F7 the new-bot No limits choice also resolves the Settings level',()=>{
  expect(selected(effective({autoApprove:false},[],'auto'))).toEqual(['Ask']);
 });
 it('R3 F7 Settings routes the effective profile through both display and level changes',()=>{
- const source=readFileSync(new URL('./SettingsPanel.tsx',import.meta.url),'utf8');
+ const source=settingsPanelSource();
  expect(source).toMatch(/const permissionBot\s*=\s*ownerBotPermissions\(bot, state.bots, state.config\?\.newBots\?\.permissionLevel\)/);
  expect(source).toContain('useLevelChange({ bot: permissionBot,');expect(source).toContain('permissionModeOf(permissionBot)');expect(source).toMatch(/bot=\{permissionBot\}\s+change=\{levelChange\}/);
 });

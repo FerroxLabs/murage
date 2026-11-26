@@ -638,3 +638,23 @@ it.each([
   expect(boundary.canRetry).toBe(retryable);
   expect(notifications).toBe(0);
 });
+
+it.each([
+  ["missing fence", undefined, (b: TurnSubmissionBoundary) => b.started(false)],
+  ["false fence", false, (b: TurnSubmissionBoundary) => b.started(false)],
+  ["released write", true, (b: TurnSubmissionBoundary) => { b.started(true); b.beforeSubmit(() => {}); }],
+  ["confirmed write", true, (b: TurnSubmissionBoundary) => { b.started(true); b.noteEngineWrite(); }],
+  ["unfenced invocation", true, (b: TurnSubmissionBoundary) => { b.setPersistenceGate({ invocation: () => {}, write: () => {} }); b.started(false); }],
+] as const)("REVIEW H1: an invoked turn refused before hand-back is not proven not launched: %s", (_name, fenced, prepare) => {
+  const boundary = new TurnSubmissionBoundary();
+  prepare(boundary);
+  expect(() => boundary.beforePrepare(() => { throw new Error("MEMORY_CONTEXT_REVOKED"); })).toThrow();
+  expect(boundary.provenNotLaunched(fenced)).toBe(false);
+});
+it("REVIEW H1: a fenced adapter refused at its first write before hand-back is proven not launched", () => {
+  const boundary = new TurnSubmissionBoundary();
+  boundary.setPersistenceGate({ invocation: () => {}, write: () => {} });
+  boundary.started(true);
+  expect(() => boundary.beforeSubmit(() => { throw new Error("MEMORY_CONTEXT_REVOKED"); })).toThrow();
+  expect(boundary.provenNotLaunched(true)).toBe(true);
+});

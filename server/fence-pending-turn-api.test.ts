@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Every server is control-murage's isolated fake-engine fixture. Hooks only
 // observe production boundaries or inject deterministic pre-write refusals.
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { readBotRecords } from "./bot-turn-state.ts";
@@ -35,9 +36,17 @@ const messages = async (thread: string) => (await api("GET", `/api/threads/${thr
 const scenario = (thread: string, input: object) => writeFileSync(join(fixture.info.dataDir, `fence-${thread}.json`), JSON.stringify(input));
 const importUrl = (file: string) => JSON.stringify(pathToFileURL(join(process.cwd(), file)).href);
 
+/** Cases whose pending check never settles in the fixture (its backlog is parked): the owner's turn continues at the wait's deadline (MAIN
+ * ruling C1 + MAIN Q2: the exact wait does no foreground work, so only the deadline ends it). They run with a 200 ms bound instead of
+ * the shipped 65 s; the bound changes how long the case takes, not what it asserts. */
+/** cause 25 (TRIAGE-GROK-SPEED-1122): GROKFENCE cases keep the shipped 65 s bound but run the pending wait on a fake clock: each poll sleep
+ * advances the clock by its own length and yields at once, so a wait to the deadline logs ms=65000 in seconds of real time. The logged
+ * fake ms is how long the turn waited for its check before its engine was spawned. */
+const fakeFenceClock = (name: string) => name.startsWith("GROKFENCE");
+const shortPendingWait = (name: string) => /owner continues after pending prefix deadline|R10 direct owner turn with|B4 R11 room with|B4 M8 retained|native replay accounts for fallback transcript|R11 a room without its rendered view|Q1 kept for outside input|T3 /.test(name);
 describe("pending fence turns in an isolated server", () => {
   beforeEach(async ({ task }) => {
-    const route = task.name.match(/\['?(claudeAgent|codex|customAcp)'?\]/)?.[1];
+    const route = task.name.match(/\['?(claudeAgent|codex|customAcp|fuigoAgent|grokAgent)'?\]/)?.[1];
     currentRoute = route;
     fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
       const fs=await import('node:fs'),path=await import('node:path'); const {createHash}=await import('node:crypto');
@@ -68,11 +77,28 @@ describe("pending fence turns in an isolated server", () => {
           return {format:'module-typescript',shortCircuit:true,source};
         }
         if(url.endsWith('/memory/recall-view.ts')){
-          // Park only the background upkeep timer once the graph is frozen. A
+          // Park only the background upkeep once the graph is frozen. A
           // turn's own maintenance request (requestRecallViewMaintenance) stays real.
-          const source=fs.readFileSync(new URL(url),'utf8'),anchor='  const tick=()=>{'+String.fromCharCode(10)+'    upkeep=undefined;';
+          // memv2 lane A: the upkeep is no longer a 50 ms timer. The views are kept current by the applier and the reclaimer by the
+          // upkeep look, both run by a wake (server/memory/wake.ts). "Parked" must mean the same as before, no background view upkeep
+          // at all, so both runs are parked by the same flag; a parked run arms nothing and the next wake asks again.
+          const source=fs.readFileSync(new URL(url),'utf8'),anchor='function runRecallUpkeep(): void {'+String.fromCharCode(10)+'  if(!applierOn)return;';
           if(source.split(anchor).length!==2)throw new Error('missing recall upkeep anchor');
-          return {format:'module-typescript',shortCircuit:true,source:source.replace(anchor,anchor+' if(globalThis.__fenceParkRecallUpkeep){upkeep=setTimeout(tick,50);upkeep.unref();return;} globalThis.__fenceUpkeepTick?.();')};
+          const applier='function runRecallApplier(_context?: unknown,force=false): void {'+String.fromCharCode(10)+'  if(!applierOn)return;';
+          if(source.split(applier).length!==2)throw new Error('missing recall applier anchor');
+          return {format:'module-typescript',shortCircuit:true,source:source.replace(applier,applier+' if(globalThis.__fenceParkRecallUpkeep)return;').replace(anchor,anchor+' if(globalThis.__fenceParkRecallUpkeep)return; globalThis.__fenceUpkeepTick?.();')};
+        }
+        if(url.endsWith('/memory/fence-pending.ts') && ${JSON.stringify(shortPendingWait(task.name))}){
+          // Both waits (settleRefusedFence and MAIN Q2's awaitExactPendingCheck, the one index.ts binds) take the short bound.
+          const source=fs.readFileSync(new URL(url),'utf8'),anchor='maxMs = PENDING_FENCE_WAIT_MS';
+          if(source.split(anchor).length!==3)throw new Error('missing pending wait anchors');
+          return {format:'module-typescript',shortCircuit:true,source:source.replaceAll(anchor,'maxMs = 200')};
+        }
+        if(url.endsWith('/memory/fence-pending.ts') && ${JSON.stringify(fakeFenceClock(task.name))}){
+          const source=fs.readFileSync(new URL(url),'utf8');
+          // memv2 V14 (MAIN-PICK memv2-I 70af151c66): the wait no longer polls on setTimeout(resolve); the clock it measures is performance.now()
+          if(source.split('performance.now()').length<3)throw new Error('missing pending wait clock anchors');
+          return {format:'module-typescript',shortCircuit:true,source:'const fakeFenceClock={now:0};const performance={now:()=>fakeFenceClock.now};const setTimeout=(fn,ms)=>{fakeFenceClock.now+=ms;return globalThis.setImmediate(fn);};\\n'+source};
         }
         if(url.endsWith('/memory/memory-revocation.ts')){
           let source=fs.readFileSync(new URL(url),'utf8');
@@ -84,16 +110,38 @@ describe("pending fence turns in an isolated server", () => {
           }
           // Park the runner only after a scenario seeds its artificial backlog.
           // Configuration revokes and ordinary checkpoint refresh stay real.
-          source=source.replace('export function wakeMemoryRevocation(getDb: () => DatabaseSync, next?: RevocationRunnerOptions): void {','export function wakeMemoryRevocation(getDb: () => DatabaseSync, next?: RevocationRunnerOptions): void { if(globalThis.__fenceParkRevocation)return;');
+          source=source.replace('export function wakeMemoryRevocation(getDb: () => DatabaseSync, next?: RevocationRunnerOptions, resume = next !== undefined): void {','export function wakeMemoryRevocation(getDb: () => DatabaseSync, next?: RevocationRunnerOptions, resume = next !== undefined): void { if(globalThis.__fenceParkRevocation)return;');
           return {format:'module-typescript',shortCircuit:true,source};
         }
         if(url.endsWith('/testing/fake-late-terminal-driver.ts'))return {format:'module-typescript',shortCircuit:true,source:fs.readFileSync(new URL(url),'utf8').replaceAll('text: "Hello from late"', "text: 'REVOKED_SENTINEL-' + turn.threadId").replaceAll('{ prompt: true, turnId', '{ prompt: true, payload: {text:turn.text,transcript:turn.transcript,system:turn.system,memoryContext:turn.memoryContext,images:turn.images}, turnId').replace('if (!twoFences && input.environment.FAKE_LATE_UNKNOWN_ACTION !== "1") beforeHandback();', 'if (!twoFences && input.environment.FAKE_LATE_UNKNOWN_ACTION !== "1") { beforeHandback(); if(dump)appendFileSync(dump,JSON.stringify({prompt:true,payload:{text:turn.text,transcript:turn.transcript,system:turn.system,memoryContext:turn.memoryContext,images:turn.images},turnId,threadId:turn.threadId})+String.fromCharCode(10)); }').replaceAll('emit({ type: "item.completed", itemType: "assistant_text"', 'turn.onEngineWrite?.(); emit({ type: "item.completed", itemType: "assistant_text"')};
         if(url.endsWith('/server/turn-context.ts'))return {format:'module-typescript',shortCircuit:true,source:fs.readFileSync(new URL(url),'utf8').replace('  return driverKind === "museCode" || TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);','  return globalThis.__fenceNativeReplay?.() || driverKind === "museCode" || TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);')};
         if(url.endsWith('/server/working-context.ts'))return {format:'module-typescript',shortCircuit:true,source:fs.readFileSync(new URL(url),'utf8').replace('  let quoted: WorkingContextQuote[] = [];', '  input = globalThis.__fenceWorking?.(input) ?? input; let quoted: WorkingContextQuote[] = [];').replace('  return { text, quoted: text ? quoted : [], part:', '  const fixtureContext=globalThis.__fenceContext?.(input); if(fixtureContext)return fixtureContext; return { text, quoted: text ? quoted : [], part:')};
+        if(url.endsWith('/server/ledger-refusal.ts')){
+          // Passive: every "not launched" close of a refused lease (REVIEW H1 negative witness).
+          const source=fs.readFileSync(new URL(url),'utf8'),anchor='    admissionNotLaunched(notice?: NativeTurnNoticeCode): void {';
+          if(source.split(anchor).length!==2)throw new Error('missing not-launched observer anchor');
+          return {format:'module-typescript',shortCircuit:true,source:source.replace(anchor,anchor+' globalThis.__fenceNotLaunched?.();')};
+        }
         if(!url.endsWith('/server/index.ts'))return next(url,context);
         let source=fs.readFileSync(new URL(url),'utf8');
-        source=source.replace('  const trace = beginTurnTrace(threadId);', '  const fixtureTier=globalThis.__routeTier?.(threadId),historyId=globalThis.__seedRouteHistory?.(threadId); if(historyId)store.appendMessage(threadId,{id:historyId,role:"user",kind:"text",text:"EARLIER_CONVERSATION_LINE"}); if(fixtureTier){const fixtureMessage=store.appendMessage(threadId,{role:"user",kind:"text",text});opts={...opts,memoryRedispatch:fixtureTier,userMessage:fixtureMessage};} if(globalThis.__seedVisible?.(threadId)){store.appendMessage(threadId,{id:"ctx-visible",role:"bot",kind:"text",text:"VISIBLE_CONVERSATION_LINE",at:Date.now(),from:{botId,name:"fixture",color:"blue"}});} if(globalThis.__seedPrivate?.(threadId)){store.appendMessage(threadId,{id:"ctx-withheld",role:"bot",kind:"text",text:"WITHHELD_CONVERSATION_LINE",at:Date.now(),withheldFromBots:"forgotten",from:{botId,name:"fixture",color:"blue"}});} const trace = beginTurnTrace(threadId);');
+        source=source.replace('  const trace = beginTurnTrace(threadId);', '  if(globalThis.__seedFullFixtureHistory?.(threadId)){for(let i=0;i<60;i++)store.appendMessage(threadId,{id:"wm-history-"+i,role:"user",kind:"text",text:"Seeded exchange "+String(i).padStart(2,"0")});} const fixtureQuoted=globalThis.__seedQuotingLine?.(threadId); if(fixtureQuoted)store.appendMessage(threadId,{id:"wm-quoting",role:"user",kind:"text",text:"Fixture quoting line",replyToId:fixtureQuoted}); const fixtureTier=globalThis.__routeTier?.(threadId),historyId=globalThis.__seedRouteHistory?.(threadId); if(historyId)store.appendMessage(threadId,{id:historyId,role:"user",kind:"text",text:"EARLIER_CONVERSATION_LINE"}); if(fixtureTier){const fixtureMessage=store.appendMessage(threadId,{role:"user",kind:"text",text});opts={...opts,memoryRedispatch:fixtureTier,userMessage:fixtureMessage};} if(globalThis.__seedVisible?.(threadId)){store.appendMessage(threadId,{id:"ctx-visible",role:"bot",kind:"text",text:"VISIBLE_CONVERSATION_LINE",at:Date.now(),from:{botId,name:"fixture",color:"blue"}});} if(globalThis.__seedPrivate?.(threadId)){store.appendMessage(threadId,{id:"ctx-withheld",role:"bot",kind:"text",text:"WITHHELD_CONVERSATION_LINE",at:Date.now(),withheldFromBots:"forgotten",from:{botId,name:"fixture",color:"blue"}});} const trace = beginTurnTrace(threadId);');
         { const wait='    if (!projection || Number(projection.watermark) >= Number(projection.latest)) {'; if(source.split(wait).length!==2)throw new Error('missing bundle wait observer anchor'); source=source.replace(wait,'    globalThis.__fenceBundleWait?.(projection,remaining);'+wait); }
+        { // A routine run handed to startTurn as webhook-triggered (outside input) when its scenario says so; a real webhook needs the ingress stack.
+          const hand='startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError'; if(source.split(hand).length!==2)throw new Error('missing routine hand-off anchor');
+          source=source.replace(hand,'startTurn(botId, prompt, { threadId, runOn, automationSource: globalThis.__outsideTrigger?.(threadId) ? "webhook" : triggerSource, onDispatchError'); }
+        { // T3: a revoke window that never settles (the live start-up storm) appears just before the direct turn's continuation check.
+          const early='    let earlyContinuityKey: string | undefined;'; if(source.split(early).length!==2)throw new Error('missing continuation check anchor');
+          source=source.replace(early,'    const stormSettlement=globalThis.__fenceSettle?.(threadId); if(stormSettlement)await stormSettlement; globalThis.__fenceStorm?.(threadId);'+early); }
+        { // T3 guard: a direct turn on the bot's own thread handed in as webhook-triggered (outside input), when its scenario says so.
+          const entry='  const threadId = opts?.threadId ?? defaultThreadId(profile);'; if(source.split(entry).length!==2)throw new Error('missing turn entry anchor');
+          source=source.replace(entry,entry+' if(globalThis.__outsideDirect?.(threadId))opts={...opts,automationSource:"webhook"};'); }
+        { const judge='      let lastResortReplay = false;\\n'; if(source.split(judge).length!==2)throw new Error('missing last-resort judge anchor'); source=source.replace(judge,'      await globalThis.__fenceHoldJudge?.(threadId, memoryLastResort);\\n'+judge); }
+        { // IMGREAD: a room turn whose words nobody proved were the owner's (as an unproven origin is), when its scenario says so.
+          const audience='  const roomOwnerAudience = turnAudienceIsOwner(threadId, { origin: latestUser?.origin })'; if(source.split(audience).length!==2)throw new Error('missing room audience anchor');
+          source=source.replace(audience,'  const roomOwnerAudience = !globalThis.__roomUnproven?.(threadId) && turnAudienceIsOwner(threadId, { origin: latestUser?.origin })'); }
+        { // cause 25: the field Grok thread holds no resume cursor (so nothing can be kept), when its scenario says so.
+          const cursor='  let resumeCursor = resume ? task.resumeCursors[instanceId] : undefined;'; if(source.split(cursor).length!==2)throw new Error('missing resume cursor anchor');
+          source=source.replace(cursor,'  let resumeCursor = resume && !globalThis.__noResume?.(threadId) ? task.resumeCursors[instanceId] : undefined;'); }
         source=source.replace('const memoryLastResort = (opts?.memoryRedispatch', 'const memoryLastResort = globalThis.__routeTier?.(threadId)===2 || (opts?.memoryRedispatch');
         source=source.replace('if (rootsApply && isMessageOnlyDispatch(lineage)) return;', 'if (rootsApply && isMessageOnlyDispatch(lineage) && !globalThis.__legacyCursor?.(event.threadId)) return;');
         source=source.replace('recordDefaultLearningConnection(database(),memoryExtractorInstanceId(),Boolean(fluxKey()));','globalThis.__pauseFenceMemory=()=>memoryWorker.stop(); globalThis.__resumeFenceMemory=()=>memoryWorker.start(); recordDefaultLearningConnection(database(),memoryExtractorInstanceId(),Boolean(fluxKey()));');
@@ -107,7 +155,7 @@ describe("pending fence turns in an isolated server", () => {
         source=source.replaceAll('text: turnPrompt','text: turnPrompt + '+JSON.stringify(String.fromCharCode(10)+'EXPANDED_SECRET_SENTINEL')).replaceAll('text:turnPrompt','text:turnPrompt + '+JSON.stringify(String.fromCharCode(10)+'EXPANDED_SECRET_SENTINEL'));
         source=source.replace('function commitFenceReset(botId: string, threadId: string, instanceId: string, cursor: unknown, incarnation: number | undefined): void {', 'function commitFenceReset(botId: string, threadId: string, instanceId: string, cursor: unknown, incarnation: number | undefined): void { globalThis.__fenceCrash?.(threadId,"before-reset");');
         source=source.replace('  const previous = store.messageById(notice.threadId, notice.id);', '  globalThis.__fenceCrash?.(notice.threadId,"before-note"); const previous = store.messageById(notice.threadId, notice.id);');
-        source=source.replace('  unlinkSync(file); syncParentDirectory(file);', '  globalThis.__fenceCrash?.(notice.threadId,"after-note"); unlinkSync(file); syncParentDirectory(file);');
+        source=source.replace('  unlinkSync(file); syncParentDirectory(file);', '  globalThis.__fenceCrash?.(notice.threadId,"after-note",file); unlinkSync(file); syncParentDirectory(file);');
         source=source.replace('      let selectiveDropped = false;', '      if(globalThis.__fenceMemoryMount?.(threadId,integrations))threadRecallOn=true; let selectiveDropped = false;');
         source=source.replace('      let roomSelectiveDropped = false;', '      globalThis.__fenceMemoryMount?.(threadId,integrations); let roomSelectiveDropped = false;');
         source=source.replace('      let roomShownRefs: LineageRef[] = [];','      if(globalThis.__fenceMissingView?.(threadId))roomRenderedView=undefined; let roomShownRefs: LineageRef[] = [];');
@@ -117,11 +165,14 @@ describe("pending fence turns in an isolated server", () => {
           const validate=source.includes('submissionBoundary.beforeSubmit(validate'+name+'Write)')?'validate'+name+'Write':'validate'+name+'Submission';
           const anchor='submissionBoundary.beforeSubmit('+validate+')';
           if(source.split(anchor).length!==2)throw new Error('missing submission anchor '+validate);
-          source=source.replace(anchor,'submissionBoundary.beforeSubmit(() => { globalThis.__fenceRefuse?.(threadId); '+validate+'(); })');
+          // cause 25 setupRefuse: after the real validator passes, the never-settling window lands and the production send fence reads the
+          // turn's own built prompt (direct only), inside the same boundary, so its refusal is the boundary's own (rebuildable, unwritten).
+          source=source.replace(anchor,'submissionBoundary.beforeSubmit(() => { globalThis.__fenceRefuse?.(threadId); '+validate+'(); '+(name==='Direct'?'globalThis.__fenceSetupRefuse?.(threadId,directPrompt); ':'')+'})');
         }
         return {format:'module-typescript',shortCircuit:true,source};
       }});
       globalThis.__fenceQueueCall=name=>log('queue-calls',{name});
+      globalThis.__fenceNotLaunched=()=>log('not-launched',{});
       const configFor=thread=>{const file=path.join(root,'fence-'+thread+'.json');return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{}};
       globalThis.__noticeFail=site=>{
         const file=path.join(root,'notice-faults');if(!fs.existsSync(file))return;
@@ -130,10 +181,58 @@ describe("pending fence turns in an isolated server", () => {
       };
       globalThis.__dropContext=refs=>refs.some(ref=>ref.kind==='line'&&ref.threadId==='OMITTED_THREAD_ID_SENTINEL')&&fs.readdirSync(root).some(name=>name.startsWith('fence-')&&name.endsWith('.json')&&JSON.parse(fs.readFileSync(path.join(root,name),'utf8')).dropContext&&JSON.parse(fs.readFileSync(path.join(root,name),'utf8')).attempt>0);
       globalThis.__retainedOnly=thread=>configFor(thread).retainedOnly&&!(configFor(thread).attempt??0);
+      globalThis.__outsideTrigger=thread=>configFor(thread).outsideTrigger===true;
+      globalThis.__noResume=thread=>configFor(thread).noResume===true;
+      globalThis.__outsideDirect=thread=>configFor(thread).outsideDirect===true;
+      globalThis.__roomUnproven=thread=>configFor(thread).roomUnproven===true;
+      // T3 storm: a bulk revoke seed still waiting for background admission (it cannot be walked, so no hurry settles it) holds a
+      // pending window over the whole thread. settledDeny also marks the retained session itself denied (a settled revoke).
+      globalThis.__fenceStorm=thread=>{
+        const file=path.join(root,'fence-'+thread+'.json'),cfg=configFor(thread);if(!cfg.storm||cfg.stormed)return;
+        cfg.stormed=true;fs.writeFileSync(file,JSON.stringify(cfg));
+        const db=database();db.exec('BEGIN IMMEDIATE');
+        try{
+          const id=openBulkRevoke(db,'fixture-storm',false);
+          const since=cfg.stormSince ? db.prepare('SELECT l.lsn FROM memory_line_lineage l JOIN memory_thread_no t ON t.no=l.thread_no WHERE t.thread_id=? AND l.message_id=?').get(thread,cfg.stormSince).lsn : 1;
+          db.prepare('INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,?,?)').run(thread,since,id);
+          const key=db.prepare('SELECT * FROM memory_session_lineage WHERE thread_id=? ORDER BY last_lsn DESC LIMIT 1').get(thread);
+          if(cfg.settledDeny)db.prepare('INSERT INTO memory_deny_session(thread_id,driver_instance,native_session,revoke_id) VALUES(?,?,?,999998)').run(key.thread_id,key.driver_instance,key.native_session);
+          db.exec('COMMIT');
+          log('storm',{thread,session:Boolean(key)});
+        }catch(error){db.exec('ROLLBACK');throw error;}
+        db.prepare("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'").run();
+      };
+      // Seeded once per thread: a refused turn's rebuilds enter startTurn again and must find the same history.
+      const seeded=(thread,id)=>!!database().prepare('SELECT 1 FROM messages WHERE thread_id=? AND id=?').get(thread,id);
+      globalThis.__seedFullFixtureHistory=thread=>configFor(thread).fullFixtureHistory===true&&!seeded(thread,'wm-history-0');
+      globalThis.__seedQuotingLine=thread=>seeded(thread,'wm-quoting')?undefined:configFor(thread).seedQuoting;
+      // WM-Q1/WM-Q2: every build reports whether the production gate (takeLastResort) made it the last resort; observed, never set.
+      // WM-Q2: the last resort waits after render and before it judges its recent window.
+      globalThis.__fenceHoldJudge=async (thread,lastResort)=>{log('judge-entry',{thread,lastResort});if(!configFor(thread).holdBeforeJudge||!lastResort)return;log('held-before-judge',{thread});const gate=path.join(root,'judge-'+thread);while(!fs.existsSync(gate))await new Promise(resolve=>setTimeout(resolve,50));};
+      globalThis.__fenceSettle=thread=>{
+        if(!configFor(thread).settleStorm)return;
+        const db=database();
+        const hold=db.prepare("SELECT p.revoke_id FROM memory_deny_pending p JOIN memory_revoke_jobs j USING(revoke_id) WHERE p.thread_id=? AND j.kind='bulk' AND j.state='seeding'").get(thread);
+        if(!hold)throw new Error('fixture has no pending bulk check to settle');
+        activateBulkRevoke(db,Number(hold.revoke_id));
+        return settleRevokesForTurn(db,3000).then(()=>log('settled-storm',{thread,held:!!db.prepare('SELECT 1 FROM memory_deny_pending WHERE thread_id=? AND revoke_id=?').get(thread,hold.revoke_id)}));
+      };
+      // USERBUG-SEALED-W1: the same never-settling window, opened MID-TURN (after the owner's prompt was written, so the turn already holds
+      // its context) when the test drops the storm-late-flag file naming the thread (logged once to storm-late).
+      const lateStorm=setInterval(()=>{
+        const flag=path.join(root,'storm-late-flag');if(!fs.existsSync(flag))return;
+        const thread=fs.readFileSync(flag,'utf8').trim();fs.rmSync(flag);
+        const db=database();db.exec('BEGIN IMMEDIATE');
+        try{const id=openBulkRevoke(db,'fixture-storm',false);db.prepare('INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,1,?)').run(thread,id);db.exec('COMMIT');}
+        catch(error){db.exec('ROLLBACK');throw error;}
+        db.prepare("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'").run();
+        log('storm-late',{thread});
+      },50);lateStorm.unref();
       globalThis.__finalLineage=(thread,turn,running)=>log('final-lineage',{thread,parents:turn.parents,roots:[...(running?.roots.roots??[])],sources:running?.sources});
       globalThis.__fenceNativeReplay=()=>fs.existsSync(path.join(root,'native-replay'));
       globalThis.__fenceMissingView=thread=>configFor(thread).missingView===true;
-      globalThis.__fenceCrash=(thread,site)=>{
+      globalThis.__fenceCrash=(thread,site,file)=>{
+        if(site==='after-note'&&configFor(thread).saveReleasedNotice)fs.copyFileSync(file,path.join(root,'released-'+thread+'.json'));
         if(configFor(thread).crashSite!==site||fs.existsSync(path.join(root,'crashed')))return;
         log('reset-disk',{thread,bots:JSON.parse(fs.readFileSync(path.join(root,'bots.json'),'utf8'))});
         fs.writeFileSync(path.join(root,'crashed'),site);process.kill(process.pid,'SIGKILL');
@@ -158,8 +257,9 @@ describe("pending fence turns in an isolated server", () => {
         if(!db.prepare('SELECT 1 FROM messages WHERE thread_id=? AND id=?').get(thread,id))appendMessage(thread,{id,role:'bot',kind:'text',text:'OMITTED_REMEMBERED_TEXT_SENTINEL',at:Date.now(),...(configFor(input.currentThreadId).dropContext?{}:{withheldFromBots:'forgotten'}),from:{botId:input.botId,name:'fixture',color:'blue'}});
         return {...input,bots:input.bots.map(bot=>bot.id===input.botId?{...bot,tasks:[...(bot.tasks??[]),{threadId:thread,title:'Omitted fixture'}]}:bot)};
       };
-      globalThis.__seedRouteHistory=thread=>{const cfg=configFor(thread),id=cfg.seedReplayUser?"ctx-route-replay":cfg.rebuildTier?"ctx-route-earlier":undefined;return route&&id&&!database().prepare("SELECT 1 FROM messages WHERE thread_id=? AND id=?").get(thread,id)?id:undefined;};
-      globalThis.__routeTier=thread=>route?(configFor(thread).rebuildTier??0):0;
+      globalThis.__seedRouteHistory=thread=>{const cfg=configFor(thread),id=cfg.seedReplayUser?"ctx-route-replay":cfg.rebuildTier&&!cfg.noReplaySeed?"ctx-route-earlier":undefined;return route&&id&&!database().prepare("SELECT 1 FROM messages WHERE thread_id=? AND id=?").get(thread,id)?id:undefined;};
+      // Every non-zero tier this harness hands to the server (the :112 redispatch injection and the :124 last-resort rewrite both read it) is logged as a route-tier-served row.
+      globalThis.__routeTier=thread=>{const tier=route?(configFor(thread).rebuildTier??0):0;if(tier)log('route-tier-served',{thread,tier});return tier;};
       globalThis.__legacyCursor=thread=>configFor(thread).legacyCursor===true;
       globalThis.__seedVisible=thread=>configFor(thread).seedVisible===true&&!database().prepare('SELECT 1 FROM messages WHERE thread_id=? AND id=?').get(thread,'ctx-visible');
       globalThis.__seedPrivate=thread=>configFor(thread).seedPrivate===true&&!database().prepare('SELECT 1 FROM messages WHERE thread_id=? AND id=?').get(thread,'ctx-withheld');
@@ -173,13 +273,36 @@ describe("pending fence turns in an isolated server", () => {
           const db=database();db.exec('BEGIN IMMEDIATE');
           let id;
           const delay=configFor(thread).pendingDelay??0;
-          try{id=openBulkRevoke(db,'fixture-pending',false);db.prepare('INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,1,?)').run(thread,id);if(!delay)activateBulkRevoke(db,id);db.exec('COMMIT');}
+          try{id=openBulkRevoke(db,'fixture-pending',false);db.prepare('INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,1,?)').run(thread,id);if(!delay&&!configFor(thread).pendingDeadline)activateBulkRevoke(db,id);db.exec('COMMIT');}
           catch(error){db.exec('ROLLBACK');throw error;}
+          if(configFor(thread).pendingDeadline){
+            // A bulk seed still waiting for background admission cannot be walked.
+            db.prepare("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'").run();
+            log('pending-checks',{thread,phase:'owed',at:Date.now()});
+            return; // The actual dispatch prompt must hit the send fence.
+          }
           if(delay){log('pending-checks',{thread,phase:'owed',at:Date.now()});setTimeout(()=>{activateBulkRevoke(db,id);log('pending-checks',{thread,phase:'runnable',at:Date.now()});},delay);}
           const head=Number(db.prepare('SELECT next FROM memory_lsn WHERE id=1').get().next);
-          assertSendFence(buildPrompt(undefined,[promptPart('fixture carried prefix',[{kind:'prefix',threadId:thread,headLsn:head}])]),{audience:null},db);
+          try{assertSendFence(buildPrompt(undefined,[promptPart('fixture carried prefix',[{kind:'prefix',threadId:thread,headLsn:head}])]),{audience:null},db);}
+          catch(error){
+            // cause 25: an owner turn no longer waits for the runner to close this check (it reads the verdict once and starts). These
+            // scenarios pin the rebuild AFTER a check that settled, so the check closes here, between the refusal and that one read. A check
+            // still open at the read is the cause 25 case (pendingDeadline); one that closes later is pendingDelay. Non-owner turns still wait for the runner.
+            if(!delay&&!['outsideDirect','outsideTrigger','roomUnproven'].some(k=>configFor(thread)[k]))db.prepare('DELETE FROM memory_deny_pending WHERE thread_id=? AND revoke_id=?').run(thread,id);
+            throw error;
+          }
           throw Error('fixture pending job did not refuse');
         }
+      };
+      // cause 25 setupRefuse (the field Grok shape): the thread's check is stuck checking:pending when the owner's prompt reaches the send
+      // fence at setup. The window opens once, after the server's validator (so the prepared disclosure still holds, as on the field thread),
+      // then the production fence reads the server's own built prompt and refuses checking:pending.
+      globalThis.__fenceSetupRefuse=(thread,prompt)=>{
+        const file=path.join(root,'fence-'+thread+'.json'),cfg=configFor(thread);if(!cfg.setupRefuse||cfg.setupRefused)return;
+        cfg.setupRefused=true;fs.writeFileSync(file,JSON.stringify(cfg));
+        pending.set(thread,'pending');globalThis.__fenceRefuse(thread);
+        assertSendFence(prompt,{audience:null},database());
+        throw Error('fixture setup fence did not refuse');
       };
       // This in-process fake has no native page fetch. Register that fact so
       // the separate web-read warning cannot masquerade as a memory refusal.
@@ -194,7 +317,7 @@ describe("pending fence turns in an isolated server", () => {
       const {assertSendFence}=await import(${importUrl("server/memory/send-fence.ts")});
       const {buildPrompt}=await import(${importUrl("server/memory/prompt-parts.ts")});
       const {markTurnOutside}=await import(${importUrl("server/email/external-marks.ts")});
-      const {stopMemoryRevocation,memoryRevocationIdle}=await import(${importUrl("server/memory/memory-revocation.ts")});
+      const {stopMemoryRevocation,memoryRevocationIdle,settleRevokesForTurn}=await import(${importUrl("server/memory/memory-revocation.ts")});
       const {maintainRecallViewSlice}=await import(${importUrl("server/memory/recall-view.ts")});
       let frozenGraph=false;
       globalThis.__fenceUpkeepTick=()=>{if(frozenGraph)log('upkeep-after-freeze',{});};
@@ -228,6 +351,11 @@ describe("pending fence turns in an isolated server", () => {
         // synchronously emits the terminal event, with no child left to close.
         const interrupt=instance.adapter.interruptTurn.bind(instance.adapter);
         if(!route)instance.adapter.interruptTurn=async(...args)=>{await interrupt(...args);return {closeConfirmed:true};};
+        if (${JSON.stringify(task.name.includes("WM-D4"))}) instance.adapter.interruptTurn=async (...args)=>{
+          const receipt=await interrupt(...args);
+          log('stop-close',{thread:args[0],confirmed:receipt?.closeConfirmed===true});
+          return receipt;
+        };
         instance.adapter.sendTurn=async turn=>{
           const file=path.join(root,'fence-'+turn.threadId+'.json');
           const cfg=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{};
@@ -235,6 +363,8 @@ describe("pending fence turns in an isolated server", () => {
           const attempt=cfg.attempt??0;cfg.attempt=attempt+1;fs.writeFileSync(file,JSON.stringify(cfg));
           input.environment.FAKE_LATE_HANDBACK=cfg.late?'1':'0';
           if(cfg.refusals>attempt)pending.set(turn.threadId,'pending');
+          // WM-Q1: the built turn waits here, after render and before its send fence, while the test forgets a line through the real route.
+          if(cfg.holdForRevoke&&attempt===(cfg.holdAttempt??0)){log('held-for-revoke',{thread:turn.threadId,attempt,text:turn.text,transcript:turn.transcript});const gate=path.join(root,'release-'+turn.threadId);while(!fs.existsSync(gate))await new Promise(resolve=>setTimeout(resolve,50));}
           if(cfg.permanentMark&&!attempt){
             const db=database();
             const key=db.prepare('SELECT * FROM memory_session_lineage WHERE thread_id=? ORDER BY last_lsn DESC LIMIT 1').get(turn.threadId);
@@ -252,7 +382,10 @@ describe("pending fence turns in an isolated server", () => {
               const cap=Number(db.prepare('SELECT next FROM memory_lsn WHERE id=1').get().next)+1;
               const insert=db.prepare("INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'line','{}',1,?,'mark','','active')");
               const hold=db.prepare("INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES('*',1,?)");
-              for(let i=0;i<cfg.backlog;i++){insert.run(800001+i,cap);hold.run(800001+i);}
+              // 1.0.21 closer2 (C3): a parked revoke still walking has a frontier row; 'mark' with no frontier row and no hold row is a walk that
+              // wrote every mark, which a waiter may now close (memory-revocation.ts READY_REVOKE), so the backlog states what it models.
+              const walking=db.prepare("INSERT INTO memory_revoke_frontier(revoke_id,seq,node) VALUES(?,1,'{}')");
+              for(let i=0;i<cfg.backlog;i++){insert.run(800001+i,cap);hold.run(800001+i);walking.run(800001+i);}
               // A real revoke commit changes the generation between build and submit.
               commitRevoke(db,{kind:'line',threadId:turn.threadId,messageIds:[],cause:'forget'});
               db.exec('COMMIT'); beforeQueue=queueSnapshot();beforeRecordGraph=recordGraph();resetDenyReadMeter();sqlWork.clear();sqlStacks.clear();
@@ -269,11 +402,19 @@ describe("pending fence turns in an isolated server", () => {
           }
           log('attempts',{thread:turn.threadId,attempt,text:turn.text,transcript:turn.transcript,system:turn.system,resumed:turn.resumeCursor!==undefined,cursor:turn.resumeCursor,refs:builtRefs.get(turn.threadId),reset:turn.sessionReset,integrationKeys:Object.keys(turn.integrations??{}),threadRecall:turn.threadRecall===true,memory:turn.memoryContext!==undefined});
           const before=turn.beforeSubmit;
-          turn.beforeSubmit=()=>{try { before?.(); } catch(error) { console.warn("fence fixture submission refused", error?.stack ?? error); throw error; } log('writes',{thread:turn.threadId,attempt,text:turn.text,transcript:turn.transcript,fallback:cfg.fallbackReplay?renderDriverReplay(turn.transcript??[],turn.replayMetadata):undefined,context:turn.memoryContext,system:turn.system,images:turn.images,integrationKeys:Object.keys(turn.integrations??{}),threadRecall:turn.threadRecall===true,memory:turn.memoryContext!==undefined,...beforeQueue?{queueBefore:beforeQueue,queueAfter:queueSnapshot(),work:denyReadMeter().statements,sqlWork:Object.fromEntries(sqlWork),sqlStacks:Object.fromEntries(sqlStacks),recordGraphBefore:beforeRecordGraph,recordGraphAfter:recordGraph()}:{}});if(cfg.releaseThenRefuse&&!attempt){fs.writeFileSync(path.join(root,'fake-transport-write'),turn.text);turn.onEngineWrite?.();pending.set(turn.threadId,'pending');before?.();}if(cfg.crashAtWrite&&attempt===1&&!fs.existsSync(path.join(root,'crashed'))){fs.writeFileSync(path.join(root,'fake-transport-write'),turn.text);log('reset-disk',{thread:turn.threadId,bots:JSON.parse(fs.readFileSync(path.join(root,'bots.json'),'utf8'))});fs.writeFileSync(path.join(root,'crashed'),'1');process.kill(process.pid,'SIGKILL');}};
+          turn.beforeSubmit=()=>{let submitted;if(cfg.removeAtWrite){const gone=path.join(root,'attachments','.removed');fs.mkdirSync(gone,{recursive:true});fs.writeFileSync(path.join(gone,path.basename(cfg.removeAtWrite)),'');}try { submitted=before?.(); } catch(error) { console.warn("fence fixture submission refused", error?.stack ?? error); log('refused-submits',{thread:turn.threadId,attempt,text:turn.text,...beforeQueue?{queueBefore:beforeQueue,queueAfter:queueSnapshot(),work:denyReadMeter().statements,sqlWork:Object.fromEntries(sqlWork),recordGraphBefore:beforeRecordGraph,recordGraphAfter:recordGraph()}:{}}); throw error; } log('writes',{thread:turn.threadId,attempt,text:turn.text,transcript:turn.transcript,fallback:cfg.fallbackReplay?renderDriverReplay(turn.transcript??[],turn.replayMetadata):undefined,context:turn.memoryContext,system:turn.system,images:turn.images,integrationKeys:Object.keys(turn.integrations??{}),threadRecall:turn.threadRecall===true,memory:turn.memoryContext!==undefined,...beforeQueue?{queueBefore:beforeQueue,queueAfter:queueSnapshot(),work:denyReadMeter().statements,sqlWork:Object.fromEntries(sqlWork),sqlStacks:Object.fromEntries(sqlStacks),recordGraphBefore:beforeRecordGraph,recordGraphAfter:recordGraph()}:{}});if(cfg.releaseThenRefuse&&!attempt){fs.writeFileSync(path.join(root,'fake-transport-write'),turn.text);turn.onEngineWrite?.();pending.set(turn.threadId,'pending');before?.();}if(cfg.crashAtWrite&&attempt===1&&!fs.existsSync(path.join(root,'crashed'))){fs.writeFileSync(path.join(root,'fake-transport-write'),turn.text);log('reset-disk',{thread:turn.threadId,bots:JSON.parse(fs.readFileSync(path.join(root,'bots.json'),'utf8'))});fs.writeFileSync(path.join(root,'crashed'),'1');process.kill(process.pid,'SIGKILL');}
+          // IMGREAD: hand the attempt id back, as the server's own beforeSubmit does; Codex reports its write only by that id (codex.ts attemptWritten).
+          if(${JSON.stringify(task.name.includes('IMGREAD'))})return submitted;};
           if(cfg.crashAtRecovery&&attempt===1&&!fs.existsSync(path.join(root,'crashed'))){
             log('reset-disk',{thread:turn.threadId,bots:JSON.parse(fs.readFileSync(path.join(root,'bots.json'),'utf8'))});
             fs.writeFileSync(path.join(root,'crashed'),'1');process.kill(process.pid,'SIGKILL');
           }
+          // cause 25 setupRefuse: the server's own submission boundary is asked during setup, before the engine is spawned or hands the
+          // turn back, as on the field Grok thread (re-preparing ~1 s after send, no engine frame before the rebuild). The real Grok driver
+          // (grok.ts over the scripted ACP CLI, a real child process) meets its fence after hand-back, so the fixture asks it here; the
+          // refusal is the boundary's (__fenceSetupRefuse above) and the real Grok driver runs the rebuilt turn.
+          if(cfg.setupRefuse&&!attempt){turn.beforeSubmit();throw new Error('fixture setup boundary did not refuse');}
+          if(cfg.pendingDeadline&&!attempt)globalThis.__fenceRefuse(turn.threadId);
           return send(turn);
         };
         const subscribe=instance.adapter.onEvent.bind(instance.adapter);
@@ -292,12 +433,33 @@ describe("pending fence turns in an isolated server", () => {
       if(!route)BUILT_IN_DRIVERS.push(driver);
       const pre=path.join(root,'ready');fs.writeFileSync(pre,'');
       const file=path.join(root,'config.json'),cfg=JSON.parse(fs.readFileSync(file,'utf8'));
-      const fake=route==='codex'?'fake-codex-app-server.ts':route==='customAcp'?'fake-acp-cli.ts':'fake-claude-cli.ts';
+      const fake=route==='codex'?'fake-codex-app-server.ts':route==='customAcp'||route==='fuigoAgent'||route==='grokAgent'?'fake-acp-cli.ts':'fake-claude-cli.ts';
       let cli=new URL(${importUrl("server/testing/fake-claude-cli.ts")}).pathname.replace("fake-claude-cli.ts",fake);
       if(route){fs.chmodSync(cli,0o755);const {recordingCli}=await import(${importUrl("server/testing/transport-bytes.test-helper.ts")});cli=recordingCli(cli,root);}
-      cfg.instances.fence={driver:route||'fakeLateTerminal',...(route?{config:{cli},environment:{FAKE_CLAUDE_MODE:'happy',FAKE_CLAUDE_DUMP:path.join(root,'wire-claude'),FAKE_CLAUDE_DUMP_EACH_TURN:'1',FAKE_CLAUDE_DUMP_HISTORY:path.join(root,'wire-history'),FAKE_CODEX_WARM:'1',FAKE_CODEX_DUMP:path.join(root,'wire-codex'),FAKE_ACP_TEXT_ONLY:'1',FAKE_ACP_PROMPT_DUMP:path.join(root,'wire-acp')}}:{environment:{FAKE_LATE_DUMP:path.join(root,'wire-late'),FAKE_LATE_FENCED_WRITES:'1',FAKE_LATE_PLAIN_SESSION:'1',FAKE_LATE_PRE_HANDBACK_GATE:pre}})};
+      const warmRoute=route==='grokAgent'||route==='fuigoAgent' ? {FAKE_ACP_UNIQUE_SESSIONS:'1',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_LIST:'all:ready',FAKE_ACP_MCP_READY_METHOD:route==='grokAgent'?'_x.ai/mcp_initialized':'_fuigo/mcp_initialized',FAKE_ACP_RPC_FULL_LOG:path.join(root,'wire-rpc')} : {};
+      cfg.instances.fence={driver:route||'fakeLateTerminal',...(route?{config:{cli},environment:{FAKE_CLAUDE_MODE:'happy',FAKE_CLAUDE_DUMP:path.join(root,'wire-claude'),FAKE_CLAUDE_DUMP_EACH_TURN:'1',FAKE_CLAUDE_DUMP_HISTORY:path.join(root,'wire-history'),FAKE_CODEX_WARM:'1',FAKE_CODEX_DUMP:path.join(root,'wire-codex'),FAKE_ACP_TEXT_ONLY:'1',FAKE_ACP_PROMPT_DUMP:path.join(root,'wire-acp'),...warmRoute}}:{environment:{FAKE_LATE_DUMP:path.join(root,'wire-late'),FAKE_LATE_FENCED_WRITES:'1',FAKE_LATE_PLAIN_SESSION:'1',FAKE_LATE_PRE_HANDBACK_GATE:pre}})};
+      if (${JSON.stringify(task.name.includes("WM-D4"))}) {
+        const gate=path.join(root,'hold-session-new');
+        if(!fs.existsSync(gate))fs.writeFileSync(gate,'');
+        cfg.instances.fence.environment.FAKE_ACP_SESSION_NEW_GATE=gate;
+      }
+      if(route==='fuigoAgent'){
+        const home=path.join(process.env.HOME,'.fuigo');
+        fs.mkdirSync(home,{recursive:true});fs.writeFileSync(path.join(home,'auth.json'),'{}');
+      }
       cfg.instances.handoff={...cfg.instances.verification,environment:{FAKE_CLAUDE_MODE:'hang'}};
       if (${JSON.stringify(task.name.includes('memory recovery retains authorized integrations'))}) cfg.instances.fence.environment.FAKE_LATE_MEMORY_MCP='1';
+      if (${JSON.stringify(task.name.includes('UNFENCED adapter'))}) cfg.instances.fence.environment.FAKE_LATE_FENCED_WRITES='0';
+      // IMGREAD: Codex resumes its thread and does no web search (outside input would reset, not keep, the session); Fuigo reports its
+      // mounted servers ready, as a settled real engine does.
+      if (${JSON.stringify(task.name.includes('IMGREAD'))} && route==='codex') Object.assign(cfg.instances.fence.environment,{FAKE_CODEX_MODE:'resume',FAKE_CODEX_NO_WEB_SEARCH:'1'});
+      if (route==='fuigoAgent') Object.assign(cfg.instances.fence.environment,{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_LIST:'all:ready'});
+      // The real Grok driver on the scripted ACP CLI: Grok reports its mounted servers with its own ready notification.
+      if (route==='grokAgent') Object.assign(cfg.instances.fence.environment,{FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_LIST:'all:ready',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized'});
+      // IMGREAD queue: a turn whose prompt says IMGREAD_HOLD waits for the gate file, so the next messages queue behind it.
+      if (${JSON.stringify(task.name.includes('IMGREAD'))} && route==='claudeAgent') Object.assign(cfg.instances.fence.environment,{FAKE_CLAUDE_HOLD_MARKER:'IMGREAD_HOLD',FAKE_CLAUDE_HOLD_GATE:path.join(root,'imgread-hold-gate'),FAKE_CLAUDE_HOLD_SEEN:path.join(root,'imgread-hold-seen')});
+      // USERBUG-SEALED: the held turn's engine stays up after its prompt, and the test asks it (the tool mailbox) to call a mounted tool.
+      if (${JSON.stringify(task.name.includes('USERBUG-SEALED'))} && route==='claudeAgent') { fs.mkdirSync(path.join(root,'userbug-mailbox'),{recursive:true}); Object.assign(cfg.instances.fence.environment,{FAKE_CLAUDE_HOLD_MARKER:'USERBUG_HOLD',FAKE_CLAUDE_HOLD_GATE:path.join(root,'userbug-hold-gate'),FAKE_CLAUDE_HOLD_SEEN:path.join(root,'userbug-hold-seen'),FIELD_REPLAY_MAILBOX:path.join(root,'userbug-mailbox')}); }
       fs.writeFileSync(file,JSON.stringify(cfg));
       // Quiescence witness holds. A held checkpoint returns the product's own
       // deferred outcome, so its debt row stays owed and the worker's debt
@@ -355,10 +517,11 @@ describe("pending fence turns in an isolated server", () => {
     console.warn(`revokefence isolated fixture ${JSON.stringify(fixture.info)}`);
   }, 120000);
   afterEach(async ({ task }) => { if (fixture) { if(task.name.includes("CTX-"))console.warn("CTX captures "+JSON.stringify({attempts:rows("attempts"),writes:rows("writes"),legacy:rows("legacy-lineage")})); console.warn(`revokefence log ${fixture.info.logPath}\n${readFileSync(fixture.info.logPath, "utf8")}`); await fixture.close(); } });
-  const make = async (room = false) => {
-    const bot = (await api("POST", "/api/bots", { name: "Fence fixture", modelSelection: { instanceId: "fence", model: currentRoute === "claudeAgent" ? "claude-sonnet-5-5" : currentRoute === "codex" ? "gpt-6.1-sol" : currentRoute === "customAcp" ? "agent-default" : "late-1" } })).bot;
+  const make = async (room = false, project = false, model?: string) => {
+    const grokModels = currentRoute === "grokAgent" ? (await api("GET", "/api/instances")).instances.find((entry: any) => entry.instanceId === "fence").models : undefined;
+    const bot = (await api("POST", "/api/bots", { name: "Fence fixture", modelSelection: { instanceId: "fence", model: model ?? (grokModels ? grokModels.options[0]?.id ?? grokModels.default : currentRoute === "claudeAgent" ? "claude-sonnet-5-5" : currentRoute === "codex" ? "gpt-6.1-sol" : currentRoute === "customAcp" ? "agent-default" : currentRoute === "fuigoAgent" ? "fake-acp-model" : "late-1") } })).bot;
     await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false });
-    const group = room ? (await api("POST", "/api/groups", { name: "Fence room", memberIds: [bot.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } } })).group : undefined;
+    const group = room ? (await api("POST", "/api/groups", { name: "Fence room", memberIds: [bot.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } }, ...(project ? { channelProject: { goal: "Fixture project" } } : {}) })).group : undefined;
     return { bot, thread: group?.threadId ?? bot.threadId, route: group ? `/api/groups/${group.id}/messages` : `/api/bots/${bot.id}/messages` };
   };
   const finished = async (thread: string, want = 1) => {
@@ -369,33 +532,112 @@ describe("pending fence turns in an isolated server", () => {
     await expect.poll(() => rows("terminal-replies").filter(row => row.thread === thread && row.text === "REVOKED_SENTINEL-" + thread).length >= want, { timeout: 60000 }).toBe(true);
     await expect.poll(async () => (await messages(thread)).filter(m => m.role === "bot" && m.kind === "text" && m.text === "REVOKED_SENTINEL-" + thread).length >= want, { timeout: 60000 }).toBe(true);
   };
-  it.each([false, true])("pending check settles before one rebuild and one write (room=%s)", async room => {
+  const LEDGER_REFUSAL_LINE = "I stopped this turn because some of its context is no longer available.";
+  const busy = async (f: { bot: { id: string }; thread: string }, room: boolean) => room
+    ? Boolean((await api("GET", "/api/bots?messages=0")).groups.find((g: any) => g.threadId === f.thread)?.busyBotId)
+    : (await api("GET", `/api/bots/${f.bot.id}/tasks/${f.thread}`)).task?.busy === true;
+  const ids = async (thread: string) => new Set((await messages(thread)).map(m => m.id as string));
+  // MAIN-RULING local-memory-budget (cause 25, Sean: no local memory check may delay an owner turn): this case asserted the owner's turn
+  // waited 6 s for its check (owed -> runnable >= 6000 ms, no write while waiting). It now never waits (OWNER_PENDING_WAIT_MS = 0) and
+  // takes its last resort: one write, the skip recorded, no error card; the check still settles in the background.
+  it.each([false, true])("pending check that settles later does not hold the owner's turn: one last-resort write (room=%s)", async room => {
     const f = await make(room);
     scenario(f.thread, { refusals: 1, pendingDelay: 6000 });
     await api("POST", f.route, { threadId: f.thread, text: "Re-send the fixture report" });
     await expect.poll(() => rows("pending-checks").some(r => r.thread === f.thread && r.phase === "owed"), { timeout: 15000 }).toBe(true);
-    expect(rows("writes").filter(r => r.thread === f.thread)).toHaveLength(0);
-    if (room) expect((await api("GET", "/api/bots?messages=0")).groups.find((g: any) => g.threadId === f.thread)?.busyBotId).toBe(f.bot.id);
-    else expect((await api("GET", `/api/bots/${f.bot.id}/tasks/${f.thread}`)).task?.busy).toBe(true);
     await finished(f.thread);
-    const checks = rows("pending-checks").filter(r => r.thread === f.thread);
-    expect(checks.map(r => r.phase)).toEqual(["owed", "runnable"]);
-    expect(checks[1].at - checks[0].at).toBeGreaterThanOrEqual(6000);
+    expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`[memory] pending fence skipped thread=${f.thread} reason=checking:pending`);
     expect(rows("attempts").filter(r => r.thread === f.thread)).toHaveLength(2);
     expect(rows("writes").filter(r => r.thread === f.thread)).toHaveLength(1);
     expect((await messages(f.thread)).filter(m => m.tool?.ok === false)).toHaveLength(0);
+    await expect.poll(() => rows("pending-checks").filter(r => r.thread === f.thread).map(r => r.phase), { timeout: 15000 }).toEqual(["owed", "runnable"]);
+  }, 90000);
+  it.each([false, true])("owner continues after pending prefix deadline (room=%s)", async room => {
+    const f = await make(room);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" });
+    await finished(f.thread);
+    const previousNotes = new Set((await messages(f.thread)).map(m => m.id));
+    scenario(f.thread, { refusals: 1, pendingDeadline: true });
+    await api("POST", f.route, { threadId: f.thread, text: "New owner message" });
+    await expect.poll(() => readFileSync(fixture.info.logPath, "utf8"), { timeout: 15000 }).toContain("pending fence settle outcome=deadline");
+    const log = readFileSync(fixture.info.logPath, "utf8");
+    expect(log).toMatch(/send fence refused \(checking:pending,.+refused refs: (?:own-)?prefix(?:-shown)? 1/);
+    await expect.poll(() => rows("writes").filter(r => r.thread === f.thread && r.text.includes("New owner message")).length, { timeout: 6000 }).toBe(1);
+    const write = rows("writes").find(r => r.thread === f.thread && r.text.includes("New owner message"));
+    expect(write.attempt).toBe(1);
+    // SABLE-IDENTITY-1020 (this pin was v1.0.20's message-only last resort): the direct last rebuild of a typed turn now carries its recent
+    // lines, each judged on its own. The owner's own line never waits on a pending window (deny-read.ts: owner lines are judged by their own
+    // flag, tombstone and thread deny), so it is replayed; the generated reply inside the pending window stays out (REVOKED_SENTINEL below).
+    // A room member's last resort is unchanged: message-only.
+    if (room) {
+      expect(write.transcript ?? []).toEqual([]);
+      expect(JSON.stringify(write)).not.toContain("Previous fixture message");
+    } else {
+      expect((write.transcript ?? []).map((entry: { role: string; text: string }) => [entry.role, entry.text])).toEqual([["user", "Previous fixture message"]]);
+      expect(write.text).toMatch(/^User: .*Previous fixture message/m);
+    }
+    expect(JSON.stringify(write)).not.toContain("REVOKED_SENTINEL-" + f.thread);
+    await finished(f.thread, 2);
+    const shown = await messages(f.thread);
+    expect(shown.filter(m => m.text === "New owner message")).toHaveLength(1);
+    expect(shown.filter(m => m.memoryNote === "without-memory" && !previousNotes.has(m.id))).toHaveLength(1);
+    expect(shown.filter(m => m.tool?.ok === false)).toEqual([]);
+  }, 90000);
+  // 1.0.20 A-3: the owner's routine is owner-originated work, not a fresh line: at the same pending deadline it takes the same message-only
+  // last resort (the server frame, no stored context, no earlier text), never the refusal line.
+  it("owner continues after pending prefix deadline: routine run", async () => {
+    const f = await make(false);
+    const made = await api("POST", "/api/routines", { botId: f.bot.id, name: "Fixture routine", prompt: "Routine fixture prompt", schedule: { type: "once", at: Date.now() + 3_600_000 } });
+    const routine = made.routine;
+    await api("POST", `/api/routines/${routine.id}/run`, {});
+    await expect.poll(() => rows("writes").filter(r => r.text.includes("Routine fixture prompt")).length, { timeout: 30000 }).toBeGreaterThanOrEqual(1);
+    const thread = rows("writes").find(r => r.text.includes("Routine fixture prompt")).thread;
+    await finished(thread);
+    const previousNotes = new Set((await messages(thread)).map(m => m.id));
+    const before = rows("writes").filter(r => r.thread === thread).length;
+    scenario(thread, { refusals: 1, pendingDeadline: true });
+    await api("POST", `/api/routines/${routine.id}/run`, {});
+    await expect.poll(() => readFileSync(fixture.info.logPath, "utf8"), { timeout: 20000 }).toContain("pending fence settle outcome=deadline");
+    await expect.poll(() => rows("writes").filter(r => r.thread === thread).length, { timeout: 10000 }).toBe(before + 1);
+    const write = rows("writes").filter(r => r.thread === thread).at(-1);
+    expect(write.attempt).toBe(1);
+    expect(write.transcript ?? []).toEqual([]);
+    expect(JSON.stringify(write)).not.toContain("REVOKED_SENTINEL-" + thread);
+    // MAIN RULING 2026-11-19: the routine's last resort carries its own task line, never only the static instruction (a run that did nothing)
+    expect(write.text).toContain("Routine fixture prompt");
+    expect(write.text).not.toContain("Stored context is unavailable for this turn");
+    await finished(thread, 2);
+    const shown = (await messages(thread)).filter(m => !previousNotes.has(m.id));
+    expect(shown.filter(m => m.tool?.ok === false)).toEqual([]);
+    expect(shown.filter(m => /could not start this reply|couldn't start this reply|context is no longer available/.test(`${m.text ?? ""} ${m.tool?.name ?? ""}`))).toEqual([]);
   }, 90000);
   it.each([false, true])("Stop ends a pending check wait with no rebuild or engine write (room=%s)", async room => {
     const f = await make(room);
-    scenario(f.thread, { refusals: 1, pendingDelay: 6000 });
+    // cause 25 (MAIN-RULING local-memory-budget): an owner turn has no wait left to stop, so the Stop-during-the-wait contract is pinned on
+    // a turn not proven the owner's (outside input / an unproven room line), whose wait is unchanged.
+    scenario(f.thread, { refusals: 1, pendingDelay: 6000, ...(room ? { roomUnproven: true } : { outsideDirect: true }) });
     await api("POST", f.route, { threadId: f.thread, text: "Stop the pending fixture report" });
     await expect.poll(() => rows("pending-checks").some(r => r.thread === f.thread && r.phase === "owed"), { timeout: 15000 }).toBe(true);
-    await api("POST", f.route.replace(/\/messages$/, "/interrupt"), { threadId: f.thread });
+    const before = await ids(f.thread);
+    const stop = await api("POST", f.route.replace(/\/messages$/, "/interrupt"), { threadId: f.thread });
+    // the Stop itself is answered as done (nothing is left HELD on this path)
+    expect(stop).toMatchObject({ ok: true });
     await expect.poll(() => readFileSync(fixture.info.logPath, "utf8").includes("pending fence settle outcome=stopped"), { timeout: 15000 }).toBe(true);
+    // JOINT RULING STOP-VS-REFUSAL: the refused first attempt handed no engine turn back, so this Stop has nothing left to close and is
+    // confirmed. The turn ends released and silent: no refusal row, no error card, no rebuild and no write.
+    await expect.poll(() => busy(f, room), { timeout: 15000 }).toBe(false);
+    const fresh = (await messages(f.thread)).filter(m => !before.has(m.id));
+    console.warn("pending Stop " + JSON.stringify({ room, stop, rows: fresh.map(m => ({ role: m.role, kind: m.kind, text: m.text, tool: m.tool?.name, ok: m.tool?.ok })) }));
+    expect(fresh.filter(m => m.text === LEDGER_REFUSAL_LINE)).toEqual([]);
+    expect(fresh.filter(m => m.role === "bot" && m.tool?.ok === false)).toEqual([]);
     expect(rows("attempts").filter(r => r.thread === f.thread)).toHaveLength(1);
     expect(rows("writes").filter(r => r.thread === f.thread)).toHaveLength(0);
     expect((await messages(f.thread)).filter(m => m.tool?.ok === false)).toHaveLength(0);
-  }, 60000);
+    // released for real: the owner's next message is admitted and dispatched
+    scenario(f.thread, {});
+    await api("POST", f.route, { threadId: f.thread, text: "after the stopped wait" });
+    await expect.poll(() => rows("attempts").filter(r => r.thread === f.thread).at(-1)?.text ?? "", { timeout: 30000 }).toContain("after the stopped wait");
+  }, 90000);
   it("a real bot handoff with outside history waits for its carried prefix check", async () => {
     const f = await make();
     scenario(f.thread, { outside: true });
@@ -449,7 +691,11 @@ describe("pending fence turns in an isolated server", () => {
   // The freeze behind the R10/B4 count comparison must wait on the database,
   // not on a sampled counter: a completed capture whose checkpoint is still
   // owed shows zero open capture jobs, and a stopped worker shows no debt.
-  it.each([["checkpoint debt", "hold-checkpoint", { capture: 0, debt: 3 }], ["open capture job", "hold-capture", { capture: 3, debt: 0 }]] as const)("fixture freeze waits for an outstanding %s", async (_name, hold, outstanding) => {
+  // mem-f6 (1.0.21): the turn's settlement row no longer waits in the capture queue; its job is written complete and owes its
+  // checkpoint at once. With the worker stopped the turn therefore leaves 2 open capture jobs (prompt, reply) and 1 debt (was 3 and 0).
+  // The freeze still has to wait for both kinds, which is what this case holds.
+  // memv2 E3: a thread's checkpoint debt is one marker (r4: one per owed job of the turn, 3 here)
+  it.each([["checkpoint debt", "hold-checkpoint", { capture: 0, debt: 1 }], ["open capture job", "hold-capture", { capture: 2, debt: 1 }]] as const)("fixture freeze waits for an outstanding %s", async (_name, hold, outstanding) => {
     const frozenFile = join(fixture.info.dataDir, "memory-frozen"), holdFile = join(fixture.info.dataDir, hold);
     await api("POST", "/api/memory/action", { action: "configure", mode: "capture" });
     const f = await make(); scenario(f.thread, { fixedGraph: true });
@@ -477,6 +723,8 @@ describe("pending fence turns in an isolated server", () => {
     expect(rows("checkpoints").filter(row => row.status === "updated").length).toBeGreaterThan(updatedBefore);
     if (hold === "hold-capture") expect(rows("capture-hold").map(row => row.held)).toEqual([true, false]);
   }, 150000);
+  // MAIN ruling C1 (1.0.20, reverses MAIN Q1 option A for the owner): these five cases send fresh owner text, so a retained refusal that is
+  // only checking:pending is sealed unwritten and rebuilt. Their f8f3 oracles are restored verbatim: one write, one without-memory note.
   it.each([10, 1000])("R10 direct owner turn with %i active jobs releases once without walking the queue", async backlog => {
     await api("POST", "/api/memory/action", { action: "configure", mode: "capture" });
     const f = await make(); scenario(f.thread, { fixedGraph: true });
@@ -508,7 +756,12 @@ describe("pending fence turns in an isolated server", () => {
     console.warn("revokefence view waits " + JSON.stringify({ backlog, frozen, behind: rows("view-behind") }));
     pendingTurnWaits.set(backlog, rows("view-behind"));
     if (pendingTurnWaits.size === 2) expect(pendingTurnWaits.get(1000)).toEqual(pendingTurnWaits.get(10));
-    pendingTurnWork.set(backlog, release.work); pendingTurnSql.set(backlog, release.sqlWork);
+    // MAIN Q2: the turn waits passively for its pending check before its one write, and that wait's probes are counted by time, not by
+    // backlog (268 v 252 statements for 10 v 1000 jobs in c1-fp2). The constant-work oracle is read at the refused submission, the
+    // turn's own work before the wait (the measure the tip used); the write keeps every other f8f3 oracle.
+    const refused = rows("refused-submits").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"))[0];
+    expect(refused?.work, "the fixture measured the refused submission").toBeTypeOf("number");
+    pendingTurnWork.set(backlog, refused.work); pendingTurnSql.set(backlog, refused.sqlWork);
     if (pendingTurnWork.size === 2) expect(pendingTurnWork.get(1000), JSON.stringify(Object.fromEntries(pendingTurnSql))).toBe(pendingTurnWork.get(10));
     if (pendingTurnGraphs.size === 2) expect(pendingTurnGraphs.get(1000)).toEqual(pendingTurnGraphs.get(10));
     expect((await messages(f.thread)).filter(m => m.memoryNote === "without-memory" && !notesBefore.has(m.id))).toHaveLength(1);
@@ -541,7 +794,10 @@ describe("pending fence turns in an isolated server", () => {
     console.warn("room view waits " + JSON.stringify({ backlog, frozen, behind: rows("view-behind") }));
     roomTurnWaits.set(backlog, rows("view-behind"));
     if (roomTurnWaits.size === 2) expect(roomTurnWaits.get(1000)).toEqual(roomTurnWaits.get(10));
-    roomTurnWork.set(backlog, writes[0].work);
+    // MAIN Q2, as in the direct case above: constant work is read at the refused submission, before the passive wait.
+    const refused = rows("refused-submits").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"))[0];
+    expect(refused?.work, "the fixture measured the refused submission").toBeTypeOf("number");
+    roomTurnWork.set(backlog, refused.work);
     console.warn("room operation profile " + JSON.stringify({ backlog, work: writes[0].work, sql: writes[0].sqlWork }));
     if (roomTurnWork.size === 2) expect(roomTurnWork.get(1000)).toBe(roomTurnWork.get(10));
     if (roomTurnGraphs.size === 2) expect(roomTurnGraphs.get(1000)).toEqual(roomTurnGraphs.get(10));
@@ -562,6 +818,22 @@ describe("pending fence turns in an isolated server", () => {
     expect(writes).toHaveLength(1);
     expect(JSON.stringify(writes)).not.toContain("REVOKED_SENTINEL-" + f.thread);
   }, 90000);
+  it("Q1 negative: an UNFENCED adapter refused before hand-back is not closed as not launched (fail closed)", async () => {
+    // REVIEW H1: the "not launched" close needs the boundary's own proof (fencedWrites, nothing released or confirmed, no unfenced
+    // invocation). The same retained pending refusal as B4 M8, on an adapter that does not declare fencedWrites: an invoked engine is
+    // never proven to have done nothing, so the lease is not closed as not launched and the thread stays held (the pre-Q1 behaviour).
+    const f = await make();
+    await api("POST", f.route, { threadId: f.thread, text: "earlier human input" }); await finished(f.thread);
+    await expect.poll(async () => (await api("GET", `/api/bots/${f.bot.id}/tasks/${f.thread}`)).task?.busy).not.toBe(true);
+    scenario(f.thread, { backlog: 10, retainedOnly: true });
+    await api("POST", f.route, { threadId: f.thread, text: "RAW_HUMAN_INPUT" });
+    await expect.poll(() => rows("refused-submits").some(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT")), { timeout: 30000 }).toBe(true);
+    // The fenced cases release the thread within one poll of the refused submission; give the unfenced one well over that.
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    expect(rows("not-launched"), "an unfenced invoked engine is never closed as not launched").toEqual([]);
+    expect(await busy(f, false), "the refused turn stays held: its close is not proven").toBe(true);
+    expect(rows("writes").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"))).toEqual([]);
+  }, 120000);
   it.each([false, true])("B2 dropped tier-one context leaves no output roots or turn/session parents (room=%s)", async room => {
     await api("POST", "/api/memory/action", { action: "configure", mode: "off" });
     const f = await make(room); scenario(f.thread, { refusals: 1, dropContext: true });
@@ -701,21 +973,63 @@ describe("pending fence turns in an isolated server", () => {
     expect(JSON.stringify(writes)).not.toContain("REVOKED_SENTINEL-" + f.thread);
     expect(writes[0].queueBefore).toEqual(writes[0].queueAfter);
   }, 90000);
-  it("R11 a room without its rendered view keeps a legacy prefix until a fenced recovery", async () => {
+  const missingViewRoomTurn = async () => {
     const f = await make(true);
     await api("POST", f.route, { threadId: f.thread, text: "ROOM_STORED_SENTINEL" }); await finished(f.thread);
     await expect.poll(async () => !!(await api("GET", "/api/bots?messages=0")).groups.find((g: any) => g.threadId === f.thread)?.busyBotId).toBe(false);
     scenario(f.thread, { backlog: 10, missingView: true });
     await api("POST", f.route, { threadId: f.thread, text: "RAW_HUMAN_INPUT" }); await finished(f.thread, 2);
+    return f;
+  };
+  // MAIN ruling C1: the owner's room turn is rebuilt (fenced recovery), never ended on checking:pending. These are the f8f3 assertions of
+  // "R11 a room without its rendered view keeps a legacy prefix until a fenced recovery", all but its `held` line, which stays below under
+  // the original name: that one line fails the same way on dev/1019-frozen 3ead2c9023 and on f8f3 (the room prefix carries `held`).
+  it("R11 a room without its rendered view is recovered by one fenced rebuild for the owner (MAIN C1)", async () => {
+    const f = await missingViewRoomTurn();
     const attempts = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"));
     expect(attempts.length).toBeGreaterThan(1);
-    expect(attempts[0].refs.find((r: any) => r.kind === "prefix")).not.toHaveProperty("held");
     const writes = rows("writes").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"));
     expect(writes).toHaveLength(1);
     expect(JSON.stringify(writes)).not.toContain("REVOKED_SENTINEL-" + f.thread);
     expect(writes[0].queueBefore).toEqual(writes[0].queueAfter);
+    expect((await messages(f.thread)).filter(m => m.text === LEDGER_REFUSAL_LINE)).toEqual([]);
   }, 90000);
-
+  it("R11 a room without its rendered view keeps a legacy prefix until a fenced recovery", async () => {
+    const f = await missingViewRoomTurn();
+    const attempts = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"));
+    expect(attempts.length).toBeGreaterThan(1);
+    expect(attempts[0].refs.find((r: any) => r.kind === "prefix")).not.toHaveProperty("held");
+  }, 90000);
+  // MAIN ruling C1 keeps MAIN Q1 (option A) for everything that is neither fresh owner text nor the owner's own work. Outside input stays
+  // refused: a routine run that arrives as webhook-triggered (the fixture marks the hand-off; the routine, thread and fence are real), with
+  // its retained history still checking:pending, ends terminal (one attempt, no engine write, exactly one stopped-context line).
+  it("Q1 kept for outside input: a webhook-triggered routine run with retained history still checking:pending ends terminal", async () => {
+    const f = await make(false);
+    const made = await api("POST", "/api/routines", { botId: f.bot.id, name: "Retained routine", prompt: "ROUTINE_RETAINED_PROMPT", schedule: { type: "once", at: Date.now() + 3_600_000 } });
+    await api("POST", `/api/routines/${made.routine.id}/run`, {});
+    await expect.poll(() => rows("writes").filter(r => r.text.includes("ROUTINE_RETAINED_PROMPT")).length, { timeout: 30000 }).toBeGreaterThanOrEqual(1);
+    const thread = rows("writes").find(r => r.text.includes("ROUTINE_RETAINED_PROMPT")).thread as string;
+    await finished(thread);
+    await expect.poll(() => busy({ bot: f.bot, thread }, false), { timeout: 30000 }).toBe(false);
+    const before = await ids(thread);
+    const writesBefore = rows("writes").filter(r => r.thread === thread).length, attemptsBefore = rows("attempts").filter(r => r.thread === thread).length;
+    scenario(thread, { backlog: 10, outsideTrigger: true });
+    await api("POST", `/api/routines/${made.routine.id}/run`, {});
+    // first the refused submission itself, so an idle thread read before the run even started cannot pass
+    await expect.poll(() => rows("refused-submits").filter(r => r.thread === thread).length, { timeout: 30000 }).toBe(1);
+    await expect.poll(() => busy({ bot: f.bot, thread }, false), { timeout: 30000 }).toBe(false);
+    await expect.poll(async () => (await messages(thread)).filter(m => !before.has(m.id) && m.text === LEDGER_REFUSAL_LINE).length, { timeout: 30000 }).toBe(1);
+    const fresh = (await messages(thread)).filter(m => !before.has(m.id));
+    console.warn("Q1 outside-input terminal " + JSON.stringify({ attempts: rows("attempts").filter(r => r.thread === thread).length - attemptsBefore, rows: fresh.map(m => ({ role: m.role, kind: m.kind, text: m.text, note: m.memoryNote, tool: m.tool?.name })) }));
+    expect(rows("attempts").filter(r => r.thread === thread)).toHaveLength(attemptsBefore + 1);
+    expect(rows("writes").filter(r => r.thread === thread)).toHaveLength(writesBefore);
+    expect(rows("refused-submits").filter(r => r.thread === thread)).toHaveLength(1);
+    // the run's own activity rows (its marker and the outside prompt, shown masked) and the one line: no reply, no second card, no note
+    expect(fresh.filter(m => m.role === "bot" && m.kind !== "activity" && m.text !== LEDGER_REFUSAL_LINE)).toEqual([]);
+    expect(fresh.filter(m => m.role === "bot" && m.kind === "activity" && m.tool?.ok === false)).toEqual([]);
+    expect(fresh.filter(m => m.memoryNote === "without-memory")).toEqual([]);
+    expect(JSON.stringify(fresh)).not.toContain("REVOKED_SENTINEL-" + thread);
+  }, 120000);
   it.each([false, true])("A7 tier 0 working-context omission in room=%s gets one counts-only note without recovery", async room => {
     // Recall is outside this oracle. With it disabled, the only observed
     // omission is the working-context quote, so a missing count cannot be
@@ -756,12 +1070,50 @@ describe("pending fence turns in an isolated server", () => {
     expect(writes[0].integrationKeys).not.toContain("memory");
     expect(writes[0].memory).toBe(false);
     expect(writes[0].threadRecall).toBe(false);
-    expect(writes[0].system).toBe("");
+    // SABLE-IDENTITY-1020 (replaces system "", direct AND room member): a recovery keeps the bot's instructions, never stored memory.
+    expect(writes[0].system).toContain("You are Fence fixture");
+    // (r2, Fable T1) no system-side sentinel here: OMITTED_REMEMBERED_TEXT_SENTINEL is message text, never a system layer, so asserting it
+    // absent from the system could not fail. Stored memory out of the system is witnessed by "room recovery leaves the notebook ..." below.
     expect(writes[0].text).not.toContain("OMITTED_REMEMBERED_TEXT_SENTINEL");
     expect(writes[0].transcript ?? []).toEqual([]);
     expect((await messages(f.thread)).filter(m => m.memoryNote === "without-memory")).toHaveLength(1);
     expect((await messages(f.thread)).filter(m => m.tool?.ok === false)).toEqual([]);
   }, 90000);
+
+  // SABLE-IDENTITY-1020 r2 (Fable H1 + T1 on d0449d883c): a room member's memory-free send keeps its identity but none of its stored memory:
+  // not its notebook (MEMORY.md), not the team brief, and not the project brief, whose lead decisions are derived from cited room lines that
+  // the refused turn may have been refused over. Attempt 0 of the same turn is the positive control: every sentinel is on that system.
+  it.each([1, 2])("room recovery leaves the notebook, team brief and project brief out of the system (tier=%s)", async tier => {
+    await api("POST", "/api/memory/action", { action: "configure", mode: "off" });
+    const NOTEBOOK = "ROOM_NOTEBOOK_SENTINEL", TEAM = "ROOM_TEAM_BRIEF_SENTINEL", RULES = "ROOM_OWNER_RULES_SENTINEL", DECISION = "ROOM_LEAD_DECISION_SENTINEL";
+    const bot = (await api("POST", "/api/bots", { name: "Fence fixture", modelSelection: { instanceId: "fence", model: currentRoute === "claudeAgent" ? "claude-sonnet-5-5" : currentRoute === "codex" ? "gpt-6.1-sol" : currentRoute === "customAcp" ? "agent-default" : "late-1" } })).bot;
+    await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false, section: "Fence team" });
+    await api("PUT", "/api/section-context?section=Fence%20team", { text: TEAM });
+    await api("PUT", `/api/bots/${bot.id}/memory`, { baseRevision: (await api("GET", `/api/bots/${bot.id}/memory`)).revision, text: `# Memory\n\n- ${NOTEBOOK}\n` });
+    const group = (await api("POST", "/api/groups", { name: "Fence project", memberIds: [bot.id], channelProject: { goal: "Ship the fixture" }, setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } } })).group;
+    const thread = group.threadId as string, route = `/api/groups/${group.id}/messages`;
+    // The room line the lead's decision cites.
+    await api("POST", route, { threadId: thread, text: "Decide on the fixture plan" }); await finished(thread);
+    const cited = (await messages(thread)).find(m => m.role === "user" && m.text === "Decide on the fixture plan")?.id as string;
+    expect(cited).toBeTruthy();
+    const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"));
+    try {
+      db.exec("PRAGMA busy_timeout=5000");
+      const version = Number((db.prepare("SELECT COALESCE(MAX(version),0) AS v FROM project_briefs WHERE group_id=?").get(group.id) as { v: number }).v) + 1;
+      db.prepare("INSERT INTO project_briefs (group_id, version, summary, done_means, rules, where_work_is, decisions, updated_by, change, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        .run(group.id, version, "", "", RULES, "[]", JSON.stringify([{ id: "fixture-decision", text: DECISION, by: bot.id, at: Date.now(), sourceMessageIds: [cited] }]), bot.id, "lead_decision", Date.now());
+    } finally { db.close(); }
+    scenario(thread, { memoryReader: true, refusals: tier, ...(tier === 1 ? { dropContext: true } : {}) });
+    await api("POST", route, { threadId: thread, text: "RAW_HUMAN_INPUT" }); await finished(thread, 2);
+    const attempts = rows("attempts").filter(r => r.thread === thread && r.text.includes("RAW_HUMAN_INPUT"));
+    expect(attempts).toHaveLength(tier + 1);
+    for (const sentinel of [NOTEBOOK, TEAM, RULES, DECISION]) expect(attempts[0].system).toContain(sentinel);
+    const writes = rows("writes").filter(r => r.thread === thread && r.text.includes("RAW_HUMAN_INPUT"));
+    expect(writes).toHaveLength(1);
+    expect(writes[0].memory).toBe(false);
+    expect(writes[0].system).toContain("You are Fence fixture");
+    for (const sentinel of [NOTEBOOK, TEAM, RULES, DECISION]) expect(writes[0].system).not.toContain(sentinel);
+  }, 120000);
 
   it("R11 refusing every tier gives one card after exactly two rebuilds", async () => {
     const f = await make(); scenario(f.thread, { refusals: 3 });
@@ -836,13 +1188,25 @@ describe("pending fence turns in an isolated server", () => {
     await api("POST", f.route, { threadId: f.thread, text: "RAW_HUMAN_INPUT" }); await finished(f.thread, 2); await directIdle(f);
     const recovery = rows("writes").filter(r => r.thread === f.thread && r.text.includes("RAW_HUMAN_INPUT"));
     expect(recovery).toHaveLength(1);
-    expect(recovery[0].text, "the recovery must actually go out message-only").not.toContain("EARLIER_CONVERSATION_LINE");
-    expect(recovery[0].transcript ?? []).toEqual([]);
-    expect(savedCursor(f), "a message-only dispatch must never publish its cursor").toBeUndefined();
+    if ("dropContext" in input) {
+      expect(recovery[0].text, "the selective drop must actually go out message-only").not.toContain("EARLIER_CONVERSATION_LINE");
+      expect(recovery[0].transcript ?? []).toEqual([]);
+    } else {
+      // SABLE-IDENTITY-1020 (this pin was v1.0.20's message-only tier-2): the last rebuild of a typed turn replays the recent lines judged
+      // shown.
+      expect(recovery[0].text, "the tier-2 rebuild of a typed turn carries the judged-shown conversation").toMatch(/^User: .*EARLIER_CONVERSATION_LINE/m);
+    }
+    // WARM-GROK-1022 D1 (this pin was "a message-only dispatch never publishes its cursor"): a tier-2 rebuild that replayed the
+    // conversation keeps its session, so its cursor is published; the tier-1 selective drop still goes out message-only and publishes none.
+    if ("dropContext" in input) expect(savedCursor(f), "a message-only dispatch must never publish its cursor").toBeUndefined();
+    else expect(savedCursor(f), "the replay session publishes its cursor").toBeTruthy();
     scenario(f.thread, {});
     await api("POST", f.route, { threadId: f.thread, text: "NEXT_ORDINARY_TURN" }); await finished(f.thread, 3);
     const next = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("NEXT_ORDINARY_TURN"));
     expect(next).toHaveLength(1);
+    // D4: the check has settled by this turn, so the shortened replay session is refreshed and the turn still starts fresh with the
+    // whole conversation (assertions below unchanged).
+    if (!("dropContext" in input)) expect(resets(f.thread).some(line => line.includes("reason=partial-replay-settled")), "the settled check refreshed the replay session").toBe(true);
     expect(next[0].resumed, "the message-only session must not be resumed").toBe(false);
     const nextText: string = next[0].text, nextEnd = nextText.indexOf("[Now reply to the user's latest message:]");
     expect(nextEnd, "the next turn must carry an inline replay").toBeGreaterThan(-1);
@@ -881,6 +1245,350 @@ describe("pending fence turns in an isolated server", () => {
     expect(healthy).toHaveLength(1);
     expect(healthy[0].resumed).toBe(true);
   }, 150000);
+  // T3 (DESIGN-T3.md, MAIN approved): the live shape is a revoke window that does not settle inside 3 x 5 s. An owner's resumed direct turn
+  // whose continuation check is exactly checking:pending keeps its session: no "continuation reset", no rebuild, one write on the SAME
+  // session, nothing remembered added, one left-out note. A settled deny and outside input keep today's reset.
+  const resets = (thread: string) => readFileSync(fixture.info.logPath, "utf8").split("\n").filter(line => line.includes(`memory continuation reset thread=${thread} `));
+  it("T3 an owner's resumed turn keeps its session while the continuation check stays checking:pending", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" });
+    await finished(f.thread);
+    const first = rows("writes").filter(r => r.thread === f.thread);
+    expect(first).toHaveLength(1);
+    const previousNotes = new Set((await messages(f.thread)).map(m => m.id));
+    scenario(f.thread, { storm: true });
+    await api("POST", f.route, { threadId: f.thread, text: "New owner message" });
+    await expect.poll(() => rows("writes").filter(r => r.thread === f.thread && r.text.includes("New owner message")).length, { timeout: 45000 }).toBe(1);
+    await finished(f.thread, 2);
+    expect(rows("storm").filter(r => r.thread === f.thread), "the fixture must plant its window over a retained session").toEqual([{ thread: f.thread, session: true }]);
+    expect(resets(f.thread)).toEqual([]);
+    const attempts = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("New owner message"));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].resumed).toBe(true);
+    expect(attempts[0].reset).not.toBe(true);
+    expect(attempts[0].memory).toBe(false);
+    const write = rows("writes").find(r => r.thread === f.thread && r.text.includes("New owner message"));
+    expect(write.attempt).toBe(0);
+    expect(write.transcript ?? []).toEqual([]);
+    expect(JSON.stringify(write)).not.toContain("Previous fixture message");
+    expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(`context revoked during dispatch on thread ${f.thread}; re-preparing`);
+    expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(`context revoked at a late submission on thread ${f.thread}; re-preparing`);
+    const shown = (await messages(f.thread)).filter(m => !previousNotes.has(m.id));
+    expect(shown.filter(m => m.text === "New owner message")).toHaveLength(1);
+    expect(shown.filter(m => m.memoryNote === "without-memory")).toHaveLength(1);
+    expect(shown.filter(m => m.tool?.ok === false)).toEqual([]);
+    expect(shown.filter(m => m.text === LEDGER_REFUSAL_LINE)).toEqual([]);
+  }, 120000);
+  it("T3 guard: a settled deny of the retained session still resets it under the same window", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" });
+    await finished(f.thread);
+    scenario(f.thread, { storm: true, settledDeny: true });
+    await api("POST", f.route, { threadId: f.thread, text: "Denied owner message" });
+    await expect.poll(() => resets(f.thread).length, { timeout: 45000 }).toBeGreaterThanOrEqual(1);
+    expect(rows("storm").filter(r => r.thread === f.thread)).toEqual([{ thread: f.thread, session: true }]);
+    expect(resets(f.thread)[0]).not.toMatch(/reason=checking:pending$/);
+    await expect.poll(() => rows("attempts").filter(r => r.thread === f.thread && r.text.includes("Denied owner message")).length, { timeout: 45000 }).toBeGreaterThanOrEqual(1);
+    expect(rows("attempts").filter(r => r.thread === f.thread && r.text.includes("Denied owner message")).every(r => r.resumed === false)).toBe(true);
+  }, 120000);
+  it("T3 guard: outside input (a webhook-triggered direct turn) on a retained session still resets on checking:pending", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" });
+    await finished(f.thread);
+    scenario(f.thread, { storm: true, outsideDirect: true });
+    await api("POST", f.route, { threadId: f.thread, text: "OUTSIDE_STORM_INPUT" });
+    await expect.poll(() => resets(f.thread).length, { timeout: 45000 }).toBeGreaterThanOrEqual(1);
+    expect(rows("storm").filter(r => r.thread === f.thread), "the fixture must plant its window over a retained session").toEqual([{ thread: f.thread, session: true }]);
+    expect(resets(f.thread)[0]).toMatch(/reason=checking:pending$/);
+    expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(`memory continuation kept thread=${f.thread} `);
+  }, 120000);
+  // IMGREAD-1020 (field, 1.0.20): a chat whose memory check was still pending could not see any attached screenshot, on Claude and on
+  // Codex. T3 sends such a turn memory-free, and the memory-free dispatch dropped the turn's pictures while their tags stayed in the text.
+  // These run the REAL adapters against the scripted CLIs and read the bytes that reached the engine's transport.
+  const IMGREAD_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
+  let imgreadUploads = 0;
+  const uploadPicture = async (thread: string) => {
+    const bytes = Buffer.concat([IMGREAD_PNG, Buffer.from([imgreadUploads++])]);
+    const r = await fetch(`${fixture.info.url}/api/attachments?threadId=${encodeURIComponent(thread)}`, { method: "POST", headers: { ...headers, "content-type": "image/png" }, body: bytes });
+    expect(r.status).toBe(201);
+    return { path: ((await r.json()) as { path: string }).path, data: bytes.toString("base64") };
+  };
+  const engineWire = (route: string) => {
+    const file = join(fixture.info.dataDir, "wire-" + (route === "claudeAgent" ? "claude" : "codex"));
+    if (!existsSync(file)) return "";
+    const dump = JSON.parse(readFileSync(file, "utf8"));
+    return JSON.stringify(route === "claudeAgent" ? dump.prompt : dump.calls.filter((call: any) => call.method === "turn/start").at(-1)?.params.input);
+  };
+  // Claude only: the fixture's scripted Codex session is not kept across the planted window (it resets on its own session proof), so the
+  // kept turn cannot be reached there. The dispatch line is the same for every engine; Codex's transport is held by the rebuild case below.
+  it.each(["claudeAgent"])("T3 IMGREAD [%s] the owner's attached picture reaches the engine on a turn kept while its memory check is pending", async route => {
+    const f = await make(false);
+    // Control, same adapter and same upload path with no pending check: the picture is sent.
+    const before = await uploadPicture(f.thread);
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_FIRST_LOOK\n\n<attached-image path="${before.path}" />` });
+    await routeFinished(f, 1);
+    const firstWrite = rows("writes").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_FIRST_LOOK"));
+    expect(firstWrite).toHaveLength(1);
+    expect(firstWrite[0].images).toEqual([{ mimeType: "image/png", data: before.data }]);
+    // The field shape: a revoke window that does not settle, over the retained session.
+    scenario(f.thread, { storm: true });
+    const picture = await uploadPicture(f.thread);
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_SECOND_LOOK\n\n<attached-image path="${picture.path}" />` });
+    await expect.poll(() => rows("writes").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_SECOND_LOOK")).length, { timeout: 45000 }).toBe(1);
+    await routeFinished(f, 2);
+    // The turn really took the kept, memory-free path (else this proves nothing).
+    expect(rows("storm").filter(r => r.thread === f.thread)).toEqual([{ thread: f.thread, session: true }]);
+    expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`memory continuation kept thread=${f.thread} `);
+    const attempt = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_SECOND_LOOK"));
+    expect(attempt).toHaveLength(1);
+    expect(attempt[0].resumed).toBe(true);
+    expect(attempt[0].memory).toBe(false);
+    const write = rows("writes").find(r => r.thread === f.thread && r.text.includes("IMGREAD_SECOND_LOOK"));
+    expect(write.text).toContain(`<attached-image path="${picture.path}" />`);
+    expect(write.images, "the picture the owner attached to this message must be sent with it").toEqual([{ mimeType: "image/png", data: picture.data }]);
+    // And on the engine's own transport, as that engine takes a picture.
+    await expect.poll(() => engineWire(route)).toContain("IMGREAD_SECOND_LOOK");
+    expect(engineWire(route)).toContain(route === "claudeAgent" ? `"data":"${picture.data}"` : `data:image/png;base64,${picture.data}`);
+    // Nothing remembered rode along with it.
+    expect(JSON.stringify(write)).not.toContain("IMGREAD_FIRST_LOOK");
+    expect(JSON.stringify(write.images)).not.toContain(before.data);
+  }, 180000);
+  it.each(["claudeAgent"])("IMGREAD [%s] the owner's attached picture reaches the engine on the last, message-only rebuild", async route => {
+    const f = await make();
+    // Two refusals at the write walk the production rebuild ladder to its last rung with the stored message and its bound picture.
+    scenario(f.thread, { refusals: 2 });
+    const picture = await uploadPicture(f.thread);
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_MESSAGE_ONLY\n\n<attached-image path="${picture.path}" />` });
+    await routeFinished(f, 1);
+    const last = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_MESSAGE_ONLY")).at(-1)!;
+    // SABLE-IDENTITY-1020 (this pin was v1.0.20's empty system): a memory-free send keeps the bot's instructions, never stored memory.
+    expect(last.memory).toBe(false); expect(last.transcript ?? []).toEqual([]); expect(last.system).toContain("You are Fence fixture");
+    const write = rows("writes").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_MESSAGE_ONLY")).at(-1)!;
+    expect(write.attempt, "the write that went out is the last rung's").toBe(2);
+    expect(write.images).toEqual([{ mimeType: "image/png", data: picture.data }]);
+    await expect.poll(() => engineWire(route)).toContain("IMGREAD_MESSAGE_ONLY");
+    expect(engineWire(route)).toContain(route === "claudeAgent" ? `"data":"${picture.data}"` : `data:image/png;base64,${picture.data}`);
+  }, 180000);
+  // Codex: the injected write refusals do not walk the scripted Codex CLI through the ladder, so (as CTX-ROUTE does) the fixture enters the
+  // last rebuild directly. That entry appends its own message row, so the picture is one this conversation bound on the turn before.
+  it.each(["codex"])("IMGREAD [%s] a picture bound to the conversation reaches the engine on the last, message-only rebuild", async route => {
+    const f = await make();
+    const picture = await uploadPicture(f.thread);
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_BOUND_LOOK\n\n<attached-image path="${picture.path}" />` });
+    await routeFinished(f, 1);
+    const bound = rows("writes").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_BOUND_LOOK"));
+    expect(bound).toHaveLength(1);
+    expect(bound[0].images).toEqual([{ mimeType: "image/png", data: picture.data }]);
+    scenario(f.thread, { rebuildTier: 2 });
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_MESSAGE_ONLY\n\n<attached-image path="${picture.path}" />` });
+    await routeFinished(f, 2);
+    const last = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_MESSAGE_ONLY")).at(-1)!;
+    // SABLE-IDENTITY-1020 (this pin was v1.0.20's message-only last resort): the last rebuild of a typed turn keeps the bot's instructions
+    // and replays its recent lines judged shown, as CTX-ROUTE tier 2 does. The transcript field is not asserted: this adapter does not replay
+    // it natively; the text is what goes out. The picture is still sent once (write.images below).
+    expect(last.memory).toBe(false); expect(last.system).toContain("You are Fence fixture");
+    // rel/1023: a replayed line that carries an image is annotated first (turn-context.ts replayImageText), so the words follow on the next line.
+    expect(last.text).toMatch(/^User: \[These images were attached to an earlier message\.[^\n]*\]\n.*IMGREAD_BOUND_LOOK/m);
+    expect((last.transcript ?? []).some((entry: { text: string }) => entry.text.includes("IMGREAD_BOUND_LOOK")), "the replay is the judged earlier line").toBe(true);
+    const write = rows("writes").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_MESSAGE_ONLY")).at(-1)!;
+    expect(write.images).toEqual([{ mimeType: "image/png", data: picture.data }]);
+    await expect.poll(() => engineWire(route)).toContain("IMGREAD_MESSAGE_ONLY");
+    expect(engineWire(route)).toContain(`data:image/png;base64,${picture.data}`);
+    // The replayed line names the same picture: the engine still gets it once.
+    expect(engineWire(route).split(picture.data).length - 1, "the picture goes to the engine once").toBe(1);
+  }, 180000);
+  it.each(["claudeAgent"])("IMGREAD [%s] room: the owner's attached picture reaches the member on the last, message-only rebuild", async route => {
+    const f = await make(true);
+    scenario(f.thread, { refusals: 2 });
+    const picture = await uploadPicture(f.thread);
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_ROOM_MESSAGE_ONLY\n\n<attached-image path="${picture.path}" />` });
+    await expect.poll(() => rows("terminal-replies").filter(r => r.thread === f.thread).length, { timeout: 60000 }).toBe(1);
+    const last = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_ROOM_MESSAGE_ONLY")).at(-1)!;
+    // SABLE-IDENTITY-1020 (this pin was v1.0.20's empty system): a room member's memory-free send keeps its identity, never stored memory.
+    expect(last.memory).toBe(false); expect(last.system).toContain("You are Fence fixture");
+    const write = rows("writes").filter(r => r.thread === f.thread && r.text.includes("IMGREAD_ROOM_MESSAGE_ONLY")).at(-1)!;
+    expect(write.attempt).toBe(2);
+    expect(write.images).toEqual([{ mimeType: "image/png", data: picture.data }]);
+    await expect.poll(() => engineWire(route)).toContain("IMGREAD_ROOM_MESSAGE_ONLY");
+    expect(engineWire(route)).toContain(`"data":"${picture.data}"`);
+  }, 180000);
+  // IMGREAD (1.0.20 field): the T3 kept path sends the owner's text alone, but the picture the owner attached to that very message is
+  // part of it, not remembered context. 1.0.20 dropped it with the remembered context (images: ... selectiveDropped ? undefined), so a
+  // bot's own chat on Claude, Codex or Fuigo got the tag and "the image is already in front of you" and no image, while a Project chat
+  // (the room path, never kept) still saw it. Observed at the real adapter's stdin bytes (recordingCli), the bytes the engine receives.
+  const upload = async (thread: string) => {
+    const response = await fetch(`${fixture.info.url}/api/attachments?threadId=${thread}`, { method: "POST", headers: { ...headers, "content-type": "image/png" }, body: IMGREAD_PNG });
+    expect(response.status).toBe(201);
+    return await response.json() as { path: string; mime: string };
+  };
+  /** What the engine received from the first byte after `marker` (the turn's own frame onward). PNG bytes as base64 start with iVBORw0KGgo. */
+  const receivedAfter = (marker: string) => { const bytes = readFileSync(join(fixture.info.dataDir, "wire-bytes"), "utf8"); const at = bytes.lastIndexOf(marker); return at < 0 ? "" : bytes.slice(at); };
+  const kept = (thread: string) => readFileSync(fixture.info.logPath, "utf8").includes(`memory continuation kept thread=${thread} `);
+  it.each(["claudeAgent", "codex", "customAcp", "fuigoAgent"])("T3 IMGREAD [%s] an owner's resumed turn kept on checking:pending still hands the engine the image attached to that message", async () => {
+    const f = await make();
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" }); await routeFinished(f, 1);
+    await expect.poll(() => savedCursor(f), { message: "the second turn must resume a retained session" }).toBeTruthy();
+    expect(receivedAfter("Previous fixture message")).not.toContain("iVBORw0KGgo");
+    const saved = await upload(f.thread);
+    scenario(f.thread, { storm: true });
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_OWNER_MESSAGE\n<attached-image path="${saved.path}" />` }); await routeFinished(f, 2);
+    expect(rows("storm").filter(r => r.thread === f.thread), "the fixture must plant its window over a retained session").toEqual([{ thread: f.thread, session: true }]);
+    expect(kept(f.thread), "the turn must take the T3 kept path").toBe(true);
+    expect(resets(f.thread)).toEqual([]);
+    const received = receivedAfter("IMGREAD_OWNER_MESSAGE");
+    expect(received, "the turn's own frame reached the engine").toContain("IMGREAD_OWNER_MESSAGE");
+    expect(received, "the attached picture's bytes reached the engine with the kept turn").toContain("iVBORw0KGgo");
+    // still nothing remembered added on the kept path
+    expect(received).not.toContain("Previous fixture message");
+  }, 180000);
+  it("T3 IMGREAD [claudeAgent] a kept turn never inlines a picture this conversation did not bind (no access beyond the attachment)", async () => {
+    const other = await make();
+    const foreign = await upload(other.thread);
+    const f = await make();
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" }); await routeFinished(f, 1);
+    await expect.poll(() => savedCursor(f)).toBeTruthy();
+    scenario(f.thread, { storm: true });
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_FOREIGN_MESSAGE\n<attached-image path="${foreign.path}" />` }); await routeFinished(f, 2);
+    expect(kept(f.thread)).toBe(true);
+    const received = receivedAfter("IMGREAD_FOREIGN_MESSAGE");
+    expect(received).toContain("IMGREAD_FOREIGN_MESSAGE");
+    expect(received, "a path bound to another conversation is never read into this turn").not.toContain("iVBORw0KGgo");
+  }, 180000);
+  it("T3 IMGREAD [claudeAgent] a room chat under the same window still hands the engine its attached image", async () => {
+    const f = await make(true);
+    const roomFinished = async (want: number) => {
+      await expect.poll(() => rows("terminal-replies").filter(r => r.thread === f.thread).length, { timeout: 60000 }).toBe(want);
+      await expect.poll(() => busy(f, true)).toBe(false);
+    };
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" }); await roomFinished(1);
+    const saved = await upload(f.thread);
+    scenario(f.thread, { storm: true });
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_ROOM_MESSAGE\n<attached-image path="${saved.path}" />` }); await roomFinished(2);
+    const received = receivedAfter("IMGREAD_ROOM_MESSAGE");
+    expect(received).toContain("IMGREAD_ROOM_MESSAGE");
+    expect(received).toContain("iVBORw0KGgo");
+  }, 180000);
+  // Astra f212385: only the pictures of the message a memory-free turn carries ride with it, never a removed picture's path, never a
+  // picture removed before the write, never on a line nobody proved was the owner's; a queued room turn carries its own source's picture;
+  // and an actual Project (channelProject) delivers like any room. Real Claude adapter, scripted CLI, bytes read at the engine's transport.
+  const holdSeen = () => existsSync(join(fixture.info.dataDir, "imgread-hold-seen"));
+  const releaseHold = () => writeFileSync(join(fixture.info.dataDir, "imgread-hold-gate"), "go");
+  const marked = (thread: string, marker: string, file = "writes") => rows(file).filter(r => r.thread === thread && String(r.text).includes(marker));
+  it("T3 IMGREAD [claudeAgent] a drained queue kept on checking:pending sends the last line's own picture, never an earlier line's", async () => {
+    const f = await make();
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" }); await routeFinished(f, 1);
+    await expect.poll(() => savedCursor(f), { message: "the batch must resume a retained session" }).toBeTruthy();
+    // A held turn keeps the bot busy, so the next two messages queue and drain as one batch.
+    await api("POST", f.route, { threadId: f.thread, text: "IMGREAD_HOLD this turn" });
+    await expect.poll(holdSeen, { timeout: 30000 }).toBe(true);
+    const a = await uploadPicture(f.thread), b = await uploadPicture(f.thread);
+    expect((await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_QUEUED_A\n\n<attached-image path="${a.path}" />` })).queued).toBe(true);
+    expect((await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_QUEUED_B\n\n<attached-image path="${b.path}" />` })).queued).toBe(true);
+    scenario(f.thread, { storm: true });
+    releaseHold();
+    await expect.poll(() => marked(f.thread, "IMGREAD_QUEUED_B").length, { timeout: 60000 }).toBe(1);
+    await routeFinished(f, 3);
+    expect(rows("storm").filter(r => r.thread === f.thread), "the fixture must plant its window over a retained session").toEqual([{ thread: f.thread, session: true }]);
+    expect(kept(f.thread), "the batch must take the T3 kept path").toBe(true);
+    const write = marked(f.thread, "IMGREAD_QUEUED_B")[0];
+    expect(write.memory).toBe(false);
+    expect(write.text, "the memory-free turn carries the last queued line only").not.toContain("IMGREAD_QUEUED_A");
+    expect(write.images, "the last line's own picture rides with it; the earlier line's does not").toEqual([{ mimeType: "image/png", data: b.data }]);
+    await expect.poll(() => engineWire("claudeAgent")).toContain("IMGREAD_QUEUED_B");
+    expect(engineWire("claudeAgent")).toContain(`"data":"${b.data}"`);
+    expect(engineWire("claudeAgent")).not.toContain(a.data);
+  }, 180000);
+  it.each([false, true])("IMGREAD [claudeAgent] a removed picture's path never reaches the engine on the last, message-only rebuild (room=%s)", async room => {
+    const f = await make(room);
+    const gone = await uploadPicture(f.thread), picture = await uploadPicture(f.thread);
+    await api("POST", "/api/storage/attachments/remove", { names: [basename(gone.path)] });
+    scenario(f.thread, { refusals: 2 });
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_REMOVED_LOOK\n\n<attached-image path="${gone.path}" />\n\n<attached-image path="${picture.path}" />` });
+    await expect.poll(() => rows("terminal-replies").filter(r => r.thread === f.thread).length, { timeout: 60000 }).toBe(1);
+    const write = marked(f.thread, "IMGREAD_REMOVED_LOOK").at(-1)!;
+    expect(write.attempt, "the write that went out is the last rung's").toBe(2);
+    expect(write.memory).toBe(false);
+    expect(write.images).toEqual([{ mimeType: "image/png", data: picture.data }]);
+    expect(write.text).toContain(picture.path);
+    expect(write.text, "the removed picture's path leaves the message-only prompt").not.toContain(gone.path);
+    await expect.poll(() => engineWire("claudeAgent")).toContain("IMGREAD_REMOVED_LOOK");
+    expect(engineWire("claudeAgent")).not.toContain(gone.path);
+  }, 180000);
+  it.each([false, true])("IMGREAD [claudeAgent] a picture removed after it was read is not sent at the adapter's write (room=%s)", async room => {
+    const f = await make(room);
+    const picture = await uploadPicture(f.thread);
+    // The fixture removes it (storage's marker) inside the adapter's write, after collection read it and before the server's check.
+    scenario(f.thread, { removeAtWrite: picture.path });
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_REMOVED_AT_WRITE\n\n<attached-image path="${picture.path}" />` });
+    await expect.poll(() => marked(f.thread, "IMGREAD_REMOVED_AT_WRITE").length + marked(f.thread, "IMGREAD_REMOVED_AT_WRITE", "refused-submits").length, { timeout: 60000 }).toBeGreaterThan(0);
+    await expect.poll(() => busy(f, room), { timeout: 60000 }).toBe(false);
+    for (const write of marked(f.thread, "IMGREAD_REMOVED_AT_WRITE")) expect(JSON.stringify(write.images ?? []), "no write carries the removed picture").not.toContain(picture.data);
+    expect(engineWire("claudeAgent")).not.toContain(picture.data);
+    expect(marked(f.thread, "IMGREAD_REMOVED_AT_WRITE", "refused-submits").length, "the server refused the write that held it").toBeGreaterThan(0);
+  }, 180000);
+  it("IMGREAD [claudeAgent] room: a line nobody proved was the owner's carries no picture on the last, message-only rebuild", async () => {
+    const f = await make(true);
+    const picture = await uploadPicture(f.thread);
+    scenario(f.thread, { refusals: 2, roomUnproven: true });
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_ROOM_UNPROVEN\n\n<attached-image path="${picture.path}" />` });
+    await expect.poll(() => marked(f.thread, "IMGREAD_ROOM_UNPROVEN").length, { timeout: 60000 }).toBeGreaterThan(0);
+    await expect.poll(() => busy(f, true), { timeout: 60000 }).toBe(false);
+    const write = marked(f.thread, "IMGREAD_ROOM_UNPROVEN").at(-1)!;
+    expect(write.attempt, "the write that went out is the last rung's").toBe(2);
+    expect(write.memory).toBe(false);
+    expect(write.images ?? []).toEqual([]);
+    expect(engineWire("claudeAgent")).not.toContain(picture.data);
+  }, 180000);
+  it("IMGREAD [claudeAgent] room: the newest line's picture never rides a queued turn that answers an earlier message", async () => {
+    const f = await make(true);
+    // Lane queuedhop's shape: the member is busy in another room, so the owner's message A is queued as a turn whose source is A; the
+    // owner's next line B, with its own picture, is the room's newest line when A's turn runs and rebuilds to its last rung.
+    const busyRoom = (await api("POST", "/api/groups", { name: "Busy room", memberIds: [f.bot.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: f.bot.id } } })).group;
+    await api("POST", `/api/groups/${busyRoom.id}/messages`, { threadId: busyRoom.threadId, text: "IMGREAD_HOLD in the other room" });
+    await expect.poll(holdSeen, { timeout: 30000 }).toBe(true);
+    const a = await uploadPicture(f.thread), b = await uploadPicture(f.thread);
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_ROOM_SOURCE_A\n\n<attached-image path="${a.path}" />` });
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_ROOM_LATER_B\n\n<attached-image path="${b.path}" />` });
+    await expect.poll(async () => (await messages(f.thread)).some(m => m.role === "user" && String(m.text).includes("IMGREAD_ROOM_LATER_B")), { message: "B is in the room before A's queued turn runs" }).toBe(true);
+    scenario(f.thread, { refusals: 2 });
+    releaseHold();
+    await expect.poll(() => rows("writes").filter(r => r.thread === f.thread && r.attempt === 2).length, { timeout: 90000 }).toBeGreaterThan(0);
+    await expect.poll(() => busy(f, true), { timeout: 60000 }).toBe(false);
+    const last = rows("writes").find(r => r.thread === f.thread && r.attempt === 2)!;
+    expect(last.memory).toBe(false);
+    expect(String(last.text), "the queued turn's last rung carries no newest-line text").not.toContain("IMGREAD_ROOM_LATER_B");
+    expect(last.images ?? [], "and none of the newest line's pictures").toEqual([]);
+  }, 180000);
+  it("IMGREAD [claudeAgent] room: a queued turn's message-only prompt carries the picture of the message it was queued for", async () => {
+    const f = await make(true);
+    await api("POST", f.route, { threadId: f.thread, text: "IMGREAD_HOLD room turn" });
+    await expect.poll(holdSeen, { timeout: 30000 }).toBe(true);
+    const a = await uploadPicture(f.thread);
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_ROOM_SOURCE_A\n\n<attached-image path="${a.path}" />` });
+    await api("POST", f.route, { threadId: f.thread, text: "IMGREAD_ROOM_LATER_B" });
+    scenario(f.thread, { refusals: 2 });
+    releaseHold();
+    await expect.poll(() => marked(f.thread, "IMGREAD_ROOM_SOURCE_A").filter(r => r.attempt === 2).length, { timeout: 90000 }).toBeGreaterThan(0);
+    await expect.poll(() => busy(f, true), { timeout: 60000 }).toBe(false);
+    const write = marked(f.thread, "IMGREAD_ROOM_SOURCE_A").find(r => r.attempt === 2)!;
+    expect(write.memory).toBe(false);
+    expect(write.text, "the queued turn's message-only prompt is its own source").not.toContain("IMGREAD_ROOM_LATER_B");
+    expect(write.images, "the source message's own picture rides with it").toEqual([{ mimeType: "image/png", data: a.data }]);
+  }, 180000);
+  it("IMGREAD [claudeAgent] Project: the owner's attached picture reaches the lead on the last, message-only rebuild", async () => {
+    const f = await make(true, true);
+    const group = (await api("GET", "/api/bots?messages=0")).groups.find((g: any) => g.threadId === f.thread);
+    expect(group.channelProject, "an actual Project, not a plain room").toMatchObject({ goal: "Fixture project", status: "active" });
+    scenario(f.thread, { refusals: 2 });
+    const picture = await uploadPicture(f.thread);
+    await api("POST", f.route, { threadId: f.thread, text: `IMGREAD_PROJECT_MESSAGE_ONLY\n\n<attached-image path="${picture.path}" />` });
+    await expect.poll(() => rows("terminal-replies").filter(r => r.thread === f.thread).length, { timeout: 60000 }).toBe(1);
+    const write = marked(f.thread, "IMGREAD_PROJECT_MESSAGE_ONLY").at(-1)!;
+    expect(write.attempt).toBe(2); expect(write.memory).toBe(false);
+    expect(write.images).toEqual([{ mimeType: "image/png", data: picture.data }]);
+    await expect.poll(() => engineWire("claudeAgent")).toContain("IMGREAD_PROJECT_MESSAGE_ONLY");
+    expect(engineWire("claudeAgent")).toContain(`"data":"${picture.data}"`);
+  }, 180000);
   it("CTX-HEAL keeps a healthy tier-one cursor after restart", async () => {
     await api("POST", "/api/memory/action", { action: "configure", mode: "off" });
     const f = await make();
@@ -902,6 +1610,343 @@ describe("pending fence turns in an isolated server", () => {
     await directIdle(f);
     expect((await messages(f.thread)).filter(m => m.role === "bot" && m.kind === "text" && m.id !== "ctx-withheld").length).toBeGreaterThanOrEqual(want);
   };
+  for (const route of ["grokAgent", "fuigoAgent", "claudeAgent"]) it.each([
+    { cell: "WM-D1", restart: false },
+    { cell: "WM-D1r", restart: true },
+  ])(`T3 $cell [${route}] reuses a replay session while the owner check remains pending`, async ({ restart }) => {
+    const f = await make();
+    await api("POST", f.route, { threadId: f.thread, text: "Earlier fixture conversation" });
+    await routeFinished(f, 1);
+    scenario(f.thread, { rebuildTier: 2, saveReleasedNotice: restart });
+    await api("POST", f.route, { threadId: f.thread, text: "Fixture recovery input" });
+    await routeFinished(f, 2);
+    const replay = rows("writes").find(r => r.thread === f.thread && r.text.includes("Fixture recovery input"));
+    expect(JSON.stringify(replay), "the last resort carried the prior exchange").toContain("Earlier fixture conversation");
+    const cursor = savedCursor(f);
+    expect(cursor, "the replay session publishes a cursor").toBeTruthy();
+    const note = (await messages(f.thread)).findLast(m => m.memoryNote === "without-memory");
+    const databaseFile = join(fixture.info.dataDir, "messages.db");
+    if (restart) {
+      // Reconcile a released obligation over the activity row written by an older build.
+      const released = readFileSync(join(fixture.info.dataDir, `released-${f.thread}.json`));
+      const obligation = join(fixture.info.dataDir, "fence-notices", `${note?.id}.json`);
+      await fixture.stop();
+      const old = new DatabaseSync(databaseFile);
+      try {
+        old.prepare("UPDATE messages SET json=json_remove(json,'$.memoryReplay') WHERE thread_id=? AND id=?").run(f.thread, note?.id ?? "");
+      } finally { old.close(); }
+      writeFileSync(obligation, released);
+      scenario(f.thread, {});
+      await fixture.restart(); await login();
+      await expect.poll(() => existsSync(obligation)).toBe(false);
+    }
+    const db = new DatabaseSync(databaseFile, { readOnly: true });
+    try {
+      const stored = db.prepare("SELECT json_extract(json,'$.memoryReplay') AS replay FROM messages WHERE thread_id=? AND id=?").get(f.thread, note?.id ?? "");
+      expect(stored?.replay, "the stored recovery note records a replay").toBe(1);
+    } finally { db.close(); }
+    const priorClaude = rows("wire-history").at(-1);
+    scenario(f.thread, { storm: true });
+    await api("POST", f.route, { threadId: f.thread, text: "Fixture pending input" });
+    await routeFinished(f, 3);
+    const attempts = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("Fixture pending input"));
+    expect(attempts.map(r => r.cursor), "the pending owner turn resumes the saved session").toEqual([cursor]);
+    if (route === "claudeAgent") {
+      const next = rows("wire-history").findLast(row => JSON.stringify(row.prompt).includes("Fixture pending input"));
+      expect(next, "Claude received the owner prompt").toBeTruthy();
+      const resume = next.argv.indexOf("--resume");
+      expect(next.pid === priorClaude?.pid || (resume !== -1 && next.argv[resume + 1] === cursor)).toBe(true);
+    } else {
+      const prompt = rows("wire-rpc").findLast(row => row.method === "session/prompt" && JSON.stringify(row.params.prompt).includes("Fixture pending input"));
+      expect(prompt?.params.sessionId, "ACP wrote the owner prompt to the saved session").toBe(cursor);
+    }
+    expect(rows("writes").filter(r => r.thread === f.thread && r.text.includes("Fixture pending input"))).toHaveLength(1);
+    expect(resets(f.thread).filter(line => line.includes("checking:pending"))).toEqual([]);
+    expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`memory continuation kept thread=${f.thread} engine=fence reason=checking:pending`);
+  }, 150000);
+
+  it("WM-D2 [grokAgent] a last resort with no replay leaves no cursor", async () => {
+    const f = await make();
+    scenario(f.thread, { rebuildTier: 2, noReplaySeed: true });
+    await api("POST", f.route, { threadId: f.thread, text: "Fixture message without history" });
+    await routeFinished(f, 1);
+    const write = rows("writes").find(r => r.thread === f.thread);
+    expect(write?.transcript ?? []).toEqual([]);
+    expect(savedCursor(f), "a message-only rebuild left its cursor unpublished").toBeUndefined();
+    scenario(f.thread, {});
+    await api("POST", f.route, { threadId: f.thread, text: "Fixture follow-up after message-only recovery" });
+    await routeFinished(f, 2);
+    expect(rows("attempts").find(r => r.thread === f.thread && r.text.includes("Fixture follow-up"))?.resumed).toBe(false);
+  }, 120000);
+
+  for (const route of ["grokAgent", "fuigoAgent", "claudeAgent"]) {
+    it.each([
+      { cell: "WM-D3", denySession: false },
+      { cell: "WM-D7", denySession: true },
+    ])(`T3 $cell [${route}] retires the replay session after revocation`, async ({ denySession }) => {
+      const f = await make();
+      await api("POST", f.route, { threadId: f.thread, text: "Earlier fixture conversation" });
+      await routeFinished(f, 1);
+      const priorText = rows("terminal-replies").find(r => r.thread === f.thread)?.text;
+      const oldReply = (await messages(f.thread)).find(m => m.role === "bot" && m.kind === "text" && m.text === priorText);
+      expect(oldReply?.text).toBeTruthy();
+      scenario(f.thread, { rebuildTier: 2 });
+      await api("POST", f.route, { threadId: f.thread, text: "Fixture recovery input" });
+      await routeFinished(f, 2);
+      const replay = rows("writes").find(r => r.thread === f.thread && r.text.includes("Fixture recovery input"));
+      expect(JSON.stringify(replay), "the last resort carried the old reply").toContain(oldReply.text);
+      const cursor = savedCursor(f);
+      if (denySession) {
+        scenario(f.thread, { storm: true, settledDeny: true });
+      } else {
+        await api("POST", "/api/memory/action", { action: "forget", kind: "source", id: `message:${f.thread}:${oldReply.id}` });
+        scenario(f.thread, {});
+      }
+      await api("POST", f.route, { threadId: f.thread, text: "Fixture input after revocation" });
+      await routeFinished(f, 3);
+      expect(resets(f.thread).some(line => line.includes("deny-session")), "the replay session reached the denial reset").toBe(true);
+      const next = rows("attempts").find(r => r.thread === f.thread && r.text.includes("Fixture input after revocation"));
+      expect(next?.resumed).toBe(false);
+      expect(savedCursor(f)).not.toEqual(cursor);
+      if (!denySession) expect(next?.transcript?.map((line: { id?: string }) => line.id) ?? []).not.toContain(oldReply.id);
+    }, 150000);
+  }
+
+  // WM-Q1/WM-Q2 (ASTRA ecfe16d56a, index.ts last-resort replay; ASTRA 4b40881687: reach it through production admission). A replayed entry
+  // carries the excerpt of the line it replies to (transcriptText). The quoted line sits outside the last resort's recent window, so only
+  // the quote carries its words. The recovery turn is refused twice at the real send fence (a pending check over the thread), the real
+  // rebuild marks the third dispatch as the last resort and takeLastResort admits it: no tier or redispatch state is injected.
+  const quotedLastResort = async (route: string, hold: object) => {
+    const f = await make(false, false, route === "grokAgent" ? "grok-4.7" : undefined);
+    await api("POST", f.route, { threadId: f.thread, text: "QUOTED_SOURCE_LINE fixture words" });
+    await routeFinished(f, 1);
+    const quoted = (await messages(f.thread)).find(m => m.role === "user" && m.text === "QUOTED_SOURCE_LINE fixture words");
+    expect(quoted?.id).toBeTruthy();
+    // The history and the quoting line are seeded when the recovery turn starts, so no engine session ever held the quoted line's words.
+    scenario(f.thread, { refusals: 2, fullFixtureHistory: true, seedQuoting: quoted.id, ...hold });
+    await api("POST", f.route, { threadId: f.thread, text: "Fixture recovery input" });
+    return { f, quoted };
+  };
+  const admittedLastResort = (f: { thread: string }) => {
+    expect(rows("route-tier-served").filter(r => r.thread === f.thread), "the harness injected no redispatch tier for this thread").toEqual([]);
+    const refused = rows("refused-submits").filter(r => r.thread === f.thread && String(r.text).includes("Fixture recovery input"));
+    expect(refused.map(r => r.attempt), "the recovery turn was refused twice at the send fence").toEqual([0, 1]);
+    expect(rows("judge-entry").filter(r => r.thread === f.thread).at(-1)?.lastResort, "production admission made the third build the last resort").toBe(true);
+  };
+
+  it.each(["grokAgent", "claudeAgent"])("T3 WM-Q1 [%s] a quoted line forgotten between render and send never reaches the engine", async route => {
+    // The last resort waits after render and before its send fence, while the test forgets the quoted line through the real route.
+    const { f, quoted } = await quotedLastResort(route, { holdForRevoke: true, holdAttempt: 2 });
+    // Held, or (when the harness injected a tier, which the next call refuses) already served.
+    await expect.poll(() => rows("held-for-revoke").filter(r => r.thread === f.thread).length === 1
+      || rows("route-tier-served").some(r => r.thread === f.thread), { timeout: 90000 }).toBe(true);
+    admittedLastResort(f);
+    const rendered = JSON.stringify(rows("held-for-revoke").find(r => r.thread === f.thread));
+    expect(rendered, "the last resort rendered the quoting entry").toContain("Fixture quoting line");
+    expect(rendered, "the quoting entry carried the quoted words when rendered").toContain("QUOTED_SOURCE_LINE");
+    expect(rendered, "the last resort kept only its recent window").not.toContain("Seeded exchange 00");
+    await api("POST", "/api/memory/action", { action: "forget", kind: "source", id: `message:${f.thread}:${quoted.id}` });
+    writeFileSync(join(fixture.info.dataDir, `release-${f.thread}`), "1");
+    const recovery = (file: string) => rows(file).filter(r => r.thread === f.thread && JSON.stringify(r).includes("Fixture recovery input"));
+    await expect.poll(async () => (await api("GET", `/api/bots/${f.bot.id}/tasks/${f.thread}`)).task?.busy, { timeout: 60000 }).not.toBe(true);
+    const thread = await messages(f.thread), ended = thread.slice(thread.findIndex(m => m.text === "Fixture recovery input") + 1);
+    expect(recovery("writes").length > 0 || ended.some(m => m.role !== "user"), "the recovery turn ended visibly: " + JSON.stringify(ended)).toBe(true);
+    for (const write of recovery("writes")) expect(JSON.stringify(write), "the forgotten quoted line reached the engine").not.toContain("QUOTED_SOURCE_LINE");
+  }, 240000);
+
+  // WM-Q2: the quoted line is forgotten after the last resort rendered its excerpt and before it judges its recent window. The entry that
+  // quotes it is left out, the rest of the window is kept and the turn is written.
+  it.each(["grokAgent", "claudeAgent"])("T3 WM-Q2 [%s] an entry quoting a line forgotten before the judge is left out of the last-resort replay", async route => {
+    const { f, quoted } = await quotedLastResort(route, { holdBeforeJudge: true });
+    // Held, or (when production admission did not make it the last resort) all four builds of this thread judged without the hold.
+    await expect.poll(() => rows("held-before-judge").filter(r => r.thread === f.thread).length === 1
+      || rows("judge-entry").filter(r => r.thread === f.thread && r.lastResort === false).length >= 4, { timeout: 90000 }).toBe(true);
+    admittedLastResort(f);
+    await api("POST", "/api/memory/action", { action: "forget", kind: "source", id: `message:${f.thread}:${quoted.id}` });
+    writeFileSync(join(fixture.info.dataDir, `judge-${f.thread}`), "1");
+    await expect.poll(async () => (await api("GET", `/api/bots/${f.bot.id}/tasks/${f.thread}`)).task?.busy, { timeout: 60000 }).not.toBe(true);
+    const recovery = rows("writes").filter(r => r.thread === f.thread && JSON.stringify(r).includes("Fixture recovery input"));
+    expect(recovery.length, "the last resort was written").toBeGreaterThan(0);
+    const write = JSON.stringify(recovery);
+    expect(write, "the forgotten quoted line reached the engine").not.toContain("QUOTED_SOURCE_LINE");
+    expect(write, "the entry quoting the forgotten line was left out").not.toContain("Fixture quoting line");
+    expect(write, "the rest of the recent window was kept").toContain("Seeded exchange 59");
+  }, 240000);
+
+  it.each(["grokAgent", "fuigoAgent", "claudeAgent"])("T3 WM-D5 [%s] restores history after the pending check settles", async route => {
+    // The Grok row runs on the Grok driver's own grok-4.7 entry (drivers/acp/grok.ts, 500k context window), so its replay is sized by a
+    // byte budget like Claude's and the refreshed session can reach lines older than the newest-40 floor.
+    const f = await make(false, false, route === "grokAgent" ? "grok-4.7" : undefined);
+    const post = async (text: string, count: number) => {
+      await api("POST", f.route, { threadId: f.thread, text });
+      await routeFinished(f, count);
+    };
+    const attempt = (text: string) => rows("attempts").find(r => r.thread === f.thread && r.text.includes(text));
+    scenario(f.thread, { fullFixtureHistory: true });
+    await post("Fixture setup turn", 1);
+    scenario(f.thread, { rebuildTier: 2, storm: true });
+    await post("Fixture short replay", 2);
+    const short = JSON.stringify(attempt("Fixture short replay"));
+    expect(short, "the last resort replayed its recent window").toContain("Seeded exchange 59");
+    expect(short, "the last resort kept only its recent window").not.toContain("Seeded exchange 00");
+    scenario(f.thread, {});
+    await post("Fixture pending continuation", 3);
+    expect(attempt("Fixture pending continuation")?.resumed, "the replay cursor sustained the pending turn").toBe(true);
+    scenario(f.thread, { settleStorm: true });
+    await post("Fixture conversation after settlement", 4);
+    expect(rows("settled-storm")).toContainEqual({ thread: f.thread, held: false });
+    expect(resets(f.thread).some(line => line.includes("reason=partial-replay-settled")), "the settled check refreshed this session").toBe(true);
+    const refreshed = attempt("Fixture conversation after settlement");
+    expect(refreshed?.resumed).toBe(false);
+    // The Fuigo fixture model has no known context window, so every direct replay there is the newest-40 floor
+    // (memory/disclosures.ts replayWindow); the Claude and Grok rows have a byte budget that reaches lines older than that window.
+    if (route !== "fuigoAgent") expect(JSON.stringify(refreshed), "the refreshed session carries history older than the window").toContain("Seeded exchange 00");
+    expect(JSON.stringify(refreshed), "the refreshed session carries the turn sent while the check was pending").toContain("Fixture pending continuation");
+    scenario(f.thread, {});
+    await post("Fixture next owner message", 5);
+    expect(attempt("Fixture next owner message")?.resumed).toBe(true);
+  }, 150000);
+
+  it("WM-D4 [grokAgent] confirmed Stop before session start leaves no replay cursor", async () => {
+    const f = await make();
+    await api("POST", f.route, { threadId: f.thread, text: "Earlier fixture conversation" });
+    await routeFinished(f, 1);
+    expect(savedCursor(f)).toBeTruthy();
+    const gate = join(fixture.info.dataDir, "hold-session-new");
+    rmSync(gate);
+    scenario(f.thread, { rebuildTier: 2 });
+    await api("POST", f.route, { threadId: f.thread, text: "Fixture input to stop" });
+    await expect.poll(() => existsSync(gate + ".waiting")).toBe(true);
+    expect(await api("POST", f.route.replace(/\/messages$/, "/interrupt"), { threadId: f.thread })).toMatchObject({ ok: true });
+    await directIdle(f);
+    expect(rows("stop-close"), "the Grok adapter closed before the cursor could be published").toContainEqual({ thread: f.thread, confirmed: true });
+    expect(savedCursor(f), "the stopped last-resort replay leaves no cursor").toBeUndefined();
+    writeFileSync(gate, "");
+    scenario(f.thread, {});
+    await api("POST", f.route, { threadId: f.thread, text: "Fixture input after Stop" });
+    await routeFinished(f, 2);
+    const next = rows("attempts").find(r => r.thread === f.thread && r.text.includes("Fixture input after Stop"));
+    expect(next?.resumed).toBe(false);
+    expect(JSON.stringify(next)).toContain("Earlier fixture conversation");
+  }, 150000);
+
+  // 1.0.22 userbug-sealed (owner report: almost every turn ended on "Murage closed this bot's tool connection ..." / "this conversation's
+  // memory was not ready yet ..."). Owners: userbug-sealed builder owns this guard and the owner rule for a mount reply
+  // (memory/send-fence.ts ownerHeldPendingProposal, witnessed in drivers/owner-pending-proposal-1022.test.ts); the recall side of a check
+  // that never settles belongs to lane fix1022-recall-checking.
+  // GUARD, not the fix's witness (it passes on 435d038d9c too): the real path of a tool reply on the owner's kept turn stays open under a
+  // check that never settles. POST /api/bots/:id/messages on a booted server, the real Claude driver, its real mount relay and shim, the
+  // real bundled agents proxy and the real release door (POST /api/internal/turn-release/v1/verdict). Only the model is scripted: the
+  // CLI stand-in holds its turn after the prompt and makes the one tool call the test asks for, on its own initialized MCP session.
+  it("T3 USERBUG-SEALED-E2E guard ['claudeAgent'] an owner's kept turn calls a bundled tool through the relay and the release door while its memory check never settles: the tool answers, the reply arrives, no card", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" }); await routeFinished(f, 1);
+    await expect.poll(() => savedCursor(f), { message: "the turn must resume a retained session" }).toBeTruthy();
+    const before = new Set((await messages(f.thread)).map(m => m.id));
+    // The field shape: a revoke window that never settles, over the retained session.
+    scenario(f.thread, { storm: true });
+    await api("POST", f.route, { threadId: f.thread, text: "USERBUG_HOLD Reply with READY" });
+    const seen = join(fixture.info.dataDir, "userbug-hold-seen");
+    await expect.poll(() => existsSync(seen), { timeout: 45000, message: "the engine must hold the turn after its prompt" }).toBe(true);
+    expect(rows("storm").filter(r => r.thread === f.thread), "the fixture must plant its window over a retained session").toEqual([{ thread: f.thread, session: true }]);
+    expect(kept(f.thread), "the turn took the kept path").toBe(true);
+    const pid = readFileSync(seen, "utf8").trim().split("\n").at(-1)!;
+    const dump = JSON.parse(readFileSync(join(fixture.info.dataDir, "wire-claude"), "utf8"));
+    const server = Object.keys(dump.mcpConfig?.mcpServers ?? {}).find(name => name === "agents" || name.endsWith("-agents"));
+    expect(server, "the turn mounts the bundled agents server").toBeTruthy();
+    // The model calls a tool: engine -> shim -> relay -> agents proxy -> release door -> relay -> engine.
+    const box = join(fixture.info.dataDir, "userbug-mailbox"), response = join(box, `${pid}-call-1.json`);
+    writeFileSync(join(box, `${pid}-call-1.pending`), JSON.stringify({ id: "call-1", server, name: "list_bots", args: {} }));
+    renameSync(join(box, `${pid}-call-1.pending`), join(box, `${pid}-request.json`));
+    await expect.poll(() => existsSync(response), { timeout: 30000, message: "the tool call must be answered while the check is still pending" }).toBe(true);
+    const reply = JSON.parse(readFileSync(response, "utf8"));
+    expect(reply.error, "the engine's MCP session to the tool stays open").toBeUndefined();
+    expect(reply.result?.isError, "the tool's own answer, not a refusal").not.toBe(true);
+    expect(reply.result?.content?.[0]?.type, "the tool's own result reaches the engine").toBe("text");
+    writeFileSync(join(fixture.info.dataDir, "userbug-hold-gate"), "go");
+    await routeFinished(f, 2);
+    const shown = (await messages(f.thread)).filter(m => !before.has(m.id));
+    expect(shown.filter(m => m.tool?.ok === false), "no card").toEqual([]);
+    expect(shown.filter(m => m.text === LEDGER_REFUSAL_LINE)).toEqual([]);
+    const log = readFileSync(fixture.info.logPath, "utf8");
+    expect(log).not.toContain("seals the relay");
+    expect(log).not.toContain("reason=mount-relay-sealed");
+    expect(resets(f.thread)).toEqual([]);
+  }, 180000);
+  // W1 (ASTRA n4:5719: the production HTTP door on a booted server; this is the fix's witness, RED on 435d038d9c): POST
+  // /api/bots/:id/messages, the real Claude driver, its mount relay and shim, the real bundled agents proxy and the release door the
+  // server serves (POST /api/internal/turn-release/v1/verdict -> turn-release-door.ts handleTurnReleaseDoor). Only the model is scripted.
+  // Unlike the guard above, the window that never settles opens AFTER the prompt was written, so the turn already holds its context and
+  // every frame of its tool exchange is a proposal on that held context.
+  it("USERBUG-SEALED-W1 ['claudeAgent'] an owner's written turn whose held context turns checking:pending forever: its tool call is answered through the HTTP release door, no seal, no card", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" }); await routeFinished(f, 1);
+    await expect.poll(() => savedCursor(f), { message: "the turn must resume a retained session" }).toBeTruthy();
+    const before = new Set((await messages(f.thread)).map(m => m.id));
+    await api("POST", f.route, { threadId: f.thread, text: "USERBUG_HOLD Reply with READY" });
+    const seen = join(fixture.info.dataDir, "userbug-hold-seen");
+    await expect.poll(() => existsSync(seen), { timeout: 45000, message: "the engine must hold the turn after its prompt" }).toBe(true);
+    expect(rows("writes").filter(r => r.thread === f.thread && r.text.includes("Reply with READY")), "the owner's prompt was written").toHaveLength(1);
+    writeFileSync(join(fixture.info.dataDir, "storm-late-flag"), f.thread);
+    await expect.poll(() => rows("storm-late").filter(r => r.thread === f.thread).length, { timeout: 10000, message: "the window must open mid-turn" }).toBe(1);
+    const pid = readFileSync(seen, "utf8").trim().split("\n").at(-1)!;
+    const dump = JSON.parse(readFileSync(join(fixture.info.dataDir, "wire-claude"), "utf8"));
+    const server = Object.keys(dump.mcpConfig?.mcpServers ?? {}).find(name => name === "agents" || name.endsWith("-agents"));
+    expect(server, "the turn mounts the bundled agents server").toBeTruthy();
+    // The model calls a tool: engine -> shim -> relay -> agents proxy -> HTTP release door -> relay -> engine.
+    const box = join(fixture.info.dataDir, "userbug-mailbox"), response = join(box, `${pid}-call-1.json`);
+    writeFileSync(join(box, `${pid}-call-1.pending`), JSON.stringify({ id: "call-1", server, name: "list_bots", args: {} }));
+    renameSync(join(box, `${pid}-call-1.pending`), join(box, `${pid}-request.json`));
+    for (const until = Date.now() + 30000; !existsSync(response) && Date.now() < until;) await new Promise(done => setTimeout(done, 100));
+    const log = () => readFileSync(fixture.info.logPath, "utf8");
+    // the door first: a reply the HTTP release door (turn-release-door.ts handleTurnReleaseDoor) refuses is logged there before the relay seals
+    expect(log(), "the HTTP release door refused nothing").not.toMatch(/swallowed error site=http\.turn-release\b/);
+    expect(existsSync(response), "the tool call must be answered within 30 s (the relay's pending bound is 65 s)").toBe(true);
+    const reply = JSON.parse(readFileSync(response, "utf8"));
+    expect(reply.error, "the engine's MCP session to the tool stays open (no seal) under a check that never settles").toBeUndefined();
+    expect(reply.result?.isError, "the tool's own answer, not a refusal").not.toBe(true);
+    expect(reply.result?.content?.[0]?.type, "the tool's own result reaches the engine").toBe("text");
+    writeFileSync(join(fixture.info.dataDir, "userbug-hold-gate"), "go");
+    await routeFinished(f, 2);
+    const shown = (await messages(f.thread)).filter(m => !before.has(m.id));
+    expect(shown.filter(m => m.tool?.ok === false), "no card").toEqual([]);
+    expect(shown.filter(m => m.text === LEDGER_REFUSAL_LINE)).toEqual([]);
+    expect(log()).not.toContain("seals the relay");
+    expect(log()).not.toContain("reason=mount-relay-sealed");
+  }, 180000);
+  // W3 (ASTRA pre-check r3 on 117f06c50c: the internal-route opt-in was a denylist, so the computer proxy's activity heartbeat took the owner
+  // rule): the same booted turn as W1. Its tool call is answered (RED on 435d038d9c: no owner rule there), then a POST to the heartbeat
+  // route (POST /api/internal/computer-activity, computer-proxy.ts) on the same live turn is NOT part of its tool exchange
+  // (ownerToolExchangeRoute, consuming-turn-response.ts) and keeps the base refusal (GROK-HOLD Q-G3: conservative, no security ruling).
+  // This fixture's bot has its computer off, so the turn holds no computer capability: the request carries the bundled agents proxy's
+  // own token and index.ts answers it with the capability refusal, through the route's own consuming writer. That answer is what the
+  // owner rule would have delivered (the denylist mutant delivers it); here it is refused like any response on held pending context.
+  it("USERBUG-SEALED-W3 ['claudeAgent'] an owner's written turn under a check that never settles: its tool call is answered, a response on the heartbeat route does not take the owner rule", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" }); await routeFinished(f, 1);
+    await expect.poll(() => savedCursor(f), { message: "the turn must resume a retained session" }).toBeTruthy();
+    await api("POST", f.route, { threadId: f.thread, text: "USERBUG_HOLD Reply with READY" });
+    const seen = join(fixture.info.dataDir, "userbug-hold-seen");
+    await expect.poll(() => existsSync(seen), { timeout: 45000, message: "the engine must hold the turn after its prompt" }).toBe(true);
+    writeFileSync(join(fixture.info.dataDir, "storm-late-flag"), f.thread);
+    await expect.poll(() => rows("storm-late").filter(r => r.thread === f.thread).length, { timeout: 10000, message: "the window must open mid-turn" }).toBe(1);
+    const pid = readFileSync(seen, "utf8").trim().split("\n").at(-1)!;
+    const dump = withTurnSecrets(JSON.parse(readFileSync(join(fixture.info.dataDir, "wire-claude"), "utf8"))) as any;
+    const server = Object.keys(dump.mcpConfig?.mcpServers ?? {}).find(name => name === "agents" || name.endsWith("-agents"))!;
+    const token = dump.mcpConfig.mcpServers[server]?.env?.MURAGE_COMMS_TOKEN as string | undefined;
+    expect(token, "the bundled agents proxy holds this turn's token").toBeTruthy();
+    const box = join(fixture.info.dataDir, "userbug-mailbox"), response = join(box, `${pid}-call-1.json`);
+    writeFileSync(join(box, `${pid}-call-1.pending`), JSON.stringify({ id: "call-1", server, name: "list_bots", args: {} }));
+    renameSync(join(box, `${pid}-call-1.pending`), join(box, `${pid}-request.json`));
+    for (const until = Date.now() + 30000; !existsSync(response) && Date.now() < until;) await new Promise(done => setTimeout(done, 100));
+    expect(existsSync(response) && JSON.parse(readFileSync(response, "utf8")).result?.content?.[0]?.type, "the tool call is answered on the owner rule").toBe("text");
+    const beat = await fetch(`${fixture.info.url}/api/internal/computer-activity`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}", signal: AbortSignal.timeout(20000) })
+      .then(async r => ({ status: r.status, body: await r.text() }), error => ({ status: 0, body: String(error) }));
+    expect(beat, "a response on the heartbeat route is refused as on 435d038d9c, not delivered on the owner rule").toEqual({ status: 409, body: LEDGER_REFUSAL_LINE });
+    // the refusal stops the turn, as on 435d038d9c (the consequence GROK-HOLD Q-G3 asks about); let it end before the next test
+    writeFileSync(join(fixture.info.dataDir, "userbug-hold-gate"), "go");
+    await directIdle(f);
+  }, 180000);
   it.each(["claudeAgent", "codex", "customAcp"])("CTX-ROUTE [%s] rebuilt history and message-only cursor suppression at the adapter write", async route => {
     const f = await make();
     await api("POST", f.route, { threadId: f.thread, text: "EARLIER_CONVERSATION_LINE" }); await routeFinished(f, 1);
@@ -924,13 +1969,22 @@ describe("pending fence turns in an isolated server", () => {
     const g = await make();
     scenario(g.thread, { rebuildTier: 2 });
     await api("POST", g.route, { threadId: g.thread, text: "MESSAGE_ONLY_LATEST" }); await routeFinished(g, 1);
-    await expect.poll(wire).toContain("MESSAGE_ONLY_LATEST"); expect(wire()).not.toContain("EARLIER_CONVERSATION_LINE");
+    // SABLE-IDENTITY-1020 (this pin was v1.0.20's message-only tier-2): the last rebuild of a typed turn carries the seeded line, judged
+    // shown and named, in the adapter's actual bytes. The transcript field is not asserted empty any more: these adapters do not replay it
+    // natively (turn-context.ts), and the wire bytes above are what the engine receives.
+    await expect.poll(wire).toContain("MESSAGE_ONLY_LATEST"); expect(wire()).toContain("EARLIER_CONVERSATION_LINE");
     const messageOnly = rows("attempts").filter(r => r.thread === g.thread && r.text.includes("MESSAGE_ONLY_LATEST")).at(-1)!;
-    expect(messageOnly.text).not.toContain("EARLIER_CONVERSATION_LINE"); expect(messageOnly.transcript ?? []).toEqual([]);
-    expect(savedCursor(g), "the real adapter's message-only session must never be published").toBeUndefined();
+    expect(messageOnly.text).toMatch(/^User: .*EARLIER_CONVERSATION_LINE/m);
+    // WARM-GROK-1022 D1 (this pin was "the real adapter's message-only session must never be published"): the tier-2 rebuild replayed
+    // the conversation, so the adapter's real session is kept and its cursor published.
+    expect(savedCursor(g), "the real adapter's replay session publishes its cursor").toBeTruthy();
     scenario(g.thread, { seedReplayUser: true });
     await api("POST", g.route, { threadId: g.thread, text: "ROUTE_NEXT_ORDINARY" }); await routeFinished(g, 2);
     const next = rows("attempts").filter(r => r.thread === g.thread && r.text.includes("ROUTE_NEXT_ORDINARY"));
+    // D4: the check has settled, so the replay session is refreshed and the next turn is still fresh (resumed false, unchanged). The Codex
+    // row reaches this turn with no resume cursor (turn context builds it with resume=false, so the resumeCursor guard of the D4 check at
+    // the continuation step never runs) and there is nothing to refresh; its fresh start and replayed line are still asserted below. Codex is not a WARM-GROK-1022 D row.
+    if (route !== "codex") expect(resets(g.thread).some(line => line.includes("reason=partial-replay-settled")), "the settled check refreshed the replay session").toBe(true);
     expect(next).toHaveLength(1); expect(next[0].resumed).toBe(false);
     expect(next[0].text).toMatch(/^User: .*EARLIER_CONVERSATION_LINE/m);
     await expect.poll(wire).toContain("ROUTE_NEXT_ORDINARY"); expect(wire()).toContain("EARLIER_CONVERSATION_LINE");
@@ -963,11 +2017,13 @@ describe("pending fence turns in an isolated server", () => {
     await api("POST", f.route, { threadId: f.thread, text: "RAW_HUMAN_INPUT" }); await done(2);
     const recovered=rows("writes").filter(r=>r.thread===f.thread&&r.text.includes("RAW_HUMAN_INPUT"));
     expect(recovered).toHaveLength(1);
-    if(!route||tier===2)expect(recovered[0].text).not.toContain("EARLIER_CONVERSATION_LINE");
+    // SABLE-IDENTITY-1020 (this pin was v1.0.20's message-only tier-2): a tier-2 last rebuild of a typed turn replays the shown earlier
+    // line, as tier 1 does; only the generic tier-1 selective drop stays message-only. The withheld line below never goes out.
+    if(!route&&tier===1)expect(recovered[0].text).not.toContain("EARLIER_CONVERSATION_LINE");
+    if(tier===2)expect(recovered[0].text).toMatch(/^User: .*EARLIER_CONVERSATION_LINE/m);
     if(route){
       await expect.poll(wire).toContain('RAW_HUMAN_INPUT');
-      if(tier===2)expect(wire()).not.toContain('EARLIER_CONVERSATION_LINE');
-      else expect(wire()).toContain('EARLIER_CONVERSATION_LINE');
+      expect(wire()).toContain('EARLIER_CONVERSATION_LINE');
     }
     if (heal) { await expect.poll(() => savedCursor(f)).toBeTruthy(); await fixture.restart(); await login(); }
     // Add an independently withheld stored line before the subsequent replay.
@@ -996,6 +2052,85 @@ describe("pending fence turns in an isolated server", () => {
       expect(received).toContain('VISIBLE_CONVERSATION_LINE');
       expect(received).not.toContain('WITHHELD_CONVERSATION_LINE');
     }
+  }, 150000);
+  // cause 25 (TRIAGE-GROK-SPEED-1122; MAIN-RULING local-memory-budget: no local memory check may stop, refuse or delay an owner turn). On the
+  // field thread every Grok turn (no resume cursor, so nothing is kept) was refused on a check stuck checking:pending, then waited the whole
+  // 65 s bound for it before the rebuilt turn's engine was spawned. Now the owner's turn takes its last resort at once: what cannot be fenced
+  // stays out, the skip is logged and the reply carries its left-out note. Outside input and the Claude kept path are unchanged.
+  const fenceWaitMs = () => [...readFileSync(fixture.info.logPath, "utf8").matchAll(/pending fence settle outcome=\w+ ms=(\d+)/g)].reduce((sum, m) => sum + Number(m[1]), 0);
+  const skipped = (thread: string) => readFileSync(fixture.info.logPath, "utf8").includes(`[memory] pending fence skipped thread=${thread} reason=checking:pending`);
+  const ownerStartsAtOnce = async (room: boolean, field?: object) => {
+    const f = await make(room);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" });
+    await expect.poll(() => rows("terminal-replies").filter(r => r.thread === f.thread).length, { timeout: 60000 }).toBe(1);
+    await expect.poll(() => busy(f, room), { timeout: 30000 }).toBe(false);
+    const before = await ids(f.thread);
+    // as on the field thread: no resume cursor is held, so nothing can be kept, and the prompt resting on the earlier lines is refused
+    // before hand-back on a pending window that never settles; the refusal reaches the same rebuild the field log shows ("re-preparing")
+    scenario(f.thread, field ?? { refusals: 1, pendingDeadline: true, noResume: true });
+    await api("POST", f.route, { threadId: f.thread, text: "GROK_OWNER_LINE" });
+    await expect.poll(() => rows("writes").filter(r => r.thread === f.thread && r.text.includes("GROK_OWNER_LINE")).length, { timeout: 30000 }).toBe(1);
+    // the scenario is real: the first prompt met the production send fence on a pending window that never settles
+    expect(readFileSync(fixture.info.logPath, "utf8")).toMatch(/send fence refused \(checking:pending,/);
+    expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`context revoked during dispatch on thread ${f.thread}; re-preparing`);
+    const attempts = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("GROK_OWNER_LINE"));
+    expect(attempts).toHaveLength(2);
+    if (!room) expect(attempts.map(r => r.resumed)).toEqual([false, false]);
+    // the spawn delay the fence added (fake clock; the shipped bound is 65,000 ms): none
+    expect(fenceWaitMs(), "fake-clock ms the owner turn waited on its pending check before its engine was spawned").toBeLessThan(1000);
+    // MAIN-RULING local-memory-budget: no wait at all, not a short one. The fake clock moves only when the wait sleeps, so 0 means no timer.
+    expect(fenceWaitMs(), "fake-clock ms of any sleep in the owner's pending wait").toBe(0);
+    expect(skipped(f.thread), "the skip is recorded").toBe(true);
+    // the rebuilt turn ran on the real engine process: the scripted CLI received the owner's line on its stdin
+    if (field) await expect.poll(() => existsSync(join(fixture.info.dataDir, "wire-bytes")) && readFileSync(join(fixture.info.dataDir, "wire-bytes"), "utf8").includes("GROK_OWNER_LINE"), { timeout: 30000 }).toBe(true);
+    await expect.poll(() => rows("terminal-replies").filter(r => r.thread === f.thread).length, { timeout: 60000 }).toBe(2);
+    await expect.poll(() => busy(f, room), { timeout: 30000 }).toBe(false);
+    const shown = (await messages(f.thread)).filter(m => !before.has(m.id));
+    expect(shown.filter(m => m.text === "GROK_OWNER_LINE")).toHaveLength(1);
+    expect(shown.filter(m => m.role === "bot" && m.kind === "text")).toHaveLength(1);
+    expect(shown.filter(m => m.text === LEDGER_REFUSAL_LINE)).toEqual([]);
+    expect(shown.filter(m => m.tool?.ok === false)).toEqual([]);
+    expect(shown.filter(m => m.memoryNote === "without-memory"), "the reply says memory was left out").toHaveLength(1);
+  };
+  // The rebuild and its wait are engine-independent (index.ts rebuildRefusedDirectTurn): the fixture's engine refuses before hand-back as the
+  // field Grok turn did. The real Grok driver here meets the fence only after hand-back (acp/core.ts ledger refusal), so W1G guards Grok itself.
+  it("GROKFENCE-W1 a direct owner turn with no resume cursor (the field Grok shape) whose check stays checking:pending starts without the fence wait", () => ownerStartsAtOnce(false), 120000);
+  // the room owner's last resort (A-3) takes the same no-wait start
+  it("GROKFENCE-W1R a room owner turn whose check stays checking:pending starts without the fence wait", () => ownerStartsAtOnce(true), 120000);
+  // The field shape on the real Grok driver (grok.ts over the scripted ACP CLI): the production send fence refuses the first prompt during
+  // setup, before Grok hands the turn back, on a pending window that never settles; the rebuilt turn is spawned on the real Grok driver.
+  // On c3f339db41 that spawn waited the whole 65,000 ms bound (fake clock); the owner's turn now starts at once and completes.
+  it("GROKFENCE-W1G ['grokAgent'] a Grok owner turn with no resume cursor refused on checking:pending before hand-back spawns its rebuild at once and completes", () => ownerStartsAtOnce(false, { setupRefuse: true, pendingDeadline: true, noResume: true }), 120000);
+  it("GROKFENCE-W2 outside input (a webhook-triggered run) on the same pending check is unchanged: refused at once, no skip, no write", async () => {
+    const f = await make(false);
+    const made = await api("POST", "/api/routines", { botId: f.bot.id, name: "Outside routine", prompt: "GROK_OUTSIDE_PROMPT", schedule: { type: "once", at: Date.now() + 3_600_000 } });
+    await api("POST", `/api/routines/${made.routine.id}/run`, {});
+    await expect.poll(() => rows("writes").filter(r => r.text.includes("GROK_OUTSIDE_PROMPT")).length, { timeout: 30000 }).toBeGreaterThanOrEqual(1);
+    const thread = rows("writes").find(r => r.text.includes("GROK_OUTSIDE_PROMPT")).thread as string;
+    await finished(thread);
+    await expect.poll(() => busy({ bot: f.bot, thread }, false), { timeout: 30000 }).toBe(false);
+    const before = await ids(thread), writesBefore = rows("writes").filter(r => r.thread === thread).length;
+    scenario(thread, { refusals: 1, pendingDeadline: true, outsideTrigger: true, noResume: true });
+    await api("POST", `/api/routines/${made.routine.id}/run`, {});
+    await expect.poll(async () => (await messages(thread)).filter(m => !before.has(m.id) && m.text === LEDGER_REFUSAL_LINE).length, { timeout: 60000 }).toBe(1);
+    // outside input never takes the owner's last resort: its refusal is not held for a rebuild, so it neither waits nor writes
+    expect(fenceWaitMs()).toBe(0);
+    expect(skipped(thread)).toBe(false);
+    expect(rows("writes").filter(r => r.thread === thread)).toHaveLength(writesBefore);
+  }, 120000);
+  it("GROKFENCE-W3 ['claudeAgent'] the kept path is unchanged: an owner's resumed turn on checking:pending keeps its session and never reaches the skip", async () => {
+    const f = await make(false);
+    await api("POST", f.route, { threadId: f.thread, text: "Previous fixture message" }); await routeFinished(f, 1);
+    await expect.poll(() => savedCursor(f), { message: "the second turn must resume a retained session" }).toBeTruthy();
+    scenario(f.thread, { storm: true });
+    await api("POST", f.route, { threadId: f.thread, text: "CLAUDE_KEPT_LINE" });
+    await routeFinished(f, 2);
+    expect(readFileSync(fixture.info.logPath, "utf8")).toContain(`memory continuation kept thread=${f.thread} `);
+    const attempts = rows("attempts").filter(r => r.thread === f.thread && r.text.includes("CLAUDE_KEPT_LINE"));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].resumed).toBe(true);
+    expect(skipped(f.thread)).toBe(false);
+    expect(fenceWaitMs()).toBe(0);
   }, 150000);
 
 });

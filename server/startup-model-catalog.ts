@@ -10,13 +10,13 @@ import type { ModelCatalog } from './contracts.ts';
 export function startupCatalogPath(identity: unknown): string {
   return join(DATA_DIR, 'model-catalogs', createHash('sha256').update(JSON.stringify(identity)).digest('hex') + '.json');
 }
-export function readStartupModelCatalog(path: string): ModelCatalog | undefined {
+export function readStartupModelCatalog(path: string, maxModels = ACP_OPTION_LIMIT): ModelCatalog | undefined {
   try {
     const value = JSON.parse(readFileSync(path, 'utf8'));
-    // Discovery may prepend one Murage-owned passthrough model to 128 native models.
+    // Discovery may prepend one Murage-owned passthrough model to the provider's native model catalog.
     const valid = (choices: unknown, limit = ACP_OPTION_LIMIT) => Array.isArray(choices) && choices.length <= limit
       && decodeChoices(choices, limit).length === choices.length;
-    if (!valid(value.options, ACP_OPTION_LIMIT + 1) || !value.options.length || !value.options.some((m: any) => m.id === value.default)
+    if (!valid(value.options, maxModels + 1) || !value.options.length || !value.options.some((m: any) => m.id === value.default)
       || !value.options.every((m: any) => m.variants === undefined || valid(m.variants))) {
       rmSync(path, { force: true });
       return;

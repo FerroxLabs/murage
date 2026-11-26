@@ -12,7 +12,7 @@ import { SkillPageControls } from "./SkillPageControls";
 import { useSkillsBrowser } from "./useSkillsBrowser";
 import { topicLabel, TopicSelect } from "./TopicSelect";
 import { VerdictBadge } from "./VerdictBadge";
-import type { SkillSummary } from "@/lib/skills-api";
+import { verdictHint, type SkillSummary } from "@/lib/skills-api";
 
 function Row({ skill, botId, onOpen }: { skill: SkillSummary; botId: string; onOpen(ref: string): void }) {
   const added = skill.usedBy.some((use) => use.botId === botId && use.enabled);
@@ -22,6 +22,7 @@ function Row({ skill, botId, onOpen }: { skill: SkillSummary; botId: string; onO
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium text-ink">{skill.name}</div>
           <div className="truncate text-[11.5px] text-ink-secondary">{skill.description}</div>
+          {!added && verdictHint(skill) && <div className={"text-[11.5px] " + (skill.verdict === "blocked" ? "text-danger" : "text-warning")}>{verdictHint(skill)}</div>}
         </div>
         {added ? <span className="shrink-0 text-[11.5px] text-success">Added</span> : <VerdictBadge verdict={skill.verdict} builtIn={skill.kind !== "collection"} className="shrink-0" />}
         <ChevronRight size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />

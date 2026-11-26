@@ -1,0 +1,543 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "mcpconnect-1022-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 MCP Connect strings"
+  },
+  "author": "mcpconnect-1022",
+  "date": "2026-11-23",
+  "base": "2d43a0c6b9",
+  "scope": "1.0.22 MCP Connect strings in 8 languages (round 3)",
+  "strings": {
+    "en:ux.cloud.mcpConnect.button": {
+      "text": "Connect",
+      "en": "Connect",
+      "verdict": "pass",
+      "note": "Source string; short imperative button label."
+    },
+    "en:ux.cloud.mcpConnect.buttonTip": {
+      "text": "Sign in to {host} so your Murage can use it.",
+      "en": "Sign in to {host} so your Murage can use it.",
+      "verdict": "pass",
+      "note": "Source string; {host} placeholder present."
+    },
+    "en:ux.cloud.mcpConnect.connecting": {
+      "text": "Getting ready...",
+      "en": "Getting ready...",
+      "verdict": "pass",
+      "note": "Source string; three-dot ellipsis."
+    },
+    "en:ux.cloud.mcpConnect.waiting": {
+      "text": "Finish signing in at {host}. This page updates by itself.",
+      "en": "Finish signing in at {host}. This page updates by itself.",
+      "verdict": "pass",
+      "note": "Source string; {host} placeholder present."
+    },
+    "en:ux.cloud.mcpConnect.openAgain": {
+      "text": "Open {host} again",
+      "en": "Open {host} again",
+      "verdict": "pass",
+      "note": "Source string; {host} placeholder present."
+    },
+    "en:ux.cloud.mcpConnect.cancel": {
+      "text": "Cancel",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Source string."
+    },
+    "en:ux.cloud.mcpConnect.connected": {
+      "text": "Connected",
+      "en": "Connected",
+      "verdict": "pass",
+      "note": "Source string."
+    },
+    "en:ux.cloud.mcpConnect.failedFallback": {
+      "text": "That did not work. Try again in a moment.",
+      "en": "That did not work. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Source string."
+    },
+    "en:ux.cloud.mcpConnect.timedOut": {
+      "text": "Still waiting for {host}. If you finished signing in, try again.",
+      "en": "Still waiting for {host}. If you finished signing in, try again.",
+      "verdict": "pass",
+      "note": "Source string; {host} placeholder present."
+    },
+    "en:ux.cloud.mcpConnect.retry": {
+      "text": "Try again",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Source string."
+    },
+    "en:ux.cloud.mcpConnect.popupBlocked": {
+      "text": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again.",
+      "en": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again.",
+      "verdict": "pass",
+      "note": "Source string."
+    },
+    "de:ux.cloud.mcpConnect.button": {
+      "text": "Verbinden",
+      "en": "Connect",
+      "verdict": "pass",
+      "note": "Standard infinitive button label for Connect."
+    },
+    "de:ux.cloud.mcpConnect.buttonTip": {
+      "text": "Melde dich bei {host} an, damit dein Murage es nutzen kann.",
+      "en": "Sign in to {host} so your Murage can use it.",
+      "verdict": "pass",
+      "note": "Faithful, uses du/dein, {host} intact."
+    },
+    "de:ux.cloud.mcpConnect.connecting": {
+      "text": "Wird vorbereitet...",
+      "en": "Getting ready...",
+      "verdict": "pass",
+      "note": "Natural progress phrase, ellipsis matches source."
+    },
+    "de:ux.cloud.mcpConnect.waiting": {
+      "text": "Schließe die Anmeldung bei {host} ab. Diese Seite aktualisiert sich von selbst.",
+      "en": "Finish signing in at {host}. This page updates by itself.",
+      "verdict": "pass",
+      "note": "Faithful, du register, {host} intact."
+    },
+    "de:ux.cloud.mcpConnect.openAgain": {
+      "text": "{host} noch einmal öffnen",
+      "en": "Open {host} again",
+      "verdict": "pass",
+      "note": "Faithful infinitive action label, {host} intact."
+    },
+    "de:ux.cloud.mcpConnect.cancel": {
+      "text": "Abbrechen",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Standard Cancel label."
+    },
+    "de:ux.cloud.mcpConnect.connected": {
+      "text": "Verbunden",
+      "en": "Connected",
+      "verdict": "pass",
+      "note": "Correct status word for Connected."
+    },
+    "de:ux.cloud.mcpConnect.failedFallback": {
+      "text": "Das hat nicht geklappt. Versuche es gleich noch einmal.",
+      "en": "That did not work. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Faithful, casual du register, natural."
+    },
+    "de:ux.cloud.mcpConnect.timedOut": {
+      "text": "Noch keine Rückmeldung von {host}. Wenn du die Anmeldung abgeschlossen hast, versuche es noch einmal.",
+      "en": "Still waiting for {host}. If you finished signing in, try again.",
+      "verdict": "pass",
+      "note": "Faithful in meaning (no response yet), du register, {host} intact."
+    },
+    "de:ux.cloud.mcpConnect.retry": {
+      "text": "Noch einmal versuchen",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Natural infinitive Try again label."
+    },
+    "de:ux.cloud.mcpConnect.popupBlocked": {
+      "text": "Dein Browser hat das Anmeldefenster blockiert. Erlaube Pop-ups für diese Seite und versuche es dann noch einmal.",
+      "en": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again.",
+      "verdict": "pass",
+      "note": "Faithful, du register, natural."
+    },
+    "es:ux.cloud.mcpConnect.button": {
+      "text": "Conectar",
+      "en": "Connect",
+      "verdict": "pass",
+      "note": "Standard infinitive button label for Connect."
+    },
+    "es:ux.cloud.mcpConnect.buttonTip": {
+      "text": "Inicia sesión en {host} para que tu Murage pueda usarlo.",
+      "en": "Sign in to {host} so your Murage can use it.",
+      "verdict": "pass",
+      "note": "Faithful and natural with informal tu, {host} intact."
+    },
+    "es:ux.cloud.mcpConnect.connecting": {
+      "text": "Preparando...",
+      "en": "Getting ready...",
+      "verdict": "pass",
+      "note": "Natural progress phrase, ellipsis matches source."
+    },
+    "es:ux.cloud.mcpConnect.waiting": {
+      "text": "Termina de iniciar sesión en {host}. Esta página se actualiza sola.",
+      "en": "Finish signing in at {host}. This page updates by itself.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact."
+    },
+    "es:ux.cloud.mcpConnect.openAgain": {
+      "text": "Abrir {host} otra vez",
+      "en": "Open {host} again",
+      "verdict": "pass",
+      "note": "Faithful infinitive action label, {host} intact."
+    },
+    "es:ux.cloud.mcpConnect.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Standard Cancel label."
+    },
+    "es:ux.cloud.mcpConnect.connected": {
+      "text": "Conectado",
+      "en": "Connected",
+      "verdict": "pass",
+      "note": "Correct status word for Connected."
+    },
+    "es:ux.cloud.mcpConnect.failedFallback": {
+      "text": "Eso no funcionó. Inténtalo de nuevo en un momento.",
+      "en": "That did not work. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Faithful and natural with informal tu."
+    },
+    "es:ux.cloud.mcpConnect.timedOut": {
+      "text": "Sigo esperando a {host}. Si ya terminaste de iniciar sesión, inténtalo de nuevo.",
+      "en": "Still waiting for {host}. If you finished signing in, try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural with informal tu, {host} intact."
+    },
+    "es:ux.cloud.mcpConnect.retry": {
+      "text": "Intentar de nuevo",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Natural infinitive Try again label."
+    },
+    "es:ux.cloud.mcpConnect.popupBlocked": {
+      "text": "Tu navegador bloqueó la ventana de inicio de sesión. Permite las ventanas emergentes en esta página y vuelve a intentarlo.",
+      "en": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural with informal tu."
+    },
+    "fr:ux.cloud.mcpConnect.button": {
+      "text": "Connecter",
+      "en": "Connect",
+      "verdict": "pass",
+      "note": "Standard infinitive button label for Connect."
+    },
+    "fr:ux.cloud.mcpConnect.buttonTip": {
+      "text": "Connectez-vous à {host} pour que votre Murage puisse l'utiliser.",
+      "en": "Sign in to {host} so your Murage can use it.",
+      "verdict": "pass",
+      "note": "Faithful, uses vous/votre, {host} intact."
+    },
+    "fr:ux.cloud.mcpConnect.connecting": {
+      "text": "Préparation...",
+      "en": "Getting ready...",
+      "verdict": "pass",
+      "note": "Natural progress phrase, ellipsis matches source."
+    },
+    "fr:ux.cloud.mcpConnect.waiting": {
+      "text": "Terminez la connexion sur {host}. Cette page se met à jour toute seule.",
+      "en": "Finish signing in at {host}. This page updates by itself.",
+      "verdict": "pass",
+      "note": "Faithful, vous register, {host} intact."
+    },
+    "fr:ux.cloud.mcpConnect.openAgain": {
+      "text": "Rouvrir {host}",
+      "en": "Open {host} again",
+      "verdict": "pass",
+      "note": "Rouvrir is the idiomatic equivalent, {host} intact."
+    },
+    "fr:ux.cloud.mcpConnect.cancel": {
+      "text": "Annuler",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Standard Cancel label."
+    },
+    "fr:ux.cloud.mcpConnect.connected": {
+      "text": "Connecté",
+      "en": "Connected",
+      "verdict": "pass",
+      "note": "Correct status word for Connected."
+    },
+    "fr:ux.cloud.mcpConnect.failedFallback": {
+      "text": "Cela n'a pas fonctionné. Réessayez dans un instant.",
+      "en": "That did not work. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Faithful, uses vous imperative."
+    },
+    "fr:ux.cloud.mcpConnect.timedOut": {
+      "text": "Toujours en attente de {host}. Si vous avez terminé la connexion, réessayez.",
+      "en": "Still waiting for {host}. If you finished signing in, try again.",
+      "verdict": "pass",
+      "note": "Faithful, vous register, {host} intact."
+    },
+    "fr:ux.cloud.mcpConnect.retry": {
+      "text": "Réessayer",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Standard Try again label."
+    },
+    "fr:ux.cloud.mcpConnect.popupBlocked": {
+      "text": "Votre navigateur a bloqué la fenêtre de connexion. Autorisez les pop-ups pour cette page, puis réessayez.",
+      "en": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again.",
+      "verdict": "pass",
+      "note": "Faithful, vous register, natural."
+    },
+    "hi:ux.cloud.mcpConnect.button": {
+      "text": "कनेक्ट करें",
+      "en": "Connect",
+      "verdict": "pass",
+      "note": "Natural polite imperative button label matching the source."
+    },
+    "hi:ux.cloud.mcpConnect.buttonTip": {
+      "text": "{host} में साइन इन करें ताकि आपका Murage उसे इस्तेमाल कर सके।",
+      "en": "Sign in to {host} so your Murage can use it.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact, danda used correctly."
+    },
+    "hi:ux.cloud.mcpConnect.connecting": {
+      "text": "तैयारी हो रही है...",
+      "en": "Getting ready...",
+      "verdict": "pass",
+      "note": "Natural progress phrase, ellipsis matches source."
+    },
+    "hi:ux.cloud.mcpConnect.waiting": {
+      "text": "{host} पर साइन इन पूरा करें। यह पेज अपने आप अपडेट हो जाता है।",
+      "en": "Finish signing in at {host}. This page updates by itself.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact."
+    },
+    "hi:ux.cloud.mcpConnect.openAgain": {
+      "text": "{host} फिर से खोलें",
+      "en": "Open {host} again",
+      "verdict": "pass",
+      "note": "Faithful, {host} intact."
+    },
+    "hi:ux.cloud.mcpConnect.cancel": {
+      "text": "रद्द करें",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Standard Cancel label."
+    },
+    "hi:ux.cloud.mcpConnect.connected": {
+      "text": "कनेक्ट हो गया",
+      "en": "Connected",
+      "verdict": "pass",
+      "note": "Natural status phrase for Connected."
+    },
+    "hi:ux.cloud.mcpConnect.failedFallback": {
+      "text": "यह नहीं हो पाया। थोड़ी देर में फिर कोशिश करें।",
+      "en": "That did not work. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Faithful and natural polite register."
+    },
+    "hi:ux.cloud.mcpConnect.timedOut": {
+      "text": "अभी भी {host} का इंतज़ार है। अगर आपने साइन इन पूरा कर लिया है, तो फिर कोशिश करें।",
+      "en": "Still waiting for {host}. If you finished signing in, try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact."
+    },
+    "hi:ux.cloud.mcpConnect.retry": {
+      "text": "फिर कोशिश करें",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Natural Try again label."
+    },
+    "hi:ux.cloud.mcpConnect.popupBlocked": {
+      "text": "आपके ब्राउज़र ने साइन-इन विंडो रोक दी। इस पेज के लिए पॉप-अप की अनुमति दें, फिर दोबारा कोशिश करें।",
+      "en": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural polite register."
+    },
+    "ja:ux.cloud.mcpConnect.button": {
+      "text": "接続",
+      "en": "Connect",
+      "verdict": "pass",
+      "note": "Concise standard button label for Connect."
+    },
+    "ja:ux.cloud.mcpConnect.buttonTip": {
+      "text": "{host} にサインインして、Murage が使えるようにします。",
+      "en": "Sign in to {host} so your Murage can use it.",
+      "verdict": "pass",
+      "note": "Faithful and natural (possessive dropped idiomatically), {host} intact."
+    },
+    "ja:ux.cloud.mcpConnect.connecting": {
+      "text": "準備しています...",
+      "en": "Getting ready...",
+      "verdict": "pass",
+      "note": "Natural progress phrase, ellipsis matches source."
+    },
+    "ja:ux.cloud.mcpConnect.waiting": {
+      "text": "{host} でのサインインを完了してください。このページは自動で更新されます。",
+      "en": "Finish signing in at {host}. This page updates by itself.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact."
+    },
+    "ja:ux.cloud.mcpConnect.openAgain": {
+      "text": "{host} をもう一度開く",
+      "en": "Open {host} again",
+      "verdict": "pass",
+      "note": "Faithful action label, {host} intact."
+    },
+    "ja:ux.cloud.mcpConnect.cancel": {
+      "text": "キャンセル",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Standard Cancel label."
+    },
+    "ja:ux.cloud.mcpConnect.connected": {
+      "text": "接続済み",
+      "en": "Connected",
+      "verdict": "pass",
+      "note": "Correct status label for Connected."
+    },
+    "ja:ux.cloud.mcpConnect.failedFallback": {
+      "text": "うまくいきませんでした。しばらくしてからもう一度お試しください。",
+      "en": "That did not work. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Faithful and natural polite register."
+    },
+    "ja:ux.cloud.mcpConnect.timedOut": {
+      "text": "まだ {host} を待っています。サインインが完了している場合は、もう一度お試しください。",
+      "en": "Still waiting for {host}. If you finished signing in, try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural polite register, {host} intact."
+    },
+    "ja:ux.cloud.mcpConnect.retry": {
+      "text": "もう一度試す",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Natural Try again label."
+    },
+    "ja:ux.cloud.mcpConnect.popupBlocked": {
+      "text": "ブラウザがサインインのウィンドウをブロックしました。このページのポップアップを許可してから、もう一度お試しください。",
+      "en": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural polite register."
+    },
+    "pt-br:ux.cloud.mcpConnect.button": {
+      "text": "Conectar",
+      "en": "Connect",
+      "verdict": "pass",
+      "note": "Standard infinitive button label for Connect."
+    },
+    "pt-br:ux.cloud.mcpConnect.buttonTip": {
+      "text": "Entre em {host} para que o seu Murage possa usá-lo.",
+      "en": "Sign in to {host} so your Murage can use it.",
+      "verdict": "pass",
+      "note": "Faithful, uses standard Entrar for sign in, {host} intact."
+    },
+    "pt-br:ux.cloud.mcpConnect.connecting": {
+      "text": "Preparando...",
+      "en": "Getting ready...",
+      "verdict": "pass",
+      "note": "Natural progress phrase, ellipsis matches source."
+    },
+    "pt-br:ux.cloud.mcpConnect.waiting": {
+      "text": "Termine de entrar em {host}. Esta página se atualiza sozinha.",
+      "en": "Finish signing in at {host}. This page updates by itself.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact."
+    },
+    "pt-br:ux.cloud.mcpConnect.openAgain": {
+      "text": "Abrir {host} de novo",
+      "en": "Open {host} again",
+      "verdict": "pass",
+      "note": "Faithful infinitive action label, {host} intact."
+    },
+    "pt-br:ux.cloud.mcpConnect.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Standard Cancel label."
+    },
+    "pt-br:ux.cloud.mcpConnect.connected": {
+      "text": "Conectado",
+      "en": "Connected",
+      "verdict": "pass",
+      "note": "Correct status word for Connected."
+    },
+    "pt-br:ux.cloud.mcpConnect.failedFallback": {
+      "text": "Isso não funcionou. Tente de novo em instantes.",
+      "en": "That did not work. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Faithful and natural."
+    },
+    "pt-br:ux.cloud.mcpConnect.timedOut": {
+      "text": "Ainda aguardando {host}. Se você já terminou de entrar, tente de novo.",
+      "en": "Still waiting for {host}. If you finished signing in, try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact."
+    },
+    "pt-br:ux.cloud.mcpConnect.retry": {
+      "text": "Tentar de novo",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Natural infinitive Try again label."
+    },
+    "pt-br:ux.cloud.mcpConnect.popupBlocked": {
+      "text": "Seu navegador bloqueou a janela de login. Permita pop-ups para esta página e tente de novo.",
+      "en": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural."
+    },
+    "zh:ux.cloud.mcpConnect.button": {
+      "text": "连接",
+      "en": "Connect",
+      "verdict": "pass",
+      "note": "Concise standard button label for Connect."
+    },
+    "zh:ux.cloud.mcpConnect.buttonTip": {
+      "text": "登录 {host}，这样你的 Murage 就能使用它。",
+      "en": "Sign in to {host} so your Murage can use it.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact, full-width punctuation."
+    },
+    "zh:ux.cloud.mcpConnect.connecting": {
+      "text": "正在准备...",
+      "en": "Getting ready...",
+      "verdict": "pass",
+      "note": "Natural progress phrase, ellipsis matches source."
+    },
+    "zh:ux.cloud.mcpConnect.waiting": {
+      "text": "请在 {host} 上完成登录。此页面会自动更新。",
+      "en": "Finish signing in at {host}. This page updates by itself.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact."
+    },
+    "zh:ux.cloud.mcpConnect.openAgain": {
+      "text": "重新打开 {host}",
+      "en": "Open {host} again",
+      "verdict": "pass",
+      "note": "Faithful action label, {host} intact."
+    },
+    "zh:ux.cloud.mcpConnect.cancel": {
+      "text": "取消",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Standard Cancel label."
+    },
+    "zh:ux.cloud.mcpConnect.connected": {
+      "text": "已连接",
+      "en": "Connected",
+      "verdict": "pass",
+      "note": "Correct status label for Connected."
+    },
+    "zh:ux.cloud.mcpConnect.failedFallback": {
+      "text": "没有成功。请稍后再试。",
+      "en": "That did not work. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Faithful and natural."
+    },
+    "zh:ux.cloud.mcpConnect.timedOut": {
+      "text": "仍在等待 {host}。如果你已经完成登录，请再试一次。",
+      "en": "Still waiting for {host}. If you finished signing in, try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural, {host} intact."
+    },
+    "zh:ux.cloud.mcpConnect.retry": {
+      "text": "重试",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Standard Retry label."
+    },
+    "zh:ux.cloud.mcpConnect.popupBlocked": {
+      "text": "你的浏览器拦截了登录窗口。请允许此页面的弹出窗口，然后再试一次。",
+      "en": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again.",
+      "verdict": "pass",
+      "note": "Faithful and natural, full-width punctuation."
+    }
+  },
+  "files": {}
+}

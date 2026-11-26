@@ -3,6 +3,7 @@
 //
 // "One more step.": the 6-digit code an owner browser on a Cloud home types before a high-risk change (src/lib/owner-code.ts
 // opens it from api()). Always mounted (App.tsx), shows nothing until a flow is running.
+import { imeComposing } from "@/lib/composer-enter";
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { uxCloud } from "@/lib/cloud-ux-copy";
@@ -105,6 +106,7 @@ function OwnerCodeDialogOpen({ session }: { session: OwnerCodeSession }) {
     apply(applyDigits(digits, index, typed));
   };
   const onKey = (index: number, event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (imeComposing(event.nativeEvent)) return;
     if (event.key === "Backspace") { event.preventDefault(); apply(afterBackspace(digits, index)); }
     else if (event.key === "ArrowLeft" && index > 0) { event.preventDefault(); focusBox(index - 1); }
     else if (event.key === "ArrowRight" && index < CODE_LENGTH - 1) { event.preventDefault(); focusBox(index + 1); }

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Container-only source snapshot: mutation/live qualification cannot race broad verification.
-import { cpSync, readFileSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { cpSync, readFileSync, mkdtempSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { resolve, join, relative } from 'node:path';
+import { safeWipeSync } from '../server/testing/safe-wipe.mjs';
 const mode = process.argv[2];
 if (!['live', 'mutants', 'candidate', 'supplementary-baseline', 'paired', 'final'].includes(mode)) throw Error('qualification mode required');
 const root = resolve('.'), out = resolve(process.argv[3]), scratch = mkdtempSync(join(tmpdir(), 'release-r5-' + mode + '-'));
@@ -14,4 +15,4 @@ try {
   const result = spawnSync(process.execPath, args, { cwd: scratch, stdio: 'inherit', timeout: 720000 });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
-} finally { rmSync(scratch, { recursive: true, force: true }); }
+} finally { safeWipeSync(scratch); }

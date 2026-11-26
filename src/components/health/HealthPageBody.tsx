@@ -16,7 +16,7 @@ import { OpenBotListButton } from "@/components/OpenBotListButton";
 import type { HealthPageProps } from "@/components/shell/shell-contract";
 import { strongestHealthLevel, type HealthFold } from "../../../shared/health-levels";
 import { HEALTH_COPY, healthStateLine, recoveredLine, type HealthIssue, type HealthSummaryResponse, type NextAction } from "../../../shared/sentinel-view";
-import { healthFromEngines, healthWithChecks } from "./health-status";
+import { healthFromEngines, healthWithChecks, healthWithRoutines } from "./health-status";
 import { healthDestination, healthGuide } from "./health-guide";
 import { healthFindings, summaryLine } from "./health-findings";
 import { HEALTH_BODY, HEALTH_FRAME, HEALTH_HEAD, HealthHeadTop } from "./HealthExit";
@@ -48,8 +48,10 @@ export function HealthPageBody({ onLeave }: HealthPageProps) {
   const desktop = useDesktopSurface();
   const [panelOpen, setPanelOpen] = useState(false);
   const panelId = useId();
-  const status = healthWithChecks(healthFromEngines(reading.health, reading.flux, reading.fromServer || state.instances.length > 0), strongestHealthLevel(folds));
+  const status = healthWithRoutines(healthWithChecks(healthFromEngines(reading.health, reading.flux, reading.fromServer || state.instances.length > 0), strongestHealthLevel(folds)), state.routineRuns);
   const checks = summary ? healthStateLine(summary.status, summary.view?.summary ?? null, now) : null;
+  const checksLine = summary?.backgroundChecksRetired && summary.status !== "unavailable" && !summary.view?.summary.openCount
+    ? t("ux.l2b.health.backgroundChecksRetired") : checks?.sentence;
   const quiet = folds.length > 0 && folds.every((fold) => fold.level === "note");
   // Every finding in order of impact (Flux Router and Fuigo first), from what the page already holds.
   // The engine actually chosen as the default; an older server only sends the fallback it names on Today.
@@ -61,7 +63,7 @@ export function HealthPageBody({ onLeave }: HealthPageProps) {
   const line = counted
     ?? (status.level === "act" || status.level === "watch" ? status.line
       : quiet ? t("ux.l2b.health.lineNote")
-        : checks?.sentence ?? status.line);
+        : checksLine ?? status.line);
   const go = (to: NextAction) => { const place = healthDestination(to); if (place) dispatch({ type: "toggleAppSettings", open: true, section: place.section }); };
   const recovered = summary?.view?.summary.recoveredCount ?? 0;
   return (
@@ -72,7 +74,7 @@ export function HealthPageBody({ onLeave }: HealthPageProps) {
         <p role="status" className="mt-1 text-[14px] text-ink-secondary">{line}</p>
       </BoxHead>
       <BoxBody className={HEALTH_BODY}>
-      {checks?.time && <p className="mt-0.5 text-[12px] text-ink-secondary">{checks.time}</p>}
+      {!summary?.backgroundChecksRetired && checks?.time && <p className="mt-0.5 text-[12px] text-ink-secondary">{checks.time}</p>}
       {failed && <p role="alert" className="mt-2 text-[13px] text-danger">{HEALTH_COPY.unavailable}</p>}
       {/* Two columns from 1024 px: findings on the left (7/12), What was checked on the right (5/12), centred up to 1200 px. */}
       <div className="mx-auto mt-4 grid w-full max-w-[1200px] grid-cols-1 gap-5 lg:grid-cols-12">
