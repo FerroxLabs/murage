@@ -1,4 +1,5 @@
 import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
+import { dataVersion } from "./data-version.ts";
 // What a procedure-evidence verdict and the set of identity sources rest on,
 // as one counter that moves only when those rows can have changed. Ordinary
 // message writes and new source captures do not move it, so the memos built
@@ -10,6 +11,7 @@ import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // or state changes (or that is deleted), and the policy revision, deletion
 // epoch and mode. Inside a transaction there is no stamp (a write may roll
 // back), so nothing is remembered from there.
+import { adoptWorker, writeSetGuardCall } from "./wake.ts";
 import { withoutDroppedTableTriggers } from "./read-time-retired.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { turnTraceEnabled } from "../turn-trace.ts";
@@ -124,14 +126,17 @@ function install(db: DatabaseSync): boolean {
 let installWarned = false;
 /** Whether the provenance and identity triggers are installed on this connection (installs them if not tried yet). */
 export function provenanceTriggersInstalled(db: DatabaseSync): boolean { return install(db); }
+/** This connection's identity counter alone (one row of a temp table; no commit counter). */
+export const IDENTITY_EPOCH_SQL = "SELECT n AS epoch FROM temp.identity_epoch";
 /** The stamp, or undefined when it cannot be trusted (inside a transaction,
  * or the triggers could not be installed). */
 export function provenanceStamp(db: DatabaseSync): string | undefined {
   if (db.isTransaction || !install(db)) return undefined;
-  const row = db.prepare("SELECT (SELECT n FROM temp.provenance_epoch) AS epoch, (SELECT data_version FROM pragma_data_version) AS version").get();
+  const row = { epoch: db.prepare("SELECT n AS epoch FROM temp.provenance_epoch").get()?.epoch, version: dataVersion(db) };
   // The connection and its ancestry-repair state ride in the stamp: a verdict reached while the lineage repair had failed (replay of
   // unrepaired threads withheld) is not reused after the repair succeeds, nor on another connection.
-  return `${connectionId(db)}${ancestryUnrepaired(db) ? "u" : ""}.${row?.epoch}:${row?.version}`;
+  if (row.version === undefined) return undefined;
+  return `${connectionId(db)}${ancestryUnrepaired(db) ? "u" : ""}.${row.epoch}:${row.version}`;
 }
 
 // The ids of every identity record, from the two sources of identity: kind='character-canon' on the record, partition='identity' on its details.
@@ -158,9 +163,16 @@ export async function ensureIdentityIndexes(db: DatabaseSync, options: { inline?
 function identityReading(db: DatabaseSync): { epoch: number; version: number } | undefined {
   if (!install(db)) return undefined;
   try {
-    const row = db.prepare("SELECT (SELECT n FROM temp.identity_epoch) AS epoch, (SELECT data_version FROM pragma_data_version) AS version").get();
-    return row && typeof row.epoch === "number" ? { epoch: row.epoch, version: Number(row.version) } : undefined;
+    const row = db.prepare(IDENTITY_EPOCH_SQL).get(), version = dataVersion(db);
+    return row && typeof row.epoch === "number" && version !== undefined ? { epoch: row.epoch, version } : undefined;
   } catch { ready.delete(db); return undefined; }
+}
+// The counter alone, for transaction()'s note before BEGIN: that note compares counters only, so every write transaction pays one
+// one-row temp read here and no commit-counter read at all (it used to pay the table-valued data_version scan on every BEGIN).
+function identityCounter(db: DatabaseSync): number | undefined {
+  if (!install(db)) return undefined;
+  try { const row = db.prepare(IDENTITY_EPOCH_SQL).get(); return row && typeof row.epoch === "number" ? row.epoch : undefined; }
+  catch { ready.delete(db); return undefined; }
 }
 // The committed counter last seen outside a transaction (or just before one
 // begins). The committed counter never goes down, and a transaction only adds
@@ -171,8 +183,8 @@ const committedEpoch = new WeakMap<object, number>();
 /** Called by transaction() just before BEGIN, outside any transaction. */
 export function noteIdentityEpoch(db: DatabaseSync): void {
   if (db.isTransaction) return;
-  const reading = identityReading(db);
-  if (reading) committedEpoch.set(db, reading.epoch);
+  const epoch = identityCounter(db);
+  if (epoch !== undefined) committedEpoch.set(db, epoch);
 }
 const identity = { db: null as DatabaseSync | null, stamp: "", epoch: -1, sources: null as Set<string> | null, builds: 0, refreshes: 0, generation: 0 };
 function collectRow(row: Record<string, unknown>, sources: Set<string>): void {
@@ -217,13 +229,15 @@ function smallStore(db: DatabaseSync): boolean {
   const row = db.prepare("SELECT (SELECT coalesce(max(rowid),0) FROM memory_records) AS r,(SELECT coalesce(max(rowid),0) FROM memory_record_details) AS d").get();
   return Number(row?.r ?? 0) <= SMALL_STORE_ROWS && Number(row?.d ?? 0) <= SMALL_STORE_ROWS;
 }
-const RECOMPUTE_WORKER = `
+// (the guard is spliced in by name, not interpolated: the worker text stays one plain literal for write-tx.structure.test.ts to read)
+const RECOMPUTE_WORKER_TEXT = `
 const { workerData, parentPort } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
 let db;
 try {
   db = new DatabaseSync(workerData.file);
   db.exec("PRAGMA busy_timeout=30000");
+  /*memory-write-set-guard*/
   db.exec("BEGIN");
   const rows = db.prepare(workerData.sql).all();
   db.exec("COMMIT");
@@ -235,6 +249,7 @@ try {
   parentPort.postMessage({ ok: false, message: String(error && error.message || error) });
 }
 `;
+const RECOMPUTE_WORKER = RECOMPUTE_WORKER_TEXT.replace("/*memory-write-set-guard*/", () => writeSetGuardCall("provenance-stamp"));
 const recomputing = new WeakMap<DatabaseSync, Promise<boolean>>();
 export const identityRecomputeStats = { started: 0, kept: 0, moved: 0 };
 /** Recomputes the set off the calling thread (a worker connection reads one snapshot). The result is kept only if neither this connection's
@@ -262,6 +277,7 @@ export function recomputeIdentityOffThread(db: DatabaseSync, attempts = 6): Prom
       else sources = await new Promise<Set<string> | undefined>(resolve => {
         try {
           const worker = new Worker(windowsHidePrelude + RECOMPUTE_WORKER, { eval: true, workerData: { file, sql: IDENTITY_SQL } });
+          adoptWorker(worker, "provenance-stamp");
           let settled = false;
           const finish = (value: Set<string> | undefined) => { if (!settled) { settled = true; resolve(value); } };
           worker.on("message", (m: { ok: boolean; sources?: string[] }) => finish(m.ok ? new Set(m.sources) : undefined));

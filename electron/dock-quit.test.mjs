@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { test } from 'vitest';
+import { quitAnnouncement } from './quit-notice.mjs';
 import { settleDesktopStartup, fallbackDesktopStartup, terminalDesktopStartup } from './startup-settle.mjs';
 
 const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
@@ -19,8 +20,11 @@ function fixture(failCleanup) {
     backgroundLifecycle: null, cuaCleanedUp: false, desktopCleanup: null, desktopCleanupStage: 'owned harness',
     cleanupDesktopForExit: () => failCleanup ? Promise.reject(Error('held')) : Promise.resolve(),
     setImmediate: fn => queue.push(fn), dialog: { showErrorBox: () => surfaces.push('dialog') },
+    // announceQuit (meetgreet) runs inside the handler; a default-profile Dock Quit logs its cause and shows no notification.
+    quitAnnouncement, hasCustomUpdaterProfile: () => false, process: { env: {} },
+    Notification: Object.assign(function () { surfaces.push('notification'); return { show() {} }; }, { isSupported: () => true }),
   });
-  vm.runInContext(source.slice(source.indexOf('app.on("before-quit", (e) => {')), ctx);
+  vm.runInContext(source.slice(source.indexOf('let quitAnnounced = false;')), ctx);
   handler({ preventDefault() {} });
   const deps = { cause: () => ctx.shutdownCause, record() {}, closeSplash() {},
     closedBackup: () => false, packaged: () => true, shutdownStarted: () => false,
@@ -34,6 +38,7 @@ for (const failCleanup of [false, true]) test(`DQ-1: unmarked Dock Quit stays un
   await Promise.resolve(); await Promise.resolve();
   assert.equal(f.ctx.shutdownCause, 'unclassified');
   assert.ok(f.logs.some(line => /unclassified/i.test(line)));
+  assert.ok(f.logs.includes('desktop quit cause=unclassified profile=default'));
   await settleDesktopStartup(Promise.reject(Error('late startup')), f.deps);
   await fallbackDesktopStartup(Error('fallback'), f.deps);
   await terminalDesktopStartup(Error('terminal'), f.deps);

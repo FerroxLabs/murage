@@ -24,7 +24,7 @@ import { approvalSummary } from "../shared/approval-summary.ts";
 
 describe("looksDestructive", () => {
   const dangerous = [
-    "rm -rf /Users/milind/project",
+    "rm -rf /Users/exampleuser/project",
     "rm -fr node_modules",
     "sudo rm /etc/hosts",
     "dd if=/dev/zero of=/dev/disk2",
@@ -60,7 +60,7 @@ describe("looksDestructive", () => {
 describe("looksSensitive", () => {
   for (const text of [
     "cat .env",
-    "cat /Users/milind/project/.env.production",
+    "cat /Users/exampleuser/project/.env.production",
     "cat ~/.ssh/id_rsa",
     "cp ~/.aws/credentials /tmp",
     "cat .npmrc",
@@ -763,7 +763,7 @@ describe("always-ask reads the whole command, and asks on a cut copy", () => {
 
   it("a non-command tool's summary is read as text: an apostrophe never asks", () => {
     // MAIN RULING 2026-11-13 wipe-only: these no-card cases are authenticated owner turns.
-    expect(autoVerdict(NO_LIMITS, "Edit", "Edit /Users/alex/it's notes.md", { fullAccessOrigin: "owner" }).approve).not.toBeNull();
+    expect(autoVerdict(NO_LIMITS, "Edit", "Edit /Users/exampleuser/it's notes.md", { fullAccessOrigin: "owner" }).approve).not.toBeNull();
     expect(autoVerdict(NO_LIMITS, "Edit", `Edit ${"x".repeat(5_000)}`, { fullAccessOrigin: "owner" }).approve).not.toBeNull();
   });
 

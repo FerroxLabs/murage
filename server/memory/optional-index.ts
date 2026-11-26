@@ -1,4 +1,5 @@
 import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
+import { adoptWorker, writeSetGuardCall } from "./wake.ts";
 import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -14,7 +15,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { quietForSmallWork, reclaimAllowed, type ReclaimGate } from "./root-set-reclaim.ts";
 
 export type OptionalIndex = { name: string; table: string; sql: string; /** Exact prior definitions replaced atomically before listen. */ previousSql?: readonly string[]; minSchemaVersion: number; /** small partial index: built at the first moment with no live turn and no typing, without the idle wait */ eager?: boolean; /** made on the opening connection before the server listens, on EVERY launch where it is missing (buildPreListenIndexes):
- * for a small partial index a turn's first read needs, whose build is cheap next to the walk its absence costs */ preListen?: boolean; /** also logs the build hold as `[<logTag>] index build ms=<n> ok=<0|1>` (a greppable line per owner of the index) */ logTag?: string; requiredBeforeListen?: boolean };
+ * for a small partial index a turn's first read needs, whose build is cheap next to the walk its absence costs */ preListen?: boolean; /** also logs the build hold as `[<logTag>] index build ms=<n> ok=<0|1>` (a greppable line per owner of the index) */ logTag?: string; requiredBeforeListen?: boolean; /** bytes of the database file above which the build before listen is left to the build after listen. Naming it is also what lets a
+ * start that died in the build be left to the build after listen (1.0.20 T1, below): only for an index whose readers answer exactly without
+ * it (preListenIndexDeferred) */ deferAboveBytes?: number };
 /** Every optional index. The exact text SQLite stores (sql without IF NOT EXISTS) is what validation accepts. */
 export const OPTIONAL_INDEXES: OptionalIndex[] = [];
 /** Required for the normal owner path. Failure keeps the bounded fallback active until a build succeeds. */
@@ -46,6 +49,69 @@ export function registerOptionalIndex(index: OptionalIndex): OptionalIndex {
   return index;
 }
 export const optionalIndexText = (index: OptionalIndex) => index.sql.replace(" IF NOT EXISTS", "");
+// 1.0.20 T1: a build before listen is ONE statement, so a start that dies during it (the shell's stop at its start-up limit, a quit, a crash)
+// keeps nothing, and the next start began the same build again: on a large history that never ended. Two rules end the loop, both decided
+// before the build and both leaving the index to the build after listen (the idle-gated worker below), which no start-up limit can stop:
+//   interrupted  a marker row is committed before the build and removed when the build returns (built or failed). A marker found at a later
+//                start means the process died inside the build, so that start does not build it before listen again.
+//   large        an index that names deferAboveBytes is not built before listen on a file larger than that.
+// A build that FAILS (an error, not a death) is not deferred: it stops the start exactly as before. An index that names deferAboveBytes
+// is deferred after ONE death: the turn index, whose reader answers exactly without it (message-db.ts reads through the prior definition, or
+// through the thread, while preListenIndexDeferred says so).
+// 1.0.20 startup-all: every other preListen index whose reader has a bounded fallback (owner-pin, evidence, lineage, receipt lines, source-lsn
+// floor, revoke-job state: all but requiredBeforeListen) is marked the same way and deferred after TWO deaths in its build: the first start
+// after a death builds it whole once more (prelisten-index-beat), a second death ends the loop. The marker's `done` column counts the deaths.
+// A deferred required index is pending exactly as after a failed build (its bounded fallback serves) until the build after listen lands.
+// The foreign-key child indexes (requiredBeforeListen, no bounded fallback, MAIN ruling) are never deferred.
+const deferredBeforeListen = new WeakMap<DatabaseSync, Set<string>>();
+/** True when this open left `name` to the build after listen. In memory, per connection: an index missing for any other reason is still a fault. */
+export function preListenIndexDeferred(db: DatabaseSync, name: string): boolean {
+  return deferredBeforeListen.get(db)?.has(name) ?? false;
+}
+export const PRE_LISTEN_ATTEMPT_PREFIX = "prelisten-build:";
+const attemptName = (index: OptionalIndex) => `${PRE_LISTEN_ATTEMPT_PREFIX}${index.name}`;
+/** True for an index this start may mark, and leave to the build after listen once its build has died often enough (above). */
+const markable = (index: OptionalIndex) => index.deferAboveBytes !== undefined || (index.preListen === true && index.requiredBeforeListen !== true);
+/** Deaths in the build before listen after which a start leaves it to the build after listen. */
+export const preListenDeathsToDefer = (index: OptionalIndex) => (index.deferAboveBytes !== undefined ? 1 : 2);
+/** Deaths inside this index's build before listen, read from its marker (0: none). A marker of t1 (done=0) is one death. */
+export function preListenDeaths(db: DatabaseSync, index: OptionalIndex): number {
+  try {
+    const row = db.prepare("SELECT done FROM transcript_index_state WHERE name=?").get(attemptName(index)) as { done?: number } | undefined;
+    return row ? Math.max(1, Number(row.done) || 0) : 0;
+  } catch { return 0; }
+}
+const attemptOpen = (db: DatabaseSync, index: OptionalIndex) => preListenDeaths(db, index) > 0;
+/** Committed before the build (never inside a caller's transaction, which would take it away with the build). A file without the state
+ * table, or a write that fails, leaves no marker: the build goes on as it always did. The count goes up by one per build begun, and the
+ * marker is removed when the build returns, so what a later start reads is the number of builds that died. */
+function noteAttempt(db: DatabaseSync, index: OptionalIndex): void {
+  if (!markable(index) || db.isTransaction) return;
+  try { db.prepare("INSERT INTO transcript_index_state(name, done, cursor, skipped) VALUES (?, 1, ?, 0) ON CONFLICT(name) DO UPDATE SET done=max(1, transcript_index_state.done)+1, cursor=excluded.cursor").run(attemptName(index), Date.now()); } catch { /* no marker */ }
+}
+function clearAttempt(db: DatabaseSync, index: OptionalIndex): void {
+  if (!markable(index) || db.isTransaction) return;
+  try { db.prepare("DELETE FROM transcript_index_state WHERE name=?").run(attemptName(index)); } catch { /* the next start that finds the index built removes it */ }
+}
+/** Why this start leaves a due index to the build after listen, or null when it builds it before listen. */
+export function preListenDeferReason(db: DatabaseSync, index: OptionalIndex): "interrupted" | "large" | null {
+  if (!markable(index)) return null;
+  if (preListenDeaths(db, index) >= preListenDeathsToDefer(index)) return "interrupted";
+  if (index.deferAboveBytes === undefined) return null;
+  try {
+    const pages = Number((db.prepare("PRAGMA page_count").get() as { page_count: number }).page_count), size = Number((db.prepare("PRAGMA page_size").get() as { page_size: number }).page_size);
+    if (pages * size > index.deferAboveBytes) return "large";
+  } catch { /* a size that cannot be read defers nothing */ }
+  return null;
+}
+/** True when the index exists under one of its exact prior definitions: the build replaces it (drop and create in one transaction). */
+function replaceable(db: DatabaseSync, index: OptionalIndex): boolean {
+  if (!index.previousSql?.length) return false;
+  try {
+    const sql = db.prepare("SELECT sql FROM sqlite_schema WHERE type='index' AND name=?").get(index.name)?.sql;
+    return typeof sql === "string" && index.previousSql.includes(sql);
+  } catch { return false; }
+}
 const WORKER_SOURCE = `
 const { workerData, parentPort } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
@@ -53,6 +119,7 @@ let db;
 try {
   db = new DatabaseSync(workerData.file);
   db.exec("PRAGMA busy_timeout=60000");
+  ${writeSetGuardCall("optional-index")}
   db.exec(workerData.sql);
   db.close();
   parentPort.postMessage({ ok: true });
@@ -70,21 +137,28 @@ export function optionalIndexReady(db: DatabaseSync, name: string): boolean {
   try { return Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='index' AND name=?").get(name)); } catch { return false; }
 }
 const inFlight = new Map<string, Promise<boolean>>();
+/** 1.0.22 revokehealth item 8 (HIDDEN-COST M26): a required index whose build failed on its worker is not started again by the next idle
+ * sweep (every 30 s): the next try waits 1 min, doubling to at most 30 min; a build that succeeds clears it. Per file and name, in memory. */
+const requiredRetryAt = new Map<string, { failures: number; at: number }>();
+const REQUIRED_RETRY_MS = 60_000, REQUIRED_RETRY_MAX_MS = 30 * 60_000;
 export const optionalIndexStats = { started: 0, built: 0, failed: 0, gated: 0 };
 /** Builds `index` on a worker thread with its own connection; resolves true once it exists. A failure (a lock held past the busy timeout) is
  * retried a few times with a growing pause, never on the caller's thread. One build per name at a time. `inline: true` (an in-memory database,
  * which a worker cannot open) builds on the caller's connection: tests only. */
 export function buildOptionalIndexOffThread(db: DatabaseSync, index: OptionalIndex, options: { retries?: number; retryMs?: number; inline?: boolean; canStart?: () => boolean; hold?: (on: boolean) => void } = {}): Promise<boolean> {
   if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) return Promise.resolve(false);
-  if (optionalIndexReady(db, index.name)) { requiredBuildResult(db, index, true); return Promise.resolve(true); }
+  // an index under a prior definition (left by a deferred replacement) is replaced here, atomically: readers keep the prior one until the commit
+  const replace = replaceable(db, index);
+  if (!replace && optionalIndexReady(db, index.name)) { requiredBuildResult(db, index, true); return Promise.resolve(true); }
+  const buildSql = replace ? `BEGIN IMMEDIATE; DROP INDEX IF EXISTS "${index.name}"; ${index.sql}; COMMIT` : index.sql;
   const file = databaseFile(db);
   const key = `${file}\0${index.name}`;
   const running = inFlight.get(key);
   if (running) return running;
   if (!file || options.inline) {
     const began = performance.now();
-    try { db.exec(index.sql); requiredBuildResult(db, index, true); }
-    catch (error) { if (!REQUIRED_INDEXES.includes(index)) throw error; requiredBuildResult(db, index, false, error); return Promise.resolve(false); }
+    try { db.exec(buildSql); requiredBuildResult(db, index, true); }
+    catch (error) { if (replace && db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* already ended */ } } if (!REQUIRED_INDEXES.includes(index)) throw error; requiredBuildResult(db, index, false, error); return Promise.resolve(false); }
     if (index.logTag) console.log(`[${index.logTag}] index build ms=${Math.round(performance.now() - began)} ok=1 inline=1`);
     return Promise.resolve(true);
   }
@@ -99,6 +173,8 @@ export function buildOptionalIndexOffThread(db: DatabaseSync, index: OptionalInd
     try { options.hold?.(true); } catch { /* not held */ }
     const done = (ok: boolean, error?: unknown) => {
       requiredBuildResult(db, index, ok, error);
+      if (ok) requiredRetryAt.delete(key);
+      else if (REQUIRED_INDEXES.includes(index)) { const failures = (requiredRetryAt.get(key)?.failures ?? 0) + 1; requiredRetryAt.set(key, { failures, at: Date.now() + Math.min(REQUIRED_RETRY_MAX_MS, REQUIRED_RETRY_MS * 2 ** (failures - 1)) }); }
       try { options.hold?.(false); } catch { /* released */ }
       const held = Math.round(performance.now() - began);
       console.log(`[memory] index build done name=${index.name} ms=${held}${ok ? "" : " failed"}`);
@@ -109,7 +185,8 @@ export function buildOptionalIndexOffThread(db: DatabaseSync, index: OptionalInd
       const timer = setTimeout(() => { void attempt(left - 1, pause * 2).then(resolve); }, pause); timer.unref?.();
     };
     try {
-      const worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: { file, sql: index.sql } });
+      const worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: { file, sql: buildSql } });
+      adoptWorker(worker, "optional-index");
       let settled = false;
       const finish = (ok: boolean, error?: unknown) => { if (settled) return; settled = true; done(ok, error); };
       worker.on("message", (message: { ok: boolean; code?: string; errcode?: number; name?: string }) => finish(message.ok, message));
@@ -138,7 +215,9 @@ export async function buildOptionalIndexesWhenIdle(db: DatabaseSync, gate: Recla
   for (const index of registeredIndexes()) {
     const required = REQUIRED_INDEXES.includes(index);
     if (!required && windowBuilt) return null;
-    if (optionalIndexReady(db, index.name)) { requiredBuildResult(db, index, true); continue; }
+    if (optionalIndexReady(db, index.name) && !replaceable(db, index)) { requiredBuildResult(db, index, true); continue; }
+    // a required build that failed on its worker waits out its backoff (item 8 above); the indexes after it are not held up
+    if (required && !options.inline && (requiredRetryAt.get(`${databaseFile(db)}\0${index.name}`)?.at ?? 0) > Date.now()) continue;
     // an index over a table this file does not have (a memory-only file) waits for it, without spending the window
     if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(index.table)) continue;
     if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) continue;
@@ -182,7 +261,7 @@ export function buildPreListenIndexes(db: DatabaseSync, options: { log?: boolean
 /** True when this launch would build a preListen index: the caller keeps the start-up note moving for the build, which blocks the server thread. Two
  * schema-table seeks, and any failure reads as nothing to build. */
 export function preListenIndexMissing(db: DatabaseSync): boolean {
-  try { return registeredIndexes().some(index => index.preListen && dueBeforeListen(db, index)); } catch { return false; }
+  try { return registeredIndexes().some(index => index.preListen && dueBeforeListen(db, index) && !preListenDeferReason(db, index)); } catch { return false; }
 }
 function dueBeforeListen(db: DatabaseSync, index: OptionalIndex): boolean {
   if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(index.table)) return false;
@@ -197,7 +276,19 @@ function buildBeforeListen(db: DatabaseSync, pick: (index: OptionalIndex) => boo
     if (!pick(index)) continue;
     let began=performance.now();
     try {
-      if (!dueBeforeListen(db, index)) { requiredBuildResult(db, index, true); continue; }
+      if (!dueBeforeListen(db, index)) { requiredBuildResult(db, index, true); if (markable(index) && attemptOpen(db, index)) clearAttempt(db, index); continue; }
+      const reason = preListenDeferReason(db, index);
+      if (reason) {
+        let left = deferredBeforeListen.get(db);
+        if (!left) { left = new Set(); deferredBeforeListen.set(db, left); }
+        left.add(index.name);
+        // a required index left until after listen is pending as after a failed build: its bounded fallback serves until the build lands
+        if (REQUIRED_INDEXES.includes(index)) { let pending = pendingRequired.get(db); if (!pending) { pending = new Set(); pendingRequired.set(db, pending); } pending.add(index.name); }
+        console.log(`[memory] index build left until after listen name=${index.name} reason=${reason}`);
+        if (index.logTag) console.log(`[${index.logTag}] index build deferred reason=${reason}`);
+        continue;
+      }
+      noteAttempt(db, index);
       began = performance.now();
       beginWrite(db, "optional_index_replace");
       try {
@@ -209,11 +300,14 @@ function buildBeforeListen(db: DatabaseSync, pick: (index: OptionalIndex) => boo
         throw error;
       }
       if (!optionalIndexReady(db, index.name)) throw new Error(`${index.name} is not in the schema after its build`);
+      clearAttempt(db, index);
       if (index.logTag) console.log(`[${index.logTag}] index build ms=${Math.round(performance.now() - began)} ok=1`);
       requiredBuildResult(db, index, true);
       built.push(index.name);
       if (options.log !== false) console.log(`[memory] index build before listen name=${index.name} ms=${Math.round(performance.now() - began)}`);
     } catch (error) {
+      // a build that failed is over: only a death leaves the marker
+      clearAttempt(db, index);
       requiredBuildResult(db, index, false, error);
       if (index.logTag) console.log(`[${index.logTag}] index build ms=${Math.round(performance.now()-began)} ok=0`);
       if (index.requiredBeforeListen) throw error;

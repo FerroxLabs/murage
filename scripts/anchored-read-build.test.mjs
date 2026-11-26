@@ -66,13 +66,7 @@ it("packaged smoke uses the supplied target executable and fails on a missing or
   } finally {removeTempDirSync(root);}
 });
 
-it("the frozen error class loads in the server's real strip-only TypeScript runtime", async () => {
-  const { execFileSync } = await import("node:child_process");
-  const output = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e",
-    "import { AnchoredReadRefused } from './server/highlevel/anchored-read.ts'; const error = new AnchoredReadRefused('link'); if (error.code !== 'link' || !(error instanceof Error)) process.exit(1); console.log('strip-safe');"],
-    { cwd: path.resolve(import.meta.dirname, ".."), encoding: "utf8", timeout: 10000 });
-  expect(output.trim()).toBe("strip-safe");
-});
+// 1.0.20 hlstrip: the error class lived in server/highlevel/anchored-read.ts, removed with Murage's own HighLevel.
 
 it("restores the Windows attack after the native held-directory handle closes", async () => {
   const { swapAndRestoreHook } = await import('./anchored-read-swap.mjs');

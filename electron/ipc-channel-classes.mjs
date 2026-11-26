@@ -31,7 +31,6 @@ export const CLOUD_REFUSED_PATTERNS = Object.freeze([
   "desktop:pick-folder",
   "desktop:surface-secret", // sync: the refused sender gets ""
   "credential:set",
-  "highlevel:*", // local encrypted capability bank; never commit credentials from a Cloud window
   "model-signin:*",
   "backup-*",
   "companion:*",
@@ -166,7 +165,6 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "composio:reconnect",
   // credential
   "credential:set",
-  "highlevel:commit",
   // cua
   "cua:connection",
   "cua:linux-disable",
@@ -191,10 +189,12 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "desktop:artifact-action",
   "desktop:capabilities",
   "desktop:export-diagnostics",
+  "desktop:open-chat",
   "desktop:pick-folder",
   "desktop:quit",
   "desktop:reveal-workspace",
   "desktop:save-file",
+  "desktop:server-launch",
   "desktop:skin",
   "desktop:surface-secret",
   "desktop:workspace-file-action",

@@ -42,7 +42,7 @@ retained but are not behavioral RED evidence. Mutation logs contain assertion
 failures, and every mutation runner restores the production source in `finally`.
 
 Evidence is retained under
-`/work/build/bld2-busyA2/evidence/` and the worktree's
+`/root/fuigo-builds/swarm-b/bld2-busyA2/evidence/` and the worktree's
 `evidence/busyloop-a21/`. The validation commands are in
 `scripts/busyloop-validate.sh`; mutation runners are `scripts/busyloop-mutants.py`,
 `scripts/busyloop-reset-mutant.py` and `scripts/busyloop-guard-mutant.py`.

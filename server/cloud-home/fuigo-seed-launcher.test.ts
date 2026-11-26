@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // FUIGO-TRUST-V2 R4 on a Cloud home: the core renders typed lists, and the launcher validates
 // them and writes Fuigo's store inside the turn's namespace, the only place its tmpfs home
-// exists. These tests drive the real launcher Python on the build host through the shared rig.
+// exists. These tests drive the real launcher Python on Hetzner through the shared rig.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

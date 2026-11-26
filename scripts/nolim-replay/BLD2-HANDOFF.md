@@ -13,14 +13,14 @@ the previous P5 handoff were read. No Mac access, credentials, paid services,
 live application verification, or outbound messaging was used.
 
 The authorized six-file diagnostic census is sealed at
-`/work/fuigo-builds/orph/_ev/nolim-replay/1019/corpus/r1/`, directory 0700,
+`/root/fuigo-builds/orph/_ev/nolim-replay/1019/corpus/r1/`, directory 0700,
 files 0600, owner 10001. Extraction and sealing used the preexisting Node 24
 image with Python, network none, read-only root, dropped capabilities,
 no-new-privileges, UID 10001, and bounded CPU/memory. Raw copies were removed
 immediately after sealing. The private deletion receipt contains SHA-256 and
 size for both removed files, UTC time, bundle digest and removal completion.
 The receipt and all private results are outside git under
-`/work/fuigo-builds/orph/_ev/nolim-replay/1019/bld2-nolimreplay/`.
+`/root/fuigo-builds/orph/_ev/nolim-replay/1019/bld2-nolimreplay/`.
 
 The census has no request envelopes, original command text, authenticated
 origin evidence, stored context, or lineage. It cannot support a faithful

@@ -269,7 +269,7 @@ describe("claim and the signed-image gate (design 9.1, 9.5, row 23)", () => {
     expect(await alertKinds()).toContain("image.unverified");
     expect(hz.created).toHaveLength(0);
   });
-  it("a build host re-check failure at claim is a skip, not a thrown error: the claim returns false and the ladder is tried", async () => {
+  it("a Hetzner re-check failure at claim is a skip, not a thrown error: the claim returns false and the ladder is tried", async () => {
     const config = provisionerConfig(e()); await seedPool("wp_545");
     const failing = async (_arch: "x86" | "arm", _image: string) => false;
     expect(await claimPoolServer(e(), config, { homeId: "h", resourceGeneration: 1, plan: "starter", now: 1 }, failing)).toBe(false);

@@ -11,7 +11,7 @@
 import { DB_NOW } from "./billing-lease";
 
 /** An assumed bound on how long a provider can still act on a create request after it was sent. None of the three providers documents a
- *  server-side request lifetime or offers idempotency keys (build host Cloud API v1, Vultr API v2, build host Storage Box API v1), so this is NOT
+ *  server-side request lifetime or offers idempotency keys (Hetzner Cloud API v1, Vultr API v2, Hetzner Storage Box API v1), so this is NOT
  *  a guarantee and nothing is settled by it (Astra INTEGRATED-7 P1); it only sets the floor for an operator's 'recheck' evidence. */
 export const PROVIDER_LIFETIME_MS = { hetzner: 60 * 60_000, vultr: 60 * 60_000, storagebox: 60 * 60_000 } as const;
 /** Worker clocks can be minutes apart; the lifetime check runs on them (time-travelling tests), so a skew margin is added. */
@@ -63,7 +63,7 @@ export async function recordSubaccountCall(db: D1Database, homeId: string, gener
 }
 
 export type ConfirmationEvidence =
-  /** The provider's request/action log shows this create completed or failed: the log entry's reference (e.g. a build host action id). */
+  /** The provider's request/action log shows this create completed or failed: the log entry's reference (e.g. a Hetzner action id). */
   | { kind: "provider_log"; reference: string }
   /** The provider confirmed the request cancelled (e.g. a support ticket reference). */
   | { kind: "cancellation"; reference: string }

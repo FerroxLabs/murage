@@ -52,7 +52,7 @@ Private creation and resident Windows security diagnostics (technical errors):
 - `Windows security request failed`
 - `Windows security session is closed`
 - `Windows security shutdown is unconfirmed`
-- `Unsafe private directory`
+- `Private directory refused`
 - `Private directory protection failed`
 - `Private directory changed`
 
@@ -77,7 +77,7 @@ Current preservation copy:
 
 Current private-directory diagnostics:
 
-- `server/windows-private-directory.ts`: Unsafe ACL marker
+- `server/windows-private-directory.ts`: ACL marker refused
 - `server/windows-private-directory.ts`: Invalid ACL marker
 - `server/windows-private-directory.ts`: Invalid ACL marker path
 - `server/windows-private-directory.ts`: ACL marker path outside data directory

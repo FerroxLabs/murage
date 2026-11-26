@@ -353,31 +353,31 @@ test("without a setup guard the flow falls back to the ordinary one",async()=>{
 // key is now made on this computer, and a folder the person picks that syncs
 // to the cloud is named before anything is saved there.
 test("folders that sync to the cloud are recognized by name on every platform",()=>{
-  const env={OneDrive:"C:\\Users\\Seani\\OneDrive",OneDriveCommercial:"C:\\Users\\Seani\\OneDrive - Ferrox Labs"};
+  const env={OneDrive:"C:\\Users\\ExampleUser\\OneDrive",OneDriveCommercial:"C:\\Users\\ExampleUser\\OneDrive - Ferrox Labs"};
   const win=folder=>cloudSyncedFolder(folder,{platform:"win32",env});
-  assert.equal(win("C:\\Users\\Seani\\OneDrive\\Documents"),"OneDrive");
-  assert.equal(win("c:\\users\\seani\\onedrive\\documents"),"OneDrive");
-  assert.equal(win("C:\\Users\\Seani\\OneDrive - Ferrox Labs\\Keys"),"OneDrive");
+  assert.equal(win("C:\\Users\\ExampleUser\\OneDrive\\Documents"),"OneDrive");
+  assert.equal(win("c:\\users\\exampleuser\\onedrive\\documents"),"OneDrive");
+  assert.equal(win("C:\\Users\\ExampleUser\\OneDrive - Ferrox Labs\\Keys"),"OneDrive");
   assert.equal(win("D:\\Sync\\OneDrive\\Keys"),"OneDrive");
-  assert.equal(win("C:\\Users\\Seani\\iCloudDrive"),"iCloud Drive");
-  assert.equal(win("C:\\Users\\Seani\\Dropbox\\Keys"),"Dropbox");
-  assert.equal(win("C:\\Users\\Seani\\Dropbox (Ferrox)"),"Dropbox");
+  assert.equal(win("C:\\Users\\ExampleUser\\iCloudDrive"),"iCloud Drive");
+  assert.equal(win("C:\\Users\\ExampleUser\\Dropbox\\Keys"),"Dropbox");
+  assert.equal(win("C:\\Users\\ExampleUser\\Dropbox (Ferrox)"),"Dropbox");
   assert.equal(win("G:\\My Drive\\Keys"),"Google Drive");
   // Astra: a Google shared drive on the mounted G: drive.
   assert.equal(win("G:\\Shared drives\\Finance"),"Google Drive");
-  assert.equal(win("C:\\Users\\Seani"),null);
-  assert.equal(win("C:\\Users\\Seani\\Documents"),null);
-  assert.equal(win("C:\\Users\\Seani\\AppData\\Local\\Murage"),null);
+  assert.equal(win("C:\\Users\\ExampleUser"),null);
+  assert.equal(win("C:\\Users\\ExampleUser\\Documents"),null);
+  assert.equal(win("C:\\Users\\ExampleUser\\AppData\\Local\\Murage"),null);
   const mac=folder=>cloudSyncedFolder(folder,{platform:"darwin",env:{}});
-  assert.equal(mac("/Users/alex/Library/Mobile Documents/com~apple~CloudDocs/Keys"),"iCloud Drive");
-  assert.equal(mac("/Users/alex/Library/CloudStorage/GoogleDrive-sean@example.com/My Drive"),"Google Drive");
-  assert.equal(mac("/Users/alex/Library/CloudStorage/OneDrive-Personal"),"OneDrive");
-  assert.equal(mac("/Users/alex/Library/CloudStorage/Dropbox"),"Dropbox");
-  assert.equal(mac("/Users/alex/Dropbox/Keys"),"Dropbox");
-  assert.equal(mac("/Users/alex/Documents"),null);
-  assert.equal(mac("/Users/alex"),null);
-  assert.equal(cloudSyncedFolder("/home/sean/Dropbox",{platform:"linux",env:{}}),"Dropbox");
-  assert.equal(cloudSyncedFolder("/home/sean",{platform:"linux",env:{}}),null);
+  assert.equal(mac("/Users/exampleuser/Library/Mobile Documents/com~apple~CloudDocs/Keys"),"iCloud Drive");
+  assert.equal(mac("/Users/exampleuser/Library/CloudStorage/GoogleDrive-sean@example.com/My Drive"),"Google Drive");
+  assert.equal(mac("/Users/exampleuser/Library/CloudStorage/OneDrive-Personal"),"OneDrive");
+  assert.equal(mac("/Users/exampleuser/Library/CloudStorage/Dropbox"),"Dropbox");
+  assert.equal(mac("/Users/exampleuser/Dropbox/Keys"),"Dropbox");
+  assert.equal(mac("/Users/exampleuser/Documents"),null);
+  assert.equal(mac("/Users/exampleuser"),null);
+  assert.equal(cloudSyncedFolder("/home/exampleuser/Dropbox",{platform:"linux",env:{}}),"Dropbox");
+  assert.equal(cloudSyncedFolder("/home/exampleuser",{platform:"linux",env:{}}),null);
   assert.equal(cloudSyncedFolder(null),null);
 });
 

@@ -1397,7 +1397,12 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (!details.url || details.url === 'about:blank') return; // still waiting for the first real page
     const b = bindings.get(candidates.get(details.tabId)); candidates.delete(details.tabId);
     // The new tab showed a page, so its first address was not a download: it no longer stands for one.
-    const announced = popupUrls.get(details.tabId); popupUrls.delete(details.tabId); if (announced) blockedUrls.delete(announced);
+    const announced = popupUrls.get(details.tabId); popupUrls.delete(details.tabId);
+    if (announced) {
+      blockedUrls.delete(announced);
+      // decide() reads raw events, so the announce and arm this popup's first address made go too; any other tab's stay.
+      for (const e of [...downloadEvents]) if ((e.kind === 'arm' || e.kind === 'announce') && e.tabId === details.tabId && e.url === announced) downloadEvents.delete(e);
+    }
     if (!b || !connected || b.state !== 'active' || !b.ready) return;
     const generation = b.generation;
     let origin = '';

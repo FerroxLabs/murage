@@ -1,8 +1,6 @@
-import { LearningConsentNotice } from "./LearningConsentNotice";
 import { BotReviewSheet } from './BotReviewSheet';
 import { useSlashSkills } from "@/lib/use-slash-skills";
 import { CallMeWhenDone } from "./CallMeWhenDone";
-import { track } from "@/lib/analytics";
 import { closedComposerLine } from "@/lib/shared-teams";
 import { FOCUS_COMPOSER_EVENT } from "./useTrayIntents";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -1110,7 +1108,6 @@ export function Composer({
         mode: groupMode,
         onError: failedSend,
       });
-      track("message_sent", { room: true, mode: effectiveChannelMode, queued: busy });
     } else if (bot) {
       // A SETUP QUESTION ON THE TABLE HEARS THE ANSWER. IT DOES NOT TAKE IT.
       //
@@ -1161,7 +1158,6 @@ export function Composer({
           if (outcome === "recorded") setIntakeNotice(null);
           else if (outcome === "refused") setIntakeNotice(INTAKE_NOT_RECORDED);
         });
-      track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
     }
     };
     void beginDraftSend(draftId, shown, (sendId, content): DraftOutboxEntry => ({
@@ -1306,7 +1302,6 @@ export function Composer({
     : <BotReviewSheet botIds={[bot.id]} />;
   return (
     <div data-composer className="pointer-events-none relative px-5 pb-3" data-composer-compact={compact ? "" : undefined}>
-      <LearningConsentNotice />
       {bot && <div className="pointer-events-auto mb-2 empty:hidden"><LazyBoundary inline onRetry={SpendPauseChunk.retry}><Suspense fallback={null}><SpendPauseChunk.Component model={bot.modelSelection.model} connectionId={bot.modelSelection.connectionId} onOpenUsage={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })} /></Suspense></LazyBoundary></div>}
       {/* No fill or hairline on this wrapper — those were the black frame
           in the pill's top corners. The dock overlays the transcript. */}

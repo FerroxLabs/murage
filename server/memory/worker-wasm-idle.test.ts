@@ -25,7 +25,7 @@ vi.mock("./index.ts", () => ({ MemoryIndex: class {
   search() { return { hits: [], vectorRows: 0 }; }
   purgeRolledCheckpoints() { return { removed: 0, examined: 0, merged: false, done: true }; }
   maintenanceOwed() { return false; }
-  async prepareExit() { state.closed++; }
+  async prepareExit() { state.closed++; return "sealed" as const; }
 } }));
 vi.mock("./eligibility.ts",()=>({MemoryEligibility:WorkerQueryEligibility}));
 

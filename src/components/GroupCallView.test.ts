@@ -255,7 +255,8 @@ describe("a spoken yes in a room call goes through fresh authentication (SEC-006
   });
 
   it("speaks a cancel and every refusal in plain words, and re-opens the card", () => {
-    expect(spoken).toMatch(/onError: \(error: string, code\?: FreshAuthCode\)/);
+    // undelivered-card-1021: the answer's code may be a delivery code; only a fresh-auth code is spoken as one
+    expect(spoken).toMatch(/onError: \(error: string, answerCode\?: FreshAuthCode \| DeliveryCode\) => \{\s*const code = freshAuthCodeOf\(answerCode\);/);
     expect(spoken).toMatch(/freshAuthSpoken\(code\)/);
     expect(spoken).toMatch(/pending\.submitted = false/);
   });

@@ -27,7 +27,7 @@ export class MockWorkerIndex {
   deletionScrubPending(): boolean { return false; }
   ageFillOwed(): boolean { return false; }
   async sealAndTruncate(): Promise<{ truncated: boolean }> { return { truncated: true }; }
-  async prepareExit(): Promise<void> {}
+  async prepareExit(): Promise<import("../memory/index-wal.ts").ExitSealOutcome> { return "clean"; }
   async purgeRecords(_ids?: unknown): Promise<void> {}
   ioBytes(): number { return 0; }
   close(): void {}

@@ -8,7 +8,7 @@ if($remaining -lt 120){throw 'Insufficient admitted window; do not launch'}
 if((Get-CimInstance Win32_ComputerSystem).UserName -ne 'FIXTURE-PC\fixture-user'){throw 'Expected interactive account unavailable'}
 if($ConfirmHiddenAncestorCorrection) {
   $prior=Get-ScheduledTask -TaskName $taskName -TaskPath '\'
-  if($prior.State -eq 'Running' -or $prior.Principal.UserId -notmatch '(?i)(fixture-user|S-1-5-21-3954847422-1325544036-2038804778-1001)$'){throw 'Prior owned task identity/state mismatch'}
+  if($prior.State -eq 'Running' -or $prior.Principal.UserId -notmatch '(?i)(fixture-user|S-1-5-21-1111111111-1111111111-1111111104-1001)$'){throw 'Prior owned task identity/state mismatch'}
   if(Test-Path -LiteralPath (Join-Path $Parent 'real-main-qualification\evidence\invoked.json')){throw 'Initial application invocation already occurred'}
   if(!(Get-Content -LiteralPath (Join-Path $Parent 'journey-console.log') -Raw).Contains('Could not find item C:\Users\fixture-user\AppData.')){throw 'Expected hidden-ancestor prelaunch failure absent'}
   if(@(Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -and $_.CommandLine.Contains($Parent)}).Count){throw 'Prior task-owned processes remain'}
@@ -22,7 +22,7 @@ if($ConfirmHiddenAncestorCorrection) {
 if(Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue){throw 'Task exists; do not adopt/replay'}
 if(!$ConfirmHiddenAncestorCorrection -and (Test-Path -LiteralPath (Join-Path $Parent 'journey-task-invoked.txt'))){throw 'Task already invoked'}
 $manifest=Get-Content -LiteralPath (Join-Path $Parent 'journey-manifest.json') -Raw | ConvertFrom-Json
-if($manifest.sid -ne 'S-1-5-21-3954847422-1325544036-2038804778-1001' -or $manifest.sessionId -ne 1){throw 'Manifest desktop binding mismatch'}
+if($manifest.sid -ne 'S-1-5-21-1111111111-1111111111-1111111104-1001' -or $manifest.sessionId -ne 1){throw 'Manifest desktop binding mismatch'}
 $arguments='-NoProfile -NonInteractive -WindowStyle Hidden -File "'+(Join-Path $Parent 'fixture\journey-entry.ps1')+'" -Parent "'+$Parent+'"'
 $action=New-ScheduledTaskAction -Execute 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Argument $arguments -WorkingDirectory $Parent
 $principal=New-ScheduledTaskPrincipal -UserId 'FIXTURE-PC\fixture-user' -LogonType Interactive -RunLevel Limited

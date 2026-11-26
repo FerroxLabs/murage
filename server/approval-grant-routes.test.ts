@@ -23,7 +23,7 @@ import { TaskAllowances } from "./stop-line-state.ts";
 import type { StopHit } from "./stop-line.ts";
 import { exactCommandKey } from "../shared/exact-command.ts";
 
-const EXACT = exactCommandKey({ engine: "claude", cwd: "/Users/alex/site", command: "git push" })!;
+const EXACT = exactCommandKey({ engine: "claude", cwd: "/Users/exampleuser/site", command: "git push" })!;
 const SET = ["app-action:GMAIL_FETCH_EMAILS", "app-action:GMAIL_SEND_EMAIL"];
 
 function pendingGrants(): PendingGrants {

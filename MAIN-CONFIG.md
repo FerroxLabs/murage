@@ -1,9 +1,9 @@
 # G-NL release host configuration
 
-MAIN must replace the contents of `/work/build/_small/gnl-corpus.env` with exactly:
+MAIN must replace the contents of `/root/fuigo-builds/swarm-b/_small/gnl-corpus.env` with exactly:
 
 ```sh
-GNL_CORPUS_HOST=/work/build/_private/nolim-cards
+GNL_CORPUS_HOST=/root/fuigo-builds/swarm-b/_private/nolim-cards
 GNL_CORPUS_SHA256=de299fed2541980e4a8585ebcb20ea02b355a200ccb08fcd64424f3309247913
 GNL_CORPUS_SELFHASH=0
 GNL_SHARDS=4
@@ -16,7 +16,7 @@ Run the committed replacement (do not invoke or edit `_small/gnl-hz.sh`):
 
 ```sh
 set -a
-source /work/build/_small/gnl-corpus.env
+source /root/fuigo-builds/swarm-b/_small/gnl-corpus.env
 set +a
 scripts/no-limits-live/gnl-hz-release.sh <40-hex-integrated-commit> <new-tag>
 ```

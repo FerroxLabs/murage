@@ -32,9 +32,9 @@ describe("cold Flux-only picker: the price note", () => {
     // This repo's component tests run in node with no DOM (no jsdom), so the mounted picker cannot be opened here; the
     // chain that carries the landing to the open menu is checked link by link instead, and each link's behaviour below.
     // 1. the picker subscribes to the snapshot: a landing re-renders it
-    expect(pickerSource).toMatch(/const metadataReady=useSyncExternalStore\(subscribeModelMetadata,modelMetadataReady,modelMetadataReady\);/);
-    // 2. the rows are rebuilt on that render (their memo keys on metadataReady), so `ordered` is the fresh list
-    expect(pickerSource).toMatch(/const rows=useMemo\(\(\)=>engine\?pickerModels\(engine,connections\):\[\],\[engine,connections,metadataReady\]\);/);
+    expect(pickerSource).toMatch(/const metadataRevision=useSyncExternalStore\(subscribeModelMetadata,modelMetadataRevision,modelMetadataRevision\);/);
+    // 2. the rows are rebuilt when the metadata revision changes, so `ordered` is the fresh list
+    expect(pickerSource).toMatch(/const rows=useMemo\(\(\)=>engine\?pickerModels\(engine,connections\):\[\],\[engine,connections,metadataRevision\]\);/);
     // 3. the open menu renders the note from that render, shown whenever it lists any row (a Flux-only list included)
     expect(dialogSource).toMatch(/<PickerPriceNote shown=\{!!ordered\.length\}\/>/);
     // 4. the note reads readiness at render time, never a value captured before the landing

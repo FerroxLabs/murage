@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// L-COPY LINT r3 (1.0.18), design section 2: the review CLI. Run it on the build host build box, never in CI
+// L-COPY LINT r3 (1.0.18), design section 2: the review CLI. Run it on the Hetzner build box, never in CI
 // (CI never writes records or the ledger).
 //
 //   node scripts/copy-review.mjs propose <bundle.json> --base <sha> --author <who wrote the strings>

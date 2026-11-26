@@ -30,6 +30,16 @@
       "kind": "agent",
       "name": "g9-ux-fable",
       "account": "Fable copy seat g9-ux-fable, read-only G9 Settings copy review"
+    },
+    {
+      "kind": "agent",
+      "name": "ctxstop-lease-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.20 A-2 refusal line"
+    },
+    {
+      "kind": "agent",
+      "name": "recallperf-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 recallperf Memory page capacity line"
     }
   ]
 }

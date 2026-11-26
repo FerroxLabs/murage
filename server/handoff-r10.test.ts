@@ -454,7 +454,11 @@ describe("R10-04: a finished ask settles when its reply row is stored", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const wait = source.slice(source.indexOf("cancelSettle = settleWithOrigin("), source.indexOf("cancelSettle = settleWithOrigin(") + 1200);
     expect(wait).toMatch(/store\.onChange\(change => \{ if \(change\.type === "message" && change\.threadId === threadId\) listener\(\)/);
-    const lookup = source.slice(source.indexOf("function turnReplyCopy("), source.indexOf("/** Consume one delegated-turn watch"));
+    // (1.0.21 cause15: the lookup's body moved to turn-reply-copy.ts; index.ts turnReplyCopy calls it)
+    expect(source.slice(source.indexOf("function turnReplyCopy("), source.indexOf("/** Consume one delegated-turn watch"))).toContain("turnReplyCopyOf(store, threadId, turnId, since)");
+    const lookupSource = readFileSync(new URL("./turn-reply-copy.ts", import.meta.url), "utf8");
+    const lookup = lookupSource.slice(lookupSource.indexOf("export function turnReplyCopyOf("));
+    expect(lookup).toContain("store.scanNewestLines(");
     expect(lookup).not.toMatch(/\.filter\(\(m\) => m\.role === "bot" && m\.kind === "text" && !m\.copyOf\)/);
   });
 });

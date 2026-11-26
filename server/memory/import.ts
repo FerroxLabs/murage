@@ -13,9 +13,9 @@ import { chunksFor } from "./chunks.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { isMemoryTopicName, MEMORY_SEED } from "../workspace.ts";
 import { scopeRow } from "./scope-id.ts";
-import { revokeAllDisclosures } from "./revocation.ts";
+import { revokeAllDisclosures, revokeRecordDisclosures } from "./revocation.ts";
 import { inheritEdge } from "./revoke-commit.ts";
-import { insertMemoryRecord } from "./record-write.ts";
+import { insertMemoryRecord, safeMemoryRecordText } from "./record-write.ts";
 
 export type ImportSelection = {kind:"bot";botId:string;topic?:string}|{kind:"section";section:string}|{kind:"partition";botId:string;partition:Partition;topic?:string};
 // `hash` is over the text as stored (redacted and masked), so the hash kept beside a masked payload says nothing about the digits it
@@ -23,6 +23,8 @@ export type ImportSelection = {kind:"bot";botId:string;topic?:string}|{kind:"sec
 interface ImportItem {selection:ImportSelection;path:string;hash:string;legacyHash:string;bytes:number;text:string;scopeId:string;scopeLabel:string;alreadyImported:boolean}
 interface Preview {previewId:string;items:ImportItem[];expiresAt:number;policyRevision:number}
 const previews=new Map<string,Preview>();
+/** Test hook: previews are process state that only time ends (at most 20 at once); a test file that imports many times starts each test with none. */
+export function resetMemoryImportPreviews():void{previews.clear();}
 let checkedDatabase:ReturnType<typeof database>|undefined;
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
 
@@ -151,8 +153,10 @@ export function commitMemoryImport(ticket:object,previewId:string,roster:MemoryR
   if(!preview||preview.expiresAt<Date.now())throw new Error("MEMORY_IMPORT_PREVIEW_EXPIRED");
   if(Number(database().prepare("SELECT policy_revision FROM memory_meta WHERE id=1").get()!.policy_revision)!==preview.policyRevision)throw new Error("MEMORY_IMPORT_POLICY_CHANGED");
   // File changes require another review; commit cannot silently import new bytes.
-  for(const item of preview.items){const current=selectionItem(item.selection,roster);if(current.hash!==item.hash||current.scopeId!==item.scopeId||current.text!==item.text)throw new Error("MEMORY_IMPORT_CHANGED");}
-  return commitImportItems(preview.items, track);
+  // cause10 v2 (review High, import.ts:187): the items written are the ones read NOW, so the forget checks see the raw hash (legacyHash)
+  // of the bytes committed, never the preview's (other raw bytes that redact to the same text would be checked under the wrong hash)
+  const current=preview.items.map(item=>{const now=selectionItem(item.selection,roster);if(now.hash!==item.hash||now.scopeId!==item.scopeId||now.text!==item.text)throw new Error("MEMORY_IMPORT_CHANGED");return now;});
+  return commitImportItems(current, track);
 }
 
 /** Whether memory_evidence_by_source is built (every older row is in it). Until then a changed import is deferred, never answered by a scan of the
@@ -163,13 +167,27 @@ function evidenceReady(db:ReturnType<typeof database>):boolean{
 const evidenceSourceQuery="SELECT record_id FROM memory_evidence_by_source WHERE source_id=?";
 const CONFLICT_OF_RECORD="(r.owner_pinned=1 OR r.state IN ('archived','deleted') OR r.assertion!='unverified-import')";
 
+/** cause10: `keep` off writes a changed notebook as 1.0.20 and 1.0.21 did (every chunk superseded and written again). Tests only: upgraded
+ * profiles hold such chains, and the readers' witnesses for them (ctxrev-h1-import-tick.test.ts) build theirs through the real import. */
+export const IMPORT_CHUNK_DIFF={keep:true};
+/** cause10: the newest version of chunk ?1 when a changed notebook (source ?2, until now at revision ?3, scope ?4) leaves it as it is: active,
+ * an import chunk with exactly the new text ?5, not pinned, resting on that notebook alone at the revision being replaced, with no later
+ * version of any state, no tombstone and no deny mark on it (a marked or tombstoned chunk is written afresh, as before). */
+const KEEPABLE_CHUNK=`SELECT r.version FROM memory_records r WHERE r.id=?1 AND r.state='active' AND r.kind='evidence' AND r.assertion='unverified-import'
+  AND r.owner_pinned=0 AND r.scope_id=?4 AND r.text=?5 AND r.version=(SELECT max(m.version) FROM memory_records m WHERE m.id=r.id)
+  AND (SELECT count(*) FROM memory_evidence e WHERE e.record_id=r.id AND e.record_version=r.version)=1
+  AND EXISTS (SELECT 1 FROM memory_evidence e WHERE e.record_id=r.id AND e.record_version=r.version AND e.source_id=?2 AND e.source_revision=?3)
+  AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=r.id)
+  AND NOT EXISTS (SELECT 1 FROM memory_deny_memory d WHERE d.kind='record' AND d.id=r.id AND d.version IN (0,r.version))`;
 /** `retryLater`: the tracked sync and the notebook walk, which leave the link as it was and look again. Anything else is told to try again in a moment. */
 function commitImportItems(items:ImportItem[], track=false, retryLater=false){
   return transaction(db=>{
-    let imported=0,skipped=0;const recordIds:string[]=[];let superseded=false;let deferred=0;
+    let imported=0,skipped=0;const recordIds:string[]=[];const withdrawn:Record<string,number>={};const replacement:Record<string,number>={};const withdrawnSources:string[]=[];let deferred=0;
     for(const item of items){
       const id=importSourceId(db,item.scopeId,item.path);
       if(db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=?) OR (target_type='import' AND target_id=? AND content_hash IN (?,?))").get(id,item.scopeId,item.hash,item.legacyHash??item.hash))throw new Error("MEMORY_IMPORT_FORGOTTEN");
+      // 1.0.21 cause10 v2: a Forget is effective for import from its own commit by that key alone: every revision's import key is in the
+      // Forget's commit (forget.ts), and a Forget an older build left queued is keyed whole before the open returns (legacy-forget-keys.ts).
       const prior=db.prepare("SELECT revision,content_hash,state FROM memory_sources WHERE id=?").get(id);
       if(prior && prior.state!=="active")throw new Error("MEMORY_IMPORT_SOURCE_RETIRED");
       // No row for the source means no evidence can name it (the foreign key runs through memory_sources), so a first import reads no evidence at
@@ -196,13 +214,45 @@ function commitImportItems(items:ImportItem[], track=false, retryLater=false){
       }
       if(unchangedSince){skipped++;continue;}
       const revision=prior?Number(prior.revision)+1:1;
-      // A changed notebook still ends every receipt (SCOPED-REVOKES E10: a version-scoped revoke needs the marker to tell a chunk's earlier
-      // version from its replacement, which shares the id; that is the marker lane's contract, not this one's). A first import ends nothing.
-      if(prior){superseded=true;db.prepare(`UPDATE memory_records SET state='superseded' WHERE id IN (${evidenceSourceQuery}) AND state!='deleted'`).run(id);}
+      // 1.0.20 T5: a changed notebook ends only the receipts that cite what it withdraws (its earlier chunks and the notebook source), never
+      // every receipt on the machine (that reset every warm session and refused the next turn on every thread). The write-time revoke names
+      // the earlier version of each chunk, so its replacement, which shares the id, is not denied with it. A first import ends nothing.
+      // 1.0.21 cause10 (chunk-diff): a chunk whose words did not change keeps its record, its version and its projection receipt. Only its
+      // evidence handle moves to the new notebook revision (every reader asks that an active record's evidence cites the current revision).
+      // Before this, one appended line superseded and rewrote EVERY chunk as a new version (a change-journal row and a projection receipt
+      // each, re-projected into every recall view), and the supersede UPDATE also re-touched every OLDER version of every chunk, so the
+      // cost of one append grew with the notebook's size times its revision count.
+      const chunks=chunksFor(item.text);
+      const kept=new Map<number,number>();
+      if(prior){
+        const keepable=db.prepare(KEEPABLE_CHUNK);
+        if(IMPORT_CHUNK_DIFF.keep)for(const [index,chunk] of chunks.entries()){
+          const row=keepable.get(`${id}:chunk:${index}`,id,Number(prior.revision),item.scopeId,safeMemoryRecordText("evidence",chunk.text));
+          if(row)kept.set(index,Number(row.version));
+        }
+        const keptIds=JSON.stringify([...kept.keys()].map(index=>`${id}:chunk:${index}`));
+        // the newest version of each: the one this change withdraws (earlier ones were withdrawn by the change that replaced them). An id
+        // with no version left to withdraw (a chunk a shorter notebook dropped at an earlier change, withdrawn then) is not withdrawn again:
+        // it would take a whole-record revoke on every later change, for ever.
+        for(const row of db.prepare(`SELECT id,MAX(version) AS version FROM memory_records WHERE id IN (${evidenceSourceQuery}) AND state NOT IN ('deleted','superseded') AND id NOT IN (SELECT value FROM json_each(?)) GROUP BY id`).all(id,keptIds))withdrawn[String(row.id)]=Number(row.version);
+        withdrawnSources.push(id);
+        // a version already superseded is not written again (each such write was a change-journal row for nothing)
+        db.prepare(`UPDATE memory_records SET state='superseded' WHERE id IN (${evidenceSourceQuery}) AND state NOT IN ('deleted','superseded') AND id NOT IN (SELECT value FROM json_each(?))`).run(id,keptIds);
+      }
       db.prepare("INSERT INTO memory_sources VALUES(?,?,NULL,NULL,NULL,?,?,'legacy-import','import','imported',NULL,'active') ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,content_hash=excluded.content_hash,state='active'").run(id,item.scopeId,revision,item.hash);
       db.prepare("INSERT INTO memory_source_versions VALUES(?,?,?,?,?)").run(id,revision,item.hash,JSON.stringify({text:item.text,path:item.path,originalHash:item.hash,selection:item.selection}),Date.now());
-      for(const [index,chunk] of chunksFor(item.text).entries()){
+      for(const [index,chunk] of chunks.entries()){
         const recordId=`${id}:chunk:${index}`;recordIds.push(recordId);
+        const keptVersion=kept.get(index);
+        if(keptVersion!==undefined){
+          // delete + insert, never UPDATE: memory_evidence_by_source is kept by the insert and delete triggers only
+          db.prepare("DELETE FROM memory_evidence WHERE record_id=? AND record_version=? AND source_id=?").run(recordId,keptVersion,id);
+          db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)").run(recordId,keptVersion,id,revision,chunk.startByte,chunk.endByte);
+          // the re-inserted edge is a late write like any other (2.11, T15): a Forget of this source whose walk already passed takes the kept version at its write
+          inheritEdge(db,{kind:"record",id:recordId,version:keptVersion},{kind:"source",id});
+          continue;
+        }
+        replacement[recordId]=revision;
         insertMemoryRecord(db,{id:recordId,version:revision,scopeId:item.scopeId,kind:"evidence",text:chunk.text,assertion:"unverified-import",state:"active",validFrom:Date.now(),createdAt:Date.now()});
         db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)").run(recordId,revision,id,revision,chunk.startByte,chunk.endByte);
         inheritEdge(db,{kind:"record",id:recordId,version:revision},{kind:"source",id});
@@ -211,8 +261,26 @@ function commitImportItems(items:ImportItem[], track=false, retryLater=false){
       imported++;
     }
     // A brand-new notebook withdraws nothing: no receipt could cite it, so no session resets and no hold moves (the notebook-link binding is a
-    // NOISY subject of the authority epoch). A changed one ends every receipt, as before (E10).
-    if(imported){db.exec("UPDATE memory_meta SET data_revision=data_revision+1");if(superseded)revokeAllDisclosures(db,"import");}
+    // NOISY subject of the authority epoch). A changed one ends the receipts citing what it withdrew (T5 above).
+    // cause10: a change that withdrew no record (every earlier chunk kept, e.g. an append that only adds chunks) ends nothing and revokes
+    // nothing: no receipt scan, no revoke job, no pending window, no deny generation bump.
+    if(imported){db.exec("UPDATE memory_meta SET data_revision=data_revision+1");if(withdrawnSources.length&&Object.keys(withdrawn).length){
+      // The write-time revoke names a version ONLY for a chunk whose replacement keeps its id, and only when that earlier version is a real
+      // one below the replacement's (memory_records is keyed by id and version, so it always is). A withdrawn record with no replacement
+      // (a shorter notebook, a record derived from the old text) is withdrawn at every version, as a record edit withdraws it. If the two
+      // versions could not be told apart, a version-scoped revoke would deny the replacement too: every receipt ends instead, as before 1.0.20.
+      const versions:Record<string,number>={};let indistinct=false;
+      for(const [recordId,version] of Object.entries(withdrawn)){const next=replacement[recordId];if(next===undefined)continue;if(!(version>0)||version>=next)indistinct=true;else versions[recordId]=version;}
+      // 1.0.20 reclaim-n6: a chunk whose replacement keeps its id AND its exact words withdraws nothing a session was shown, so it takes no
+      // write-time revoke (each one held every thread's lines in checking:pending until the paced marker walked it; a routine's one-line
+      // append to a notebook queued one per chunk, every minute). Receipts citing the notebook source still end below (sourceIds).
+      if(!indistinct){const same=db.prepare("SELECT 1 FROM memory_records o JOIN memory_records n ON n.id=o.id WHERE o.id=? AND o.version=? AND n.version=? AND n.text=o.text AND n.kind=o.kind AND n.scope_id=o.scope_id");
+        for(const [recordId,version] of Object.entries(versions))if(same.get(recordId,version,replacement[recordId]!)){delete withdrawn[recordId];delete versions[recordId];}}
+      if(indistinct)revokeAllDisclosures(db,"import");
+      // 1.0.20 ctxrev-h1: a receipt that cites only unchanged chunks (and so the notebook source at its old revision) keeps its turn: it
+      // ends by a withdrawn record it cites, never by the source alone (deny-read.ts judges that source by the chunk's replacement).
+      else revokeRecordDisclosures(db,"import",{recordIds:Object.keys(withdrawn),sourceIds:withdrawnSources,versions,receiptsByRecordOnly:true});
+    }}
     return {imported,skipped,deferred,recordIds,originals:"preserved" as const};
   });
 }
@@ -221,7 +289,7 @@ function commitImportItems(items:ImportItem[], track=false, retryLater=false){
  * intent means someone else wrote the row, so everything is read afresh), when
  * it last looked, and the file's size and modified time then. In memory: a
  * restart reads every file once. */
-const linkSeen=new Map<string,{intent:string;at:number;sig:string|undefined;fullAt:number}>();
+const linkSeen=new Map<string,{intent:string;at:number;sig:string|undefined;fullAt:number;waitEvidence?:true}>();
 /** A file that has not changed on disk is still read again this often, so a change
  * the size and time did not show, or a forgotten original, is not missed for long. */
 const LINK_FULL_RECHECK_MS=60_000;
@@ -241,6 +309,13 @@ function selectionStat(selection:ImportSelection):string|undefined {
     const stat=lstatSync(path);
     return stat.isFile()?`${stat.mtimeMs}:${stat.size}`:undefined;
   }catch{return undefined;}
+}
+
+/** The stored source for this item is active, holds exactly this text's hash and has no tombstone: committing it would change nothing. */
+function unchangedActive(item:ImportItem):boolean{
+  const db=database(),id=importSourceId(db,item.scopeId,item.path);
+  if(db.prepare("SELECT 1 FROM memory_tombstones WHERE (target_type='source' AND target_id=?) OR (target_type='import' AND target_id=? AND content_hash IN (?,?))").get(id,item.scopeId,item.hash,item.legacyHash))return false;
+  return Boolean(db.prepare("SELECT 1 FROM memory_sources WHERE id=? AND state='active' AND content_hash=?").get(id,item.hash));
 }
 
 /** Owner-selected links are polled in small batches; no whole-profile file watcher.
@@ -271,10 +346,17 @@ export function syncTrackedMemoryImports(roster:MemoryRoster){
   for(const {id,intent,link:previous,fresh} of due.slice(0,4)){
     const seen=linkSeen.get(id),signature=selectionStat(previous.selection);
     if(fresh&&signature!==undefined&&signature===seen!.sig&&previous.status==="current"&&Date.now()-seen!.fullAt<LINK_FULL_RECHECK_MS){seen!.at=Date.now();continue;}
+    // 1.0.22 revokehealth item 4 (HIDDEN-COST 9): a change whose commit was deferred waits for the evidence index without reading or hashing
+    // its file on every pass (one readiness query); the first pass after the index is ready reads it in full and commits it
+    if(fresh&&seen!.waitEvidence&&!evidenceReady(db)){seen!.at=Date.now();continue;}
     let link:Link;
     try{
       const item=selectionItem(previous.selection,roster);
-      if(commitImportItems([item],false,true).deferred)continue; // the evidence index is not ready: the link keeps its old hash and the next look tries again
+      // 1.0.20 checkfix-n4: byte-identical text (a file rewritten or touched with the same words: a new mtime, the same hash as the stored
+      // source) is a no-op before any transaction, revoke or receipt work; only a changed hash reaches the commit and its write-time revoke.
+      if(item.alreadyImported&&item.hash===previous.hash&&previous.status==="current"&&!previous.error&&unchangedActive(item)){linkSeen.set(id,{intent,at:Date.now(),sig:signature,fullAt:Date.now()});continue;}
+      // the evidence index is not ready: the link keeps its old hash and the first look once it is ready tries again
+      if(commitImportItems([item],false,true).deferred){linkSeen.set(id,{intent,at:Date.now()-LINK_POLL_MS,sig:undefined,fullAt:0,waitEvidence:true});continue;}
       link={selection:previous.selection,hash:item.hash,status:"current",checkedAt:Date.now()};
     }catch(error){
       // a held write lock is "try again shortly" (the idle pass is retried), never a link that needs review

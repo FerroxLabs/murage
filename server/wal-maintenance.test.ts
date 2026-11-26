@@ -14,7 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { checkpointLedger } from "./admission-shared.ts";
-import { ioBudget, setAdmissionClockOffsetForFixture } from "./io-budget.ts";
+import { ADMISSION_MISS_BACKOFF_MS, ioBudget, setAdmissionClockOffsetForFixture } from "./io-budget.ts";
 import { JOURNAL_SIZE_LIMIT_BYTES, closeDatabase, database } from "./database.ts";
 import { ConversationDeletions, runConversationDeletion } from "./conversation-deletion.ts";
 import { engineHistoryTestHooks, resumeEngineHistory, runEngineHistoryOffThread, stopEngineHistory } from "./engine-history-offthread.ts";
@@ -289,7 +289,8 @@ it("T-SETTLE-MISS-RETRY: exactly one admission-lock miss refuses the copy once, 
     try {
       await new Promise<void>((resolve, reject) => { holder.once("message", () => resolve()); holder.once("error", reject); });
       // The product timer path only (design D3: no copyRoom call): fake intervals are installed BEFORE the budget starts, so the 25 ms admission read runs only when this test advances time.
-      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      // (1.0.22 lockloop: the refresh is a setTimeout chain, so timeouts are faked too)
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
       ioBudget.start();
       const before = ioBudget.admissionHealth();
       expect(slots[7], "idle verdict before the miss").toBe(0n);
@@ -315,7 +316,11 @@ it("T-SETTLE-MISS-RETRY: exactly one admission-lock miss refuses the copy once, 
       expect(ioBudget.admissionHealth().lockTimeouts, "no second miss").toBe(misses);
     } finally { bufferRead.mockRestore(); }
     // The next read, through the product's own call (the same admissionReading the 25 ms timer and every copied pass run): the verdict is republished and the next settle copies.
-    vi.advanceTimersByTime(25); // the next scheduled invocation of the product timer republishes the verdict
+    // CHANGED EXPECTATION (MAIN-RULING 2026-11-25T13:37:06Z IDLECPU-1022 cause 3, q1022-lockloop-opus): after the miss the refresh backs off
+    // ADMISSION_MISS_BACKOFF_MS (250 ms), never a 25 ms re-arm; the next scheduled invocation then republishes the verdict.
+    vi.advanceTimersByTime(25);
+    expect(slots[7], "backed off: still the strict verdict 25 ms after the miss").toBe(1n);
+    vi.advanceTimersByTime(ADMISSION_MISS_BACKOFF_MS - 25); // the next scheduled invocation of the product timer republishes the verdict
     expect(slots[7], "the idle verdict is republished").toBe(0n);
     expect(ioBudget.admissionHealth().lockTimeouts, "the republishing invocation did not miss").toBe(misses);
     ioBudget.stop(); vi.useRealTimers();
@@ -486,7 +491,7 @@ it("no connection of the server process runs TRUNCATE or RESTART on messages.db 
   const revoke = readFileSync(join(root, "memory/revoke-budget.ts"), "utf8");
   expect(revoke.match(/wal_checkpoint\(\s*(TRUNCATE|RESTART)/g)).toHaveLength(1);
   expect(revoke).toMatch(/PRAGMA busy_timeout=0[\s\S]*nBackfill < again\.mxFrame[\s\S]*wal_checkpoint\(TRUNCATE\)/);
-  for (const file of ["wal-maintenance.ts", "engine-history-offthread.ts", "engine-history-worker.ts"]) expect(readFileSync(join(root, file), "utf8"), file).not.toMatch(/Atomics\.wait|execSync|spawnSync/);
+  for (const file of ["wal-maintenance.ts", "engine-history-offthread.ts", "engine-history-worker.ts"]) expect(readFileSync(join(root, file), "utf8"), file).not.toMatch(/Atomics\.wait(?!Async)|execSync|spawnSync/); // 1.0.21 W4: Atomics.waitAsync never blocks a thread (the checkpointer waits on the commit notice with it)
 });
 
 it("every promise the module hands out resolves, even with no checkpointer running", async () => {

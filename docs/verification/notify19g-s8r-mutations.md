@@ -3,7 +3,7 @@
 Each mutant was applied to the green head (host, reader, card or pill-window source), the node tests
 (host, reader, cross-layer race, pill-window) and, for the renderer mutants, the vitest suites
 (attention-ui, pill, float) were run, and the file was restored. Every row must go red in the test(s) the design names (Q7).
-Run on build-host in the lane container (no network). Red-first evidence for the new tests on 0199b7c69 is recorded in the
+Run on hetzner-dsm in the lane container (no network). Red-first evidence for the new tests on 0199b7c69 is recorded in the
 commit message / report: the node suites fail 18 tests there and the renderer suites fail T1, P1, P2, F1, F2.
 
 | # | Mutant | Named killers | Result | Failing tests observed (first six) |

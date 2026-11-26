@@ -740,19 +740,8 @@ describe("stop-fence D7: a reset, then a late child event", () => {
     expect(types(events)).toEqual(STOPPED_PAIR);
     pairFor(events, turnId);
   });
-  it("T29b a reset during initialize, then an oversized frame: the stopped receipt once, no runtime.error, not FRAME_TOO_LARGE [mutant: the G15 overflow guard dropped]", async () => {
-    const engine = engineOf(["initialize"]);
-    const { instance, events } = await boot(engine);
-    const { turnId } = await send(instance);
-    await waitFor(() => expect(engine.hold("initialize")).toBe(true));
-    await applyStop(instance, "reset", "t1");
-    acpChild().stdout.emit("data", Buffer.alloc(33 * 1024 * 1024, 97));
-    await settleAndCheck(events, turnId);
-    engine.open("initialize");
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(types(events)).toEqual(STOPPED_PAIR);
-    pairFor(events, turnId);
-  });
+  // T29b (a reset during initialize, then an oversized frame) is gone: MAIN-RULING cause22-no-transport-caps deleted the frame overflow
+  // handler and its G15 guard (acp/core.ts), so a large frame has no terminal path left to fence. T29a keeps the reset-then-child-event row.
   it("T29c Fuigo, a reset after the prompt is written, the engine then stays silent: the watchdog still ends the turn once (one runtime.error, one completion), nothing after [mutant: turnHalted drops !state.promptSent]", async () => {
     vi.stubEnv("MURAGE_FUIGO_SILENT_MS", "400");
     const engine = engineOf(["session/prompt"]);

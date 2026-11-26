@@ -59,14 +59,17 @@ if [ -z "$f" ] || [ ! -r "$f" ]; then
   exit 126
 fi
 # W2: the file must be Murage's own, `<this wrapper's folder>/env/<24 hex>`. On MSYS both sides are compared in the
-# POSIX form: $0 is the forward-slash spelling and the file the Windows one.
+# POSIX form. $0 is converted BEFORE its folder is taken: a Bash call hands the forward-slash prefix, but Claude starts
+# each stdio MCP server through cross-spawn, which resolves the prefix to its backslash spelling (1.0.20 winmount: with
+# no "/" in $0 the folder was the wrapper itself, and every MCP server stopped here).
 # No limits keeps the pre-X3 map path and format; X3 proof checks cannot refuse it.
-murage_exec_dir="${0%/*}"
+murage_exec_self="$0"
 murage_exec_file="$f"
 if [ "$murage_exec_msys" = 1 ]; then
-  murage_exec_dir="$(cygpath -u "$murage_exec_dir")" || exit 126
+  murage_exec_self="$(cygpath -u "$0")" || exit 126
   murage_exec_file="$(cygpath -u "$f")" || exit 126
 fi
+murage_exec_dir="${murage_exec_self%/*}"
 murage_exec_base="${murage_exec_file##*/}"
 if [ "$murage_exec_no_limits" != 1 ] && { [[ ! "$murage_exec_base" =~ ^[0-9a-f]{24}$ ]] || [ "$murage_exec_file" != "$murage_exec_dir/env/$murage_exec_base" ]; }; then
   echo "murage-exec: the turn environment is not Murage's" >&2
@@ -184,10 +187,10 @@ if [ "$murage_exec_mcp" = 0 ]; then
     murage_exec_listed=0
     case "$murage_exec_shape" in
       *$'\n'*|*$'\r'*) ;;
-      *) if [ -r "$0.shapes" ]; then
+      *) if [ -r "$murage_exec_self.shapes" ]; then
            while IFS= read -r line || [ -n "$line" ]; do
              [ "$line" = "$murage_exec_shape" ] && { murage_exec_listed=1; break; }
-           done < "$0.shapes"
+           done < "$murage_exec_self.shapes"
          fi ;;
     esac
     [ "$murage_exec_listed" = 1 ] || murage_exec_reason="unlisted"

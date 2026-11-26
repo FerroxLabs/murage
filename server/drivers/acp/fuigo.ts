@@ -26,13 +26,14 @@ import { NotModelRequest } from "../../../shared/engine-transport.ts";
 // the note on `spawnArgs`, which carries the live transcript.
 import { createHash } from "node:crypto";
 import { writeFileSync } from "../../counted-fs.ts";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 
 import type { ModelCatalog, ModelRefreshOptions, ProviderErrorCode } from "../../contracts.ts";
 import { resolveFuigoCli } from "../../env-path.ts";
 import { DATA_DIR, deleteEnvNames } from "../../config.ts";
+import { writeFileAtomic } from "../../atomic.ts";
 import { headlessTextOnlyTurn } from "../headless-text-only.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { fuigoConfigOverlay } from "../../flux-memory-headers.ts";
@@ -587,7 +588,7 @@ export function ensureFuigoLocalModel(modelId: string, env: Record<string, strin
     const { text: without } = removeTomlTables(text, (name) => name === `model.${slug}`);
     const prefix = without && !without.endsWith("\n") ? `${without}\n\n` : without ? `${without}\n` : "";
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(path, `${prefix}${block}`, { mode: 0o600 });
+    writeFuigoConfig(path, `${prefix}${block}`);
   }
   env[keyEnv] = hostApiKey(host, env);
   return slug;
@@ -603,8 +604,27 @@ export function removeFuigoLocalHost(
   if (text === null) return "absent";
   const { text: next, removed } = removeTomlTables(text, (name) => name.startsWith(`model.${FUIGO_LOCAL_PREFIX}${host.id}-`));
   if (!removed) return "absent";
-  writeFileSync(path, next, { mode: 0o600 });
+  writeFuigoConfig(path, next);
   return "removed";
+}
+
+/** FUIGO2BOT r2: config.toml under Fuigo's home is read by every Fuigo bot's engine as it starts (and by the owner's own
+ *  Fuigo), so a rewrite is never seen half done: written beside it and renamed over it, onto a link's target so a
+ *  dotfiles link stays a link. Windows refuses that rename while another process holds the file (after atomic.ts's
+ *  retries); then the file is accepted if it already holds the text, else written in place as before 1.0.21, so a
+ *  second bot's turn never fails on it. */
+function writeFuigoConfig(path: string, text: string): void {
+  let target = path, mode = 0o600;
+  // An existing file keeps its own mode, as the in-place write kept it; a new one is the owner's only.
+  try { target = realpathSync(path); mode = statSync(target).mode & 0o777; } catch { /* missing: created here */ }
+  try { writeFileAtomic(target, text, { mode }); }
+  catch (error) {
+    const { code, syscall } = error as NodeJS.ErrnoException;
+    if (syscall !== "rename" || !["EPERM", "EACCES", "EBUSY"].includes(code ?? "")) throw error;
+    let now: string | null = null;
+    try { now = readFileSync(target, "utf8"); } catch { now = null; }
+    if (now !== text) writeFileSync(target, text, { mode: 0o600 });
+  }
 }
 
 /**

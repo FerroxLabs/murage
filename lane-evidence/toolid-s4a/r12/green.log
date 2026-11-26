@@ -24,8 +24,8 @@
  ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'rm -rf $HOME' asks ('delete-home') 0ms
  ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'rm -rf "$HOME"' asks ('delete-home') 0ms
  ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'rm -rf ${HOME}/' asks ('delete-home') 0ms
- ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'rm -rf /fixture-users/sean' asks ('delete-home') 0ms
- ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'rm -rf /home/sean/' asks ('delete-home') 0ms
+ ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'rm -rf /fixture-users/exampleuser' asks ('delete-home') 0ms
+ ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'rm -rf /home/exampleuser/' asks ('delete-home') 0ms
  ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'rm -rf /usr' asks ('delete-system-folder') 0ms
  ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'sudo rm -rf /etc/' asks ('delete-system-folder') 0ms
  ✓ server/always-ask.test.ts > 5.1 catastrophic: always asks > 'rm -rf /System' asks ('delete-system-folder') 0ms
@@ -221,7 +221,7 @@
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf build dist' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf /tmp/murage-test' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf ~/projects/app/node_modules' is ordinary 0ms
- ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf /fixture-users/sean/Documents/old' is ordinary 0ms
+ ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf /fixture-users/exampleuser/Documents/old' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -f ~/.cache/thing' is ordinary 1ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'echo "rm -rf /"' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'echo \'rm -rf ~\'' is ordinary 0ms
@@ -325,7 +325,7 @@
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'echo \$HOME' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf ./~' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'Remove-Item -Recurse .\build' is ordinary 0ms
- ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rd /s /q C:\Users\sean\project\out' is ordinary 1ms
+ ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rd /s /q C:\Users\exampleuser\project\out' is ordinary 1ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rmdir empty' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'del old.txt' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'powershell -c "Get-ChildItem"' is ordinary 0ms
@@ -338,7 +338,7 @@ approvals: asked bot=unknown tool=Bash reason=always-ask:delete-root origin=owne
 stdout | server/always-ask.test.ts > 5.4 from a folder > rm -rf . run from ~ asks (delete-home)
 approvals: asked bot=unknown tool=Bash reason=always-ask:delete-home origin=owner unattended=0 cmd=shell level=no-limits owner=0 initiator=unproven suppressed=0
 
-stdout | server/always-ask.test.ts > 5.4 from a folder > rm -rf .. run from /fixture-users/sean asks (delete-system-folder)
+stdout | server/always-ask.test.ts > 5.4 from a folder > rm -rf .. run from /fixture-users/exampleuser asks (delete-system-folder)
 approvals: asked bot=unknown tool=Bash reason=always-ask:delete-system-folder origin=owner unattended=0 cmd=shell level=no-limits owner=0 initiator=unproven suppressed=0
 
 stdout | server/always-ask.test.ts > 5.4 from a folder > cd "$(mktemp -d)" && rm -rf * run from / asks (unreadable)
@@ -350,7 +350,7 @@ approvals: asked bot=unknown tool=Bash reason=always-ask:unknown-target origin=o
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf build dist' is ordinary (no cwd) 2ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf /tmp/murage-test' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf ~/projects/app/node_modules' is ordinary (no cwd) 0ms
- ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf /fixture-users/sean/Documents/old' is ordinary (no cwd) 0ms
+ ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf /fixture-users/exampleuser/Documents/old' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -f ~/.cache/thing' is ordinary (no cwd) 1ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'echo "rm -rf /"' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'echo \'rm -rf ~\'' is ordinary (no cwd) 0ms
@@ -454,7 +454,7 @@ approvals: asked bot=unknown tool=Bash reason=always-ask:unknown-target origin=o
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'echo \$HOME' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rm -rf ./~' is ordinary (no cwd) 1ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'Remove-Item -Recurse .\build' is ordinary (no cwd) 0ms
- ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rd /s /q C:\Users\sean\project\out' is ordinary (no cwd) 1ms
+ ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rd /s /q C:\Users\exampleuser\project\out' is ordinary (no cwd) 1ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'rmdir empty' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'del old.txt' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.3 ordinary: never asks, never unreadable > 'powershell -c "Get-ChildItem"' is ordinary (no cwd) 0ms
@@ -476,10 +476,10 @@ approvals: asked bot=unknown tool=Bash reason=always-ask:unknown-target origin=o
  ✓ server/always-ask.test.ts > 5.4 from a folder > find . -delete run from / asks (delete-root) 0ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf . run from ~ asks (delete-home) 1ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf * run from ~ asks (delete-home) 0ms
- ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf * run from /fixture-users/sean asks (delete-home) 0ms
- ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf . run from /home/sean/ asks (delete-home) 1ms
+ ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf * run from /fixture-users/exampleuser asks (delete-home) 0ms
+ ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf . run from /home/exampleuser/ asks (delete-home) 1ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf * run from /home/tester asks (delete-home) 0ms
- ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf .. run from /fixture-users/sean asks (delete-system-folder) 1ms
+ ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf .. run from /fixture-users/exampleuser asks (delete-system-folder) 1ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf * run from /usr asks (delete-system-folder) 0ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > Remove-Item -Recurse -Force * run from C:\ asks (delete-root) 0ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > (cd / && rm -rf *) run from /tmp asks (delete-root) 0ms
@@ -488,7 +488,7 @@ approvals: asked bot=unknown tool=Bash reason=always-ask:unknown-target origin=o
  ✓ server/always-ask.test.ts > 5.4 from a folder > cd .. && rm -rf * run from /usr/local asks (delete-system-folder) 1ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > { cd /; }; rm -rf * run from /tmp asks (delete-root) 0ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > cd "$(mktemp -d)" && rm -rf * run from / asks (unreadable) 2ms
- ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf . run from /fixture-users/sean/projects/app/build is ordinary unless it says (undefined) 10ms
+ ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf . run from /fixture-users/exampleuser/projects/app/build is ordinary unless it says (undefined) 10ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf * run from /tmp/murage-test is ordinary unless it says (undefined) 3ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf ./node_modules run from / is ordinary unless it says (undefined) 1ms
  ✓ server/always-ask.test.ts > 5.4 from a folder > rm -rf build run from ~ is ordinary unless it says (undefined) 1ms
@@ -868,7 +868,7 @@ approvals: asked bot=unknown tool=Bash reason=always-ask:unknown-target origin=o
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'powershell -c \'Get-ChildItem | Where…' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'rmdir build' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'del old.txt' is ordinary 0ms
- ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'rd /s /q C:\Users\sean\project\out' is ordinary 0ms
+ ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'rd /s /q C:\Users\exampleuser\project\out' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'Remove-Item -Recurse .\build' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'Remove-Item -Recurse -Force C:\Users\…' is ordinary 0ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'echo $\'\x41\' $\'\101\' $\'\u00e9\' …' is ordinary 0ms
@@ -904,7 +904,7 @@ approvals: asked bot=unknown tool=Bash reason=always-ask:unknown-target origin=o
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'powershell -c \'Get-ChildItem | Where…' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'rmdir build' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'del old.txt' is ordinary (no cwd) 0ms
- ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'rd /s /q C:\Users\sean\project\out' is ordinary (no cwd) 1ms
+ ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'rd /s /q C:\Users\exampleuser\project\out' is ordinary (no cwd) 1ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'Remove-Item -Recurse .\build' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'Remove-Item -Recurse -Force C:\Users\…' is ordinary (no cwd) 0ms
  ✓ server/always-ask.test.ts > 5.8 Astra round 4: strict, asks over modeling > 'echo $\'\x41\' $\'\101\' $\'\u00e9\' …' is ordinary (no cwd) 0ms
@@ -1730,8 +1730,8 @@ approvals: asked bot=unknown tool=Bash reason=always-ask:fork-bomb origin=owner 
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf $HOME' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf "$HOME"' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf ${HOME}/' still raises a card 0ms
- ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf /fixture-users/sean' still raises a card 0ms
- ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf /home/sean/' still raises a card 0ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf /fixture-users/exampleuser' still raises a card 0ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf /home/exampleuser/' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf /usr' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'sudo rm -rf /etc/' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf /System' still raises a card 0ms
@@ -2757,7 +2757,7 @@ approvals: asked bot=unknown tool=Bash reason=always-ask:fork-bomb origin=owner 
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf build dist' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf /tmp/murage-test' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf ~/projects/app/node_modules' runs without asking 1ms
- ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf /fixture-users/sean/Documents/old' runs without asking 1ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf /fixture-users/exampleuser/Documents/old' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -f ~/.cache/thing' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'echo "rm -rf /"' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'echo \'rm -rf ~\'' runs without asking 0ms
@@ -2864,7 +2864,7 @@ approvals: asked bot=unknown tool=Bash reason=unread-call:U19 origin=owner unatt
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'echo \$HOME' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rm -rf ./~' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'Remove-Item -Recurse .\build' runs without asking 0ms
- ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rd /s /q C:\Users\sean\project\out' runs without asking 1ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rd /s /q C:\Users\exampleuser\project\out' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rmdir empty' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'del old.txt' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'powershell -c "Get-ChildItem"' runs without asking 0ms
@@ -2949,7 +2949,7 @@ approvals: asked bot=unknown tool=Bash reason=unread-call:U19 origin=owner unatt
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'powershell -c \'Get-ChildItem | Where…' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rmdir build' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'del old.txt' runs without asking 0ms
- ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rd /s /q C:\Users\sean\project\out' runs without asking 1ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'rd /s /q C:\Users\exampleuser\project\out' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'Remove-Item -Recurse .\build' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'Remove-Item -Recurse -Force C:\Users\…' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > Full access: 'echo $\'\x41\' $\'\101\' $\'\u00e9\' …' runs without asking 0ms
@@ -3092,8 +3092,8 @@ approvals: asked bot=unknown tool=Bash reason=unread-call:U19 origin=owner unatt
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf $HOME' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf "$HOME"' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf ${HOME}/' still raises a card 0ms
- ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /fixture-users/sean' still raises a card 0ms
- ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /home/sean/' still raises a card 0ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /fixture-users/exampleuser' still raises a card 0ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /home/exampleuser/' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /usr' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'sudo rm -rf /etc/' still raises a card 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /System' still raises a card 0ms
@@ -4119,7 +4119,7 @@ approvals: asked bot=unknown tool=Bash reason=unread-call:U19 origin=owner unatt
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf build dist' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /tmp/murage-test' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf ~/projects/app/node_modules' runs without asking 1ms
- ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /fixture-users/sean/Documents/old' runs without asking 1ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /fixture-users/exampleuser/Documents/old' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -f ~/.cache/thing' runs without asking 2ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'echo "rm -rf /"' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'echo \'rm -rf ~\'' runs without asking 0ms
@@ -4223,7 +4223,7 @@ approvals: asked bot=unknown tool=Bash reason=unread-call:U19 origin=owner unatt
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'echo \$HOME' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf ./~' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'Remove-Item -Recurse .\build' runs without asking 0ms
- ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rd /s /q C:\Users\sean\project\out' runs without asking 1ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rd /s /q C:\Users\exampleuser\project\out' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rmdir empty' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'del old.txt' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'powershell -c "Get-ChildItem"' runs without asking 0ms
@@ -4308,7 +4308,7 @@ approvals: asked bot=unknown tool=Bash reason=unread-call:U19 origin=owner unatt
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'powershell -c \'Get-ChildItem | Where…' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rmdir build' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'del old.txt' runs without asking 1ms
- ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rd /s /q C:\Users\sean\project\out' runs without asking 1ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rd /s /q C:\Users\exampleuser\project\out' runs without asking 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'Remove-Item -Recurse .\build' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'Remove-Item -Recurse -Force C:\Users\…' runs without asking 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'echo $\'\x41\' $\'\101\' $\'\u00e9\' …' runs without asking 0ms
@@ -4433,7 +4433,7 @@ approvals: asked bot=unknown tool=Bash reason=unread-call:U19 origin=owner unatt
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf build dist' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /tmp/murage-test' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf ~/projects/app/node_modules' runs without asking (no cwd) 1ms
- ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /fixture-users/sean/Documents/old' runs without asking (no cwd) 1ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf /fixture-users/exampleuser/Documents/old' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -f ~/.cache/thing' runs without asking (no cwd) 2ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'echo "rm -rf /"' runs without asking (no cwd) 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'echo \'rm -rf ~\'' runs without asking (no cwd) 0ms
@@ -4537,7 +4537,7 @@ approvals: asked bot=unknown tool=Bash reason=unread-call:U19 origin=owner unatt
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'echo \$HOME' runs without asking (no cwd) 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rm -rf ./~' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'Remove-Item -Recurse .\build' runs without asking (no cwd) 1ms
- ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rd /s /q C:\Users\sean\project\out' runs without asking (no cwd) 1ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rd /s /q C:\Users\exampleuser\project\out' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rmdir empty' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'del old.txt' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'powershell -c "Get-ChildItem"' runs without asking (no cwd) 0ms
@@ -4622,7 +4622,7 @@ approvals: asked bot=unknown tool=Bash reason=unread-call:U19 origin=owner unatt
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'powershell -c \'Get-ChildItem | Where…' runs without asking (no cwd) 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rmdir build' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'del old.txt' runs without asking (no cwd) 1ms
- ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rd /s /q C:\Users\sean\project\out' runs without asking (no cwd) 1ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'rd /s /q C:\Users\exampleuser\project\out' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'Remove-Item -Recurse .\build' runs without asking (no cwd) 1ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'Remove-Item -Recurse -Force C:\Users\…' runs without asking (no cwd) 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > No limits: 'echo $\'\x41\' $\'\101\' $\'\u00e9\' …' runs without asking (no cwd) 0ms
@@ -4769,8 +4769,8 @@ approvals: asked bot=unknown tool=exec_command reason=always-ask:delete-home ori
  ✓ server/always-ask.test.ts > always ask, at every access level > 'rm -rf $HOME' is answered by no grant, allowance or excuse 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > 'rm -rf "$HOME"' is answered by no grant, allowance or excuse 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > 'rm -rf ${HOME}/' is answered by no grant, allowance or excuse 0ms
- ✓ server/always-ask.test.ts > always ask, at every access level > 'rm -rf /fixture-users/sean' is answered by no grant, allowance or excuse 0ms
- ✓ server/always-ask.test.ts > always ask, at every access level > 'rm -rf /home/sean/' is answered by no grant, allowance or excuse 0ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > 'rm -rf /fixture-users/exampleuser' is answered by no grant, allowance or excuse 0ms
+ ✓ server/always-ask.test.ts > always ask, at every access level > 'rm -rf /home/exampleuser/' is answered by no grant, allowance or excuse 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > 'rm -rf /usr' is answered by no grant, allowance or excuse 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > 'sudo rm -rf /etc/' is answered by no grant, allowance or excuse 0ms
  ✓ server/always-ask.test.ts > always ask, at every access level > 'rm -rf /System' is answered by no grant, allowance or excuse 0ms

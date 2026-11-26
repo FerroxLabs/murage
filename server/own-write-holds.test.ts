@@ -164,3 +164,23 @@ it('the owner can review a complete accepted body beyond the former preview cut'
   expect(JSON.parse(ownWriteCard(row).detail).role).toBe(role);
   expect(r.effects()).toBe(0);
 });
+
+describe("1.0.22 idle: the 30 s recovery tick rewrites nothing that has not changed (q1022-idlerest W-HOLDS-IDLE)", () => {
+  it("ten idle minutes of ticks: 0 projections and 0 row writes for a projected waiting hold and an already blanked old terminal hold", async () => {
+    const r = rig(), waiting = r.create(), old = r.create({ targetBotId: "other", role: "Old role" });
+    await r.service.answer(old.id, 1, "deny", { device: "desktop", at: 1000 }, () => true);
+    // fixture age only: the declined hold was last touched 31 days ago, so the tick's blanking pass owns it
+    r.db.prepare("UPDATE own_write_holds SET updated_at=? WHERE hold_id=?").run(1000 - 31 * 86_400_000, old.id);
+    await r.service.tick();
+    expect(r.db.prepare("SELECT body_present AS p, receipt FROM own_write_holds WHERE hold_id=?").get(old.id)).toEqual({ p: 0, receipt: null });
+    const changes = () => Number(r.db.prepare("SELECT total_changes() AS n").get()!.n);
+    const before = { events: r.events.length, changes: changes() };
+    for (let tick = 0; tick < 20; tick++) { r.advance(30_000); await r.service.tick(); }
+    expect({ projections: r.events.slice(before.events).filter(e => e.startsWith("project:")), writes: changes() - before.changes }).toEqual({ projections: [], writes: 0 });
+    // the effect is kept: the waiting hold still expires and is projected at its TTL
+    expect(r.service.get(waiting.id)?.state).toBe("waiting");
+    r.advance(OWN_WRITE_TTL_MS); await r.service.tick();
+    expect(r.service.get(waiting.id)?.state).toBe("expired");
+    expect(r.events.at(-1)).toBe("project:expired");
+  });
+});

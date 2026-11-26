@@ -125,67 +125,6 @@ describe("explicit web search configuration", () => {
   });
 });
 
-describe("HighLevel private token is stored with the config", () => {
-  const file = join(DATA_DIR, "config.json");
-  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", undefined); });
-  afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
-  const diskToken = () => (JSON.parse(readFileSync(file, "utf8")) as { highlevel?: { privateToken?: string } }).highlevel?.privateToken;
-
-  it("a cleared token stays gone from memory and from config.json, before and after a restart", () => {
-    // config.json still holds an older plaintext token (written by hand, or a file from before the desktop shell kept it)
-    writeFileSync(file, JSON.stringify({ language: "en", highlevel: { privateToken: "old-plaintext-hl-token" } }));
-    vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", "live-hl-token");
-    expect(loadConfig().highlevel?.privateToken).toBe("live-hl-token");
-    // the owner clears the credential: the same write and env sync PUT /api/config runs
-    const clear = parseConfigPatch({ highlevel: { privateToken: "" } });
-    saveConfig(clear);
-    syncCredentialEnv(clear);
-    expect(process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN).toBeUndefined();
-    // the reload commitEngineChange does right after the save
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-    expect(diskToken()).toBe("");
-    expect(readFileSync(file, "utf8")).not.toContain("old-plaintext-hl-token");
-    // a restart: nothing in env, only the file
-    vi.unstubAllEnvs();
-    vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", undefined);
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-    expect(loadConfig().language).toBe("en");
-  });
-
-  it("the external-storage tombstone also clears an old plaintext token on disk", () => {
-    writeFileSync(file, JSON.stringify({ highlevel: { privateToken: "old-plaintext-hl-token" } }));
-    // ?secretStorage=external: the shell keeps the real value; the server writes the empty tombstone
-    saveConfig({ highlevel: { privateToken: "" } });
-    expect(diskToken()).toBe("");
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-  });
-
-  it("a token saved with no desktop shell survives a restart, and a later save of another section keeps it", () => {
-    saveConfig(parseConfigPatch({ highlevel: { privateToken: "file-hl-token" } }));
-    expect(diskToken()).toBe("file-hl-token");
-    saveConfig({ language: "fr" });
-    expect(loadConfig().highlevel?.privateToken).toBe("file-hl-token");
-  });
-  it("an upgrade from a 1.0.17-shaped config.json (no highlevel section) saves, clears and restarts with no token anywhere", () => {
-    // 1.0.17 shipped no HighLevel credential: its config.json has no highlevel key at all
-    writeFileSync(file, JSON.stringify({ language: "en", webSearch: { provider: "auto" }, instances: { fuigo: { driver: "fuigoAgent", enabled: true } } }));
-    expect(loadConfig().highlevel).toBeUndefined();
-    const save = parseConfigPatch({ highlevel: { privateToken: "upgrade-hl-token" } });
-    saveConfig(save);
-    syncCredentialEnv(save);
-    expect(loadConfig().highlevel?.privateToken).toBe("upgrade-hl-token");
-    const clear = parseConfigPatch({ highlevel: { privateToken: "" } });
-    saveConfig(clear);
-    syncCredentialEnv(clear);
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-    expect(readFileSync(file, "utf8")).not.toContain("upgrade-hl-token");
-    vi.unstubAllEnvs();
-    vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", undefined);
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-    expect(loadConfig().webSearch).toEqual({ provider: "auto" });
-  });
-});
-
 describe("every config key saveConfig accepts reaches config.json", () => {
   const file = join(DATA_DIR, "config.json");
   beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });

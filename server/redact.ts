@@ -226,7 +226,7 @@ export const TEXT_RULES: readonly (readonly [string, TrackedRule])[] = [
   // their digits, byte for byte (shared/financial-ids.ts). Last, so a secret
   // rule above sees the text as typed.
   ["FINANCIAL_ID", (text, edits) => {
-    const shown = maskFinancialIdentifiers(text);
+    const shown = keepDecimalNumbers(text, maskFinancialIdentifiers(text));
     for (let at = 0; at < text.length;) {
       if (text[at] === shown[at]) { at++; continue; }
       const start = at++; while (at < text.length && text[at] !== shown[at]) at++;
@@ -237,11 +237,59 @@ export const TEXT_RULES: readonly (readonly [string, TrackedRule])[] = [
 ];
 
 
+/** A decimal number is not a card. The card rule reads any 13 to 19 digit
+ * Luhn-valid run "wherever it stands" and takes a dot as a group separator, so
+ * about one float in ten with a long fraction (a search score such as
+ * `4.718623638153076` in a tool's JSON result) was masked as a card, and that
+ * one hit latched the whole turn for its audience. Kept as typed: a digit run
+ * that is exactly ONE decimal literal (one to three digits, one dot, ten to
+ * eighteen digits; no digit, letter, `_` or further group joined on either
+ * side) and that the rules mask standing alone, i.e. with no context word. A
+ * card in any real grouping (three or more groups, spaces, dashes, a four
+ * digit first group) and every number beside a bank or id word stay masked. */
+const DECIMAL_LITERAL = /(?<![A-Za-z0-9_])(?<!\d[ \t.\/-]{1,2})\d{1,3}\.\d{10,18}(?![A-Za-z0-9_])(?![ \t.\/-]{1,2}\d)/g;
+function keepDecimalNumbers(text: string, shown: string): string {
+  if (shown === text) return shown;
+  let out = shown;
+  for (const m of text.matchAll(DECIMAL_LITERAL)) {
+    const start = m.index, end = start + m[0].length;
+    if (shown.slice(start, end) === m[0]) continue;
+    // Only the context-free hit: the literal alone masks the same way.
+    if (maskFinancialIdentifiers(m[0]) !== shown.slice(start, end)) continue;
+    out = out.slice(0, start) + m[0] + out.slice(end);
+  }
+  return out;
+}
+
 const USER_TEXT_WORK = 1_048_576;
+/** MAIN-RULING cause22-no-transport-caps (1.0.21): a reply of any size is redacted and shown, never swapped whole for
+ * the marker because it is long. Ordinary text costs about 3 work units a character; the allowance per character keeps
+ * the scan linear in the text, so only work out of proportion to the text (not its size) still fails closed. */
+const USER_TEXT_WORK_PER_CHAR = 64;
 type TextScanResult = ReturnType<typeof scan>;
+/** A long text is scanned whole now (no size cap), and one owner line reaches this pass from several sinks in the same turn (row
+ * store, transcript, search, the engine's copy). The scan is a pure function of the text, so the last few long results are reused:
+ * the same answer, without re-paying a linear scan per sink that pushed a 900 KB steer past its 4 s acknowledgement window. */
+const USER_SCAN_MEMO_MIN = 65_536, USER_SCAN_MEMO_ENTRIES = 4, USER_SCAN_MEMO_CHARS = 16 * 1_048_576;
+const userScanMemo = new Map<string, TextScanResult>();
 function redactUserLabels(text: string): TextScanResult {
-  try { return scan(text, { mode: "user", providers: false, budget: USER_TEXT_WORK }); }
+  const memo = text.length >= USER_SCAN_MEMO_MIN && text.length <= USER_SCAN_MEMO_CHARS;
+  if (memo) {
+    const hit = userScanMemo.get(text);
+    if (hit) { userScanMemo.delete(text); userScanMemo.set(text, hit); return hit; }
+  }
+  let result: TextScanResult;
+  try { result = scan(text, { mode: "user", providers: false, budget: USER_TEXT_WORK, perChar: USER_TEXT_WORK_PER_CHAR }); }
   catch { return { text: "«redacted»", detected: true, exhausted: true, candidates: [], spans: [], workUnits: USER_TEXT_WORK }; }
+  if (memo) {
+    userScanMemo.set(text, Object.freeze(result));
+    let chars = 0; for (const key of userScanMemo.keys()) chars += key.length;
+    for (const key of userScanMemo.keys()) {
+      if (userScanMemo.size <= USER_SCAN_MEMO_ENTRIES && chars <= USER_SCAN_MEMO_CHARS) break;
+      userScanMemo.delete(key); chars -= key.length;
+    }
+  }
+  return result;
 }
 /** Forward the shared scanner's original spans through subsequent Basic masking. */
 const trackedUserLabels: TrackedRule = (text, edits) => {
@@ -423,8 +471,8 @@ function compatibilitySpans(text: string, spend: ScanCharge): SecretSpan[] {
 
 /** The complete turn checker has ONE SSB cap, including all legacy passes.
  * Meter totals are returned by scan(), even when a later pass exhausts. */
-export function scanTurnText(text: string, options: { mode?: "turn"; budget?: number; vendor?: boolean } = {}): SecretScanResult {
-  return scan(text, { mode: "turn", budget: options.budget ?? SECRET_SCAN_BUDGET, vendor: options.vendor, turnComplete: true }, (original, result, spend) => {
+export function scanTurnText(text: string, options: { mode?: "turn"; budget?: number; perChar?: number; vendor?: boolean } = {}): SecretScanResult {
+  return scan(text, { mode: "turn", budget: options.budget ?? SECRET_SCAN_BUDGET, perChar: options.perChar, vendor: options.vendor, turnComplete: true }, (original, result, spend) => {
     const spans = [...(result.spans ?? []), ...compatibilitySpans(original, spend)];
     spend(spans.length * (1 + Math.ceil(Math.log2(spans.length + 1))));
     spans.sort((a, b) => a.from - b.from || b.to - a.to);

@@ -5,7 +5,7 @@ import { expect, test as base, type Locator, type Page } from "./page-error-guar
 
 export { expect };
 
-/** analytics.ts:120 — set before the first script runs so the gate overlay
+/** first-run-gate.ts — set before the first script runs so the gate overlay
  *  never mounts. A spec about the gate itself can clear it. */
 const EMAIL_GATE_KEY = "murage-email-gate";
 

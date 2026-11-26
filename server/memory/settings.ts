@@ -12,6 +12,7 @@ import { reflectionStatus, retryReflection, setReflectExcluded } from "./pip-ref
 import { supportsNativeMemoryModel } from "./embeddings.ts";
 import { bundledModelState } from "./model-location.ts";
 import { rebuildSearchIndex, semanticIndexStatus } from "./model-adoption.ts";
+import { startModelAdoption } from "./recall-producers.ts";
 import { archiveMemoryRecord, restoreArchivedMemoryRecord, memoryRetentionStatus } from "./retention.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
@@ -337,7 +338,10 @@ async function downloadModel(options:MemoryOwnerOptions){
       if((await stat(part)).size!==asset.bytes||await fileHash(part)!==asset.sha256){rmSync(part,{force:true});throw new Error("MEMORY_MODEL_HASH_MISMATCH");}
       renameSync(part,target);download.bytesDownloaded+=asset.bytes;
     }
-    database().prepare("UPDATE memory_projection_receipts SET lexical_status='pending',embedding_status='pending' WHERE embedding_status='unavailable' AND lexical_status='indexed'").run();
+    // memv2 lane A (A10): the receipts indexed without a model are owed again in pages of at most 256, each one transaction and one journal
+    // range row, the producer waiting for the recall applier between pages; a store of one page is adopted before this returns, a longer one
+    // goes on in the background and is finished by the next start if the process dies (recall-producers.ts, marker memory-v2:model-adoption).
+    startModelAdoption(database());
     await options.onModelReady?.();download.state="ready";
   } catch(error){download.state="failed";download.error=error instanceof Error&&/^MEMORY_MODEL_/.test(error.message)?error.message:"MEMORY_MODEL_DOWNLOAD_FAILED";}
 }

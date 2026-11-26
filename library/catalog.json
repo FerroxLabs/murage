@@ -4760,54 +4760,6 @@
       }
     },
     {
-      "slug": "moltbook-skills",
-      "name": "Moltbook Skills",
-      "summary": "Posts, comments, upvotes and browses communities on the Moltbook agent network, so an Ember can take part in it the way a person would.",
-      "category": "Social",
-      "outcome": "Posts, comments and upvotes published to Moltbook",
-      "setupMinutes": 5,
-      "manifest": "teams/moltbook-skills/moltbook-skills.emberteam.json",
-      "readme": "teams/moltbook-skills/README.md",
-      "members": 1,
-      "skills": [],
-      "playbooks": [
-        {
-          "key": "moltbook-skills",
-          "name": "Moltbook Skills",
-          "summary": "Posts, comments, upvotes and communities on the Moltbook agent network"
-        }
-      ],
-      "adaptable": true,
-      "profileReviewHash": "ebdcd3ae3d780a4d7b461162da25fa79c779025fe40d383f16c39c016057816e",
-      "requires": {
-        "apps": []
-      }
-    },
-    {
-      "slug": "moltbook",
-      "name": "Moltbook Assistant",
-      "summary": "Registers an AI agent on the Moltbook social network and helps it post and interact there.",
-      "category": "Social",
-      "outcome": "A registered, verified Moltbook agent",
-      "setupMinutes": 10,
-      "manifest": "teams/moltbook/moltbook.emberteam.json",
-      "readme": "teams/moltbook/README.md",
-      "members": 1,
-      "skills": [],
-      "playbooks": [
-        {
-          "key": "moltbook",
-          "name": "Moltbook Assistant",
-          "summary": "Registers and runs an AI agent on the Moltbook social network"
-        }
-      ],
-      "adaptable": true,
-      "profileReviewHash": "3c7400de81dba04bef7bf8cbaa4b6608a0d81a7913678f4067ea8da77e26ae5f",
-      "requires": {
-        "apps": []
-      }
-    },
-    {
       "slug": "monthly-retro",
       "name": "Monthly Retro",
       "summary": "Mirror prepares a monthly retro with wins and missed expectations for your review. Work from supplied records or supported connected tools, with gaps and decisions visible. For founder decision coaching, use Coach. For broad operations coordination, use Ops.",
@@ -6641,7 +6593,7 @@
         }
       ],
       "adaptable": true,
-      "profileReviewHash": "9e21a16fe542dbad595ff0560492fe9c94623a3fa6fa308a6526663c09ee826f",
+      "profileReviewHash": "ab15b91dc4742f9d26a8d310b7113f77ef20472d742ac513870a11ef6ff98a70",
       "requires": {
         "apps": []
       }

@@ -91,10 +91,8 @@ export interface ToolStart {
   toolIdentity?: { namespace?: string; name?: string; kind?: string };
   /** ACP (Astra r1 4): the title is the qualified tool a wrapper call names in its arguments, not the engine's own title */
   wrapped?: boolean;
-  /** 1.0.19 4.5: the paths an ACP call's `locations` name (read with the input's own paths) */
+  /** 1.0.19 4.5: the paths an ACP call's `locations` name (read with the input's own paths; every one, cause22 C1) */
   paths?: string[];
-  /** Astra r1 H3: the call named more locations than `paths` holds, so it is judged closed */
-  pathsOverflow?: boolean;
   /** 1.0.19 A3: the call's key (ACP toolCallId, Claude tool + sorted input, Codex item id); the mark it sets carries it */
   callKey?: string;
   lateFrame?: boolean;
@@ -243,7 +241,6 @@ function noteSessionEditsOf(threadId: string, item: ToolStart, cwd: string | und
   const edits = sessionEdits(threadId, instanceId);
   if (edits.has(SESSION_EDITS_OVERFLOW)) return;
   const seenPaths = new Set<string>();
-  const budget: RealBudget = { left: REALPATH_BUDGET };
   for (const p of toolPaths(inputOf(item))) {
     const absolute = isAbsolute(p) ? p : cwd && isAbsolute(cwd) ? join(cwd, p) : undefined;
     if (absolute === undefined) { noteSessionEdits(threadId, instanceId, [SESSION_EDITS_OVERFLOW]); return; }
@@ -251,19 +248,20 @@ function noteSessionEditsOf(threadId: string, item: ToolStart, cwd: string | und
     const list = [absolute];
     // Fable (S4-INTERP-L1): the scan compares exact strings, so the same file under another spelling must be held too: the
     // normalized spelling and the realpath. Only adds. Each extra counts inside the cap like any path (past it: overflow).
-    // Astra L1 r4 Medium: a repeated path is looked up once, and one call has one shared budget of realpath attempts. Past it
-    // the paths still get their own and normalized spellings (no disk), only the realpath extra is skipped (Astra r5: never
-    // overflow or drop a path here, that would lose the edit).
+    // Astra L1 r4 Medium: a repeated path is looked up once. cause22 C5: each distinct path gets its own RealBudget (64), so
+    // no location's real spelling is skipped for its neighbours; past a path's own budget only its realpath extra is skipped
+    // (Astra r5: never overflow or drop a path here, that would lose the edit).
     if (!seenPaths.has(absolute)) {
       seenPaths.add(absolute);
-      for (const extra of otherSpellings(absolute, budget)) if (!edits.has(extra)) list.push(extra);
+      for (const extra of otherSpellings(absolute, { left: REALPATH_BUDGET })) if (!edits.has(extra)) list.push(extra);
     }
     const newCount = new Set(list.filter((entry) => !edits.has(entry))).size;
     if (edits.size + newCount > SESSION_EDITS_MAX) { noteSessionEdits(threadId, instanceId, [SESSION_EDITS_OVERFLOW]); return; }
     noteSessionEdits(threadId, instanceId, list);
   }
 }
-/** Astra L1 r4 Medium: the realpath attempts one tool call may spend (the first lookup counts); past it no lookup is made. */
+/** Astra L1 r4 Medium: the realpath attempts one path of a tool call may spend (the first lookup counts; cause22 C5: per
+ *  path, never shared across the call's paths); past it no lookup is made. */
 const REALPATH_BUDGET = 64;
 interface RealBudget { left: number }
 function budgeted(budget: RealBudget, file: string): string {
@@ -332,8 +330,6 @@ export function toolStartOutside(item: ToolStart, dl?: DlScan, options: ToolJudg
   }
   const local = kind !== undefined && kind !== "" ? LOCAL_KINDS.has(kind) : LOCAL_NAMES.has(tool);
   if (!local) return "outside tool";
-  // Astra r1 H3: a call whose locations overflowed the cap is never judged on part of them: anything registered marks
-  if (item.pathsOverflow && dl) return "downloaded file";
   if (SHELL_NAMES.has(tool) || kind === "execute") {
     const text = commandFromToolInput(item.input);
     if (text === undefined || text.trim() === "") return "outside tool";
@@ -522,12 +518,14 @@ function fileToolMatch(input: unknown, tool: string, dl: DlScan, kind?: string):
   const folders = [...(searched ? searchFolders(input, tool, paths) : []), ...(tool === "skill" ? skillFolders(input, dl) : [])];
   if ((searched || folders.length > 0) && searchAll(dl)) return "downloaded file";
   if (paths.length === 0 && folders.length === 0) return dl.registry.matchPath(dl.cwd, { ...options, searched: true });
+  // cause22 C2: each judged item has a budget of its own (TextBudget.alone()), so its hit comes only from its own lookups;
+  // the cwd-only case above and the trailing spent() keep the call's budget, which no location touches
   for (const p of paths) {
-    const hit = dl.registry.match(p, { ...options, searched });
+    const hit = dl.registry.match(p, { ...options, budget: dl.budget.alone(), searched });
     if (hit) return hit;
   }
   for (const folder of folders) {
-    const hit = dl.registry.match(folder, { ...options, searched: true });
+    const hit = dl.registry.match(folder, { ...options, budget: dl.budget.alone(), searched: true });
     if (hit) return hit;
   }
   return dl.budget.spent() ? "downloaded file" : null;
@@ -740,10 +738,10 @@ function registerAtStart(threadId: string, item: ToolStart, cwd: string | undefi
       }
     } else if (marked && server === undefined && (kind !== undefined && kind !== "" ? WRITE_KINDS.has(kind) : WRITE_NAMES.has(tool))) {
       const paths = toolPaths(inputOf(item));
-      for (const p of paths) add.push(...registerToolWrite(p, base));
-      // A4: a write on a marked turn that names no path writes where no rule names: the turn's span covers it; so does
-      // one whose locations overflowed the cap (Astra r1 H3: the ones past it are never registered one by one)
-      if (paths.length === 0 || item.pathsOverflow) spanTurn(threadId, cwd);
+      // cause22 C2: each written path registers on a budget of its own, so a root span comes only from that path's chain
+      for (const p of paths) for (const entry of registerToolWrite(p, { ...base, budget: base.budget.alone() })) add.push(entry);
+      // A4: a write on a marked turn that names no path writes where no rule names: the turn's span covers it
+      if (paths.length === 0) spanTurn(threadId, cwd);
     }
     if (add.length) downloadRegistry().add(add);
     if (marked && spanWorthy(item, threadId, cwd, options)) spanTurn(threadId, cwd);
@@ -765,8 +763,9 @@ export function askOutsideMark(threadId: string, input: unknown, filePaths: read
       if (hit) return hit;
     }
     const paths = filePaths?.length ? [...filePaths] : toolPaths(input);
+    // cause22 C2: each asked path on a budget of its own; the shell text above and the trailing spent() keep the call's
     for (const p of paths) {
-      const hit = dl.registry.match(p, matchOptions(dl));
+      const hit = dl.registry.match(p, { ...matchOptions(dl), budget: dl.budget.alone() });
       if (hit) return hit;
     }
     return dl.budget.spent() ? "downloaded file" : null;

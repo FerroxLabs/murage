@@ -26,8 +26,11 @@
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { optionalIndexReady } from "./optional-index.ts";
 import { SEEDING_FOLD_SQL, ACTIVE_FLOW_SQL } from "./settle-queries.ts";
+import { raise } from "./revoke-wake.ts";
+import { onWake as onCommitWake, WAKE_PRIORITY } from "./wake.ts";
 import { accountedPrepare, chargeReleaseWork } from "./release-budget.ts";
 import { currentLsn } from "./lineage-write.ts";
+import { runningAppVersion } from "./app-version.ts";
 import { threadIdOf, threadNo } from "./thread-no.ts";
 import { FLIP_DRAIN_MAX, receiptStart } from "./receipt-outputs.ts";
 import { AUDIENCE_COALESCED, CONSUMED_REF_KINDS, COVER_REVOKE, decodeCarryChild, decodeNode, DENY_RANGE_COALESCE, encodeNode, MARKER_SLICE_ROWS, objectCarryThread, PENDING_ALL_SCOPES, PENDING_ALL_THREADS, UNKNOWN_LSN, WALKER_REVOKE, type FrontierNode, type MemoryRefKind } from "./lineage-types.ts";
@@ -117,7 +120,7 @@ function uncertifiedRecordForget(job: JobRow): boolean {
 export type JobState = "active" | "undoing" | "done" | "undone" | "folded" | "seeding";
 export type JobPhase = "flow" | "mark" | "hold" | "tidy" | "undo" | "done";
 type JobRow = { revoke_id: number; kind: string; root: string; root_lsn: number; started_lsn: number; phase: JobPhase; cursor: string; state: JobState };
-type Budget = { rows: number; deadline: number; over?: () => boolean };
+type Budget = { rows: number; deadline: number; over?: () => boolean; prune?: () => number; lateBuildAttempted?: true };
 const spend = (budget: Budget, n: number) => { budget.rows -= Math.max(1, n); };
 const exhausted = (budget: Budget) => budget.rows <= 0 || performance.now() >= budget.deadline || Boolean(budget.over?.());
 /** Rows this connection changed so far (inserts, updates and deletes, trigger writes included): the marker's write meter. */
@@ -128,6 +131,113 @@ const page = (budget: Budget) => Math.max(1, Math.min(MARKER_SLICE_ROWS / 4, bud
 
 export function bumpDenyGeneration(db: DatabaseSync): void {
   st(db, "UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'").run();
+  // MEMORY V2 V14: a turn waiting under a window wakes on this, never on a poll (fence-pending.ts). Delivered in a microtask, after the
+  // caller's synchronous transaction; a rolled-back bump is a spurious wake and the waiter's exact check still decides.
+  if (!windowWakeTestHooks.muteGeneration) raise(WINDOW_WAKE);
+}
+/** Test seam (mutant): the generation moves without its wake. Never set outside a test. */
+export const windowWakeTestHooks = { muteGeneration: false };
+/** The wake topic of every waiter under a pending window (V14): raised when the deny generation moves or a pending row is deleted. */
+export const WINDOW_WAKE = "window";
+// Lane W's wake bus raises `window` after every COMMIT that inserted or deleted a pending row on the main connection (wake.ts
+// WAKE_TRIGGERS), whoever wrote it. The waiters of V14 hear it as the same wake and re-read their own rows. Owner of the bus: lane W;
+// of this subscriber: lane C.
+onCommitWake(WINDOW_WAKE, () => { raise(WINDOW_WAKE); }, { priority: WAKE_PRIORITY.owner, name: "window-waiters" });
+
+// ---- MEMORY V2 V10: per-job backoff. A job whose step throws rolls its slice back and, before this, was the next slice's first candidate
+// again whenever its class is served oldest first (every flow phase, every undoing job): one bad job stopped the whole queue. It now sits
+// out a deadline (1 s, doubling to 60 s, cleared by its first step that completes) while the selectors pass over it. Process state only: a
+// restart tries every job again. Nothing is skipped for good and no window closes early: the job keeps its pending rows until its own walk
+// is proven (P4), so what it holds reads "checking" for as long as it fails, exactly as before.
+export const JOB_BACKOFF = { firstMs: 1_000, capMs: 60_000 };
+// 1.0.22 revokehealth: a job that only ever throws (an unreadable frontier node, say) backed off to 60 s and was tried forever, its readers at
+// "checking" for good and told to the console only. After JOB_QUARANTINE_AFTER failures in a row it is quarantined: state 'quarantined', out
+// of every selector, its pending rows kept. A reader reads what such a row covers as withheld, never shown and never "checking" (deny-read.ts),
+// so nothing it covers comes back and no turn waits on it; the owner is told (memory-revocation.ts revokeHealthNotices). Only 'active' jobs.
+export const JOB_QUARANTINE_AFTER = 10;
+const jobBackoff = new WeakMap<DatabaseSync, Map<number, { until: number; delay: number; count: number }>>();
+/** The jobs of `db` quarantined now (caller's transaction): those that failed JOB_QUARANTINE_AFTER times in a row. Returns their ids. */
+export function quarantineFailingJobs(db: DatabaseSync): number[] {
+  const map = jobBackoff.get(db), done: number[] = [];
+  if (!map) return done;
+  for (const [revokeId, held] of map) {
+    if (held.count < JOB_QUARANTINE_AFTER) continue;
+    if (st(db, "UPDATE memory_revoke_jobs SET state='quarantined' WHERE revoke_id=? AND state='active'").run(revokeId).changes) {
+      done.push(revokeId);
+      quarantineTable(db);
+      st(db, "INSERT OR REPLACE INTO memory_revoke_quarantine(revoke_id,version) VALUES(?,?)").run(revokeId, runningAppVersion());
+    }
+    map.delete(revokeId);
+  }
+  if (done.length) bumpDenyGeneration(db);
+  return done;
+}
+// MAIN-RULING REVOKEHEALTH-1022 (17:23Z): a quarantined job records the app version that quarantined it; the first start on a NEWER version
+// retries it once (it fails again: re-quarantined under the new version). Never a retry loop within one version: a start on the same version
+// (or an unknown one) leaves it quarantined. Rows of memory_revoke_quarantine are version stamps only; the job row and its pending rows are the data.
+function quarantineTable(db: DatabaseSync): void {
+  db.exec("CREATE TABLE IF NOT EXISTS memory_revoke_quarantine (revoke_id INTEGER PRIMARY KEY, version TEXT)");
+}
+/** Whether `running` is a newer build than `stamp` (numeric major.minor.patch; a release is newer than its own prerelease). A version
+ * either side cannot be read as one is never newer: the job stays quarantined (fail closed, what it covers stays withheld). */
+export function isNewerAppVersion(running: string, stamp: string): boolean {
+  const core = (v: string) => /^v?(\d+)\.(\d+)\.(\d+)(-\S+)?$/.exec(v.trim());
+  const a = core(running), b = core(stamp);
+  if (!a || !b) return false;
+  for (let i = 1; i <= 3; i++) if (Number(a[i]) !== Number(b[i])) return Number(a[i]) > Number(b[i]);
+  return !a[4] && !!b[4];
+}
+/** At a start (caller's transaction): every quarantined job stamped by an older version than `version` goes back to 'active' once, its
+ * stamp moved to `version` so a second start of this version does not retry it again. A start on the same, an older (a downgrade) or an
+ * unreadable version leaves it quarantined with its stamp. A job with no stamp (quarantined while the running version could not be read)
+ * is not proven older: it stays quarantined and takes `version` as its stamp, so only a start on a newer version retries it (Astra
+ * d2e7ff4df4 High; fail closed). Returns the ids put back. */
+export function retryQuarantinedOnNewVersion(db: DatabaseSync, version: string | null = runningAppVersion()): number[] {
+  if (!version) return [];
+  quarantineTable(db);
+  const rows = st(db, "SELECT j.revoke_id AS id, q.version AS stamp FROM memory_revoke_jobs j LEFT JOIN memory_revoke_quarantine q ON q.revoke_id=j.revoke_id WHERE j.state='quarantined' AND (q.version IS NULL OR q.version<>?)").all(version);
+  for (const row of rows) if (row.stamp == null) st(db, "INSERT OR REPLACE INTO memory_revoke_quarantine(revoke_id,version) VALUES(?,?)").run(Number(row.id), version);
+  const ids = rows.filter(row => row.stamp != null && isNewerAppVersion(version, String(row.stamp))).map(row => Number(row.id));
+  for (const id of ids) {
+    st(db, "UPDATE memory_revoke_jobs SET state='active' WHERE revoke_id=? AND state='quarantined'").run(id);
+    st(db, "INSERT OR REPLACE INTO memory_revoke_quarantine(revoke_id,version) VALUES(?,?)").run(id, version);
+  }
+  st(db, "DELETE FROM memory_revoke_quarantine WHERE revoke_id NOT IN (SELECT revoke_id FROM memory_revoke_jobs WHERE state IN ('quarantined','active'))").run();
+  if (ids.length) bumpDenyGeneration(db);
+  return ids;
+}
+/** How many revoke jobs are quarantined (the owner notice). One bounded read. */
+export function quarantinedRevokeCount(db: DatabaseSync): number {
+  return Number(st(db, "SELECT count(*) AS n FROM (SELECT 1 FROM memory_revoke_jobs WHERE state='quarantined' LIMIT 1000)").get()?.n ?? 0);
+}
+let jobFailures = 0;
+/** Steps that threw and were charged to their job (the runner reads it to tell a job's failure from its own). */
+export const revokeJobFailures = (): number => jobFailures;
+const backedOff = (db: DatabaseSync, revokeId: number): boolean => { const held = jobBackoff.get(db)?.get(revokeId); return held !== undefined && Date.now() < held.until; };
+/** When the earliest job now sitting out may run again (wall clock ms; Infinity: none sits out). The runner arms its deadline there. */
+export function revokeBackoffDueMs(db: DatabaseSync): number {
+  let due = Number.POSITIVE_INFINITY;
+  const now = Date.now(), map = jobBackoff.get(db);
+  if (map) for (const held of map.values()) if (held.until > now) due = Math.min(due, held.until);
+  return due;
+}
+/** Test hook: forget every backoff of `db`. */
+export function resetRevokeBackoff(db: DatabaseSync): void { jobBackoff.delete(db); }
+function served(db: DatabaseSync, revokeId: number, run: () => Step): Step {
+  try {
+    const step = run();
+    if (step === "progress") jobBackoff.get(db)?.delete(revokeId);
+    else { const held = jobBackoff.get(db)?.get(revokeId); if (held) held.count = 0; }
+    return step;
+  } catch (error) {
+    let map = jobBackoff.get(db);
+    if (!map) jobBackoff.set(db, map = new Map());
+    const prior = map.get(revokeId);
+    const delay = Math.min(JOB_BACKOFF.capMs, prior ? prior.delay * 2 : JOB_BACKOFF.firstMs);
+    map.set(revokeId, { until: Date.now() + delay, delay, count: (prior?.count ?? 0) + 1 });
+    jobFailures++;
+    throw error;
+  }
 }
 /** Next frontier seq of a revoke (exact nodes are positive, oldest first). */
 function nextSeq(db: DatabaseSync, revokeId: number): number {
@@ -816,6 +926,32 @@ function deletePage(db: DatabaseSync, table: string, key: string, revokeId: numb
 }
 const deleteOwn = (db: DatabaseSync, table: "memory_revoke_frontier" | "memory_revoke_reached", revokeId: number, n: number) =>
   Number(st(db, `DELETE FROM ${table} WHERE revoke_id=?1 AND ${table === "memory_revoke_frontier" ? "seq" : "thread_id"} IN (SELECT ${table === "memory_revoke_frontier" ? "seq" : "thread_id"} FROM ${table} WHERE revoke_id=?1 LIMIT ?2)`).run(revokeId, n).changes);
+/** 1.0.22 revokehealth item 7 (HIDDEN-COST M27): a deleted bot's walk leaves one memory_deny_memory mark per record and source of its
+ * notebooks (about 230k rows a bot), kept for good. Once its tidy runs, or its scope job has tombstoned every record (pruneDeletedBotMarks), a mark of
+ * this revoke goes when the permanent deny of a notebook covers every row of its target and the target is ended: a record whose every
+ * version lives in a denied scope and carries the whole-record tombstone, or a source in a denied scope that is no longer active. A target
+ * with any row elsewhere (a record id spanning notebooks), or any other mark kind, keeps its mark. Tombstones stay (import and forget read
+ * them). One page; returns the rows removed. */
+function pruneBotMarks(db: DatabaseSync, revokeId: number, n: number): number {
+  const denied = "SELECT id FROM memory_deny WHERE kind='scope'";
+  return Number(st(db, `DELETE FROM memory_deny_memory WHERE (kind,id,version,revoke_id) IN (SELECT d.kind,d.id,d.version,d.revoke_id FROM memory_deny_memory d
+    WHERE d.revoke_id=?1 AND ((d.kind='record' AND EXISTS (SELECT 1 FROM memory_records r WHERE r.id=d.id)
+        AND NOT EXISTS (SELECT 1 FROM memory_records r WHERE r.id=d.id AND r.scope_id NOT IN (${denied}))
+        AND EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=d.id AND t.revision IS NULL))
+      OR (d.kind='source' AND EXISTS (SELECT 1 FROM memory_sources s WHERE s.id=d.id AND s.state!='active' AND s.scope_id IN (${denied}))))
+    LIMIT ?2)`).run(revokeId, n).changes);
+}
+/** 1.0.22 revokehealth item 7: the deleted bot's scope job (memory-revocation.ts scopeStep) calls this once every record of the bot's
+ * scopes carries its tombstone, because a small bot revoke finishes inline in its commit, before any tombstone exists, and its own tidy
+ * then pruned nothing. Prunes a page of the revoke's marks once it is finished (its row done, or already pruned); a revoke still walking
+ * prunes in its own tidy. Returns the rows removed. */
+export function pruneDeletedBotMarks(db: DatabaseSync, revokeId: number, n: number): number {
+  if (!(revokeId > 0) || !hasWritetime(db)) return 0;
+  revokeId = resolveRevoke(db, revokeId);
+  const job = st(db, "SELECT kind,state FROM memory_revoke_jobs WHERE revoke_id=?").get(revokeId);
+  if (job && (job.kind !== "bot" || job.state !== "done")) return 0;
+  return pruneBotMarks(db, revokeId, n);
+}
 /** The revoke's visited rows, then its pending rows (only once every mark is written). True when none is left. */
 function tidyStep(db: DatabaseSync, job: JobRow, budget: Budget): boolean {
   const n = page(budget);
@@ -823,7 +959,23 @@ function tidyStep(db: DatabaseSync, job: JobRow, budget: Budget): boolean {
   if (gone < n) gone += deletePage(db, "memory_deny_pending", "thread_id,since_lsn,revoke_id", job.revoke_id, n - gone);
   if (gone < n) gone += deletePage(db, "memory_deny_pending_scope", "scope_id,since_lsn,revoke_id", job.revoke_id, n - gone);
   spend(budget, gone);
+  // V14: a page of pending rows went (this proof site, unchanged): the waiters under them look again
+  if (gone > 0) raise(WINDOW_WAKE);
   return gone < n;
+}
+/** 1.0.22 q1022-closing-batch H1 (IDLECPU-1022): a pending row whose revoke has no memory_revoke_jobs row is an orphan. Nothing walks or
+ * tidies it (tidyStep pages by its own job), and while it stands the runner reads closing work (memory-revocation.ts pendingRowStands is
+ * global), so every later prune, tidy and late build skipped the idle pause and ran at the 20 MiB/min closing budget. No job means no mark
+ * of it is still owed: its window proves nothing. Deletes at most `n` such rows (thread rows first, then scope rows; the caller's
+ * transaction) and returns how many went; the waiters under them look again. Run at the start at listen and after a job ends (runner). */
+export function clearOrphanPending(db: DatabaseSync, n: number): number {
+  let gone = 0;
+  for (const [table, key] of [["memory_deny_pending", "thread_id,since_lsn,revoke_id"], ["memory_deny_pending_scope", "scope_id,since_lsn,revoke_id"]] as const) {
+    if (gone >= n) break;
+    gone += Number(st(db, `DELETE FROM ${table} WHERE (${key}) IN (SELECT ${key} FROM ${table} p WHERE NOT EXISTS (SELECT 1 FROM memory_revoke_jobs j WHERE j.revoke_id=p.revoke_id) LIMIT ?)`).run(n - gone).changes);
+  }
+  if (gone > 0) raise(WINDOW_WAKE);
+  return gone;
 }
 function undoStep(db: DatabaseSync, job: JobRow, budget: Budget): boolean {
   const n = page(budget);
@@ -833,9 +985,20 @@ function undoStep(db: DatabaseSync, job: JobRow, budget: Budget): boolean {
   spend(budget, gone);
   return gone < n;
 }
-/** Finished revokes leave no row, except the newest, which keeps revoke ids from being taken again (INTEGER PRIMARY KEY, no AUTOINCREMENT). */
-function pruneFinished(db: DatabaseSync): void {
-  st(db, "DELETE FROM memory_revoke_jobs WHERE state IN ('done','undone') AND revoke_id<(SELECT max(revoke_id) FROM memory_revoke_jobs)").run();
+/** 1.0.21 cause5 r2: the most finished job rows an owner's inline walk (`only`) removes when its own revoke finishes. Finished rows are
+ * global, not the owner's: a targeted completion leaves its row to the runner (markerSliceDetailed), so a backlog of them can stand, and one
+ * statement removed all of it inside the owner's committing transaction, whatever the write cap of the slice (with the inline floor, in a
+ * spent minute too). The inline walk now takes one page of them, and no more than its cap and step reserve have left; the rest stays for
+ * the next finish (another inline page, or the runner, whose prune in its own paced transaction is unchanged). Tests may change it. */
+export const INLINE_PRUNE = { rows: 64 };
+/** Finished revokes leave no row, except the newest, which keeps revoke ids from being taken again (INTEGER PRIMARY KEY, no AUTOINCREMENT).
+ * `budget.prune` (an owner's inline walk): the most rows this call may remove. */
+function pruneFinished(db: DatabaseSync, budget?: Budget): void {
+  if (!budget?.prune) { st(db, "DELETE FROM memory_revoke_jobs WHERE state IN ('done','undone') AND revoke_id<(SELECT max(revoke_id) FROM memory_revoke_jobs)").run(); return; }
+  const n = Math.floor(budget.prune());
+  if (!(n > 0)) return;
+  st(db, `DELETE FROM memory_revoke_jobs WHERE revoke_id IN (SELECT revoke_id FROM memory_revoke_jobs WHERE state IN ('done','undone')
+    AND revoke_id<(SELECT max(revoke_id) FROM memory_revoke_jobs) LIMIT ?)`).run(Math.min(n, Number.MAX_SAFE_INTEGER));
 }
 
 /** `flowOnly` (1.0.3 revoke drain, F3): the slice is running every pending job's flow phase before any job marks; the job stops at the end
@@ -873,7 +1036,10 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
       if (done === "late") {
         // a lookup table the walk needs is still being built: build a window of it now (the walk resumes on the next slice)
         save();
-        if (late?.(db, page(budget))) return "progress";
+        if (late) {
+          budget.lateBuildAttempted = true;
+          if (late(db, page(budget))) return "progress";
+        }
         return progressed ? "progress" : "wait";
       }
       if (done) { job.phase = "hold"; c = {}; }
@@ -889,6 +1055,11 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
     } else if (job.phase === "tidy") {
       if (st(db, "SELECT 1 FROM memory_revoke_frontier WHERE revoke_id=? LIMIT 1").get(job.revoke_id)) { job.phase = "mark"; continue; }
       if (tidyStep(db, job, budget)) {
+        if (job.kind === "bot") {
+          const n = page(budget), gone = pruneBotMarks(db, job.revoke_id, n);
+          if (gone) spend(budget, gone);
+          if (gone >= n) { progressed = true; continue; }
+        }
         // a fold bulk's members leave their 'folded' rows last (F1.4), a page per step (a cohort holds up to FLIP_DRAIN_MAX members): the
         // bulk is done only once none is left, and a restart resumes the tidy. Their ids stay in the map and in memory_revoke_audience.
         if (hasFoldMap(db)) {
@@ -908,10 +1079,10 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
           st(db, `DELETE FROM memory_revoke_reached WHERE revoke_id=${WALKER_REVOKE}`).run();
         }
         noteDeletionDone(db, job);
-        job.phase = "done"; job.state = "done"; c = {}; bumpDenyGeneration(db); save(); if (prune) pruneFinished(db); return "progress";
+        job.phase = "done"; job.state = "done"; c = {}; bumpDenyGeneration(db); save(); if (prune) pruneFinished(db, budget); return "progress";
       }
     } else if (job.phase === "undo") {
-      if (undoStep(db, job, budget)) { job.phase = "done"; job.state = "undone"; c = {}; bumpDenyGeneration(db); save(); if (prune) pruneFinished(db); return "progress"; }
+      if (undoStep(db, job, budget)) { job.phase = "done"; job.state = "undone"; c = {}; bumpDenyGeneration(db); save(); if (prune) pruneFinished(db, budget); return "progress"; }
     } else { job.state = job.state === "undoing" ? "undone" : "done"; save(); return "progress"; }
     progressed = true;
     } finally { if (countWork) noteUpgradeWork(db, job, Math.max(0, rowsBefore - budget.rows)); }
@@ -928,6 +1099,16 @@ function coverQuiet(db: DatabaseSync, self: number): boolean {
 const ACTIVE_JOBS = "SELECT revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state FROM memory_revoke_jobs WHERE state IN ('active','undoing') ORDER BY revoke_id LIMIT 16";
 /** The oldest job still narrowing (1.0.3 revoke drain, F3). */
 const FLOW_JOB = "SELECT revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state FROM memory_revoke_jobs WHERE state='active' AND phase='flow' ORDER BY revoke_id LIMIT 1";
+const FLOW_JOB_AFTER = "SELECT revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state FROM memory_revoke_jobs WHERE state='active' AND phase='flow' AND revoke_id>? ORDER BY revoke_id LIMIT 1";
+/** The oldest job still narrowing that is not sitting out a backoff (V10): the plain oldest when none is. */
+function flowJob(db: DatabaseSync): JobRow | undefined {
+  if (!jobBackoff.get(db)?.size) return st(db, FLOW_JOB).get() as JobRow | undefined;
+  for (let after = 0; ;) {
+    const row = st(db, FLOW_JOB_AFTER).get(after) as JobRow | undefined;
+    if (!row || !backedOff(db, Number(row.revoke_id))) return row;
+    after = Number(row.revoke_id);
+  }
+}
 const ACTIVE_JOB_ONE = "SELECT revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state FROM memory_revoke_jobs WHERE state IN ('active','undoing') AND revoke_id=?";
 /** One marker slice (caller's transaction): the oldest revoke with work moves within the budget. True when it did work; false when no
  * revoke waits or every waiting one is held by its bookkeeping job (the runner then runs that job). */
@@ -967,7 +1148,24 @@ const flipQueued = (db: DatabaseSync) => Boolean(st(db, "SELECT 1 FROM memory_re
 export const MARKER_STEP_RESERVE = 512;
 /** Options of one capped slice. `only`: an owner's inline walk (revoke-commit.ts markInline) moves only its own revoke and never drains
  * the queued flips (unrelated backlog the runner carries). */
-export type MarkerSliceOptions = { only?: number; flipsOnly?: true; flowsOnly?: true };
+export type MarkerSliceOptions = { only?: number; flipsOnly?: true; flowsOnly?: true; jobs?: number;
+  /** 1.0.21 mem-f3 c, with `only` (revoke-budget.ts budgetedMarkerSlice, the owner's inline walk): the queued receipt flips at the head are
+   * committed first, by the same drain and under the same cap and deadline as the runner's, and the owner's revoke moves only once none
+   * waits. Before, one queued flip stopped every inline walk, so each commit left a job and a machine-wide window for the paced runner. The
+   * order the rule needs is kept (flips before any revoke), and a flip the cap has no room for still blocks the walk (fail closed). */
+  headFlips?: true };
+/** 1.0.20 (fable-macmem): the most revoke jobs one paced drain slice serves (`jobs`, passed by revoke-budget.ts budgetedMarkerSlice only).
+ * The walker served ONE job per slice and every slice is its own paced commit (revoke-budget.ts REVOKE_PACE: about one commit a minute
+ * once its copy half is held), so a queue of N small jobs took N commits whatever room each commit had left: on the owner's file more than
+ * 1000 active jobs held every thread "checking" for hours while each commit used a few of its rows. Further jobs are served in the SAME
+ * transaction only while the slice's own limits have room (rows, deadline and the write cap: `exhausted`), and never past a queued flip, a
+ * waiting fold or a job still in flow (each takes the next slice's first turn, as before). Each serve is the walker's whole scheduling
+ * decision on the transaction's own state, so k serves in one transaction are k consecutive slices with one COMMIT: no job skips a phase, no
+ * mark or pending row is written or removed that the same slices would not have, and no budget is raised. A serve that throws rolls the whole
+ * slice back, as it always did; the next `soloAfterError` slices then serve one job each (the rotation has moved past the failing job, so the
+ * others still progress exactly as before this change). */
+export const MARKER_SLICE_JOBS = { max: 64, soloAfterError: 64 };
+const soloSlices = new WeakMap<DatabaseSync, number>();
 export type BlockedCause = "flip-queued" | "flip-room" | "fold-seeding" | "fold-room";
 export type MarkerSliceOutcome =
   | { outcome: "progress" | "idle" }
@@ -1002,19 +1200,26 @@ function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBu
   // the slice's deadline and write cap hold from its start, the flip drain included
   const capped = Number.isFinite(maxChanges), start = capped ? totalChanges(db) : 0;
   const over = capped ? () => totalChanges(db) - start >= maxChanges : undefined;
-  const budget: Budget = { rows: Math.max(1, rows), deadline: performance.now() + ms, ...(over ? { over } : {}) };
+  // an owner's inline walk removes at most a page of finished rows, inside what its cap and step reserve have left (INLINE_PRUNE)
+  const pruneCap = opts.only === undefined ? undefined
+    : () => Math.min(INLINE_PRUNE.rows, capped ? maxChanges + MARKER_STEP_RESERVE - (totalChanges(db) - start) : Number.POSITIVE_INFINITY);
+  const budget: Budget = { rows: Math.max(1, rows), deadline: performance.now() + ms, ...(over ? { over } : {}), ...(pruneCap ? { prune: pruneCap } : {}) };
   // A queued flip has already left memory_disclosure_refs, and its consumer edges are written only when it is drained (revoke-commit.ts
   // holdRevokedReceipt). Until then a content forget walking the items it cites would find neither, so NO revoke advances while a flip
   // waits: the flips are drained first, and a slice that cannot drain one moves nothing ("blocked"; the runner waits for room).
   if (flipQueued(db)) {
-    if (opts.only !== undefined || opts.flowsOnly) return { outcome: "blocked", cause: "flip-queued" };
+    const inlineFlips = opts.only !== undefined && opts.headFlips === true && drainFlips !== undefined;
+    if ((opts.only !== undefined && !inlineFlips) || opts.flowsOnly) return { outcome: "blocked", cause: "flip-queued" };
     if (!drainFlips) return opts.flipsOnly ? { outcome: "blocked", cause: "flip-room" } : { outcome: "idle" };
     // a flip is committed only when its whole cost fits the cap and the deadline; the first of a drain may use the step reserve
     const fits = (cost: number, first: boolean) => {
       if (!first && performance.now() >= budget.deadline) return false;
       return !capped || totalChanges(db) - start + cost <= maxChanges + (first ? MARKER_STEP_RESERVE : 0);
     };
-    return drainFlips(db, FLIP_DRAIN_MAX, fits) > 0 ? { outcome: "progress" } : { outcome: "blocked", cause: "flip-room" };
+    const drained = drainFlips(db, FLIP_DRAIN_MAX, fits);
+    // an owner's inline walk: its own revoke takes the NEXT slice, and only when no flip is left (the caller loops inside its deadline)
+    if (inlineFlips) return drained > 0 ? { outcome: "progress" } : { outcome: "blocked", cause: "flip-queued" };
+    return drained > 0 ? { outcome: "progress" } : { outcome: "blocked", cause: "flip-room" };
   }
   if (opts.flipsOnly) return { outcome: "idle" };
   if (opts.flowsOnly && st(db, SEEDING_FOLD_SQL).get()) return { outcome: "blocked", cause: "fold-seeding" };
@@ -1044,16 +1249,35 @@ function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBu
     return { outcome: flow && advance(db, { ...flow, revoke_id: Number(flow.revoke_id) }, budget, late, true) === "progress" ? "progress" : "idle" };
   }
   if (opts.only === undefined) {
-    for (let flow = st(db, FLOW_JOB).get() as JobRow | undefined; flow; flow = st(db, FLOW_JOB).get() as JobRow | undefined) {
-      advance(db, { ...flow, revoke_id: Number(flow.revoke_id) } as JobRow, budget, late, true);
+    // V10: the oldest flow job that is not sitting out a failure; one that throws here is charged its backoff and the next slice passes it
+    for (let flow = flowJob(db); flow; flow = flowJob(db)) {
+      const job = { ...flow, revoke_id: Number(flow.revoke_id) } as JobRow;
+      served(db, job.revoke_id, () => advance(db, job, budget, late, true));
       if (exhausted(budget)) return { outcome: "progress" };
     }
   }
-  if (opts.only === undefined && REVOKE_COVER.enabled) return { outcome: walkerSlice(db, budget, late) ? "progress" : "idle" };
+  if (opts.only === undefined && REVOKE_COVER.enabled) {
+    if (!walkerSlice(db, budget, late)) return { outcome: "idle" };
+    const solo = soloSlices.get(db) ?? 0;
+    if (solo > 0) soloSlices.set(db, solo - 1);
+    const most = solo > 0 ? 1 : Math.max(1, Math.min(Math.floor(opts.jobs ?? 1), MARKER_SLICE_JOBS.max));
+    // what would take the next slice's first turn ends this one: a queued flip, a fold (unreadable counts as waiting) or a job still in flow
+    const preempted = () => { try { return flipQueued(db) || Boolean(foldHooks?.pending(db)) || Boolean(flowJob(db)); } catch { return true; } };
+    try {
+      // A late-build page uses the remaining row allowance without debiting it.
+      for (let served = 1; served < most && !budget.lateBuildAttempted && !exhausted(budget) && !preempted(); served++) {
+        chargeReleaseWork();
+        if (!walkerSlice(db, budget, late)) break;
+      }
+    } catch (error) { soloSlices.set(db, MARKER_SLICE_JOBS.soloAfterError); throw error; }
+    return { outcome: "progress" };
+  }
   for (const row of st(db, opts.only === undefined ? ACTIVE_JOBS : ACTIVE_JOB_ONE).all(...(opts.only === undefined ? [] : [opts.only])) as JobRow[]) {
     chargeReleaseWork();
     const job = { ...row, revoke_id: Number(row.revoke_id) } as JobRow;
-    if (advance(db, job, budget, late, false, false, prune) === "progress") return { outcome: "progress" };
+    // an owner's inline walk (`only`) is asked for by name and always tried; the queue passes over a job sitting out a failure (V10)
+    if (opts.only === undefined && backedOff(db, job.revoke_id)) continue;
+    if (served(db, job.revoke_id, () => advance(db, job, budget, late, false, false, prune)) === "progress") return { outcome: "progress" };
   }
   return { outcome: "idle" };
 }
@@ -1106,8 +1330,8 @@ function roundRobin(db: DatabaseSync, sql: string, args: unknown[], last: () => 
     chargeReleaseWork();
     const job = asJob(row);
     set(job.revoke_id); // advanced for every raw candidate, including the other class
-    if (!eligible(job)) continue;
-    if (serve(job) === "progress") return true;
+    if (!eligible(job) || backedOff(db, job.revoke_id)) continue;
+    if (served(db, job.revoke_id, () => serve(job)) === "progress") return true;
   }
   return false;
 }
@@ -1115,8 +1339,9 @@ function walkerSlice(db: DatabaseSync, budget: Budget, late: LateBuild | null): 
   const note = (job: JobRow, cls: "undo" | "content" | "walker" | "others") => { if (COVER_TRACE.on) COVER_TRACE.served.push({ job: job.revoke_id, cls }); };
   for (const row of st(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='undoing' ORDER BY revoke_id LIMIT 16`).all()) {
     chargeReleaseWork();
+    if (backedOff(db, Number(row.revoke_id))) continue; // V10: an undo that failed sits out; the jobs behind it move
     note(asJob(row), "undo");
-    if (advance(db, asJob(row), budget, late) === "progress") return true;
+    if (served(db, Number(row.revoke_id), () => advance(db, asJob(row), budget, late)) === "progress") return true;
   }
   let rot = rotations.get(db);
   if (!rot) rotations.set(db, rot = { lastContent: 0, lastOther: 0, audienceTurn: false, parity: false });
@@ -1125,7 +1350,7 @@ function walkerSlice(db: DatabaseSync, budget: Budget, late: LateBuild | null): 
   if (audienceFirst) rot.parity = !rot.parity;
   const walker = walkerJob(db);
   if (!optionalIndexReady(db, "memory_revoke_jobs_mark_cap")) {
-    if (walker) { note(walker, "walker"); if (advance(db, walker, budget, late) === "progress") return true; }
+    if (walker && !backedOff(db, walker.revoke_id)) { note(walker, "walker"); if (served(db, walker.revoke_id, () => advance(db, walker, budget, late)) === "progress") return true; }
     // Ordinary round robin considers every active job: no audience/coverability
     // predicate can scan an arbitrarily long ineligible active prefix first.
     return roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND revoke_id<>?`, [walker?.revoke_id ?? 0],
@@ -1137,7 +1362,7 @@ function walkerSlice(db: DatabaseSync, budget: Budget, late: LateBuild | null): 
   const content = () => roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active'`, [],
     () => rot!.lastContent, id => { rot!.lastContent = id; }, job => { note(job, "content"); return advance(db, job, budget, late); }, job => !isAudience(db, job.revoke_id) && !isDeletionJob(job));
   // a walker in hold returning "wait" is passed over for this slice and stays the walker
-  const walk = () => { if (!walker) return false; note(walker, "walker"); return advance(db, walker, budget, late) === "progress"; };
+  const walk = () => { if (!walker || backedOff(db, walker.revoke_id)) return false; note(walker, "walker"); return served(db, walker.revoke_id, () => advance(db, walker, budget, late)) === "progress"; };
   const others = () => roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND revoke_id<>?`, [walker?.revoke_id ?? 0],
     () => rot!.lastOther, id => { rot!.lastOther = id; }, job => { note(job, "others"); return advance(db, job, budget, late, false, walker !== undefined); }, job => isAudience(db, job.revoke_id) || isDeletionJob(job));
   const audience = walkerFirst ? [walk, others] : [others, walk];

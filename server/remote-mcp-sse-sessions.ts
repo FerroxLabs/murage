@@ -155,7 +155,8 @@ export class RemoteSseSessions {
     try {
       reserveUpstreamRequest(0);
       opened = await guardedRequest({
-        url: input.url, method: "GET", kind: "sse", responseMode: "stream", mode: "request", confirmed: input.confirmed,
+        // MAIN-RULING cause22-no-transport-caps: no byte ceiling on the session's stream or on a POST's answer.
+        url: input.url, method: "GET", kind: "sse", responseMode: "stream", mode: "request", confirmed: input.confirmed, maxBytes: Number.POSITIVE_INFINITY,
         signal: input.signal, resolver: input.resolver, totalMs: LIMITS.initializeRelayMs,
         headers: { accept: "text/event-stream", ...input.headers, ...(input.bearer ? { authorization: `Bearer ${input.bearer}` } : {}) },
       });
@@ -169,7 +170,7 @@ export class RemoteSseSessions {
     }
     const stream = opened as unknown as GuardedStreamResponse;
     const accounting: UpstreamAccounting | undefined = currentUpstreamAccounting("sse");
-    const events = createSseReader(stream.stream as Readable, { idleMs: this.idleMs, maxEventBytes: LIMITS.sseEventBytes, accounting });
+    const events = createSseReader(stream.stream as Readable, { idleMs: this.idleMs, accounting });
     let first;
     let endpointTimer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -279,7 +280,7 @@ export class RemoteSseSessions {
       // resumed outside the opening async scope or under another owner.
       if (session.accounting) reserveRelease(session.accounting.budgets, { attempts: 1, bytes: Buffer.byteLength(JSON.stringify(message)), work: 1 });
       response = await guardedRequest({
-        url: session.endpoint, method: "POST", kind: "mcp", mode: "request", confirmed: session.confirmed,
+        url: session.endpoint, method: "POST", kind: "mcp", mode: "request", confirmed: session.confirmed, maxBytes: Number.POSITIVE_INFINITY,
         signal: input.signal, resolver: input.resolver, totalMs: input.timeoutMs, body: JSON.stringify(message),
         headers: { "content-type": "application/json", ...input.headers, ...(input.bearer ? { authorization: `Bearer ${input.bearer}` } : {}) },
       });

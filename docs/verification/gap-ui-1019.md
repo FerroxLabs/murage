@@ -118,7 +118,7 @@ failures, with unchanged tests green before and after restoration.
 `r2/check-review.mjs` also reproduces the reviewed High, Medium and Low gaps as
 RED checks, verifies the stricter gate and kills four validator/report mutants.
 
-All new tests use `/work/fuigo-builds/tools/it-remote.sh` with
+All new tests use `/root/fuigo-builds/tools/it-remote.sh` with
 `IT_JOB=gap-ui-r2`, the assigned worktree and generic local fallback, network
 none, and at most eight containers. Inherited same-SHA shards retain their
 original afix job receipts. Host selections for concurrent new calls must be

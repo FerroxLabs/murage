@@ -301,16 +301,16 @@ describe("rebaseStoredPath (section 2: D1-D4, D14, D14b, D15, D16)", () => {
     expect(rebaseStoredPath("/old/workspaces/b", two, { dataDir: "/new", previous: ["/old"], platform: "linux" })).toEqual({ refused: true });
   });
   it("D15 darwin: case differs -> refused; NFD home -> rebased", () => {
-    const ctx = { dataDir: "/n", previous: ["/Us" + "ers/sean/.murage"], platform: "darwin" as const };
-    expect(rebaseStoredPath("/Us" + "ers/Sean/.murage/workspaces/b/threads/t", ctor("b", "t"), ctx)).toEqual({ refused: true });
-    expect(rebaseStoredPath("/Us" + "ers/Sean/.murage/workspaces/b/threads/t", ctor("b", "t"), { ...ctx, previous: ["/Us" + "ers/Sean/.murage"] })).toEqual({ path: "/n/workspaces/b/threads/t" });
+    const ctx = { dataDir: "/n", previous: ["/Us" + "ers/exampleuser/.murage"], platform: "darwin" as const };
+    expect(rebaseStoredPath("/Us" + "ers/ExampleUser/.murage/workspaces/b/threads/t", ctor("b", "t"), ctx)).toEqual({ refused: true });
+    expect(rebaseStoredPath("/Us" + "ers/ExampleUser/.murage/workspaces/b/threads/t", ctor("b", "t"), { ...ctx, previous: ["/Us" + "ers/ExampleUser/.murage"] })).toEqual({ path: "/n/workspaces/b/threads/t" });
     const nfc = "/Us" + "ers/Jos\u00e9/.murage", nfd = "/Us" + "ers/Jose\u0301/.murage";
     expect(rebaseStoredPath(`${nfd}/workspaces/b/threads/t`, ctor("b", "t"), { ...ctx, previous: [nfc] })).toEqual({ path: "/n/workspaces/b/threads/t" });
   });
   it("D16 win32: drive change, case, long prefix and forward slashes", () => {
     const w = (root: string) => [`${root}\\workspaces\\b\\threads\\t`];
-    const ctx = { dataDir: "D:\\Murage", previous: ["C:\\Users\\Sean\\.murage"], platform: "win32" as const };
-    for (const stored of ["C:\\Users\\Sean\\.murage\\workspaces\\b\\threads\\t", "c:\\users\\sean\\.murage\\workspaces\\b\\threads\\t", "\\\\?\\C:\\Users\\Sean\\.murage\\workspaces\\b\\threads\\t", "C:/Us" + "ers/Sean/.murage/workspaces/b/threads/t"]) {
+    const ctx = { dataDir: "D:\\Murage", previous: ["C:\\Users\\ExampleUser\\.murage"], platform: "win32" as const };
+    for (const stored of ["C:\\Users\\ExampleUser\\.murage\\workspaces\\b\\threads\\t", "c:\\users\\exampleuser\\.murage\\workspaces\\b\\threads\\t", "\\\\?\\C:\\Users\\ExampleUser\\.murage\\workspaces\\b\\threads\\t", "C:/Us" + "ers/ExampleUser/.murage/workspaces/b/threads/t"]) {
       expect(rebaseStoredPath(stored, w, ctx)).toEqual({ path: "D:\\Murage\\workspaces\\b\\threads\\t" });
     }
     expect(lexicalKey("D:x\\y", "win32")).toBeUndefined();

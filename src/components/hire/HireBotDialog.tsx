@@ -24,7 +24,6 @@ import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "@/components/ui/BoxShell";
 import { failureText } from "@/components/FirstRunChrome";
 import { retryableLazy } from "@/components/LazyBoundary";
 import type { TeamImportResult } from "@/components/TeamLibraryPanel";
-import { track } from "@/lib/analytics";
 import { levelName } from "@/lib/fold-words";
 import { HIRE_NAME_MAX, HIRE_SENTENCE_MAX, hireProfile, hireReady, suggestHireName } from "@/lib/hire-defaults";
 import { useFocusTrap } from "@/lib/focus-trap";
@@ -76,7 +75,7 @@ export function HireBotDialog({ layerLifecycle, onClose, onBrowseTemplates, onTe
           {loadedLayer => (<NewFromTemplateDialog.Component layerLifecycle={loadedLayer}
             kind="bot"
             onClose={loadedLayer.dismiss}
-            onBlank={() => { track("bot_created"); dispatch({ type: "newBot" }); onClose(); }}
+            onBlank={() => { dispatch({ type: "newBot" }); onClose(); }}
             onOpenFile={() => { dispatch({ type: "showTeamLibrary", tab: "import" }); onClose(); }}
             onCreated={(result) => { onTemplateCreated?.(result); onClose(); }}
           />)}
@@ -99,7 +98,6 @@ export function HireBotDialog({ layerLifecycle, onClose, onBrowseTemplates, onTe
       onSettled: (error) => {
         if (!live.current) return;
         if (error === null) {
-          track("bot_created");
           onClose();
           return;
         }

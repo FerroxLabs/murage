@@ -11,7 +11,9 @@ import { RECORD_KEYS_TABLE, recordKeysPresent } from "./schema.ts";
  * work, so an entry indexed before that rule existed leaves the index when its
  * record is deleted. The same predicate answers "is anything pending" and "what
  * is next". */
-const PENDING = `p.lexical_status IN ('pending','pending-archive','delete-pending') AND (r.kind NOT IN ${PIP_ALL_KINDS_SQL} OR p.lexical_status='delete-pending')`;
+// 1.0.22 revokehealth item 8: a receipt the controller skipped (error MEMORY_INDEX_RECORD_SKIPPED after repeated failed batches) is not
+// pending until the record is written again; a removal (delete-pending) is never passed over
+const PENDING = `p.lexical_status IN ('pending','pending-archive','delete-pending') AND (r.kind NOT IN ${PIP_ALL_KINDS_SQL} OR p.lexical_status='delete-pending') AND (p.error IS NULL OR p.lexical_status='delete-pending')`;
 
 /** An old version of a thread checkpoint: archived because a newer version of the same checkpoint replaced it. A
  * checkpoint rolls on every captured message and each version only re-quotes excerpts of sources whose own records stay
@@ -45,11 +47,11 @@ export function pendingProjectionRefsIn(db:DatabaseSync,scopeIds:readonly string
 /** The next records after `after` (a receipt row id; 0 starts) in these scopes whose projection is still pending, in receipt
  * order, at most `limit`, with the row id to continue from. A reader's coverage is decided by walking this to the first record
  * it may read, however many it may not (search.ts), so the walk is keyed, never counted. */
-export function pendingProjectionRefsAfter(db:DatabaseSync,scopeIds:readonly string[]|RecallViewHandle,after:number,limit:number):Array<{id:string;version:number;rowid:number}> {
-  if(!Array.isArray(scopeIds))return pendingViewPage(db,scopeIds as RecallViewHandle,after,limit);
+export function pendingProjectionRefsAfter(db:DatabaseSync,scopeIds:readonly string[]|RecallViewHandle,after:number|string,limit:number):Array<{id:string;version:number;rowid:number}> {
+  if(!Array.isArray(scopeIds))return pendingViewPage(db,scopeIds as RecallViewHandle,typeof after==='string'?after:'',limit);
   return db.prepare(`SELECT p.rowid AS rowid,r.id,r.version FROM memory_projection_receipts p
     JOIN memory_records r ON r.id=p.record_id AND r.version=p.record_version
-    WHERE p.rowid>? AND ${PENDING} AND r.scope_id IN (SELECT value FROM json_each(?)) ORDER BY p.rowid LIMIT ?`).all(after,JSON.stringify(scopeIds),limit).map(row=>({id:String(row.id),version:Number(row.version),rowid:Number(row.rowid)}));
+    WHERE p.rowid>? AND ${PENDING} AND r.scope_id IN (SELECT value FROM json_each(?)) ORDER BY p.rowid LIMIT ?`).all(Number(after),JSON.stringify(scopeIds),limit).map(row=>({id:String(row.id),version:Number(row.version),rowid:Number(row.rowid)}));
 }
 
 /** `ageKey`: the record's age key (schema.ts RECORD_KEYS_SCHEMA), the rowid of its FTS row in an index in age order; null until the key

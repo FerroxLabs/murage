@@ -179,7 +179,7 @@ it.each(["c11", "early", "confirmed", "uncertain", "duplicate", "retained", "ref
     // Q1: an exact native write is confirmed, so the owner is never told to send what the engine already received.
     expect(errors[0].memoryNote).toBeUndefined(); expect(JSON.stringify(after)).not.toContain(RESEND_LINE);
   }
-  expect(JSON.stringify(after)).not.toContain("could not start this reply");
+  expect(JSON.stringify(after)).not.toMatch(/could not start this reply|couldn't start this reply/);
   expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain("re-preparing");
 }, 60000);
 
@@ -453,7 +453,10 @@ it("T9/T37 crash and registry recreation retain the original stamp without redis
   expect((await messages()).find(m => m.id === owner.id).dispatchedIn).toBe(owner.dispatchedIn);
   expect(rows().filter(r => r.event === "prompt")).toHaveLength(1);
   expect((await new ToolLimitStore(file).get("a".repeat(64)))?.limit).toBe(40);
-  await recallReady(bot, bot.threadId);
+  // q1022-idlefix (MAIN-RULING 2026-11-25T12:40:11Z): the bounded fixture wait is the guarded behaviour here: after the crash and the
+  // restart, with nobody active, the bot's recall view is ready for the new send. Named assertion, not a fixture Error.
+  const recall = await recallReady(bot, bot.threadId).then(() => "ready", (error: unknown) => String((error as Error)?.message ?? error));
+  expect(recall, "after a crash and restart on an idle minute the bot's recall view is ready for the next send (a turn never loses memory because the app was idle)").toBe("ready");
   expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "Explicit authorized new send" })).status).toBe(202);
   await expect.poll(() => rows().filter(r => r.event === "prompt").length, { timeout: 20000 }).toBe(2);
   await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id).busy, { timeout: 20000 }).toBe(false);
@@ -486,7 +489,7 @@ it.each(["roomconfirmed", "roomuncertain"])("c11-review-3 room resend refusal pr
   expect(errors[0].tool).toEqual({ name: engineLimitLine("c11Fixture"), ok: false });
   if (variant === "roomuncertain") { expect(errors[1].memoryNote).toBe("resend"); expect(errors[1].tool.name).toBe(RESEND_LINE); expect(errors[1].from?.botId).toBe(bot.id); const asked = messages.filter(m => m.role === "user"); expect(asked).toHaveLength(1); expect(errors[1].resendOf).toEqual({ messageId: asked[0].id, threadId: room.threadId, botId: bot.id }); }
   else expect(errors[1].tool.name).toContain("The original message was submitted.");
-  expect(JSON.stringify(messages)).not.toContain("could not start this reply");
+  expect(JSON.stringify(messages)).not.toMatch(/could not start this reply|couldn't start this reply/);
   expect(rows().filter(r => r.event === "spawn")).toHaveLength(2);
   expect(rows().filter(r => r.event === "prompt")).toHaveLength(1);
 }, 45000);

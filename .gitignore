@@ -94,3 +94,9 @@ server/testing/.git-ls-files.fixture
 
 # Generated package qualification receipts, like dist-native build receipts.
 /qualification-evidence/
+
+# integrator/test scratch (never tracked)
+__pycache__/
+.sw*.txt
+# W-COMPAT (4): the f6ae52c670 tree compat-v2-oldbuild.test.ts extracts or is given (memv2-I)
+/.memv2-compat-old*/

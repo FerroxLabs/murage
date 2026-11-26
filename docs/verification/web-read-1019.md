@@ -167,11 +167,11 @@ retained. Evidence directories are 0755 and files 0644, including under umask
 
 ```sh
 export IT_JOB=fix-webread-r2
-export IT_W=/work/build/bld-webread/wt
-export IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh
-/work/fuigo-builds/tools/it-remote.sh 'node_modules/.bin/vitest run server/browser-read-route-inventory.test.ts src/components/EngineLimitRow.dom.test.ts scripts/web-read-replay/replay.test.mjs'
-/work/fuigo-builds/tools/it-remote.sh 'WEBREAD_REVISION=<candidate-sha> node --experimental-strip-types scripts/web-read-replay/run.mjs --fake --out NEW_EVIDENCE_DIRECTORY'
-/work/fuigo-builds/tools/it-remote.sh 'node scripts/web-read-replay/mutants.mjs NEW_MUTANT_DIRECTORY'
+export IT_W=/root/fuigo-builds/swarm-b/bld-webread/wt
+export IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh
+/root/fuigo-builds/tools/it-remote.sh 'node_modules/.bin/vitest run server/browser-read-route-inventory.test.ts src/components/EngineLimitRow.dom.test.ts scripts/web-read-replay/replay.test.mjs'
+/root/fuigo-builds/tools/it-remote.sh 'WEBREAD_REVISION=<candidate-sha> node --experimental-strip-types scripts/web-read-replay/run.mjs --fake --out NEW_EVIDENCE_DIRECTORY'
+/root/fuigo-builds/tools/it-remote.sh 'node scripts/web-read-replay/mutants.mjs NEW_MUTANT_DIRECTORY'
 ```
 
 Evidence is under `.webread-evidence/r2/`. Baseline source snapshots contain
