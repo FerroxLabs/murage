@@ -12,7 +12,6 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { LibraryArt } from "./LibraryArt";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
-import { track } from "@/lib/analytics";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
 import type { Routine } from "@/lib/routines";
 import { api, useStore, type Bot, type Group, type InstanceInfo } from "@/state/store";
@@ -197,7 +196,6 @@ export function NewFromTemplateDialog({ layerLifecycle, kind, onClose, onBlank, 
       for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });
       const first = response.bots[0];
       if (first) dispatch({ type: "select", id: first.id });
-      track("team_imported", { members: response.bots.length, source: "library", mode: "add" });
       onCreated({
         name: entry.name,
         members: response.bots.length,
@@ -245,7 +243,7 @@ export function NewFromTemplateDialog({ layerLifecycle, kind, onClose, onBlank, 
         <BoxBody className="px-5 py-4">
           {screen.kind === "hermes" ? (
             <Suspense fallback={<p className="text-[12px] text-ink-secondary">Loading…</p>}>
-              <HermesImport onBack={() => setScreen({ kind: "choose" })} onDone={() => { track("bot_created"); onClose(); }} />
+              <HermesImport onBack={() => setScreen({ kind: "choose" })} onDone={onClose} />
             </Suspense>
           ) : screen.kind === "preview" ? (
             <div>

@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Phone } from "lucide-react";
 import { Card, Switch } from "./SettingsPrimitives";
 import { api, useStore } from "@/state/store";
-import { localeCode, languageCode } from "@/lib/i18n";
+import { localeCode, languageCode, t } from "@/lib/i18n";
 import { localeChoices } from "@/locales";
 import { prefillBotChat } from "@/lib/compose-link";
 import { chiefFor } from "@/lib/help-ask-chief";
@@ -34,29 +34,49 @@ const input = "min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-i
 const note = "text-[12px] leading-relaxed text-ink-secondary";
 const link = "text-[13px] text-accent underline-offset-2 hover:underline";
 
-type Load = { kind: "loading" } | { kind: "ready"; status: PhoneStatus | null } | { kind: "failed" };
+type Load = { kind: "loading" } | { kind: "ready"; status: PhoneStatus | null } | { kind: "failed"; error?: ReturnType<typeof phoneErrorKey> };
+
+/** The full card needs a connected voice account. Before that, both Settings surfaces offer a compact connection entry. */
+export function phoneCallsCardShown(load: Load, bridge: ReturnType<typeof phoneKeyBridge>): boolean {
+  return load.kind === "ready" && load.status?.keyPresent === true && phoneCallsAvailable(load.status, bridge);
+}
 
 export default function PhoneCallsSettings() {
   const copy = usePhoneCopy();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const refresh = useCallback(async () => {
-    try { setLoad({ kind: "ready", status: await readPhoneStatus(api) }); } catch { setLoad({ kind: "failed" }); }
+    try { setLoad({ kind: "ready", status: await readPhoneStatus(api) }); } catch (error) { setLoad({ kind: "failed", error: phoneErrorKey(error) }); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const bridge = phoneKeyBridge();
-  const status = load.kind === "ready" ? load.status : null;
+  if (!bridge) return null;
+  if (load.kind === "loading") return <p role="status" className={note}>{copy("phoneCalls.checking")}</p>;
+  if (load.kind === "failed") return (
+    <div className="flex flex-wrap items-center gap-2">
+      <p role="alert" className="text-[13px] text-danger">{copy(load.error ?? "phoneCalls.error.generic")}</p>
+      <button type="button" className={secondary} onClick={() => { setLoad({ kind: "loading" }); void refresh(); }}>{t("providerError.retry")}</button>
+    </div>
+  );
+  const { status } = load;
+  if (!status) return null;
+  if (!phoneCallsCardShown(load, bridge)) {
+    if (!phoneCallsAvailable(status, bridge)) return null;
+    return (
+      <details className="px-1 text-[13px] text-ink">
+        <summary className="min-h-9 cursor-pointer py-2 font-medium">{copy("phoneCalls.title")}</summary>
+        <p className={note}>{copy("phoneCalls.step.key")}</p>
+        <a className={link} href={VAPI_HOME} target="_blank" rel="noreferrer">{copy("phoneCalls.link.vapi")}</a>
+        <KeyBox copy={copy} keyPresent={false} onChanged={refresh} />
+      </details>
+    );
+  }
   return (
     <Card>
       <div data-setting-control="phone-calls-heading" tabIndex={-1} className="flex items-center gap-2 text-[15px] font-medium text-ink outline-none"><Phone className="h-4 w-4" aria-hidden />{copy("phoneCalls.title")}</div>
       <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{copy("phoneCalls.intro")}</p>
       <div className="mt-4 space-y-4">
-        {load.kind === "loading" && <p role="status" className={note}>{copy("phoneCalls.checking")}</p>}
-        {load.kind === "failed" && <p role="alert" className="text-[13px] text-danger">{copy("phoneCalls.error.generic")}</p>}
-        {load.kind === "ready" && !phoneCallsAvailable(status, bridge) && (
-          <p data-testid="phone-calls-desktop-only" className="text-[13px] text-ink">{copy("phoneCalls.desktopOnly")}</p>
-        )}
-        {load.kind === "ready" && status && bridge && phoneCallsAvailable(status, bridge) && <Setup copy={copy} status={status} onChanged={refresh} />}
+        <Setup copy={copy} status={status} onChanged={refresh} />
       </div>
     </Card>
   );

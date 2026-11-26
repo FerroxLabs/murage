@@ -379,6 +379,74 @@ describe("1.0.8 ACP approval delivery", () => {
     expect(await answer(requestId)).toBe("unavailable");
   });
 
+  // K2 (MC63, arev-hermes-int2): a duplicate-option request on an RPC id that already holds a card must retire that card,
+  // never leave it answerable (an answer would send "selected" for an id already answered "cancelled").
+  it("same id with duplicate option ids retires the pending card and cancels the RPC once", async () => {
+    const requestId = await open();
+    const dup = JSON.parse(peer.request);
+    const first = dup.params.options[0];
+    dup.params.options = [first, { ...first, kind: "allow_always" }];
+    peer.child!.stdout.emit("data", Buffer.from(JSON.stringify(dup) + "\n"));
+    // Either ending is awaited, so a K2 refusal that skipped the conflict handling fails at this assertion, not at a timeout.
+    const ending = await recorder.until(e => e.type === "turn.completed" || (e.type === "runtime.error" && e.message.includes("share an ID")));
+    expect(ending).toMatchObject({ type: "turn.completed", ok: false, stopReason: "approval_request_conflict" });
+    expect(recorder.events.filter(e => e.type === "request.opened")).toHaveLength(1);
+    expect(peer.responses).toEqual([{ jsonrpc: "2.0", id: dup.id, result: { outcome: { outcome: "cancelled" } } }]);
+    expect(await answer(requestId)).toBe("unavailable");
+    expect(peer.responses).toHaveLength(1);
+  });
+
+  // K2 (ASTRA/OPUS 6fff6fda75 H1): an answered RPC id may be reused for another call (GH-19 above), and that reuse is a new
+  // request. With duplicate option ids it gets no card and no option: one cancelled reply and one visible error, and the turn goes on.
+  it("K2: an answered RPC id reused for another call with duplicate option ids is cancelled with an error and no card", async () => {
+    await repeatedPeer("1", true);
+    const first = await open();
+    const write = vi.spyOn(peer.child!.stdin, "write").mockImplementation(((_chunk: unknown, done?: (error?: Error | null) => void) => {
+      queueMicrotask(() => done?.(null));
+      return true;
+    }) as Writable["write"]);
+    const answersSent = () => write.mock.calls.map(([chunk]) => JSON.parse(String(chunk))).filter(m => m.result?.outcome).map(m => ({ id: m.id, result: m.result }));
+    expect(await answer(first)).toBe("allowed-once");
+    const nextCall = JSON.parse(peer.request);
+    nextCall.params.toolCall.toolCallId = "macro-call-2";
+    const allow = nextCall.params.options.find((o: { kind: string }) => o.kind === "allow_once");
+    nextCall.params.options = [allow, { ...allow, kind: "reject_once" }];
+    peer.child!.stdout.emit("data", Buffer.from(JSON.stringify(nextCall) + "\n"));
+    // Wait on whatever comes first (a second reply, a second card or the refusal row), so every wrong outcome fails at an assertion below.
+    await vi.waitFor(() => {
+      if (answersSent().length < 2 && !recorder.events.some(e => (e.type === "request.opened" && e.requestId !== first) || (e.type === "runtime.error" && e.message.includes("share an ID")))) throw new Error("not handled yet");
+    }, { timeout: 10_000, interval: 20 });
+    expect(recorder.events.filter(e => e.type === "request.opened")).toHaveLength(1);
+    expect(answersSent()).toEqual([
+      { id: nextCall.id, result: { outcome: { outcome: "selected", optionId: allow.optionId } } },
+      { id: nextCall.id, result: { outcome: { outcome: "cancelled" } } },
+    ]);
+    expect(recorder.events.filter(e => e.type === "runtime.error" && e.message.includes("share an ID"))).toHaveLength(1);
+    peer.child!.stdout.emit("data", Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: peer.promptId, result: { stopReason: "end_turn" } }) + "\n"));
+    expect(await recorder.until(e => e.type === "turn.completed")).toMatchObject({ ok: true });
+  });
+
+  // K2 guard: a replay of an answered id for the same call keeps GH-19's visible stop; a cancel to that id would conflict
+  // with the answer already sent.
+  it("K2: a replay of an answered RPC id for the same call with duplicate option ids stops the turn and sends no second reply", async () => {
+    await repeatedPeer("1", true);
+    const first = await open();
+    const write = vi.spyOn(peer.child!.stdin, "write").mockImplementation(((_chunk: unknown, done?: (error?: Error | null) => void) => {
+      queueMicrotask(() => done?.(null));
+      return true;
+    }) as Writable["write"]);
+    const answersSent = () => write.mock.calls.map(([chunk]) => JSON.parse(String(chunk))).filter(m => m.result?.outcome).map(m => m.id);
+    expect(await answer(first)).toBe("allowed-once");
+    const replay = JSON.parse(peer.request);
+    const allow = replay.params.options.find((o: { kind: string }) => o.kind === "allow_once");
+    replay.params.options = [allow, { ...allow, kind: "reject_once" }];
+    peer.child!.stdout.emit("data", Buffer.from(JSON.stringify(replay) + "\n"));
+    const ending = await recorder.until(e => e.type === "turn.completed" || (e.type === "runtime.error" && e.message.includes("share an ID")));
+    expect(ending).toMatchObject({ type: "turn.completed", ok: false, stopReason: "approval_request_conflict" });
+    expect(answersSent()).toEqual([replay.id]);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toHaveLength(1);
+  });
+
   it("same id with conflicting params during an accepted Allow never sends cancellation", async () => {
     const requestId = await open();
     peer.mode = "hold"; peer.failures = 1;

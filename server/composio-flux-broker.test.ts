@@ -18,6 +18,7 @@ import {
   applyManagedBrokerMessage,
   BROKER_UNAVAILABLE,
   connectedServices,
+  connectedServicesSettled,
   connectionBroker,
   configured,
   connectionMode,
@@ -216,6 +217,19 @@ describe("what a broker request carries", () => {
       if (previousKey === undefined) delete process.env.FLUX_API_KEY;
       else process.env.FLUX_API_KEY = previousKey;
     }
+  });
+
+  it("reads a levels save's inventory as complete only when the broker says its account sweep finished", async () => {
+    await readyFlux({ claim: { state: "claimed" } });
+    const services = { gmail: { connected: true, accounts: [{ id: "ca_mail_a", status: "ACTIVE" }] } };
+    dataAnswer = { status: 200, body: { configured: true, complete: true, services } };
+    expect(await connectedServicesSettled(cfg())).toMatchObject({ settled: true, complete: true });
+    // A failed sweep: the broker answers 200 but omits accounts. It must never read as the whole list.
+    dataAnswer = { status: 200, body: { configured: true, complete: false, services: { gmail: { connected: true, accounts: [] } } } };
+    expect(await connectedServicesSettled(cfg())).toMatchObject({ settled: true, complete: false });
+    // An older broker sends no flag at all: fail closed.
+    dataAnswer = { status: 200, body: { configured: true, services } };
+    expect(await connectedServicesSettled(cfg())).toMatchObject({ settled: true, complete: false });
   });
 
   it("names both ways out when nothing can serve connected apps", async () => {

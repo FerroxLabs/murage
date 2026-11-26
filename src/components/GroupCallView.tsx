@@ -1,3 +1,4 @@
+import { isSkillSwitchAction } from "../../shared/skill-request";
 // Conference call mode — one microphone, several room members.
 //
 // Capture stays half-duplex for the same reason as one-to-one calls: the
@@ -10,7 +11,7 @@ import { Loader2, PhoneOff, X } from "lucide-react";
 
 import { currentCall, deferCallCleanup, endCall } from "@/lib/call";
 import { publishCallBarState } from "@/lib/call-bar";
-import { freshAuthSpoken, type FreshAuthCode } from "@/lib/fresh-auth";
+import { freshAuthCodeOf, freshAuthSpoken, type DeliveryCode, type FreshAuthCode } from "@/lib/fresh-auth";
 import { CallBarContent } from "./CallBarContent";
 import { useCallSlot } from "@/lib/call-slot";
 import { CALL_ENDPOINT_LONG_MS, CALL_ENDPOINT_MS, groupBusyStep } from "@/lib/call-turns";
@@ -743,7 +744,8 @@ export function GroupCall({
             message: allow ? undefined : "Denied by the user, on a group call.",
             card: openApproval.card,
             botName: openApproval.member?.name,
-            onError: (error: string, code?: FreshAuthCode) => {
+            onError: (error: string, answerCode?: FreshAuthCode | DeliveryCode) => {
+              const code = freshAuthCodeOf(answerCode);
               const pending = askedApproval.current;
               if (
                 !alive.current ||
@@ -896,7 +898,9 @@ export function GroupCall({
       };
       spokenIds.current.add(approval.message.id);
       const name = member?.name ?? approval.message.from?.name ?? "A channel member";
-      const skillPrompt = approval.message.card?.skillRequest?.action === "update"
+      const skillPrompt = isSkillSwitchAction(approval.message.card?.skillRequest?.action)
+        ? `${approval.message.card?.title} Open this chat to review the complete skill. You can say no to deny it.`
+        : approval.message.card?.skillRequest?.action === "update"
         ? `${name} wants to update a learned skill. Open the channel chat to review the complete skill before replacing the current version. You can say no to deny it.`
         : `${name} wants to enable a new learned skill. Open the channel chat to review the complete skill before enabling it. You can say no to deny it.`;
       // Rule 83c: with more than one waiting the count leads and every request is offered.

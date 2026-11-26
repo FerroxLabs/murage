@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const PRELOAD = fileURLToPath(new URL("./attention-window-preload.cjs", import.meta.url));
 const clamp = (n, min, max) => Math.max(min, Math.min(n, max));
+const NEEDS_YOU = "needs-you";
 const finite = n => typeof n === "number" && Number.isFinite(n);
 
 /** Mac-only, event-driven panel. Items are MAIN-only attention host records plus
@@ -24,12 +25,13 @@ export function createPillWindow({ BrowserWindow, screen, attentionIpc, loadUrlF
   presence = () => null, getSafeAreaTop = () => 0, powerMonitor,
   platform = process.platform, replyTyping = false }) {
   const rows = new Map(), listeners = new Set(), subscriptions = [];
-  let win = null, loaded = null, visible = false, expanded = false, disposed = false;
+  let win = null, loaded = null, visible = false, expanded = false, disposed = false, suspended = false;
   let sequence = 0, destroyTimer = null, layoutTimer = null, hideGeneration = 0;
   const ordered = () => [...rows.values()].sort((a, b) => a.at - b.at || a.order - b.order);
   const state = () => !rows.size ? "hidden" : [...rows.values()].every(row => row.item.kind === "receipt")
     ? "finished" : expanded ? rows.size > 1 ? "stacked" : "expanded" : "collapsed";
   const reason = () => {
+    if (suspended) return "suspend";
     try {
       const p = presence();
       for (const key of ["locked", "sharing", "fullscreen"]) if (p?.[key] === true) return key;
@@ -38,9 +40,9 @@ export function createPillWindow({ BrowserWindow, screen, attentionIpc, loadUrlF
   };
   // discard:true = presence/privacy withdrawal or window close (drop card identity); false = a stack
   // change or retirement push (the host keeps card ids so a Reply draft survives the refresh).
-  const notify = (current = win, send = true, discard = false) => {
-    if (!current) return;
-    for (const listener of listeners) listener(current.webContents.id, { discard });
+  const notify = (current = win, send = true, discard = false, windowId = current?.webContents?.id) => {
+    if (windowId === undefined) return;
+    for (const listener of listeners) listener(windowId, { discard });
     if (send && !current.isDestroyed()) current.webContents.send("attention-window:changed");
   };
   const cancelDestroy = () => {
@@ -82,7 +84,9 @@ export function createPillWindow({ BrowserWindow, screen, attentionIpc, loadUrlF
     return { x: Math.round(clamp(center - width / 2, area.x, area.x + area.width - width)), y: Math.round(y), width, height };
   };
   const position = () => {
-    if (win && !win.isDestroyed()) win.setBounds(geometryFor(screen.getDisplayNearestPoint(screen.getCursorScreenPoint())));
+    if (!win || win.isDestroyed()) return;
+    const display = screen.getAllDisplays().find(display => display.internal === true) ?? screen.getPrimaryDisplay();
+    win.setBounds(geometryFor(display));
   };
   const scheduleLayout = () => {
     if (disposed || !win || !rows.size || layoutTimer !== null) return;
@@ -99,8 +103,9 @@ export function createPillWindow({ BrowserWindow, screen, attentionIpc, loadUrlF
     source.on(event, callback); subscriptions.push(() => source.removeListener(event, callback));
   };
   for (const event of ["display-metrics-changed", "display-added", "display-removed"]) listen(screen, event, scheduleLayout);
-  listen(powerMonitor, "suspend", () => { hideAll(); });
-  listen(powerMonitor, "resume", scheduleLayout);
+  listen(powerMonitor, "lock-screen", hideAll);
+  listen(powerMonitor, "suspend", () => { suspended = true; hideAll(); });
+  listen(powerMonitor, "resume", () => { suspended = false; scheduleLayout(); });
   // Native display sleep/wake adapters may emit these on screen as well.
   for (const event of ["display-sleep", "display-wake"]) listen(screen, event, scheduleLayout);
   const settle = itemId => {
@@ -119,12 +124,13 @@ export function createPillWindow({ BrowserWindow, screen, attentionIpc, loadUrlF
     if (!isCurrent()) return { shown: false, reason: "withdrawn" };
     const blocked = reason();
     if (blocked) { hideAll(); return { shown: false, reason: blocked }; }
-    if (!item || typeof item.itemId !== "string" || !item.itemId || (item.kind !== "receipt" && (!item.threadId || !item.messageId)))
+    const summary = item?.kind === "summary" && item.itemId === NEEDS_YOU;
+    if (!item || typeof item.itemId !== "string" || !item.itemId || (!summary && item.kind !== "receipt" && (!item.threadId || !item.messageId)))
       return { shown: false, reason: "item" };
     if (!rows.has(item.itemId) && rows.size >= 100) return { shown: false, reason: "capacity" };
     const previous = rows.get(item.itemId);
     if (previous?.timer !== null && previous?.timer !== undefined) clearTimer(previous.timer);
-    const kind = item.kind === "approval" || item.kind === "receipt" ? item.kind : "question";
+    const kind = summary || item.kind === "approval" || item.kind === "receipt" ? item.kind : "question";
     const previews = item.previews === true;
     const row = { item: { ...item, kind, display: previews ? item.display : null, level: previews ? item.level : "",
       receiptText: previews && typeof item.receiptText === "string" ? item.receiptText : "",
@@ -140,14 +146,15 @@ export function createPillWindow({ BrowserWindow, screen, attentionIpc, loadUrlF
           focusable: false, show: false, skipTaskbar: true, resizable: false,
           webPreferences: { preload: PRELOAD, contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false } });
         win = created; current = created;
+        const windowId = created.webContents.id;
         created.on("closed", () => {
-          notify(created, false, true); attentionIpc.unregister(created.webContents.id);
+          notify(created, false, true, windowId); attentionIpc.unregister(windowId);
           if (win === created) { clearRows(); cancelDestroy(); cancelLayout(); win = null; loaded = null; visible = false; }
         });
         created.setContentProtection(true);
         created.setAlwaysOnTop(true, "status");
         created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
-        attentionIpc.register(created.webContents.id, "pill");
+        attentionIpc.register(windowId, "pill");
         created.on("blur", () => { if (!created.isDestroyed()) created.setFocusable(false); });
         for (const event of ["will-navigate", "will-frame-navigate", "will-attach-webview"])
           created.webContents.on(event, event => event.preventDefault());
@@ -172,14 +179,21 @@ export function createPillWindow({ BrowserWindow, screen, attentionIpc, loadUrlF
   };
   return {
     show, settle, receipt: (item, options) => show({ ...item, kind: "receipt" }, options), hideAll,
+    hideIfBlocked() { if (rows.size && reason()) hideAll(); },
+    syncNeedsYou(snapshot, options) {
+      if (snapshot.count <= 0) { settle(NEEDS_YOU); return; }
+      return show({ ...snapshot, kind: "summary", itemId: NEEDS_YOU }, options);
+    },
     destroy() { disposed = true; clearRows(); dropWindow(); for (const stop of subscriptions) stop(); listeners.clear(); },
     count: () => rows.size, geometryFor,
     readItems() {
       if (rows.size && reason()) hideAll();
       const entries = ordered();
-      return { previews: true, items: entries.filter(row => row.item.kind !== "receipt").map(row => row.item),
+      const summary = rows.get(NEEDS_YOU)?.item;
+      return { previews: summary?.previews ?? true,
+        items: summary?.items ?? entries.filter(row => row.item.kind !== "receipt").map(row => row.item),
         receipts: entries.filter(row => row.item.kind === "receipt").map(row => ({ text: row.item.receiptText })),
-        pill: { state: state(), count: rows.size }, running: [], chief: null };
+        pill: { state: state(), count: summary?.count ?? rows.size, fromNeedsYou: Boolean(summary) }, running: [], chief: null };
     },
     onChange(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     pillExpand(windowId, value) {

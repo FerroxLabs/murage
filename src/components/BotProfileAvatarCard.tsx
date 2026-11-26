@@ -1,3 +1,4 @@
+import { imeComposing } from "@/lib/composer-enter";
 import { useRef, useState, type ReactNode } from "react";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { Check, ImagePlus, Loader2, Sparkles, Trash2 } from "lucide-react";
@@ -64,6 +65,7 @@ export function BotProfileAvatarCard({
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const crop = bot.avatarCrop ?? "mascot";
+  const showsMascot = crop === "mascot" || !bot.avatarUrl;
   const cropRef = useRef(crop);
   cropRef.current = crop;
   const [lastAttemptFailed, setLastAttemptFailed] = useState(false);
@@ -272,9 +274,7 @@ export function BotProfileAvatarCard({
           </div>
         )}
 
-        {/* A shaped tile with no image still shows the mascot, so its
-            expression and colour stay choosable until an image replaces it. */}
-        {(crop === "mascot" || !bot.avatarUrl) && (
+        {showsMascot && (
           <>
             <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
               Expression
@@ -297,28 +297,32 @@ export function BotProfileAvatarCard({
                 </button>
               ))}
             </div>
+          </>
+        )}
 
-            <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-              Color
-            </div>
-            <div className="flex flex-wrap gap-2.5">
-              {EMBER_COLOR_NAMES.map((color) => (
-                <button
-                  key={color}
-                  type="button"
-                  aria-pressed={bot.color === color}
-                  onClick={() => onPatch({ color })}
-                  className={cn(
-                    "size-10 rounded-full border-2 border-transparent transition-transform hover:scale-110",
-                    bot.color === color && "ring-2 ring-accent-border ring-offset-2 ring-offset-card",
-                  )}
-                  style={{ backgroundColor: EMBER_COLORS[color] }}
-                  title={color}
-                  aria-label={`Use ${color} mascot color`}
-                />
-              ))}
-            </div>
+        <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
+          Color
+        </div>
+        <div className="flex flex-wrap gap-2.5">
+          {EMBER_COLOR_NAMES.map((color) => (
+            <button
+              key={color}
+              type="button"
+              aria-pressed={bot.color === color}
+              onClick={() => onPatch({ color })}
+              className={cn(
+                "size-10 rounded-full border-2 border-transparent transition-transform hover:scale-110",
+                bot.color === color && "ring-2 ring-accent-border ring-offset-2 ring-offset-card",
+              )}
+              style={{ backgroundColor: EMBER_COLORS[color] }}
+              title={color}
+              aria-label={`Use ${color} mascot color`}
+            />
+          ))}
+        </div>
 
+        {showsMascot && (
+          <>
             <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
               Body
             </div>
@@ -449,7 +453,7 @@ export function AvatarGenerateSection({
         type="password"
         value={imageKey}
         onChange={(event) => onImageKey(event.target.value)}
-        onKeyDown={(event) => event.key === "Enter" && onSaveKey()}
+        onKeyDown={(event) => event.key === "Enter" && !imeComposing(event.nativeEvent) && onSaveKey()}
         placeholder={placeholder}
         aria-label={label}
         autoComplete="off"

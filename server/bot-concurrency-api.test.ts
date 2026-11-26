@@ -35,6 +35,7 @@ for await(const line of rl){const rpc=JSON.parse(line);if(rpc.id===undefined)con
 if(rpc.method==='initialize')result={protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'isolated-fake-host',version:'1'}};
 else if(rpc.method==='tools/list')result={tools:[{name:'fixture_ping',description:'No computer action',inputSchema:{type:'object',properties:{}}}]};
 else if(rpc.method==='tools/call'&&rpc.params.name==='fixture_ping')result={content:[{type:'text',text:'isolated-host-pong'}]};
+else if(rpc.method==='tools/call'&&rpc.params.name==='fixture_whoami')result={content:[{type:'text',text:'driver-child:'+process.pid}]};
 else result={isError:true,content:[{type:'text',text:'unsupported fixture request'}]};
 process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:rpc.id,result})+String.fromCharCode(10));}`;
 
@@ -108,13 +109,13 @@ beforeAll(async () => {
       const stat=fs.statSync(driver,{bigint:true});
       const fileIdentity=Object.fromEntries(['dev','ino','uid','gid','mode','size','mtimeNs','ctimeNs'].map(key=>[key,String(stat[key])]));
       fs.writeFileSync(path.join(dataDir,'cua-connection.json'),JSON.stringify({schemaVersion:1,mode:'linux-x11-supervised',platform:'linux',session:'x11',enabled:true,status:'ready',ownerPid:process.pid,generation:randomUUID(),
-        driver:{path:driver,version:'0.19.3',source:'path',manifestSchema:'1',fileIdentity},
-        daemon:{socketPath,pid:process.pid,contractVersion:'0.6.0',toolsListSchemaVersion:'1',capabilityVersion:'1',mcpProtocolVersion:'2025-06-18'},
+        driver:{path:driver,version:'0.55.0',source:'path',manifestSchema:'1',fileIdentity},
+        daemon:{socketPath,pid:process.pid,contractVersion:'0.9.0',toolsListSchemaVersion:'1',capabilityVersion:'1',mcpProtocolVersion:'2025-06-18'},
         mcp:{command:driver,args:['mcp','--embedded','--socket',socketPath],env:{CUA_DRIVER_EMBEDDED:'1',CUA_DRIVER_HOST_BUNDLE_ID:'com.murage.app',CUA_DRIVER_RS_UPDATE_CHECK:'false',CUA_DRIVER_RS_TELEMETRY_ENABLED:'false'}},
-        toolNames:['click','get_window_state','list_apps','type_text','fixture_ping'],doctorWarnings:[]}),{mode:0o600});
+        toolNames:['click','get_window_state','list_apps','type_text','fixture_ping','fixture_whoami'],doctorWarnings:[]}),{mode:0o600});
     }else{
       const driver=path.join(dataDir,'fake-host-driver.mjs');fs.writeFileSync(driver,'#!'+process.execPath+String.fromCharCode(10)+hostSource);fs.chmodSync(driver,0o755);
-      fs.writeFileSync(path.join(dataDir,'cua-connection.json'),JSON.stringify({mode:'embedded',status:'ready',socketPath:path.join(dataDir,'cua.sock'),mcpCommand:driver,mcpArgs:['mcp'],mcpEnv:{FIXTURE_HOST_SECRET:'synthetic-host-only'}}));
+      fs.writeFileSync(path.join(dataDir,'cua-connection.json'),JSON.stringify({mode:'embedded',status:'ready',socketPath:path.join(dataDir,'cua.sock'),mcpCommand:driver,mcpArgs:['mcp'],mcpEnv:{FIXTURE_HOST_SECRET:'synthetic-host-only',CUA_DRIVER_RS_TELEMETRY_ENABLED:'0',CUA_DRIVER_RS_UPDATE_CHECK:'false'}}));
     }
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     cfg.instances.second={...cfg.instances.verification,displayName:'Second isolated engine',environment:{FAKE_CLAUDE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'second-dump.json')}};
@@ -203,6 +204,18 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
         await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "isolated-test", version: "1" } });
         expect(await client.request("tools/call", { name: "fixture_ping", arguments: {} })).toMatchObject({ content: [{ type: "text", text: "isolated-host-pong" }] });
       }
+      // The driver keeps "this window was read" per MCP connection (cua-driver
+      // 0.55.0), so each tools/call of one turn must reach the same driver
+      // child, and two bots must never share one.
+      // One computer action at a time across bots, so the calls run in turn.
+      const children: Array<Array<string | undefined>> = [];
+      for (const client of clients) {
+        const seen: Array<string | undefined> = [];
+        for (let call = 0; call < 2; call++) seen.push(JSON.stringify(await client.request("tools/call", { name: "fixture_whoami", arguments: {} })).match(/driver-child:\d+/)?.[0]);
+        children.push(seen);
+      }
+      for (const seen of children) { expect(seen[0]).toMatch(/^driver-child:\d+$/); expect(seen[1]).toBe(seen[0]); }
+      expect(children[0]![0]).not.toBe(children[1]![0]);
     }
     expect((await api("POST", `/api/bots/${bots[0].id}/interrupt`, { threadId: bots[0].threadId })).status).toBe(200);
     expect((await task(bots[0])).busy).toBe(false);
@@ -220,3 +233,52 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
     for (const bot of bots) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId });
   }
 }, 30000);
+
+// cua-upgrade-design BROKER-DESIGN.md case 3: an explicit Local turn holds the
+// bot's screen claim for the whole turn (server/turn-resources.ts
+// computerResourceKeys), so a second thread of the same bot waits for the
+// computer while the first is mounted. This pins that admission rule only; Auto
+// can still mount two threads (readiness is read again at mount), so the broker
+// retires per thread, which host-computer-broker.test.ts and the X11 smoke cover.
+it.skipIf(admission?.local !== "host")("a second Local thread of one bot waits for This computer while the first holds it, and gets a new driver connection after the first stops", async () => {
+  const created = await api("POST", "/api/bots", { name: "one bot two threads", modelSelection: { instanceId: "verification", model } });
+  expect(created.status).toBe(201);
+  const bot = created.body.bot;
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "local", browser: false, composio: false })).status).toBe(200);
+  const sibling = (await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Second thread" })).body.task;
+  expect((await api("PATCH", `/api/bots/${bot.id}/tasks/${sibling.threadId}`, { modelSelection: { instanceId: "second", model }, autoApprove: false })).status).toBe(200);
+  const threads = [bot.threadId as string, sibling.threadId as string];
+  const clients: Array<EngineClient & { terminal(): unknown }> = [];
+  const mount = async (i: number) => {
+    const mounted = dump(i === 1).mcpConfig.mcpServers.computer;
+    expect(mounted.env.MURAGE_BOT_ID).toBe(bot.id);
+    expect(mounted.env.MURAGE_THREAD_ID).toBe(threads[i]);
+    const client = await boundHostClient(mounted); clients.push(client);
+    await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "isolated-test", version: "1" } });
+    return client;
+  };
+  const whoami = async (client: EngineClient) => JSON.stringify(await client.request("tools/call", { name: "fixture_whoami", arguments: {} })).match(/driver-child:\d+/)?.[0];
+  const sentTo = (i: number, label: string) => (JSON.stringify(dump(i === 1)?.prompt) ?? "").includes(label);
+  try {
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: threads[0], text: "__fixture_hold_authority__ one-bot-thread-0" })).status).toBe(202);
+    await expect.poll(() => sentTo(0, "one-bot-thread-0"), { timeout: 20000 }).toBe(true);
+    const first = await mount(0);
+    const firstChild = await whoami(first);
+    expect(firstChild).toMatch(/^driver-child:\d+$/);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: threads[1], text: "__fixture_hold_authority__ one-bot-thread-1" })).status).toBe(202);
+    await expect.poll(async () => (await state(bot.id)).tasks.find((item: any) => item.threadId === threads[1])?.waitingFor?.resource, { timeout: 20000 }).toBe("computer");
+    // still waiting: its engine never started, and the first thread's read stays on its connection
+    expect(sentTo(1, "one-bot-thread-1")).toBe(false);
+    expect(await whoami(first)).toBe(firstChild);
+    expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: threads[0] })).status).toBe(200);
+    await expect.poll(() => sentTo(1, "one-bot-thread-1"), { timeout: 20000 }).toBe(true);
+    const second = await mount(1);
+    const secondChild = await whoami(second);
+    expect(secondChild).toMatch(/^driver-child:\d+$/);
+    expect(secondChild).not.toBe(firstChild);
+    expect(await whoami(second)).toBe(secondChild);
+  } finally {
+    for (const client of clients) await client.close();
+    for (const thread of threads) await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: thread });
+  }
+}, 90000);

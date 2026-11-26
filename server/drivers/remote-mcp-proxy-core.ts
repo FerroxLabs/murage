@@ -155,6 +155,12 @@ export function failureFrame(method: string, id: unknown, text: string): JsonRpc
   return { jsonrpc: "2.0", id, error: { code: -32000, message: text } };
 }
 
+/** The relay's own failure answer (server/mcp-relay.ts relayFailure): a bare code word and its fixed
+ * sentence. Nothing an upstream said is in it, so it can be handed to one call as that call's error. */
+export function isRelayDecision(body: unknown): boolean {
+  return isRecord(body) && typeof body.code === "string" && /^[a-z][a-z-]{1,40}$/.test(body.code) && typeof body.error === "string" && body.error.trim() !== "";
+}
+
 /** The sentence from a relay failure body, or a fixed fallback. */
 export function failureText(body: unknown, fallback: string): string {
   if (isRecord(body) && typeof body.error === "string" && body.error.trim()) return body.error.slice(0, 400);

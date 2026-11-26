@@ -831,7 +831,8 @@ describe("16 D: late cap-free fan-out inherits at write (2.11, T15)", () => {
     // the 2.11 list (grep at the base): a new site is caught above; a removed one shows here
     const files = [...new Set(sites.map(x => x.split(":")[0]))].sort();
     expect(files).toEqual(["authority.ts", "bring-in.ts", "consolidate.ts", "identity.ts", "import.ts", "jobs.ts", "pip-episodes.ts", "pip-lived.ts", "pip-stance.ts", "reveal-capture.ts", "review.ts", "routes.ts", "settings.ts"]);
-    expect(sites.length).toBe(26);
+    // 27: cause10's kept-version re-insert in import.ts (delete + insert of a kept chunk's evidence row), followed by inheritEdge like the rest
+    expect(sites.length).toBe(27);
     expect(/writeCaptureLineage\([^)]*\);\s*\n?\s*\/\/[^\n]*\n\s*inheritEdge\(/.test(readFileSync(join(dir, "capture.ts"), "utf8"))).toBe(true);
   });
   // 1.0.3 drain reopen (T20): a memory-idle consolidation's late edge under a revoke that has finished marked the child by reopening the

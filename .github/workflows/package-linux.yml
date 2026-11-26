@@ -77,7 +77,7 @@ jobs:
       - name: Install package validation and native smoke tools
         run: >-
           sudo apt-get update && sudo apt-get install -y
-          at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
+          at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb xfwm4
           build-essential binutils libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
           pkg-config libseccomp-dev xz-utils python3 python3-pip git linux-libc-dev
       - run: pnpm install --frozen-lockfile
@@ -93,7 +93,9 @@ jobs:
       - name: Stage the pinned CUA runtime
         run: pnpm build:cua:linux
       - name: Prove overlay-free X11 input routing
-        run: dbus-run-session -- xvfb-run -a pnpm smoke:cua-x11-input
+        # cua-driver 0.55.0 sends foreground input only after a window manager
+        # has made the target window active (_NET_ACTIVE_WINDOW).
+        run: dbus-run-session -- xvfb-run -a sh -c 'xfwm4 --compositor=off & sleep 2; exec pnpm smoke:cua-x11-input'
       - name: Build and verify pinned GEPA runtime
         run: |
           export SOURCE_SHA="$(git rev-parse HEAD)"

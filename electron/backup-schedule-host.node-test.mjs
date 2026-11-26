@@ -62,6 +62,24 @@ test("destination permission failure keeps its named code through the host and c
     assert.equal(captureFailureSentence(failure),"The last backup stopped while copying your workspace. Murage can't write a file the backup needs. Choose a backup folder you can write to, or fix the permissions on that folder and on the folder that holds Murage's data.");
   }finally{f.cleanup();}
 });
+test("HB: a schedule change carries its change id into the coordinator's own save, the host serves the log after a cursor, and a retry after the process died is answered once",async()=>{
+  const f=fixture();try{const status=await f.controller.selectReferences();const schedule={...choices,...Object.fromEntries(["installationRef","destinationRef","recoveryRef"].map(key=>[key,status.refs[key]])),allowIdleRestart:true};
+    assert.deepEqual(f.controller.changeLog(0),[]);
+    await f.controller.configure(0,schedule,"change-one");f.controller.stopPolling();
+    for(let attempt=0;attempt<100&&f.controller.isPreparing();attempt++)await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(f.controller.changeLog(0).map(r=>[r.changeId,r.revision]),[["change-one",1]]);
+    assert.deepEqual(f.controller.changeLog(1),[]);
+    // the host process died after the save: a new host over the same state answers the retry with its stored receipt, not BACKUP_SCHEDULE_CHANGED
+    const reborn=f.create();await reborn.configure(0,schedule,"change-one");reborn.stopPolling();
+    assert.equal(f.coordinator().status().revision,1);assert.equal(f.coordinator().changeReceipts().length,1);
+    await assert.rejects(reborn.configure(0,schedule,"change-two"),/BACKUP_SCHEDULE_CHANGED/);reborn.stopPolling();
+    // a replay changes nothing on the host either: no consent record is rewritten from the retried input, no first-run row is recorded
+    let protectedWrites=0;const watched=f.create({writeProtected:async()=>{protectedWrites++;}});
+    await watched.configure(0,{...schedule,allowClosedApp:true},"change-one");watched.stopPolling();
+    assert.equal(protectedWrites,0);assert.equal(f.coordinator().status().revision,1);
+    assert.throws(()=>f.controller.changeLog(-1),/INVALID_BACKUP_REQUEST/);
+  }finally{f.cleanup();}
+});
 test("disabled selection never enables, exposes only labels/refs, and needs explicit consent",async()=>{
   const f=fixture();try{await f.controller.tick();assert.deepEqual(f.calls,[]);const s=await f.controller.selectReferences();assert.equal(s.enabled,false);const encoded=JSON.stringify(s);assert.equal(encoded.includes(f.root),false);assert.equal(encoded.includes("AGE-SECRET"),false);assert.equal(encoded.includes("age1"),false);
     await assert.rejects(f.controller.configure(0,{...choices,...s.refs}),/CONSENT/);assert.equal(f.coordinator().status().enabled,false);

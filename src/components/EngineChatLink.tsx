@@ -35,7 +35,6 @@ export function EngineChatLink({ href, children, bridge = currentLocalEngineLogi
   }
   return <button type="button" data-engine-chat-link={link.kind} className={button} onClick={() => window.dispatchEvent(new CustomEvent(OPEN_ENGINE_CHAT_LINK_EVENT, { detail: href }))}>
     {children}
-    {link.kind === "plan" && link.provider === "supergrok" ? <span className="rounded bg-black/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">{t("modelSignIn.grok.unofficial")}</span> : null}
   </button>;
 }
 

@@ -307,7 +307,7 @@ describe("stop rules after a lead wake (SPEC-P 5.3)", () => {
       hop("ask", "wren", "nova", asked.id, "ask:delegation:d1", 210);
       expect(pause()).toBe("Paused: Nova and Wren keep handing the same work back to each other. Open the goal and press Resume.");
     });
-    // AFTER-REVIEW (0.1.61 review): both goals paused 1 to 2
+    // AFTER-REVIEW (lane/0161-review 774fa78c): both goals paused 1 to 2
     // minutes in. Wren, on the card Nova gave her, used delegate_bot to ask
     // Nova for inputs. A question for inputs is not the card handed back.
     it("finiteGoal: a member delegating a question for inputs to the lead from its card: no pause", () => {

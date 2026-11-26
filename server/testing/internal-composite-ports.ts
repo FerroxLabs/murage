@@ -26,6 +26,7 @@ import { createProjectFrameEmitter } from "../project-frames.ts";
 import type { BoxRelayDeps } from "../box-relay.ts";
 import { BOX_API_BASE } from "../box.ts";
 import type { RoutineDeliveryDeps } from "../routine-delivery.ts";
+import type { PhoneAdmissionDeps } from "../phone-calls/contracts.ts";
 
 const cleanups: Array<() => void> = [];
 export function closeCompositeFixturePorts(): void {
@@ -118,6 +119,7 @@ export function compositeFixturePorts(context: InternalPortContext): StatePort[]
       get projectTurns() { return leases(); },
       stoppedTurnCloseMs: providerCloseDeadlineMs,
     })),
+    port("phoneAdmission", () => ({ botMayPhone: production("phoneAdmission.botMayPhone") } satisfies PhoneAdmissionDeps)),
     port("emailCallLive", () => ({
       bot: production("emailCallLive.bot"),
       ownerSurface: production("emailCallLive.ownerSurface"),

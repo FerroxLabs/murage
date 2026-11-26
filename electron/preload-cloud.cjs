@@ -6,6 +6,8 @@
 //   reachable               cloud-home:reachable          (cloud-only: is the home answering right now)
 //   disconnectThisComputer  cloud-home:disconnect-this    (cloud-only: revoke this computer from this window's own home)
 //   openExternal            desktop:open-external         (cloud-safe: an https link in the default browser; main validates it)
+//   requestSignIn           cloud-home:request-sign-in    (cloud-only: a bot's engine sign-in in the local Connect panel)
+//   openEngineSignIn        cloud-home:open-engine-sign-in (cloud-only: an engine's sign-in row in the local Connect panel)
 //   browserPopout           cloud-home:browser-popout:* (the pop-out itself exposes close/currentState only)
 //   homeId, platform        constants
 // Sandboxed preloads cannot require sibling files, so everything is inline. It exposes nothing unless the document
@@ -113,6 +115,8 @@ if (documentIsOurHome(homeId) && surface === "browser-popout" && new URLSearchPa
     },
     // Main derives the home from this window, then opens the existing Connect sign-in on this computer.
     requestSignIn: request => ipcRenderer.invoke("cloud-home:request-sign-in", request).catch(plainError),
+    // S2 (PARITYFIX): an engine's sign-in for this window's own home (no bot): main focuses the local window's Connect row.
+    openEngineSignIn: engine => ipcRenderer.invoke("cloud-home:open-engine-sign-in", engine).catch(plainError),
     reachable: () => ipcRenderer.invoke("cloud-home:reachable"),
     disconnectThisComputer: () => ipcRenderer.invoke("cloud-home:disconnect-this").catch(plainError),
     openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url).catch(plainError),

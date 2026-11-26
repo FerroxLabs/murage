@@ -37,6 +37,7 @@ function HealthBody({ status }: { status: HealthStatus }) {
   const health = status.health;
   return <div className="mt-3 space-y-2 text-[12px] text-ink-secondary">
     {status.semantic && <p>{semanticPhrase(status.semantic)}</p>}
+    {typeof status.semantic?.capacityHitAt === "number" && <p data-testid="memory-capacity-hit">{tx("capacityHit")}</p>}
     <p>{tx("scope")}</p>
     {!health ? <p role="status">{tx("unavailable")}</p> : <>
       <dl className="space-y-2">

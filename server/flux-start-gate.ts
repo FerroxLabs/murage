@@ -5,6 +5,7 @@
 // a call inside an admitted turn is entitled only while that turn's permission matches this key's account, anything else
 // is a start and meets the gate. Until index.ts installs the gate (and in every test) the door is open, which is also
 // what the pause-off path does.
+import { registerBusyloopPayloadSite } from "../shared/flux-route.ts";
 import type { SpendGate } from "./spend-gate.ts";
 
 let installed: SpendGate | null = null;
@@ -18,5 +19,5 @@ export async function authorizeFluxDispatch(key?: string | null): Promise<void> 
 /** A Flux 402 body from a transport, with the key the request was sent with: arms the scoped refusal (spend-gate.ts). */
 export function reportFlux402(rawBody: string, key?: string | null): void {
   if (!installed) return;
-  try { installed.onBudgetReached(JSON.parse(rawBody), key); } catch { /* not JSON: today's behavior */ }
+  try { installed.onBudgetReached(registerBusyloopPayloadSite("read", JSON.parse(rawBody)), key); } catch { /* not JSON: today's behavior */ }
 }

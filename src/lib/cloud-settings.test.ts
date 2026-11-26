@@ -126,7 +126,7 @@ describe("Settings search in a Cloud window", () => {
   // The modal and search read one list: every card the modal hides on a page a Cloud window renders.
   it("each of this computer's cards on a Cloud-usable page is a registered card, and the modal stubs it by that list", () => {
     const modal = read("SettingsModal.tsx") + read("settings/pages/GeneralPage.tsx") + read("settings/pages/SkillsPage.tsx") + read("settings/pages/AboutPage.tsx") + read("settings/pages/about-rows.tsx") + read("settings/pages/ConnectionsPage.tsx");
-    expect([...CLOUD_COMPUTER_ONLY_CARDS].sort()).toEqual(["claude-code-import-heading", "diagnostics-heading", "mcp-servers-heading", "setup-heading", "skill-recorder-heading", "startup-heading", "updates-heading", "voice-key-heading"]);
+    expect([...CLOUD_COMPUTER_ONLY_CARDS].sort()).toEqual(["claude-code-import-heading", "diagnostics-heading", "mcp-servers-heading", "setup-heading", "skill-recorder-heading", "startup-heading", "updates-heading"]);
     for (const anchor of CLOUD_COMPUTER_ONLY_CARDS) {
       // The updater row sits inside the merged Version and updates card, so its stub names that card.
       const card = cards.find((entry) => entry.anchor === (MERGED_CARD_ANCHORS[anchor] ?? anchor));

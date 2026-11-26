@@ -49,7 +49,7 @@ beforeAll(async () => {
     registerHooks({load(url,context,next){
       const loaded=next(url,context);
       if(!url.endsWith('/server/index.ts'))return loaded;
-      const source=String(loaded.source),anchor='    const accessRoute =';
+      const source=String(loaded.source),anchor='    // GET/PUT /api/bots/:id/access lives in server/settings/access-routes.ts';
       if(!source.includes(anchor))throw Error('paging fixture route anchor missing');
       return {...loaded,source:source.replace(anchor,${JSON.stringify(seedRoute)}+anchor)};
     }});

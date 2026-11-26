@@ -35,7 +35,7 @@ describe("claudeAuthStatus", () => {
   it("reads a refusal of the launch flags as an update, not a lost login", async () => {
     // rig, 2.1.281 and 2.1.295: `claude --<unknown> auth status --json` prints this on stderr, exit 1
     const status = await claudeAuthStatus("claude", {}, refusing("error: unknown option '--strict-mcp-config'\n"), ["--strict-mcp-config"]);
-    expect(status).toMatchObject({ signedIn: false, refusal: { stopReason: "update_required", message: CLAUDE_UPDATE_MESSAGE } });
+    expect(status).toMatchObject({ refusal: { stopReason: "update_required", message: CLAUDE_UPDATE_MESSAGE } });
     expect(status.error).toBeUndefined();
   });
 
@@ -50,10 +50,10 @@ describe("claudeAuthStatus", () => {
     expect(status.error).not.toMatch(/Q7|7x|xQ/);
   });
 
-  it("keeps any other failure as the CLI's own words, signed out and no refusal", async () => {
-    expect(await claudeAuthStatus("claude", {}, refusing("error: unknown option '--some-owner-flag'\n"))).toEqual({ signedIn: false, error: "error: unknown option '--some-owner-flag'" });
-    expect(await claudeAuthStatus("claude", {}, refusing("error: unknown command 'auth'\n"))).toEqual({ signedIn: false, error: "error: unknown command 'auth'" });
-    expect(await claudeAuthStatus("claude", {}, refusing(""))).toEqual({ signedIn: false, error: "Command failed: exit code 1" });
+  it("keeps any other failure as the CLI's own words, unknown and no refusal", async () => {
+    expect(await claudeAuthStatus("claude", {}, refusing("error: unknown option '--some-owner-flag'\n"))).toEqual({ error: "error: unknown option '--some-owner-flag'" });
+    expect(await claudeAuthStatus("claude", {}, refusing("error: unknown command 'auth'\n"))).toEqual({ error: "error: unknown command 'auth'" });
+    expect(await claudeAuthStatus("claude", {}, refusing(""))).toEqual({ error: "Command failed: exit code 1" });
   });
 
   it("reads the billing from authMethod only when signed in, and only for names it knows", async () => {
@@ -64,6 +64,13 @@ describe("claudeAuthStatus", () => {
     expect(await claudeAuthStatus("claude", {}, said('{"loggedIn":true}'))).toEqual({ signedIn: true });
     expect(await claudeAuthStatus("claude", {}, said('{"loggedIn":false,"authMethod":"api_key"}'))).toEqual({ signedIn: false });
     expect([null, 1, {}, "Claude.ai", "none"].map(claudeBillingOf)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+  });
+
+  it("leaves the buffered Claude auth status unknown when the probe times out", async () => {
+    const stopped = ((_cli, _args, _options, callback) =>
+      callback(Object.assign(new Error("Probe timed out"), { killed: true }), '{"loggedIn":false}', "")
+    ) satisfies typeof import("../procs.ts").execCli;
+    expect(await claudeAuthStatus("claude", {}, stopped)).toEqual({ error: "Probe timed out" });
   });
 
   it("returns the status itself when the CLI gives one, even with a non-zero exit", async () => {

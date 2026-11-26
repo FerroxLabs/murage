@@ -1,10 +1,11 @@
+import { evidencePath } from '../../scripts/evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Each mutant restores a reviewed defect; only a failed assertion counts.
 import "../../shared/win-hide-child-process.mjs";
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 const path='server/index.ts', original=readFileSync(path,'utf8');
-const dir='evidence/afix-bld-nolim-s4/mutants';mkdirSync(dir,{recursive:true});
+const dir=evidencePath('evidence/afix-bld-nolim-s4/mutants');mkdirSync(dir,{recursive:true});
 const mutations=[
  ['review5-first-event','before the first activity',
   "if (bot) decisionBotLevels.get(bot.id)?.turns.set(provenance.generation, botPermissionMode(store.projectBotForTask(bot.id, provenance.threadId) ?? bot));",

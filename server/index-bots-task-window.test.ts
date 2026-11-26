@@ -138,7 +138,7 @@ describe("the roster carries a window of each bot's tasks", () => {
     expect(wired.tasksTotal).toBe(count + 1);
     // the full-list sums
     const turns = count, input = Array.from({ length: count }, (_, i) => 100 + i).reduce((a, b) => a + b, 0);
-    expect(wired.usageTotal).toEqual({ input, output: 10 * count, cachedInput: 50 * count, costUsd: expect.closeTo(0.01 * count, 6), turns });
+    expect(wired.usageTotal).toEqual({ input, output: 10 * count, cachedInput: 50 * count, costUsd: expect.closeTo(0.01 * count, 6), turns, usageAccounting: { version: 1, inputComplete: false, cacheComplete: false } });
     expect(new Set(wired.grantsAll)).toEqual(grants);
     // pinned, unread, the open task and the newest are in; an ordinary old one is not
     for (const id of ["old-00003", "old-00004", bot.threadId, "old-04999"]) expect(ids.has(id), id).toBe(true);

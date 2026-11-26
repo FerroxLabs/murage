@@ -30,6 +30,36 @@ export const SETTINGS_PAGE_LOADERS: Partial<Record<SettingsPage, PageLoader>> = 
   usage: () => import("./pages/UsagePage"),
 };
 
+/** Settings v10 (SHELL-SEAT): the 17 app pages of the new rail, in rail order. Each has one loader line and one file, so no
+ *  page lane edits this registry. `messaging` and `rules` are the v10 names of the Channels and Bot defaults pages. The
+ *  rail, the old ids and their aliases move onto these in F2; until then the table above still drives the shell. */
+export const SETTINGS_V10_PAGE_IDS = [
+  "overview", "providers", "engines", "models", "usage", "tools", "connections", "computer", "messaging",
+  "companion", "bots", "rules", "skills", "memory", "general", "backups", "about",
+] as const;
+export type SettingsV10Page = (typeof SETTINGS_V10_PAGE_IDS)[number];
+
+/** v10 page id -> its lazy page file. One entry per line, in rail order. */
+export const SETTINGS_V10_PAGE_LOADERS: Record<SettingsV10Page, PageLoader> = {
+  overview: () => import("./pages/OverviewPage"),
+  providers: () => import("./pages/ProvidersPage"),
+  engines: () => import("./pages/EnginesPage"),
+  models: () => import("./pages/ModelsPage"),
+  usage: () => import("./pages/UsagePage"),
+  tools: () => import("./pages/ToolsPage"),
+  connections: () => import("./pages/ConnectionsPage"),
+  computer: () => import("./pages/ComputerPage"),
+  messaging: () => import("./pages/ChannelsPage"),
+  companion: () => import("./pages/CompanionPage"),
+  bots: () => import("./pages/BotsPage"),
+  rules: () => import("./pages/BotDefaultsPage"),
+  skills: () => import("./pages/SkillsPage"),
+  memory: () => import("./pages/MemoryPage"),
+  general: () => import("./pages/GeneralPage"),
+  backups: () => import("./pages/BackupsPage"),
+  about: () => import("./pages/AboutPage"),
+};
+
 const mounted = new Map<SettingsPage, ReturnType<typeof retryableLazy<ComponentType<SettingsPageProps>>>>();
 
 function mountFor(page: SettingsPage) {

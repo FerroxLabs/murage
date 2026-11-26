@@ -25,7 +25,7 @@ import { describe, expect, it, vi } from "vitest";
 // "no analytics, no device id"). A spy on the real export, so a call that
 // came back would be seen rather than inferred from source.
 const analytics = vi.hoisted(() => ({ identifyEmail: vi.fn(), setEmailGateDone: vi.fn() }));
-vi.mock("@/lib/analytics", async (importOriginal) => ({ ...(await importOriginal<object>()), ...analytics }));
+vi.mock("@/lib/first-run-gate", async (importOriginal) => ({ ...(await importOriginal<object>()), ...analytics }));
 
 import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import { sellsOnPrice } from "@/lib/first-run-copy-rules";

@@ -921,3 +921,110 @@ test("P1-1 an idle MCP grant with no expiry is probed on a bounded schedule", as
   timers[0].fn(); await r.settle("idle");
   assert.equal(probes, 1); assert.equal(doc.needsReconnect, true); r.dispose();
 });
+
+test("an owner's app is saved only to main, follows a rename, and is forgotten on removal", async () => {
+  const fake = await startFakeRemoteMcp({ auth: "bearer", unauthorized: "bearer-resource-metadata", dcr: false });
+  try {
+    const entry = { url: fake.mcpUrl, auth: "oauth", local: "this-computer", rev: "fixture-rev" };
+    const h = harness({ fake, entries: { notes: entry } });
+    const input = { clientId: "fixture-client", clientSecret: "fixture-value" };
+    const result = await h.service.useOwnApp("notes", input);
+    assert.equal(result.ok, true);
+    assert.deepEqual(Object.keys(result).sort(), ["ok", "redirectUri", "tokenHost"]);
+    assert.equal(result.redirectUri, `http://127.0.0.1:${h.doc("notes").oauth.redirectPort}/callback`);
+    assert.equal(h.doc("notes").oauth.clientSecret === input.clientSecret, true);
+    assert.equal(h.server.pushes.length, 0);
+    h.server.entries.renamed = entry;
+    delete h.server.entries.notes;
+    assert.equal(await h.service.handleSecretsRenamed({ from: "notes", to: "renamed" }), true);
+    assert.equal(h.doc("notes"), undefined);
+    assert.equal(h.doc("renamed").oauth.clientSecret === input.clientSecret, true);
+    assert.equal((await h.service.remove("renamed")).ok, true);
+    assert.equal(h.doc("renamed"), undefined);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("a cancelled own-app setup cannot persist after the server was removed", async () => {
+  const fake = await startFakeRemoteMcp({ auth: "bearer", unauthorized: "bearer-resource-metadata", dcr: false });
+  try {
+    let unblock;
+    const hold = new Promise(resolve => { unblock = resolve; });
+    let observed;
+    const discovering = new Promise(resolve => { observed = resolve; });
+    const h = harness({
+      fake, entries: { notes: { url: fake.mcpUrl, auth: "oauth", local: "this-computer", rev: "fixture-rev" } },
+      request: async options => { observed(); await hold; return guardedRequest(options); },
+    });
+    const pending = h.service.useOwnApp("notes", { clientId: "fixture-client", clientSecret: "fixture-value" });
+    await Promise.race([discovering, pending]);
+    assert.equal((await h.service.remove("notes")).ok, true);
+    unblock();
+    assert.equal((await pending).ok, false);
+    assert.equal(h.doc("notes"), undefined);
+    assert.equal(h.server.pushes.length, 0);
+  } finally {
+    await fake.close();
+  }
+});
+
+for (const mode of ["moved", "added", "withdrawn", "foreign", "same-origin", "absent"]) {
+  test(`an own app binds revocation before sign-in: ${mode}`, async () => {
+    const fake = await startFakeRemoteMcp({ auth: "bearer", unauthorized: "bearer-resource-metadata", dcr: false });
+    const foreign = await startFakeRemoteMcp();
+    try {
+      const endpoint = `${fake.origin}/oauth/revoke`;
+      let advertised = mode === "foreign" ? `${foreign.origin}/oauth/revoke` : ["added", "absent"].includes(mode) ? null : endpoint;
+      const h = harness({
+        fake, entries: { notes: { url: fake.mcpUrl, auth: "oauth", local: "this-computer", rev: "fixture-rev" } },
+        request: async options => {
+          const response = await guardedRequest(options);
+          if (new URL(options.url).pathname !== "/.well-known/oauth-authorization-server" || response.status !== 200) return response;
+          const metadata = JSON.parse(Buffer.from(response.body).toString("utf8"));
+          if (advertised === null) delete metadata.revocation_endpoint;
+          else metadata.revocation_endpoint = advertised;
+          return { ...response, body: Buffer.from(JSON.stringify(metadata)) };
+        },
+      });
+      const input = { clientId: "fixture-client", clientSecret: "fixture-value" };
+      const enrolled = await h.service.useOwnApp("notes", input);
+      assert.equal(enrolled.ok, true);
+      fake.addRegisteredClient(input.clientId, enrolled.redirectUri);
+      if (mode === "moved") advertised = `${fake.origin}/oauth/revoke-next`;
+      if (mode === "added") advertised = endpoint;
+      if (mode === "withdrawn") advertised = null;
+      const signedIn = await h.service.signIn("notes");
+      if (["moved", "added", "withdrawn"].includes(mode)) {
+        assert.equal(signedIn.error, "own-app-changed");
+        assert.equal(h.opened.length, 0);
+        assert.equal(fake.tokenRequests.length, 0);
+        return;
+      }
+      assert.equal(signedIn.ok, true);
+      assert.equal((await h.service.signOut("notes")).revoked, mode === "same-origin");
+      assert.equal(h.doc("notes").oauth.accessToken, undefined);
+      assert.equal(h.doc("notes").oauth.clientSecret === input.clientSecret, true);
+      assert.equal(foreign.revocationRequests.length, 0);
+      assert.equal(fake.revocationRequests.length, mode === "same-origin" ? 2 : 0);
+      for (const request of fake.revocationRequests) assert.equal(request.client_secret === input.clientSecret, true);
+    } finally {
+      await Promise.all([fake.close(), foreign.close()]);
+    }
+  });
+}
+
+test("legacy own-app sign-out forgets tokens without contacting an unpinned endpoint", async () => {
+  const { fake, h, result } = await signedIn();
+  try {
+    assert.equal(result.ok, true);
+    const document = h.saved();
+    document[MCP_SECRETS_KEY].comfy.oauth.preRegistered = true;
+    const legacy = harness({ fake, document, entries: h.server.entries });
+    assert.equal((await legacy.service.signOut("comfy")).revoked, false);
+    assert.equal(legacy.doc("comfy").oauth.accessToken, undefined);
+    assert.equal(fake.revocationRequests.length, 0);
+  } finally {
+    await fake.close();
+  }
+});

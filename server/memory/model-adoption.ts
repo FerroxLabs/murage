@@ -70,7 +70,16 @@ export const SEMANTIC_PENDING_CAP = 50_000;
 
 /** `status.semantic` (SETTINGS-LANES.md I0). "indexing" from adoption until the records it re-queued have their embeddings, with
  * done/total over those records; the first read that finds none pending records it, so later everyday indexing never shows as "indexing". */
+/** q1022-recallperf item 4: the last time a meaning search stopped at its scan budget with records left (search.ts). Reported to the owner
+ *  on the memory status (semantic.capacityHitAt); never silent. */
+let semanticCapacityHitAt: number | undefined;
+export function noteSemanticCapacityHit(at = Date.now()): void { semanticCapacityHitAt = at; }
+export function resetSemanticCapacityForTest(): void { semanticCapacityHitAt = undefined; }
 export function semanticIndexStatus(input: { nativeSupported: boolean; model: "missing" | "unverified" | "downloading" | "ready" | "failed"; revision: string }, dataDir = DATA_DIR): SemanticIndexStatus {
+  const status = semanticIndexState(input, dataDir);
+  return semanticCapacityHitAt === undefined ? status : { ...status, capacityHitAt: semanticCapacityHitAt };
+}
+function semanticIndexState(input: { nativeSupported: boolean; model: "missing" | "unverified" | "downloading" | "ready" | "failed"; revision: string }, dataDir: string): SemanticIndexStatus {
   if (!input.nativeSupported || input.model === "missing" || input.model === "failed" || input.model === "downloading") return { state: "keyword-only", done: 0, total: 0 };
   const marker = readMarker(dataDir), mine = marker?.revision === input.revision ? marker : null;
   if (mine?.caughtUpAt) return { state: "ready", done: mine.total ?? 0, total: mine.total ?? 0 };

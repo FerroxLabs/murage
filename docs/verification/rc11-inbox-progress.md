@@ -1,6 +1,6 @@
 # RC11 inbox and upgrade progress
 
-Owner: Codex, branch `codex/rc11-inbox`, base `7da331a56`. Coordinator owns commits and build host qualification.
+Owner: Codex, branch `codex/rc11-inbox`, base `7da331a56`. Coordinator owns commits and Hetzner qualification.
 
 ## Contract
 
@@ -12,7 +12,7 @@ Only this worktree may be edited. No commits, deployment, owner-data writes, or 
 
 1. Inbox: trace the route, base rollup, backup notices, lesson and procedure suggestions, waiting memory, and project decisions. Establish row counts and query plans on the supplied copy. Add cost regressions using statement and visited/returned-row counts at two data sizes, plus write invalidation and card equivalence checks. Run affected inbox and memory tests.
 2. Progress: identify the flat interval from phase, ph, phases, storage, and adjacent server log offsets. Add a deterministic fixture that exercises the responsible step and proves completed-work movement and monotonicity with a controlled clock. Run affected lineage and upgrade progress tests.
-3. Integration: server TypeScript check, focused lint, isolated server launch and inbox read through the documented control surface where the local environment permits. Record limits separately from source and fixture results. Real-data latency and build host verification remain with the coordinator.
+3. Integration: server TypeScript check, focused lint, isolated server launch and inbox read through the documented control surface where the local environment permits. Record limits separately from source and fixture results. Real-data latency and Hetzner verification remain with the coordinator.
 
 Acceptance and these check categories are fixed before verification. Maximum eight cumulative rounds and eight unsuccessful corrections per package; after two unsuccessful rounds on one issue, obtain the required deeper evaluation before another correction. Stop when both fixes and required local checks are complete, or preserve a concrete unmet gate with evidence and the remaining attempt budget.
 
@@ -37,7 +37,7 @@ Acceptance and these check categories are fixed before verification. Maximum eig
 | Inbox implementation | ✅ Done | Candidate-index reads, batched fallback, immediate write invalidation and transaction-aware caching. |
 | Upgrade progress implementation | ✅ Done | Committed work counters, independent observation, 15-second throttled slices, correct final phase count, no progress from held polls. |
 | Local checks | ✅ Done | Cost, correctness, progress, existing affected suites, server TypeScript and focused lint pass. |
-| HTTP and build host qualification | ⬜ Pending | Local loopback bind returns EPERM; coordinator owns the real-data run and commits. |
+| HTTP and Hetzner qualification | ⬜ Pending | Local loopback bind returns EPERM; coordinator owns the real-data run and commits. |
 
 ### Causes
 
@@ -81,7 +81,7 @@ Acceptance and these check categories are fixed before verification. Maximum eig
 
 ### Remaining qualification
 
-The actual p95 below 50 ms and about 20 ms main-thread target are **not measured after this change**. The coordinator should run the same owner-copy probes on the build host, confirm `memory_records_waiting_review` has been built, and check both completed-work counters and the longest identical progress signature, including the final interval ending at completion. This workspace cannot bind loopback, so no HTTP fixture or visual runtime result is claimed.
+The actual p95 below 50 ms and about 20 ms main-thread target are **not measured after this change**. The coordinator should run the same owner-copy probes on Hetzner, confirm `memory_records_waiting_review` has been built, and check both completed-work counters and the longest identical progress signature, including the final interval ending at completion. This workspace cannot bind loopback, so no HTTP fixture or visual runtime result is claimed.
 
 Before the optional index exists, the correct fallback still performs native indexed seeks across stored scopes inside one SQL statement. The index-ready path has the proven flat historical-growth cost. Work remains proportional to current candidates and live cards; the change preserves the existing output caps and does not omit owed items to obtain a faster result. Existing procedure reads remain proportional to the `psug-` range.
 

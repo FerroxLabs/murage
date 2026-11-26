@@ -112,7 +112,7 @@ describe("MEMSTART B / T10 real direct and room notice paths", () => {
   for (const room of [false, true]) for (const [name, causes, sites, ending, expected] of [
     ["setup to late checking", ["pending", "raw", "session"], ["setup", "late", "setup"], "success", checkingLine],
     ["late to setup checking", ["pending", "frame", "pending"], ["late", "setup", "late"], "success", checkingLine],
-    ["mixed cause", ["withheld", "pending", "pending"], ["late", "setup", "late"], "success", "Memory changed while Claude was starting, so this reply ran without remembered context."],
+    ["mixed cause", ["withheld", "pending", "pending"], ["late", "setup", "late"], "success", "This reply went ahead without remembered context after memory changed."],
     ["unknown cause", ["unknown", "pending", "pending"], ["setup", "late", "setup"], "success", "This reply ran without remembered context."],
     ["failed fallback", ["pending", "pending", "pending"], ["late", "setup", "late"], "failed", undefined],
     ["stopped fallback", ["pending", "pending", "pending"], ["setup", "late", "setup"], "stop", undefined],

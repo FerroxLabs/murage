@@ -1,15 +1,12 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 
 import { OverviewLine, overviewLineText } from "./LearningOverviewLine";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
 
 it("says one short sentence, and nothing when there is nothing to say", () => {
   expect(overviewLineText(null)).toBeNull();
@@ -20,7 +17,7 @@ it("says one short sentence, and nothing when there is nothing to say", () => {
   expect(renderToStaticMarkup(createElement(OverviewLine, { text: "Learned 14 things this month" }))).toContain("Learned 14 things this month");
 });
 it("sits after the setup action on the Overview, desktop only", () => {
-  const panel = readFileSync(join(HERE, "SettingsPanel.tsx"), "utf8");
+  const panel = settingsPanelSource();
   expect(panel).toMatch(/<BotSetupAction bot=\{bot\} \/>\s*\{desktop === true && <LearningOverviewLine /);
   expect(panel).toMatch(/<SettingsSection id="learning" active=\{section\}>\s*(?:<div id="bot-setting-learning"[^>]*>)?\{desktop === true && <LearningSettings key=\{`learning-\$\{bot\.id\}`\} bot=\{bot\} \/>\}/);
 });

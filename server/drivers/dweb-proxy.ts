@@ -1,3 +1,4 @@
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import "../../shared/win-hide-child-process.mjs";
 import {exitWithChildIoReceipt} from "../io-child-receipts.ts";
 import { sendProxyFrame, proxyFetch, proxyTransportLost } from "../proxy-turn-release.ts";
@@ -63,8 +64,8 @@ const TOOLS = [
 
 type Json = Record<string, unknown>;
 const send = (msg: Json) => sendProxyFrame("dweb", msg);
-const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
-const rpcErr = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
+const ok = (id: unknown, result: unknown) => NotModelRequest("Dweb MCP tool reply or error to the local client.", send({ jsonrpc: "2.0", id, result }));
+const rpcErr = (id: unknown, code: number, message: string) => NotModelRequest("Dweb MCP tool reply or error to the local client.", send({ jsonrpc: "2.0", id, error: { code, message } }));
 const textResult = (id: unknown, text: string, isError = false) =>
   ok(id, { content: [{ type: "text", text }], isError });
 

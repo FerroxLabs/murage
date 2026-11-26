@@ -78,7 +78,7 @@ it("renders a generated attachment and embedded raster bytes as enlargeable imag
 });
 it("never requests a remote, local-path, file or SVG image from model text", () => {
   const html = renderToStaticMarkup(createElement(ChatMarkdown, {
-    text: "![pixel](https://tracker.example/p.gif) ![secret](/Users/alex/secret.png) ![f](file:///etc/x.png) ![s](data:image/svg+xml;base64,PHN2Zz4=) ![r](abc-123.png)",
+    text: "![pixel](https://tracker.example/p.gif) ![secret](/Users/exampleuser/secret.png) ![f](file:///etc/x.png) ![s](data:image/svg+xml;base64,PHN2Zz4=) ![r](abc-123.png)",
   }));
   expect(html).not.toContain("<img");
   expect(html).toContain("Image from tracker.example not loaded.");

@@ -212,12 +212,12 @@ describe("Store", () => {
     const turn = { input: 100, output: 20, costUsd: 0.5 };
     store.addTaskUsage(bot.id, bot.threadId, turn, "turn-a");
     store.addTaskUsage(bot.id, bot.threadId, turn, "turn-a");
-    expect(store.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 100, output: 20, costUsd: 0.5, turns: 1 });
+    expect(store.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 100, output: 20, costUsd: 0.5, turns: 1, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } });
     const reloaded = new Store(selection);
     reloaded.addTaskUsage(bot.id, bot.threadId, turn, "turn-a");
-    expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 100, output: 20, costUsd: 0.5, turns: 1 });
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 100, output: 20, costUsd: 0.5, turns: 1, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } });
     reloaded.addTaskUsage(bot.id, bot.threadId, turn, "turn-b");
-    expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 200, output: 40, costUsd: 1, turns: 2 });
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 200, output: 40, costUsd: 1, turns: 2, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } });
   });
 
   it("addTaskUsage keeps a per-bot bucket for the current month: two bots stay apart, a redelivery adds nothing, a restart keeps it, all-time totals still work", () => {
@@ -312,21 +312,38 @@ describe("Store", () => {
     } finally { save.mockRestore(); }
   });
 
+  it("PC-F3: unreported turns remain incomplete in task, month and routine totals after reload and duplicate settlement", () => {
+    const known = { input: 100, output: 0, cachedInput: 80, usageAccounting: { version: 1 as const, inputComplete: true, cacheComplete: true }, costUsd: 0.01 };
+    const unknown = { input: 0, output: 0, usageAccounting: { version: 1 as const, inputComplete: false, cacheComplete: false }, costUsd: 0.01 };
+    for (const turns of [[known, unknown], [unknown, known]]) {
+      const store = new Store(selection), bot = store.createBot();
+      turns.forEach((turn, n) => {
+        store.addTaskUsage(bot.id, bot.threadId, turn, `coverage-${n}`, { id: "routine", name: "Routine" });
+        store.addTaskUsage(bot.id, bot.threadId, turn, `coverage-${n}`, { id: "routine", name: "Routine" });
+      });
+      flushCoalesced();
+      const loaded = new Store(selection), key = usageMonthKey();
+      const expected = { input: 100, output: 0, cachedInput: 80, usageAccounting: { version: 1, inputComplete: false, cacheComplete: false } };
+      expect(loaded.taskByThread(bot.id, bot.threadId)!.usage).toEqual({ ...expected, turns: 2, costUsd: 0.02 });
+      expect(loaded.bot(bot.id)!.usageMonths![key]).toMatchObject({ ...expected, replies: 2 });
+      expect(loaded.bot(bot.id)!.usageRoutineMonths![key].routine).toMatchObject({ ...expected, replies: 2 });
+    }
+  });
+
   it("addTaskUsage accumulates settled-turn totals per task and survives a restart", () => {
     const store = new Store(selection);
     const bot = store.createBot();
     expect(store.addTaskUsage(bot.id, bot.threadId, { input: 1200, output: 300, cachedInput: 1000, costUsd: null })).toEqual({
       input: 1200,
       output: 300,
-      cachedInput: 1000,
+      cachedInput: 1000, usageAccounting: { version: 1, inputComplete: true, cacheComplete: true },
       costUsd: null,
       turns: 1,
     });
     // a driver that never reports the cached share leaves it unchanged
     store.addTaskUsage(bot.id, bot.threadId, { input: 800, output: 100, costUsd: null });
     store.addTaskUsage(bot.id, bot.threadId, { input: Number.NaN, output: -20, cachedInput: -5, costUsd: null });
-    // Providers occasionally report a cache count larger than input; keep the
-    // persisted share physically possible so percentages cannot exceed 100%.
+    // A cache count larger than input is rejected, never made into a cached lower bound.
     store.addTaskUsage(bot.id, bot.threadId, { input: 10, output: 0, cachedInput: 20, costUsd: null });
     // a different thread never inherits another task's tally
     expect(store.addTaskUsage(bot.id, "no-such-thread", { input: 5, output: 5, costUsd: null })).toBeNull();
@@ -335,7 +352,7 @@ describe("Store", () => {
     expect(reloaded.taskByThread(bot.id, bot.threadId)?.usage).toEqual({
       input: 2010,
       output: 400,
-      cachedInput: 1010,
+      cachedInput: 1000, usageAccounting: { version: 1, inputComplete: false, cacheComplete: false },
       costUsd: null,
       turns: 4,
     });
@@ -1620,7 +1637,7 @@ describe("Store change stream", () => {
     // MAIN RULING INT-CONFLICT-DEFAULT f0fcf15cff: the usage write carries only its bounded numeric delta alongside the bot id.
     expect(events.filter(e => e.type !== "workroot")).toEqual([
       ...Array.from({ length: 6 }, () => ({ type: "bot", botId: bot.id })),
-      { type: "bot", botId: bot.id, usageDelta: { before: undefined, after: { input: 10, output: 5, costUsd: null, turns: 1 } } },
+      { type: "bot", botId: bot.id, usageDelta: { before: undefined, after: { input: 10, output: 5, costUsd: null, turns: 1, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } } } },
     ]);
     expect(events).toHaveLength(9);
     store.deleteBot(bot.id);
@@ -1887,7 +1904,7 @@ describe("Store redacts bot-authored secrets on write", () => {
     expect(skillCard.card?.skillRequest?.source).not.toContain(key);
     expect(skillCard.card?.skillRequest?.preview).not.toContain(key);
     expect(skillCard.card?.skillRequest?.sha256).toBeUndefined();
-    expect(skillCard.card?.skillRequest?.warnings.join(" ")).not.toContain(key);
+    expect(skillCard.card?.skillRequest?.warnings!.join(" ")).not.toContain(key);
 
     const reviewedPreview = "---\nname: reviewed-skill\ndescription: Already scrubbed.\n---\n";
     const reviewedSha256 = createHash("sha256").update(reviewedPreview).digest("hex");
@@ -1969,16 +1986,16 @@ describe("Store task usage", () => {
     expect(store.addTaskUsage(bot.id, bot.threadId, { input: 100, output: 20, costUsd: 0.01 })).toEqual({
       input: 100,
       output: 20,
-      costUsd: 0.01,
+      costUsd: 0.01, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false },
       turns: 1,
     });
     expect(store.addTaskUsage(bot.id, bot.threadId, { input: 50, output: 5, costUsd: 0.005 })).toEqual({
       input: 150,
       output: 25,
-      costUsd: 0.015,
+      costUsd: 0.015, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false },
       turns: 2,
     });
-    expect(store.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 150, output: 25, costUsd: 0.015, turns: 2 });
+    expect(store.taskByThread(bot.id, bot.threadId)?.usage).toEqual({ input: 150, output: 25, costUsd: 0.015, turns: 2, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } });
   });
 
   it("keeps cost null until some turn reports one, then sums only reported costs", () => {
@@ -1992,7 +2009,7 @@ describe("Store task usage", () => {
   it("counts a turn that reported no tokens at all", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    expect(store.addTaskUsage(bot.id, bot.threadId, { costUsd: null })).toEqual({ input: 0, output: 0, costUsd: null, turns: 1 });
+    expect(store.addTaskUsage(bot.id, bot.threadId, { costUsd: null })).toEqual({ input: 0, output: 0, costUsd: null, turns: 1, usageAccounting: { version: 1, inputComplete: false, cacheComplete: false } });
   });
 
   it("ignores an unknown task", () => {

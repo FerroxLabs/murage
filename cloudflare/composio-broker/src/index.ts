@@ -802,7 +802,9 @@ async function listConnectedAccounts(env: Env, userId: string, slugs: string[]) 
     const body = connectedAccountsPageSchema.parse(await response.json());
     accounts.push(...body.items);
     const next = body.next_cursor || undefined;
-    if (!next || seenCursors.has(next)) return accounts;
+    if (!next) return accounts;
+    // A cursor seen before means the upstream walk looped; the rows so far are not the whole inventory.
+    if (seenCursors.has(next)) throw new Error("Connected-account inventory repeated a pagination cursor");
     seenCursors.add(next);
     cursor = next;
   }
@@ -812,7 +814,7 @@ async function listConnectedAccounts(env: Env, userId: string, slugs: string[]) 
 async function listSessionToolkits(
   env: Env,
   sessionId: string,
-): Promise<ToolkitItem[]> {
+): Promise<{ toolkits: ToolkitItem[]; complete: boolean }> {
   const toolkits: ToolkitItem[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
@@ -829,7 +831,9 @@ async function listSessionToolkits(
     const body = toolkitPageSchema.parse(await response.json());
     toolkits.push(...(body.items ?? []));
     const next = body.next_cursor || undefined;
-    if (!next || seenCursors.has(next)) return toolkits;
+    if (!next) return { toolkits, complete: true };
+    // Views keep the rows so far; a save must not trust them.
+    if (seenCursors.has(next)) return { toolkits, complete: false };
     seenCursors.add(next);
     cursor = next;
   }
@@ -910,13 +914,16 @@ async function connectedServices(
   ctx: ExecutionContext,
 ) {
   const session = await ensureSession(installation, env, ctx);
-  const [toolkits, accounts] = await Promise.all([
+  // A failed account sweep degrades to an empty list for views, but is reported so a save that needs the whole list can refuse.
+  let complete = true;
+  const [toolkitPages, accounts] = await Promise.all([
     listSessionToolkits(env, session.sessionId),
-    listConnectedAccounts(env, installation.composio_user_id, []).catch(() => []),
+    listConnectedAccounts(env, installation.composio_user_id, []).catch(() => { complete = false; return []; }),
   ]);
   return json({
     configured: true,
-    services: allServiceStates(summarizeAccounts(accounts, []), toolkits),
+    complete: complete && toolkitPages.complete,
+    services: allServiceStates(summarizeAccounts(accounts, []), toolkitPages.toolkits),
   });
 }
 

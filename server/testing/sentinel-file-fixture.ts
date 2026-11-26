@@ -12,6 +12,7 @@ import {sentinelInstallationIdOf} from "../../shared/sentinel-installation.mjs";
 import {defaultOutputRoot,sourcePaths,writeDescriptor,type SentinelDescriptor} from "../sentinel/paths.ts";
 import {SentinelFileReceiver,SentinelFileWriter,ReceiptDirectory,provisionFileReceipts,decodeReceipt,encodeReceipt} from "../sentinel/file-receipts.ts";
 import {scannerNative} from "../sentinel/io-meter.ts";
+import { safeWipeSync } from "./safe-wipe.mjs";
 export async function fileScenario(kind:string){
  const root=mkdtempSync(join(tmpdir(),"sentinel-file-")),data=join(root,"data");mkdirSync(data,{mode:0o700});
  process.env.MURAGE_DATA_DIR=data;process.env.MURAGE_SENTINEL_STATE_DIR=join(root,"state");
@@ -278,5 +279,5 @@ export async function fileScenario(kind:string){
    return samples;
   }
   throw Error("FIXTURE_SCENARIO");
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 }

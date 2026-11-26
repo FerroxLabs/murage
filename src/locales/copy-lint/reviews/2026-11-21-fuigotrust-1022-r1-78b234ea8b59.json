@@ -1,0 +1,1029 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "held1022-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 held rows 21 (Fuigo Trust) and 29 (Sentinel Health)"
+  },
+  "author": "fuigotrust-fin-1021-wf1121",
+  "date": "2026-11-21",
+  "base": "f68bccc8c5",
+  "scope": "1.0.22 row 21 Fuigo Trust v2: folder trust destination, last-turn and withheld-reason strings (8 languages)",
+  "strings": {
+    "en:folderTrust.processLabel": {
+      "text": "Folder settings allowed for this turn.",
+      "en": "Folder settings allowed for this turn.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.processDescription": {
+      "text": "This does not save a trust decision.",
+      "en": "This does not save a trust decision.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.lastTurn": {
+      "text": "Last turn",
+      "en": "Last turn",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.savedChoiceSent": {
+      "text": "Saved answer sent to Fuigo.",
+      "en": "Saved answer sent to Fuigo.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.observationUnknown": {
+      "text": "No folder settings result is available.",
+      "en": "No folder settings result is available.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.searchAnswers": {
+      "text": "Search saved answers",
+      "en": "Search saved answers",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.moreAnswers": {
+      "text": "Show more answers",
+      "en": "Show more answers",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.destination.own-local-home": {
+      "text": "Own local Fuigo home",
+      "en": "Own local Fuigo home",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.destination.per-turn-local-home": {
+      "text": "Per-turn local Fuigo home",
+      "en": "Per-turn local Fuigo home",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.destination.cloud-home": {
+      "text": "Cloud Fuigo home",
+      "en": "Cloud Fuigo home",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.destination.refused": {
+      "text": "Turn unavailable",
+      "en": "Turn unavailable",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.engineVersion": {
+      "text": "Fuigo generation {generation}, version {version}",
+      "en": "Fuigo generation {generation}, version {version}",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.withheldObservation": {
+      "text": "Folder settings withheld.",
+      "en": "Folder settings withheld.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.authority-unavailable": {
+      "text": "Authority could not be confirmed.",
+      "en": "Authority could not be confirmed.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.store-unreadable": {
+      "text": "The saved trust store could not be read.",
+      "en": "The saved trust store could not be read.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.version-unsupported": {
+      "text": "This Fuigo version does not support a process choice.",
+      "en": "This Fuigo version does not support a process choice.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.not-picked": {
+      "text": "This folder was not picked.",
+      "en": "This folder was not picked.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.saved-decline": {
+      "text": "A saved decline applies.",
+      "en": "A saved decline applies.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.coverage-incomplete": {
+      "text": "Saved decline coverage is incomplete.",
+      "en": "Saved decline coverage is incomplete.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.reply-failed": {
+      "text": "The reply could not be sent.",
+      "en": "The reply could not be sent.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.unsafe-key": {
+      "text": "The folder key is not valid.",
+      "en": "The folder key is not valid.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.unsupported-scope": {
+      "text": "The requested scope is unsupported.",
+      "en": "The requested scope is unsupported.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.inactive-turn": {
+      "text": "The turn is no longer active.",
+      "en": "The turn is no longer active.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.unknown": {
+      "text": "The reason is unknown.",
+      "en": "The reason is unknown.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "de:folderTrust.processLabel": {
+      "text": "Ordnereinstellungen für diesen Durchgang erlaubt.",
+      "en": "Folder settings allowed for this turn.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.processDescription": {
+      "text": "Dadurch wird keine Vertrauensentscheidung gespeichert.",
+      "en": "This does not save a trust decision.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.lastTurn": {
+      "text": "Letzter Durchgang",
+      "en": "Last turn",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.savedChoiceSent": {
+      "text": "Gespeicherte Antwort an Fuigo gesendet.",
+      "en": "Saved answer sent to Fuigo.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.observationUnknown": {
+      "text": "Kein Ergebnis für Ordnereinstellungen verfügbar.",
+      "en": "No folder settings result is available.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.searchAnswers": {
+      "text": "Gespeicherte Antworten suchen",
+      "en": "Search saved answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.moreAnswers": {
+      "text": "Weitere Antworten anzeigen",
+      "en": "Show more answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.destination.own-local-home": {
+      "text": "Eigener lokaler Fuigo-Ordner",
+      "en": "Own local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.destination.per-turn-local-home": {
+      "text": "Lokaler Fuigo-Ordner für diesen Durchgang",
+      "en": "Per-turn local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.destination.cloud-home": {
+      "text": "Fuigo-Ordner in der Cloud",
+      "en": "Cloud Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.destination.refused": {
+      "text": "Durchgang nicht verfügbar",
+      "en": "Turn unavailable",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.engineVersion": {
+      "text": "Fuigo-Generation {generation}, Version {version}",
+      "en": "Fuigo generation {generation}, version {version}",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.withheldObservation": {
+      "text": "Ordnereinstellungen zurückgehalten.",
+      "en": "Folder settings withheld.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.authority-unavailable": {
+      "text": "Berechtigung konnte nicht bestätigt werden.",
+      "en": "Authority could not be confirmed.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.store-unreadable": {
+      "text": "Gespeicherte Vertrauensentscheidungen konnten nicht gelesen werden.",
+      "en": "The saved trust store could not be read.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.version-unsupported": {
+      "text": "Diese Fuigo-Version unterstützt keine Entscheidung nur für den Prozess.",
+      "en": "This Fuigo version does not support a process choice.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.not-picked": {
+      "text": "Dieser Ordner wurde nicht ausgewählt.",
+      "en": "This folder was not picked.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.saved-decline": {
+      "text": "Eine gespeicherte Ablehnung gilt.",
+      "en": "A saved decline applies.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.coverage-incomplete": {
+      "text": "Gespeicherte Ablehnungen sind nicht vollständig abgedeckt.",
+      "en": "Saved decline coverage is incomplete.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.reply-failed": {
+      "text": "Die Antwort konnte nicht gesendet werden.",
+      "en": "The reply could not be sent.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.unsafe-key": {
+      "text": "Der Ordnerschlüssel ist unzulässig.",
+      "en": "The folder key is not valid.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.unsupported-scope": {
+      "text": "Der angefragte Umfang wird nicht unterstützt.",
+      "en": "The requested scope is unsupported.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.inactive-turn": {
+      "text": "Der Durchgang ist nicht mehr aktiv.",
+      "en": "The turn is no longer active.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "de:folderTrust.reason.unknown": {
+      "text": "Der Grund ist unbekannt.",
+      "en": "The reason is unknown.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.processDescription": {
+      "text": "Esto no guarda una decisión de confianza.",
+      "en": "This does not save a trust decision.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.lastTurn": {
+      "text": "Último turno",
+      "en": "Last turn",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.savedChoiceSent": {
+      "text": "Respuesta guardada enviada a Fuigo.",
+      "en": "Saved answer sent to Fuigo.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.searchAnswers": {
+      "text": "Buscar respuestas guardadas",
+      "en": "Search saved answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.moreAnswers": {
+      "text": "Mostrar más respuestas",
+      "en": "Show more answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.destination.own-local-home": {
+      "text": "Carpeta local propia de Fuigo",
+      "en": "Own local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.destination.per-turn-local-home": {
+      "text": "Carpeta local de Fuigo para este turno",
+      "en": "Per-turn local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.destination.cloud-home": {
+      "text": "Carpeta de Fuigo en la nube",
+      "en": "Cloud Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.destination.refused": {
+      "text": "Turno no disponible",
+      "en": "Turn unavailable",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.engineVersion": {
+      "text": "Generación de Fuigo {generation}, versión {version}",
+      "en": "Fuigo generation {generation}, version {version}",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.authority-unavailable": {
+      "text": "No se pudo confirmar la autorización.",
+      "en": "Authority could not be confirmed.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.store-unreadable": {
+      "text": "No se pudieron leer las decisiones de confianza guardadas.",
+      "en": "The saved trust store could not be read.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.version-unsupported": {
+      "text": "Esta versión de Fuigo no admite una decisión solo para el proceso.",
+      "en": "This Fuigo version does not support a process choice.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.not-picked": {
+      "text": "No se eligió esta carpeta.",
+      "en": "This folder was not picked.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.saved-decline": {
+      "text": "Se aplica un rechazo guardado.",
+      "en": "A saved decline applies.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.coverage-incomplete": {
+      "text": "La cobertura de los rechazos guardados está incompleta.",
+      "en": "Saved decline coverage is incomplete.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.reply-failed": {
+      "text": "No se pudo enviar la respuesta.",
+      "en": "The reply could not be sent.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.unsafe-key": {
+      "text": "La clave de la carpeta no es válida.",
+      "en": "The folder key is not valid.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.unsupported-scope": {
+      "text": "No se admite el alcance solicitado.",
+      "en": "The requested scope is unsupported.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.inactive-turn": {
+      "text": "El turno ya no está activo.",
+      "en": "The turn is no longer active.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "es:folderTrust.reason.unknown": {
+      "text": "Se desconoce el motivo.",
+      "en": "The reason is unknown.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.lastTurn": {
+      "text": "Dernier tour",
+      "en": "Last turn",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.savedChoiceSent": {
+      "text": "Réponse enregistrée envoyée à Fuigo.",
+      "en": "Saved answer sent to Fuigo.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.searchAnswers": {
+      "text": "Rechercher les réponses enregistrées",
+      "en": "Search saved answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.moreAnswers": {
+      "text": "Afficher plus de réponses",
+      "en": "Show more answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.destination.own-local-home": {
+      "text": "Dossier local personnel de Fuigo",
+      "en": "Own local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.destination.per-turn-local-home": {
+      "text": "Dossier local de Fuigo pour ce tour",
+      "en": "Per-turn local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.destination.cloud-home": {
+      "text": "Dossier Fuigo dans le cloud",
+      "en": "Cloud Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.destination.refused": {
+      "text": "Tour indisponible",
+      "en": "Turn unavailable",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.engineVersion": {
+      "text": "Génération Fuigo {generation}, version {version}",
+      "en": "Fuigo generation {generation}, version {version}",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.authority-unavailable": {
+      "text": "Impossible de confirmer l’autorisation.",
+      "en": "Authority could not be confirmed.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.version-unsupported": {
+      "text": "Cette version de Fuigo ne permet pas un choix limité au processus.",
+      "en": "This Fuigo version does not support a process choice.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.not-picked": {
+      "text": "Ce dossier n’a pas été choisi.",
+      "en": "This folder was not picked.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.saved-decline": {
+      "text": "Un refus enregistré s’applique.",
+      "en": "A saved decline applies.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.coverage-incomplete": {
+      "text": "La couverture des refus enregistrés est incomplète.",
+      "en": "Saved decline coverage is incomplete.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.reply-failed": {
+      "text": "Impossible d’envoyer la réponse.",
+      "en": "The reply could not be sent.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.unsafe-key": {
+      "text": "La clé du dossier n’est pas valide.",
+      "en": "The folder key is not valid.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.unsupported-scope": {
+      "text": "La portée demandée n’est pas prise en charge.",
+      "en": "The requested scope is unsupported.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.inactive-turn": {
+      "text": "Le tour n’est plus actif.",
+      "en": "The turn is no longer active.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "fr:folderTrust.reason.unknown": {
+      "text": "Le motif est inconnu.",
+      "en": "The reason is unknown.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.observationUnknown": {
+      "text": "फ़ोल्डर की सेटिंग का कोई परिणाम उपलब्ध नहीं है।",
+      "en": "No folder settings result is available.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.moreAnswers": {
+      "text": "और जवाब दिखाएँ",
+      "en": "Show more answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.destination.own-local-home": {
+      "text": "Fuigo का अपना स्थानीय होम",
+      "en": "Own local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.destination.per-turn-local-home": {
+      "text": "इस टर्न के लिए स्थानीय Fuigo होम",
+      "en": "Per-turn local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.destination.cloud-home": {
+      "text": "क्लाउड Fuigo होम",
+      "en": "Cloud Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.destination.refused": {
+      "text": "टर्न उपलब्ध नहीं है",
+      "en": "Turn unavailable",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.engineVersion": {
+      "text": "Fuigo जनरेशन {generation}, संस्करण {version}",
+      "en": "Fuigo generation {generation}, version {version}",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.authority-unavailable": {
+      "text": "अधिकार की पुष्टि नहीं हो सकी।",
+      "en": "Authority could not be confirmed.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.store-unreadable": {
+      "text": "सहेजे गए भरोसे के निर्णय पढ़े नहीं जा सके।",
+      "en": "The saved trust store could not be read.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.version-unsupported": {
+      "text": "यह Fuigo संस्करण केवल प्रोसेस के लिए निर्णय का समर्थन नहीं करता।",
+      "en": "This Fuigo version does not support a process choice.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.not-picked": {
+      "text": "यह फ़ोल्डर चुना नहीं गया था।",
+      "en": "This folder was not picked.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.saved-decline": {
+      "text": "सहेजा गया अस्वीकार लागू होता है।",
+      "en": "A saved decline applies.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.coverage-incomplete": {
+      "text": "सहेजे गए अस्वीकारों का कवरेज अधूरा है।",
+      "en": "Saved decline coverage is incomplete.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.reply-failed": {
+      "text": "जवाब भेजा नहीं जा सका।",
+      "en": "The reply could not be sent.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.unsafe-key": {
+      "text": "फ़ोल्डर कुंजी अमान्य है।",
+      "en": "The folder key is not valid.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.unsupported-scope": {
+      "text": "अनुरोधित दायरा समर्थित नहीं है।",
+      "en": "The requested scope is unsupported.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.inactive-turn": {
+      "text": "टर्न अब सक्रिय नहीं है।",
+      "en": "The turn is no longer active.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "hi:folderTrust.reason.unknown": {
+      "text": "कारण अज्ञात है।",
+      "en": "The reason is unknown.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.processLabel": {
+      "text": "このターンではフォルダー設定を許可しました。",
+      "en": "Folder settings allowed for this turn.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.processDescription": {
+      "text": "信頼の判断は保存されません。",
+      "en": "This does not save a trust decision.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.lastTurn": {
+      "text": "前回のターン",
+      "en": "Last turn",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.observationUnknown": {
+      "text": "フォルダー設定の結果はありません。",
+      "en": "No folder settings result is available.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.searchAnswers": {
+      "text": "保存された回答を検索",
+      "en": "Search saved answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.moreAnswers": {
+      "text": "回答をさらに表示",
+      "en": "Show more answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.destination.own-local-home": {
+      "text": "Fuigo の自分のローカルホーム",
+      "en": "Own local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.destination.per-turn-local-home": {
+      "text": "このターン専用の Fuigo ローカルホーム",
+      "en": "Per-turn local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.destination.cloud-home": {
+      "text": "Fuigo のクラウドホーム",
+      "en": "Cloud Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.destination.refused": {
+      "text": "ターンを開始できません",
+      "en": "Turn unavailable",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.engineVersion": {
+      "text": "Fuigo 世代 {generation}、バージョン {version}",
+      "en": "Fuigo generation {generation}, version {version}",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.withheldObservation": {
+      "text": "フォルダー設定は適用対象から除外されました。",
+      "en": "Folder settings withheld.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.authority-unavailable": {
+      "text": "権限を確認できませんでした。",
+      "en": "Authority could not be confirmed.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.store-unreadable": {
+      "text": "保存済みの信頼設定を読み取れませんでした。",
+      "en": "The saved trust store could not be read.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.version-unsupported": {
+      "text": "この Fuigo バージョンはプロセス限定の選択に対応していません。",
+      "en": "This Fuigo version does not support a process choice.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.not-picked": {
+      "text": "このフォルダーは選択されていません。",
+      "en": "This folder was not picked.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.saved-decline": {
+      "text": "保存済みの拒否が適用されます。",
+      "en": "A saved decline applies.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.coverage-incomplete": {
+      "text": "保存済みの拒否をすべて反映できていません。",
+      "en": "Saved decline coverage is incomplete.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.reply-failed": {
+      "text": "応答を送信できませんでした。",
+      "en": "The reply could not be sent.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.unsafe-key": {
+      "text": "フォルダーキーが無効です。",
+      "en": "The folder key is not valid.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.unsupported-scope": {
+      "text": "要求された範囲には対応していません。",
+      "en": "The requested scope is unsupported.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.inactive-turn": {
+      "text": "ターンは終了しています。",
+      "en": "The turn is no longer active.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "ja:folderTrust.reason.unknown": {
+      "text": "理由は不明です。",
+      "en": "The reason is unknown.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.processDescription": {
+      "text": "Isso não salva uma decisão de confiança.",
+      "en": "This does not save a trust decision.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.savedChoiceSent": {
+      "text": "Resposta salva enviada ao Fuigo.",
+      "en": "Saved answer sent to Fuigo.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.observationUnknown": {
+      "text": "Nenhum resultado de configuração da pasta disponível.",
+      "en": "No folder settings result is available.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.searchAnswers": {
+      "text": "Buscar respostas salvas",
+      "en": "Search saved answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.moreAnswers": {
+      "text": "Mostrar mais respostas",
+      "en": "Show more answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.destination.own-local-home": {
+      "text": "Pasta local própria do Fuigo",
+      "en": "Own local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.destination.per-turn-local-home": {
+      "text": "Pasta local do Fuigo para este turno",
+      "en": "Per-turn local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.destination.cloud-home": {
+      "text": "Pasta do Fuigo na nuvem",
+      "en": "Cloud Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.destination.refused": {
+      "text": "Turno indisponível",
+      "en": "Turn unavailable",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.engineVersion": {
+      "text": "Geração do Fuigo {generation}, versão {version}",
+      "en": "Fuigo generation {generation}, version {version}",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.withheldObservation": {
+      "text": "As configurações da pasta foram omitidas.",
+      "en": "Folder settings withheld.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.authority-unavailable": {
+      "text": "Não foi possível confirmar a autorização.",
+      "en": "Authority could not be confirmed.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.store-unreadable": {
+      "text": "Não foi possível ler as decisões de confiança salvas.",
+      "en": "The saved trust store could not be read.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.version-unsupported": {
+      "text": "Esta versão do Fuigo não oferece uma escolha limitada ao processo.",
+      "en": "This Fuigo version does not support a process choice.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.not-picked": {
+      "text": "Esta pasta não foi escolhida.",
+      "en": "This folder was not picked.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.saved-decline": {
+      "text": "Uma recusa salva se aplica.",
+      "en": "A saved decline applies.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.coverage-incomplete": {
+      "text": "A cobertura das recusas salvas está incompleta.",
+      "en": "Saved decline coverage is incomplete.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.reply-failed": {
+      "text": "Não foi possível enviar a resposta.",
+      "en": "The reply could not be sent.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.unsafe-key": {
+      "text": "A chave da pasta é inválida.",
+      "en": "The folder key is not valid.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.unsupported-scope": {
+      "text": "O escopo solicitado não é compatível.",
+      "en": "The requested scope is unsupported.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.inactive-turn": {
+      "text": "O turno não está mais ativo.",
+      "en": "The turn is no longer active.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "pt-br:folderTrust.reason.unknown": {
+      "text": "O motivo é desconhecido.",
+      "en": "The reason is unknown.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.processDescription": {
+      "text": "这不会保存信任决定。",
+      "en": "This does not save a trust decision.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.savedChoiceSent": {
+      "text": "已将保存的回答发送给 Fuigo。",
+      "en": "Saved answer sent to Fuigo.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.observationUnknown": {
+      "text": "暂无文件夹设置结果。",
+      "en": "No folder settings result is available.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.searchAnswers": {
+      "text": "搜索已保存的回答",
+      "en": "Search saved answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.moreAnswers": {
+      "text": "显示更多回答",
+      "en": "Show more answers",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.destination.own-local-home": {
+      "text": "Fuigo 自己的本地目录",
+      "en": "Own local Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.destination.cloud-home": {
+      "text": "Fuigo 云端目录",
+      "en": "Cloud Fuigo home",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.engineVersion": {
+      "text": "Fuigo 第 {generation} 代，版本 {version}",
+      "en": "Fuigo generation {generation}, version {version}",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.authority-unavailable": {
+      "text": "无法确认权限。",
+      "en": "Authority could not be confirmed.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.store-unreadable": {
+      "text": "无法读取已保存的信任决定。",
+      "en": "The saved trust store could not be read.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.version-unsupported": {
+      "text": "此 Fuigo 版本不支持仅对当前进程生效的选择。",
+      "en": "This Fuigo version does not support a process choice.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.not-picked": {
+      "text": "此文件夹未被选取。",
+      "en": "This folder was not picked.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.saved-decline": {
+      "text": "已保存的拒绝决定适用。",
+      "en": "A saved decline applies.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.coverage-incomplete": {
+      "text": "已保存拒绝决定的覆盖范围不完整。",
+      "en": "Saved decline coverage is incomplete.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.reply-failed": {
+      "text": "无法发送回复。",
+      "en": "The reply could not be sent.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.unsafe-key": {
+      "text": "文件夹键无效。",
+      "en": "The folder key is not valid.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.unsupported-scope": {
+      "text": "不支持请求的范围。",
+      "en": "The requested scope is unsupported.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    },
+    "zh:folderTrust.reason.unknown": {
+      "text": "原因未知。",
+      "en": "The reason is unknown.",
+      "verdict": "pass",
+      "note": "Matches English and neighbour terms; placeholders intact."
+    }
+  },
+  "files": {}
+}

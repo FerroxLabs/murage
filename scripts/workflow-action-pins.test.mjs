@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Every third-party action a workflow runs is pinned to a full commit sha, never a tag a
-// publisher can move. scale-budget.yml writes the build host root key and was the one left on
+// publisher can move. scale-budget.yml writes the Hetzner root key and was the one left on
 // tags (upstream 3a5935956's class).
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";

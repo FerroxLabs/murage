@@ -72,9 +72,11 @@ let toolLog = "";
 let shell: DesktopShell;
 let oauth: FakeRemoteMcp;
 let keyed: FakeRemoteMcp;
+let lax: FakeRemoteMcp;
 let legacy: FakeRemoteMcp;
 const API_KEY = "fake-key-e2e-5c1f0a9b7d3e";
 const LEGACY_KEY = "fake-key-legacy-0e9d8c7b";
+const LAX_KEY = "fake-key-lax-4b8e2d6a1c";
 const bots = new Map<string, { id: string; threadId: string }>();
 // MAIN RULING 1115-C4D2-FOUR: native Pi is an independent, real launch witness.
 const nativeLaunches: Array<Pick<ToolLine, "engine" | "launch" | "engineArgv">> = [];
@@ -155,12 +157,15 @@ posixOnly("MCP-LINK T15: a link server end to end", () => {
     oauth = await startFakeRemoteMcp({ auth: "bearer", unauthorized: "comfy" });
     keyed = await startFakeRemoteMcp({ auth: "api-key", apiKey: API_KEY, apiKeyHeader: "x-api-key", unauthorized: "api-key-only", prm: false });
     legacy = await startFakeRemoteMcp({ auth: "api-key", apiKey: LEGACY_KEY, apiKeyHeader: "x-api-key", unauthorized: "api-key-only", prm: false, transport: "sse" });
+    // Streamable HTTP that accepts a notification with 200 text/plain and labels its JSON answers text/plain:
+    // Settings Test takes both, so a turn must too (1.0.20 owner report: Test passed, every turn sealed the mount).
+    lax = await startFakeRemoteMcp({ auth: "api-key", apiKey: LAX_KEY, apiKeyHeader: "x-api-key", unauthorized: "api-key-only", prm: false, notificationAnswer: "200-text", answerContentType: "text/plain" });
     shell = await startDesktopShell({ home });
   }, 60_000);
 
   afterAll(async () => {
     await shell?.stop();
-    await Promise.all([oauth?.close(), keyed?.close(), legacy?.close()]);
+    await Promise.all([oauth?.close(), keyed?.close(), legacy?.close(), lax?.close()]);
     if (home) await removeTempDir(home);
   });
 
@@ -404,6 +409,39 @@ posixOnly("MCP-LINK T15: a link server end to end", () => {
     expect(keyed.requests.filter((request) => request.method === "POST").at(-1)!.headers["x-api-key"]).toBe(API_KEY);
     expect(JSON.stringify(await listing())).not.toContain(API_KEY);
   }, 90_000);
+
+  it("a server that passes Test with a 200 or 204 notification answer and text/plain JSON mounts in a claude turn", async () => {
+    expect((await shell.desktop("POST", "/api/mcp/servers", { name: "lax", url: lax.mcpUrl, confirmLocal: "this-computer", auth: "header", headers: { "x-api-key": true } })).status).toBe(201);
+    expect(await shell.service.saveSecrets("lax", { headers: { "x-api-key": LAX_KEY } })).toEqual({ ok: true });
+    expect((await shell.desktop("POST", "/api/mcp/servers/lax/test", {})).body).toMatchObject({ ok: true, transport: "http" });
+    expect((await shell.desktop("PATCH", "/api/mcp/servers/lax", { enabled: true })).status).toBe(200);
+    for (const answer of ["200-text", "204"] as const) {
+      lax.options.notificationAnswer = answer;
+      const before = lax.toolCalls.length, sent = lax.requests.length;
+      const [line] = await turn(bots.get("claude")!, "__custom_tool__:lax");
+      expect(line, answer).toMatchObject({ engine: "claude", server: "lax", text: "hello from claude", isError: false });
+      expect(lax.toolCalls.slice(before), answer).toEqual([{ name: "echo", arguments: { text: "hello from claude" } }]);
+      // the notification really took the non-202 path upstream, and the key reached only the server
+      expect(lax.requests.slice(sent).filter((request) => request.method === "POST" && request.body.includes('"notifications/initialized"')).length, answer).toBeGreaterThan(0);
+      expect(lax.requests.filter((request) => request.method === "POST").at(-1)!.headers["x-api-key"]).toBe(LAX_KEY);
+    }
+    expect(JSON.stringify(await listing())).not.toContain(LAX_KEY);
+  }, 120_000);
+
+  // 1.0.21 cause6: on an owner's computer the server never connected in any turn (mount unavailable, transport-lost).
+  // One call the server failed sealed the whole server for the turn; every fake answered every call well.
+  it("cause6: a server that fails one call of a turn (a 500 to the notification) still mounts, lists and runs in that claude turn", async () => {
+    lax.options.notificationAnswer = "500";
+    try {
+      const before = lax.toolCalls.length, sent = lax.requests.length;
+      const [line] = await turn(bots.get("claude")!, "__custom_tool__:lax");
+      expect(line).toMatchObject({ engine: "claude", server: "lax", tools: ["echo", "sum"], text: "hello from claude", isError: false });
+      expect(lax.toolCalls.slice(before)).toEqual([{ name: "echo", arguments: { text: "hello from claude" } }]);
+      // the failing call really went upstream in this turn, and nothing the server said in its error reached the engine
+      expect(lax.requests.slice(sent).filter((request) => request.method === "POST" && request.body.includes('"notifications/initialized"')).length).toBeGreaterThan(0);
+      expect(JSON.stringify(line)).not.toContain("UPSTREAM-ERROR-TEXT");
+    } finally { lax.options.notificationAnswer = "200-text"; }
+  }, 120_000);
 
   it("a legacy SSE run: Test falls back to HTTP+SSE, saves the transport, and a turn's call rides the stream", async () => {
     expect((await shell.desktop("POST", "/api/mcp/servers", { name: "legacy", url: legacy.mcpUrl, confirmLocal: "this-computer", auth: "header", headers: { "x-api-key": true } })).status).toBe(201);

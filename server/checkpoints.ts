@@ -10,7 +10,7 @@ import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // tree, so the user's repository internals are invisible to the snapshot.
 //
 // Restore is redo-friendly on purpose: it commits a safety point, then moves
-// the index and work tree back with `git restore --source` + `git clean -fd`
+// the index and work tree back with `git restore --source` (no clean: q1022-disk)
 // while HEAD stays put — so the state that was just replaced is itself a
 // checkpoint, and "undo the undo" is one more restore. Ignored/excluded files
 // (node_modules, .env, media) are never snapshotted and never removed by one.
@@ -28,7 +28,7 @@ import { engineStderrRedacted } from "./drivers/acp/core.ts";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "./counted-fs.ts";
-import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, parse, resolve } from "node:path";
 
@@ -46,7 +46,7 @@ export type RestoreResult = { ok: true } | { ok: false; error: string };
 const COMMIT_HASH = /^[0-9a-f]{40}$/;
 
 // What a checkpoint deliberately does not carry. Restores must never delete
-// these either: `git clean -fd` (without -x) leaves ignored files alone, so
+// these either: restore touches no untracked file (no clean), so
 // everything listed here survives a rollback untouched. Categories follow
 // Roo-Code's checkpoint excludes: VCS internals, dependency trees, build
 // output, caches, logs, secrets, media, archives, databases, model weights.
@@ -158,7 +158,7 @@ function gitAvailable(): Promise<boolean> {
  * personal folders (home, Desktop, Documents, Downloads and the rest — see
  * protected-folders.ts, which finds where they really are on each platform),
  * and the filesystem, volume or home root — snapshotting those would trawl
- * unbounded personal data into a repo, and a restore's `git clean -fd` there
+ * unbounded personal data into a repo, and a restore's rewrite there
  * would be an act of vandalism. */
 export function refusalReason(cwd: string): string | null {
   if (!isAbsolute(cwd)) return "the working folder must be an absolute path";
@@ -201,7 +201,7 @@ export function refusalReason(cwd: string): string | null {
  * `realpathSync.native` path: the key is a digest of the string, so a second
  * spelling of one folder would otherwise open a second repo, hiding the
  * folder's checkpoints ("no checkpoints exist for this folder") and letting a
- * restore's `git clean -fd` run beside a snapshot it never waited for. */
+ * restore rewrite files beside a snapshot it never waited for. */
 function shadowDir(botId: string, cwd: string): string {
   const key = createHash("sha256").update(resolve(cwd)).digest("hex").slice(0, 16);
   return join(CHECKPOINTS_DIR, botId, key);
@@ -231,12 +231,12 @@ function gitEnv(shadow: string, cwd: string): NodeJS.ProcessEnv {
  * "." pathspec in add/restore resolves relative to it. A hung git (index
  * lock, dead network filesystem) would otherwise jam the per-repo queue for
  * the whole session, so every call carries a hard timeout. */
-function runGit(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+function runGit(args: string[], cwd: string, env: NodeJS.ProcessEnv, timeout = 120_000): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
     execFile(
       "git",
       [...args],
-      withHideInherit({ cwd, env, windowsHide: true, encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }),
+      withHideInherit({ cwd, env, windowsHide: true, encoding: "utf8", timeout, maxBuffer: 16 * 1024 * 1024 }),
       (err, stdout, stderr) => {
         if (err) rejectPromise(new Error(`git ${args[0]}: ${engineStderrRedacted(stderr || err.message, false).trim().slice(0, 400)}`));
         else resolvePromise(stdout);
@@ -306,7 +306,99 @@ async function ensureShadow(cwd: string, env: NodeJS.ProcessEnv, shadow: string)
   }
 }
 
-type CommitResult = { hash: string; complete: boolean };
+type CommitResult = { hash: string; complete: boolean; large: string[] };
+
+/** q1022-disk: retention and size bounds of a shadow repo. A checkpoint is kept while it is one of the newest
+ * CHECKPOINT_KEEP or younger than CHECKPOINT_KEEP_MS (whichever keeps more); older history leaves once
+ * CHECKPOINT_PRUNE_SLACK more have piled up behind it. A file over CHECKPOINT_MAX_FILE_BYTES is never copied in. */
+export const CHECKPOINT_KEEP = 50;
+export const CHECKPOINT_KEEP_MS = 14 * 24 * 60 * 60 * 1000;
+export const CHECKPOINT_PRUNE_SLACK = 10;
+export const CHECKPOINT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+/** Paths (relative, as git names them) of the folder's files over the size cap that git would otherwise copy in. */
+async function largeFiles(cwd: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+  const out = await runGit(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd, env);
+  const large = new Set<string>();
+  for (const rel of out.split("\0")) {
+    if (!rel) continue;
+    try { const seen = lstatSync(join(cwd, rel)); if (seen.isFile() && seen.size > CHECKPOINT_MAX_FILE_BYTES) large.add(rel); } catch { /* gone since the listing */ }
+  }
+  return [...large].sort();
+}
+/** What a restore to `source` must leave alone: the large files already known (`large`), every source path the folder has as
+ * a file that the safety point does not hold (ignored, excluded or over the size cap: restore would write the source's copy
+ * over bytes no checkpoint has, Astra 48618e0c2f and 49e82fb258), the same for a name above a source path, and a source file
+ * where the folder now has a directory holding anything no checkpoint has. */
+async function restoreKeepOut(cwd: string, env: NodeJS.ProcessEnv, source: string, safety: string, large: readonly string[]): Promise<string[]> {
+  const listed = async (rev: string) => (await runGit(["ls-tree", "-r", "-z", "--name-only", "--full-tree", rev], cwd, env)).split("\0").filter(Boolean);
+  const paths = await listed(source), held = new Set(await listed(safety)), seen = new Map<string, boolean>();
+  const unheld = (rel: string) => {
+    if (held.has(rel)) return false;
+    let answer = seen.get(rel);
+    if (answer === undefined) {
+      try { answer = !lstatSync(join(cwd, rel)).isDirectory(); } catch { answer = false; }
+      seen.set(rel, answer);
+    }
+    return answer;
+  };
+  const folders = (rel: string) => rel.split("/").slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join("/"));
+  const out = new Set(large);
+  for (const rel of paths) {
+    if (unheld(rel)) out.add(rel);
+    for (const folder of folders(rel)) if (unheld(folder)) out.add(folder);
+  }
+  // a source file where the folder now has a directory: writing it would delete the directory, and whatever in it is in no
+  // checkpoint (ignored or excluded files, large ones) has no copy anywhere, so such a directory stays as it is
+  for (const rel of paths) {
+    if (out.has(rel)) continue;
+    let folder = false;
+    try { folder = lstatSync(join(cwd, rel)).isDirectory(); } catch { /* not there */ }
+    if (folder && (await runGit(["ls-files", "-z", "--others", "--", `:(literal)${rel}`], cwd, env)) !== "") out.add(rel);
+  }
+  return [...out];
+}
+/** Pathspecs that keep the large files out of add and restore (argv carries any name, line breaks included). */
+const keepOut = (large: readonly string[]) => large.map(rel => `:(exclude,literal)${rel}`);
+
+/** A large file is kept out by pathspecs (add, restore), never by an ignore line: the folder's own .gitignore can
+ * re-include what info/exclude names (a "!name" there wins), and an ignored file would drop out of the listing above. It is
+ * dropped from the index once, so it stays untracked: listed every time it is unignored, never added. */
+async function excludeLarge(cwd: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+  const large = await largeFiles(cwd, env);
+  if (!large.length) return large;
+  await runGit(["rm", "--cached", "-q", "--ignore-unmatch", "--", ...large.map(rel => `:(literal)${rel}`)], cwd, env);
+  // a tracked large file the folder ignores since: git add never adds it, and naming it to add, even as an exclude, fails the
+  // add (a restore safety point would refuse); restore checks every source path's size on its own (restoreKeepOut)
+  const ignored = new Set((await runGit(["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", ...large.map(rel => `:(literal)${rel}`)], cwd, env)).split("\0"));
+  return large.filter(rel => !ignored.has(rel));
+}
+
+/** Drop history behind the kept checkpoints: the newest kept-out commit becomes the shallow boundary (the repo's new base,
+ * which listing and restore already treat as the marker, not a checkpoint), so kept checkpoints keep their hashes; then
+ * the reflog lets go and gc prunes what is no longer reachable. Runs on the shadow's own queue after the snapshot returned. */
+async function pruneHistory(cwd: string, env: NodeJS.ProcessEnv, now: number): Promise<void> {
+  const rows = (await runGit(["log", "--format=%H %ct"], cwd, env)).split("\n").filter(Boolean).map(line => line.split(" "));
+  let keep = CHECKPOINT_KEEP;
+  while (keep < rows.length && now - Number(rows[keep]![1]) * 1000 < CHECKPOINT_KEEP_MS) keep++;
+  // rows[keep] is the new base; prune only once SLACK commits sit behind it
+  if (rows.length - 1 - keep < CHECKPOINT_PRUNE_SLACK) return;
+  writeFileSync(join(env.GIT_DIR!, "shallow"), `${rows[keep]![0]}\n`);
+  // Collecting is the costly half, and the next turn's snapshot waits for it on this queue. The shadow repo is never
+  // packed (gc.auto=0), so its objects are loose and prune alone frees the pruned history: a reachability walk plus
+  // deletes, no repack and no rewrite of what is kept. It has its own bound, and after a failure this shadow skips it for
+  // a day (the boundary above still moved, so the list stays bounded; the next turns do not wait on one that keeps failing).
+  const gitDir = env.GIT_DIR!;
+  if ((gcFailedAt.get(gitDir) ?? -Infinity) > now - GC_RETRY_MS) return;
+  try {
+    await runGit(["reflog", "expire", "--expire=now", "--all"], cwd, env, GC_TIMEOUT_MS);
+    await runGit(["prune", "--expire=now"], cwd, env, GC_TIMEOUT_MS);
+    gcFailedAt.delete(gitDir);
+  } catch (e) { gcFailedAt.set(gitDir, now); throw e; }
+}
+const GC_TIMEOUT_MS = 5 * 60 * 1000;
+const GC_RETRY_MS = 24 * 60 * 60 * 1000;
+const gcFailedAt = new Map<string, number>();
 
 /** Stage everything and commit if anything actually changed. `complete`
  * records whether every path was indexable: ordinary snapshots may keep the
@@ -318,13 +410,14 @@ async function commitAll(cwd: string, env: NodeJS.ProcessEnv, label: string): Pr
   // Restore treats an incomplete safety point as a hard stop before touching
   // the work tree.
   let complete = true;
-  await runGit(["add", "-A", "--ignore-errors", "."], cwd, env).catch(() => {
+  const large = await excludeLarge(cwd, env);
+  await runGit(["add", "-A", "--ignore-errors", "--", ".", ...keepOut(large)], cwd, env).catch(() => {
     complete = false;
   });
   if (await hasStagedChanges(cwd, env)) {
     await runGit(["commit", "--no-verify", "-m", label], cwd, env);
   }
-  return { hash: (await runGit(["rev-parse", "HEAD"], cwd, env)).trim(), complete };
+  return { hash: (await runGit(["rev-parse", "HEAD"], cwd, env)).trim(), complete, large };
 }
 
 /** Snapshot the folder. Returns the checkpoint hash, or null when the
@@ -337,11 +430,15 @@ export async function snapshot(botId: string, cwd: string, label: string): Promi
   try {
     const worktree = realpathSync.native(resolve(cwd));
     const shadow = shadowDir(botId, worktree);
-    return await serialize(shadow, async () => {
-      const env = gitEnv(shadow, worktree);
+    const env = gitEnv(shadow, worktree);
+    const hash = await serialize(shadow, async () => {
       await ensureShadow(worktree, env, shadow);
       return (await commitAll(worktree, env, label)).hash;
     });
+    // background: the turn has its checkpoint; the next snapshot of this folder queues behind the prune
+    void serialize(shadow, () => pruneHistory(worktree, env, Date.now()))
+      .catch(e => console.warn(`workspace checkpoint prune skipped for bot ${botId}: ${e instanceof Error ? e.message : String(e)}`));
+    return hash;
   } catch (e) {
     disable(botId, e instanceof Error ? e.message : String(e));
     return null;
@@ -409,6 +506,8 @@ export async function restore(botId: string, cwd: string, hash: string, options:
       }
       const base = (await runGit(["rev-list", "--max-parents=0", "HEAD"], worktree, env)).trim();
       if (base === hash) return { ok: false, error: "that is the empty base marker, not a checkpoint" };
+      // a commit behind the kept history (pruned, its objects not yet collected) is no checkpoint any more (q1022-disk)
+      try { await runGit(["merge-base", "--is-ancestor", hash, "HEAD"], worktree, env); } catch { return { ok: false, error: "no such checkpoint" }; }
       // safety point: whatever is about to be overwritten becomes restorable
       const safety = await commitAll(worktree, env, "before restore");
       if (!safety.complete) {
@@ -420,15 +519,39 @@ export async function restore(botId: string, cwd: string, hash: string, options:
       // Index AND work tree move to the source; HEAD stays put. --staged
       // matters: with a work-tree-only restore, a file that exists in the
       // source but not in the index (deleted in a later checkpoint, now
-      // resurrected) would be untracked the moment restore recreates it —
-      // and the clean below would delete it right back. Restoring the index
-      // too makes clean blind to everything the checkpoint owns; what clean
-      // then sweeps is exactly the strays the safety commit could not stage
-      // (unreadable files, add races) — never ignored/excluded files (no -x).
+      // resurrected) would be untracked the moment restore recreates it.
+      // Restoring the index too removes every file the safety point holds
+      // that the source lacks; untracked files are left alone (see below).
       options.assertCurrent?.();
-      await runGit(["restore", "--source", hash, "--staged", "--worktree", "--", "."], worktree, env);
+      // a file over the size cap is in no checkpoint as it is now, so restore leaves it as it is (q1022-disk), ignored or not
+      const large = await restoreKeepOut(worktree, env, hash, safety.hash, safety.large);
+      // the keep-out scan awaits git: the folder may have been replaced meanwhile, so the lease is checked again right
+      // before restore writes (Astra 57a91517c8: otherwise the replacement folder is overwritten and only caught after)
       options.assertCurrent?.();
-      await runGit(["clean", "-fd"], worktree, env);
+      // a file created during the restore at a path the safety point lacks but the checkpoint holds is untracked, so the safety
+      // diff below does not see it and restore would write over it with no copy (ASTRA/OPUS 95dac87ccb H2). The paths the restore
+      // adds are listed first (an awaited git: a tracked edit meanwhile is still caught by the safety diff after it, ASTRA
+      // 8d18ad5701), and checked without any await right before the spawn
+      const adds = (await runGit(["diff", "--name-only", "-z", "--no-renames", "--diff-filter=A", safety.hash, hash, "--", ".", ...keepOut(large)], worktree, env)).split("\0").filter(Boolean);
+      // a file saved during the scan is in no safety point: refuse rather than overwrite it (Astra f382199d76)
+      try {
+        // --ignore-submodules=dirty: a nested repo's own uncommitted edits are never in a safety point (it is a gitlink) and restore
+        // does not write inside it, so they must not refuse every restore of the folder (FABLE/OPUS 95dac87ccb H1; as hasStagedChanges)
+        await runGit(["diff", "--quiet", "--ignore-submodules=dirty", safety.hash, "--", ".", ...keepOut(large)], worktree, env);
+      } catch {
+        return { ok: false, error: "files in this folder changed while the restore was starting, so nothing was restored; try again" };
+      }
+      options.assertCurrent?.();
+      for (const rel of adds) {
+        let there = true;
+        try { lstatSync(join(worktree, rel)); } catch { there = false; }
+        if (there) return { ok: false, error: "files in this folder changed while the restore was starting, so nothing was restored; try again" };
+      }
+      await runGit(["restore", "--source", hash, "--staged", "--worktree", "--", ".", ...keepOut(large)], worktree, env);
+      options.assertCurrent?.();
+      // No clean (q1022-disk, Astra e40607932a): restore already removed every file the safety point held that the source
+      // lacks, so whatever untracked file is left is one no checkpoint holds (ignored, excluded, over the size cap, made
+      // unignored by the restore's own .gitignore change, or written after the safety point). Removing it would lose data.
       // record the post-restore state (also re-syncs the index with the
       // deletions restore made), so the timeline shows the rollback
       await commitAll(worktree, env, `restored ${hash.slice(0, 8)}`);

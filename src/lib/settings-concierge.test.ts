@@ -17,11 +17,15 @@ describe("every setting Help page", () => {
   if (process.env.MURAGE_TEST_WRITE_CONCIERGE === "1") writeFileSync(file, page);
 
   it("lists every registry entry, once, with its address", () => {
-    for (const entry of SETTINGS_INDEX) {
+    // The own transcription key renders only while a key saved earlier is in use (Sean 11-06), so Help leaves it out.
+    const listed = SETTINGS_INDEX.filter((entry) => !(entry.scope === "app" && entry.anchor === "voice-key-heading"));
+    expect(listed).toHaveLength(SETTINGS_INDEX.length - 1);
+    for (const entry of listed) {
       const address = settingsAddressFor(entry);
       expect(page.split(`Address: ${address}\n`).length - 1, entry.id).toBe(1);
     }
-    expect(page.match(/^## /gm)?.length).toBe(SETTINGS_INDEX.length);
+    expect(page).not.toContain("webSearch/voice-key");
+    expect(page.match(/^## /gm)?.length).toBe(listed.length);
   });
 
   it("names a reason for every entry that can be off, and no heading twice", () => {

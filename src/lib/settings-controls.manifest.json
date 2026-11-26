@@ -49,6 +49,7 @@
     "identity.title": { "kind": "text", "key": "title" },
     "identity.instructions": { "kind": "textarea", "key": "description" },
     "identity.personality": { "kind": "textarea", "key": "persona" },
+    "identity.archive": { "kind": "button", "key": "none (owner action: archive, or delete behind its own confirmation)" },
     "shapes.shapes": { "kind": "list", "key": "house-rules flag (app-wide), aboutMe, teamBrief, skills enabled" },
     "skills.skills": { "kind": "list", "key": "PATCH /api/bots/:id/skills/:name {enabled}" },
     "learning.learning": { "kind": "composite", "key": "learning handlers (setEnabled, setAskFirst, lessons)" },

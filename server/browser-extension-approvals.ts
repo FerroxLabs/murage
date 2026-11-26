@@ -349,7 +349,7 @@ export class BrowserExtensionApprovals {
     let count = 0;
     for (const record of [...this.records.values()]) if (this.now() >= record.expiresAt) { this.forget(record, true); count++; }
     // the cards still open, through the card index: every one this closes is an unanswered request card
-    for (const threadId of threads) for (const message of this.bus.store.openRequestCardRows(threadId)) {
+    for (const threadId of threads) for (const message of this.bus.store.openDecisionCardRows(threadId)) {
       const card = message.card;
       if (card?.tool !== BROWSER_EXTENSION_APPROVAL_TOOL || !card.requestId || card.answered || card.dismissed || this.pending.has(card.requestId)) continue;
       const record = this.records.get(card.requestId);

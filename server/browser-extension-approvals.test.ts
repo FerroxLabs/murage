@@ -16,14 +16,16 @@ import type { ApprovalBus } from "./peer-approval.ts";
 import type { Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { IndependentThreadRuns } from "./independent-thread-runs.ts";
+import { automaticSettlement } from './skill-switch-settlement.ts';
 import { BrowserTurnExecution } from "./browser-turn-execution.ts";
 function fixture() {
   const messages = new Map<string, Message[]>(); let counter=0;
   const store = {
+    isMailboxSealed: () => false,
     bots:[{threadId:"thread",tasks:[{threadId:"task"}]}],groups:[{threadId:"group",tasks:[]}],
     messagesFor:(thread:string)=>messages.get(thread)??[],
     messageById:(thread:string,id:string)=>(messages.get(thread)??[]).find(m=>m.id===id),
-    openRequestCardRows:(thread:string)=>(messages.get(thread)??[]).filter(m=>m.card?.requestId&&!m.card.answered&&!m.card.dismissed),
+    openDecisionCardRows:(thread:string)=>(messages.get(thread)??[]).filter(m=>m.card?.requestId&&!m.card.answered&&!m.card.dismissed),
     appendMessage:(thread:string,input:Partial<Message>)=>{const message={...input,id:String(++counter)} as Message;messages.set(thread,[...(messages.get(thread)??[]),message]);return message;},
     patchMessage:(thread:string,id:string,patch:Partial<Message>)=>{const message=messages.get(thread)?.find(m=>m.id===id);if(!message)return null;Object.assign(message,patch);return message;},
     patchMessagePoint:(thread:string,id:string,patch:Partial<Message>)=>store.patchMessage(thread,id,patch),
@@ -60,7 +62,7 @@ function registeredAnswerRoute(store: ReturnType<typeof fixture>['store']) {
     outsideFlights: new Set(), answeredWhere: { attempt() {}, forget() {} }, pushWarn() {},
     answerAsSendReply: async () => null, folderTrustBrowserGate: async () => null,
     questionReply: () => ({ kind: 'none' }), freshAuthRefusal: async () => null,
-    publishAnswerAllowed: () => true,
+    publishAnswerAllowed: () => true, onOwnerBrowser: () => false, skipsFreshAuth: () => true, automaticSettlement, freshAuthNeeded: () => false, // route now gates browser-origin owners (row 45 port); this fixture is the desktop caller
   };
   const code = ['requestBehavior', 'answerRegisteredApproval', 'respondToCard'].map(cut).join('\n');
   return new Function(...Object.keys(bindings), stripTypeScriptTypes(code) + ';return respondToCard;')(...Object.values(bindings));

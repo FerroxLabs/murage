@@ -9,6 +9,7 @@
 // Same modal contract as ChannelDetailsPanel: focus lands on the field the
 // person asked for, Escape closes, Tab stays inside, and focus goes back to
 // whatever opened it. Delete asks inline, never with a browser confirm().
+import { imeComposing } from "@/lib/composer-enter";
 import { useFocusTrap } from "@/lib/focus-trap";
 import { LayerSurface } from "@/components/LayerSurface";
 import type { LoadedLayerProps } from "@/components/LazyOverlay";
@@ -25,6 +26,7 @@ import {
   saveTeamMembers,
   saveTeamName,
   teamCandidateDetail,
+  teamDeleteChoicesReview,
   teamDeleteSummary,
   teamMembersChange,
   teamMembersSavedNote,
@@ -77,6 +79,9 @@ export interface TeamSettingsDialogBodyProps {
   onAskDelete: () => void;
   onDeleteChoice: (choice: TeamDeleteChoice) => void;
   onConfirmDelete: () => void;
+  /** The team changed after the review: show it again before another delete. */
+  reviewStale?: boolean;
+  onLookAgain?: () => void;
   onCancelDelete: () => void;
   onClose: () => void;
   /** Opens that bot's Teams settings (SPEC-X 13.2). */
@@ -135,6 +140,7 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
               value={name}
               onChange={(event) => props.onName(event.target.value)}
               onKeyDown={(event) => {
+                if (imeComposing(event.nativeEvent)) return;
                 if (event.key === "Enter" && !renameProblem && !busy) props.onSaveName();
               }}
               className={cn(FIELD, "min-w-0 flex-1 basis-48")}
@@ -287,13 +293,27 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
                   <li key={line}>{line}</li>
                 ))}
               </ul>
+              <p className="mt-2 text-[12.5px] font-medium text-ink">Both choices clear these saved app choices:</p>
+              <ul data-team-delete-choices className="mt-1 list-disc space-y-0.5 pl-5 text-[12.5px] leading-relaxed text-ink-secondary">
+                {teamDeleteChoicesReview(team).map((row) => (
+                  <li key={row.id}>
+                    {row.name}{row.archived ? " (archived)" : ""}: {row.text}
+                  </li>
+                ))}
+              </ul>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" data-team-focus="delete" onClick={props.onCancelDelete} disabled={busy} className={BUTTON}>
                   Cancel
                 </button>
-                <button type="button" onClick={props.onConfirmDelete} disabled={busy} className={DANGER}>
-                  Delete {team.name}
-                </button>
+                {props.reviewStale ? (
+                  <button type="button" onClick={() => props.onLookAgain?.()} disabled={busy} className={BUTTON}>
+                    Look again
+                  </button>
+                ) : (
+                  <button type="button" onClick={props.onConfirmDelete} disabled={busy} className={DANGER}>
+                    Delete {team.name}
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -335,6 +355,7 @@ export function TeamSettingsDialog({ layerLifecycle,
   const [lead, setLead] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(focus === "delete");
   const [deleteChoice, setDeleteChoice] = useState<TeamDeleteChoice>("keep");
+  const [reviewStale, setReviewStale] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ error: boolean; text: string } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -435,11 +456,28 @@ export function TeamSettingsDialog({ layerLifecycle,
     });
   };
 
-  const confirmDelete = () =>
-    team &&
-    run(async () => {
+  // A refused delete never reloads on its own: the owner looks again, then confirms the new review.
+  const confirmDelete = async () => {
+    if (!team) return;
+    setBusy(true);
+    setStatus(null);
+    try {
       applyChanges((await removeTeam(team, deleteChoice, api)).changed);
       onClose();
+    } catch (cause) {
+      const error = cause as Error & { status?: number };
+      setStatus({ error: true, text: error.message });
+      if (error.status === 409) setReviewStale(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const lookAgain = () =>
+    team &&
+    run(async () => {
+      adopt(await loadTeam(team.name, api));
+      setReviewStale(false);
+      setStatus({ error: false, text: "Reviewed again. Check the list, then delete." });
     });
 
   return <LayerSurface handle={layer}><div
@@ -483,6 +521,8 @@ export function TeamSettingsDialog({ layerLifecycle,
           }}
           onDeleteChoice={setDeleteChoice}
           onConfirmDelete={() => void confirmDelete()}
+          reviewStale={reviewStale}
+          onLookAgain={() => void lookAgain()}
           onCancelDelete={() => {
             setConfirmingDelete(false);
             window.setTimeout(() => layer?.active && dialogRef.current?.querySelector<HTMLElement>('[data-team-focus="delete-ask"]')?.focus(), 0);

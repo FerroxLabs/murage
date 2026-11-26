@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run only in an authorized Ubuntu image builder. Does not provision a VM.
-# Base: Ubuntu 24.04 LTS amd64 or arm64 (aarch64, build host CAX), Ubuntu serial 20260926.
+# Base: Ubuntu 24.04 LTS amd64 or arm64 (aarch64, Hetzner CAX), Ubuntu serial 20260926.
 # One script builds either architecture; every download is pinned per architecture below.
 set -euo pipefail
 # Never let a python helper write __pycache__ into the source checkout (it dirties it and the stage 2 clean-checkout test refuses).
@@ -35,8 +35,8 @@ declare -A node_sha256=([x86_64]=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a2
 declare -A caddy_sha256=([x86_64]=527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9 [aarch64]=52d42ae12b3462097e9868da6dfed3c9648ae12edd3b3638102312af84cb6904)
 declare -A cloudflared_sha256_by_arch=([x86_64]=053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0 [aarch64]=89297ebfb9e8c99c0dc013a1140601453cf3798d8306c5591651f4a3f5210be8)
 declare -A docker_sha256_by_arch=([x86_64]=4f798b3ee1e0140eab5bf30b0edc4e84f4cdb53255a429dc3bbae9524845d640 [aarch64]=e6b53725a73763ab3f988c73f8772eaed429754c1a579db5ff11f21990fd1817)
-declare -A claude_sha256_by_arch=([x86_64]=a967e7b1d8b4e47ee421d5433027880347952b0c0857abf880e2c942a4ec93b3 [aarch64]=24caa9e6ff13bf227049a2626f1c816fc895023050f0ec3b12dbf14d897367e0)
-declare -A codex_sha256_by_arch=([x86_64]=86f268d81b898f3e144c5ecff2ad2fda2c5802e042d6195b72538fe0fa125057 [aarch64]=bf3ca2719f1143b1440fbd85c149379e696c782c50ad7991f8bfcec60b2600c1)
+declare -A claude_sha256_by_arch=([x86_64]=604d29a6869409106b6a1110bdadcc8b72e8654a5a865d23258f938a696e348e [aarch64]=452dddff140b5caf00a5410333a3d6db82c73ea2dec74b1541fae18e97d47dca)
+declare -A codex_sha256_by_arch=([x86_64]=01baa2e47809f8597be5b2f8abd4e4dfe3fb5bcb6e504c2fbaaad97056c15e8d [aarch64]=bcf50b836385e51bd2976ab2bbe92b1b08a1cbe37712eb8dbe378aa78d24871c)
 declare -A grok_sha256_by_arch=([x86_64]=1668414b047e1050a96d25fe17dfc3efe63190fbf66d8cc1c3de8633caf50d11 [aarch64]=fc32410b6883c15a39b9f33ec04a6bfb7d070b383e5dbad7efbc48c787e5050d)
 # Antigravity CLI 1.4.4: the vendor publishes SHA-512 (not SHA-256) in its auto-updater manifests,
 # https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_{amd64,arm64}.json,
@@ -305,11 +305,11 @@ cp -a "dist-native/browser/$browser_target" resources/browser-engine
 cp "dist-native/fuigo/$browser_target/fuigo" bin/fuigo
 chmod 0755 bin/fuigo
 # Sean's five Cloud engines, each a single native ELF (the launcher's manifest rule),
-# pinned to an exact version with a SHA-256 per architecture (verified 2026-10-15):
-#   Claude Code 2.1.292: official native binary from downloads.claude.ai; SHA-256 equals
+# pinned to an exact version with a SHA-256 per architecture (verified 2026-11-22):
+#   Claude Code 2.1.323: official native binary from downloads.claude.ai; SHA-256 equals
 #     platforms.<platform>.checksum in the release manifest.json, which Anthropic signs
 #     with GPG key 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE.
-#   Codex 0.162.1: official musl release; SHA-256 equals the GitHub release asset digest.
+#   Codex 0.171.0: official musl release; SHA-256 equals the GitHub release asset digest.
 #   Grok Build 1.0.52 (the `stable` channel of x.ai/cli/install.sh): the bare static
 #     binary the installer downloads; no checksum is published, so the pin is the TLS
 #     origin hash, cross-checked against the GCS fallback object's md5.
@@ -321,9 +321,9 @@ chmod 0755 bin/fuigo
 #     optionalDependency of opencode-ai 1.19.0), which runs on every x86-64 CPU, not
 #     only those with AVX2; checked with --version under qemu -cpu Nehalem.
 # A mismatch is fatal (set -e); no CLI is ever signed in or configured here.
-claude_version=2.1.292
+claude_version=2.1.323
 claude_sha256=${claude_sha256_by_arch[$machine]}
-codex_version=0.162.1
+codex_version=0.171.0
 codex_sha256=${codex_sha256_by_arch[$machine]}
 grok_version=1.0.52
 grok_sha256=${grok_sha256_by_arch[$machine]}
@@ -514,6 +514,10 @@ install -d -o root -g root -m 0755 /etc/claude-code /etc/codex /etc/grok /etc/fu
 install -o root -g root -m 0644 deploy/cloud-home/managed/claude-settings.json /etc/claude-code/managed-settings.json
 install -o root -g root -m 0644 deploy/cloud-home/managed/codex-requirements.toml /etc/codex/requirements.toml
 install -o root -g root -m 0644 deploy/cloud-home/managed/grok-requirements.toml /etc/grok/requirements.toml
+# One source of truth: the cap must equal the pinned Grok, and the pinned binary must start under it.
+grep -qx "maximum_version = \"$grok_version\"" /etc/grok/requirements.toml || { echo "Grok cap differs from grok_version $grok_version" >&2; exit 1; }
+grok_reported=$(env -i HOME=/nonexistent PATH=/usr/bin:/bin /opt/murage/bin/grok --version) || { echo "Grok $grok_version refused to start under /etc/grok/requirements.toml" >&2; exit 1; }
+case "$grok_reported" in *"$grok_version"*) ;; *) echo "Grok reported '$grok_reported', expected $grok_version" >&2; exit 1 ;; esac
 # Fuigo's root-owned system tiers (plugin discovery, the leader and the Claude import off): installed
 # for hosts where an admin tier loads, but NOT bound into Cloud turns. Inside a turn's user namespace
 # host root is unmapped and Fuigo refuses an admin file it cannot see owned by uid 0, so the same pins

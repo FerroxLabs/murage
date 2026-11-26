@@ -13,3 +13,10 @@ export const BOT_PROFILE_LIMITS = {
   persona: 280,
   voice: 200,
 } as const;
+
+/** The longest bot description a package or team file carries. Profile edits
+ * stop at `description`, but a Chief creates bots with up to 8000 characters of
+ * instructions and older or imported bots were never capped, so export and import
+ * must carry far more than the edit box allows: every bot Murage keeps must leave
+ * and come back whole (1.0.20 export-toolong). */
+export const BOT_DESCRIPTION_PORTABLE_MAX = 100_000;

@@ -1,10 +1,11 @@
+import { archivedEvidencePath, evidencePath } from './evidence-path.mjs';
 // Actual production reversions in disposable fixtures, with positive controls.
 import {cpSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync,symlinkSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-const source=process.cwd(),out=resolve('evidence/gnl-prod-r5/mutants');mkdirSync(out,{recursive:true});
+const source=process.cwd(),out=resolve(evidencePath('evidence/gnl-prod-r5/mutants'));mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'gnl-r5-mutants-'));
 try{
  for(const entry of ['server','scripts','shared','src','electron','extensions','companion','tools','cloudflare','apps','package.json','pnpm-lock.yaml','pnpm-workspace.yaml','vite.config.ts','tsconfig.json'])cpSync(entry,join(root,entry),{recursive:true});
@@ -27,7 +28,7 @@ try{
   let mutated;
   if(kind==='native'){
    const start=original.indexOf('function decisionLiveLevel('),end=original.indexOf('function decisionContinuationInitiator',start);
-   mutated=original.slice(0,start)+readFileSync('evidence/gnl-prod-r5/old-live-level.txt','utf8')+original.slice(end);
+   mutated=original.slice(0,start)+readFileSync(archivedEvidencePath('evidence/gnl-prod-r5/old-live-level.txt'),'utf8')+original.slice(end);
   }else if(kind==='muse')mutated=original.replace('return driverKind === "museCode" || TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);','return TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);');
   else if(kind==='project')mutated=original.replace('ownerTyped: ownerTyped || authenticatedOwnerCard','ownerTyped');
   else mutated=original.replace('  runById(id: string): RoutineRun | null {','  runById(id: string): RoutineRun | null {\n    this.runIdIndex = undefined;');

@@ -11,6 +11,7 @@ import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { keepFuigoTurnLogs } from "./fuigo-turn-logs.ts";
 import { isFluxUrl } from "./flux-memory-headers.ts";
+import { codexProviderTableArgs } from "./flux-routing.ts";
 import { FLUX_MEMORY_APP, FLUX_MEMORY_APP_HEADER, FLUX_MEMORY_CAPTURE_HEADER } from "./flux-memory-wire.ts";
 import { z } from "zod";
 import { looksLikeFlux } from "./cloud-home/engine-flux-guard.ts";
@@ -25,8 +26,8 @@ export interface ProviderRouteBinding { model: string; args: string[]; modelProv
   keepLogs: (turnId: string) => void }
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const grokThread = z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/);
-function directory(path: string, privateMode = true) {
-  try { mkdirSync(path, { mode: 0o700 }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+function directory(path: string, privateMode = true, create = true) {
+  if (create) try { mkdirSync(path, { mode: 0o700 }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
   const s = lstatSync(path);
   if (!s.isDirectory() || s.isSymbolicLink() || (privateMode && process.platform !== "win32" && (s.mode & (process.env.MURAGE_CLOUD_ROLE === "home" ? 0o007 : 0o077)) !== 0)) throw new Error("Grok provider directory ownership needs review");
 }
@@ -48,17 +49,35 @@ function ownedDirectory(path: string, owner: object) {
   if (created) writeFileAtomic(marker, expected, { mode: 0o600 });
   if (privateText(marker) !== expected) throw new Error("Grok provider ownership marker mismatch; original data preserved");
 }
-function grokThreadRoot(threadId: string): string {
+function grokThreadRoot(threadId: string, readOnly = false): string {
   // Grok keeps its native session home beside server receipts; until those
   // are split, a home must not create either inside the engine home.
   if (process.env.MURAGE_CLOUD_ROLE === "home") throw new Error(cloudHomeCopy.grokRouteOnHome);
   grokThread.parse(threadId);
   const base = process.env.MURAGE_CLOUD_ROLE === "home" ? cloudEngineHome("grokAgent") : DATA_DIR;
-  directory(base, false); directory(join(base, "native"), false);
-  const root = join(base, "native", "grok-provider-context");
-  ownedDirectory(root, { version: 1, kind: "murage-grok-provider-context" });
+  const native = join(base, "native");
+  const root = join(native, "grok-provider-context");
   const thread = join(root, hash(threadId));
-  ownedDirectory(thread, { version: 1, kind: "murage-grok-thread", threadId });
+  const rootOwner = { version: 1, kind: "murage-grok-provider-context" };
+  const threadOwner = { version: 1, kind: "murage-grok-thread", threadId };
+  if (readOnly) {
+    try {
+      directory(base, false, false);
+      directory(native, false, false);
+      directory(root, true, false);
+      directory(thread, true, false);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return thread;
+      throw error;
+    }
+    for (const [path, owner] of [[root, rootOwner], [thread, threadOwner]] as const) {
+      if (privateText(join(path, ".murage-owner.json")) !== JSON.stringify(owner)) throw new Error("Grok provider ownership marker mismatch; original data preserved");
+    }
+  } else {
+    directory(base, false); directory(native, false);
+    ownedDirectory(root, rootOwner);
+    ownedDirectory(thread, threadOwner);
+  }
   return thread;
 }
 export function grokProviderIdentity(route: ProviderTurnRoute, threadId: string): string {
@@ -67,8 +86,8 @@ export function grokProviderIdentity(route: ProviderTurnRoute, threadId: string)
 const grokReceiptSchema = z.object({ version: z.literal(1), identity: z.string().regex(/^[a-f0-9]{64}$/).nullable(), sessionId: z.string().min(1).max(1000) }).strict();
 /** Native IDs stay native in RuntimeEvent and memory bookkeeping. This private
  * receipt determines which home, if any, is allowed to load one. */
-export function grokResumeBinding(threadId: string, identity: string | null, rawCursor: unknown) {
-  const root = grokThreadRoot(threadId), file = join(root, "resume-binding.json"), text = privateText(file);
+export function grokResumeBinding(threadId: string, identity: string | null, rawCursor: unknown, readOnly = false) {
+  const root = grokThreadRoot(threadId, readOnly), file = join(root, "resume-binding.json"), text = privateText(file);
   let saved: z.infer<typeof grokReceiptSchema> | null = null;
   if (text !== null) { const parsed = grokReceiptSchema.safeParse(JSON.parse(text)); if (!parsed.success) throw new Error("Grok resume binding needs review"); saved = parsed.data; }
   const requested = typeof rawCursor === "string" && rawCursor.length > 0 ? rawCursor : null;
@@ -76,6 +95,7 @@ export function grokResumeBinding(threadId: string, identity: string | null, raw
   // ever been recorded here. Routed homes require an exact retained receipt.
   const cursor = requested && ((!saved && identity === null) || (saved?.identity === identity && saved.sessionId === requested)) ? requested : null;
   return { cursor, replay: Boolean(requested && !cursor), record(sessionId: string) {
+    if (readOnly) throw new Error("Cannot write a Grok resume binding during admission");
     const receipt = grokReceiptSchema.parse({ version: 1, identity, sessionId });
     privateText(file); writeFileAtomic(file, JSON.stringify(receipt), { mode: 0o600 });
   } };
@@ -161,7 +181,7 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
       cloudTurnRender(env, "route", { provider, baseUrl: cloudRouteUrl(route.baseUrl), model: route.model, apiKey: route.apiKey, label: "Selected provider" });
       return { ...result, modelProvider: provider };
     }
-    return { ...result, modelProvider: provider, args: ["-c", `model_providers.${provider}.name=${JSON.stringify("Selected provider")}`, "-c", `model_providers.${provider}.base_url=${JSON.stringify(route.baseUrl)}`, "-c", `model_providers.${provider}.wire_api="responses"`, "-c", `model_providers.${provider}.env_key="MURAGE_PROVIDER_API_KEY"`] };
+    return { ...result, modelProvider: provider, args: codexProviderTableArgs(provider, { name: "Selected provider", baseUrl: route.baseUrl, envKey: "MURAGE_PROVIDER_API_KEY", wireApi: "responses" }) };
   }
   if (driver === "hermesAgent" || driver === "fuigoAgent") {
     // A pinned Hermes profile keeps its persona, skills and sign-ins in its

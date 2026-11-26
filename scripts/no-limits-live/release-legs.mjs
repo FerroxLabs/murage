@@ -1,8 +1,9 @@
 import {createRequire} from 'node:module';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
 import {tmpdir} from 'node:os';
 import { dirname,join } from 'node:path';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 export const mandatoryFiles = [
   'scripts/no-limits-live/mandatory-ruling.test.mjs',
   'scripts/no-limits-live/mandatory-powershell.test.mjs',
@@ -73,7 +74,7 @@ export async function replayLeg(root, out, { corpus, corpusSha, platform, candid
       // Deliberately discard all worker stdout/stderr, including errors.
       if(existsSync(json)){try{return privateCountResult(JSON.parse(readFileSync(json)),result.code);}catch{return privateCountResult(null,result.code);}}
       return {verdict:'FAIL',rows:0,pass:0,nonwipe_cards:0,refusals:0,skipped:0,harness_errors:1};
-    }finally{rmSync(isolated,{recursive:true,force:true});}
+    }finally{safeWipeSync(isolated);}
   }
   if(release){
     const report={verdict:'FAIL',status:'UNPROVEN',rows:0,pass:0,nonwipe_cards:0,refusals:0,skipped:0,harness_errors:1};

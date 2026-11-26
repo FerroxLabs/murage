@@ -1,6 +1,7 @@
 // Runner side owner: MAIN (T2/T3). Receipt review side owner: MAIN.
 // Collected only by qualify-claude-s2.mjs; every case uses an isolated home,
 // real CLI, real admission and real mounted child. No production unlock exists.
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import { afterEach, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -82,9 +83,9 @@ async function fixture(retain = true, ask = false) {
         let frame: { type?: string; response?: { response?: { action?: string } } } | undefined;
         try { frame = JSON.parse(String(values[0])); } catch {}
         if (ask && !held && frame?.type === "control_response" && frame.response?.response?.action === "accept") {
-          held = () => { write(...values); }; return true;
+          held = () => { NotModelRequest("Native qualification fixture forwards synthetic MCP or stale-ticket frames.", write(...values)); }; return true;
         }
-        return write(...values);
+        return NotModelRequest("Native qualification fixture forwards synthetic MCP or stale-ticket frames.", write(...values));
       }) as typeof child.stdin.write;
     }
     return child;
@@ -147,7 +148,7 @@ it("T-S2-PLATFORM-NO-CROSS real delayed generation callback", async () => {
   x.held()!();
   const stale = connect(x.relays[1]!.socketPath); stale.on("error", () => {});
   await once(stale, "connect"); const closed = once(stale, "close");
-  stale.write(JSON.stringify({ server: Object.keys(x.relays[1]!.servers)[0], ticket: oldTicket }) + "\n"); await closed;
+  NotModelRequest("Native qualification fixture forwards synthetic MCP or stale-ticket frames.", stale.write(JSON.stringify({ server: Object.keys(x.relays[1]!.servers)[0], ticket: oldTicket }) + "\n")); await closed;
   await until(() => x.rows().some(r => r.generation === 2 && r.req?.method === "tools/call"));
   expect(x.rows().filter(r => r.generation === 2).some(r => r.req?.id === "old-server-request")).toBe(false);
 }, 240_000);

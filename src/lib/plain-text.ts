@@ -19,6 +19,13 @@ export function plainText(input: string): string {
   // Fenced blocks first: their content is code, not prose worth flattening.
   out = out.replace(/```[\s\S]*?```/g, " ");
 
+  // Keep inline code and escaped emphasis literal while stripping markup around them.
+  const literals: string[] = [];
+  out = out.replace(/`([^`]+)`|\\([\\*_])|\uE000/g, (_match, code?: string, escaped?: string) => {
+    literals.push(code ?? escaped ?? "\uE000");
+    return `\uE000${literals.length - 1}\uE001`;
+  });
+
   // Images before links — ![alt](src) keeps the alt, and running the link rule
   // first would leave a stray "!" behind.
   out = out.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
@@ -30,15 +37,10 @@ export function plainText(input: string): string {
   // as an emphasis span and loses its operators.
   const run = (marker: string) => new RegExp(`${marker}(\\S|\\S[^\\n]*?\\S)${marker}`, "g");
   out = out.replace(run("\\*\\*\\*"), "$1");
-  out = out.replace(run("___"), "$1");
   out = out.replace(run("\\*\\*"), "$1");
-  out = out.replace(run("__"), "$1");
   out = out.replace(run("\\*"), "$1");
-  // Single underscores only when the run is bounded by whitespace, so
-  // snake_case identifiers survive intact.
-  out = out.replace(/(^|\s)_(\S|\S[^\n]*?\S)_(?=\s|$)/g, "$1$2");
+  out = out.replace(/(?<![\p{L}\p{N}\p{M}_])(_{1,3})(?!_)(\S|\S[^\n]*?\S)\1(?![\p{L}\p{N}\p{M}_])/gu, "$2");
   out = out.replace(run("~~"), "$1");
-  out = out.replace(/`([^`]+)`/g, "$1");
 
   // Line-leading furniture: headings, quotes, bullets and ordered markers.
   out = out.replace(/^[ \t]*#{1,6}[ \t]+/gm, "");
@@ -48,6 +50,7 @@ export function plainText(input: string): string {
   // A horizontal rule carries no words at all.
   out = out.replace(/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, " ");
 
+  out = out.replace(/\uE000(\d+)\uE001/g, (_match, index: string) => literals[Number(index)]!);
   return out.replace(/\s+/g, " ").trim();
 }
 

@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineSpecs, scenarios } from './scenarios.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 test('release CLI fails missing engines and replay, emits one complete summary and verdict', () => {
   const root = mkdtempSync(join(tmpdir(), 'gnl-cli-'));
   try {
@@ -29,7 +30,7 @@ registerHooks({load(url,ctx,next){if(url===${JSON.stringify(new URL('./candidate
     assert.equal(report.mandatory.verdict, 'FAIL');
     assert.equal(report.candidate.qualificationOnly, true);
     assert.deepEqual(report.errors, ['No requested engines installed; all engine rows UNPROVEN']);
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  } finally { safeWipeSync(root); }
 });
 test('invalid CLI still emits one failing machine summary', () => {
   const r = spawnSync(process.execPath, ['--experimental-strip-types', fileURLToPath(new URL('./run.mjs', import.meta.url)), '--bad-option'], { encoding: 'utf8', timeout: 10000 });

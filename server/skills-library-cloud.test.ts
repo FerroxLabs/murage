@@ -14,6 +14,7 @@ import { CloudSessions } from "./cloud-sessions.ts";
 import { routeActDigest, stepPurpose } from "./cloud-request-auth.ts";
 import { skillActDigest } from "./cloud-home/owner-code.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 
 const origin = "https://home.example.test";
 const cp = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
@@ -90,7 +91,16 @@ beforeAll(async () => {
     env,
     cloud: { publicOrigin: origin, bootstrapSecret: "fixture-library-cloud-bootstrap-32-characters" },
     // Cloud homes cannot grant No limits through the physical-computer-only preview; load an already enabled fixture bot.
-    instrumentationSource: `const {pathToFileURL}=await import('node:url'); const {join}=await import('node:path'); const {writeFileSync}=await import('node:fs'); writeFileSync(join(process.env.MURAGE_DATA_DIR,'bots.json'),JSON.stringify([${JSON.stringify(noLimitsBot)}])); const control=await import(pathToFileURL(join(process.cwd(),'server/cloud-home/control-state-verification.fixture.mjs')).href); control.installVerificationControl(${JSON.stringify(origin)},${JSON.stringify(pem)});`,
+    instrumentationSource: `
+      process.env.FAKE_CLAUDE_MODE = 'hang';
+      // The verification CLI runs locally. Keep Cloud auth and dispatch active.
+      const { registerHooks } = await import('node:module');
+      registerHooks({ load(url, context, next) {
+        const loaded = next(url, context);
+        if (!['/drivers/claude.ts', '/drivers/cli-mount-relay.ts', '/cloud-home/turn-process.ts', '/server/procs.ts'].some(path => url.endsWith(path))) return loaded;
+        return { ...loaded, source: String(loaded.source).replaceAll('process.env.MURAGE_CLOUD_ROLE', '"fixture"') };
+      } });
+      const {pathToFileURL}=await import('node:url'); const {join}=await import('node:path'); const {writeFileSync}=await import('node:fs'); writeFileSync(join(process.env.MURAGE_DATA_DIR,'bots.json'),JSON.stringify([${JSON.stringify(noLimitsBot)}])); const control=await import(pathToFileURL(join(process.cwd(),'server/cloud-home/control-state-verification.fixture.mjs')).href); control.installVerificationControl(${JSON.stringify(origin)},${JSON.stringify(pem)});`,
     readyTimeoutMs: 60_000,
   });
   console.info("Library Cloud fixture", JSON.stringify(fixture.info));
@@ -311,3 +321,83 @@ it("saves a copy after the existing route approval without consuming a second in
   expect((await api("GET", "/api/skills/library:guide-one?view=library")).body.bots).not.toContainEqual(expect.objectContaining({ id: bot.id, name: bot.name }));
   expect((await api("PUT", path, body, header)).status).toBe(403);
 });
+
+it("refuses a stepped-up Cloud phone's Every bot ON and OFF without changing ownership or copies", async () => {
+  const { bot } = await copyAndBot();
+  const path = "/api/skills/library:guide-one/every-bot";
+  const mark = join(fixture.info.dataDir, "skill-state", "every-bot.json");
+  const installed = () => tree(join(fixture.info.dataDir, "skill-state", bot.id));
+  const snapshot = () => ({ mark: existsSync(mark) ? readFileSync(mark) : null, installed: installed() });
+  const before = snapshot();
+  expect((await factorApi("PUT", path, { on: true }, phoneCookie, phoneId)).status).toBe(403);
+  expect(snapshot()).toEqual(before);
+  expect((await factorApi("PUT", path, { on: true })).status).toBe(200);
+  try {
+    const marked = snapshot();
+    expect(marked.mark).not.toBeNull();
+    expect((await factorApi("PUT", path, { on: false }, phoneCookie, phoneId)).status).toBe(403);
+    expect(snapshot()).toEqual(marked);
+  } finally {
+    expect((await factorApi("PUT", path, { on: false })).status).toBe(200);
+  }
+}, 60_000);
+
+it("Cloud phone MCP summaries refuse hidden and missing bots identically", async () => {
+  const { bot } = await copyAndBot();
+  const route = (id: string) => `/api/bots/${id}/mcp-servers`;
+  const get = (id: string) => api("GET", route(id), undefined, undefined, phoneCookie);
+  expect(await get(bot.id)).toMatchObject({ status: 200, body: { servers: expect.any(Array) } });
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { hidden: true }, undefined, desktopCookie)).status).toBe(200);
+  try {
+    expect(await get(bot.id)).toEqual(await get("missing-fixture-bot"));
+    expect((await get(bot.id)).status).toBe(404);
+    expect((await api("GET", route(bot.id), undefined, undefined, desktopCookie)).status).toBe(200);
+  } finally {
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { hidden: false }, undefined, desktopCookie)).status).toBe(200);
+  }
+}, 60_000);
+
+it.skipIf(process.platform === "win32")("Cloud phone skill reviews refuse hidden and missing threads identically", async () => {
+  const created = await api("POST", "/api/bots", {
+    name: "Private Cloud review fixture",
+    modelSelection: { instanceId: "verification", model: "claude-sonnet-5" },
+  }, undefined, desktopCookie);
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
+  const bot = created.body.bot;
+  createdBots.push(bot.id);
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false, autoReview: "off" }, undefined, desktopCookie)).status).toBe(200);
+  expect((await factorApi("PUT", `/api/skills/library:guide-one/bots/${bot.id}`, { on: true })).status).toBe(200);
+  const send = await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "Turn off this skill." }, undefined, desktopCookie);
+  expect(send.status, JSON.stringify(send.body)).toBe(202);
+  try {
+    let turnToken: string | undefined;
+    await expect.poll(() => {
+      try {
+        const dump = withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")));
+        const env = dump.mcpConfig?.mcpServers?.agents?.env;
+        if (env?.MURAGE_BOT_ID === bot.id && env?.MURAGE_THREAD_ID === bot.threadId) turnToken = env.MURAGE_COMMS_TOKEN;
+      } catch {}
+      return Boolean(turnToken);
+    }, { timeout: 30_000 }).toBe(true);
+    const proposed = await api("POST", "/api/internal/skills/switch", {
+      fromBotId: bot.id, fromThreadId: bot.threadId, action: "turn_off", skill_name: "guide-one",
+    }, undefined, "", { authorization: `Bearer ${turnToken}` });
+    expect(proposed.status, JSON.stringify(proposed.body)).toBe(201);
+    const messages = await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`, undefined, undefined, desktopCookie);
+    const message = messages.body.messages.find((row: any) => row.card?.skillRequest?.action === "turn_off");
+    expect(message).toBeDefined();
+    const path = (thread: string) => `/api/threads/${thread}/skill-switch-review/${message.id}`;
+    const get = (thread: string, auth = phoneCookie) => api("GET", path(thread), undefined, undefined, auth);
+    expect(await get(bot.threadId)).toMatchObject({ status: 200, body: { request: { preview: expect.stringContaining("Draft a clear response.") } } });
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { hidden: true }, undefined, desktopCookie)).status).toBe(200);
+    try {
+      expect(await get(bot.threadId)).toEqual(await get("missing-fixture-thread"));
+      expect((await get(bot.threadId)).status).toBe(404);
+      expect((await get(bot.threadId, desktopCookie)).status).toBe(200);
+    } finally {
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { hidden: false }, undefined, desktopCookie)).status).toBe(200);
+    }
+  } finally {
+    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId }, undefined, desktopCookie);
+  }
+}, 90_000);

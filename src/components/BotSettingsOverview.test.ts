@@ -11,13 +11,14 @@ import { describe, expect, it } from "vitest";
 
 import { BOT_ROLE_BADGE, BOT_ROLE_TITLE, botRoleTitle } from "@/lib/bot-role";
 import { settingsRoleLabel } from "./bot-settings-sections";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
-const settings = read("./SettingsPanel.tsx");
+const settings = settingsPanelSource();
 const overviewAt = settings.indexOf('<SettingsSection id="overview" active={section}>');
 const at = (needle: string) => settings.indexOf(needle, overviewAt);
-const identityAt = settings.indexOf('<SettingsSection id="identity" active={section}>');
-const overviewBody = settings.slice(overviewAt, identityAt);
+// The Overview blocks live in their own page file since the B0 split.
+const overviewBody = read("./bot-pages/BotOverviewPage.tsx");
 
 describe("the order of Bot settings → Overview", () => {
   it("asks what the bot is for before anything else", () => {
@@ -27,6 +28,7 @@ describe("the order of Bot settings → Overview", () => {
   });
 
   it("no longer shows Appearance", () => {
+    expect(overviewBody).toContain('<SettingsSection id="overview" active={section}>');
     expect(overviewBody).not.toContain("<BotProfileAvatarCard");
     expect(overviewBody).not.toContain("settings.appearance.title");
     expect(overviewBody).not.toContain("<details");

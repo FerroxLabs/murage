@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Connected apps (SETTINGS-LOCKED-1019.md 3.11): the apps you connect once and the tools your bots can use. Simple shows
-// the apps card and the tools (MCP) card; Advanced adds bot email, HighLevel and phone calls. One list of cards, filtered by
+// the apps card and the tools (MCP) card; Advanced adds bot email and Claude Code import. One list of cards, filtered by
 // the shell (PageCards). Remote surfaces retain app/email readouts and stub computer-only actions.
-import { Suspense, useEffect, useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { cloudCardHidden } from "@/lib/cloud-settings";
 import { t } from "@/lib/i18n";
 import type { SettingsPageCard, SettingsPageProps } from "@/lib/settings-page-contract";
@@ -12,18 +12,15 @@ import { settingsSectionLabel } from "@/lib/settings-sections";
 import { useStore, type AppSettingsSection } from "@/state/store";
 import { BotEmailAccountCard } from "../../BotEmailSettings";
 import { ClaudeCodeImportCard } from "../../ClaudeCodeImportCard";
-import { HighLevelSettings } from "../../HighLevelSettings";
-import { LazyBoundary, retryableLazy } from "../../LazyBoundary";
 import { Card } from "../../SettingsPrimitives";
 import { ComputerOnlyStub } from "../../SettingsStub";
 import { PageCards } from "../PageCards";
 import { PluginsPanel } from "../../PluginsPanel";
+import { ReconnectAppsNeedsYou } from "../../ReconnectAppsBanner";
 import { McpServersPanel } from "../../McpServersPanel";
 import { ChannelsPageBody, channelsCards } from "./ChannelsPage";
 import { BotEmailReadout } from "./BotEmailReadout";
 import { settingsTabKeys } from "./settings-tab-keys";
-
-const PhoneCallsSection = retryableLazy(() => import("../../PhoneCallsSettings"));
 
 const linkButton = "rounded px-0.5 font-medium text-accent-text underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus";
 /** One catalog/account component owns both views, including authorization and its retained drafts. */
@@ -34,6 +31,8 @@ export function ConnectedAppsCard({ readOnly = false }: { readOnly?: boolean }) 
     <>
       <Card title={t("settings.section.connections")} subtitle={t(state.config?.composio?.mode === "managed" ? "settings.connections.noteManaged" : "settings.connections.note")}>
         <div className="flex flex-col gap-4">
+          {/* An app to sign in again, first: the reconnect line can be put away, this stays until it is done (1.0.20). */}
+          {!readOnly && <ReconnectAppsNeedsYou dispatch={dispatch} label={t("connectorHealth.reconnect")} />}
           <PluginsPanel embedded readOnly={readOnly} />
           {state.config?.composio?.mode === "managed" ? (
             <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">{t("settings.connections.ready")}</div>
@@ -51,6 +50,9 @@ export function ConnectedAppsCard({ readOnly = false }: { readOnly?: boolean }) 
         <button type="button" onClick={() => go("voice")} className={linkButton}>{settingsSectionLabel("voice")}</button>
         {" · "}
         <button type="button" onClick={() => go("models")} className={linkButton}>{t("settings.models.pasteTitle")}</button>
+        {" · "}
+        <button type="button" onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "calls", anchor: "phone-calls-heading" })}
+          className={linkButton}>{t("settings.l1.card.connections.phone-calls")}</button>
       </p>
     </>
   );
@@ -80,13 +82,6 @@ export function connectionsCards({ desktop, cloud }: Pick<SettingsPageProps, "de
     { id: "connections.bot-email", anchor: "bot-email-heading", simple: false, render: () => (live && !cloud ? <BotEmailAccountCard /> : <BotEmailReadout />) },
     { id: "connections.mcp", anchor: "mcp-servers-heading", simple: true, render: () => (live ? <McpToolsCard cloud={cloud} /> : stub("mcp-servers-heading")) },
     { id: "connections.claude-code", anchor: "claude-code-import-heading", simple: false, render: () => (live ? <ClaudeCodeCard cloud={cloud} /> : stub("claude-code-import-heading")) },
-    { id: "connections.highlevel", anchor: "highlevel-heading", simple: false, render: () => (live && !cloud ? <HighLevelSettings /> : stub("highlevel-heading")) },
-    // Phone calls moves to the Calls page with SETPAGES-A; until that lands it keeps its registered home here.
-    {
-      id: "connections.phone-calls", anchor: "phone-calls-heading", simple: false, render: () => (live
-        ? <LazyBoundary inline onRetry={PhoneCallsSection.retry}><Suspense fallback={null}><PhoneCallsSection.Component /></Suspense></LazyBoundary>
-        : stub("phone-calls-heading")),
-    },
   ];
 }
 

@@ -79,6 +79,9 @@ export async function handleSecretsStale(message, { updateDocument, log }) {
  * next sign-in registers a new client. The access token is kept until it expires. */
 export function withoutClient(oauth) {
   if (!isRecord(oauth)) return undefined;
+  // B98: the owner's own app is theirs to change, not Murage's to forget. Only
+  // the tokens go; the server shows needs-sign-in and the app stays saved.
+  if (oauth.preRegistered === true) return clientOnly(oauth);
   const { clientId: _c, clientSecret: _s, refreshToken: _r, redirectPort: _p, ...rest } = oauth;
   void _c; void _s; void _r; void _p;
   return rest;

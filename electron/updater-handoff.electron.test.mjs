@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const electron = require("electron");
 const fixture = fileURLToPath(new URL("./fixtures/updater-handoff.cjs", import.meta.url));
 
 const xvfb =
@@ -20,6 +19,7 @@ const xvfb =
 const canRun = process.platform === "linux" && (Boolean(process.env.DISPLAY) || Boolean(xvfb));
 
 function runFixture() {
+  const electron = require("electron");
   const [command, args] = xvfb
     ? [xvfb, ["-a", electron, "--no-sandbox", fixture]]
     : [electron, ["--no-sandbox", fixture]];

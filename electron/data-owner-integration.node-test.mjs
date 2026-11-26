@@ -1,4 +1,5 @@
 import {createReturnAuthority,revokeReturn,joinExplicitQuit} from "./backup-offline-return.mjs";
+import { quitAnnouncement } from "./quit-notice.mjs";
 import {backupStartupDispatch} from "./backup-startup.mjs";
 // Node runner: included by package.json test:electron, not Vitest discovery.
 import assert from "node:assert/strict";
@@ -9,6 +10,7 @@ import path from "node:path";
 import test from "node:test";
 import { settleDesktopStartup, terminalDesktopStartup, startupFailureCode } from "./startup-settle.mjs";
 import { BACKUP_MODE_ARGUMENT } from "./backup-mode.mjs";
+import { launchIdOf } from "./server-follow.mjs";
 import { awaitOwnedWork, SERVER_CHILD_STOP_TIMEOUT_MS } from "./server-child-lifecycle.mjs";
 import { dataDirLeasePaths } from "./data-dir-lease.mjs";
 import { MANAGED_COMPOSIO_UPDATE_OPTIONS } from "./managed-composio.mjs";
@@ -65,7 +67,9 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
     backupStartupDispatch, createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
     createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, readStartupPicture: () => null, splashMode: () => "tip", startupIpc: { requestWhatsNew() {} }, noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
     // The Sentinel host (sentinel-host.mjs) starts right after ownership; tests that care about its order override it.
-    initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost: async () => {}, sentinelHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
+    initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost: async () => {}, sentinelHost: null,
+    // The jobs a previous install paused (update-launch-pause.mjs) are put back at ready; that touches no data.
+    desktopUpdateLaunchPause: () => ({ resume() {} }), desktopRecoveryMode: false, desktopShutdownStarted: false,
     // The live gate is a top-level const in main.mjs, declared before app.whenReady; the startup block only schedules its probe.
     cloudLive: { start() {}, probeOnFocus() {} },
     // A cold-start Cloud link handoff (cloud-link-handoff.mjs) runs first at ready; an ordinary launch has none.
@@ -224,6 +228,7 @@ function serverLauncher({ proc, poll, track, environment = {}, portAvailable = a
   const text = between("async function startServerOn(port) {", "async function startServerPackaged()");
   const owner = { utilityServerLeaseEnvironment:()=>({MURAGE_INTERNAL_DATA_DIR_LEASE:"private-fixture-capability"}) };
   const scope = {
+    launchIdOf,
     // c27f55e312: the extracted launcher also inherits the Windows child preload.
     withHideInherit,
     path, process:{env:environment,resourcesPath:"/fixture/resources"},restoredConnections:null,restoredHarnessEnvironment:env=>env,
@@ -233,7 +238,7 @@ function serverLauncher({ proc, poll, track, environment = {}, portAvailable = a
     secureCredentials:{},credentialStoreUnavailable:false,desktopSurfaceSecret:"",browserHost:null,
     phoneSecretsEnv:()=>'{"key":"fixture-phone-key","origin":"https://api.vapi.ai"}',
     launchSecretVia,sendLaunchSecretParent,managedComposioChildEnvironment:(_url,_keys,env)=>env, composioBrokerUrl:()=>null, fluxComposioBrokerUrlValue:()=>"", composioLegacyUntilValue:()=>"",
-    watchMemoryUpgrade:()=>({stop(){}}),showMemoryUpgradeProgress:()=>{},closeMemoryUpgradeWindow:()=>{},clearMemoryUpgradeStatus:()=>{},memoryUpgradeBlockedSentence:()=>"",readMemoryUpgradeStatus:()=>null,harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),desktopFluxEnvironment,secretSaveRefusedReason:async()=>"",slog:()=>{},
+    watchMemoryUpgrade:()=>({stop(){}}),watchBootProgress:()=>({stop(){},fresh:()=>false}),showMemoryUpgradeProgress:()=>{},closeMemoryUpgradeWindow:()=>{},clearMemoryUpgradeStatus:()=>{},memoryUpgradeBlockedSentence:()=>"",readMemoryUpgradeStatus:()=>null,harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),desktopFluxEnvironment,secretSaveRefusedReason:async()=>"",slog:()=>{},
     utilityProcess:{fork:(_entry,_args,options)=>{proc.environment=options.env;return proc;}},
     receiveDesktopSurfaceSecret:()=>false,receiveBrowserControlHold:()=>false,receiveBrowserLifecycleCleanup:()=>false,syncBrowserConnection:()=>{},
     pollServerIdentity:poll,SERVER_BOOT_TIMEOUT_MS:25,SERVER_BOOT_SLOW_LIMIT_MS:25,portAvailable,compileCacheEnvironment:()=>({}),desktopMark:()=>{},
@@ -272,6 +277,23 @@ test("a timeout names the one-time index, a migration or nothing, and a note lef
   const none = await run(null);
   assert.deepEqual(none.result, { proc: null, reason: "timeout" });
   assert.deepEqual(none.seen, ["clear", "fork", "poll", "clear"]);
+});
+
+// 1.0.20 startup-all: the launcher hands the probe the child's own start-up note (server/boot-progress.ts), watched for THIS child's pid in the
+// installation folder, and stops the watcher when the wait ends (ready, timeout or a throw).
+test("startServerOn waits on the child's own start-up note: the probe's bootProgressFresh is the watcher of this child's pid, stopped after", async () => {
+  const proc = new EventEmitter();
+  proc.pid = 321; proc.kill = () => {}; proc.postMessage = () => {};
+  const watched = [];
+  let fresh = true, stopped = 0, seenFresh = [];
+  const launch = serverLauncher({ proc, track: () => ({ exited: false, stop: async () => {} }),
+    poll: async (options) => { seenFresh.push(options.bootProgressFresh()); fresh = false; seenFresh.push(options.bootProgressFresh()); return { outcome: "ready" }; },
+    overrides: { watchBootProgress: (options) => { watched.push({ dataDir: options.dataDir, pid: options.pid() }); return { fresh: () => fresh, stop: () => { stopped++; } }; } } });
+  const result = await launch(8799);
+  assert.equal(result.proc, proc);
+  assert.deepEqual(watched, [{ dataDir: "/canonical/installation", pid: 321 }]);
+  assert.deepEqual(seenFresh, [true, false]);
+  assert.equal(stopped, 1);
 });
 
 test("the one-time step's page says the step starts over, in every language, and promises no finished step", () => {
@@ -346,6 +368,8 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
   const messages=[];let quit=0,backgroundQuits=0,androidStops=0;let trigger,ownerRequest=false;
   const scope={
     startupDecisionPending:false,updateRecoveryDescriptor:null,updateRequester:false,returnAuthority:createReturnAuthority(),revokeReturn,joinExplicitQuit:options=>joinExplicitQuit({...options,setTimer:()=>{}}),finishUpdateWait:()=>{},takeBackupProgress:()=>null,messages,
+    // meetgreet quit notice (main.mjs announceQuit, inside the shutdown-cause slice): the real module, default profile.
+    quitAnnouncement,hasCustomUpdaterProfile:()=>false,
     app:{on:(_event,handler)=>{trigger=handler;},quit:()=>{if(ownerRequest)trigger({preventDefault(){}});else quit++;}},
     // The actual before-quit handler first tells the background lifecycle
     // (5b140c4f) that quit began so tray/close handling stops re-hiding the window.

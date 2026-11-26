@@ -4,7 +4,7 @@ import { accessSync, constants, existsSync, readdirSync, realpathSync } from 'no
 import { dirname, isAbsolute, join, posix, win32 } from 'node:path';
 import { systemPathPort, canonicalPath } from '../wipe/roots.ts';
 import { registeredWipeProjects } from '../wipe/registry.ts';
-import { mountedRoots } from '../wipe/mounts.ts';
+import { mountedRoots, refreshMountsForWipe } from '../wipe/mounts.ts';
 import { parse } from '../wipe/invocation.ts';
 import { effectsOf } from '../wipe/programs.ts';
 import { known } from '../wipe/types.ts';
@@ -87,8 +87,12 @@ export function wipeGuardRootPaths(ctx: WipeContext, extra: readonly string[] = 
   const roots = candidates.filter((p): p is string => !!p).map(p => {
     // Use the same bounded path port as the classifier. Missing roots retain a
     // lexical absolute form; readable symlinks MUST publish the physical root.
+    // A root that cannot be probed (an empty card reader or optical drive reports
+    // UNKNOWN on Windows, a timeout, a link loop) is kept in its lexical form like a
+    // missing one: still protected, never a reason to refuse the whole turn.
     const physical = ctx.pathPort ?? (platform === process.platform ? systemPathPort : undefined);
-    const real = physical?.realpath(p);
+    let real: string | null | undefined;
+    try { real = physical?.realpath(p); } catch { real = undefined; }
     return path.resolve(real ?? p).replaceAll('\\', '/');
   });
   return [...new Set(roots)];
@@ -202,8 +206,9 @@ export async function wipeGuardTurnEnvironment(o: TurnGuardEnvOptions): Promise<
   const ctx = context();
   // Current context plus filesystem/OS roots. A producer snapshot may supply
   // the full registered-project/mount set without traversing history here.
-  const roots = o.roots ?? wipeGuardRootPaths(ctx, o.turn.addDirs);
   try {
+    if (!o.roots) await refreshMountsForWipe();
+    const roots = o.roots ?? wipeGuardRootPaths(ctx, o.turn.addDirs);
     const realTools = wipeGuardRealTools(env.PATH ?? '');
     const shim = (o.installShim ?? installWipeGuardShim)(realTools);
     const nativePath = (path: string) => process.platform === 'win32' ? path.replaceAll('\\', '/') : path;
@@ -219,7 +224,14 @@ export async function wipeGuardTurnEnvironment(o: TurnGuardEnvOptions): Promise<
     liveGuards.set(key, active);
     commandEnv = wipeGuardEnvironment(env, guard.file, process.platform, shim);
     return commandEnv;
-  } catch (error) { await end(); throw error; }
+  } catch (error) { await end(); throw plainGuardFailure(error); }
+}
+
+/** A guard that cannot start refuses the turn (No limits never runs unguarded),
+ * but the owner reads a plain line, never a raw probe code. */
+export const GUARD_START_FAILED_LINE = "Murage couldn't start this reply. Send it again.";
+function plainGuardFailure(error: unknown): unknown {
+  return error instanceof Error && /^wipe-[a-z-]+$/.test(error.message) ? Object.assign(new Error(GUARD_START_FAILED_LINE, { cause: error }), { code: error.message }) : error;
 }
 
 /** Trusted owner-card bridge. Only one entirely literal simple rm is concrete;

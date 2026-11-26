@@ -242,7 +242,7 @@ export async function testRemoteServer(name: string, server: StoredRemoteMcpServ
     return { ok: false, reason: "needs-key", error: "This server needs an API key.", apiKey: { headerHint: "authorization" } };
   }
   return (deps.probe ?? probeRemoteMcp)({
-    url, transport: server.transport, headers: auth.headers, bearer: auth.bearer,
+    url, transport: server.transport, headers: auth.headers, bearer: auth.bearer, urlSecret: server.urlSecret === true,
     confirmed: server.local ?? null, mode: "request", signal: deps.signal, resolver: deps.resolver,
   });
 }

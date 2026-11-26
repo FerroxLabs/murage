@@ -53,6 +53,8 @@ const WORDS_B = "Independent check: 3.60 percent since 18 February 2026 (RESEARC
 const WITHHELD = `[${ROOM_REPLY_WITHHELD}]`;
 const CHECKING = `[${ROOM_REPLY_CHECKING}]`;
 const NO_ANSWER = "(no answer: that memory is still being checked, try again later)";
+// 1.0.20: the internal line above is never shown; every held final reads this plain notice (held-replies.ts heldReplyRule)
+const NOTICE = "That reply isn't ready to share yet. Ask again in a minute.";
 let inlineMs: number;
 
 beforeEach(() => {
@@ -191,12 +193,12 @@ it("a direct hand-off whose reply reads checking is never held: the asker gets t
   expect(w.verdictOf(w.a, replyA.id)).toEqual({ state: "checking", reason: "pending" });
   expect(w.finish(w.a, replyA, "task-a")).toBe(true);
   const row = w.row("task-a")!;
-  expect(row.text).toBe(NO_ANSWER);
+  expect(row.text).toBe(NOTICE);
   expect(row.withheldFromBots).toBeUndefined();
   expect(row.copyOf).toBeUndefined();
-  expect(w.botReads(row)).toBe(NO_ANSWER);
+  expect(w.botReads(row)).toBe(NOTICE);
   const receipt = findDelegationReceipt("task-a")!;
-  expect(receipt).toMatchObject({ status: "done", result: NO_ANSWER });
+  expect(receipt).toMatchObject({ status: "done", result: NOTICE });
   expect(receipt.held).toBeUndefined();
   expect(receipt.copyOf).toBeUndefined();
   expect(heldReceipts()).toEqual([]);
@@ -208,8 +210,8 @@ it("a direct hand-off whose reply reads checking is never held: the asker gets t
   expect(mirrored.join("\n")).not.toContain("RESEARCHER_A_WORDS");
   // final for the request: the check finishing later changes nothing a bot reads and wakes nobody again
   expect(drainRevokeMarker(database()).pending).toBe(false);
-  expect((await w.check("task-a")).result).toBe(NO_ANSWER);
-  expect(w.botReads(w.row("task-a")!)).toBe(NO_ANSWER);
+  expect((await w.check("task-a")).result).toBe(NOTICE);
+  expect(w.botReads(w.row("task-a")!)).toBe(NOTICE);
   expect(w.wakeCalls).toHaveLength(1);
   expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
 });
@@ -220,10 +222,10 @@ it("poll while checking: check_delegation reads the final no-answer line, consum
   w.finish(w.a, w.heldReply(w.a, WORDS_A), "task-p");
   // the wake is owed; the asker polls before it is claimed: it reads the no-answer line and is owed nothing more
   const polled = await w.check("task-p");
-  expect(polled).toMatchObject({ status: "done", result: NO_ANSWER });
+  expect(polled).toMatchObject({ status: "done", result: NOTICE });
   expect(w.wakes.claim(w.leader.threadId)).toBeUndefined();
   drainRevokeMarker(database());
-  expect((await w.check("task-p")).result).toBe(NO_ANSWER);
+  expect((await w.check("task-p")).result).toBe(NOTICE);
   expect(JSON.stringify(await w.check("task-p"))).not.toContain("RESEARCHER_A_WORDS");
 });
 
@@ -238,7 +240,7 @@ it("failed wake save: registration reports it (the hand-off is then not acknowle
   const row = w.row("task-f")!;
   expect(w.wakeCalls).toEqual([`task-f:${row.id}`]);
   // the wake is not on disk yet: the receipt still owes its line, so a crash now is delivered again by the boot (deduped below)
-  expect(findDelegationReceipt("task-f")!.reply).toEqual({ text: NO_ANSWER });
+  expect(findDelegationReceipt("task-f")!.reply).toEqual({ text: NOTICE });
   // a second return of the same task (a receipt's recovery) is no second wake
   expect(w.wakes.deliver("task-f", { toBotId: w.a.id, toBotName: w.a.name, ok: true, messageId: row.id })).toBe(false);
   w.failWrites(false);
@@ -262,8 +264,8 @@ it("a room hand-off whose reply reads checking completes its request at once, at
   w.finish(w.a, w.heldReply(w.a, WORDS_A), "task-room", { requestId: request.id });
   expect(w.completeRoomAsk).toHaveBeenCalledTimes(1);
   expect(w.completeRoomAsk).toHaveBeenCalledWith(request.id, { state: "done", resultMessageId: handoffReplyId("task-room") });
-  expect(w.row("task-room")!.text).toBe(NO_ANSWER);
-  expect(findDelegationReceipt("task-room")).toMatchObject({ requestId: request.id, result: NO_ANSWER });
+  expect(w.row("task-room")!.text).toBe(NOTICE);
+  expect(findDelegationReceipt("task-room")).toMatchObject({ requestId: request.id, result: NOTICE });
   expect(heldReceipts()).toEqual([]);
 });
 
@@ -279,10 +281,10 @@ it("nested continuation (S waits on W1, W1 on W2): the request that delivers to 
   const store = boundaryStore(w.store);
   // W1, A's continuation, is woken with W2's result: an intermediate turn, its child's answer still being checked
   const forA = continuationOutcome({ store }, { toBotId: w.a.id, notOwnerAudience: false } as RoomRequest, w.a.threadId, { requestId: w2.id, state: "done", messageId: replyB.id } as never)!;
-  expect(outboundWords(forA.answer!)).toBe(NO_ANSWER);
+  expect(outboundWords(forA.answer!)).toBe(NOTICE);
   // S delivers to the leader: the original asker reads the no-answer line for A's still-checking answer
   const forLeader = continuationOutcome({ store }, { toBotId: w.leader.id, notOwnerAudience: false } as RoomRequest, w.leader.threadId, { requestId: s.id, state: "done", messageId: replyA.id } as never)!;
-  expect(outboundWords(forLeader.answer!)).toBe(NO_ANSWER);
+  expect(outboundWords(forLeader.answer!)).toBe(NOTICE);
   expect([forA, forLeader].map(o => outboundWords(o.answer!)).join("\n")).not.toMatch(/RESEARCHER_[AB]_WORDS/);
 });
 
@@ -344,7 +346,7 @@ for (const route of ["delegate", "askBusy"] as const) {
     run.complete(w.heldReply(w.a, WORDS_A));
     const rows = w.store.messagesFor(w.leader.threadId).filter(m => m.requestId === run.id);
     expect(rows).toHaveLength(1);
-    expect(rows[0].text).toBe(NO_ANSWER);
+    expect(rows[0].text).toBe(NOTICE);
     expect(w.wakeCalls).toEqual([`${run.id}:${rows[0].id}`]);
     expect(w.marked).toHaveBeenCalledTimes(1);
     expect(roomRequest(database(), run.id)!.refusal ?? null).not.toBeNull();
@@ -394,21 +396,21 @@ it("a shared hand-off made from a direct chat is never held: the destination row
   expect(roomRequest(database(), request.id)!.refusal ?? null).toBeNull();
   const rows = w.store.messagesFor(w.leader.threadId).filter(m => m.requestId === request.id);
   expect(rows).toHaveLength(1);
-  expect(rows[0].text).toBe(NO_ANSWER);
+  expect(rows[0].text).toBe(NOTICE);
   expect(rows[0].withheldFromBots).toBeUndefined();
-  expect(w.botReads(rows[0])).toBe(NO_ANSWER);
+  expect(w.botReads(rows[0])).toBe(NOTICE);
   const receipt = findDelegationReceipt(request.id)!;
-  expect(receipt).toMatchObject({ status: "done", result: NO_ANSWER });
+  expect(receipt).toMatchObject({ status: "done", result: NOTICE });
   expect(receipt.held).toBeUndefined();
   expect(receipt.copyOf).toBeUndefined();
-  expect((w.comms.reply.mock.calls as unknown[][]).map(call => outboundWords(call[1] as Outbound))).toEqual([CHECKING]);
+  expect((w.comms.reply.mock.calls as unknown[][]).map(call => outboundWords(call[1] as Outbound))).toEqual([NOTICE]);
   // the delivery asked again (the owed pass, after the check finished) writes nothing twice, keeps the no-answer (final) and never the words;
   // the wake is asked for at the same row (AskerWakes dedupes it) and, now on disk, the request is marked delivered
   drainRevokeMarker(database());
   onDisk = true;
   deliver();
   expect(w.store.messagesFor(w.leader.threadId).filter(m => m.requestId === request.id)).toHaveLength(1);
-  expect(findDelegationReceipt(request.id)).toMatchObject({ result: NO_ANSWER });
+  expect(findDelegationReceipt(request.id)).toMatchObject({ result: NOTICE });
   expect(woken).toEqual([`${request.id}:${rows[0].id}`, `${request.id}:${rows[0].id}`]);
   expect(roomRequest(database(), request.id)!.refusal).toBeTruthy();
   expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
@@ -426,7 +428,7 @@ it("replay: a repeat in the same event replays the no-answer (or withheld) line,
   for (const via of ["ask", "delegate"] as const) {
     const replayed = formatHandoff(decoded, via, { targetName: botName(w.a), resolvable: () => true, answerText }, false)!;
     const text = JSON.stringify(replayed.body);
-    expect(text).toContain(NO_ANSWER);
+    expect(text).toContain(NOTICE);
     expect(text).not.toContain("RESEARCHER_A_WORDS");
   }
   expect(answerText).not.toHaveBeenCalled();
@@ -434,7 +436,7 @@ it("replay: a repeat in the same event replays the no-answer (or withheld) line,
   // an older answer record whose stored answer reads checking replays the no-answer line too
   const heldAgain = w.heldReply(w.a, WORDS_B);
   const replay = storedAnswerText({ ...w.deps, request: () => null, requestSourceThread: () => undefined }, { threadId: w.a.threadId, messageId: heldAgain.id }, { fromBotId: w.leader.id, toBotId: w.a.id, fromThreadId: w.leader.threadId }, false);
-  expect(outboundWords(replay!)).toBe(NO_ANSWER);
+  expect(outboundWords(replay!)).toBe(NOTICE);
 });
 
 it("expired: a hold an earlier build left past HELD_MAX_AGE_MS is retired at start as the no-answer result, its asker woken once, its words deleted", async () => {
@@ -455,12 +457,12 @@ it("expired: a hold an earlier build left past HELD_MAX_AGE_MS is retired at sta
   const ports = w.retirePorts();
   expect(retireHeldReplies(ports)).toBe(1);
   const row = w.row("task-old")!;
-  expect(row.text).toBe(NO_ANSWER);
+  expect(row.text).toBe(NOTICE);
   expect(row.copyOf).toBeUndefined();
   expect(row.withheldFromBots).toBeUndefined();
-  expect(w.botReads(row)).toBe(NO_ANSWER);
+  expect(w.botReads(row)).toBe(NOTICE);
   const receipt = findDelegationReceipt("task-old")!;
-  expect(receipt).toMatchObject({ status: "done", result: NO_ANSWER });
+  expect(receipt).toMatchObject({ status: "done", result: NOTICE });
   expect(receipt.held).toBeUndefined();
   expect(receipt.copyOf).toBeUndefined();
   expect(ports.completed).toEqual([["task-old", id]]);
@@ -468,7 +470,7 @@ it("expired: a hold an earlier build left past HELD_MAX_AGE_MS is retired at sta
   // a second start finds nothing to retire and wakes nobody again; check_delegation reads the line
   expect(retireHeldReplies(ports)).toBe(0);
   expect(w.wakeCalls).toHaveLength(1);
-  expect((await w.check("task-old")).result).toBe(NO_ANSWER);
+  expect((await w.check("task-old")).result).toBe(NOTICE);
   expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
 });
 
@@ -482,16 +484,16 @@ it("dropped hold: a held receipt whose row never reached the conversation is ret
   w.ports.finalizingDelegations.delete("task-lost");
   expect(w.row("task-lost")).toBeUndefined();
   expect(retireHeldReplies(w.retirePorts())).toBe(1);
-  expect(w.row("task-lost")!.text).toBe(NO_ANSWER);
+  expect(w.row("task-lost")!.text).toBe(NOTICE);
   const receipt = findDelegationReceipt("task-lost")!;
   expect(receipt.reply).toBeUndefined();
   expect(receipt.copyOf).toBeUndefined();
   // the original reads shown (it always did): the receipt still answers the line
-  expect((await w.check("task-lost")).result).toBe(NO_ANSWER);
+  expect((await w.check("task-lost")).result).toBe(NOTICE);
   // an earlier build's owed held reply replayed by any path writes the line, never the words
   const replayed = replayOwedReply(w.store, { id: "task-lost-2", sourceThreadId: w.leader.threadId, toBotId: w.a.id, toBotName: w.a.name, status: "done", finishedAt: Date.now(), reply: { text: WORDS_A, held: { copyOf } } } as never)!;
-  expect(replayed.text).toBe(NO_ANSWER);
-  expect(w.botReads(replayed)).toBe(NO_ANSWER);
+  expect(replayed.text).toBe(NOTICE);
+  expect(w.botReads(replayed)).toBe(NOTICE);
   // the leader's conversation deleted: the hold is retired with nothing written
   const gone = w.store.createBot({ name: "Gone Leader", section: "Research" }, { seedMessages: false });
   recordDelegationReceipt({ id: "task-gone", sourceThreadId: gone.threadId, toBotId: w.a.id, toBotName: w.a.name, status: "done", copyOf, lineage: true, held: { messageId: handoffReplyId("task-gone"), since: Date.now() } });
@@ -520,7 +522,7 @@ it("scan: after every path above in one install, the held words are in no receip
   const all = storesText(w, [...events, ...(w.comms.reply.mock.calls as unknown[][]).map(call => outboundWords(call[1] as Outbound))]);
   expect(all).not.toContain("RESEARCHER_A_WORDS");
   expect(all).not.toContain("RESEARCHER_B_WORDS");
-  expect(all).toContain(NO_ANSWER);
+  expect(all).toContain(NOTICE);
 });
 
 it("a clean delegation still delivers its words normally: shown at finalize, no hold, woken once", async () => {
@@ -578,4 +580,94 @@ it("the copy of this lane carries no em dash in the files it wrote, and none of 
     for (const line of text.split("\n")) if (banned.test(line)) offenders.push(`${file}: ${line.trim().slice(0, 80)}`);
   }
   expect(offenders).toEqual([]);
+});
+
+// 1.0.20 (Sean's FINAL6 thread): a delegated reply held while memory is being checked must never reach the owner's conversation as the internal
+// placeholder "(no answer: that memory is still being checked, try again later)". One rule (held-replies.ts heldReplyRule): a writing site waits
+// for the check to clear, bounded, and delivers; past the bound, or where nothing can wait, the asker reads only the plain notice.
+/** A DelegatedReplyChecks driven by hand: `tick` fires the armed re-checks, `advance` moves the clock. */
+async function manualChecks(waitMs = 1_000) {
+  const { DelegatedReplyChecks } = await import("./delegated-reply-check.ts");
+  let clock = 0;
+  const armed: Array<() => void> = [];
+  const checks = new DelegatedReplyChecks({ now: () => clock, setTimer: run => { armed.push(run); return run; }, clearTimer: handle => { const i = armed.indexOf(handle as () => void); if (i >= 0) armed.splice(i, 1); }, waitMs, recheckMs: 100, log: () => {} });
+  return { checks, advance: (ms: number) => { clock += ms; }, tick: () => { for (const run of armed.splice(0)) run(); } };
+}
+function sharedHeld(w: ReturnType<typeof world>, key: string) {
+  const request = insertRoomRequest(database(), {
+    groupId: "g", verb: "ask", fromKind: "bot", fromBotId: w.leader.id, toBotId: w.a.id, targetThreadId: w.a.threadId, returnThreadId: w.leader.threadId, admissionKey: `ask:${key}`, now: 1, state: "running",
+    lineage: { rootThreadId: w.leader.threadId, origin: "desktop", audienceFingerprint: "owner", notOwnerAudience: false, unattended: false },
+  }).request;
+  const replyA = w.heldReply(w.a, WORDS_A);
+  finishRequestTurn(database(), request.id, { ok: true, now: 2, resultMessageId: replyA.id });
+  return request;
+}
+const ownerRows = (w: ReturnType<typeof world>, requestId: string) => w.store.messagesFor(w.leader.threadId).filter(m => m.requestId === requestId);
+
+it("1.0.20 witness: a shared reply held by checking posts NO placeholder bubble in the owner thread; it waits and is delivered once checking clears", async () => {
+  const w = world();
+  const { checks, tick } = await manualChecks();
+  const request = sharedHeld(w, "held-wait");
+  runDeliverSharedResult({ store: boundaryStore(w.store), rows: new RowSink(w.store), comms: w.comms as never, heldWait: checks }, roomRequest(database(), request.id)!);
+  // still checking: nothing in the owner thread, nothing mirrored, no receipt, the delivery owed
+  expect(ownerRows(w, request.id)).toEqual([]);
+  expect(w.store.messagesFor(w.leader.threadId).map(m => m.text ?? "").join("\n")).not.toContain(NO_ANSWER);
+  expect(w.comms.reply).not.toHaveBeenCalled();
+  expect(findDelegationReceipt(request.id)).toBeNull();
+  expect(checks.has(`shared:${request.id}`)).toBe(true);
+  // checking clears: the re-check delivers the real reply, once
+  expect(drainRevokeMarker(database()).pending).toBe(false);
+  tick();
+  const rows = ownerRows(w, request.id);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].text).toContain("RESEARCHER_A_WORDS");
+  expect(rows[0].text).not.toContain(NO_ANSWER);
+  expect(checks.has(`shared:${request.id}`)).toBe(false);
+});
+
+it("1.0.20 bounded: a shared reply still held past the wait is the plain notice, never the internal placeholder, and never the held words", async () => {
+  const w = world();
+  const { checks, advance, tick } = await manualChecks();
+  const request = sharedHeld(w, "held-bound");
+  runDeliverSharedResult({ store: boundaryStore(w.store), rows: new RowSink(w.store), comms: w.comms as never, heldWait: checks }, roomRequest(database(), request.id)!);
+  expect(ownerRows(w, request.id)).toEqual([]);
+  advance(1_000);
+  tick();
+  const rows = ownerRows(w, request.id);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].text).toBe(NOTICE);
+  expect(storesText(w)).not.toContain(NO_ANSWER);
+  expect(storesText(w)).not.toContain("RESEARCHER_A_WORDS");
+  expect((w.comms.reply.mock.calls as unknown[][]).map(call => outboundWords(call[1] as Outbound))).toEqual([NOTICE]);
+});
+
+it("1.0.20 every site: no path that used to emit no_answer_checking still yields the internal placeholder", async () => {
+  const { receiptResultShown } = await import("./handoff-boundary.ts");
+  const { appendHandoffReply } = await import("./handoff-reply.ts");
+  const { retireHeldRow } = await import("./held-replies.ts");
+  const w = world();
+  const checking = { kind: "checking" } as Parameters<typeof receiptResultShown>[0];
+  const words = (out: Outbound | undefined) => (out === undefined ? "" : outboundWords(out));
+  const replyBody = (r: unknown) => JSON.stringify((r as { body?: unknown }).body ?? r);
+  // the shared, finalizer and check_delegation writers are driven for real; the reads and earlier-build retirements are called directly
+  const sites: Array<[string, () => Promise<string> | string]> = [
+    ["handoff-boundary finalizer (no scheduler wired)", () => { w.asked("site-f"); w.finish(w.a, w.heldReply(w.a, WORDS_A), "site-f"); return w.row("site-f")!.text ?? ""; }],
+    ["handoff-boundary check_delegation", async () => JSON.stringify(await w.check("site-f"))],
+    ["handoff-boundary receiptResultShown", () => words(receiptResultShown(checking, {}).result)],
+    ["handoff-boundary runDeliverSharedResult (no wait wired)", () => { const r = sharedHeld(w, "site-s"); runDeliverSharedResult({ store: boundaryStore(w.store), rows: new RowSink(w.store), comms: w.comms as never }, roomRequest(database(), r.id)!); return ownerRows(w, r.id).map(m => m.text).join("\n"); }],
+    ["handoff-reply legacy held owed reply", () => appendHandoffReply(w.store, { handoffId: "site-h", sourceThreadId: w.leader.threadId, owed: { text: WORDS_A, held: { copyOf: { threadId: w.a.threadId, messageIds: [] } } } as never, targetBotId: w.a.id, targetName: w.a.name }).text ?? ""],
+    ["held-replies retireHeldRow", () => { const id = retireHeldRow({ store: w.store, complete: () => {} }, { id: "site-r", sourceThreadId: w.leader.threadId, toBotId: w.a.id, toBotName: w.a.name }, "dres-site-r")!; return w.store.messageById(w.leader.threadId, id)!.text ?? ""; }],
+    ["handoff-outcome no_answer checking", () => replyBody(formatHandoff({ kind: "no_answer", why: "checking" } as never, "ask", { targetName: botName({ name: w.a.name }), resolvable: () => true, answerText: () => undefined } as never))],
+    ["handoff-replay checking mirror", () => { const m = w.store.appendMessage(w.leader.threadId, { role: "bot", kind: "text", text: CHECKING, murageLine: true } as never); return words(storedAnswerText({ ...w.deps, request: () => null, requestSourceThread: () => undefined }, { threadId: w.leader.threadId, messageId: m.id }, { fromBotId: w.leader.id, toBotId: w.a.id, fromThreadId: w.leader.threadId }, false)); }],
+  ];
+  const seen: string[] = [];
+  for (const [name, run] of sites) {
+    const out = await run();
+    seen.push(`${name}: ${out.includes(NO_ANSWER) ? "PLACEHOLDER" : out.includes(NOTICE) ? "notice" : "other"}`);
+  }
+  expect(seen).toEqual(sites.map(([name]) => `${name}: notice`));
+  // and no product source still names the internal line as something to emit
+  const { readdirSync: list, readFileSync: read } = await import("node:fs");
+  const emitters = list("server").filter(f => f.endsWith(".ts") && !f.includes(".test.")).filter(f => /status\("no_answer_checking"\)/.test(read(join("server", f), "utf8")));
+  expect(emitters).toEqual([]);
 });

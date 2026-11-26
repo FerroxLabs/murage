@@ -1,4 +1,4 @@
-// electron-updater 6.8.9: r3.1 §2 forbids ShellExecute for installers. Apply
+// electron-updater 6.8.11: r3.1 §2 forbids ShellExecute for installers. Apply
 // the reviewed vendor diff after the other bundle patches, on every rebuild.
 // Exact, unique context matching fails closed if upstream changes these sites.
 import { readFileSync } from 'node:fs';

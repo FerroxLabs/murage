@@ -132,3 +132,23 @@ export function buildNotification(
 
   return { kind, botId: bot.id, botName: bot.name, threadId, title, body, ...extra };
 }
+
+/** A teammate's settled reply opens the asking chat. Both bots' mute settings
+ * apply. The caller supplies the same mask as other notification sinks, before
+ * summarize can cut a secret in half. The parent's resumed turn announces its
+ * own closing reply through the ordinary done path. */
+export function buildDelegationNotification(
+  asker: NotifyBot,
+  peer: NotifyBot & { avatarUrl?: string },
+  threadId: string,
+  detail: string,
+  messageId: string,
+  mask: (text: string) => string,
+): Notification | null {
+  if (asker.notifications === false) return null;
+  // The click opens botId's chat first, so it names the asking bot: the
+  // reply lives in the asker's conversation, not in the peer's own chat.
+  return buildNotification("done", { ...peer, id: asker.id, name: mask(peer.name) }, threadId, mask(detail), {
+    messageId, deliveryId: `delegation:${messageId}`, avatarUrl: peer.avatarUrl,
+  });
+}

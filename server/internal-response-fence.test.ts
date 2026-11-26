@@ -203,9 +203,11 @@ it("refuses unknown descriptors before bytes and mutations", () => {
   expect(write).not.toHaveBeenCalled(); expect(f.turn.parents).toBe(before);
 });
 // control: exact crossing release cannot mutate a ledger before byte reservation.
+// "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, the release was refused by crossing the
+// 64 MiB byte budget; now the budget is sealed first (a work crossing with no accepted release) and must still refuse before any ref lands.
 it("reserves bytes before accepting new result refs", () => {
   const f = fixture(), before = f.turn.parents, write = vi.fn();
-  f.budget.charge({ bytes: RELEASE_LIMITS.bytes });
+  expect(() => f.budget.charge({ work: RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
   expect(() => emitConsumingTurnResponse(f.binding, registerConsumingDescriptor(modeId.body, "body"), {
     bytes: 1, refs: [{ kind: "line", threadId: "T", messageId: "Y" }], write,
   })).toThrow("MEMORY_CONTEXT_REVOKED");
@@ -597,7 +599,7 @@ async function internalDispatchFixture(catchErrors = false) {
 // red-at-8d3290c81 A3-8: valid capabilities reach each concrete producer.
 // The fixture table is intentionally separate from the inventory: adding a
 // route requires a reviewed request and a route-specific response assertion.
-it("T-ALL-RETURNS valid-capability concrete local and delegated producers", async () => {
+it.each([0, 1])("T-ALL-RETURNS valid-capability concrete local and delegated producers (shard %s)", async shard => {
   const dispatch = await internalDispatchFixture(true);
   const { CHANNEL_PERSON_INTERNAL_REFUSAL } = await import("./internal-route-authority.ts");
   const { MCP_REMOTE_OWNER_ONLY } = await import("./mcp-relay.ts");
@@ -642,7 +644,6 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
   ensureDirs();
   const { configureBotEgress } = await import("./bot-egress.ts");
 
-  const { HighLevelHost } = await import("./highlevel/host.ts");
   const botWriterScope = {
 
   };
@@ -667,12 +668,12 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
     "POST publish-site": { status: 403, contains: "Publishing is only available" },
     "POST take-down-site": { status: 403, contains: "Publishing is only available", body: { siteId: "fixture" } },
     "POST generate-image": { status: 409, contains: "Choose an image connection", body: { requestId: "fixture" } },
-    "POST web-read": { status: 400, contains: "page URL", body: { input: {} } },
+    // settings-truth: the shared cfg turns web search Off, which also turns page reading off before any read.
+    "POST web-read": { status: 409, contains: "Web page reading is off in Settings.", body: { input: {} } },
     "POST web-search": { status: 409, contains: "Native web search is disabled" },
     // MAIN RULING: "keep only the wipe check, everything else is NO LIMITS".
     // BASE and HEAD return the disabled phone service's explicit off envelope, not a permission card.
     "POST device/call": { status: 200, contains: '"code":"off"' },
-    "POST highlevel/mcp": { status: 200, contains: '"result":{}', body: { jsonrpc: "2.0", id: 1, method: "ping" } },
     "POST host-computer": { status: 403, contains: "computer turn is no longer authorized" },
     "POST unified-browser": { status: 403, contains: "browser turn is no longer authorized" },
     "POST headless-browser": { status: 405, contains: "method not allowed" },
@@ -680,7 +681,9 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
     "DELETE headless-browser": { status: 200, contains: '"closed":true' },
     "POST tool-result": { status: 400, contains: "Expected bounded text" },
     "GET tool-result": { status: 400, contains: "Expected a saved result id" },
-    "GET skills": { status: 403, contains: "skill authoring is not enabled" },
+    // MAIN RULING 1115-SKILLS-GROK b: metadata-only owner listing.
+    "GET skills": { status: 200, contains: '"skills":' },
+    "POST skills/switch": { status: 400, contains: "action must be turn_on, turn_off or delete" },
     "POST skills/stage": { status: 403, contains: "skill authoring is not enabled" },
     "GET agents": { status: 200, contains: '"bots":[]' },
     "GET routines": { status: 200, contains: '"routines":[]' },
@@ -719,6 +722,8 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
     "POST venue/read-messages": { status: 403, contains: VENUE_READ_UNAVAILABLE },
     "POST venue/post": { status: 403, contains: VENUE_POST_UNAVAILABLE },
     "POST room-share/ask": { status: 403, contains: SHARE_UNAVAILABLE },
+    "POST phone/phone_call_place": { status: 200, contains: "not_set_up" },
+    "POST phone/phone_call_result": { status: 200, contains: "not_set_up" },
     "POST bot-management": { status: 400, contains: "Invalid bot-management request" },
     "POST ask-bot": { status: 400, contains: "error", body: { toBotId: "B" } },
     "POST delegate-bot": { status: 400, contains: "error", body: { toBotId: "B" } },
@@ -734,7 +739,9 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
   ];
   expect(inline.map(route => `${route.method} ${route.path.slice("/api/internal/".length)}`).sort()).toEqual(Object.keys(recipes).sort());
   let cell = 0;
-  for (const route of inline) for (const authorizedDelegate of /^\/api\/internal\/(?:(?:box|email|mcp-remote|delegations)\/|skills(?:\/stage)?$|project\/propose$|connectors\/(?:request|mcp)$|access-request$|permission-status$|outcome-proposals$|routine-requests$|bot-management$)/.test(route.path) ? [false, true] : [false]) for (const delegatedStage of authorizedDelegate && route.path.endsWith("/skills/stage") ? [false, true] : [false]) for (const revoked of [false, true]) {
+  // Keep all route and revocation cases within the shared test timeout.
+  const routes = inline.filter((_, index) => index % 2 === shard);
+  for (const route of routes) for (const authorizedDelegate of /^\/api\/internal\/(?:(?:box|email|mcp-remote|delegations)\/|skills(?:\/stage)?$|project\/propose$|connectors\/(?:request|mcp)$|access-request$|permission-status$|outcome-proposals$|routine-requests$|bot-management$)/.test(route.path) ? [false, true] : [false]) for (const delegatedStage of authorizedDelegate && route.path.endsWith("/skills/stage") ? [false, true] : [false]) for (const revoked of [false, true]) {
     cell++;
     let closeChannelDatabase: (() => void) | undefined;
     try {
@@ -789,7 +796,7 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
     const accessHandler = vi.fn(requestBotAccess), permissionHandler = vi.fn(permissionStatus), outcomeHandler = vi.fn(proposeOutcomeFromAgent);
     let routineHandler:ReturnType<ReturnType<typeof fixtureObservers>["spy"]>|undefined;
     if (authorizedAccess || authorizedPermission) expect(mayReviewAccessStatus(bot as never, bot as never)).toBe(true);
-    const proposals = new ChiefProposalTurns();
+    const proposals = new ChiefProposalTurns(() => ({ holder: "B", epoch: 0 }));
     const validateProposal = vi.fn((raw: unknown) => validateProjectProposal(raw, []));
     if (authorizedProposal) {
       void proposals.begin(threadId, "B", f.turn.turnId, "fixture", validateProposal);
@@ -870,12 +877,6 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
       req: Object.assign(new (await import("node:events")).EventEmitter(), { method: route.method, headers: { authorization: `Bearer ${token}` } }), res: sink.raw,
       internalCapabilities: capabilities,
       ...(emailRoute?{emailRuntime}:{}),
-      highlevel: { host: new HighLevelHost({ capabilities, bot: () => bot,
-        signals: { onEnd: () => () => {} } as any,
-        get leases(): never { throw new Error("unexpected HighLevel lease use"); },
-        get client(): never { throw new Error("unexpected HighLevel client use"); },
-        get actions(): never { throw new Error("unexpected HighLevel action use"); },
-      }) },
       chiefProposals: proposals,
 
       cfg: { features: { skillRecorder: authorizedSkills,cloudBoxComputers:authorizedBox },box:authorizedBox?{token:"fixture-box-account"}:{}, imageGen: { enabled: false }, webSearch: { provider: "off" }, mcpServers: { approved: { url: "https://fixture.invalid/mcp", enabled: true } } },
@@ -911,6 +912,13 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
       await dispatch(scope);
       expect(sink.output[0]?.status, `route=${inline.indexOf(route)} cell=${cell} frames=${sink.output.length}`).toBe(recipe.status);
       expect(sink.output.at(-1)?.body, route.path).toContain(recipe.contains);
+      // MAIN RULING 1115-SKILLS-GROK b: reject every body/evidence field.
+      if (route.method === "GET" && route.path === "/api/internal/skills") {
+        const result = JSON.parse(sink.output.at(-1)!.body!);
+        expect(Object.keys(result).sort()).toEqual(["skills", "staged"]);
+        for (const row of [...result.skills, ...result.staged])
+          expect(Object.keys(row).sort()).toEqual(["action", "name", "scope", "sha256"]);
+      }
       if (channelPerson || !authorizedDelegate && route.path.startsWith("/api/internal/mcp-remote/")) {
         // MAIN RULING 1114-SC-SAFETY-REAL-PRODUCERS: exact production audience denial, beyond the original reachability check.
         expect(JSON.parse(sink.output.at(-1)!.body!)).toEqual({ error: recipe.contains });
@@ -948,7 +956,7 @@ it("T-ALL-RETURNS valid-capability concrete local and delegated producers", asyn
 });
 
 // MAIN RULING 1114-SC-SAFETY-HSCOPE4: added assertions use a separate ID.
-it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local and delegated producers", async () => {
+it.each([0, 1, 2, 3])("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local and delegated producers (shard %s)", async shard => {
   const dispatch = await internalDispatchFixture(true);
   const { CHANNEL_PERSON_INTERNAL_REFUSAL } = await import("./internal-route-authority.ts");
   const { MCP_REMOTE_OWNER_ONLY } = await import("./mcp-relay.ts");
@@ -993,7 +1001,6 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
   ensureDirs();
   const { configureBotEgress } = await import("./bot-egress.ts");
 
-  const { HighLevelHost } = await import("./highlevel/host.ts");
   const botWriterScope = {
 
   };
@@ -1018,12 +1025,12 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
     "POST publish-site": { status: 403, contains: "Publishing is only available" },
     "POST take-down-site": { status: 403, contains: "Publishing is only available", body: { siteId: "fixture" } },
     "POST generate-image": { status: 409, contains: "Choose an image connection", body: { requestId: "fixture" } },
-    "POST web-read": { status: 400, contains: "page URL", body: { input: {} } },
+    // settings-truth: the shared cfg turns web search Off, which also turns page reading off before any read.
+    "POST web-read": { status: 409, contains: "Web page reading is off in Settings.", body: { input: {} } },
     "POST web-search": { status: 409, contains: "Native web search is disabled" },
     // MAIN RULING: "keep only the wipe check, everything else is NO LIMITS".
     // BASE and HEAD return the disabled phone service's explicit off envelope, not a permission card.
     "POST device/call": { status: 200, contains: '"code":"off"' },
-    "POST highlevel/mcp": { status: 200, contains: '"result":{}', body: { jsonrpc: "2.0", id: 1, method: "ping" } },
     "POST host-computer": { status: 403, contains: "computer turn is no longer authorized" },
     "POST unified-browser": { status: 403, contains: "browser turn is no longer authorized" },
     "POST headless-browser": { status: 405, contains: "method not allowed" },
@@ -1031,7 +1038,9 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
     "DELETE headless-browser": { status: 200, contains: '"closed":true' },
     "POST tool-result": { status: 400, contains: "Expected bounded text" },
     "GET tool-result": { status: 400, contains: "Expected a saved result id" },
-    "GET skills": { status: 403, contains: "skill authoring is not enabled" },
+    // MAIN RULING 1115-SKILLS-GROK b: metadata-only owner listing.
+    "GET skills": { status: 200, contains: '"skills":' },
+    "POST skills/switch": { status: 400, contains: "action must be turn_on, turn_off or delete" },
     "POST skills/stage": { status: 403, contains: "skill authoring is not enabled" },
     "GET agents": { status: 200, contains: '"bots":[]' },
     "GET routines": { status: 200, contains: '"routines":[]' },
@@ -1070,6 +1079,8 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
     "POST venue/read-messages": { status: 403, contains: VENUE_READ_UNAVAILABLE },
     "POST venue/post": { status: 403, contains: VENUE_POST_UNAVAILABLE },
     "POST room-share/ask": { status: 403, contains: SHARE_UNAVAILABLE },
+    "POST phone/phone_call_place": { status: 200, contains: "not_set_up" },
+    "POST phone/phone_call_result": { status: 200, contains: "not_set_up" },
     "POST bot-management": { status: 400, contains: "Invalid bot-management request" },
     "POST ask-bot": { status: 400, contains: "error", body: { toBotId: "B" } },
     "POST delegate-bot": { status: 400, contains: "error", body: { toBotId: "B" } },
@@ -1085,7 +1096,9 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
   ];
   expect(inline.map(route => `${route.method} ${route.path.slice("/api/internal/".length)}`).sort()).toEqual(Object.keys(recipes).sort());
   let cell = 0;
-  for (const route of inline) for (const authorizedDelegate of /^\/api\/internal\/(?:(?:box|email|mcp-remote|delegations)\/|skills(?:\/stage)?$|project\/propose$|connectors\/(?:request|mcp)$|access-request$|permission-status$|outcome-proposals$|routine-requests$|bot-management$)/.test(route.path) ? [false, true] : [false]) for (const delegatedStage of authorizedDelegate && route.path.endsWith("/skills/stage") ? [false, true] : [false]) for (const revoked of [false, true]) {
+  // The matrix grew past one test timeout (220 cells at ~0.2 s each, no waiting): split it like the sibling matrix, every route stays covered by exactly one shard.
+  const routes = inline.filter((_, index) => index % 4 === shard);
+  for (const route of routes) for (const authorizedDelegate of /^\/api\/internal\/(?:(?:box|email|mcp-remote|delegations)\/|skills(?:\/stage)?$|project\/propose$|connectors\/(?:request|mcp)$|access-request$|permission-status$|outcome-proposals$|routine-requests$|bot-management$)/.test(route.path) ? [false, true] : [false]) for (const delegatedStage of authorizedDelegate && route.path.endsWith("/skills/stage") ? [false, true] : [false]) for (const revoked of [false, true]) {
     cell++;
     let closeChannelDatabase: (() => void) | undefined;
     try {
@@ -1140,7 +1153,7 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
     const accessHandler = vi.fn(requestBotAccess), permissionHandler = vi.fn(permissionStatus), outcomeHandler = vi.fn(proposeOutcomeFromAgent);
     let routineHandler:ReturnType<ReturnType<typeof fixtureObservers>["spy"]>|undefined;
     if (authorizedAccess || authorizedPermission) expect(mayReviewAccessStatus(bot as never, bot as never)).toBe(true);
-    const proposals = new ChiefProposalTurns();
+    const proposals = new ChiefProposalTurns(() => ({ holder: "B", epoch: 0 }));
     const validateProposal = vi.fn((raw: unknown) => validateProjectProposal(raw, []));
     if (authorizedProposal) {
       void proposals.begin(threadId, "B", f.turn.turnId, "fixture", validateProposal);
@@ -1225,12 +1238,6 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
       req: Object.assign(new (await import("node:events")).EventEmitter(), { method: route.method, headers: { authorization: `Bearer ${token}` } }), res: sink.raw,
       internalCapabilities: capabilities,
       ...(emailRoute?{emailRuntime}:{}),
-      highlevel: { host: new HighLevelHost({ capabilities, bot: () => bot,
-        signals: { onEnd: () => () => {} } as any,
-        get leases(): never { throw new Error("unexpected HighLevel lease use"); },
-        get client(): never { throw new Error("unexpected HighLevel client use"); },
-        get actions(): never { throw new Error("unexpected HighLevel action use"); },
-      }) },
       chiefProposals: proposals,
 
       cfg: { features: { skillRecorder: authorizedSkills,cloudBoxComputers:authorizedBox },box:authorizedBox?{token:"fixture-box-account"}:{}, imageGen: { enabled: false }, webSearch: { provider: "off" }, mcpServers: { approved: { url: "https://fixture.invalid/mcp", enabled: true } } },
@@ -1266,6 +1273,13 @@ it("SC-SAFETY added assertions: T-ALL-RETURNS valid-capability concrete local an
       await dispatch(scope);
       expect(sink.output[0]?.status, `route=${inline.indexOf(route)} cell=${cell} frames=${sink.output.length}`).toBe(recipe.status);
       expect(sink.output.at(-1)?.body, route.path).toContain(recipe.contains);
+      // MAIN RULING 1115-SKILLS-GROK b: reject every body/evidence field.
+      if (route.method === "GET" && route.path === "/api/internal/skills") {
+        const result = JSON.parse(sink.output.at(-1)!.body!);
+        expect(Object.keys(result).sort()).toEqual(["skills", "staged"]);
+        for (const row of [...result.skills, ...result.staged])
+          expect(Object.keys(row).sort()).toEqual(["action", "name", "scope", "sha256"]);
+      }
       if (channelPerson || !authorizedDelegate && route.path.startsWith("/api/internal/mcp-remote/")) {
         // MAIN RULING 1114-SC-SAFETY-REAL-PRODUCERS: exact production audience denial, beyond the original reachability check.
         expect(JSON.parse(sink.output.at(-1)!.body!)).toEqual({ error: recipe.contains });
@@ -1474,7 +1488,7 @@ it("T-SHARED-OWNER-BINDING actual wrapper awaits acceptance with the same bindin
 // control: real proposal registration, valid agents capability, actual dispatch,
 // validation and successful submit, then a retained refusal and ended binding.
 it("T-PROPOSAL-BINDING actual proposal dispatch lifecycle", async () => {
-  const dispatch = await internalDispatchFixture(), f = fixture(true), proposals = new ChiefProposalTurns();
+  const dispatch = await internalDispatchFixture(), f = fixture(true), proposals = new ChiefProposalTurns(() => ({ holder: "B", epoch: 0 }));
   const { PROJECT_PROPOSE_ROUTE } = await import("./project-proposal-engines.ts");
 
   const validated = { proposal: { marker: "validated proposal" } };
@@ -1552,75 +1566,6 @@ async function validDispatchScope(f: ReturnType<typeof fixture>, path: string, m
 
   };
 }
-
-// red-at-fc2aad5b4: the rebased inventory includes the native HighLevel host.
-// Revoke inside the real host's authorized bot lookup, before its final return.
-it("T-ALL-RETURNS inventory HighLevel delegate after authorization", async () => {
-  const dispatch = await internalDispatchFixture();
-  const { HighLevelHost } = await import("./highlevel/host.ts");
-  const { INTERNAL_HTTP_ROUTES } = await import("./consuming-sink-inventory.ts");
-  const routes = INTERNAL_HTTP_ROUTES.filter(route => route.path.endsWith("/highlevel/mcp"));
-  expect(routes).toHaveLength(1);
-  for (const route of routes) for (const revoked of [false, true]) {
-    const f = fixture(), sink = consumingResponseRecorder();
-    const base = await validDispatchScope(f, route.path, route.method);
-    const bot = vi.fn(() => { if (revoked) f.flip(); return { id: "B" }; });
-    const host = new HighLevelHost({ capabilities: base.internalCapabilities, bot,
-      signals: { onEnd: () => () => {} } as any,
-      get leases(): never { throw new Error("unexpected HighLevel lease use"); },
-      get client(): never { throw new Error("unexpected HighLevel client use"); },
-      get actions(): never { throw new Error("unexpected HighLevel action use"); },
-    });
-    const handle = realMethodObserver(host, "handle");
-    const scope = { ...base, res: sink.raw, highlevel: { host },
-      readBody: async () => ({ jsonrpc: "2.0", id: 1, method: "ping" }) };
-    if (revoked) {
-      await expect(dispatch(scope)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
-      // Host refusal precedes HTTP serialization; no result has been released.
-      expect(sink.output).toEqual([]);
-    } else {
-      await dispatch(scope);
-      expect(JSON.parse(sink.output.at(-1)!.body!)).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
-    }
-
-    expect(handle).toHaveBeenCalledOnce(); expect(bot).toHaveBeenCalledOnce();
-    expect(f.refusals).toBe(revoked ? 1 : 0);
-  }
-});
-
-// MAIN RULING 1114-SC-SAFETY-HSCOPE4: added assertions use a separate ID.
-it("SC-SAFETY added assertions: T-ALL-RETURNS inventory HighLevel delegate after authorization", async () => {
-  const dispatch = await internalDispatchFixture();
-  const { HighLevelHost } = await import("./highlevel/host.ts");
-  const { INTERNAL_HTTP_ROUTES } = await import("./consuming-sink-inventory.ts");
-  const routes = INTERNAL_HTTP_ROUTES.filter(route => route.path.endsWith("/highlevel/mcp"));
-  expect(routes).toHaveLength(1);
-  for (const route of routes) for (const revoked of [false, true]) {
-    const f = fixture(), sink = consumingResponseRecorder();
-    const base = await validDispatchScope(f, route.path, route.method);
-    const bot = vi.fn(() => { if (revoked) f.flip(); return { id: "B" }; });
-    const host = new HighLevelHost({ capabilities: base.internalCapabilities, bot,
-      signals: { onEnd: () => () => {} } as any,
-      get leases(): never { throw new Error("unexpected HighLevel lease use"); },
-      get client(): never { throw new Error("unexpected HighLevel client use"); },
-      get actions(): never { throw new Error("unexpected HighLevel action use"); },
-    });
-    const handle = realMethodObserver(host, "handle");
-    const scope = { ...base, res: sink.raw, highlevel: { host },
-      readBody: async () => ({ jsonrpc: "2.0", id: 1, method: "ping" }) };
-    if (revoked) {
-      await expect(dispatch(scope)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
-      // Host refusal precedes HTTP serialization; no result has been released.
-      expect(sink.output).toEqual([]);
-    } else {
-      await dispatch(scope);
-      expect(JSON.parse(sink.output.at(-1)!.body!)).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
-    }
-    expect((dispatchBindings.get(scope)?.decisionAuthorities as Map<string, unknown>)?.get("T")).toMatchObject({ identity: { threadId: "T", generation: f.turn.turnId }, claim: expect.any(Object) });
-    expect(handle).toHaveBeenCalledOnce(); expect(bot).toHaveBeenCalledOnce();
-    expect(f.refusals).toBe(revoked ? 1 : 0);
-  }
-});
 
 // red-at-4df086541 A3-8: exercise nonempty scheduler/webhook projections after
 // sender authorization, using the real managers and the production callbacks.
@@ -2322,6 +2267,61 @@ it("T-ALL-RETURNS inventory venue and share delegates after authorization", asyn
   } finally { read.setVenueReadLive(null); post.setVenuePostLive(null); setExecutionStore(beforeStore!); }
 });
 
+// VENUE-POST lineage (row 67, ASTRA 4619): the real serveVenuePost (index.ts source, run through the production /api/internal/venue/post
+// branch) writes the held row and the posted line with the 1:1's lineage; nothing here matches source text.
+it.each([
+  { mode: "posted", settings: {} },
+  { mode: "held", settings: { autoApprove: false, fullAccess: false, noLimits: false } },
+])("T-VENUE-POST-LINEAGE $mode through POST /api/internal/venue/post carries the 1:1 prefix", async ({ mode, settings }) => {
+  const dispatch = await internalDispatchFixture();
+  const post = await import("./venue-post.ts");
+  const { createHash } = await import("node:crypto");
+  const { executionStore, setExecutionStore } = await import("./execution-audience.ts");
+  const beforeStore = executionStore();
+  const f = fixture(), sink = consumingResponseRecorder();
+  const bot = { id: "B", name: "Fixture", threadId: "T", section: "Fixture", tasks: [], ...settings } as unknown as import("./store.ts").BotRecord;
+  const group = { id: "venue", name: "Fixture venue", threadId: "R", section: "Fixture", memberIds: ["B"], tasks: [] } as unknown as import("./store.ts").GroupRecord;
+  const roster = { bots: [bot], groups: [group] };
+  const store = await fixtureRoster([bot], [group]);
+  setExecutionStore(executionStoreFixture(store));
+  const request = { id: "owner-request", role: "user", kind: "text", text: "Post the fixture", origin: "desktop", at: 1, postTo: { venueId: "venue" } } as const;
+  f.f.owner("T", request.id, 3);
+  const live = { ownerSurface: () => true, notOwnerAudience: () => false, roster: () => roster, message: () => request };
+  post.setVenuePostLive(live);
+  const mount = post.venuePostMounts({ botId: "B", bot, threadId: "T", message: request, origin: "desktop", surfacesForOwner: true,
+    directOwnerAudience: true, automationThread: false, agentsMcp: true });
+  expect(mount).not.toBeNull();
+  post.recordVenuePostTurn(f.turn.turnId, mount!);
+  try {
+    const setup = await validDispatchScope(f, "/api/internal/venue/post", "POST", { store, settings: settings as Partial<import("./store.ts").BotRecord> });
+    await dispatch({ ...setup, res: sink.raw, store, readBody: async () => ({ venueId: "venue", text: "fixture post" }), consumingHttpWriter });
+    const id = `vpost-${createHash("sha256").update(`${f.turn.turnId}\u0000R\u0000fixture post`, "utf8").digest("hex").slice(0, 32)}`;
+    const row = f.f.db.prepare("SELECT state, lineage FROM venue_posts WHERE id=?").get(id) as { state: string; lineage: string } | undefined;
+    const lines = f.f.db.prepare("SELECT thread_no, lsn, message_id, turn_lsn FROM memory_line_lineage").all() as Array<{ thread_no: number; lsn: number; message_id: string; turn_lsn: number | null }>;
+    const flow = f.f.db.prepare("SELECT from_thread, to_thread FROM memory_thread_flow WHERE from_thread='T' AND to_thread='R'").all();
+    const carry = f.f.db.prepare("SELECT parent_thread_no, to_lsn, child_thread_no FROM memory_lineage_carry").all() as Array<{ parent_thread_no: number; to_lsn: number; child_thread_no: number }>;
+    // the held row carries the 1:1's prefix with the shown request line, then the running turn's parents
+    expect(row?.state).toBe(mode);
+    expect(JSON.parse(row!.lineage)).toEqual([{ kind: "prefix", threadId: "T", shown: ["owner-request"] }, { kind: "line", threadId: "T", messageId: "X" }]);
+    const request = lines.find(line => line.message_id === "owner-request")!;
+    const posted = lines.find(line => line.message_id === id);
+    if (mode === "held") {
+      expect(sink.output.at(-1)?.body).toContain('"held":true');
+      expect(posted).toBeUndefined();
+      expect(carry).toEqual([]);
+      expect(flow).toEqual([]);
+    } else {
+      expect(JSON.parse(sink.output.at(-1)!.body!)).toEqual({ posted: true, venueId: "venue", messageId: id });
+      // the posted line in the venue rests on the 1:1: it was written at the request line's position and carried from that thread
+      expect(posted).toBeDefined();
+      expect(posted!.thread_no).not.toBe(request.thread_no);
+      expect(posted!.turn_lsn).toBe(request.lsn);
+      expect(carry).toEqual([{ parent_thread_no: request.thread_no, to_lsn: request.lsn, child_thread_no: posted!.thread_no }]);
+      expect(flow).toHaveLength(1);
+    }
+  } finally { post.forgetVenuePostTurn(f.turn.turnId); post.setVenuePostLive(null); setExecutionStore(beforeStore!); }
+});
+
 // red-at-4df086541 A3-8: the connector destination reaches the actual relay
 // after bot access authorization; only the remote broker is a fixture.
 it("T-ALL-RETURNS inventory connector relay after authorization", async () => {
@@ -2332,12 +2332,14 @@ it("T-ALL-RETURNS inventory connector relay after authorization", async () => {
   const dispatch = await internalDispatchFixture();
   const routes = INTERNAL_HTTP_ROUTES.filter(route => route.path === "/api/internal/connectors/mcp");
   expect(routes).toHaveLength(1);
-  let onReply = () => {}, calls = 0;
+  let onReply = () => {}, calls = 0, inventoryReads = 0;
   const broker = createServer((req, res) => {
     let raw = ""; req.on("data", chunk => { raw += chunk; });
     req.on("end", () => {
       res.setHeader("content-type", "application/json");
       if (req.url?.endsWith("/health")) return res.end('{"service":"flux-composio","ready":true,"claims":true}');
+      // The relay checks the bot's account against the connected-app inventory first: a GET, not a JSON-RPC call.
+      if (req.method === "GET" && req.url?.endsWith("/v1/connectors/connected")) { inventoryReads++; return res.end('{"services":{},"complete":true}'); }
       const rpc = JSON.parse(raw); calls++; onReply();
       res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: { fixture: "authorized relay" } }));
     });
@@ -2350,7 +2352,7 @@ it("T-ALL-RETURNS inventory connector relay after authorization", async () => {
       composio.applyManagedBrokerMessage({ type: "murage:managed-composio", access: null, fluxBrokerUrl: base,
         fluxAccess: { url: base, token: "b".repeat(64) }, legacyUntil: "", legacyClaim: { state: "claimed" }, accountKind: null, tokenError: null });
       await composio.primeBrokerReadiness();
-      const f = fixture(), sink = consumingResponseRecorder(), before = calls;
+      const f = fixture(), sink = consumingResponseRecorder(), before = calls, readsBefore = inventoryReads;
       onReply = () => { if (revoke) f.flip(); };
       const admitted = await validDispatchScope(f, route.path, route.method);
       const scope = { ...admitted, res: sink.raw,
@@ -2368,6 +2370,7 @@ it("T-ALL-RETURNS inventory connector relay after authorization", async () => {
         expect(JSON.parse(sink.output.at(-1)!.body!)).toEqual({ jsonrpc: "2.0", id: 1, result: { fixture: "authorized relay" } });
       }
       expect(calls - before).toBe(1);
+      expect(inventoryReads - readsBefore).toBe(1);
     }
   } finally { composio.resetManagedBrokerState(); broker.closeAllConnections(); await new Promise<void>(resolve => broker.close(() => resolve())); }
 });

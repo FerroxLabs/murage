@@ -33,3 +33,22 @@ export function installServerChildCrashObserver(options?: {
   processTarget?: NodeJS.Process;
   write?: (line: string) => void;
 }): () => void;
+
+/** The close-request marker: `event=server-child-close`. */
+export const SERVER_CHILD_CLOSE_EVENT: "server-child-close";
+/** The exit marker: `event=server-child-exit`. */
+export const SERVER_CHILD_EXIT_EVENT: "server-child-exit";
+
+/**
+ * Record why this process ends whenever JavaScript still runs to say so: one
+ * line per close request (`via=SIGTERM|SIGINT|message|restart`, repeats
+ * bounded) and one line on every 'exit' event (`code=<n> cause=...`). A server
+ * that leaves no exit line was killed or aborted from outside.
+ */
+export function installServerChildExitNote(options?: {
+  processTarget?: NodeJS.Process;
+  write?: (line: string) => void;
+}): {
+  closeRequested: (via: "SIGTERM" | "SIGINT" | "message" | "restart") => void;
+  dispose: () => void;
+};

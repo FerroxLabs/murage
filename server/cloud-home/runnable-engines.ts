@@ -18,7 +18,7 @@ export const CLOUD_DESKTOP_ONLY_ENGINES = ["museCode"] as const;
  * for each instead of a pickable engine (cloudLocalOnlyEngineNames). Kept apart from
  * CLOUD_HIDDEN_ENGINES so that list still matches CLOUD_ENGINES exactly; the launcher and
  * the image are untouched. Driver kind to the engine's own name. */
-export const CLOUD_LOCAL_ONLY_ENGINES = { clineAgent: "Cline", copilotAgent: "GitHub Copilot", deepseekAgent: "DeepSeek Harness" } as const;
+export const CLOUD_LOCAL_ONLY_ENGINES = { clineAgent: "Cline", copilotAgent: "GitHub Copilot", commandCodeAgent: "Command Code", kiroAgent: "Kiro", ompAgent: "OMP", devinAgent: "Devin", deepseekAgent: "DeepSeek Harness" } as const;
 function isCloudLocalOnlyEngine(driver: string): boolean {
   return Object.hasOwn(CLOUD_LOCAL_ONLY_ENGINES, driver);
 }

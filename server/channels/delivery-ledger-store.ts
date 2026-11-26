@@ -9,6 +9,7 @@
 // store's NAME is proven durable (a directory sync that really ran, or a later machine boot).
 import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "../sqlite-open.ts";
 import { CHECKPOINT_BUSY_MS } from "../sqlite-checkpoint.ts";
@@ -88,6 +89,8 @@ async function checkpointHandle(file: string, handle: Handle): Promise<boolean> 
     handle.refs--;
   }
   const requested = Atomics.load(handle.coordination.gate, 1);
+  // Nothing committed since the last fold: the file is already folded, so no worker starts.
+  if (!handle.checkpoint && handle.folded === requested) return true;
   if (!handle.checkpoint) {
     handle.refs++; handle.checkpointRevision = requested;
     handle.checkpoint = checkpointFile(file, { gate: handle.coordination.gate }).then(folded => {
@@ -195,7 +198,9 @@ export class LedgerStore {
       return result;
     });
   }
-  /** One transaction: the ledger row, every record and every tombstone (rewritten whole), and, when `legacy` is given, its migration facts. */
+  /** One transaction: the ledger row, and only the record and tombstone rows that differ from the committed ones.
+   * A row keeps its seq while its order allows; a row whose place moved, a new row and a changed body are the only writes, and a row that left
+   * the state is deleted. ORDER BY seq always reads back the state's own order. */
   commit(state: State, legacy?: { legacy: Legacy; sha: string | null; by: string | null }): void {
     this.tx(() => {
       if (legacy) this.db.prepare(`INSERT INTO delivery_ledger (ledger_key,binding_key,recipient,legacy,legacy_sha256,migrated_by,migrated_boot,retire_attempts,retire_after) VALUES (?,?,?,?,?,?,?,0,NULL)
@@ -205,10 +210,36 @@ export class LedgerStore {
       else this.db.prepare(`INSERT INTO delivery_ledger (ledger_key,binding_key,recipient) VALUES (?,?,?)
         ON CONFLICT(ledger_key) DO UPDATE SET binding_key=excluded.binding_key, recipient=excluded.recipient`)
         .run(this.key, state.bindingKey, state.recipient);
-      this.db.prepare("DELETE FROM delivery_entry WHERE ledger_key=?").run(this.key);
+      const remove = this.db.prepare("DELETE FROM delivery_entry WHERE ledger_key=? AND kind=? AND seq=?");
       const insert = this.db.prepare("INSERT INTO delivery_entry (ledger_key,kind,seq,body) VALUES (?,?,?,?)");
-      state.records.forEach((row, seq) => insert.run(this.key, "record", seq, JSON.stringify(row)));
-      state.tombstones.forEach((row, seq) => insert.run(this.key, "tombstone", seq, JSON.stringify(row)));
+      const update = this.db.prepare("UPDATE delivery_entry SET body=? WHERE ledger_key=? AND kind=? AND seq=?");
+      for (const kind of ["record", "tombstone"] as const) {
+        const held = this.db.prepare("SELECT seq, body FROM delivery_entry WHERE ledger_key=? AND kind=? ORDER BY seq").all(this.key, kind) as unknown as Array<{ seq: number; body: string }>;
+        const rows = kind === "record" ? state.records : state.tombstones;
+        const byId = new Map<string, { seq: number; value: { deliveryId: string } }>();
+        let readable = true;
+        for (const entry of held) {
+          try { const value = JSON.parse(entry.body) as { deliveryId: string }; byId.set(value.deliveryId, { seq: entry.seq, value }); } catch { readable = false; }
+        }
+        // An unreadable body or duplicate ids on either side leave no row identity to diff by: that kind is written whole, as before.
+        if (!readable || byId.size !== held.length || new Set(rows.map(row => row.deliveryId)).size !== rows.length) {
+          for (const entry of held) remove.run(this.key, kind, entry.seq);
+          rows.forEach((row, seq) => insert.run(this.key, kind, seq, JSON.stringify(row)));
+          continue;
+        }
+        const kept = new Set<number>(), writes: Array<() => void> = [];
+        let last = -1, top = held.length ? held[held.length - 1].seq : -1;
+        for (const row of rows) {
+          const body = JSON.stringify(row), entry = byId.get(row.deliveryId);
+          if (entry && entry.seq > last) {
+            kept.add(entry.seq); last = entry.seq;
+            // Compared by value: a body read back through the schema has its keys in schema order, which is no change.
+            if (!isDeepStrictEqual(entry.value, JSON.parse(body))) writes.push(() => update.run(body, this.key, kind, entry.seq));
+          } else { const seq = last = ++top; writes.push(() => insert.run(this.key, kind, seq, body)); }
+        }
+        for (const entry of held) if (!kept.has(entry.seq)) remove.run(this.key, kind, entry.seq);
+        for (const write of writes) write();
+      }
     });
   }
   setLegacy(legacy: Legacy, sha?: string | null): void {

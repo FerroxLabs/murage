@@ -3,12 +3,11 @@
 //
 // 1.0.4 U33 r2 (Grok H2): the notebook editor saves only against a revision it loaded. Before, Save stayed on after a failed load and the
 // editor sent no revision while none was loaded, so a save could replace the whole notebook blind.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { notebookCanSave, notebookSaveBody } from "./notebook-save";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
-const source = readFileSync(fileURLToPath(new URL("./SettingsPanel.tsx", import.meta.url)), "utf8");
+const source = settingsPanelSource();
 const memoryCard = source.slice(source.indexOf("function MemoryCard("), source.indexOf("const openTopic", source.indexOf("function MemoryCard(")));
 
 describe("U33 r2: the notebook Save waits for a loaded revision", () => {

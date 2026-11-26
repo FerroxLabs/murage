@@ -5,13 +5,18 @@ import { LimitTurns } from './limit-continuation.ts';
 import { wiring } from './decision-wiring/fixture.ts';
 import { isFluxHost } from './flux-usage-tags.ts';
 import { isFluxModel } from './flux-surface.ts';
+import { assertRecallDispatch } from './memory/recall-readiness.ts';
 
-it.each(['admitted', 'missing-owner', 'missing-retained', 'missing-admission'])('project writer is built only after consuming admission: %s', async mode => {
+it.each(['admitted', 'resumed', 'missing-owner', 'missing-retained', 'missing-admission'])('project writer is built only after consuming admission: %s', async mode => {
   const events: string[] = [];
   const binding = { identity: { botId: 'bot', threadId: 'thread', dispatchGeneration: 'generation' } };
   const owner = { botId: 'bot', generation: 'generation', ownerAudience: true };
   const lease = { admissionNotLaunched: () => {} };
-  const built = { threadId: 'thread', text: 'Fixture', warmIdentity: {}, background: false, usageFeature: 'chat', fluxCaptureHold: true };
+  const system = 'Fixture persona';
+  const built = {
+    threadId: 'thread', text: 'Fixture', warmIdentity: {}, background: false, usageFeature: 'chat', fluxCaptureHold: true,
+    recall: 'off', system, recallPrepared: { system, integrations: [], historyPrepared: mode === 'resumed', resumed: mode === 'resumed' },
+  };
   const fence = { retained: mode === 'missing-retained' ? undefined : {}, invoked: () => events.push('invoked') };
   const sourceContext = { attachment: {} };
   const assertEngineInput = vi.fn((input: unknown) => { expect(input).toBe(fence); });
@@ -26,7 +31,7 @@ it.each(['admitted', 'missing-owner', 'missing-retained', 'missing-admission'])(
     isFluxHost, isFluxModel, fluxKey: () => { throw new Error('Native fixture requested a Flux key'); },
     process: { env: {} }, PORT: 12345, homeExecutionGate: undefined,
     assertConsumingBinding: (actual: unknown) => { expect(actual).toBe(binding); },
-    assertEngineInput, bus: { admitNewTurn: (instanceId: string, threadId: string) => {
+    assertEngineInput, assertRecallDispatch, bus: { admitNewTurn: (instanceId: string, threadId: string) => {
       expect(instanceId).toBe('fixture-instance'); expect(threadId).toBe('thread'); return sourceContext;
     } },
     internalTurnOwners: new Map(mode === 'missing-owner' ? [] : [['thread', owner]]),
@@ -51,7 +56,7 @@ it.each(['admitted', 'missing-owner', 'missing-retained', 'missing-admission'])(
     fluxFirstTokenProbe: { begin: () => {} }, fluxMemoryCapture: { begin: () => {} },
     projectGroupForThread: () => null, sharedOwnerUsageTurn: () => null, store: {},
   });
-  if (mode === 'admitted') {
+  if (mode === 'admitted' || mode === 'resumed') {
     expect(await sendProjectUsageTurn(instance, built, fence)).toEqual({ turnId: 'native-turn' });
     expect(events).toEqual(['bind', 'fence', 'invoked', 'send']);
   } else {

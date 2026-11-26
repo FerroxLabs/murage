@@ -1,7 +1,8 @@
 import {readdirSync,readFileSync,statSync} from 'node:fs';
 import {join,relative} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {describe,expect,it} from 'vitest';
-const root=new URL('..',import.meta.url).pathname;
+const root=fileURLToPath(new URL('..',import.meta.url));
 const collector=join(root,'infra/windows-signing/collector');
 const walk=dir=>readdirSync(dir).flatMap(name=>{const path=join(dir,name);return statSync(path).isDirectory()?(name==='fixtures'?[]:walk(path)):[path];});
 const compiled=[...walk(collector).filter(path=>path.endsWith('.cs')&&!path.endsWith('.selfcheck.cs')),join(root,'infra/windows-signing/boundary/SigningProcess.cs'),join(root,'infra/windows-signing/boundary/WindowsSigningProcessApi.cs')];

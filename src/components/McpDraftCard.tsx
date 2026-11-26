@@ -6,11 +6,14 @@
 // callback, so each card state can be drawn and checked without a network. A
 // secret the owner types lives in the state the parent holds; the DOM shows it
 // only as the value of a password field.
+import { isCloudHome } from "@/lib/cloud-workspace";
 import { AlertTriangle, Check, KeyRound, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { displayArgs, hostOf, probeToolCount, secretsInArgs, testWaitKey, type HeaderChoice } from "@/lib/mcp-add-flow";
+import { McpOwnAppForm } from "./McpOwnAppForm";
+import type { McpBridge } from "@/lib/mcp-bridge";
 import { connectedSentence, draftView, probeSentence, type DraftCardState } from "@/lib/mcp-card-view";
 
 export interface McpDraftCardActions {
@@ -20,6 +23,7 @@ export interface McpDraftCardActions {
   onMoveArgSecrets(): void;
   onHeader(choice: HeaderChoice, custom?: string): void;
   onSignIn(): void;
+  saveOwnApp?: McpBridge["useOwnApp"];
   onCancelSignIn(): void;
   onUseKey(): void;
   onUseSignIn(): void;
@@ -138,7 +142,7 @@ export function McpDraftCard({ state, actions }: { state: DraftCardState; action
   const host = draft.kind === "remote" ? hostOf(draft.maskedUrl) : "";
   const failed = probe && !probe.ok ? probe : undefined;
   const reasonText = failed ? probeSentence(failed, host) : "";
-  const bridgeless = typeof window !== "undefined" && !(window as unknown as { muragebox?: { mcpServers?: unknown } }).muragebox?.mcpServers;
+  const bridgeless = typeof window !== "undefined" && !(window as unknown as { muragebox?: { mcpServers?: unknown } }).muragebox?.mcpServers && !isCloudHome();
   const toolCount = probe && probe.ok ? probe.tools.length : 0;
   const nameTaken = state.name.trim() === "";
 
@@ -182,6 +186,8 @@ export function McpDraftCard({ state, actions }: { state: DraftCardState; action
             </button>
             {(failed?.apiKey || state.signInFailed) && <button type="button" className={linkButton} onClick={actions.onUseKey}>{t("mcp.card.signin.useKey")}</button>}
           </div>
+          {state.ownApp && state.savedName && state.savedName === state.name.trim() && actions.saveOwnApp &&
+            <McpOwnAppForm name={state.savedName} save={actions.saveOwnApp} />}
           {bridgeless && <p className="mt-2 text-[12px] text-ink-secondary">{t("mcp.card.signin.desktopOnly")}</p>}
           {state.message && <p role="alert" className="mt-2 text-[12.5px] text-danger">{state.message}</p>}
         </div>

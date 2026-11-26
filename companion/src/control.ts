@@ -117,7 +117,9 @@ export interface ControlOptions {
   removalRetryDelaysMs?: number[];
   /** Queue the harness to drop this device's relay push binding. Called as soon as a removal is pending (and again on each resume), so
    * a phone being removed stops receiving new pushes without waiting for the registry to drop the record. Idempotent. */
-  revokePush?: (deviceId: string) => void;
+  revokePush?: (deviceId: string) => unknown;
+  /** P1: the recorded state of this device's notifications step (readable after the row is gone and after a restart). */
+  pushRemovalStatus?: (deviceId: string) => { state: string; notifications: string; removalId?: string };
   /** Terminate every authenticated event stream owned by a revoked device. */
   disconnectDevice?: (deviceId: string) => void;
   /** Re-read Tailscale after the sidecar has started. People commonly
@@ -368,7 +370,8 @@ function createRemovalRunner(options: ControlOptions) {
     if (!record) return "missing";
     // Every way back in is already refused for a pending device, so its live streams close now rather than when the removal lands.
     options.disconnectDevice?.(id);
-    try { options.revokePush?.(id); } catch { /* the removal itself still proceeds and retries */ }
+    // The queue writes the removal down before the registry row may go (P1): a failed save, or a throw, keeps the device pending and retried.
+    try { if (options.revokePush?.(id) === "failed") return "pending"; } catch { return "pending"; }
     // The harness job map goes first, the registry last. A device with no phone-jobs token has no job map.
     if (options.revokePhoneJobs && devices.hasPhoneJobsToken(id)) {
       let done = false;
@@ -428,6 +431,10 @@ function createRemovalRunner(options: ControlOptions) {
       timers.clear();
     },
   };
+}
+
+function pushStep(options: ControlOptions, id: string) {
+  try { return options.pushRemovalStatus?.(id) ?? null; } catch { return null; }
 }
 
 export function createControlServer(options: ControlOptions): Server {
@@ -609,6 +616,12 @@ export function createControlServer(options: ControlOptions): Server {
       })().catch(() => json(res, 500, { error: "could not save share and ask access" }));
       return;
     }
+    // Check again (P1): the recorded notifications step of a removal, read only; it still answers once the device row is gone.
+    const removalRead = path.match(/^\/devices\/([\w-]+)\/removal$/);
+    if (removalRead && method === "GET") {
+      const removal = pushStep(options, removalRead[1]);
+      return removal && removal.state !== "unknown" ? json(res, 200, { id: removalRead[1], ...removal }) : json(res, 404, { error: "no removal recorded" });
+    }
     const revoke = path.match(/^\/devices\/([\w-]+)$/);
     if (revoke && method === "DELETE") {
       const id = revoke[1];
@@ -624,7 +637,8 @@ export function createControlServer(options: ControlOptions): Server {
         const outcome = await removals.attempt(id);
         if (outcome === "missing") return json(res, 404, { error: "no such device" });
         // Pending is not an error: the device stays on the list as "Removal pending" until the registry has really dropped it.
-        return json(res, outcome === "done" ? 200 : 202, companionState(options));
+        const removal = pushStep(options, id);
+        return json(res, outcome === "done" ? 200 : 202, { ...companionState(options), ...(removal ? { removal } : {}) });
       })().catch(() => json(res, 500, { error: "could not remove the device" }));
       return;
     }

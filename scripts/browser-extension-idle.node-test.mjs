@@ -92,8 +92,9 @@ test('startup and early alarms honor persisted nextRetryAt; owner Connect retrie
   assert.equal(f.attempts.length, 0);
   await f.api.alarms.onAlarm.fire({ name: 'murage-reconnect' }); await settle();
   assert.equal(f.attempts.length, 0);
-  await f.advance(599_999); assert.equal(f.attempts.length, 0);
-  await f.reconnect(); assert.deepEqual(f.attempts, [1_599_999]);
+  // A deadline stored by an older worker is clamped to the 30 s cap.
+  await f.advance(29_999); assert.equal(f.attempts.length, 0);
+  await f.reconnect(); assert.deepEqual(f.attempts, [1_029_999]);
   assert.equal(f.stored[KEY].attempts, 1);
 });
 
@@ -105,12 +106,12 @@ test('worker restart preserves the backoff deadline and attempt count', async ()
   assert.equal(g.attempts.length, 1); assert.equal(g.stored[KEY].attempts, 2);
 });
 
-test('mature jitter spreads profiles without shortening the ten-minute minimum', async () => {
+test('mature jitter spreads profiles and never exceeds the 30 s cap', async () => {
   const deadlines = [];
   for (const random of [0, 0.5, 0.999]) {
     const f = await fixture({ random, stored: { [KEY]: { attempts: 10, nextRetryAt: 0 } } });
     const delay = f.stored[KEY].nextRetryAt - f.now();
-    assert.ok(delay >= 600_000 && delay <= 720_000); deadlines.push(delay);
+    assert.ok(delay >= 24_000 && delay <= 30_000); deadlines.push(delay);
   }
   assert.equal(new Set(deadlines).size, 3);
 });
@@ -131,9 +132,9 @@ test('app absent: record idle wakeups for one and two independent profiles after
     for (const [profile, f] of profiles.entries()) {
       assert.ok(f.attempts.length >= 10, 'automatic retries continue through the backoff ramp');
       measurements.push({ profile, attempts: f.attempts.length - baseline[profile].attempts, wakeups: f.wakeups() - baseline[profile].wakeups });
-      assert.ok(measurements.at(-1).attempts <= 6);
-      assert.ok(measurements.at(-1).wakeups <= 6);
-      assert.equal(f.timers.size, 0, 'long backoff uses only the persisted alarm');
+      assert.ok(measurements.at(-1).attempts <= 150, 'one attempt per capped 24-30 s step');
+      assert.ok(measurements.at(-1).wakeups <= 150);
+      assert.ok(f.timers.size <= 1, 'at most the one pending short timer next to the persisted alarm');
     }
     t.diagnostic(JSON.stringify({ app: 'absent', profiles: profileCount, windowMs: 3_600_000, measurements }));
   }

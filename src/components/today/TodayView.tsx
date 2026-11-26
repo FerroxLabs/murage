@@ -151,6 +151,9 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
   const visibleBots = useMemo(() => state.bots.filter((bot) => !bot.hidden), [state.bots]);
   const botNames = useMemo(() => Object.fromEntries(state.bots.map((bot) => [bot.id, bot.name])), [state.bots]);
   const chief = todayChiefId(state.bots, chiefBotId);
+  // First run hides the Tell box, but setup still needs the same chat destination.
+  const tellBot = tellChief(state.bots, chief, false);
+  const openSetup = () => { if (tellBot) nav.openChat(tellBot.id); };
   const prefs = state.config?.notifications;
   const quiet = useMemo(() => {
     const active = quietHoursActive(prefs, new Date(now));
@@ -223,7 +226,7 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
       case "health": return () => nav.showHealth();
       case "apps": return () => dispatch({ type: "togglePlugins", open: true });
       case "notifications": return () => dispatch({ type: "toggleAppSettings", open: true, section: "general" });
-      case "setup": return chief ? () => nav.openChat(chief) : undefined;
+      case "setup": return tellBot ? openSetup : undefined;
       default: return undefined;
     }
   };
@@ -265,8 +268,7 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
     if (row.threadId) nav.openChat(row.botId, row.threadId);
     else nav.openRoutines();
   };
-  const tellBot = tellChief(state.bots, chief, model.firstRun);
-  const chiefName = (chief ? botNames[chief] : "") ?? "";
+  const chiefName = (tellBot ? tellBot.name : chief ? botNames[chief] : "") ?? "";
   const viewSwitch = model.firstRun ? null : <TodayViewSwitch view={todayView.view} failed={todayView.failed} onPick={todayView.press} />;
   const needsBlock = needsShown && (
     <NeedsBlock needs={lines} count={kept.count} stale={needs.stale} mode={detailed ? "all" : "calm"} expanded={needsExpanded} onExpand={() => setNeedsExpanded(true)} onCollapse={() => setNeedsExpanded(false)}
@@ -320,7 +322,7 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
         {model.firstRun && <PendingJobsLine />}
         {model.firstRun ? (
           <div className="mt-5">
-            <LazyBoundary inline onRetry={FirstRunTodayCard.retry}><Suspense fallback={null}><FirstRunTodayCard.Component chiefBotId={chief} remote={remote} onContinueSetup={() => { if (chief) nav.openChat(chief); }} /></Suspense></LazyBoundary>
+            <LazyBoundary inline onRetry={FirstRunTodayCard.retry}><Suspense fallback={null}><FirstRunTodayCard.Component chiefBotId={tellBot?.id ?? null} remote={remote} onContinueSetup={openSetup} /></Suspense></LazyBoundary>
           </div>
         ) : (
           <>

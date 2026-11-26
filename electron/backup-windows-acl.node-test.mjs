@@ -44,9 +44,9 @@ test("restrictToOwner runs icacls from System32 and refuses a result that is not
 // W-A1 (0.1.60 audit): only S-1-5-21-… was accepted, so every off-site step
 // failed for Entra ID (Azure AD) accounts. Real-format SIDs of each kind.
 const SIDS={
- local:"S-1-5-21-3623811015-3361044348-30300820-1013",
- domain:"S-1-5-21-1004336348-1177238915-682003330-512041",
- microsoftAccountLinked:"S-1-5-21-2896476437-1624578325-2931386102-1001",
+ local:"S-1-5-21-1111111111-1111111111-1111111101-1013",
+ domain:"S-1-5-21-1111111111-1111111111-1111111102-512041",
+ microsoftAccountLinked:"S-1-5-21-1111111111-1111111111-1111111103-1001",
  entra:"S-1-12-1-2743382473-1146318542-2395616179-3871231519",
 };
 const withSystemRoot=fn=>{const saved=process.env.SystemRoot;process.env.SystemRoot="D:\\WINNT";try{return fn();}finally{if(saved===undefined)delete process.env.SystemRoot;else process.env.SystemRoot=saved;}};

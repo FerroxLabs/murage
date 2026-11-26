@@ -44,6 +44,7 @@
   "phoneCalls.error.badSettings": "其中一些设置无法使用。请检查后再次保存。",
   "phoneCalls.error.notSetUp": "请先保存你的 Vapi 私钥。",
   "phoneCalls.error.generic": "出了点问题。请重试。",
+  "phoneCalls.error.store": "Murage 无法打开通话记录。请重启 Murage。如果问题仍然存在，请检查磁盘剩余空间。",
   "phoneCalls.older.one": "1 个已安排的通话使用旧设置",
   "phoneCalls.older.many": "{count} 个已安排的通话使用旧设置",
   "phoneCalls.cancel": "取消",

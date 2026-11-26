@@ -360,63 +360,63 @@
     },
     {
       "path": "resources/browser-engine/chrome/chrome-headless-shell-win64/libEGL.dll",
-      "sha256": "14b74bf48b708810330de4a0d3e4db895204e20396452bdf93c8f806c5fe9ed4",
-      "reason": "Chromium headless shell 152.0.7977.82, pinned archive 86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "sha256": "337b0d0251c65554894498708064dcf2c978308f706cfd93a599f7a7b5268459",
+      "reason": "Chromium headless shell 158.0.8127.36, pinned archive 9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
       "publishers": [
         "Google LLC",
         "Google Inc"
       ],
       "target": "win32-x64",
       "kind": "upstream",
-      "sourceSha256": "14b74bf48b708810330de4a0d3e4db895204e20396452bdf93c8f806c5fe9ed4",
+      "sourceSha256": "337b0d0251c65554894498708064dcf2c978308f706cfd93a599f7a7b5268459",
       "component": "chrome-headless-shell",
-      "version": "152.0.7977.82",
-      "sourceReceiptSha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845"
+      "version": "158.0.8127.36",
+      "sourceReceiptSha256": "9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e"
     },
     {
       "path": "resources/browser-engine/chrome/chrome-headless-shell-win64/libGLESv2.dll",
-      "sha256": "11243662b21117a566dc1dafd2982a8c5285ca9935ef4bc396916a38690efb71",
-      "reason": "Chromium headless shell 152.0.7977.82, pinned archive 86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "sha256": "9c28623c7809d805a061ee479b300ab2f91580d04b92dc456f69814a4b2a1623",
+      "reason": "Chromium headless shell 158.0.8127.36, pinned archive 9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
       "publishers": [
         "Google LLC",
         "Google Inc"
       ],
       "target": "win32-x64",
       "kind": "upstream",
-      "sourceSha256": "11243662b21117a566dc1dafd2982a8c5285ca9935ef4bc396916a38690efb71",
+      "sourceSha256": "9c28623c7809d805a061ee479b300ab2f91580d04b92dc456f69814a4b2a1623",
       "component": "chrome-headless-shell",
-      "version": "152.0.7977.82",
-      "sourceReceiptSha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845"
+      "version": "158.0.8127.36",
+      "sourceReceiptSha256": "9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e"
     },
     {
       "path": "resources/browser-engine/chrome/chrome-headless-shell-win64/vk_swiftshader.dll",
-      "sha256": "e9501c5e869f1c9be6b6ddc4d53d1bb714b45e5893af6c7d20839c9622aa7f4f",
-      "reason": "Chromium headless shell 152.0.7977.82, pinned archive 86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "sha256": "aa174aeb29526e3487488f35a46c15b8f0710052c936f19a66a80f41faed177f",
+      "reason": "Chromium headless shell 158.0.8127.36, pinned archive 9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
       "publishers": [
         "Google LLC",
         "Google Inc"
       ],
       "target": "win32-x64",
       "kind": "upstream",
-      "sourceSha256": "e9501c5e869f1c9be6b6ddc4d53d1bb714b45e5893af6c7d20839c9622aa7f4f",
+      "sourceSha256": "aa174aeb29526e3487488f35a46c15b8f0710052c936f19a66a80f41faed177f",
       "component": "chrome-headless-shell",
-      "version": "152.0.7977.82",
-      "sourceReceiptSha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845"
+      "version": "158.0.8127.36",
+      "sourceReceiptSha256": "9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e"
     },
     {
       "path": "resources/browser-engine/chrome/chrome-headless-shell-win64/vulkan-1.dll",
-      "sha256": "444865a230470ab1be052176d4fa0321647f69c7b82afb772eb1d10fa877c423",
-      "reason": "Chromium headless shell 152.0.7977.82, pinned archive 86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
+      "sha256": "ab57c501f91372804ad65a36ad10ae62efef159ed86a283ffb8810e68c4bf774",
+      "reason": "Chromium headless shell 158.0.8127.36, pinned archive 9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e; source provenance pin. Packaging preserves a valid trusted vendor signature or appends the production signature and emits the final SHA-256.",
       "publishers": [
         "Google LLC",
         "Google Inc"
       ],
       "target": "win32-x64",
       "kind": "upstream",
-      "sourceSha256": "444865a230470ab1be052176d4fa0321647f69c7b82afb772eb1d10fa877c423",
+      "sourceSha256": "ab57c501f91372804ad65a36ad10ae62efef159ed86a283ffb8810e68c4bf774",
       "component": "chrome-headless-shell",
-      "version": "152.0.7977.82",
-      "sourceReceiptSha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845"
+      "version": "158.0.8127.36",
+      "sourceReceiptSha256": "9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e"
     }
   ]
 }

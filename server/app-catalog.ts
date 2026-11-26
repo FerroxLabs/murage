@@ -36,8 +36,10 @@ export type SignIn = "managed" | "own" | "none";
 export interface CatalogApp extends CatalogCardIdentity {
   slug: string;
   label: string;
-  /** at most 90 characters, never naming the connection service */
+  /** at most 90 characters, never naming the connection service; cut at a word with "…" */
   blurb: string;
+  /** the full description (at most 400 characters) when `blurb` was cut, for the hover title */
+  blurbFull?: string;
   logo: string | null;
   /** used for the client-side favicon fallback when logo is null/broken */
   domain: string | null;
@@ -134,6 +136,16 @@ const SLUG = /^[a-z0-9_][a-z0-9_.-]{0,80}$/;
 const OFF_COPY = /\b(?:un)?saf(?:e|ely|ety)\b|\bpric(?:e|es|ing)\b/i;
 const CURSOR = /^[A-Za-z0-9+/_=-]{1,256}$/;
 
+/** At most 90 characters, ending at a whole word with an ellipsis when cut; the full words (bounded) ride along for the
+ *  card's hover title. Never a cut mid-word (1.0.21 polish). */
+function blurbOf(text: string): { blurb: string; blurbFull?: string } {
+  if (text.length <= 90) return { blurb: text };
+  const cut = text.slice(0, 89);
+  const space = cut.lastIndexOf(" ");
+  const blurb = `${(space > 40 ? cut.slice(0, space) : cut).replace(/[\s,;:.-]+$/, "")}…`;
+  return { blurb, blurbFull: text.slice(0, 400) };
+}
+
 /** The vendor's raw toolkit or a contract-2 slim item, as one CatalogApp. */
 export function slimApp(raw: unknown): CatalogApp | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -167,7 +179,7 @@ export function slimApp(raw: unknown): CatalogApp | null {
     ...(typeof toolCount === "number" && Number.isSafeInteger(toolCount) && toolCount >= 0 ? { toolCount } : {}),
     // product copy never names the connection service, even in an app's
     // own description
-    blurb: SERVICE_NAME.test(rawBlurb) || OFF_COPY.test(rawBlurb) ? "" : rawBlurb.slice(0, 90),
+    ...blurbOf(SERVICE_NAME.test(rawBlurb) || OFF_COPY.test(rawBlurb) ? "" : rawBlurb),
     logo: typeof rawLogo === "string" && /^https:\/\/[^\s"'<>]{1,500}$/i.test(rawLogo) ? rawLogo : null,
     noAuth,
     domain: typeof t.domain === "string" && /^[a-z0-9.-]{1,120}$/i.test(t.domain) ? t.domain : null,

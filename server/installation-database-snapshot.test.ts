@@ -125,13 +125,27 @@ it("copies v2 memory classification and learning controls into a separate paused
 it.each([
   ["missing required column", "ALTER TABLE messages DROP COLUMN text", "DATABASE_SCHEMA_UNSUPPORTED"],
   ["unknown trigger", "CREATE TRIGGER hostile AFTER UPDATE ON messages BEGIN DELETE FROM thread_state; END", "DATABASE_SCHEMA_UNSUPPORTED"],
-  ["column/JSON disagreement", "UPDATE messages SET role='user'", "INVALID_MESSAGE_IDENTITY"],
-  ["malformed parent", `UPDATE messages SET json=json_set(json,'$.parentId','not a message id')`, "INVALID_MESSAGE_PARENT"],
-  ["self cycle", `UPDATE messages SET json=json_set(json,'$.parentId','m')`, "CYCLIC_MESSAGE_BRANCH"],
 ])("refuses %s while preserving the source", async (_name, sql, code) => {
   const f = fixture(); f.db.exec(sql);
   await expect(snapshotInstallationDatabase(f.data, f.target)).rejects.toMatchObject({ code });
   expect(existsSync(f.target)).toBe(false);
+  expect(f.db.prepare("SELECT COUNT(*) AS n FROM messages").get()?.n).toBe(1);
+});
+// 1.0.22 owner report: these three used to refuse the whole snapshot (the rows above still do: they are about the schema). One
+// conversation row the reader refuses no longer stops this installation's backup: it leaves the staged copy and is named, the
+// source keeps it, and the copy passes the same inspection a restore runs (backup-unreadable-row.test.ts drives the whole backup).
+it.each([
+  ["column/JSON disagreement", "UPDATE messages SET role='user'", "INVALID_MESSAGE_IDENTITY"],
+  ["malformed parent", `UPDATE messages SET json=json_set(json,'$.parentId','not a message id')`, "INVALID_MESSAGE_PARENT"],
+  ["self cycle", `UPDATE messages SET json=json_set(json,'$.parentId','m')`, "CYCLIC_MESSAGE_BRANCH"],
+])("sets aside a row with %s, names it, and preserves the source", async (_name, sql, code) => {
+  const f = fixture(); f.db.exec(sql);
+  await expect(snapshotInstallationDatabase(f.data, f.target)).resolves.toMatchObject({ status: "copied", messages: 0, setAside: [{ thread: "t", id: "m", reason: code }] });
+  const copy = new DatabaseSync(f.target, { readOnly: true });
+  try {
+    expect(() => inspectInstallationDatabase(copy)).not.toThrow();
+    expect(copy.prepare("SELECT COUNT(*) AS n FROM messages").get()?.n).toBe(0);
+  } finally { copy.close(); }
   expect(f.db.prepare("SELECT COUNT(*) AS n FROM messages").get()?.n).toBe(1);
 });
 
@@ -422,11 +436,17 @@ it("never overwrites an existing destination", async () => {
   expect(readFileSync(f.target, "utf8")).toBe("existing-backup-canary");
 });
 
-it("refuses invalid branch state without publishing a seemingly healthy backup", async () => {
+// 1.0.22 owner report: this used to refuse the whole snapshot. A current message that names no row is repaired in the staged copy
+// only (it points at the conversation's newest message) and is named, never passed off as healthy; the source keeps what it had.
+it("moves a current message that names no row to the newest message in the copy, names it, and leaves the source alone", async () => {
   const f = fixture();
   f.db.exec("UPDATE thread_state SET active_leaf_id='missing'");
-  await expect(snapshotInstallationDatabase(f.data, f.target)).rejects.toMatchObject({ code: "INVALID_ACTIVE_BRANCH" });
-  expect(existsSync(f.target)).toBe(false);
+  await expect(snapshotInstallationDatabase(f.data, f.target)).resolves.toMatchObject({ status: "copied", messages: 1, setAside: [{ thread: "t", id: "missing", reason: "INVALID_ACTIVE_BRANCH" }] });
+  const copy = new DatabaseSync(f.target, { readOnly: true });
+  try {
+    expect(() => inspectInstallationDatabase(copy)).not.toThrow();
+    expect(copy.prepare("SELECT active_leaf_id FROM thread_state").get()?.active_leaf_id).toBe("m");
+  } finally { copy.close(); }
   expect(f.db.prepare("SELECT active_leaf_id FROM thread_state").get()?.active_leaf_id).toBe("missing");
 });
 
@@ -463,16 +483,17 @@ it("rejects a destination symlink without touching its target", async () => {
   expect(readFileSync(sentinel, "utf8")).toBe("must survive");
 });
 
-it("rejects malformed message JSON with no secret-bearing diagnostics or staging debris", async () => {
+// 1.0.22 owner report: this used to refuse the whole snapshot. The row with malformed JSON leaves the staged copy and is named by
+// conversation and message only: nothing of its content reaches the result, the published copy or the staging directory.
+it("sets aside malformed message JSON with no secret-bearing receipt, copy or staging debris", async () => {
   const f = fixture();
   f.db.prepare("UPDATE messages SET json=?").run('{"private":"never-echo-this",');
-  let failure: unknown;
-  try { await snapshotInstallationDatabase(f.data, f.target); } catch (error) { failure = error; }
-  expect(failure).toMatchObject({ code: "INVALID_MESSAGE_JSON" });
-  expect(String(failure)).not.toContain("never-echo-this");
-  expect((failure as Error).cause).toBeUndefined();
+  const result = await snapshotInstallationDatabase(f.data, f.target);
+  expect(result).toMatchObject({ status: "copied", messages: 0, setAside: [{ thread: "t", id: "m", reason: "INVALID_MESSAGE_JSON" }] });
+  expect(JSON.stringify(result)).not.toContain("never-echo-this");
+  expect(readFileSync(f.target).includes("never-echo-this")).toBe(false);
   expect(readdirSync(f.scratch).filter(name => name.startsWith(".murage-database-snapshot-"))).toEqual([]);
-  expect(existsSync(f.target)).toBe(false);
+  expect(f.db.prepare("SELECT json FROM messages").get()?.json).toBe('{"private":"never-echo-this",');
   const owner = acquireDataDirLease(f.data);
   owner.release();
 });

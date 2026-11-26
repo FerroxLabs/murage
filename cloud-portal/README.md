@@ -26,4 +26,4 @@ token in an HttpOnly `__Host-` cookie and calls the control plane from the serve
 
 ## Checks
 
-`npm install && npx tsc --noEmit && npx next build && npx playwright test` (run on the build host; see the browser journey in `e2e/`).
+`npm install && npx tsc --noEmit && npx next build && npx playwright test` (run on Hetzner; see the browser journey in `e2e/`).

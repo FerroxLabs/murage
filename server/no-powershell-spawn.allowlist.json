@@ -1,5 +1,26 @@
 {
   "_about": "Every shipped code line naming a PowerShell program is fingerprinted. Direct launches require the exact user-terminal entry or one of the three reviewed security reads authorized by MAIN POWERSHELL GUARD RULING r2 (2026-11-11). reviewed_security pins each real launch by holder, call and full-source digests, with callsite, reason and citations; these are never names_only. The command-environment probe in engine-env.ts uses execCli, a fixed nonce-tagged script, a pinned NoProfile form, closed stdin, a hidden console, bounded output and bounded cleanup. No command text or environment value is interpolated into that script.",
+  "shell_dialects": {
+    "server/auto-approve.ts": {
+      "reason": "A local dialect variable and the shellGlobWords lexer option choose the command text grammar.",
+      "counts": {
+        "9b7816ba8720d13e": 1,
+        "7776a742852c8d7c": 1
+      }
+    },
+    "server/index.ts": {
+      "reason": "prepareShellJudgement receives a dialect field for the cwd evidence parser.",
+      "counts": {
+        "a0b343cd3411f00f": 1
+      }
+    },
+    "server/x3-glob-words.ts": {
+      "reason": "Two payload records label nested command text for the recursive shell word reader.",
+      "counts": {
+        "f4fed2ac0cdad3b2": 2
+      }
+    }
+  },
   "names_only": {
     "server/engine-reply-check.ts": {
       "reason": "fixed owner probe: resolves Windows PowerShell under the server's absolute SystemRoot, never PATH; execCliSync runs a fixed NoProfile command with closed stdin, hidden console, timeout and output bound. The literal owner path is passed only in MURAGE_CHECK_PATH, never command text (engine-check-folder.test.ts). No direct launch is authorized.",
@@ -33,12 +54,11 @@
       }
     },
     "server/auto-approve.ts": {
-      "reason": "recognizer: the command-tool names ('powershell', 'pwsh') and the PowerShell dialect of a remembered approval key; classifies a proposed command, starts nothing (1.0.18 int reds: 7af2a4dfa and ec3c8eb8b NOLIMITS-MEANS-IT/MARKS r11 added the pwsh key-guard dialect flag and the OutsideShell type for outsideTurnCard; types and comparisons only, no launch)",
+      "reason": "recognizer: the command-tool names ('powershell', 'pwsh') and the PowerShell dialect of a remembered approval key; classifies a proposed command, starts nothing (1.0.18 int reds: 7af2a4dfa and ec3c8eb8b NOLIMITS-MEANS-IT/MARKS r11 added the pwsh key-guard dialect flag and the OutsideShell type for outsideTurnCard; types and comparisons only, no launch) The command reader uses the dialect to bound parsing work, match approval keys and track shell cwd.",
       "lines": {
         "9ed9cfeb637eb026": "type KeyWhy = \"path\" | \"value\" | \"field\" | \"mcp\" | \"summary\" | \"unmodeled\" | \"pwsh\" | \"local-hold\";",
         "8c31ac12b45b7d5f": "const commandData: CommandDataRead | \"plain\" | \"unmodeled\" | \"summary\" | undefined = covered && pinShell !== \"pwsh\"",
         "09b9146350fd9b8f": ": pinShell === \"pwsh\" ? \"pwsh\"",
-        "3542a1ee4d026956": "const gate = gateHit([keyText, rawDequotedText(keyText, pinShell === \"pwsh\").text, ...(dequoted ? [dequoted.text] : [])]);",
         "f66ec09b84cdfaf5": "const POWERSHELL_TOOLS = new Set([\"powershell\", \"pwsh\"]);",
         "476755901dcc1868": "function simpleProgram(summary: string, dialect: \"posix\" | \"pwsh\" = \"posix\"): string | und",
         "5945fbeb2c17e4c0": "if (dialect === \"pwsh\" && /[\\u2018-\\u201E\\u2013-\\u2015]/.test(summary)) return undefined;",
@@ -52,7 +72,15 @@
         "a97a271e3bccca0b": "const dequoted = (pinShell === \"pwsh\" && !windowsBash?.length || !commandGlobText.trim()) ",
         "7a740b380a441e1e": "const reads = (pinShell === \"pwsh\" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : ",
         "dd418132b926e346": "type OutsideShell = \"pwsh\" | undefined;",
-        "55823e68eb2ea605": "const keyGuard = sensitive ?? (destructive ? keyHit() : null) ?? gateHitSpelled([keyText, rawDe"
+        "55823e68eb2ea605": "const keyGuard = sensitive ?? (destructive ? keyHit() : null) ?? gateHitSpelled([keyText, rawDe",
+        "9b7816ba8720d13e": "const shell: 'pwsh' | undefined = isPowerShellTool(tool) || call?.commandShell === \"pwsh\" ? \"pwsh\" : undefined;",
+        "273714c54ac9795e": "if (gateParts.some(part => part !== undefined && (fullRead ? part.length > COMMAND_GATE_CHARS : commandReadWork(part, shell === \"pwsh\") > COMMAND_READ_MAX_WORK)",
+        "a042a0042aa167ce": "const gateTexts = [keyText, rawDequotedText(keyText, pinShell === \"pwsh\").text, ...(dequoted ? [dequoted.text] : [])];",
+        "c1955b3b0b23c19f": "home?: string; cdpath?: string; shell?: \"pwsh\"; deadline?: number; fs?: CredentialGlobFs; directoryBuiltins?: boolean;",
+        "6ead55cb62cf8284": "const provenCds = options.shell === \"pwsh\" || options.directoryBuiltins === false || !shellAndList(text) ? -1 : provenCdList(text);",
+        "6e64e65d24d0733b": "let chain: { targets: string[]; lastAbsolute: boolean; seen: boolean; command: string } | undefined = options.shell !== \"pwsh\" && provenCds >= 0",
+        "6ce7eacffa620337": "export function invalidateShellJudgement(prepared: { local: ShellCwdState; rule: string | null; start: ShellStartSet }, text: string, shell?: \"pwsh\"): void {",
+        "b30db4e75ebee9db": "home?: string; cdpath?: string; shell?: \"pwsh\"; fs?: CredentialGlobFs;"
       }
     },
     "server/claude-accounts.ts": {
@@ -74,14 +102,12 @@
       }
     },
     "server/drivers/claude.ts": {
-      "reason": "Driver shell form or tool-name recognizer. Command asks may run only the fixed bounded environment probe in engine-env.ts through execCli. Claude retains its separate inherited-environment path; this entry authorizes no arbitrary PowerShell launch.",
+      "reason": "Driver shell form or tool-name recognizer. Command asks may run only the fixed bounded environment probe in engine-env.ts through execCli. Claude retains its separate inherited-environment path; this entry authorizes no arbitrary PowerShell launch. Selects the Claude SDK tool-name label for a policy decision based on the admitted shell mode.",
       "lines": {
         "2101e5911314cb27": "ask: [...CLAUDE_BARE_ASK_TOOLS, ...(platform === \"win32\" ? [\"PowerShell\"] : []), ...claude",
         "353828da41736378": "export const CLAUDE_POWERSHELL_FORM: readonly string[] = [\"powershell.exe\", \"-NoProfile\", ",
-        "d72924dab298f88c": "const modeTool = (mode: ClaudeShellMode): \"Bash\" | \"PowerShell\" => (mode.kind === \"murage-",
         "b8ef6f3f62521f0f": "deny.push(\"PowerShell\");",
-        "d82f002d5d3e1ebe": "if (ask.kind === \"permission\" && (ask.tool === \"Bash\" || ask.tool === \"PowerShell\") && inh",
-        "fff8d4827d9e7359": "else if (ask.kind === \"permission\" && (ask.tool === \"Bash\" || ask.tool === \"PowerShell\")) "
+        "4fa8482d79682756": "const modeTool = (mode: ClaudeShellMode): \"Bash\" | \"PowerShell\" => (mode.kind === \"murage-exec\" ? CLAUDE_NATIVE_SHELL_TOOLS.bash : CLAUDE_NATIVE_SHELL_TOOLS.pow"
       }
     },
     "server/drivers/codex.ts": {
@@ -99,10 +125,13 @@
       }
     },
     "server/index.ts": {
-      "reason": "recognizer: tool-name comparison on a permission event; starts nothing",
+      "reason": "recognizer: tool-name comparison on a permission event; starts nothing Routes command metadata to the shell cwd judgement and invalidates unpublishable prepared evidence.",
       "lines": {
         "ca444eaa2a77bfbf": "...(event.execEnv?.unchecked && (exactCommand !== undefined || isCommandTool(event.t",
-        "f17418f396ccd9f7": "...(event.execEnv?.unread && (exactCommand !== undefined || isCommandTool(event.tool) || e"
+        "f17418f396ccd9f7": "...(event.execEnv?.unread && (exactCommand !== undefined || isCommandTool(event.tool) || e",
+        "f9e558618f241ab5": "if (preparedShell && preparedRecord && !preparedRecord.active) invalidateShellJudgement(preparedShell, wholeCommand.commandText ?? \"\", isPowerShellTool(event.to",
+        "a0b343cd3411f00f": "void prepareShellJudgement(text, shellSessions.snapshot(record), { shell: isPowerShellTool(executionEvent.tool) || executionEvent.commandShell === \"pwsh\" ? \"pws",
+        "574d8e6046707a37": "if (record && !shellSessions.publish(record, result.parent, publishSeq)) { invalidateShellJudgement(result, text, isPowerShellTool(executionEvent.tool) || execu"
       }
     },
     "server/mobile-push-risk.ts": {
@@ -119,7 +148,7 @@
       }
     },
     "server/shell/pwsh.ts": {
-      "reason": "recognizer: the PowerShell lexer for the always-ask rules; parses a command an engine proposes, starts nothing; literal interpreter argv is inspected by the shared POSIX scanner",
+      "reason": "recognizer: the PowerShell lexer for the always-ask rules; parses a command an engine proposes, starts nothing; literal interpreter argv is inspected by the shared POSIX scanner Collects nested text and literal argument roles from PowerShell and cmd syntax trees.",
       "lines": {
         "09d2bf808b29b4fa": "export const POWERSHELLS = new Set([\"powershell\", \"powershell.exe\", \"pwsh\", \"pwsh.exe\"]);",
         "1e488447888185b3": "if (lead?.kind === \"var\" || lead?.kind === \"subst\") throw new Unreadable(\"pwsh\", \"an assig",
@@ -142,7 +171,16 @@
         "93246a19243b672f": "if (/^[A-Z][a-z]+-[A-Z]/.test(first)) return \"pwsh\";",
         "4d1662205ce5d0a0": "if (POWERSHELLS.has(lower)) return \"pwsh\";",
         "b2a8a5d6d9a7c37a": "return [\"format-volume\", \"clear-disk\", \"initialize-disk\", \"remove-item\", \"ri\", \"set-locati",
-        "961700bbd755d969": "if (runner === \"launcher\" && dialect === \"pwsh\" && ctx.windowsBash && literalBash && /^bash$/i.test(name)"
+        "961700bbd755d969": "if (runner === \"launcher\" && dialect === \"pwsh\" && ctx.windowsBash && literalBash && /^bash$/i.test(name)",
+        "daba03550fc575a6": "export function collectWindowsSyntax(text: string, dialect: 'cmd' | 'pwsh', sink: {",
+        "fe49a06e1b794523": "nested(text: string, syntaxId: string, dialect: 'cmd' | 'pwsh' | 'posix'): void;",
+        "ee66a792f7a40994": "const assignment = dialect === 'pwsh' ? assignmentOf(words) : undefined;",
+        "02509e40c4d94fcc": "sink.command(dialect==='pwsh' ? aliases[name] ?? name : name,args,id,stdin);",
+        "1748944fb92bfa9c": "if(dialect==='pwsh' && EVALS.has(name) && args.length===0 && stdin?.kind==='literal')",
+        "264aae4c1de739ac": "sink.nested(stdin.text,id+'/literal-eval','pwsh');",
+        "b23935b67001c3ff": "if(body!==undefined)sink.nested(body,id+'/executor',name==='cmd'?'cmd':/^(sh|bash)$/.test(name)?'posix':'pwsh');",
+        "41725342c4ed0258": "if(dialect==='pwsh'){",
+        "df50d4ea4454b4d3": "for(const [i,body]of parsed.nested.entries())sink.nested(body,`block${i}`,'pwsh');"
       }
     },
     "server/startup-files.ts": {
@@ -261,10 +299,401 @@
       }
     },
     "server/no-limits-shell.ts": {
-      "reason": "Recognizer: compares parsed executor names and scans operands for command wrappers; these comparisons do not execute any command.",
+      "reason": "Recognizer: compares parsed executor names and scans operands for command wrappers; these comparisons do not execute any command. Reads nested interpreter arguments and tracks candidate working directories in proposed command text.",
       "lines": {
         "f36dd7a93d977343": "if ([\"cmd\", \"powershell\", \"pwsh\"].includes(name)) {",
-        "aaf7ca9b714c30d1": "if ([\"cmd\", \"powershell\", \"pwsh\"].includes(name)) for (let k = 0; k + 1 < args.length; k++) {"
+        "aaf7ca9b714c30d1": "if ([\"cmd\", \"powershell\", \"pwsh\"].includes(name)) for (let k = 0; k + 1 < args.length; k++) {",
+        "2422b9f77457d217": "if(['cmd','powershell','pwsh'].includes(name))for(let k=0;k<args.length-1;k++)if((name==='cmd'?['/c','/k']:['-c','-command']).includes(args[k].toLowerCase())){n",
+        "df19052b6b150c92": "function cwdMachine(cwd:string|Cwds|ShellCwdCandidate[]|undefined,dialect:'posix'|'pwsh',realpath:(path:string)=>string,bound?:ReturnType<typeof newContext>['bo",
+        "df4c8efc86497de5": "export function forEachOwnerSegment(source:string,cwd:string|Cwds|ShellCwdCandidate[]|undefined,visit:(row:OwnerSegmentContext)=>void,dialect:'posix'|'pwsh'='po",
+        "3926be1e5e9bafef": "export function segmentContexts(result:SegmentResult,cwd?:string|Cwds,dialect:'posix'|'pwsh'='posix'){",
+        "42271b915665e7c1": "export function pathTargetsOwnerNl(words:Array<string|undefined>,cwd?:string,candidates?:Candidate[][],dialect:'posix'|'pwsh'='posix'):OwnerShellTarget[]{",
+        "0db0034b551d0a52": "function inspectOwnerShell(source:string,depth:number,nested:Payload[],classes:CodeClass[],cwd?:string,dialect:'posix'|'pwsh'='posix',physicalPaths=false):Owner",
+        "9fc52276fb376fac": "export function readShellExecOwnerNl(source:string,depth:number,nested:Payload[],collected:CodeClass[]=[],cwd?:string,dialect:'posix'|'pwsh'='posix',physicalPat"
+      }
+    },
+    "server/decision/action.ts": {
+      "reason": "Classifies tool input and selects the in-process command effects reader by language.",
+      "lines": {
+        "8c177ded4cb2ea76": "const lang=code?(/node|javascript/.test(name)?'js':'py'):/powershell|pwsh/.test(name)?'pwsh':'sh';",
+        "4ce8ad6db15972b5": "if(lang==='sh'||lang==='pwsh'){",
+        "f77ab09aadfe9a01": "const dialect=lang==='pwsh'?'pwsh':looksLikePowerShell(text)==='cmd'||/^\\s*(?:mklink|fsutil)\\b/i.test(text)?'cmd':'sh';"
+      }
+    },
+    "server/decision/types.ts": {
+      "reason": "Type-level language tag on the executable fragments passed to the action reader.",
+      "lines": {
+        "a32fe295a00c147a": "readonly executables: readonly { readonly lang: 'sh' | 'py' | 'js' | 'pwsh'; readonly text: string; readonly cwd?: string; readonly from: 'command' | 'code' | '"
+      }
+    },
+    "server/drivers/claude-tool-names.ts": {
+      "reason": "Claude SDK tool-name labels for native shell mode and the Murage execution wrapper.",
+      "lines": {
+        "1fbceba0da103228": "export const CLAUDE_NATIVE_SHELL_TOOLS = Object.freeze({ bash: 'Bash', powershell: 'PowerShell' } as const);"
+      }
+    },
+    "server/drivers/pi-wipe-check.generated.mjs": {
+      "reason": "Generated in-process wipe checker. Its PowerShell names are command vocabularies, parser modes and diagnostics.",
+      "lines": {
+        "7646516687bf051e": "const read2 = dialect === \"pwsh\" ? text4.replace(/`/g, \"\") : text4;",
+        "d00d32e4c306756a": "return (dialect === \"pwsh\" ? PWSH_MENTION : POSIX_MENTION).exec(read2)?.[0] ?? STARTUP_FILES.exec(read2)?.[0];",
+        "0e310265f3221ab1": "if (ctx.windowsForeign && (powershellRunner(name) === \"interpreter\" || interpreterKey(name) !== void 0)) throw new Unreadable(\"pwsh\", `${name} reached through a",
+        "43dcf0abd9a7b67f": "if (ctx.windowsBash && (windowsRunner === \"interpreter\" || windowsRunner === \"launcher\" && name !== \"bash\" || /^(cmd|wsl|start-process|set-content|powershell|pw",
+        "4778b015425b002f": "var POWERSHELLS = /* @__PURE__ */ new Set([\"powershell\", \"powershell.exe\", \"pwsh\", \"pwsh.exe\"]);",
+        "1e488447888185b3": "if (lead?.kind === \"var\" || lead?.kind === \"subst\") throw new Unreadable(\"pwsh\", \"an assignment the reader does not model\");",
+        "cf822222c93d11ea": "if (option === \"-ec\" || abbreviates(option, \"-encodedcommand\") || abbreviates(option, \"-encodedarguments\", 9) || option === \"-ea\") throw new Unreadable(\"pwsh\", ",
+        "50a462fb6a10f989": "if (!text4.startsWith(\"-\")) return name === \"powershell\" ? { kind: \"text\", words: args.slice(i) } : { kind: \"file\", word: args[i] };",
+        "33b5a96c564d490a": "if (!ctx.written.has(resolveWritten(ctx, path))) throw new Unreadable(\"pwsh\", \"a shell runs a script file the reader does not see\");",
+        "2b9f429078a7ca30": "if (runner === \"launcher\" && dialect === \"pwsh\" && ctx.windowsBash && literalBash && /^bash$/i.test(name) && !stdin && args.length === 2 && literalText(args[0])",
+        "e92b1954dffe3c25": "const loader = mentionsLoaderVariable(text4, \"pwsh\");",
+        "5b6978843826ba92": "throw new Unreadable(\"pwsh\", \"a .NET call\");",
+        "dbfbdb7a8bcbb2e9": "if (!set) throw new Unreadable(\"pwsh\", \"Set-Variable with a value the reader does not follow\");",
+        "987d8b811a9778d6": "if (dashed && slashed) throw new Unreadable(\"pwsh\", `${program} with both -Parameters and /switches`);",
+        "2b124293a8b59801": "unmodelled(name, renderPwshWord(call[0]), args, stdin, \"pwsh\", ctx, literalProgram);",
+        "a387e386e017f5c9": "if ((program === \"foreach-object\" || program === \"%\") && callsMember(args)) throw new Unreadable(\"pwsh\", \"ForEach-Object calls a member on every item\");",
+        "8e68f222258206cc": "if (/^\\s*\\[[A-Za-z][\\w.]*\\]::[A-Za-z]/.test(text4)) return \"pwsh\";",
+        "d2f61d552a9dd3ce": "if (/^\\s*\\$[A-Za-z_][\\w:]*\\s*=/.test(text4)) return \"pwsh\";",
+        "93246a19243b672f": "if (/^[A-Z][a-z]+-[A-Z]/.test(first)) return \"pwsh\";",
+        "4d1662205ce5d0a0": "if (POWERSHELLS.has(lower)) return \"pwsh\";",
+        "b2a8a5d6d9a7c37a": "return [\"format-volume\", \"clear-disk\", \"initialize-disk\", \"remove-item\", \"ri\", \"set-location\"].includes(lower) ? \"pwsh\" : null;",
+        "f3352eef6aed8550": "var SHELLS2 = /* @__PURE__ */ new Set([\"sh\", \"bash\", \"zsh\", \"dash\", \"ksh\", \"mksh\", \"fish\", \"pwsh\", \"powershell\", \"cmd\"]);",
+        "37554469ea35c122": "const parsed2 = getopt(args, { permute: false, flags: allFlags.replaceAll(\"c\", \"\"), valued: \"c\", singleDashLong: name === \"pwsh\" || name === \"powershell\", long:",
+        "b526cb09c580708e": "const pwshProgram = /^(?:set-content|sc|add-content|ac|out-file|new-item|ni|remove-item|ri|del|erase|rd|move-item|move|mi|copy-item|copy|cpi|rename-item|rni)$/.",
+        "0858a7507f26286b": "mode = \"pwsh\";",
+        "5b1dc45d80ad7a14": "if (mode === \"pwsh\") {",
+        "f798c6c601f85705": "if (matches.length !== 1) throw new Unreadable(\"pwsh\", matches.length ? `-${given} is ambiguous` : `-${given} is not a Remove-Item parameter`);",
+        "a9c6d48447723a55": "if (text4 === \"--%\") throw new Unreadable(\"pwsh\", \"--% stops parsing\");",
+        "26663727e123b618": "if (parameter2[2] !== void 0) throw new Unreadable(\"pwsh\", `${text4}: a parameter with a glued value`);",
+        "d822e46a789dbdd1": "if (!value) throw new Unreadable(\"pwsh\", `${text4} without a value`);",
+        "df9775ad21d6ab24": "const found = shell === \"pwsh\" ? walkPwsh(text4, { ...newContext(ownerDeny() ? cwd : cwd || void 0, ownerDeny() ? activeSessionFiles?.runtimePaths : void 0), wi",
+        "835a1386127a88c6": "const bashShape = shell === \"pwsh\" && (ownerDeny() && options.pwshOwnerBash === true || options.pwshFullBash === true) ? PWSH_BASH_SCRIPT.exec(text4)?.[1] : voi",
+        "8f99c8f32fc2ae5f": "if (shell === \"pwsh\" && bashShape === void 0 && windowsBash?.length && !pwshBashIsGitBash(\"bash\", options)) return unreadableHit();",
+        "b81067e60ef04571": "if (shell === \"pwsh\" || looksLikePowerShell(text4) !== null || /^\\s*robocopy(\\.exe)?(?=\\s|$)/i.test(text4)) return null;",
+        "3bdbab86f3d3c49b": "case \"pwsh\":",
+        "02b603fdd3af25c0": "if (state.dialect === \"pwsh\") {",
+        "fc831c4581c1723f": "if (at >= 0 && !(![\"pwsh\", \"powershell\", \"cmd\"].includes(program) && args.slice(0, at + 1).some((word2) => /^-[a-z]*n[a-z]*$/.test(word2)))) work.push(args.slic",
+        "75aa3a146000e402": "const assignment = state.dialect === \"pwsh\" && !quote ? /^\\$(?:\\{[^}]+\\}|[\\w:]+)(?:\\.\\w+|\\[[^\\]]+\\])?\\s*(?:\\?\\?=|[+*\\/%-]?=)/.exec(input.slice(i)) : null;",
+        "f918ec6967e3b0f2": "const match = (state.dialect === \"pwsh\" ? /^(?:\\{([\\w:]+)\\}|([\\w:]+))/ : /^(?:\\{(\\w+)\\}|(\\w+))/).exec(input.slice(i + 1));",
+        "8d2d75375cb9a20f": "next.dialect = lang === \"pwsh\" ? \"pwsh\" : lang === \"cmd\" ? \"cmd\" : \"sh\";",
+        "8fc715976327d09b": "var escapeOf = (dialect) => dialect === \"pwsh\" ? \"`\" : dialect === \"sh\" ? \"\\\\\" : \"\";",
+        "6132fd1315bfff60": "return globValue(s, st.dialect === \"sh\" && s.includes(\"\\\\\") ? \"pwsh\" : st.dialect);",
+        "34af34752c6b15d9": "const unc = (windows2 || inv.dialect === \"pwsh\" || inv.dialect === \"cmd\") && /^\\/\\/[^/]+\\/[^/]+/.test(candidate);",
+        "0d2f11d3d3f0108e": "} else if ((inv.dialect === \"pwsh\" || inv.dialect === \"cmd\") && /^\\\\(?![\\\\/])[^/]*$/.test(path)) path = \"C:\" + path;",
+        "53a9a6b66f6957b5": "{ family: \"powershell\", names: [\"powershell\", \"powershell_ise\"], kind: \"shell\", style: \"pwsh\", permute: false, prefix: \"pwsh-any\", bundle: false, opts: pwshOpts",
+        "7a5268e406ea6007": "{ family: \"pwsh\", names: [\"pwsh\"], kind: \"shell\", style: \"pwsh\", permute: false, prefix: \"pwsh-any\", bundle: false, opts: pwshOpts, positional: \"file\", lang: \"p",
+        "86eacac87fceb3d1": "{ family: \"iex\", names: [\"iex\", \"invoke-expression\"], kind: \"cmdlet\", style: \"pwsh\", permute: true, prefix: \"pwsh-any\", bundle: false, opts: [P(\"command\", 1, \"s",
+        "49b148757d2abcd0": "style: \"pwsh\",",
+        "93c707bd9e66cbf5": "lang: \"pwsh\",",
+        "15f5da44ec7ecae8": "return host?.kind === \"cmdlet\" && dialect !== \"pwsh\" ? void 0 : host;",
+        "83fa8afcc3fee83b": "if (host.style === \"pwsh\") {",
+        "a5ffe1f2ae9abf17": "model = { ...plain2, ...globValue(pattern ?? s, \"pwsh\", literal2), candidates: void 0 };",
+        "bcf2af5305d84391": "if (!properties.some((v) => v.k === \"known\" && globRegExp(v.s, \"pwsh\", true).test(\"PSPath\"))) {",
+        "23783a2107931e0a": "if (bound.flags.has(\"excludeproperty\") && (bound.values.get(\"excludeproperty\") ?? []).some((v) => v.k === \"known\" && globRegExp(v.s, \"pwsh\", true).test(\"PSPath\"",
+        "7eb0449f72cceff5": "if (inv.dialect !== \"pwsh\") return [];",
+        "10806d13d4d1ec9b": "if (inv.dialect === \"pwsh\" && cmdletFor(p)) return [...effects, ...pwshEffects(inv).map(record)];",
+        "21497ed7f29c0074": "if (depth > 16) return { nodes: [{ k: \"residual\", text: text4, dialect: \"pwsh\", span: [0, text4.length] }], incompleteTail: false };",
+        "1aed49ae17a495b8": "var parse2 = (text4, dialect) => dialect === \"pwsh\" ? parsePwsh(text4) : dialect === \"cmd\" ? parseCmd(text4) : parseSh(text4);",
+        "f8dc9241b3208c61": "const producedBy = st.dialect === \"pwsh\" && stage.k === \"cmd\" && stage.c.words.length === 1 && !stage.c.assigns.length && stage !== n.stages.at(-1) && stage.c.w",
+        "e952991d5b8cf415": "if (st.dialect === \"pwsh\" && stage.k === \"cmd\" && stage.c.words.length === 1 && !stage.c.assigns.length && stage !== n.stages.at(-1) && /^(?:[$'\"]|@\\()/.test(st",
+        "0a9f73eee8caf69b": "if (st.dialect === \"pwsh\") {",
+        "4d6c2c2b3d74e8d3": "argv = c.words.flatMap((w, i) => expandWords(st.dialect === \"pwsh\" && (/^-(?:literalpath|literalp|literal|lit|li|l)$/i.test(c.words[i - 1]?.raw ?? \"\") || /^-(?:",
+        "07a7bb10de0209af": "if (st.dialect === \"pwsh\" && [\"rd\", \"rmdir\"].includes(program) && argv.some((v) => /^\\/s/i.test(text3(v) ?? \"\"))) child.dialect = \"cmd\";",
+        "730ddfd6fe4dd2ee": "if (child.dialect === \"pwsh\") program = aliases[program] ?? program;",
+        "d44553fdc1b5bf58": "if (st.dialect === \"pwsh\") for (const assignment of c.assigns) {",
+        "8126b64fd0d12aa9": "const parsed = globValue(legacy.dir.replace(/[\\\\/]$/, \"\") + \"/\" + legacy.pattern, this.ctx.dialect ?? (this.ctx.lang === \"pwsh\" ? \"pwsh\" : \"sh\"));",
+        "d6f9ace38a1e615e": "const dialect = ctx.dialect ?? (ctx.shell === \"pwsh\" || ctx.lang === \"pwsh\" ? \"pwsh\" : /^\\s*(?:[&.]\\s+)?(?:Remove-Item|Move-Item|ri|mi|Set-Location|Push-Locatio",
+        "f84b7bacccb1fdae": "for (const dialect of [pwshMarker.test(text4) && !cmdSwitch.test(text4) ? \"pwsh\" : void 0, cmdMarker.test(text4) || hostEscapedQuote.test(text4) ? \"cmd\" : void "
+      }
+    },
+    "server/engine-bash-binding.ts": {
+      "reason": "Validates the syntax occurrence dialect stored with a proposed nested Bash command.",
+      "lines": {
+        "034f7d5fc65e459e": "occurrence: { dialect: \"bash\" | \"pwsh\"; treePath: number[]; startByte: number; endByte: number; role: string };",
+        "f6bca0742a8f5e04": "&& !!occurrence && [\"bash\", \"pwsh\"].includes(occurrence.dialect) && text(occurrence.role, 64)"
+      }
+    },
+    "server/no-limits-code.ts": {
+      "reason": "Dispatches proposed executable text to an in-process shell, Python or JavaScript effects reader.",
+      "lines": {
+        "aa7d0197154a90b2": "export function readExecutable(lang:'sh'|'py'|'js'|'pwsh',source:string,budget=new ReaderBudget(),depth=0): {classes:CodeClass[];targets:Array<{path:string;op:'",
+        "59dac0a077e5c741": "const classes:CodeClass[]=[],targets:Array<{path:string;op:'read'|'write'|'delete'}>=[],work:Payload[]=[[lang==='pwsh'?'sh':lang,(lang==='pwsh'?powerShellSource",
+        "290d0dab3efa2e5b": "export function readExecutableOwnerNl(lang:'sh'|'py'|'js'|'pwsh',source:string,budget?:ReaderBudget,depth=0,cwd?:string,onShellOrEvidence?:((text:string,cwd:str",
+        "dd857883799dc25e": "export function readExecutableEffectsOwnerNl(lang:'sh'|'py'|'js'|'pwsh',source:string,budget?:ReaderBudget,depth=0,cwd?:string,onShellOrEvidence?:((text:string,",
+        "aa12e96288831a79": "const work:Payload[]=[[lang==='pwsh'?'sh':lang,source,depth,'root',cwd]];",
+        "0a1b0bfc1a50b5f7": "onShell?.(text,location,lang==='pwsh'?'pwsh':'posix');",
+        "b0ffedd13dcfb459": "const read=readShellExecOwnerNl(text,d,nested,classes,location,lang==='pwsh'?'pwsh':'posix',physicalPaths);"
+      }
+    },
+    "server/no-limits-collect.ts": {
+      "reason": "Selects lexical command collection and records both Windows parse variants when the dialect is ambiguous.",
+      "lines": {
+        "8e4d64ce38e676ed": "export type CollectorDialect = 'posix' | 'cmd' | 'pwsh';",
+        "db0aaa17bfcd4ddd": "const body=literalText(args[at+1]!);if(body!==undefined)nested(body,scope,id+'/windows',name==='cmd'?'cmd':'pwsh');",
+        "3f6cd18b68081b68": "function windows(body:string,scope:CollectorScope,id:string,dialect:'cmd'|'pwsh') {",
+        "37a47437aaeb9f2d": "const dialect=options.dialect??(inferred==='pwsh'||inferred==='cmd'?inferred:/^\\s*(?:mklink|fsutil)\\b/i.test(text)?'cmd':'posix');",
+        "629d1a23b660564c": "if(inferred==='both'&&options.dialect!=='cmd'&&options.dialect!=='pwsh'){",
+        "37408fd9a09a80f6": "for(const variant of ['cmd','pwsh'] as const)nested(text,child(root,`root/${variant}`,'nested'),'root',variant,'nested',true);"
+      }
+    },
+    "server/no-limits-cwd-suffix.ts": {
+      "reason": "Normalizes separators and resolves known protected cwd suffixes by shell dialect.",
+      "lines": {
+        "e72806f254634a1a": "export function protectedCwdSuffix(raw:string,dialect:'posix'|'pwsh'='posix'):ProtectedCwdSuffix|undefined {",
+        "16ca450b9b343a33": "const value=(dialect==='pwsh'?raw.replaceAll('\\\\','/'):raw).replace(/^(?:\\.\\/)+/,'');",
+        "b2b6fec890c8cf1c": "const flags=dialect==='pwsh'||row.caseInsensitive?'i':'';"
+      }
+    },
+    "server/no-limits-cwd.ts": {
+      "reason": "Distinguishes named PowerShell path options from cwd operands while reading command effects.",
+      "lines": {
+        "0e9ac1517bcede77": "if (record.dialect === 'pwsh' && /^-(?:literalpath|path|passthru)$/i.test(value)) return false;"
+      }
+    },
+    "server/no-limits-fs.ts": {
+      "reason": "Selects Windows separator and case semantics in the protected path comparison.",
+      "lines": {
+        "51d67b74abd6939a": "export type Dialect = 'sh' | 'pwsh' | 'cmd';",
+        "6ceeb509aced0711": "const suffix = protectedCwdSuffix(raw, context.windows ? 'pwsh' : 'posix');"
+      }
+    },
+    "server/no-limits-inspection.ts": {
+      "reason": "Chooses the shell inspection reader for a stored command body by language.",
+      "lines": {
+        "64dde8f7aa8cfbca": "if(body.lang==='sh'||body.lang==='cmd'||body.lang==='pwsh'){"
+      }
+    },
+    "server/no-limits-operation.ts": {
+      "reason": "Derives the dialect of a proposed invocation from its environment and reported tool name.",
+      "lines": {
+        "e532dda4683d604b": "const dialect=place.dialect??event?.commandShell??(/^(?:pwsh|powershell)$/i.test(tool)?'pwsh':/^cmd$/i.test(tool)?'cmd':'sh');"
+      }
+    },
+    "server/no-limits-producers.ts": {
+      "reason": "Tracks path roles and the move semantics of PowerShell aliases in the command-effect walk.",
+      "lines": {
+        "b7816e1b76323055": "export function collectProducer(id: string, input: SimpleCommand, context: FsContext, walk: WalkContext, dialect: 'posix' | 'cmd' | 'pwsh' = 'posix'): AliasOper",
+        "518da31dc35958bb": "const roles = ownerCommandRoles(command, dialect === 'pwsh' ? 'pwsh' : 'posix');",
+        "b2b680131a723c11": "const windowsMove = ['move', 'ren', 'rename', 'move-item', 'mi', 'rename-item', 'rni'].includes(program) || dialect === 'pwsh' && program === 'mv';"
+      }
+    },
+    "server/no-limits-protected.ts": {
+      "reason": "Classifies possible protected writes by parsing command text, operands and candidate cwd by dialect.",
+      "lines": {
+        "011f318349bee696": "function inspectProtectedText(text:string,context?:AutoContext,shell?:'pwsh') {",
+        "f5372227f937c434": "const dialect=shell==='pwsh'?'pwsh':looksLikePowerShell(text)==='cmd'||/^\\s*(?:mklink|fsutil)\\b/i.test(text)?'cmd':'sh';",
+        "46d1a8ceb7bbaa84": "export function structuredProtectedWrite(text:string,context?:AutoContext,shell?:'pwsh'):AlwaysAskHit|null {",
+        "24fb831ba9bafcd5": "export function noLimitsProtectedWrite(text: string, context?: AutoContext, shell?: 'pwsh', gates = false, realTargetsOnly = false): AlwaysAskHit | null {",
+        "746a384ef21f9747": "if(cwd===undefined && protectedCwdSuffix(value,dialect==='pwsh'?'pwsh':'posix'))found??={rule:'protected-path',classification:'deny',reason:'protected-path',wha",
+        "a4dd6625882a1f07": "}, dialect==='pwsh'?'pwsh':'posix',context?.unseen?.fs?.realpath ?? realpathSync.native);",
+        "852630e1eb893bfb": "if (dialect === 'pwsh') {"
+      }
+    },
+    "server/no-limits-role-adapter.ts": {
+      "reason": "Translates parsed shell words into operand roles for the owner command reader.",
+      "lines": {
+        "216f9ddfaf630959": "export function ownerRoleArguments(command: SimpleCommand, dialect: 'posix' | 'pwsh' = 'posix'): Array<string | undefined> {",
+        "e330a5adf3d1e01f": "export const ownerCommandRoles = (command: SimpleCommand, dialect: 'posix' | 'pwsh' = 'posix') =>"
+      }
+    },
+    "server/no-limits-taint.ts": {
+      "reason": "Chooses argument roles by the recorded dialect while tracing proposed path and command values.",
+      "lines": {
+        "99a155d883f27cde": "const roles=ownerCommandRoles(command,record.dialect==='pwsh'?'pwsh':'posix');"
+      }
+    },
+    "server/no-limits-wipe-scripts.ts": {
+      "reason": "Type-level dialect of command text passed to the owner write-source scanner.",
+      "lines": {
+        "4409bfb08cb6ebbd": "export function* writtenScriptTexts(_commands:Iterable<{words:string[];program:string;args:string[];cwd?:string;stdin?:string}>,_options:{cwd?:string;project?:s"
+      }
+    },
+    "server/shell/roles.ts": {
+      "reason": "Parses argument roles and flags for known shell forms and PowerShell file cmdlets.",
+      "lines": {
+        "17a1e7c739225539": "const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'pwsh', 'powershell', 'cmd']);",
+        "3bba969fc8d9acb4": "export function commandRoles(words: ReadonlyArray<string | undefined>, dialect: 'posix' | 'pwsh' = 'posix',sourceWords?:ReadonlyArray<SegWord>): CommandRoles {",
+        "8269b09cd92e2a89": "const parsed = getopt(args, { permute:false, flags: allFlags.replaceAll('c', ''), valued: 'c', singleDashLong: name === 'pwsh' || name === 'powershell', long: {",
+        "acd3cae229425424": "let mode: 'all' | 'last' | 'copy' | 'move' | 'link' | 'sed' | 'perl' | 'permissions' | 'rsync' | 'compress' | 'pwsh' | 'find' | 'read' = 'read';",
+        "3db2d70ad6f97e5c": "const pwshProgram = /^(?:set-content|sc|add-content|ac|out-file|new-item|ni|remove-item|ri|del|erase|rd|move-item|move|mi|copy-item|copy|cpi|rename-item|rni)$/.",
+        "36e99b9335766cc7": "mode = 'pwsh'; spec = { singleDashLong: true, long: { ...longs('Path LiteralPath FilePath PSPath Destination NewName Value Encoding ItemType Name Filter Include",
+        "13020f88a2e268dd": "if (mode === 'pwsh') {"
+      }
+    },
+    "server/shell/segments.ts": {
+      "reason": "Selects PowerShell quoting and segmentation rules when examining proposed command text.",
+      "lines": {
+        "081e954b241c6072": "dialect?: 'posix' | 'pwsh'; maxDepth?: number;",
+        "d9d3cef5c9e71192": "const pwsh = opts.dialect === 'pwsh';"
+      }
+    },
+    "server/wipe/corpus/v3-context.fixture.ts": {
+      "reason": "Dialect field in synthetic wipe contexts consumed as parser input by the proof harness.",
+      "lines": {
+        "98333fa0f1c4656d": "id:string; cmd:string; dialect:'sh'|'pwsh'|'cmd'; platform:'linux'|'darwin'|'win32';"
+      }
+    },
+    "server/wipe/evidence.ts": {
+      "reason": "Reads encoded command evidence, assignments and variable syntax without invoking an interpreter.",
+      "lines": {
+        "b4fabda20518d153": "if(state.dialect==='pwsh'){",
+        "05630529da89ce37": "else {const at=args.findIndex(w=>/^(?:-[a-z]*c|-(?:command|c)|\\/\\/?[ck])$/i.test(w));if(at>=0&&!(!['pwsh','powershell','cmd'].includes(program)&&args.slice(0,at",
+        "0c2244bee018bd7b": "const assignment=state.dialect==='pwsh'&&!quote?/^\\$(?:\\{[^}]+\\}|[\\w:]+)(?:\\.\\w+|\\[[^\\]]+\\])?\\s*(?:\\?\\?=|[+*\\/%-]?=)/.exec(input.slice(i)):null;",
+        "cbc97d41e0008975": "const match=(state.dialect==='pwsh'?/^(?:\\{([\\w:]+)\\}|([\\w:]+))/:/^(?:\\{(\\w+)\\}|(\\w+))/).exec(input.slice(i+1));"
+      }
+    },
+    "server/wipe/expand.ts": {
+      "reason": "Models PowerShell glob quoting, Windows UNC paths and drive-relative operands for wipe inspection.",
+      "lines": {
+        "cbab406711eea8a2": "return globValue(s,st.dialect==='sh'&&s.includes('\\\\')?'pwsh':st.dialect);",
+        "49721dd6ded10bd1": "const unc=(windows||inv.dialect==='pwsh'||inv.dialect==='cmd')&&/^\\/\\/[^/]+\\/[^/]+/.test(candidate);",
+        "a12d18827c5c7bca": "else if((inv.dialect==='pwsh'||inv.dialect==='cmd')&&/^\\\\(?![\\\\/])[^/]*$/.test(path))path='C:'+path;"
+      }
+    },
+    "server/wipe/glob.ts": {
+      "reason": "Chooses the parser's escape character for PowerShell and POSIX glob patterns.",
+      "lines": {
+        "c641e3be90713830": "const escapeOf = (dialect: Dialect) => dialect === 'pwsh' ? '`' : dialect === 'sh' ? '\\\\' : '';"
+      }
+    },
+    "server/wipe/hosts.ts": {
+      "reason": "Describes command hosts and cmdlet option shapes for the in-process wipe interpreter.",
+      "lines": {
+        "158b4fbe58e6d96e": "export type Lang='sh'|'fish'|'csh'|'pwsh'|'cmd'|'py'|'js'|'perl'|'ruby'|'php';",
+        "cbf879674774c0fb": "style:'gnu'|'posix-sh'|'pwsh'|'cmd'|'interp';permute:boolean;prefix:'gnu-long'|'pwsh-any'|'none';bundle:boolean;",
+        "e7dd18e92f5fd794": "{family:'powershell',names:['powershell','powershell_ise'],kind:'shell',style:'pwsh',permute:false,prefix:'pwsh-any',bundle:false,opts:pwshOpts,positional:'comm",
+        "a00a7bc47cb46f1e": "{family:'pwsh',names:['pwsh'],kind:'shell',style:'pwsh',permute:false,prefix:'pwsh-any',bundle:false,opts:pwshOpts,positional:'file',lang:'pwsh'},",
+        "9c887ab8acdea564": "{family:'iex',names:['iex','invoke-expression'],kind:'cmdlet',style:'pwsh',permute:true,prefix:'pwsh-any',bundle:false,opts:[P('command',1,'source')],positional",
+        "dcd132cd815ece14": "{family:'start-process',names:['start-process','saps','start'],kind:'cmdlet',style:'pwsh',permute:true,prefix:'pwsh-any',bundle:false,unknownTakesValue:true,pos",
+        "78132a83c2b29a5a": "return host?.kind==='cmdlet'&&dialect!=='pwsh'?undefined:host;",
+        "7263919a9ca6e5d6": "if(host.style==='pwsh'){"
+      }
+    },
+    "server/wipe/invocation.ts": {
+      "reason": "Computes wipe effects over parsed invocations, including PowerShell assignment and path expansion.",
+      "lines": {
+        "ce19c3fe010c3875": "export const parse=(text:string,dialect:ShellState['dialect'])=>dialect==='pwsh'?parsePwsh(text):dialect==='cmd'?parseCmd(text):parseSh(text);",
+        "a22a56b9764370f5": "const producedBy=st.dialect==='pwsh'&&stage.k==='cmd'&&stage.c.words.length===1&&!stage.c.assigns.length&&stage!==n.stages.at(-1)&&stage.c.words[0]!.parts.lengt",
+        "00fae0d2410144cf": "if(st.dialect==='pwsh'&&stage.k==='cmd'&&stage.c.words.length===1&&!stage.c.assigns.length&&stage!==n.stages.at(-1)&&/^(?:[$'\"]|@\\()/.test(stage.c.words[0]!.raw",
+        "5d60d681504ae5f6": "if(st.dialect==='pwsh'){",
+        "6fcde179ebd0ee5e": "argv=c.words.flatMap((w,i)=>expandWords(st.dialect==='pwsh'&&(/^-(?:literalpath|literalp|literal|lit|li|l)$/i.test(c.words[i-1]?.raw??'')||/^-(?:literalpath|lit",
+        "7c1559a837c09e69": "if(st.dialect==='pwsh'&&['rd','rmdir'].includes(program)&&argv.some(v=>/^\\/s/i.test(text(v)??'')))child.dialect='cmd';",
+        "3b44e5e03847718a": "if(child.dialect==='pwsh')program=aliases[program]??program;",
+        "28525ac4743b6404": "if(output.k==='known')inv.stdout=[output];if(st.dialect==='pwsh')for(const assignment of c.assigns){setVar(st,assignment.name,output,!!st.weak||!!n.cond);if(!st"
+      }
+    },
+    "server/wipe/matrix.fixture.ts": {
+      "reason": "Synthetic wipe-matrix row types declare the shell dialect for corpus input.",
+      "lines": {
+        "d6331e8a93762dfd": "export type Row={e:'C'|'R';d:'sh'|'pwsh'|'cmd';p:'linux'|'darwin'|'win32';cwd?:string;cmd:string;ms?:number;env?:Record<string,string|undefined>};"
+      }
+    },
+    "server/wipe/mutants.mjs": {
+      "reason": "Mutates the source text of a wipe parser for the qualification proof.",
+      "lines": {
+        "f32ab0c02a64ccf6": "[\"MU23\", \"expand.ts\", \"return globValue(s,st.dialect==='sh'&&s.includes('\\\\\\\\')?'pwsh':st.dialect);\", \"{const slash=Math.max(s.lastIndexOf('/'),s.lastIndexOf('\\"
+      }
+    },
+    "server/wipe/process.ts": {
+      "reason": "Carries the inferred child command language into the in-process wipe analysis.",
+      "lines": {
+        "ea50e3ee271861f6": "next.dialect=lang==='pwsh'?'pwsh':lang==='cmd'?'cmd':'sh';"
+      }
+    },
+    "server/wipe/programs.ts": {
+      "reason": "Selects the PowerShell cmdlet effect model when classifying a proposed invocation.",
+      "lines": {
+        "059fb6cda3b03373": "if(inv.dialect==='pwsh'&&cmdletFor(p))return [...effects,...pwshEffects(inv).map(record)];"
+      }
+    },
+    "server/wipe/pwsh-model.ts": {
+      "reason": "Models cmdlet output, path globs and pipeline dialect for wipe effects.",
+      "lines": {
+        "6695d9768d350b87": "model = {...plain,...globValue(pattern??s,'pwsh',literal),candidates:undefined};",
+        "17b38d85eba44af2": "if(!properties.some(v=>v.k==='known'&&globRegExp(v.s,'pwsh',true).test('PSPath'))){items=[];continue;}",
+        "b98aaf04097ddcf1": "if (bound.flags.has('excludeproperty') && (bound.values.get('excludeproperty')??[]).some(v => v.k === 'known' && globRegExp(v.s,'pwsh',true).test('PSPath'))) {i",
+        "be5dfcbb93df4be5": "if (inv.dialect !== 'pwsh') return [];"
+      }
+    },
+    "server/wipe/pwsh.ts": {
+      "reason": "Labels the residual syntax node when a command exceeds the in-process parser depth.",
+      "lines": {
+        "1dd6278ff2f70f79": "if(depth>16)return {nodes:[{k:'residual',text,dialect:'pwsh',span:[0,text.length]}],incompleteTail:false};"
+      }
+    },
+    "server/wipe/roots.ts": {
+      "reason": "Parses legacy root glob syntax in the dialect supplied to the wipe registry.",
+      "lines": {
+        "3336567e134e1357": "const parsed=globValue(legacy.dir.replace(/[\\\\/]$/,'')+'/'+legacy.pattern,this.ctx.dialect??(this.ctx.lang==='pwsh'?'pwsh':'sh'));"
+      }
+    },
+    "server/wipe/types.ts": {
+      "reason": "Type declarations for the dialect fields consumed by the wipe text classifier.",
+      "lines": {
+        "51d67b74abd6939a": "export type Dialect = 'sh' | 'pwsh' | 'cmd';",
+        "a38153fc6e2fa242": "shell?: 'pwsh'; lang?: 'sh'|'pwsh'|'py'|'js'; dialect?: Dialect;"
+      }
+    },
+    "server/wipe/v3-fault-scenarios.fixture.ts": {
+      "reason": "Sets target platform and dialect for deterministic synthetic wipe fault cases.",
+      "lines": {
+        "7718271792d55d91": "const ctx=corpusContext({platform,dialect:platform==='win32'?'pwsh':'sh',cwd:platform==='win32'?'C:\\\\scratch':'/work/project/pkg'},{pathPort:port,mountInventory",
+        "da6dfed58e7e70d6": "const ctx=corpusContext({platform:'win32',dialect:'pwsh',cwd:'C:\\\\scratch'},{project:'D:\\\\work\\\\project',registry:{contains:p=>p.toLowerCase().replace(/\\\\/g,'/'"
+      }
+    },
+    "server/wipe-breaker.ts": {
+      "reason": "Selects dialects while inspecting the proposed command for destructive targets.",
+      "lines": {
+        "771d1cff639c45ca": "const dialect:Dialect=ctx.dialect??(ctx.shell==='pwsh'||ctx.lang==='pwsh'?'pwsh':/^\\s*(?:[&.]\\s+)?(?:Remove-Item|Move-Item|ri|mi|Set-Location|Push-Location|Pop-",
+        "16978c6c3b1d870d": "for(const dialect of [pwshMarker.test(text)&&!cmdSwitch.test(text)?'pwsh':undefined,cmdMarker.test(text)||hostEscapedQuote.test(text)?'cmd':undefined] as (Diale"
+      }
+    },
+    "server/wipe-guard/server.ts": {
+      "reason": "The operation normalizer supplies the dialect of proposed remove text to the wipe evaluator.",
+      "lines": {
+        "631dc802f83ede8e": "cwd: known(r.cwd), dialect: tool.includes('-') ? 'pwsh' : 'sh', platform: ctx.platform, home: ctx.home });"
+      }
+    },
+    "server/wipe-proof/adapter.mjs": {
+      "reason": "Path to the guard scripts copied into an isolated proof fixture by the packaging verification driver.",
+      "lines": {
+        "8bbf9fc627065c97": "powershell: path.resolve(here, '../wipe-guard/pwsh'),"
+      }
+    },
+    "server/wipe-proof/windows/driver.mjs": {
+      "reason": "Native verification-only driver selects installed interpreters for an isolated temporary wipe proof. The app does not ship this driver.",
+      "lines": {
+        "f74fd8938fbbcf49": "for (const [name, executable, major] of [['powershell-5.1', 'powershell.exe', 5], ['powershell-7', 'pwsh.exe', 7]]) {"
+      }
+    },
+    "server/wipe-proof/windows-gate/run.mjs": {
+      "reason": "Names the Windows reference corpus dialects for the text-only wipe classifier proof.",
+      "lines": {
+        "ca13c89ea1d9f934": "['Windows PowerShell 5.1', 'pwsh'], ['PowerShell 7', 'pwsh'],"
+      }
+    },
+    "server/x3-glob-words.ts": {
+      "reason": "Extracts potential path operands by recursively parsing shell text and nested payloads.",
+      "lines": {
+        "7436f2ef290b7fe5": "export function shellGlobWords(text: string, options: { shell?: \"pwsh\"; payloads?: readonly string[]; dotglob?: boolean; handedOn?: boolean; depth?: number } = ",
+        "c248d76ea52e1d52": "function collectShellGlobWords(text: string, options: { shell?: \"pwsh\"; payloads?: readonly string[]; dotglob?: boolean; handedOn?: boolean; depth?: number } = ",
+        "9fc08bab31801e51": "if (options.shell === \"pwsh\") {",
+        "5b2af130d1f6fce7": "let payload: { text: string; shell?: \"pwsh\" } | undefined;",
+        "f4fed2ac0cdad3b2": "if (flag >= 0) payload = { text: rest.slice(flag + 1).map(renderWord).join(\" \"), shell: \"pwsh\" };"
+      }
+    },
+    "shared/no-limits-visible-wipe.ts": {
+      "reason": "Maps prior API dialect spellings into the wipe classifier's shared context shape.",
+      "lines": {
+        "9d362a0cc494b518": "type LegacyDialect='posix'|'powershell'|'cmd';",
+        "4601dc7d5a3d7359": "? {home,cwd,...(/^(?:[a-z]:|\\\\\\\\)/i.test(home)?{platform:'win32' as const}:{}),...(dialect?{dialect:dialect==='powershell'?'pwsh':dialect==='posix'?'sh':'cmd'}:"
+      }
+    },
+    "shared/sensitive-globs.ts": {
+      "reason": "Distinguishes PowerShell escape syntax in the reader for files named by a proposed command.",
+      "lines": {
+        "e6bf8e259fe4927b": "export function shellDirectoryEffects(text: string, child = false, depth = 0, payloads?: string[], shell?: \"pwsh\"): ShellDirectoryEffect[] {",
+        "ef05804d33ddaaa8": "if (shell !== \"pwsh\" && char === \"\\\\\" && quote !== \"'\") { escaped = true; continue; }",
+        "ac1fd5b8a51dbc7b": "if (shell !== \"pwsh\" && char === \"\\\\\" && quote !== \"'\" && at + 1 < word.length && (!quote || /[$`\"\\\\\\n]/.test(word[at + 1]!))) {"
       }
     }
   },
@@ -289,39 +718,39 @@
   "reviewed_security": {
     "server/channels/signal/storage.ts": {
       "reason": "CLM owner/DACL/reparse read before any Signal key access; six JSON roots or ancestor-first path batches with an optional recursive component root in the environment, fixed stdin script, absolute SystemRoot program, bounded hidden runner; malformed, partial, foreign-owner and reparse evidence refuses.",
-      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /work/build/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); bea800eee5185305eb0e80d3484e76ac84930392; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/win-signal-native.README.md",
-      "callsite": "server/channels/signal/storage.ts:91 -> defaultSecurityRunner -> execFileSync",
+      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /root/fuigo-builds/swarm-b/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); bea800eee5185305eb0e80d3484e76ac84930392; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/win-signal-native.README.md",
+      "callsite": "server/channels/signal/storage.ts:95 -> defaultSecurityRunner -> fixed Windows security session or execFileSync",
       "lines": {
         "e9525a08174b1edf": "const output = run(win32.join(systemRoot, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\"),"
       },
       "launches": {
         "1d6dcd8f2d70fa39": "run(win32.join(systemRoot, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\"),\n      [\"-NoProfile\", \"-NonInteractive\", \"-ExecutionPolicy\", \"Bypass\", \"-Command\", \"-\"], {\n        input: SECURITY_SCRIPT, env: projectionEnv, timeout,\n      })"
       },
-      "source_sha256": "c601c73102b10af8ee92599a7bac1d62beffd9391fb3ce75aa19e0a59807027e"
+      "source_sha256": "fc0660659f0a7e3aabd54aaaa7f5bcbbaa7efe4c7ec23d5c20475b4cdc27a30f"
     },
     "server/channels/signal/service.ts": {
       "reason": "Signal bootstrap projects owner/DACL/reparse attributes before creating missing directories; fixed stdin script, JSON paths in the environment, absolute SystemRoot program, bounded hidden runner; foreign ownership and unknown evidence refuse without ownership transfer.",
-      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /work/build/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); server/channels/signal/service.ts prepareDirectories B3 bootstrap; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/ci-signal-windows.ps1",
-      "callsite": "server/channels/signal/service.ts:133 -> defaultSecurityRunner -> execFileSync",
+      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /root/fuigo-builds/swarm-b/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); server/channels/signal/service.ts prepareDirectories B3 bootstrap; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/ci-signal-windows.ps1",
+      "callsite": "server/channels/signal/service.ts:139 -> defaultSecurityRunner -> fixed Windows security session or execFileSync",
       "lines": {
         "a90d832505ef6042": "const output = run(win32.join(systemRoot, \"System32/WindowsPowerShell/v1.0/powershell.exe\"),"
       },
       "launches": {
-        "c939a60b4d5f364d": "run(win32.join(systemRoot, \"System32/WindowsPowerShell/v1.0/powershell.exe\"),\n        [\"-NoProfile\", \"-NonInteractive\", \"-ExecutionPolicy\", \"Bypass\", \"-Command\", \"-\"], { env: { ...env, MURAGE_SIGNAL_DIRS: JSON.stringify(existing) }, timeout: 15000,\n          input: \"$ErrorActionPreference = 'Stop'\\n@(($env:MURAGE_SIGNAL_DIRS | ConvertFrom-Json) | ForEach-Object { $_ }) | ForEach-Object { $item = Get-Item -LiteralPath $_ -Force; $attributes = [int]$item.Attributes; $sddl = $null; if (($attributes -band 1024) -eq 0) { $sddl = (Get-Acl -LiteralPath $_).Sddl }; @{ attributes = $attributes; sddl = $sddl } | ConvertTo-Json -Compress }\\n\" })"
+        "cea115c174263717": "run(win32.join(systemRoot, \"System32/WindowsPowerShell/v1.0/powershell.exe\"),\n        [\"-NoProfile\", \"-NonInteractive\", \"-ExecutionPolicy\", \"Bypass\", \"-Command\", \"-\"], { env: { ...env, MURAGE_SIGNAL_DIRS: JSON.stringify(existing) }, timeout: 15000,\n          input: DIRECTORY_SECURITY_SCRIPT })"
       },
-      "source_sha256": "0f90d11b6e645303d019544258fede48d334a33f46cdc9e62aebec4cd0ef50a3"
+      "source_sha256": "6b9d5bee3c50100fc87b56a5fde10c87861f7b32866ec4b51dd7c4c1563f9c11"
     },
     "server/browser-window-chrome.ts": {
       "reason": "Read-only Registry64 HKLM Chrome policy query: only explicit absent-key output permits preparation; reg.exe combines absence/access errors as exit 1 with localized diagnostics, and the shipped native helper has no registry query. Keep this fixed registry API script, absolute SystemRoot program, bounded hidden runner and fail-closed output validation.",
-      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /work/build/_small/SEATING-RULES.txt; d7e42a63f9912871d35d9ad621dfbfce9d25fba9; docs/verification/window-chrome.md Windows policy contract; protected server/browser-window-policy.test.ts:21-44 (nine subprocess outcomes) and server/browser-window-chrome.test.ts Windows organization policy",
-      "callsite": "server/browser-window-chrome.ts:110 organizationManaged -> runTool -> execFile",
+      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /root/fuigo-builds/swarm-b/_small/SEATING-RULES.txt; d7e42a63f9912871d35d9ad621dfbfce9d25fba9; docs/verification/window-chrome.md Windows policy contract; protected server/browser-window-policy.test.ts:21-44 (nine subprocess outcomes) and server/browser-window-chrome.test.ts Windows organization policy",
+      "callsite": "server/browser-window-chrome.ts:111 organizationManaged -> runTool -> execFile",
       "lines": {
         "de3635f850f6430a": "const result = await run(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script]);"
       },
       "launches": {
         "47b9127a4de91dec": "run(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script])"
       },
-      "source_sha256": "2656bff35e6aa08b01105edf5fec9040a0d50a2304dbcbc9a2646a7db338956a"
+      "source_sha256": "3ce2c4e42068e646e5fc00d594b509298cb680dce365897e418bad193b58cf72"
     }
   }
 }

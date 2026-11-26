@@ -7,6 +7,7 @@
 // (server/result-egress.ts) via `answerText`.
 import type { HandoffOutcome } from "./event-limit.ts";
 import { botReply, type BotReply } from "./bot-egress.ts";
+import { noAnswerLine } from "./held-replies.ts";
 import { status, type BotName, type Outbound } from "./murage-status.ts";
 
 export type HandoffVia = "ask" | "delegate";
@@ -39,7 +40,7 @@ export function formatHandoff(outcome: HandoffOutcome, via: HandoffVia, who: Han
     }
     case "no_answer": {
       // final for the request: the same line again, whatever the originals read now (NOHOLD-DELEGATION.md)
-      const line = status("answered_in_run", { name: targetName, answer: status(outcome.why === "checking" ? "no_answer_checking" : "withheld") });
+      const line = status("answered_in_run", { name: targetName, answer: outcome.why === "checking" ? noAnswerLine() : status("withheld") });
       return via === "ask" ? reply({ botName: targetName, text: line }) : reply({ message: line });
     }
     case "answer": {

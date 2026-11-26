@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "settingstruth-1022-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 row 22 settings-truth strings"
+  },
+  "author": "settings-truth-1021",
+  "date": "2026-11-22",
+  "base": "1b3866f67e",
+  "scope": "1.0.22 row 22 settings-truth: web page reading switch, Search Off help and voice engine status line (8 languages), and this seat on the reviewers list (round 2; round 1 fails fixed)",
+  "strings": {
+    "en:searchSettings.offHelp": {
+      "text": "Page reading is off while web search is off. Search tools that engines or connected tools (MCP) provide separately may still be available.",
+      "en": "Page reading is off while web search is off. Search tools that engines or connected tools (MCP) provide separately may still be available.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (meaning of separately provided search tools now clear, terms match searchSettings neighbours)."
+    },
+    "en:searchSettings.readPages": {
+      "text": "Allow Murage to read web pages",
+      "en": "Allow Murage to read web pages",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; plain toggle label; matches readEnabled behaviour and the wording of offHelp."
+    },
+    "en:settings.voiceProviderUnavailable": {
+      "text": "Voice engine status is unavailable.",
+      "en": "Voice engine status is unavailable.",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; plain status line; \"Voice engine\" is the heading of the picker this line replaces in VoiceSettings.tsx."
+    },
+    "de:searchSettings.offHelp": {
+      "text": "Das Lesen von Webseiten ist deaktiviert, solange die Websuche ausgeschaltet ist. Suchtools, die Engines oder verbundene Tools (MCP) separat bereitstellen, können weiterhin verfügbar sein.",
+      "en": "Page reading is off while web search is off. Search tools that engines or connected tools (MCP) provide separately may still be available.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (meaning of separately provided search tools now clear, terms match searchSettings neighbours)."
+    },
+    "de:searchSettings.readPages": {
+      "text": "Murage erlauben, Webseiten zu lesen",
+      "en": "Allow Murage to read web pages",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; faithful and natural; Webseiten matches offHelp."
+    },
+    "de:settings.voiceProviderUnavailable": {
+      "text": "Der Status der Sprach-Engine ist nicht verfügbar.",
+      "en": "Voice engine status is unavailable.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (now says engine, matching the English \"Voice engine\" picker heading and the pack term)."
+    },
+    "es:searchSettings.offHelp": {
+      "text": "La lectura de páginas está desactivada mientras la búsqueda web está desactivada. Las herramientas de búsqueda que ofrecen por separado los motores o las herramientas conectadas (MCP) pueden seguir disponibles.",
+      "en": "Page reading is off while web search is off. Search tools that engines or connected tools (MCP) provide separately may still be available.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (meaning of separately provided search tools now clear, terms match searchSettings neighbours)."
+    },
+    "es:searchSettings.readPages": {
+      "text": "Permitir que Murage lea páginas web",
+      "en": "Allow Murage to read web pages",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; faithful and natural; páginas web matches offHelp."
+    },
+    "es:settings.voiceProviderUnavailable": {
+      "text": "El estado del motor de voz no está disponible.",
+      "en": "Voice engine status is unavailable.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (now says engine, matching the English \"Voice engine\" picker heading and the pack term)."
+    },
+    "fr:searchSettings.offHelp": {
+      "text": "La lecture des pages est désactivée tant que la recherche web est désactivée. Les outils de recherche fournis séparément par les moteurs ou les outils connectés (MCP) peuvent rester disponibles.",
+      "en": "Page reading is off while web search is off. Search tools that engines or connected tools (MCP) provide separately may still be available.",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; faithful (\"fournis séparément par\" gives the intended meaning); recherche web and moteurs match neighbours."
+    },
+    "fr:searchSettings.readPages": {
+      "text": "Autoriser Murage à lire des pages web",
+      "en": "Allow Murage to read web pages",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; faithful and natural; matches offHelp."
+    },
+    "fr:settings.voiceProviderUnavailable": {
+      "text": "L’état du moteur vocal est indisponible.",
+      "en": "Voice engine status is unavailable.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (now says engine, matching the English \"Voice engine\" picker heading and the pack term)."
+    },
+    "hi:searchSettings.offHelp": {
+      "text": "वेब खोज बंद रहने तक वेब पेज पढ़ना भी बंद है। इंजन या जुड़े टूल (MCP) के अलग खोज टूल अब भी उपलब्ध हो सकते हैं।",
+      "en": "Page reading is off while web search is off. Search tools that engines or connected tools (MCP) provide separately may still be available.",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; faithful; वेब खोज, इंजन and टूल match searchSettings.title, intro and engineOption."
+    },
+    "hi:searchSettings.readPages": {
+      "text": "Murage को वेब पेज पढ़ने दें",
+      "en": "Allow Murage to read web pages",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; faithful and natural; वेब पेज पढ़ना matches offHelp."
+    },
+    "hi:settings.voiceProviderUnavailable": {
+      "text": "वॉइस इंजन की स्थिति उपलब्ध नहीं है।",
+      "en": "Voice engine status is unavailable.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (now says engine, matching the English \"Voice engine\" picker heading and the pack term)."
+    },
+    "ja:searchSettings.offHelp": {
+      "text": "ウェブ検索がオフの間は、ページの読み取りもオフになります。エンジンや接続済みツール（MCP）が個別に提供する検索ツールは、引き続き使える場合があります。",
+      "en": "Page reading is off while web search is off. Search tools that engines or connected tools (MCP) provide separately may still be available.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (meaning of separately provided search tools now clear, terms match searchSettings neighbours)."
+    },
+    "ja:searchSettings.readPages": {
+      "text": "Murage にウェブページの読み取りを許可する",
+      "en": "Allow Murage to read web pages",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (ウェブ now matches the web-search neighbours)."
+    },
+    "ja:settings.voiceProviderUnavailable": {
+      "text": "音声エンジンの状態を取得できません。",
+      "en": "Voice engine status is unavailable.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (now says engine, matching the English \"Voice engine\" picker heading and the pack term)."
+    },
+    "pt-br:searchSettings.offHelp": {
+      "text": "A leitura de páginas fica desativada enquanto a pesquisa na web estiver desativada. Ferramentas de pesquisa fornecidas separadamente por mecanismos ou ferramentas conectadas (MCP) podem continuar disponíveis.",
+      "en": "Page reading is off while web search is off. Search tools that engines or connected tools (MCP) provide separately may still be available.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (meaning of separately provided search tools now clear, terms match searchSettings neighbours)."
+    },
+    "pt-br:searchSettings.readPages": {
+      "text": "Permitir que o Murage leia páginas da web",
+      "en": "Allow Murage to read web pages",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; faithful and natural; Murage takes the article as in neighbours (do Murage)."
+    },
+    "pt-br:settings.voiceProviderUnavailable": {
+      "text": "O status do mecanismo de voz não está disponível.",
+      "en": "Voice engine status is unavailable.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (now says engine, matching the English \"Voice engine\" picker heading and the pack term)."
+    },
+    "zh:searchSettings.offHelp": {
+      "text": "网页搜索关闭时，网页读取也会关闭。引擎或已连接工具（MCP）单独提供的搜索工具可能仍可使用。",
+      "en": "Page reading is off while web search is off. Search tools that engines or connected tools (MCP) provide separately may still be available.",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; faithful (单独提供 gives the intended meaning); 网页搜索 and 引擎 match searchSettings.title and intro."
+    },
+    "zh:searchSettings.readPages": {
+      "text": "允许 Murage 读取网页",
+      "en": "Allow Murage to read web pages",
+      "verdict": "pass",
+      "note": "Unchanged since round 1 pass; faithful and natural; 读取网页 matches offHelp."
+    },
+    "zh:settings.voiceProviderUnavailable": {
+      "text": "语音引擎状态不可用。",
+      "en": "Voice engine status is unavailable.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim and matches the pack; fixes the round 1 issue (now says engine, matching the English \"Voice engine\" picker heading and the pack term)."
+    }
+  },
+  "files": {
+    "reviewers.json": {
+      "text": "{\n  \"version\": 1,\n  \"reviewers\": [\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol\",\n      \"account\": \"gpt-6.1-sol read-only, codex acct2 and acct6\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"claude-copyrev\",\n      \"account\": \"claude sonnet 5.5, copy-review seat for MurageMain\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"muragemain-copyrev\",\n      \"account\": \"claude opus 5.5, MurageMain copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-sc-issues-r3\",\n      \"account\": \"sc-issues-r3 independent review of inherited sc-issues copy\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-copyrev-m5-followup\",\n      \"account\": \"Independent Sol review session for the copyrev-m5 replacement titles\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"g9-ux-fable\",\n      \"account\": \"Fable copy seat g9-ux-fable, read-only G9 Settings copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"ctxstop-lease-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.20 A-2 refusal line\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"polish-1021-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.21 Settings polish strings\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"held1022-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 held rows 21 (Fuigo Trust) and 29 (Sentinel Health)\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"settingstruth-1022-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 row 22 settings-truth strings\"\n    }\n  ]\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

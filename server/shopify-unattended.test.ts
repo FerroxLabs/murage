@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as composio from "./composio.ts";
 import { connectorHealthStore } from "./connected-app-health.ts";
 import type { AppConfig } from "./config.ts";
+import { assertRelayBot, assertRelayStored } from "./connector-relay.ts";
 
 // Shopify actions that run unattended (routines, scheduled or background turns,
 // delegated work) use the GraphQL actions only; attended chat is unchanged. A
@@ -151,11 +152,11 @@ async function route(threadState: { unattended?: boolean; liveRoutine?: boolean;
   const deps = { isUnattended: () => threadState.unattended === true, routines: () => ({ isActiveThread: () => threadState.liveRoutine === true }), routineAuthority: () => threadState.routinePeer === true || threadState.wake === true };
   let reply: { bytes: Uint8Array; delivery?: string } | undefined;
   const manager = { routineRunForThread: () => null };
-  await new Function("composio", "cfg", "routines", "req", "internalClaim", "authorize", "CONNECTED_APP_WAIT_HEADER", "body", "internalCapabilities", "serviceNoLimits", "connectedAppUnattended",
+  await new Function("composio", "cfg", "routines", "req", "internalClaim", "authorize", "CONNECTED_APP_WAIT_HEADER", "body", "internalCapabilities", "serviceNoLimits", "connectedAppUnattended", "assertRelayBot", "assertRelayStored", "relayInventory",
     `return (async () => { ${js} })();`)(
     { relayConnectedAppCall: async (...args: any[]) => (reply = await (composio.relayConnectedAppCall as any)(...args)) }, cfg, manager,
     { headers: {} }, { threadId: "peer-thread", botId: "shopify-fixture", generation: "g" }, () => {}, "x-fixture-wait", body, { providerTurnOf: () => "t" }, () => false,
-    (threadId: string) => connectedAppTurnUnattended(deps, threadId));
+    (threadId: string) => connectedAppTurnUnattended(deps, threadId), assertRelayBot, assertRelayStored, null);
   return reply!;
 }
 const shapes = {

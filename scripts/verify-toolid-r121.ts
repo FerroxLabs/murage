@@ -1,3 +1,5 @@
+import { evidencePath } from './evidence-path.mjs';
+import { pathToFileURL } from 'node:url';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Smoke the isolated server through the documented control surface. Payload
@@ -6,7 +8,7 @@ import assert from "node:assert/strict";
 import { copyFileSync, writeFileSync } from "node:fs";
 import { launchVerificationServer, runControlMurage } from "./control-murage.ts";
 
-const evidence = new URL("../evidence/cfix-toolid-s4a/", import.meta.url);
+const evidence = pathToFileURL(evidencePath("evidence/cfix-toolid-s4a/") + "/");
 const fixture = await launchVerificationServer(process.env);
 const commands: unknown[] = [];
 try {

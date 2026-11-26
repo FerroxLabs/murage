@@ -47,8 +47,11 @@ it('T-WG-FAST-PATH-LEAN: path resolution and argv scanning are parsed only on de
   expect(lib).toContain('wg_device() {');
   const main = lib.slice(lib.indexOf('wg_main() {'));
   expect(main.indexOf('wg_plain_rm "$@"')).toBeGreaterThan(-1);
-  expect(main.indexOf('wg_plain_rm "$@"')).toBeLessThan(main.indexOf('wg_load_request || wg_exec'));
-  expect(main.indexOf('wg_load_request || wg_exec')).toBeLessThan(main.indexOf('wg_argv "$@"'));
+  // The on-demand load now falls back through the refusal of a check that cannot finish (wg_unchecked), then the tool.
+  const load = 'wg_load_request || wg_unchecked "$@" || wg_exec';
+  expect(main.indexOf(load)).toBeGreaterThan(-1);
+  expect(main.indexOf('wg_plain_rm "$@"')).toBeLessThan(main.indexOf(load));
+  expect(main.indexOf(load)).toBeLessThan(main.indexOf('wg_argv "$@"'));
 });
 
 it.each([

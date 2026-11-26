@@ -6,6 +6,8 @@ import { join } from "node:path";
 import ts from "typescript";
 import { expect, it, vi } from "vitest";
 import { RoutineManager, type RoutineRun } from "./routines.ts";
+import type { Store } from "./store.ts";
+import { MAILBOX_PLACEHOLDER } from "./mailbox/projection.ts";
 import { pageChats, chatSearchRows, type ChatSource, type ChatFilters } from "./chat-list.ts";
 import { directRoutineHistoryFixture, historyInside, HISTORY_NOW } from "./testing/routine-history-fixture.ts";
 import { measureHistoryWork } from "./testing/routine-history-work.ts";
@@ -53,11 +55,11 @@ const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true
 const declarations = ast.statements.filter((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node)
   && ["chatSource", "chatRoutineRuns"].includes(node.name?.text ?? "")).map(node => node.getText(ast)).join("\n");
 const body = ts.transpileModule(`let chatRoutineRunCache: any = null;\n${declarations}\nreturn chatSource(desktop);`, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.None } }).outputText;
-const currentSource = new Function("routines", "store", "desktop", body) as (manager: RoutineManager, store: Pick<ChatSource, "bots" | "groups" | "lastActivityAt">, desktop: boolean) => ChatSource;
+const currentSource = new Function("routines", "store", "desktop", body) as (manager: RoutineManager, store: Pick<ChatSource, "bots" | "groups" | "lastActivityAt"> & Pick<Store, "isMailboxSealed">, desktop: boolean) => ChatSource;
 const filters: ChatFilters[] = [{}, { routines: false }, { routines: true }, { unread: true, routines: true }, { pinned: true, routines: true },
   { groupId: "history-room-0", routines: true }, { dateFrom: HISTORY_NOW - 10, dateTo: HISTORY_NOW + 10, routines: true },
   { q: "nothing-matches", routines: true }, { archived: true, routines: true }];
-function chatRoster() {
+function chatRoster(sealed: ReadonlySet<string> = new Set()) {
   const task = (threadId: string, n: number) => ({ threadId, title: `Fixture ${n}`, createdAt: HISTORY_NOW - Math.floor(n / 2), pinned: n % 7 === 0, unread: n % 3 === 0 });
   const bots = Array.from({ length: 3 }, (_, b) => ({ id: `history-bot-${b}`, name: `Fixture ${b}`, threadId: `bot-main-${b}`, hidden: b === 2,
     tasks: Array.from({ length: 20 }, (_, n) => ({ ...task(`chat-b${b}-${n}`, n), ...(n % 5 === 0 ? { channelProjectDesk: { groupId: "history-room-0" } } : {}) })) }));
@@ -65,7 +67,12 @@ function chatRoster() {
     tasks: Array.from({ length: 10 }, (_, n) => task(`chat-g${g}-${n}`, n)) }));
   // The same thread is present under a bot and a room: room projection must never expose botId.
   bots[0].tasks[10].threadId = groups[0].tasks[0].threadId;
-  return { bots, groups, lastActivityAt: (threadId: string) => threadId.endsWith("0") ? HISTORY_NOW : undefined };
+  // chatSource (index.ts) reads the real Store seam store.isMailboxSealed (store.ts:3562, a Store method every store has); a thread is sealed only when the caller names it.
+  return { bots, groups, lastActivityAt: (threadId: string) => threadId.endsWith("0") ? HISTORY_NOW : undefined, isMailboxSealed: (threadId: string) => sealed.has(threadId) };
+}
+// A throw from the production chatSource under test (for example a store seam the fake lacks) is returned as a value, so it fails the list/search comparison below instead of aborting setup.
+function settle<T>(run: () => T): T | { threw: string } {
+  try { return run(); } catch (error) { return { threw: String(error) }; }
 }
 function compare(manager: RoutineManager, roster: ReturnType<typeof chatRoster>) {
   const map = oldMap(manager);
@@ -81,11 +88,11 @@ function compare(manager: RoutineManager, roster: ReturnType<typeof chatRoster>)
     for (const filter of filters) {
       let cursor: string | null = null, pages = 0;
       do {
-        const page = pageChats(actual, filter, cursor, 7), reference = pageChats(expected, filter, cursor, 7);
+        const page = settle(() => pageChats(actual, filter, cursor, 7)), reference = pageChats(expected, filter, cursor, 7);
         expect(page, `complete page desktop=${desktop} filter=${JSON.stringify(filter)}`).toEqual(reference);
         cursor = reference!.next; expect(++pages).toBeLessThan(30);
       } while (cursor);
-      expect(chatSearchRows(actual, filter), `complete search desktop=${desktop}`).toEqual(chatSearchRows(expected, filter));
+      expect(settle(() => chatSearchRows(actual, filter)), `complete search desktop=${desktop}`).toEqual(chatSearchRows(expected, filter));
     }
   }
   expect(manager.verifyIndexes()).toEqual([]);
@@ -294,10 +301,12 @@ it("H1 first request and first routine turn after restart have history-independe
     const manager = new RoutineManager(options), inside = historyInside(manager);
     try {
       expect(inside.runStore.size).toBe(size);
-      const request = await measureHistoryWork(manager, () => pageChats(currentSource(manager, chatRoster(), true), {}, null, 10));
+      const request = await measureHistoryWork(manager, () => settle(() => pageChats(currentSource(manager, chatRoster(), true), {}, null, 10)));
+      expect(request.value, "first request page").not.toHaveProperty("threw");
       for (const key of ["storeTraversals", "storeVisits", "runsMaterialized", "cloneRun", "trieEnumerations", "indexTraversals", "indexVisits"] as const) expect(request.work[key], `first request ${key}@${size}`).toBe(0);
       expect(request.work.trieCalls).toBe(10);
-      const warm = await measureHistoryWork(manager, () => pageChats(currentSource(manager, chatRoster(), true), {}, null, 10));
+      const warm = await measureHistoryWork(manager, () => settle(() => pageChats(currentSource(manager, chatRoster(), true), {}, null, 10)));
+      expect(warm.value, "warm request page").not.toHaveProperty("threw");
       expect(warm.work).toEqual(request.work);
       requests.push(request.work);
       const queued = manager.runNow(f.definitions[5].id)!;
@@ -305,11 +314,11 @@ it("H1 first request and first routine turn after restart have history-independe
         await manager.tick(); await new Promise<void>(resolve => setImmediate(resolve));
         const run = inside.indexes.runsById.get(queued.id)!;
         expect(run.status).toBe("running");
-        pageChats(currentSource(manager, chatRoster(), true), {}, null, 10);
+        expect(settle(() => pageChats(currentSource(manager, chatRoster(), true), {}, null, 10)), "turn page").not.toHaveProperty("threw");
         manager.handleRuntimeEvent(f.event(run, "turn.started"));
         manager.handleRuntimeEvent(f.event(run, "turn.completed", { ok: true }));
         await new Promise<void>(resolve => setImmediate(resolve));
-        pageChats(currentSource(manager, chatRoster(), true), {}, null, 10);
+        expect(settle(() => pageChats(currentSource(manager, chatRoster(), true), {}, null, 10)), "turn page").not.toHaveProperty("threw");
         expect(run.status).toBe("completed");
       });
       for (const key of ["storeTraversals", "storeVisits", "runsMaterialized", "trieEnumerations", "retainedMapVisits", "journalFullTraversals", "fullCommits"] as const) expect(measured.work[key], `first turn ${key}@${size}`).toBe(0);
@@ -331,5 +340,20 @@ it("H1 accessor visits only its winning run and never enumerates history", async
     expect(value?.routineName).toBe("History 5");
     for (const key of ["storeTraversals", "storeVisits", "runsMaterialized", "cloneRun", "trieEnumerations", "indexTraversals", "indexVisits", "runArrayVisits"] as const) expect(work[key], `accessor ${key}`).toBe(0);
     expect(work.trieCalls).toBe(1);
+  } finally { manager.stop(); removeTempDirSync(root); }
+});
+
+it("H1 production chatSource shows the mailbox placeholder for exactly the sealed thread, in list and search", async () => {
+  const root = mkdtempSync(join(tmpdir(), "routine-history-sealed-"));
+  const { manager } = directRoutineHistoryFixture(root, 10);
+  try {
+    const sealedId = "chat-b0-3", plainId = "chat-b0-4", roster = chatRoster(new Set([sealedId]));
+    const source = currentSource(manager, roster, true);
+    const page = settle(() => pageChats(source, {}, null, 200)!.chats), search = settle(() => chatSearchRows(source, {}));
+    const titleOf = (rows: typeof page | typeof search, id: string) => "threw" in rows ? rows.threw : rows.find(row => row.threadId === id)?.title;
+    for (const rows of [page, search]) {
+      expect(titleOf(rows, sealedId), "sealed thread title").toBe(MAILBOX_PLACEHOLDER);
+      expect(titleOf(rows, plainId), "unsealed thread title").toBe("Fixture 4");
+    }
   } finally { manager.stop(); removeTempDirSync(root); }
 });

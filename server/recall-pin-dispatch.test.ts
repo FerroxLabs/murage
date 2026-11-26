@@ -147,13 +147,17 @@ for(const scenario of cases) for(const venue of (scenario==='out-of-view'?['bot'
     if(scenario==='out-of-view'||scenario==='out-of-view-static')expect(request.memory).not.toContain('Fixture secret must stay private');
     if(scenario==='identity-room'||scenario==='forgotten')expect(request.memory).not.toContain('Fixture mandatory marker');
     if(scenario==='forgotten'){expect(request.memory).not.toContain('Fixture unpinned marker');expect(request.memory).not.toContain('Fixture archived marker');expect(JSON.stringify(rows)).not.toContain('Bots were not given a pinned note');}
-    if(['capacity','new-omission'].includes(scenario))expect(rows.messages.filter((row:any)=>row.tool?.name?.startsWith('Murage left some pinned memories out'))).toHaveLength(n+1);
-    if(['long','many'].includes(scenario))expect(rows.messages.filter((row:any)=>row.tool?.name?.startsWith('Bots were not given a pinned note'))).toHaveLength(n+1);
+    // MAIN 10:22Z (a): one memory line per reply, and not again on consecutive replies of the thread while the cause is
+    // unchanged; the pin line is that reply's line (never also the fence left-out note). Was n+1 lines (Review H1, 1.0.4).
+    if(['capacity','new-omission'].includes(scenario))expect(rows.messages.filter((row:any)=>row.tool?.name?.startsWith('Murage left some pinned memories out'))).toHaveLength(1);
+    if(['long','many'].includes(scenario))expect(rows.messages.filter((row:any)=>row.tool?.name?.startsWith('Bots were not given a pinned note'))).toHaveLength(1);
+    if(['capacity','new-omission','long','many'].includes(scenario))expect(JSON.stringify(rows)).not.toContain('Murage left remembered details out of this reply.');
     if(scenario==='pin-after-write'&&n>0)expect(request.memory).toContain('Fixture late marker');
     if(scenario==='accounting'){
      const counts=JSON.parse([...log.matchAll(/fixture bundle counts=([^\n]+)/g)].at(-1)![1]);
      expect(counts).toEqual({delivered:1,dropped:1,withheld:1});expect(counts.delivered+counts.dropped+counts.withheld+1).toBe(4);
-     expect(JSON.stringify(rows)).toContain('Murage left some pinned memories out');expect(JSON.stringify(rows)).toContain('Bots were not given a pinned note');
+     // MAIN 10:22Z (a): a reply with withheld and dropped pins carries the one withheld line (the failure), not both.
+     expect(JSON.stringify(rows)).not.toContain('Murage left some pinned memories out');expect(JSON.stringify(rows)).toContain('Bots were not given a pinned note');
     }
    }
   }

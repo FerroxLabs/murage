@@ -2,30 +2,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter } from "node:events";
 import { createAttentionSurfaces, surfaceForKind } from "./attention-surfaces.mjs";
 import { notifySurfaceDefaults } from "../shared/notify-surfaces.mjs";
 
 const URL_FOR = { popover: "file:///app/ui/src/tray-panel/index.html", flyout: "file:///app/ui/src/tray-panel/index.html", popup: "file:///app/ui/src/tray-panel/index.html",
-  bubble: "file:///app/ui/src/float/bubble.html", dock: "file:///app/ui/src/float/dock.html" };
+  pill: "file:///app/ui/src/pill/index.html", bubble: "file:///app/ui/src/float/bubble.html", dock: "file:///app/ui/src/float/dock.html" };
 
-function rig({ previews = true, hold = null } = {}) {
+function rig({ previews = true, hold = null, platform = "linux", electron, presence = () => ({}), openNeedsYou } = {}) {
   const handlers = new Map(), minted = [], invalidated = [], opened = [], sent = [], targets = [], watches = [], created = [];
   const transport = { current: () => "port|pid", readCard: async () => ({ open: true }), post: async () => ({ ok: true }) };
   const attention = { epoch: "E1", open: [{ threadId: "t1", messageId: "m1", requestId: "r1", botId: "b1", display: { botName: "Ada", title: "Run a command", willRun: "ls" }, outsideOk: { flyout: true }, digest: "d".repeat(64) }] };
   const tray = { needsYou: 1, items: [], working: [{ botId: "b2", botName: "Bo", doing: "x" }], bots: [{ id: "b1", name: "Ada", chief: true }, { id: "b2", name: "Bo", chief: false }] };
   const prefs = notifySurfaceDefaults("new", "linux");
   const surfaces = createAttentionSurfaces({
-    electron: { BrowserWindow: class { constructor() { created.push(1); throw new Error("no window expected"); } static getAllWindows() { return []; } }, screen: { getAllDisplays: () => [], getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 800, height: 600 } }), on() {}, removeListener() {} } },
-    ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) }, platform: "linux", tray: { getBounds: () => ({ x: 0, y: 0, width: 16, height: 16 }) },
+    electron: electron ?? { BrowserWindow: class { constructor() { created.push(1); throw new Error("no window expected"); } static getAllWindows() { return []; } }, screen: { getAllDisplays: () => [], getPrimaryDisplay: () => ({ id: 1, workArea: { x: 0, y: 0, width: 800, height: 600 } }), on() {}, removeListener() {} } },
+    ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) }, platform, tray: { getBounds: () => ({ x: 0, y: 0, width: 16, height: 16 }) },
     actions: { mint: entry => { minted.push(entry); return "t".repeat(32); }, invalidateSurface: id => invalidated.push(id), act: async () => ({ ok: true }) },
-    prefs: () => prefs, capabilities: () => ({ session: "x11", surfaces: {} }), presence: () => ({}), presenceWatch: () => { watches.push(1); return () => watches.push(-1); },
+    prefs: () => prefs, capabilities: () => ({ session: "x11", surfaces: {} }), presence, presenceWatch: () => { watches.push(1); return () => watches.push(-1); },
     transportFor: home => (home === "local" ? transport : null),
     readLocal: async route => { if (hold) await hold.promise; return JSON.parse(JSON.stringify(route === "/api/desktop/attention" ? attention : tray)); },
     readPreviews: async () => previews, openApp: async () => { opened.push("app"); }, openTarget: target => targets.push(target),
     sendToBot: async (who, text) => { sent.push([who, text]); return { ok: true }; }, pauseAutomations: async () => ({ ok: true }),
-    loadUrlFor: kind => URL_FOR[kind] ?? null, log: () => {} });
+    openNeedsYou, loadUrlFor: kind => URL_FOR[kind] ?? null, log: () => {} });
   const invoke = (channel, id, kind, ...args) => handlers.get(channel)({ sender: { id }, senderFrame: { url: URL_FOR[kind], parent: null } }, ...args);
-  return { surfaces, handlers, minted, invalidated, opened, sent, targets, invoke, watches, created, transport, prefs };
+  return { surfaces, handlers, minted, invalidated, opened, sent, targets, invoke, watches, created, transport, prefs, tray, attention };
 }
 
 test("S6: the window gate serves a registered panel its cards with an action token bound to the transport it read, and refuses anyone else", async () => {
@@ -127,4 +128,84 @@ test("S9: the bubble rung is the float surface the router is given", () => {
   const r = rig();
   assert.equal(typeof r.surfaces.floatSurface.show, "function");
   assert.equal(typeof r.surfaces.floatSurface.close, "function");
+});
+
+test("an existing Needs you snapshot presents a protected pill and follows preferences and committed presence", async () => {
+  const windows = [];
+  class Window extends EventEmitter {
+    constructor() {
+      super();
+      windows.push(this);
+      this.webContents = new EventEmitter();
+      Object.assign(this.webContents, { id: 42, send() {}, setWindowOpenHandler() {} });
+    }
+    setContentProtection(value) { this.protected = value; }
+    setAlwaysOnTop() {}
+    setVisibleOnAllWorkspaces(...value) { this.workspaces = value; }
+    setBounds(bounds) { this.bounds = bounds; }
+    setFocusable() {}
+    isDestroyed() { return false; }
+    loadURL(url) { this.url = url; }
+    showInactive() { this.visible = true; }
+    hide() { this.visible = false; }
+    destroy() { this.emit("closed"); }
+  }
+  const builtIn = { id: 1, internal: true, bounds: { x: 0, y: 0, width: 1512, height: 982 },
+    workArea: { x: 0, y: 38, width: 1512, height: 944 } };
+  const screen = new EventEmitter();
+  screen.getAllDisplays = () => [builtIn];
+  screen.getPrimaryDisplay = () => builtIn;
+  const presence = { locked: false, sharing: false, fullscreen: false };
+  let inboxOpens = 0;
+  const hold = { promise: Promise.resolve() };
+  const r = rig({ platform: "darwin", hold, electron: { BrowserWindow: Window, screen }, presence: () => presence,
+    openNeedsYou: () => inboxOpens++ });
+  try {
+    r.prefs.surfaces.pill = true;
+    r.tray.needsYou = 81;
+    r.attention.open[0].outsideOk.pill = true;
+    await r.surfaces.sync();
+    const w = windows[0];
+    assert.ok(w?.visible);
+    assert.equal(w.protected, true);
+    assert.deepEqual(w.workspaces, [true, { visibleOnFullScreen: false }]);
+    assert.deepEqual(w.bounds, { x: 616, y: 38, width: 280, height: 72 });
+    assert.equal(w.url, URL_FOR.pill);
+    let data = await r.invoke("attention-window:items", 42, "pill");
+    assert.equal(data.pill.count, 81);
+    assert.equal(data.items.length, 1);
+    assert.equal(data.items[0].actionToken, undefined);
+    presence.fullscreen = true;
+    let release;
+    hold.promise = new Promise(resolve => { release = resolve; });
+    const blocked = r.surfaces.sync();
+    assert.equal(w.visible, false, "the committed fullscreen signal hides before the server read");
+    release();
+    await blocked;
+    presence.fullscreen = false;
+    await r.surfaces.sync();
+    assert.equal(w.visible, true);
+    r.attention.open = [];
+    await r.surfaces.sync();
+    data = await r.invoke("attention-window:items", 42, "pill");
+    assert.equal(data.pill.count, 81);
+    assert.deepEqual(await r.invoke("attention-window:open", 42, "pill", data.pill.toggleToken), { ok: true });
+    assert.equal(inboxOpens, 1);
+    r.tray.needsYou = 0;
+    await r.surfaces.sync();
+    assert.equal(w.visible, false);
+    r.tray.needsYou = 1;
+    await r.surfaces.sync();
+    assert.equal(w.visible, true);
+    hold.promise = new Promise(resolve => { release = resolve; });
+    const stale = r.surfaces.sync();
+    r.prefs.surfaces.pill = false;
+    await r.surfaces.sync();
+    assert.equal(w.visible, false);
+    release();
+    await stale;
+    assert.equal(w.visible, false, "an older snapshot cannot reopen a disabled pill");
+  } finally {
+    r.surfaces.dispose();
+  }
 });

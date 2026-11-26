@@ -3,11 +3,12 @@
 // Run only on the separately authorized dedicated Linux qualification host.
 import { spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeS2NativeBuild } from "../server/drivers/claude-s2-qualification.ts";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2), value = name => args[args.indexOf(name) + 1];
@@ -52,4 +53,4 @@ try {
     skipped: assertions.filter(test => ["pending", "skipped", "todo"].includes(test.status)).length,
     buildBefore: build, buildAfter: afterBuild }, null, 2) + "\n");
   process.exitCode = passed ? 0 : 1;
-} finally { rmSync(home, { recursive: true, force: true }); }
+} finally { safeWipeSync(home); }

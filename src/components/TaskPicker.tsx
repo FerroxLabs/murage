@@ -274,7 +274,7 @@ export function ConversationTaskPicker({
   onNewInFolder?: () => void;
   onSwitch: (threadId: string) => void;
   onRename: (threadId: string, title: string) => void;
-  onDelete: (threadId: string) => void;
+  onDelete: (threadId: string, nextThreadId?: string) => void;
   /** Bots only for now; a channel's task switcher has no pin. */
   onTogglePin?: (threadId: string, pinned: boolean) => void;
   /** Take the link off a conversation; absent where links are not offered. */
@@ -793,7 +793,12 @@ export function ConversationTaskPicker({
           name={name}
           preview={{ ...deleteScope, threadId: task.threadId }}
           onCancel={() => setConfirmingDelete(null)}
-          onConfirm={() => { setConfirmingDelete(null); onDelete(task.threadId); }}
+          onConfirm={() => {
+            setConfirmingDelete(null);
+            const at = view.navigable.findIndex(row => row.threadId === task.threadId);
+            const next = view.navigable[at + 1] ?? view.navigable[at - 1];
+            onDelete(task.threadId, next?.threadId);
+          }}
         />
       )}
       {unsnoozeFailed === task.threadId && (
@@ -1102,7 +1107,7 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       onNewInFolder={desktop && window.muragebox?.pickFolder ? () => void newTaskInFolder(bot, dispatch) : undefined}
       onSwitch={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
-      onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
+      onDelete={(threadId, nextThreadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId, nextThreadId })}
       deleteScope={{ botId: bot.id }}
       archived={bot.hidden}
       onOpenHit={hit => { void landOnSearchHit(hit, state, dispatch).catch(error => dispatch({ type: "error", message: String(error) })); }}

@@ -110,7 +110,8 @@ export function describeSizeRule(rule: SizeRule): string {
     return `Any width and height in multiples of ${rule.multiple}, ratio ${ratioLabel(rule.minRatio)} to ${ratioLabel(rule.maxRatio)}, ${fmt(rule.minPixels)} to ${fmt(rule.maxPixels)} pixels, longest side at most ${rule.maxEdge}.${top}`;
   }
   if (rule.kind === "ratioTier") return `Supported image proportions: ${rule.ratios.join(", ")}. Available image sizes: ${rule.tiers.join(", ")}.`;
-  return rule.sizes.length ? `Only these sizes: ${rule.sizes.join(", ")}.` : "The provider's default size only.";
+  // Shown after "Sizes:", so a list is just the sizes.
+  return rule.sizes.length ? `${rule.sizes.join(", ")}.` : "The provider's default size only.";
 }
 
 export interface ImageSizeRequest {
@@ -373,6 +374,19 @@ export const FLUX_LEGACY_IDS: Readonly<Record<string, { base: string; quality: s
   ...Object.entries(family.aliases).map(([quality, id]) => [id, { base: family.id, quality, size: "1024x1024" }] as const),
   ...Object.entries(family.sizeAliases ?? {}).flatMap(([size, byQuality]) => Object.entries(byQuality).map(([quality, id]) => [id, { base: family.id, quality, size }] as const)),
 ]));
+const FLUX_QUALITY_WORDS: Readonly<Record<string, string>> = { low: "low", medium: "medium", high: "high", xhigh: "extra high", max: "max" };
+/** A Flux model id in words for Settings, e.g. flux-image-gpt25-xhigh -> "GPT Image 2.5 Flare, extra high".
+ * A family base or extra model keeps its own label; an id Murage does not know returns null. */
+export function fluxImageModelLabel(id: string): string | null {
+  const family = FLUX_FAMILIES.find(item => item.id === id);
+  if (family) return family.label;
+  const extra = FLUX_EXTRA_MODELS.find(item => item.id === id);
+  if (extra) return extra.label;
+  const legacy = FLUX_LEGACY_IDS[id];
+  const base = legacy && FLUX_FAMILIES.find(item => item.id === legacy.base);
+  if (!legacy || !base) return null;
+  return `${base.label}, ${FLUX_QUALITY_WORDS[legacy.quality] ?? legacy.quality}${legacy.size === "1024x1024" ? "" : `, wide (${legacy.size})`}`;
+}
 const FLUX_GPT_BASE = { maxPromptChars: 32_000, formats: ["png" as ImageFormat], maxReferences: 4, maxReferenceBytes: IMAGE_REFERENCE_BYTES_DEFAULT, maxReferenceBytesTotal: IMAGE_REFERENCE_TOTAL_DEFAULT,
   supports: { ...NO_SUPPORTS, edit: true }, delivery: { stream: true, streamEdits: false, jobs: false }, editTimeoutSeconds: 100, qualityMode: "alias" as const, defaultSize: "1024x1024" };
 function fluxFamily(family: FluxFamily): ImageModelCapabilities {
@@ -404,7 +418,7 @@ export function fluxBuiltInModels(): Array<{ id: string; label: string; aliasOf?
   const families = FLUX_FAMILIES.map(family => ({ id: family.id, label: family.label, capabilities: fluxFamily(family) }));
   const extras = FLUX_EXTRA_MODELS.map(model => ({ ...model, capabilities: fluxExtra(model.id)! }));
   const legacy = Object.entries(FLUX_LEGACY_IDS).filter(([id]) => !FLUX_FAMILIES.some(family => family.id === id))
-    .map(([id, value]) => ({ id, label: id, aliasOf: value.base, capabilities: fluxLegacy(id)! }));
+    .map(([id, value]) => ({ id, label: fluxImageModelLabel(id) ?? id, aliasOf: value.base, capabilities: fluxLegacy(id)! }));
   return [...families, ...extras, ...legacy];
 }
 
@@ -528,7 +542,9 @@ function parseEntry(row: unknown, fallbackFor: (id: string) => ImageModelCapabil
   const statusRaw = rec(row.status) ? row.status : undefined;
   const state = statusRaw && (statusRaw.state === "ok" || statusRaw.state === "degraded" || statusRaw.state === "down") ? statusRaw.state : undefined;
   const checkedAt = iso(statusRaw?.checked_at), lastGoodAt = iso(statusRaw?.last_good_at);
-  return { id, label: catalogueLabel(row.label) ?? id, aliases, operations, capabilities,
+  // A router label that only repeats the id is shown as Murage's own name for it.
+  const routerLabel = catalogueLabel(row.label);
+  return { id, label: routerLabel && routerLabel !== id ? routerLabel : fluxImageModelLabel(id) ?? routerLabel ?? id, aliases, operations, capabilities,
     ...(state ? { status: { state, ...(checkedAt ? { checkedAt } : {}), ...(lastGoodAt ? { lastGoodAt } : {}) } } : {}) };
 }
 
@@ -536,7 +552,8 @@ function parseEntry(row: unknown, fallbackFor: (id: string) => ImageModelCapabil
  * zero-width) and markup characters removed, one line, at most 80. */
 function catalogueLabel(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const label = value.replace(/[\p{Cc}\p{Cf}<>\[\]`]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 80).trim();
+  const label = value.replace(/[\p{Cc}\p{Cf}<>\[\]`]/gu, " ").replace(/\s+/g, " ").trim().slice(0, 80).trim()
+    .replace(/\bgrok\b/gi, "Grok");  // a brand keeps its spelling whatever case the router sends (Settings showed "GRok")
   return label || undefined;
 }
 

@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Fixture owner: sc-safety. Production service owners: imported service modules.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TurnWatchdog } from "../turn-watchdog.ts";
@@ -31,6 +31,7 @@ import { indexSourceData } from "./internal-source-data.ts";
 import { extractFunction, type StatePort } from "./source-extract.ts";
 import type { InternalPortContext } from "./internal-port-context.ts";
 import { registerPortConstructor } from "./port-integrity.ts";
+import { safeWipeSync } from "./safe-wipe.mjs";
 
 // Capture imported constructor and ancestor methods before any case hook.
 for (const Constructor of [TurnWatchdog, ReplyState, EventBus, PushStore, Presence, AskerWakes, PendingTurnCancellations, RetiredTurnRegistry, PendingTurnKeys, TurnImages, LimitTurns, MemoryRefusalCauses, RoomTurnStallRegistry, PooledSessionAudiences, LimitFailoverStore, EngineCommandCache, LocalVmLeasePool, FolderTrustStore, LimitStateStore, UserChromeBinds]) if (typeof Constructor === "function") registerPortConstructor(Constructor);
@@ -58,7 +59,7 @@ export function closeAncillaryFixturePorts(): void {
   for (const path of directories) {
     try {
       if (!path || !path.startsWith(join(tmpdir(), "sc-safety-ancillary-"))) throw new Error("FIXTURE_CLEANUP_PATH");
-      rmSync(path, { recursive: true, force: true }); directories.delete(path);
+      safeWipeSync(path); directories.delete(path);
     } catch (error) { failures.push(error); }
   }
   if (failures.length) throw new AggregateError(failures, "FIXTURE_ANCILLARY_CLEANUP_FAILED");

@@ -39,7 +39,7 @@ export function createBadgeSurfaces({ app, Menu, platform, prefs, onTask, t, win
       } else if (platform === "darwin" || platform === "linux") app.setBadgeCount(count);
     },
     refreshMenu() {
-      const enabled = prefs()?.badgeMenu === true;
+      const enabled = prefs()?.surfaces?.badge === true;
       if (platform === "win32") {
         app.setUserTasks(enabled ? TASKS.map(([id, key]) => ({
           program: process.execPath, arguments: `--murage-task=${id}`,

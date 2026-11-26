@@ -29,7 +29,7 @@ entries:
     anchors:
       - settings-control:models/plan-sign-in
       - "file:electron/model-signin-presets.mjs#const DEFAULT_ON = Object.freeze({ chatgpt: true, supergrok: true })"
-      - file:src/components/SubscriptionSignIn.tsx#modelSignIn.grok.unofficial
+      - file:src/components/SubscriptionSignIn.tsx#modelSignIn.grok.unauthorized
       - "file:shared/provider-engine.ts#if (preset === \"chatgpt\" || preset === \"supergrok\") {"
       - file:src/lib/engine-chat-link.ts#PLAN_SIGNIN_ANCHOR
     verified: 1.0.14
@@ -193,7 +193,7 @@ entries:
       - Does Murage bundle Codex?
     answer: >
       For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback
-      recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0.
+      recommends GPT-6.1 Sol, supported by the Codex 0.162.1 and Codex 0.167.0 catalogs.
       A live Codex catalog or configured
       Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol,
       stay as they are. The picker marks the current catalog recommendation.

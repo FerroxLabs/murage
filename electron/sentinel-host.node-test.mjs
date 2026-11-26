@@ -23,7 +23,7 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 5));
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) safeWipeSync(root); });
 
-function rig({ closed = false, captureActive = () => false, provider, probe, delivery, Notification, spawnWatcher, bindingCurrent, now = () => 1_000_000, boundaryOverride } = {}) {
+function rig({ closed = false, captureActive = () => false, provider, probe, delivery, Notification, spawnWatcher, bindingCurrent, now = () => 1_000_000, boundaryOverride, kill, endWatcherOnQuit } = {}) {
   const base = realpathSync.native(mkdtempSync(path.join(tmpdir(), "murage-sentinel-host-")));
   roots.push(base);
   chmodSync(base, 0o700);
@@ -38,7 +38,7 @@ function rig({ closed = false, captureActive = () => false, provider, probe, del
   writeFileSync(entrySource, "// entry\n", { mode: 0o600 });
   const logs = [];
   const host = createSentinelHost({
-    platform: "linux", dataDir, home, userData, executable, entrySource, env: { XDG_STATE_HOME: path.join(base, "state") }, uid: process.getuid?.(),
+    platform: "linux", kill, endWatcherOnQuit, dataDir, home, userData, executable, entrySource, env: { XDG_STATE_HOME: path.join(base, "state") }, uid: process.getuid?.(),
     loadBoundary: async () => boundaryOverride ?? boundary, closed, captureActive, now, log: line => logs.push(line),
     provider: provider ?? fakeProvider(), probe: probe ?? (async () => boundary.EXIT.notProven), delivery, Notification,
     spawnWatcher: spawnWatcher ?? (() => 4242), bindingCurrent,
@@ -104,6 +104,79 @@ test("a closed-app run never creates the root, uses an existing one, and starts 
   await present.host.shutdown();
   assert.deepEqual(provider.calls.install, []);
   assert.deepEqual(readdirSync(present.health), []);
+});
+
+// 1.0.21 Windows canary: the scheduled task did not read back, the app started the fallback supervisor as its own
+// detached child, and that child outlived quit holding the app's listening sockets and its executable.
+test("quit on Windows ends the supervisor this app started, and only that one; elsewhere it keeps running", { skip: POSIX_ONLY }, async () => {
+  const refused = () => ({ ...fakeProvider({ installFails: "SENTINEL_NO_USER_MANAGER" }), installFallback: async () => {}, readFallback: async () => null });
+  // The rig's folders are POSIX, so the Windows quit rule is switched on by its option; the default is checked below.
+  const killed = [];
+  const win = rig({ endWatcherOnQuit: true, provider: refused(), spawnWatcher: () => 777, kill: pid => killed.push(pid) });
+  await win.host.initialize();
+  await win.host.reconcile();
+  assert.deepEqual(killed, [], "nothing ends while the app runs");
+  await settle(); await win.host.shutdown();
+  assert.deepEqual(killed, [777], "quit ends exactly the supervisor this app started");
+  await win.host.shutdown();
+  assert.deepEqual(killed, [777], "never a second signal to a pid that may have been reused");
+
+  // No supervisor was started by this app (the schedule registered): quit signals nothing.
+  const none = [];
+  const registered = rig({ endWatcherOnQuit: true, spawnWatcher: () => 778, kill: pid => none.push(pid) });
+  await registered.host.initialize();
+  await registered.host.reconcile();
+  await settle(); await registered.host.shutdown();
+  assert.deepEqual(none, []);
+
+  // Linux default: the supervisor outlives the app, as documented.
+  const kept = [];
+  const linux = rig({ provider: refused(), spawnWatcher: () => 779, kill: pid => kept.push(pid) });
+  await linux.host.initialize();
+  await linux.host.reconcile();
+  await settle(); await linux.host.shutdown();
+  assert.deepEqual(kept, []);
+
+  // The rule is on by default on Windows only, and main.mjs does not turn it off.
+  const source = readFileSync(new URL("./sentinel-host.mjs", import.meta.url), "utf8");
+  assert.ok(source.includes('if (options.endWatcherOnQuit ?? platform === "win32") { quitEndsWatcher = true; host.stopWatcher(); }'));
+  assert.ok(!readFileSync(new URL("./main.mjs", import.meta.url), "utf8").includes("endWatcherOnQuit"));
+});
+
+// 1.0.22 (Astra on e65132530b): a reconcile already waiting on the scheduler when quit began resumed after quit had
+// ended the supervisor and started a new detached one, which then outlived the app.
+test("quit on Windows while a reconcile still waits on the scheduler: no supervisor is started after quit", { skip: POSIX_ONLY }, async () => {
+  let asked, release;
+  const waiting = new Promise(resolve => { asked = resolve; });
+  const answer = new Promise(resolve => { release = resolve; });
+  const provider = { ...fakeProvider({ installFails: "SENTINEL_NO_USER_MANAGER" }), installFallback: async () => {}, readFallback: async () => { asked(); await answer; return null; } };
+  const spawned = [], killed = [];
+  const fx = rig({ endWatcherOnQuit: true, provider, spawnWatcher: () => { spawned.push(780); return 780; }, kill: pid => killed.push(pid) });
+  await fx.host.initialize();
+  const pending = fx.host.reconcile();
+  await waiting;
+  await settle(); await fx.host.shutdown();
+  release();
+  await pending;
+  assert.deepEqual(spawned, [], "the reconcile that resumes after quit starts no supervisor");
+  assert.deepEqual(killed, [], "nothing was started, so nothing is signalled");
+  // A later reconcile (the first-reconcile timer firing during quit) starts none either.
+  await fx.host.reconcile();
+  assert.deepEqual(spawned, [], "no reconcile starts a supervisor once quit has ended it");
+});
+
+test("quit on Windows never signals a supervisor that already ended: its pid may belong to another process", { skip: POSIX_ONLY }, async () => {
+  const provider = { ...fakeProvider({ installFails: "SENTINEL_NO_USER_MANAGER" }), installFallback: async () => {}, readFallback: async () => null };
+  let emit = null;
+  const killed = [];
+  const fx = rig({ endWatcherOnQuit: true, provider, spawnWatcher: (file, entry, io) => { emit = io.onIoEvent; return 781; }, kill: pid => killed.push(pid) });
+  await fx.host.initialize();
+  await fx.host.reconcile();
+  assert.equal(typeof emit, "function", "the supervisor reports its launch and exit to the host");
+  emit({ type: "launch", generation: 1 });
+  emit({ type: "exit", generation: 1, code: 0, signal: null });
+  await settle(); await fx.host.shutdown();
+  assert.deepEqual(killed, [], "the supervisor ended on its own before quit: no signal");
 });
 
 test("an unloadable boundary leaves the app running with health checks waiting", async () => {

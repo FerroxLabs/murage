@@ -593,7 +593,7 @@ describe("save version", () => {
   });
 });
 
-// build host int-head (Linux, 48 workers): an equal-length rewrite made inside
+// Hetzner int-head (Linux, 48 workers): an equal-length rewrite made inside
 // one timestamp tick kept size, inode, mtime and ctime, so a revision built
 // from metadata alone stayed valid and Save version copied bytes nobody chose.
 // Each case rewrites the same number of bytes and puts the modification time

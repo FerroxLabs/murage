@@ -12,7 +12,7 @@ import { isReusableWindowsSecurityScript, isWindowsSecuritySessionRunner, markWi
 
 export interface PrivateWriterOptions { platform?: NodeJS.Platform; run?: SecurityRunner; sid?: () => string | null; batchSize?: number; windowsEntry?: (path:string) => WindowsSecurityEntry | null }
 const BATCH_SIZE = 128;
-function unsafe():never { throw new Error('Unsafe Signal private file'); }
+function unsafe():never { throw new Error('Signal private file refused'); }
 const same = (a:IdentityStat,b:IdentityStat) => a.dev===b.dev&&a.ino===b.ino&&a.isDirectory()===b.isDirectory()&&a.isFile()===b.isFile()&&!b.isSymbolicLink()&&(!b.isFile()||b.nlink===1);
 const unchanged = (a:IdentityStat,b:IdentityStat) => same(a,b)&&a.ctimeMs===b.ctimeMs&&a.mtimeMs===b.mtimeMs&&a.size===b.size;
 

@@ -103,7 +103,6 @@ async function mount(page: Page, mode?: "simple" | "advanced", surface: "desktop
     if (path === "/api/mcp/servers") return json({ servers: [{ kind: "stdio", name: "fixture-tool", command: "fixture-command", args: [], envKeys: [], enabled: false }] });
     if (path === "/api/mcp/inspect") return json({ ok: true, drafts: [], notes: [] });
     if (path === "/api/email/status") return json({ enabled: true, accountState: "active", termsVersion: null, limits: {}, removing: [{ botId: "ada", address: "ada@example.test" }], otherSetups: [{ inboxId: "old", address: "old@example.test" }], accountSends: { today: 2, perDay: 10 }, ownerSignedIn: true });
-    if (path === "/api/highlevel") return json({ tokenSaved: false, connection: null, bots: [] });
     if (path === "/api/telegram/status") return json({ configured: false, paired: false, enabled: false, connecting: false, pending: 0, uncertain: 0 });
     if (path === "/api/slack/status" || path === "/api/discord/status") return json({ state: "idle", configured: false, appConfigured: false, botConfigured: false, paired: false, enabled: false, requiresRevoke: false, busy: false, pending: 0, uncertain: 0, rejected: 0, needsReview: 0, error: null, nextRetryAt: null });
     if (path === "/api/whatsapp/status") return json({ state: "idle", linked: false, enabled: false, busy: false, error: null, blockedReason: null, nextRetryAt: null, pending: 0, uncertain: 0, rejected: 0, needsReview: 0, number: null, pairing: [], settings: { mode: "self-chat", allowFrom: [], readReceipts: false, quoteReplies: "groups", groups: { policy: "disabled", senders: "members", allow: [] } } });
@@ -125,7 +124,7 @@ const dialog = (page: Page) => page.getByRole("dialog", { name: "Settings", exac
 const shot = async (page: Page, name: string) => { if (shots) await page.screenshot({ path: join(shots, `${name}.png`) }); };
 const PAGES: Record<string, { section: string; title: RegExp; simpleCards: string[]; advancedCards: string[] }> = {
   about: { section: "about", title: /About/, simpleCards: ["about-version-heading", "updates-heading", "whats-new-heading"], advancedCards: ["news-heading", "health-heading", "diagnostics-heading", "setup-heading", "shortcuts-heading"] },
-  connections: { section: "connections", title: /Connected apps|Apps/, simpleCards: ["connections-heading", "mcp-servers-heading"], advancedCards: ["bot-email-heading", "claude-code-import-heading", "highlevel-heading"] },
+  connections: { section: "connections", title: /Connected apps|Apps/, simpleCards: ["connections-heading", "mcp-servers-heading"], advancedCards: ["bot-email-heading", "claude-code-import-heading"] },
   channels: { section: "channels", title: /Messaging apps/, simpleCards: ["telegram-settings-title"], advancedCards: ["slack-app-setup-heading", "whatsapp-allow-heading"] },
   computer: { section: "computer", title: /Computer/, simpleCards: ["browser-settings-heading"], advancedCards: ["computer-settings-heading", "vps-heading", "script-access-heading"] },
   companion: { section: "companion", title: /Phone/, simpleCards: ["companion-heading"], advancedCards: [] },
@@ -454,8 +453,8 @@ if (only.includes("connections")) {
     const computerReads: string[] = [];
     page.on("request", (request) => {
       const path = new URL(request.url()).pathname;
-      if (/^\/api\/(connectors|email|mcp|highlevel)(\/|$)/.test(path) && request.method() !== "GET") mutations.push(path);
-      if (/^\/api\/(mcp|highlevel)(\/|$)/.test(path)) computerReads.push(path);
+      if (/^\/api\/(connectors|email|mcp)(\/|$)/.test(path) && request.method() !== "GET") mutations.push(path);
+      if (/^\/api\/mcp(\/|$)/.test(path)) computerReads.push(path);
     });
     await mount(page, "advanced", surface === "cloud" ? "cloud" : "remote");
     if (surface !== "cloud") await openApps(page);
@@ -471,7 +470,7 @@ if (only.includes("connections")) {
     await expect(email).toContainText("old@example.test");
     await expect(email).toContainText("2 of 10");
     await expect(email.getByRole("switch")).toHaveCount(0);
-    for (const anchor of ["connections-heading", "bot-email-heading", "mcp-servers-heading", "highlevel-heading"]) await expect(body.getByTestId(`settings-stub-${anchor}`)).toBeVisible();
+    for (const anchor of ["connections-heading", "bot-email-heading", "mcp-servers-heading"]) await expect(body.getByTestId(`settings-stub-${anchor}`)).toBeVisible();
     await body.getByRole("tab", { name: "Messaging apps", exact: true }).click();
     await expect(body.getByTestId("settings-stub-telegram-settings-title")).toBeVisible();
     expect(mutations).toEqual([]);

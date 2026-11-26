@@ -162,6 +162,35 @@ describe("V5 Claude ask order (fake CLI)", () => {
     expect(unseen).toContain("t-v5-plain-unseen");
     plain.conn.destroy();
   }, 20_000);
+
+  // cause22 counts (MAIN-RULING cause22-no-transport-caps): no count bound on the calls a turn has started (old bound 512 keys, the
+  // oldest forgotten) or on the threads whose started calls are kept (old bound 1,024 threads, the oldest thread forgotten). Each row
+  // is real turns on the fake CLI and a real ask on the broker socket for a call whose item stdout already delivered.
+  const startedAsk = async (threadId: string, id: string, command: string) => {
+    const conn = await connectSocket(permissionSocketPath(threadId));
+    const sentAt = Date.now();
+    conn.write(JSON.stringify({ t: "ask", id, tool: "Bash", input: { command } }) + "\n");
+    // an ask that never opens is reported as such (type "none"), so the row fails at its own assertion
+    const opened = await settledOrOpened(id).catch(() => ({ type: "none" }));
+    conn.destroy();
+    return { type: opened.type, itemUnseen: (opened as { itemUnseen?: boolean }).itemUnseen ?? false, held: Date.now() - sentAt >= CLAUDE_ASK_ITEM_WAIT_MS - 500 };
+  };
+  const KNOWN = { type: "request.opened", itemUnseen: false, held: false };
+  it("cause22 counts: on a lane turn the first and the last of 513 started calls are still known to their asks, so each ask opens at once and unmarked", async () => {
+    lane = "clean";
+    process.env.FAKE_CLAUDE_STARTED_ITEMS = "513";
+    try {
+      await create();
+      const threadId = "t-c22-keys";
+      await instance.adapter.sendTurn({ threadId, text: HOLD, cwd: scratch });
+      await recorder.until(() => recorder.events.filter((e) => e.type === "item.started" && e.threadId === threadId).length === 513, 30_000);
+      const first = await startedAsk(threadId, "k1", "echo 1");
+      const last = await startedAsk(threadId, "k513", "echo 513");
+      expect({ first, last, unseen }, "the first and the last of 513 started calls are still known to their asks: no hold, no itemUnseen, no mark").toEqual({ first: KNOWN, last: KNOWN, unseen: [] });
+    } finally {
+      delete process.env.FAKE_CLAUDE_STARTED_ITEMS;
+    }
+  }, 60_000);
 });
 
 // Adapter turns in this suite use an isolated durable store.

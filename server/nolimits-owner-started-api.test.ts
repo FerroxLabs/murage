@@ -144,7 +144,8 @@ describe("NOLIMITS-MEANS-IT real starts", () => {
         keys: engine("grokAgent", KEY_READ), gate: engine("grokAgent", GATE_READ), queued: { ...engine("customAcp",KEY_READ),environment:{...engine("customAcp",KEY_READ).environment,FAKE_ACP_SESSION_NEW_GATE:queueGate}},
         // S1 queues lines while a turn runs, so it needs an engine with no steer (Grok and Fuigo take them into the running turn)
         // that Murage sees in full (v1 V7: customAcp is not, so every one of its turns is marked and its batch rightly cards)
-        queuedSeen:{...engine("geminiAgent",KEY_READ),environment:{...engine("geminiAgent",KEY_READ).environment,FAKE_ACP_SESSION_NEW_GATE:queueGate}}, queuedCursor:{...engine("cursorAgent",KEY_READ),environment:{...engine("cursorAgent",KEY_READ).environment,FAKE_ACP_SESSION_NEW_GATE:queueGate}},
+        // Gemini reads the tools/list receipt written by each mounted server.
+        queuedSeen:{...engine("geminiAgent",KEY_READ),environment:{...engine("geminiAgent",KEY_READ).environment,FAKE_ACP_SESSION_NEW_GATE:queueGate,FAKE_ACP_MCP_CONNECT:"1"}}, queuedCursor:{...engine("cursorAgent",KEY_READ),environment:{...engine("cursorAgent",KEY_READ).environment,FAKE_ACP_SESSION_NEW_GATE:queueGate}},
         gateWin: engine("grokAgent", GATE_READ_WIN),
         // no FAKE_ACP_TOOL_KIND: the scripted tool row is a kindless (outside) tool, so the owner's turn is a marked turn (M2)
         gateMarked: { ...engine("grokAgent", GATE_READ), environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: GATE_READ } },

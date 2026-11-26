@@ -79,18 +79,18 @@ describe('G-NL service origin rule', () => {
       expect(serviceThreadNoLimits(threadId,botId)).toBe(false);
     } finally {remove();f.dispose();}
   });
-  it('S3 undecided folders are trusted for this turn and saved rejects remain unchanged', () => {
+  it('S3 undecided folders and saved rejects remain unchanged at No limits', () => {
     const generation = randomUUID(), thread = randomUUID();
     const facts: ServiceTurnFacts = { ownerAudience: true, origin: 'routine', noLimits: true };
     bindServiceTurn(generation, thread, 'bot', () => true, () => facts);
     const gate = { key: '/fixture', folder: '/fixture', sources: ['AGENTS.md'], rejects: [{ key:'/other',folder:'/other' }] };
     const trusted = serviceFolderTrust(generation, thread, 'bot', gate);
-    expect(trusted).toMatchObject({ decision: 'trust', rejects: [], trustKeys: ['/fixture'] });
+    expect(trusted).toBe(gate);
     expect(gate).not.toHaveProperty('decision');
     expect(gate.rejects).toEqual([{key:'/other',folder:'/other'}]);
     facts.noLimits = false; expect(serviceFolderTrust(generation, thread, 'bot', gate)).toBe(gate);
   });
-  it.each(['record','exact reject','ancestor reject','native no'] as const)('N7 a saved Do not trust is overridden for this No limits turn: %s', mode => {
+  it.each(['record','exact reject','ancestor reject','native no'] as const)('service-turn-keeps-saved-decline (W-T03, N7 %s)', mode => {
     const generation = randomUUID(), thread = randomUUID();
     bindServiceTurn(generation, thread, 'bot', () => true, () => ({ownerAudience:true,origin:'owner',noLimits:true}));
     const gate = { key:mode==='ancestor reject'?'/fixture':'/fixture/child', folder:'/fixture/child/grand', sources:['AGENTS.md'],
@@ -98,7 +98,7 @@ describe('G-NL service origin rule', () => {
       ...(mode==='native no'?{storedNoPick:true as const}:{}),
       rejects:mode==='exact reject'?[{key:'/fixture/child',folder:'/fixture/child'}]:mode==='ancestor reject'?[{key:'/fixture/child',folder:'/fixture/child'}]:[] };
     const before=JSON.stringify(gate);
-    expect(serviceFolderTrust(generation,thread,'bot',gate)).toMatchObject({decision:'trust',rejects:[],trustKeys:[gate.key],storedNoPick:undefined,fromRecord:undefined});
+    expect(serviceFolderTrust(generation,thread,'bot',gate)).toBe(gate);
     expect(JSON.stringify(gate)).toBe(before);
   });
   it.each(['record','exact reject','ancestor reject','native no'] as const)('N7 a saved Do not trust stays untrusted below No limits: %s', mode => {

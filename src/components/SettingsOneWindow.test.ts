@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { sidebarBots } from "@/lib/settings-shell-bots";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const fixture = vi.hoisted(() => ({
   bots: [{ id: "nova", name: "Nova" }, { id: "pepper", name: "Pepper" }] as Array<Record<string, unknown>>,
@@ -90,7 +91,7 @@ describe("one Settings window", () => {
   });
 
   it("each header chip opens a section and a row that exist", () => {
-    const panel = read("./SettingsPanel.tsx");
+    const panel = settingsPanelSource();
     expect(BOT_HEADER_CHIPS.map((chip) => chip.id)).toEqual(["level", "engine", "apps", "folder", "email"]);
     for (const chip of BOT_HEADER_CHIPS) {
       const at = panel.indexOf(`id="${chip.anchor}"`);

@@ -67,7 +67,7 @@ export type ImportScope = "skills" | "mcp" | "both";
 export interface ImportFs {
   realpathSync(path: string): string;
   readlinkSync(path: string): string;
-  readdirSync(path: string): string[];
+  readdirSync(path: string, maxNames?: number): string[];
   openSync(path: string, flags: number): number;
   fstatSync(fd: number): Pick<nodeFs.Stats, "isFile" | "isDirectory" | "size" | "dev" | "ino" | "uid" | "mode" | "nlink">;
   readSync(fd: number, buffer: Uint8Array, offset: number, length: number, position: number): number;
@@ -112,7 +112,19 @@ function realWinAnchor(): WinAnchor | null {
 export const realImportFs: ImportFs = {
   realpathSync: (path) => nodeFs.realpathSync(path),
   readlinkSync: (path) => nodeFs.readlinkSync(path),
-  readdirSync: (path) => nodeFs.readdirSync(path),
+  readdirSync(path, maxNames) {
+    if (maxNames === undefined) return nodeFs.readdirSync(path);
+    const dir = nodeFs.opendirSync(path, { bufferSize: Math.min(32, maxNames + 1) });
+    const names: string[] = [];
+    try {
+      while (names.length <= maxNames) {
+        const entry = dir.readSync();
+        if (!entry) break;
+        names.push(entry.name);
+      }
+    } finally { dir.closeSync(); }
+    return names;
+  },
   openSync: (path, flags) => nodeFs.openSync(path, flags),
   fstatSync: (fd) => nodeFs.fstatSync(fd),
   readSync: (fd, buffer, offset, length, position) => nodeFs.readSync(fd, buffer, offset, length, position),
@@ -123,16 +135,16 @@ export const realImportFs: ImportFs = {
   winAnchor: realWinAnchor,
 };
 
-class ReadRefused extends Error {
-  kind: "missing" | "refused" | "linked" | "not-directory";
-  constructor(kind: "missing" | "refused" | "linked" | "not-directory") { super(kind); this.kind = kind; }
+export class ReadRefused extends Error {
+  readonly kind: "missing" | "refused" | "linked" | "not-directory" | "budget";
+  constructor(kind: ReadRefused["kind"]) { super(kind); this.kind = kind; }
 }
 
-interface Budget { deadline: number; bytes: number; reader?: AnchoredImport; settled?: Promise<boolean> }
-const newBudget = (now: () => number): Budget => ({ deadline: now() + READ_TIMEOUT_MS, bytes: 0 });
+export interface Budget { deadline: number; bytes: number; reader?: AnchoredImport; settled?: Promise<boolean> }
+export const newBudget = (now: () => number): Budget => ({ deadline: now() + READ_TIMEOUT_MS, bytes: 0 });
 
-function checkBudget(budget: Budget, now: () => number): void {
-  if (now() > budget.deadline || budget.bytes > MAX_REQUEST_BYTES) throw new ReadRefused("refused");
+export function checkBudget(budget: Budget, now: () => number): void {
+  if (now() > budget.deadline || budget.bytes > MAX_REQUEST_BYTES) throw new ReadRefused("budget");
 }
 
 function inside(root: string, path: string): boolean {
@@ -163,6 +175,13 @@ function importPlatform(fs: ImportFs, _home: string): "linux" | "darwin" | "win3
 
 /** The native error code of a thrown value, or undefined. A native error never reaches a response or a log. */
 const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | undefined)?.code;
+const winBudgetHit = (code: string | undefined): boolean => code === "ETIMEDOUT" || code === "EMFILE";
+
+function allowsClaudeImport(parts: readonly string[]): boolean {
+  if (parts[0] === CLAUDE_GLOBAL_CONFIG) return parts.length === 1;
+  return parts[0] === ".claude" && (parts.length === 1 || parts[1] === "skills")
+    && parts.slice(2).every((part) => IMPORT_NAME.test(part));
+}
 
 export class AnchoredImport {
   readonly fs: ImportFs;
@@ -174,9 +193,14 @@ export class AnchoredImport {
   private session: unknown;
   private readonly held = new Map<string, WinEntry>();
   private settled: Promise<boolean> | undefined;
+  private readonly allows: (parts: readonly string[], kind: "file" | "dir") => boolean;
 
-  constructor(fs: ImportFs, home: string, budgetMs: number) {
+  constructor(
+    fs: ImportFs, home: string, budgetMs: number,
+    allows: (parts: readonly string[], kind: "file" | "dir") => boolean = allowsClaudeImport,
+  ) {
     this.fs = fs;
+    this.allows = allows;
     this.platform = importPlatform(fs, home);
     if (this.platform === "win32") {
       // R12/R17/R18: no realpath on Windows; the home goes to the helper exactly as given and every part is computed against that string.
@@ -185,7 +209,9 @@ export class AnchoredImport {
       const anchor = fs.winAnchor();
       if (!anchor) throw new ReadRefused("refused");
       this.anchor = anchor;
-      try { this.session = anchor.anchorBegin(home, Math.max(1, Math.min(budgetMs, READ_TIMEOUT_MS))); } catch { throw new ReadRefused("refused"); }
+      try { this.session = anchor.anchorBegin(home, Math.max(1, Math.min(budgetMs, READ_TIMEOUT_MS))); } catch (error) {
+        throw new ReadRefused(winBudgetHit(codeOf(error)) ? "budget" : "refused");
+      }
       return;
     }
     const uid = fs.getuid();
@@ -221,14 +247,8 @@ export class AnchoredImport {
   }
 
   /** Windows: the walk from the session. Each directory part is looked up in the held map, opened once, and kept until anchorEnd. */
-  private openWin(absPath: string, kind: "file" | "dir"): ImportHandle {
+  private openWin(absPath: string, kind: "file" | "dir", parts: string[]): ImportHandle {
     const anchor = this.anchor!;
-    if (!inside(this.realHome, absPath)) throw new ReadRefused("refused");
-    const parts = relative(this.realHome, absPath).split(sep);
-    if (parts[0] !== CLAUDE_GLOBAL_CONFIG && parts[0] !== ".claude") throw new ReadRefused("refused");
-    if (parts[0] === CLAUDE_GLOBAL_CONFIG && parts.length !== 1) throw new ReadRefused("refused");
-    if (parts[0] === ".claude" && parts.length > 1 && parts[1] !== "skills") throw new ReadRefused("refused");
-    if (parts.slice(2).some((part) => !IMPORT_NAME.test(part))) throw new ReadRefused("refused");
     let parent: unknown = this.session;
     let current = this.realHome;
     let opening = false;
@@ -243,7 +263,7 @@ export class AnchoredImport {
         let entry: WinEntry;
         if (known) entry = known;
         else {
-          if (this.held.size >= MAX_HELD_ENTRIES) throw new ReadRefused("refused");
+          if (this.held.size >= MAX_HELD_ENTRIES) throw new ReadRefused("budget");
           opening = true;
           entry = anchor.anchorOpen(parent, part, entryKind);
           opening = false;
@@ -256,6 +276,7 @@ export class AnchoredImport {
     } catch (error) {
       if (error instanceof ReadRefused) throw error;
       const code = opening ? codeOf(error) : undefined;
+      if (winBudgetHit(code)) throw new ReadRefused("budget");
       if (current === join(this.realHome, ".claude") && code === "ELOOP") throw new ReadRefused("linked");
       if (current === absPath && kind === "dir" && code === "ENOTDIR") throw new ReadRefused("not-directory");
       throw new ReadRefused(code === "ENOENT" ? "missing" : "refused");
@@ -286,13 +307,10 @@ export class AnchoredImport {
   }
 
   openAnchored(absPath: string, kind: "file" | "dir"): ImportHandle {
-    if (this.platform === "win32") return this.openWin(absPath, kind);
     if (!inside(this.realHome, absPath)) throw new ReadRefused("refused");
     const parts = relative(this.realHome, absPath).split(sep);
-    if (parts[0] !== CLAUDE_GLOBAL_CONFIG && parts[0] !== ".claude") throw new ReadRefused("refused");
-    if (parts[0] === CLAUDE_GLOBAL_CONFIG && parts.length !== 1) throw new ReadRefused("refused");
-    if (parts[0] === ".claude" && parts.length > 1 && parts[1] !== "skills") throw new ReadRefused("refused");
-    if (parts.slice(2).some((part) => !IMPORT_NAME.test(part))) throw new ReadRefused("refused");
+    if (!this.allows(parts, kind)) throw new ReadRefused("refused");
+    if (this.platform === "win32") return this.openWin(absPath, kind, parts);
     const flags = (entryKind: "file" | "dir") => nodeFs.constants.O_RDONLY | nodeFs.constants.O_NONBLOCK
       | (entryKind === "dir" ? nodeFs.constants.O_DIRECTORY : 0)
       | (this.platform === "darwin" ? 0x20000000 : nodeFs.constants.O_NOFOLLOW);
@@ -347,15 +365,18 @@ export class AnchoredImport {
   }
 
   /** The entries of a proven directory handle, sorted. `truncated`: the listing is incomplete (Windows: more than 1,024 names). */
-  list(absPath: string, handle: ImportHandle): { names: string[]; truncated: boolean } {
+  list(absPath: string, handle: ImportHandle, maxNames?: number): { names: string[]; truncated: boolean } {
     if (handle.win) {
       let listing: { names: string[]; truncated: boolean };
       try { listing = this.anchor!.anchorList(handle.win.handle); } catch (error) {
-        throw new ReadRefused(codeOf(error) === "ENOENT" ? "missing" : "refused");
+        const code = codeOf(error);
+        if (winBudgetHit(code)) throw new ReadRefused("budget");
+        throw new ReadRefused(code === "ENOENT" ? "missing" : "refused");
       }
       return { names: [...listing.names].sort(), truncated: listing.truncated === true };
     }
-    return { names: this.fs.readdirSync(this.platform === "linux" ? `/proc/self/fd/${handle.fd}` : absPath).sort(), truncated: false };
+    const names = this.fs.readdirSync(this.platform === "linux" ? `/proc/self/fd/${handle.fd}` : absPath, maxNames).sort();
+    return { names, truncated: maxNames !== undefined && names.length > maxNames };
   }
 
   /** Windows: read a whole proven file by the helper, in steps of at most 1 MiB, then compare the handle's identity once more. */
@@ -375,7 +396,7 @@ export class AnchoredImport {
       const after = anchor.anchorStat(win.handle);
       if (done !== win.size || after.kind !== "file" || after.volume !== win.volume || after.fileId !== win.fileId || after.size !== win.size || after.nlink !== 1) throw new ReadRefused("refused");
     } catch (error) {
-      throw error instanceof ReadRefused ? error : new ReadRefused("refused");
+      throw error instanceof ReadRefused ? error : new ReadRefused(winBudgetHit(codeOf(error)) ? "budget" : "refused");
     }
     return buffer;
   }
@@ -402,11 +423,14 @@ function endBudget(budget: Budget): Promise<boolean> {
 }
 
 /** Read only the bounded size (fstat on POSIX, the helper's query on Windows), through the already-verified handle. */
-function readConfinedFile(reader: AnchoredImport, handle: ImportHandle, maxBytes: number, budget: Budget, now: () => number): Buffer {
+export function readConfinedFile(
+  reader: AnchoredImport, handle: ImportHandle, maxBytes: number, budget: Budget, now: () => number, whole = false,
+): Buffer {
   const { fs } = reader;
   try {
     const size = handle.win ? handle.win.size : handle.stat.size;
-    if (!Number.isSafeInteger(size) || size < 0 || size > maxBytes) throw new ReadRefused("refused");
+    if (!Number.isSafeInteger(size) || size < 0) throw new ReadRefused("refused");
+    if (size > maxBytes) throw new ReadRefused(whole ? "budget" : "refused");
     budget.bytes += size;
     checkBudget(budget, now);
     if (handle.win) {
@@ -446,21 +470,52 @@ function allowedSkillFile(name: string): boolean {
 }
 
 /** Walk one proven skill folder; a refused child skips the whole skill. */
-function readSkillFolder(reader: AnchoredImport, name: string, folder: ImportHandle, budget: Budget, now: () => number): ReadSkill | null {
-  const base = join(reader.realHome, ".claude", "skills", name);
+class SkillFileRefused extends Error {
+  readonly file?: string;
+  constructor(file?: string) { super("not-copied"); this.file = file; }
+}
+
+export function privateSkillPath(name: string): boolean {
+  return NEVER_COPIED.some(pattern => pattern.test(name))
+    || /^(?:auth(?:\.json(?:\.lock)?)?|history(?:\.jsonl?)?|hooks(?:\.json)?|rules(?:\.json)?|agents(?:\.md)?|claude\.md|plugins?|sessions?)$/i.test(name);
+}
+
+function readSkillFolder(
+  reader: AnchoredImport, base: string, name: string, folder: ImportHandle, budget: Budget, now: () => number, whole = false,
+): ReadSkill | null {
   const files: Array<{ path: string; content: string }> = [];
   let folderBytes = 0;
   let seen = 0;
   const walk = (relative: string[], depth: number, dirHandle: ImportHandle): boolean => {
     checkBudget(budget, now);
-    if (depth > MAX_SKILL_DEPTH) return false;
+    if (depth > MAX_SKILL_DEPTH) {
+      if (whole) throw new ReadRefused("budget");
+      return false;
+    }
     const dir = join(base, ...relative);
-    const listing = reader.list(dir, dirHandle);
+    const listing = reader.list(dir, dirHandle, whole ? MAX_FILES_PER_SKILL_WALK - seen : undefined);
     // An incomplete listing cannot prove the folder's contents: the whole skill is skipped (by its proven name).
-    if (listing.truncated) return false;
+    if (listing.truncated) {
+      if (whole) throw new ReadRefused("budget");
+      return false;
+    }
+    const names = new Set<string>();
     for (const entry of listing.names) {
       checkBudget(budget, now);
-      if (++seen > MAX_FILES_PER_SKILL_WALK) return false;
+      if (++seen > MAX_FILES_PER_SKILL_WALK) {
+        if (whole) throw new ReadRefused("budget");
+        return false;
+      }
+      const relativeFile = [...relative, entry].join("/");
+      // Darwin enumerates by pathname. Until the child opens, its name has no handle proof.
+      const listedFile = reader.platform === "darwin" ? undefined : relativeFile;
+      if (whole) {
+        const safeName = IMPORT_NAME.test(entry) && !looksSecret(entry);
+        if (!safeName || privateSkillPath(entry)) throw new SkillFileRefused(safeName ? listedFile : undefined);
+        const lower = entry.toLowerCase();
+        if (names.has(lower)) throw new SkillFileRefused(listedFile);
+        names.add(lower);
+      }
       if (!IMPORT_NAME.test(entry)) {
         if (NEVER_COPIED.some((pattern) => pattern.test(entry))) continue;
         return false;
@@ -469,8 +524,15 @@ function readSkillFolder(reader: AnchoredImport, name: string, folder: ImportHan
       let child: ImportHandle;
       try { child = reader.openAnchored(path, "dir"); } catch (error) {
         // Only a wrong-kind open gets a second attempt; failed handle checks stay refused.
-        if (!(error instanceof ReadRefused) || error.kind !== "not-directory") throw error;
-        child = reader.openAnchored(path, "file");
+        if (!(error instanceof ReadRefused) || error.kind !== "not-directory") {
+          if (whole && error instanceof ReadRefused && error.kind !== "budget") throw new SkillFileRefused(listedFile);
+          throw error;
+        }
+        if (whole && !allowedSkillFile(entry)) throw new SkillFileRefused(listedFile);
+        try { child = reader.openAnchored(path, "file"); } catch (fileError) {
+          if (whole && fileError instanceof ReadRefused && fileError.kind !== "budget") throw new SkillFileRefused(listedFile);
+          throw fileError;
+        }
       }
       if (reader.isDirectory(child)) {
         try {
@@ -479,14 +541,23 @@ function readSkillFolder(reader: AnchoredImport, name: string, folder: ImportHan
         continue;
       }
       if (!allowedSkillFile(entry)) { reader.close(child); continue; }
-      const bytes = readConfinedFile(reader, child, MAX_SKILL_FOLDER_BYTES - folderBytes, budget, now);
+      const bytes = readConfinedFile(reader, child, MAX_SKILL_FOLDER_BYTES - folderBytes, budget, now, whole);
       folderBytes += bytes.length;
       if (folderBytes > MAX_SKILL_FOLDER_BYTES) return false;
-      if (bytes.includes(0)) continue;
+      if (bytes.includes(0)) {
+        if (whole) throw new SkillFileRefused(relativeFile);
+        continue;
+      }
       const content = bytes.toString("utf8");
       // Keep exactly the reviewed bytes; never silently replace invalid UTF-8.
-      if (!Buffer.from(content, "utf8").equals(bytes)) return false;
-      files.push({ path: [...relative, entry].join("/"), content });
+      if (!Buffer.from(content, "utf8").equals(bytes)) {
+        if (whole) throw new SkillFileRefused(relativeFile);
+        return false;
+      }
+      if (whole && (looksSecret(content) || /\b(?:api[_-]?key|access[_-]?token|password|client[_-]?secret)\s*[:=]\s*["']?[a-z0-9_~+/-]{4,}/i.test(content))) {
+        throw new SkillFileRefused(relativeFile);
+      }
+      files.push({ path: relativeFile, content });
     }
     return true;
   };
@@ -537,7 +608,7 @@ function readSkillsWith(home: string, fs: ImportFs, now: () => number, budget: B
     let dir: ImportHandle;
     try { dir = reader.openAnchored(join(reader.realHome, ".claude", "skills", name), "dir"); } catch { unreadable = true; continue; }
     let folder: ReadSkill | null;
-    try { folder = readSkillFolder(reader, name, dir, budget, now); } catch {
+    try { folder = readSkillFolder(reader, join(reader.realHome, ".claude", "skills", name), name, dir, budget, now); } catch {
       checkBudget(budget, now);
       folder = null;
     } finally { reader.close(dir); }
@@ -546,6 +617,51 @@ function readSkillsWith(home: string, fs: ImportFs, now: () => number, budget: B
   // Unproven listing entries never disclose their names or their number.
   if (unreadable) skipUnreadable("(could not read)");
   return result;
+}
+
+export function readWholeSkills(
+  reader: AnchoredImport, root: string, budget: Budget, now: () => number, maxNames: number,
+): { skills: ReadSkill[]; skipped: Array<{ name: string; file?: string }>; count: number } {
+  const skills: ReadSkill[] = [];
+  const skipped: Array<{ name: string; file?: string }> = [];
+  let handle: ImportHandle;
+  try { handle = reader.openAnchored(root, "dir"); } catch (error) {
+    if (error instanceof ReadRefused && error.kind === "missing") return { skills, skipped, count: 0 };
+    throw error;
+  }
+  let listing;
+  try { listing = reader.list(root, handle, maxNames); } finally { reader.close(handle); }
+  if (listing.truncated || listing.names.length > maxNames) throw new ReadRefused("budget");
+  const names = new Set<string>();
+  let unproven = false;
+  for (const name of listing.names) {
+    checkBudget(budget, now);
+    if (name === ".system") continue;
+    if (!IMPORT_NAME.test(name) || looksSecret(name) || privateSkillPath(name)) {
+      unproven = true;
+      continue;
+    }
+    if (names.has(name.toLowerCase())) throw new ReadRefused("refused");
+    names.add(name.toLowerCase());
+    const path = join(root, name);
+    let folder: ImportHandle;
+    try { folder = reader.openAnchored(path, "dir"); } catch (error) {
+      if (error instanceof ReadRefused && error.kind === "budget") throw error;
+      unproven = true;
+      continue;
+    }
+    try {
+      const skill = readSkillFolder(reader, path, name, folder, budget, now, true);
+      if (skill) skills.push(skill);
+      else skipped.push({ name });
+    } catch (error) {
+      if (error instanceof ReadRefused && error.kind === "budget") throw error;
+      skipped.push({ name, ...(error instanceof SkillFileRefused && error.file ? { file: error.file } : {}) });
+    } finally { reader.close(folder); }
+  }
+  if (unproven) skipped.push({ name: "(could not read)" });
+  checkBudget(budget, now);
+  return { skills, skipped, count: listing.names.length };
 }
 
 // ---------------------------------------------------------------- MCP servers
@@ -572,7 +688,9 @@ function slugFor(name: string): string {
 }
 
 /** Plan one server: only the allowed fields survive, every other value is dropped and flagged. Returns null to skip it. */
-export function planServer(name: string, raw: unknown, takenNames: readonly string[]): PlannedServer | null {
+export function planServer(
+  name: string, raw: unknown, takenNames: readonly string[], disabledReason = DISABLED_REASON,
+): PlannedServer | null {
   if (!IMPORT_NAME.test(name) || !raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const source = raw as Record<string, unknown>;
   const slug = slugFor(name);
@@ -602,7 +720,7 @@ export function planServer(name: string, raw: unknown, takenNames: readonly stri
       needsKey = true;
       if (HEADER_KEY.test(header) && !pending.includes(header) && pending.length < 16) pending.push(header);
     }
-    stored = { url: clean, transport: type === "sse" ? "sse" : "http", auth: pending.length ? "header" : "none", headers: {}, ...(pending.length ? { pendingHeaders: pending } : {}), enabled: false, disabledReason: DISABLED_REASON };
+    stored = { url: clean, transport: type === "sse" ? "sse" : "http", auth: pending.length ? "header" : "none", headers: {}, ...(pending.length ? { pendingHeaders: pending } : {}), enabled: false, disabledReason };
   } else {
     if (typeof source.command !== "string" || !source.command.trim()) return null;
     const command = source.command.trim();
@@ -618,7 +736,7 @@ export function planServer(name: string, raw: unknown, takenNames: readonly stri
       needsKey = true;
       if (ENV_KEY.test(key) && !isHarnessOwnedMcpEnvName(key) && !pending.includes(key) && pending.length < 64) pending.push(key);
     }
-    stored = { command, args, env, ...(pending.length ? { pendingEnv: pending } : {}), enabled: false, disabledReason: DISABLED_REASON };
+    stored = { command, args, env, ...(pending.length ? { pendingEnv: pending } : {}), enabled: false, disabledReason };
   }
   const parsed = parseAnyStoredMcpServer(slug, stored);
   if (!parsed.ok || parsed.server.enabled !== false) return null;

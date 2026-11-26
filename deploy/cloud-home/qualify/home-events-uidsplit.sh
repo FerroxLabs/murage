@@ -1,8 +1,12 @@
 #!/bin/bash
 # Runs INSIDE a root container (node:24-bookworm, --network none, repo copy at /work). Root prepares the dirs exactly as the shipped code does, then the
 # test runs as uid 2001, then root checks murage-control sees what the server wrote.
-cd /work
-rm -rf /var/lib/murage-home /data; mkdir -p /var/lib /data
+if [[ ! -f /.dockerenv || $EUID != 0 || -e /var/lib/murage-home || -L /var/lib/murage-home || -e /data || -L /data ]]; then
+  echo 'home-events-uidsplit requires a fresh root container' >&2
+  exit 2
+fi
+cd /work || exit 2
+mkdir -p /var/lib /data || exit 2
 python3 -I - <<'PY' || exit 4
 import importlib.machinery, importlib.util, os
 def load(n, p):

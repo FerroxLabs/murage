@@ -67,7 +67,7 @@ function world() {
     botForDirectThread: () => from, promptWithReply: (text: string) => text, replyForPrompt: () => undefined,
     activeGroupTurnForBot: () => undefined, directThreadBusy: () => false, turnImages: { promote: () => [] },
     PHONE_IDLE_ENTRY: Symbol(), PHONE_TICKET: Symbol(), HL_OWNER_TICKET: Symbol(), phonesOfferedNow: () => false, phoneMintEligible: () => false,
-    RECENT_SEND_ROWS: 10, murageLine: (row: unknown) => row, sendNoticeError: (message: string) => new Error(message),
+    RECENT_SEND_ROWS: 10, queuedOwnerStartsPending: new Map(), ownerSendsStarting: new Map(), appClosing: false, murageLine: (row: unknown) => row, sendNoticeError: (message: string) => new Error(message),
   };
   const drain = fn("drainQueuedSends", env); env.drainQueuedSends = drain;
   const admit = fn("admitDirectSend", env);

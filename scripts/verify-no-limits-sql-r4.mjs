@@ -1,3 +1,4 @@
+import { evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // A copied tree and isolated fake relay never touch live application data.
 import {cpSync,mkdtempSync,readdirSync,symlinkSync,mkdirSync,readFileSync,writeFileSync,existsSync} from 'node:fs';
@@ -7,7 +8,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {safeWipeSync} from '../server/testing/safe-wipe.mjs';
 if(process.env.CI!=='1')throw Error('Requires isolated container');
-const source=process.cwd(),out=resolve('evidence/nolim-sql-r4');mkdirSync(out,{recursive:true});
+const source=process.cwd(),out=resolve(evidencePath('evidence/nolim-sql-r4'));mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'nolim-sql-r4-'));
 const names=['no-limits-wipe-sql.ts','no-limits-database-input.ts'];
 const originals=Object.fromEntries(names.map(name=>[name,readFileSync(join(source,'server',name),'utf8')]));

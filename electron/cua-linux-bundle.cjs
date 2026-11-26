@@ -6,8 +6,8 @@ const path = require("node:path");
 const STAGE_PREFIX = "murage-cua-linux-x64-";
 const LEGACY_STAGE_GRACE_MS = 10 * 60 * 1000;
 const FILES = Object.freeze({
-  "cua-driver": "ed5844fadf07b9b72c4a3b3802e1c47233c166d66d6198608d5991f807aab4ac",
-  "cua-cursor-theme": "e589b2b7521bbfeaf9e2bfce668a38e80ed1b9790b1327b13d374fc331d8312a",
+  "cua-driver": "5d7ff450488e6a3e796d5c69c6d835dda71933c15c572097bc3bc6707212f826",
+  "cua-cursor-theme": "b69b09dc7ab54cba4e565d863f6f03bb30a9af251d538813dd74b11c37089e67",
 });
 
 function sha256(file, fileSystem = fs) {

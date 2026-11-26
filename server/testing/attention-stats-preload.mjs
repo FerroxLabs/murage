@@ -19,8 +19,16 @@ const presented = async () => {
   while (existsSync(`${holdFile}.held`)) await new Promise(resolve => setTimeout(resolve, 20));
   writeFileSync(`${holdFile}.released`, String(Date.now()));
 };
+// 1021: while the file MURAGE_TEST_DELIVERY_LOST names exists, the server resolves no engine adapter for any ask's turn (as
+// when the provider turn that asked has moved on): an answer is not taken and its interrupt reaches nothing.
+const lostFile = process.env.MURAGE_TEST_DELIVERY_LOST;
+const deliveryLost = () => Boolean(lostFile) && existsSync(lostFile);
+// 1021 Retry live witness: while the file MURAGE_TEST_DELIVERY_REFUSED names exists, the asking turn's adapter stays live but
+// does not take an answer and its stop resolves stop-failed, so an undelivered card offers Send again (index.ts decisionTargetAdapter).
+const refusedFile = process.env.MURAGE_TEST_DELIVERY_REFUSED;
+const deliveryRefused = () => Boolean(refusedFile) && existsSync(refusedFile);
 globalThis[Symbol.for("murage.approvalAttention.testProbe")] = (stats) => {
-  if (!file) return { presented };
+  if (!file) return { presented, deliveryLost, deliveryRefused };
   let seq = 0;
   const timer = setInterval(() => {
     try {
@@ -29,5 +37,5 @@ globalThis[Symbol.for("murage.approvalAttention.testProbe")] = (stats) => {
     } catch { /* the next tick writes again */ }
   }, 40);
   timer.unref();
-  return { presented };
+  return { presented, deliveryLost, deliveryRefused };
 };

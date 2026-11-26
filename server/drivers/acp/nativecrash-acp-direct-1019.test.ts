@@ -17,7 +17,8 @@ import { checkedOpenTurns } from '../../memory/lineage-write.ts';
 import { consumingFixture } from '../../testing/consuming-fixture.ts';
 import { fixtureBotFolder } from '../../testing/bot-folder-fixture.ts';
 import { recordEvents } from '../../testing/events.ts';
-import { bindFixtureAdapter } from '../../testing/mcp-admission-fixture.ts';
+import { bindFixtureAdapter, fixtureMountTurn } from '../../testing/mcp-admission-fixture.ts';
+import type { LineageVerdict } from '../../memory/lineage-types.ts';
 import { expectDefinedRefusal, expectMemoryRefused, watchEscapes } from '../../testing/nativecrash-harness.ts';
 import type { ProviderInstance } from '../../contracts.ts';
 
@@ -116,4 +117,27 @@ it('LLD-acp a load-proof refusal is recorded at acp.direct.7292 with the lease a
   expect(r[0]!.closer).toBe('lease');
   expect(r[0]!.kind).toBe('turn');
   expect(await within(instance!.adapter.interruptTurn!('nc-lld-b'), 10_000), 'the Stop body runs as the close and resolves').toEqual({ closeConfirmed: true });
+});
+
+// 1.0.20 busy-engines (ACP family): the driver's own refusals reach the lease as ENGINE_OWN_REFUSAL (driverRaised), the verdict the direct
+// turn's lease reads at its seal to end the turn at once instead of rebuilding it into the same refusal (index.ts admitLedgerLease).
+it('busy-engines ACP: the capacity refusal (3105) and the servers-never-ready refusal (7292) reach the lease marked driverRaised', async () => {
+  vi.stubEnv('MURAGE_ACP_MCP_LISTED_MS', '1500');
+  const verdicts: Record<string, LineageVerdict[]> = { a: [], b: [] };
+  await create(baseSupport('beAcpA', { ownTools: true }), 'be-acp-a', { FAKE_ACP_MODE: 'no-auth' });
+  bindFixtureAdapter(instance!.adapter);
+  const a = fixtureMountTurn({ cwd: fixtureBotFolder(), threadId: 'be-acp-a', text: 'go', integrations: { agents: peer(['one']) } } as never, v => verdicts.a!.push(v));
+  const threw = await instance!.adapter.sendTurn(a).then(() => undefined, error => error);
+  expect((threw as Error | undefined)?.message).toBe('MEMORY_CONTEXT_REVOKED');
+  expect(refusalsOf('be-acp-a', 'acp.direct.3105')).toHaveLength(1);
+  expect(verdicts.a, 'the lease is told once, by the driver').toEqual([{ state: 'checking', reason: 'not-built', driverRaised: true }]);
+  await instance!.dispose().catch(() => {}); instance = undefined;
+  await create(baseSupport('beAcpB', { ownTools: false, mcpListedWait: true }), 'be-acp-b', { FAKE_ACP_MODE: 'no-auth', FAKE_ACP_MCP_LIST: 'all:initializing' });
+  bindFixtureAdapter(instance!.adapter);
+  const recorder = recordEvents(instance!.adapter); cleanups.push(() => recorder.stop());
+  const b = fixtureMountTurn({ cwd: fixtureBotFolder(), threadId: 'be-acp-b', text: 'go', integrations: { agents: peer(['one']) } } as never, v => verdicts.b!.push(v));
+  const sent = await instance!.adapter.sendTurn(b);
+  await recorder.until(e => e.type === 'turn.completed' && e.turnId === sent.turnId);
+  expect(refusalsOf('be-acp-b', 'acp.direct.7292')).toHaveLength(1);
+  expect(verdicts.b, 'the lease is told once, by the driver').toEqual([{ state: 'checking', reason: 'not-built', driverRaised: true }]);
 });

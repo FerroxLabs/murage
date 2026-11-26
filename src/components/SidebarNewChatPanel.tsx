@@ -4,6 +4,7 @@
 // "New chat": pick any bot and a fresh conversation with it opens, without finding the bot in the list first.
 // Idea from OpenMaus (Apache-2.0, SidebarNewChatPanel.tsx). The list is the Chief first, then recent bots; arrow keys and
 // Enter work from the filter box.
+import { imeComposing } from "@/lib/composer-enter";
 import { useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 
@@ -34,6 +35,7 @@ export function SidebarNewChatPanel({ bots, onPick, onClose }: { bots: readonly 
           value={query}
           onChange={(event) => { setQuery(event.target.value); setCursor(0); }}
           onKeyDown={(event) => {
+            if (imeComposing(event.nativeEvent)) return;
             if (event.key === "ArrowDown") { event.preventDefault(); move(at + 1); }
             else if (event.key === "ArrowUp") { event.preventDefault(); move(at - 1); }
             else if (event.key === "Enter" && rows[at]) { event.preventDefault(); onPick(rows[at]!); }

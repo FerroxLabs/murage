@@ -11,6 +11,8 @@
 // on that seam: `input`/`instructions`, `store:false`, stream, strip
 // `max_output_tokens` (chatgptOAuth.ts, registerChatGptSubscription).
 
+import { registerBusyloopPayloadSite } from "../shared/flux-route.ts";
+
 type Json = Record<string, unknown>;
 const record = (value: unknown): value is Json => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const DEFAULT_INSTRUCTIONS = "You are a helpful assistant.";
@@ -121,36 +123,42 @@ export function chatToResponses(body: Json): { request: Json; wantStream: boolea
 }
 
 /** Parse Server-Sent Events text incrementally. */
-export function createSseParser(onEvent: (data: Json) => void): { push(chunk: string): void; end(): void } {
+/** `maxBytes`: one event, chunk or unfinished event may hold this much (1 MiB; the owner turn's ceiling when the gateway says so). */
+export function createSseParser(onEvent: (data: Json) => void, maxBytes = 1024 * 1024): { push(chunk: string): void; end(): void } {
   let buffer = "";
   const flush = (block: string) => {
-    if (Buffer.byteLength(block) > 1024 * 1024) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+    if (Buffer.byteLength(block) > maxBytes) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
     const data = block.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
     if (!data || data === "[DONE]") return;
     let parsed: unknown;
-    try { parsed = JSON.parse(data); } catch { return; /* a keep-alive or a torn frame */ }
+    try { parsed = registerBusyloopPayloadSite("read", JSON.parse(data)); } catch { return; /* a keep-alive or a torn frame */ }
     // Consumer failures, including a final-writer refusal, must stop the reader.
     if (record(parsed)) onEvent(parsed);
   };
+  // What is held of the unfinished event is counted as it arrives, and a boundary is looked for only where a new one can appear (the
+  // last three characters held plus the chunk), so a very large event costs its size once, not once per chunk.
+  let held = 0, tail = "";
   return {
     push(chunk) {
-      if (Buffer.byteLength(chunk) > 1024 * 1024) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
-      const tail = buffer.slice(-3), prefix = buffer.slice(0, buffer.length - tail.length);
+      const size = Buffer.byteLength(chunk);
+      if (size > maxBytes) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
       const incoming = tail + chunk;
       const boundary = incoming.search(/\r?\n\r?\n/);
-      if (Buffer.byteLength(prefix) + Buffer.byteLength(boundary < 0 ? incoming : incoming.slice(0, boundary)) > 1024 * 1024) {
+      if (held - Buffer.byteLength(tail) + Buffer.byteLength(boundary < 0 ? incoming : incoming.slice(0, boundary)) > maxBytes) {
         throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
       }
       buffer += chunk;
+      if (boundary < 0) { held += size; tail = incoming.slice(-3); return; }
       let index: number;
       while ((index = buffer.search(/\r?\n\r?\n/)) >= 0) {
         const block = buffer.slice(0, index);
         buffer = buffer.slice(buffer.slice(index).match(/^\r?\n\r?\n/)![0].length + index);
         flush(block);
       }
-      if (Buffer.byteLength(buffer) > 1024 * 1024) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+      held = Buffer.byteLength(buffer); tail = buffer.slice(-3);
+      if (held > maxBytes) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
     },
-    end() { if (buffer.trim()) flush(buffer); buffer = ""; },
+    end() { if (buffer.trim()) flush(buffer); buffer = ""; held = 0; tail = ""; },
   };
 }
 
@@ -207,13 +215,13 @@ export function createChatStreamTranslator(model: string, id: string, created: n
 }
 
 /** Collect a whole Responses stream into the final response object. */
-export function collectResponse(events: Json[]): Json {
+export function collectResponse(events: Json[], maxBytes = 8 * 1024 * 1024): Json {
   let bytes = 0;
   const items: Json[] = [];
   let completed: Json | null = null;
   for (const event of events) {
     bytes += Buffer.byteLength(JSON.stringify(event));
-    if (bytes > 8 * 1024 * 1024) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+    if (bytes > maxBytes) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
     if (event.type === "response.output_item.done" && record(event.item)) items.push(event.item);
     else if ((event.type === "response.completed" || event.type === "response.incomplete") && record(event.response)) completed = event.response;
     else if (event.type === "response.failed" || event.type === "error") throw failure(event);
@@ -268,7 +276,7 @@ export function createResponsesPassthrough(write: (text: string) => void): { pus
   const forward = (block: string) => {
     const data = block.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
     let event: Json | null = null;
-    if (data && data !== "[DONE]") { try { const parsed = JSON.parse(data); if (record(parsed)) event = parsed; } catch { event = null; } }
+    if (data && data !== "[DONE]") { try { const parsed = registerBusyloopPayloadSite("read", JSON.parse(data)); if (record(parsed)) event = parsed; } catch { event = null; } }
     if (data === "[DONE]" && !terminal) fail();
     if (event) {
       const type = event.type;
@@ -305,7 +313,7 @@ export function createResponsesPassthrough(write: (text: string) => void): { pus
       if (tail) {
         const data = tail.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
         let whole = data === "[DONE]";
-        if (!whole && data) { try { whole = record(JSON.parse(data)); } catch { whole = false; } }
+        if (!whole && data) { try { whole = record(registerBusyloopPayloadSite("read", JSON.parse(data))); } catch { whole = false; } }
         if (whole) forward(tail);
       }
       if (!terminal) fail();

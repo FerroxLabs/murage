@@ -3,7 +3,7 @@ import type { ParsedUpgradeState } from "../shared/upgrade-contract.mjs";
 export const MEMORY_UPGRADE_STATUS_FILE: string;
 export type MemoryUpgradeNote = {
   state: "upgrading" | "blocked";
-  code?: "MEMORY_MIGRATION_DISK_SPACE" | "MEMORY_SCHEMA_NEWER" | "MEMORY_MIGRATION_FAILED";
+  code?: "MEMORY_MIGRATION_DISK_SPACE" | "MEMORY_SCHEMA_NEWER" | "MEMORY_SCHEMA_UNSUPPORTED" | "MEMORY_MIGRATION_FAILED";
   phase?: "checking" | "copying" | "migrating" | "indexing" | "converting" | "reclaiming";
   done?: number; total?: number;
   startedAt?: number; updatedAt?: number; copyBytes?: number; needBytes?: number; freeBytes?: number; shortBytes?: number; newerVersion?: number;
@@ -16,6 +16,7 @@ export type MemoryUpgradeNote = {
 export function cleanUpgrade(raw: unknown): ParsedUpgradeState;
 export function statusFromHealth(body: unknown, now?: number): MemoryUpgradeNote | null;
 export function clearMemoryUpgradeStatus(dataDir: string): void;
+export function isOneTimeIndexNote(status: MemoryUpgradeNote | null | undefined): boolean;
 export function readMemoryUpgradeStatus(dataDir: string, options?: { pid?: number }): MemoryUpgradeNote | null;
 export function memoryUpgradeProgress(status: MemoryUpgradeNote | null, dataDir: string, size?: (file: string) => number): number | null;
 export function describeBytes(bytes: number): string;

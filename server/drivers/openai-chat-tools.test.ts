@@ -17,6 +17,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { createGracefulShutdown, SERVER_SHUTDOWN_TIMEOUT_MS } from "../graceful-shutdown.ts";
+import { resetServerQuitForTest } from "../quit-latch.ts";
 import { loggedRuntimeEvent } from "../runtime-event-out.ts";
 import { EventBus } from "../harness/bus.ts";
 import { recordEvents } from "../testing/events.ts";
@@ -30,7 +31,7 @@ import { engineSeenInFull } from "../email/external-marks.ts";
 import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 import {
-  MAX_CHAT_ROUNDS, MAX_TURN_TOOL_CALLS, NUDGE_ANNOUNCED_ACTION, PERMISSION_DENIED, TEXT_ONLY_NOTICE, CLOUD_HOME_TOOLS_NOTICE, TOOL_CALLS_TO_HELPER,
+  NUDGE_ANNOUNCED_ACTION, PERMISSION_DENIED, TEXT_ONLY_NOTICE, CLOUD_HOME_TOOLS_NOTICE, TOOL_CALLS_TO_HELPER,
   TOOL_INTERRUPTED,
 } from "./openai-chat-tools.ts";
 
@@ -263,16 +264,16 @@ const answer = (instance: ProviderInstance, decide: (event: Loose) => Decision |
   });
 const allowAll = (instance: ProviderInstance) => answer(instance, () => ({ behavior: "allow" }));
 
-const start = async (instance: ProviderInstance, input: SendTurnInput) => {
+const start = async (instance: ProviderInstance, input: SendTurnInput, ownerTurn = false) => {
   const recorder = recordEvents(instance.adapter);
   // control: server-owned tool acceptance uses a real isolated bound ingress.
-  const { turnId } = await instance.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(), ...input }));
+  const { turnId } = await instance.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(), ...input }, undefined, { ownerTurn }));
   const events = recorder.events as unknown as Loose[];
   const done = () => recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId).then((event) => event as unknown as Loose);
   return { turnId, events, done, recorder };
 };
-const run = async (instance: ProviderInstance, input: SendTurnInput) => {
-  const turn = await start(instance, input);
+const run = async (instance: ProviderInstance, input: SendTurnInput, ownerTurn = false) => {
+  const turn = await start(instance, input, ownerTurn);
   const completed = await turn.done();
   turn.recorder.stop();
   return { ...turn, completed };
@@ -325,6 +326,25 @@ afterAll(() => {
 
 describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
   const spec = DRIVERS[name];
+
+  it.each([true, false])("replays Gemini call metadata through the next request, streaming=%s", async streaming => {
+    const instance = await make(name);
+    allowAll(instance);
+    const log = newLog();
+    const extra_content = { google: { thought_signature: "fixture-signature" } };
+    const call = { id: "signature_call", type: "function", function: { name: "fake_noop", arguments: "{}" }, extra_content };
+    script = [
+      () => streaming ? sse([
+        frame({ choices: [{ delta: { tool_calls: [{ index: 0, ...call }] } }] }),
+        frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }), DONE,
+      ]) : Response.json({ choices: [{ message: { content: null, tool_calls: [call] }, finish_reason: "tool_calls" }] }),
+      () => textReply("done"),
+    ];
+    const { completed } = await run(instance, { threadId: threadId(), text: "run once", integrations: { custom: { fake: mount(log) } } });
+    expect(completed.ok).toBe(true);
+    expect(ran(log)).toEqual([{ name: "noop", arguments: {} }]);
+    expect(bodies[1]!.messages.find((message: any) => message.role === "assistant").tool_calls[0].extra_content).toEqual(extra_content);
+  });
 
   it("1. advertises the mounted tools with safe schemas, runs an allowed call and returns its result to the model", async () => {
     const instance = await make(name);
@@ -442,6 +462,133 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(ran(log)).toEqual([{ name: "ask_user", arguments: { question: "Ship it?" } }]);
   });
 
+  // The owner's own turn (the production owner path; a non-owner turn's upstream marks are release-budget.ts, GROUP D).
+  it("3c. cause22 (MAIN-RULING cause22-no-transport-caps): a 20 MiB tool-call reply is read whole, its call is asked with its whole input, and the turn completes", async () => {
+    const instance = await make(name);
+    const big = "x".repeat(20 * 1024 * 1024);
+    const asked: number[] = [];
+    answer(instance, (opened) => { asked.push(String(opened.toolCall.input.text ?? "").length); return { behavior: "deny" }; });
+    script = [
+      () => callsReply([{ id: "c_big", name: "fake_echo", args: { text: big } }]),
+      () => textReply("done after the large call"),
+    ];
+    const { completed, events } = await run(instance, { threadId: threadId(), text: "go", integrations: { custom: { fake: mount(newLog()) } } }, true);
+    expect(completed.ok, `a tool-call reply over the old 1 MiB line / 32 MiB reply caps ends nothing: ${JSON.stringify(completed)} ${JSON.stringify(events.filter((e) => e.type === "runtime.error"))}`).toBe(true);
+    expect(asked, "the one call reached its ask with its whole input").toEqual([big.length]);
+    expect(JSON.parse(toolMessages(bodies[1]!)[0]!.content)).toEqual({ ok: false, result: PERMISSION_DENIED });
+    expect(answers(events)).toEqual(["done after the large call"]);
+  }, 120_000);
+
+  it("3e. cause22 (MAIN-RULING cause22-no-transport-caps, board 3104): a streamed tool-call reply of 36 MiB in lines under the old 1 MiB line cap (over the old 32 MiB reply cap) is read whole, its call is asked with its whole input, and the turn completes", async () => {
+    const instance = await make(name);
+    const piece = "y".repeat(512 * 1024);
+    const pieces = 72; // 36 MiB of argument text, each SSE line about 0.5 MiB
+    const asked: number[] = [];
+    answer(instance, (opened) => { asked.push(String(opened.toolCall.input.text ?? "").length); return { behavior: "deny" }; });
+    const delta = (fn: Record<string, string>, extra: Record<string, string> = {}) => frame({ choices: [{ delta: { tool_calls: [{ index: 0, ...extra, function: fn }] } }] });
+    script = [
+      () => sse([
+        delta({ name: "fake_echo", arguments: '{"text":"' }, { id: "c_stream", type: "function" }),
+        ...Array.from({ length: pieces }, () => delta({ arguments: piece })),
+        delta({ arguments: '"}' }),
+        frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+        DONE,
+      ]),
+      () => textReply("done after the streamed call"),
+    ];
+    const { completed, events } = await run(instance, { threadId: threadId(), text: "go", integrations: { custom: { fake: mount(newLog()) } } }, true);
+    expect(completed.ok, `a streamed tool-call reply over the old 32 MiB reply cap ends nothing: ${JSON.stringify(completed)} ${JSON.stringify(events.filter((e) => e.type === "runtime.error"))}`).toBe(true);
+    expect(asked, "the one call reached its ask with its whole input").toEqual([piece.length * pieces]);
+    expect(answers(events)).toEqual(["done after the streamed call"]);
+  }, 120_000);
+
+  it("3f. cause22 (MAIN-RULING cause22-no-transport-caps, board 3104): a streamed tool-call reply of 36 MiB whose call arguments stay small (provider fields fill the frames, over the old 32 MiB reply cap only) completes", async () => {
+    const instance = await make(name);
+    const pad = "p".repeat(512 * 1024);
+    const asked: string[] = [];
+    answer(instance, (opened) => { asked.push(String(opened.toolCall.input.text ?? "")); return { behavior: "deny" }; });
+    const delta = (fn: Record<string, string>, extra: Record<string, string> = {}) => frame({ choices: [{ delta: { tool_calls: [{ index: 0, ...extra, function: fn }] } }] });
+    script = [
+      () => sse([
+        delta({ name: "fake_echo", arguments: '{"text":"' }, { id: "c_padded", type: "function" }),
+        // 72 frames of 0.5 MiB each in a provider field the driver ignores: 36 MiB of reply, under 1 MiB per line, arguments untouched
+        ...Array.from({ length: 72 }, () => frame({ choices: [{ index: 0, delta: {} }], provider_padding: pad })),
+        delta({ arguments: 'small"}' }),
+        frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+        DONE,
+      ]),
+      () => textReply("done after the padded call"),
+    ];
+    const { completed, events } = await run(instance, { threadId: threadId(), text: "go", integrations: { custom: { fake: mount(newLog()) } } }, true);
+    expect(completed.ok, `a streamed reply over the old 32 MiB reply cap ends nothing: ${JSON.stringify(completed)} ${JSON.stringify(events.filter((e) => e.type === "runtime.error"))}`).toBe(true);
+    expect(asked, "the one call reached its ask with its input").toEqual(["small"]);
+    expect(answers(events)).toEqual(["done after the padded call"]);
+  }, 120_000);
+
+  // ASTRA f5591adf0d (openai-chat-protocol.ts:30): the reasoning blocks were pushed by one spread, which throws a RangeError past the engine's argument limit
+  it("3g. cause22 (MAIN-RULING cause22-no-transport-caps): a reply with 300,000 reasoning-detail blocks is read whole, replayed whole, and the turn completes", async () => {
+    const instance = await make(name);
+    answer(instance, () => ({ behavior: "deny" }));
+    const blocks = Array.from({ length: 300_000 }, (_, index) => ({ type: "reasoning.text", text: "r", index }));
+    script = [
+      () => sse([frame({ choices: [{ delta: { reasoning_details: blocks } }] }), frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "c_1", type: "function", function: { name: "fake_echo", arguments: "{}" } }] } }] }),
+        frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }), DONE]),
+      () => textReply("done after the long reasoning"),
+    ];
+    const { completed, events } = await run(instance, { threadId: threadId(), text: "go", integrations: { custom: { fake: mount(newLog()) } } }, true);
+    expect([completed.ok, events.filter((e) => e.type === "runtime.error").map((e) => String((e as { message?: unknown }).message).slice(0, 200))], "300,000 reasoning blocks end nothing").toEqual([true, []]);
+    const replay = (bodies[1]!.messages as Array<Record<string, any>>).find((message) => message.role === "assistant" && Array.isArray(message.reasoning_details));
+    expect(replay?.reasoning_details?.length, "every block is replayed to the model").toBe(300_000);
+    expect(answers(events)).toEqual(["done after the long reasoning"]);
+  }, 120_000);
+
+  // MAIN-RULING groupB-left (3) (openai-chat-protocol.ts slotOf): an id-only (Gemini-style) call was placed after Math.max(...slots), one argument per
+  // slot, so a reply already holding 300,000 indexed calls threw a RangeError and the reply could not be read. 299,999 indexed calls plus one id-only call
+  // drive the slot map past the argument limit by count with one placement (no per-call scan on the old code). Restated per MAIN-RULING 2026-11-23T02:48:33Z
+  // (row 3h, B x E): the per-turn call count this row used to stop on is deleted (MAIN-RULING cause22-E-remainder), so the turn ends on the owner's Stop
+  // at the first ask. ASTRA 16ca3b58f1 (the id-only call dropped still passed): the 299,999 indexed calls name a tool this turn does not offer, so each
+  // is refused without a card (s6.1) and the ONE ask of the reply is the id-only call's, after every indexed call ran. A throw while placing it (the
+  // spread RangeError), no slot, a slot that lands on an indexed call (id change) or a dropped id-only call reaches no ask with "id only".
+  it("3h. cause22: an id-only call after 299,999 indexed calls is placed (no argument-spread failure while placing it) and reaches its ask; the owner's Stop ends the turn there", async () => {
+    const instance = await make(name);
+    const asked: string[] = [];
+    answer(instance, (opened) => { asked.push(String(opened.toolCall.input.text ?? "")); return undefined; });
+    const call = (id: string, tool: string, text: string) => ({ id, type: "function", function: { name: tool, arguments: JSON.stringify({ text }) } });
+    const indexed = Array.from({ length: 299_999 }, (_, index) => ({ index, ...call(`c_${index}`, "not_offered", `call ${index}`) }));
+    script = [() => sse([frame({ choices: [{ delta: { tool_calls: indexed } }] }), frame({ choices: [{ delta: { tool_calls: [call("c_idonly", "fake_echo", "id only")] } }] }),
+      frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }), DONE])];
+    const thread = threadId();
+    const turn = await start(instance, { threadId: thread, text: "go", integrations: { custom: { fake: mount(newLog()) } } }, true);
+    // the first ask, or the first runtime error / end of the turn (a dropped id-only call asks the model again: the rig refuses that extra request)
+    const first = await turn.recorder.until((event) => event.type === "request.opened" || event.type === "runtime.error" || (event.type === "turn.completed" && event.turnId === turn.turnId)) as unknown as Loose;
+    const runtimeErrors = () => errors(turn.events).map((message) => message.slice(0, 200));
+    expect([first.type, first.toolCall?.input, runtimeErrors()], `the reply is read whole (300,000 calls placed) and the id-only call, after the 299,999 indexed ones, reaches its ask: ${JSON.stringify(first).slice(0, 300)}`).toEqual(["request.opened", { text: "id only" }, []]);
+    expect(await instance.adapter.interruptTurn(thread, turn.turnId)).toEqual({ closeConfirmed: true });
+    const completed = await turn.done();
+    turn.recorder.stop();
+    expect(completed, "the owner's Stop ends the turn").toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(runtimeErrors(), "no runtime error through the Stop").toEqual([]);
+    expect(ofType(turn.events, "request.opened"), "the id-only call's is the reply's one ask").toHaveLength(1);
+    expect(asked).toEqual(["id only"]);
+    expect(bodies, "the Stop writes no new request").toHaveLength(1);
+  }, 600_000); // 299,999 refused calls each append their result through the release path: about 2 min per engine
+
+  it("3d. cause22 (MAIN-RULING cause22-no-transport-caps): a reply with 40 tool calls (over the old 32-call bound) has every call asked and the turn completes", async () => {
+    const instance = await make(name);
+    const asked: string[] = [];
+    answer(instance, (opened) => { asked.push(String(opened.toolCall.input.text ?? "")); return { behavior: "deny" }; });
+    const calls = Array.from({ length: 40 }, (_, index) => ({ id: `c_${index}`, name: "fake_echo", args: { text: `call ${index}` } }));
+    script = [
+      () => callsReply(calls),
+      () => textReply("done after forty calls"),
+    ];
+    const { completed, events } = await run(instance, { threadId: threadId(), text: "go", integrations: { custom: { fake: mount(newLog()) } } }, true);
+    expect(completed.ok, `a reply over the old 32-call bound ends nothing: ${JSON.stringify(completed)} ${JSON.stringify(events.filter((e) => e.type === "runtime.error"))}`).toBe(true);
+    expect(asked, "every call reached its ask, in order").toEqual(calls.map((call) => call.args.text));
+    expect(toolMessages(bodies[1]!).map((message) => message.tool_call_id)).toEqual(calls.map((call) => call.id));
+    expect(answers(events)).toEqual(["done after forty calls"]);
+  }, 120_000);
+
   it("3. deny: the tool is not executed and {ok:false} goes to the model; updatedInput runs the narrowed args", async () => {
     const instance = await make(name);
     const log = newLog();
@@ -522,10 +669,11 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(turn.completed.ok).toBe(false);
     expect(ran(log)).toHaveLength(1);
     expect(errors(turn.events).join(" ")).toContain("repeated a tool call");
-    // finish "length" with calls, an index out of range, a name over 64 chars: the reply is refused whole, no card
+    // finish "length" with calls, an invalid (negative) index, a name over 64 chars: the reply is refused whole, no card
+    // (MAIN-RULING cause22-no-transport-caps deleted the 32-call index bound, so index 40 is now a valid slot)
     for (const reply of [
       () => callsReply([{ id: "len_1", name: "fake_noop" }], "length"),
-      () => sse([frame({ choices: [{ delta: { tool_calls: [{ index: 40, id: "idx", type: "function", function: { name: "fake_noop", arguments: "{}" } }] } }] }), frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }), DONE]),
+      () => sse([frame({ choices: [{ delta: { tool_calls: [{ index: -1, id: "idx", type: "function", function: { name: "fake_noop", arguments: "{}" } }] } }] }), frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }), DONE]),
       () => callsReply([{ id: "long_1", name: "a".repeat(65) }]),
     ]) {
       log = newLog();
@@ -543,6 +691,40 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(ofType(turn.events, "request.opened")).toHaveLength(0);
     expect(ran(log)).toHaveLength(0);
     for (const message of toolMessages(bodies.at(-1)!)) expect(JSON.parse(message.content).ok).toBe(false);
+  });
+
+  it("replays rejected arguments through a retry without leaking escaped values or executing the calls", async () => {
+    const instance = await make(name);
+    allowAll(instance);
+    const log = newLog();
+    const thread = threadId();
+    const unicode = String.raw`"\u006frchid-value"`;
+    const escaped = JSON.stringify(PASSWORD);
+    const args = [`[${unicode}]`, unicode, `[${escaped}]`, `{"note":${unicode}`];
+    script = [
+      () => callsReply(args.map((value, index) => ({ id: `bad_${index}`, name: "fake_echo", args: value }))),
+      () => httpError(400, { error: { code: "tool_use_failed", failed_generation: args[0] } }),
+      () => textReply("done"),
+    ];
+    const turn = await run(instance, {
+      threadId: thread, text: "run tools",
+      integrations: { custom: { fake: mount(log, { FAKE_TOKEN: "orchid-value", FAKE_PASSWORD: PASSWORD }) } },
+    });
+    expect(turn.completed.ok).toBe(true);
+    expect(ofType(turn.events, "request.opened")).toHaveLength(0);
+    expect(ran(log)).toEqual([]);
+    expect(ofType(turn.events, "turn.retrying")).toEqual([expect.objectContaining({ reason: "tool_use_failed", attempt: 1 })]);
+    expect(bodies).toHaveLength(3);
+    for (const body of bodies.slice(1)) {
+      const results = toolMessages(body).map(message => JSON.parse(message.content));
+      expect(results).toEqual(args.map(() => ({
+        ok: false, result: "The tool arguments were not a JSON object, so nothing ran. Send the arguments as one JSON object.",
+      })));
+      const replay = body.messages.find((message: any) => message.role === "assistant" && message.tool_calls);
+      expect(replay.tool_calls.map((call: any) => call.function.arguments)).toEqual(args.map(() => "{}"));
+      expect(JSON.stringify(body)).not.toMatch(/rchid-value|Zk8-Mv3#Lr9/);
+    }
+    expect(nativeText(thread)).not.toMatch(/rchid-value|Zk8-Mv3#Lr9/);
   });
 
   it("7. text-only fallback: a refused tools parameter resends once without tools, says so once, and later turns mount nothing", async () => {
@@ -603,39 +785,42 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     for (const body of bodies) expect(toolNames(body)).toContain("fake_echo");
   });
 
-  it("8. the 64-step cap: every step ran, the turn fails plainly, and the last step refuses a steer", async () => {
+  it("8. finishes after more than 64 tool rounds and delivers both steers once", async () => {
     const instance = await make(name);
     allowAll(instance);
     const log = newLog();
     const thread = threadId();
     const steers: Record<number, Promise<unknown>> = {};
     fallback = ({ index }) => {
-      if (index === 10 || index === MAX_CHAT_ROUNDS - 1) steers[index] = instance.adapter.steer!(thread, `steer at ${index}`);
-      return callsReply([{ id: `c${index}`, name: "fake_noop" }]);
+      if (index === 10 || index === 63) steers[index] = instance.adapter.steer!(thread, `steer at ${index}`);
+      return index < 70 ? callsReply([{ id: `c${index}`, name: "fake_noop" }]) : textReply("finished");
     };
     const { completed, events } = await run(instance, { threadId: thread, text: "loop", integrations: { custom: { fake: mount(log) } } });
-    expect(completed).toMatchObject({ ok: false, stopReason: "error" });
-    expect(bodies).toHaveLength(MAX_CHAT_ROUNDS);
-    expect(ran(log)).toHaveLength(MAX_CHAT_ROUNDS);
-    expect(errors(events).at(-1)).toContain(`Stopped after ${MAX_CHAT_ROUNDS} steps`);
-    expect(await steers[10]).toBe("delivered");
-    expect(await steers[MAX_CHAT_ROUNDS - 1]).toBe("rejected");
-    const carrying = bodies.flatMap((body, index) => (body.messages as Array<Record<string, any>>).some((message) => message.content === "steer at 10") ? [index] : []);
-    expect(carrying[0]).toBe(11);
-    expect(bodies.some((body) => (body.messages as Array<Record<string, any>>).some((message) => message.content === `steer at ${MAX_CHAT_ROUNDS - 1}`))).toBe(false);
+    expect(completed).toMatchObject({ ok: true });
+    expect(bodies).toHaveLength(71);
+    expect(ran(log)).toHaveLength(70);
+    expect(errors(events)).toEqual([]);
+    expect(answers(events)).toEqual(["finished"]);
+    for (const at of [10, 63]) {
+      expect(await steers[at]).toBe("delivered");
+      const before = bodies[at]!.messages as Array<Record<string, unknown>>;
+      const after = bodies[at + 1]!.messages as Array<Record<string, unknown>>;
+      expect(before.filter(message => message.content === `steer at ${at}`)).toHaveLength(0);
+      expect(after.filter(message => message.content === `steer at ${at}`)).toHaveLength(1);
+    }
   });
 
-  it("8b. the 200-call cap: the batch that crosses it never runs", async () => {
+  it("8b. no per-turn tool-call count: 201 calls over seven batches all run and the turn answers (MAIN-RULING cause22-E-remainder 2026-11-22: MAX_TURN_TOOL_CALLS is a count seal, deleted; this row asserted the old stop at 200)", async () => {
     const instance = await make(name);
     allowAll(instance);
     const log = newLog();
-    fallback = ({ index }) => callsReply(Array.from({ length: index < 6 ? 32 : 9 }, (_, k) => ({ id: `r${index}_${k}`, name: "fake_noop" })));
+    fallback = ({ index }) => index < 7 ? callsReply(Array.from({ length: index < 6 ? 32 : 9 }, (_, k) => ({ id: `r${index}_${k}`, name: "fake_noop" }))) : textReply("all ran");
     const { completed, events } = await run(instance, { threadId: threadId(), text: "many", integrations: { custom: { fake: mount(log) } } });
-    expect(completed.ok).toBe(false);
-    expect(bodies).toHaveLength(7);
-    expect(ran(log)).toHaveLength(192);
-    expect(ofType(events, "request.opened")).toHaveLength(192);
-    expect(errors(events).at(-1)).toContain(`Stopped after ${MAX_TURN_TOOL_CALLS} tool calls`);
+    expect(completed.ok).toBe(true);
+    expect(bodies).toHaveLength(8);
+    expect(ran(log)).toHaveLength(201);
+    expect(ofType(events, "request.opened")).toHaveLength(201);
+    expect(errors(events)).toHaveLength(0);
   });
 
   it("9. steer: spliced between rounds only (never mid-batch), resolves on its splice; a fence throw is rejected", async () => {
@@ -1014,7 +1199,13 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(text).not.toContain(PASSWORD_CORE);
     expect(replay.content).toBe("using [redacted]");
     expect(JSON.parse(replay.tool_calls[0].function.arguments)).toEqual({ note: "[redacted]", pw: "[redacted]" });
-    expect(replay.tool_calls[1].function.arguments).toBe('{"note":"[redacted]"');
+    expect(replay.tool_calls[1].function.arguments).toBe("{}");
+    const refused = toolMessages(bodies[1]!).find(message => message.tool_call_id === "rp_2")!;
+    const failure = JSON.parse(refused.content);
+    expect(failure).toMatchObject({ ok: false, result: expect.stringContaining("Send the arguments as one JSON object.") });
+    expect(failure.result).not.toContain("note");
+    expect(failure.result).not.toContain(PASSWORD_CORE);
+    expect(ran(log)).toHaveLength(1);
     if (spec.reasoning) expect(replay.reasoning_content).toBe("plan with [redacted]");
   });
 
@@ -1137,6 +1328,28 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(ran(log)).toHaveLength(1);
   });
 
+  it("keeps echoed arguments out of terminal details when tool-call retries are exhausted", async () => {
+    const instance = await make(name);
+    const log = newLog();
+    const thread = threadId();
+    const generation = String.raw`["\u006frchid-value",${JSON.stringify(PASSWORD)}]`;
+    fallback = () => httpError(400, { error: { code: "tool_use_failed", message: `Invalid call ${generation}`, failed_generation: generation } });
+    const turn = await run(instance, {
+      threadId: thread, text: "run tools",
+      integrations: { custom: { fake: mount(log, { FAKE_TOKEN: "orchid-value", FAKE_PASSWORD: PASSWORD }) } },
+    });
+    expect(turn.completed.ok).toBe(false);
+    expect(bodies).toHaveLength(3);
+    expect(ofType(turn.events, "turn.retrying").map(event => event.reason)).toEqual(["tool_use_failed", "tool_use_failed"]);
+    const failures = ofType(turn.events, "runtime.error");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.details).toContain("tool_use_failed");
+    expect(JSON.stringify(failures)).not.toMatch(/rchid-value|Zk8-Mv3#Lr9/);
+    expect(JSON.stringify(bodies)).not.toMatch(/rchid-value|Zk8-Mv3#Lr9/);
+    expect(nativeText(thread)).not.toMatch(/rchid-value|Zk8-Mv3#Lr9/);
+    expect(ran(log)).toEqual([]);
+  });
+
   it("15. caps: 129 tools, an oversized schema or an oversized catalog drop that server whole, with a notice", async () => {
     const instance = await make(name);
     allowAll(instance);
@@ -1225,19 +1438,23 @@ describe("openai-compat on a local endpoint: announcement nudges (s5.4)", () => 
     expect((bodies[2]!.messages as Array<Record<string, any>>).at(-1)).toEqual({ role: "user", content: NUDGE_ANNOUNCED_ACTION });
   });
 
-  it("never nudges on the last allowed step", async () => {
+  it("nudges an announced action even after a long sequence of tool rounds", async () => {
     const instance = await make("openai-compat", LOCAL);
     allowAll(instance);
     const log = newLog();
-    fallback = ({ index }) => index < MAX_CHAT_ROUNDS - 1 ? callsReply([{ id: `l${index}`, name: "fake_noop" }]) : textReply("Let me check the logs:");
+    fallback = ({ index }) => index < 63 ? callsReply([{ id: `l${index}`, name: "fake_noop" }])
+      : textReply(index === 63 ? "Let me check the logs:" : "The logs are ready.");
     const { completed, events } = await run(instance, { threadId: threadId(), text: "go", integrations: { custom: { fake: mount(log) } } });
     expect(completed.ok).toBe(true);
-    expect(bodies).toHaveLength(MAX_CHAT_ROUNDS);
-    expect(answers(events).at(-1)).toBe("Let me check the logs:");
+    expect(bodies).toHaveLength(65);
+    expect((bodies[64]!.messages as Array<Record<string, unknown>>).at(-1)).toEqual({ role: "user", content: NUDGE_ANNOUNCED_ACTION });
+    expect(answers(events).at(-1)).toBe("The logs are ready.");
   });
 });
 
 describe.skipIf(process.platform === "win32")("shutdown with a turn in flight (rev 5, H2)", () => {
+  // each shutdown here sets the process-wide Quit latch: the tests after this block are not a Quit
+  afterEach(() => { resetServerQuitForTest(); });
   it("dispose inside the graceful shutdown escalates the POSIX group SIGTERM to SIGKILL before the deadline", async () => {
     // the real close budget, not a fixture's shortened one
     setEnv("MURAGE_PROVIDER_CLOSE_MS", undefined);

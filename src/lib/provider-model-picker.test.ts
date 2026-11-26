@@ -67,6 +67,32 @@ it("offers the full authoritative Flux chat list on every already-supported conn
     expect(rows).toHaveLength(6);
   }
 });
+
+it("keeps Flux Auto first and recommended on Fuigo alongside the new named pins", () => {
+  const pins = [
+    { id: "flux-pinned-gemini-4-neon", label: "Gemini 4 Neon" },
+    { id: "flux-pinned-gpt-6-2-sol", label: "GPT-6.2 Sol" },
+    { id: "flux-pinned-gpt-6-2-astra", label: "GPT-6.2 Astra" },
+  ];
+  const instance: PickerEngine = {
+    ...engine([]),
+    instanceId: "fuigo",
+    driverKind: "fuigoAgent",
+    displayName: "Fuigo",
+    models: {
+      default: "flux-auto",
+      options: [...pins.map(({ id }) => ({ id, label: id })), { id: "flux-auto", label: "Flux Auto" }],
+    },
+  };
+  const rows = orderedPickerModels(pickerModels(instance, []), "", [], []);
+  expect(rows.map(({ selection, label }) => ({ id: selection.model, label }))).toEqual([
+    { id: "flux-auto", label: "Flux Auto" },
+    ...pins,
+  ]);
+  expect(rows.filter(row => row.recommended).map(row => row.selection.model)).toEqual(["flux-auto"]);
+  expect(rows.slice(1).map(row => pickerZone(row, [], []))).toEqual(pins.map(() => "Flux pinned models"));
+});
+
 it("refreshes cold Flux cache on open without retrying failures or refreshing unrelated providers",()=>{
   const warm=fluxConnection(),cold={...warm,catalog:{...warm.catalog,fetchedAt:undefined,models:[]}};
   const failed={...cold,id:"failed",catalog:{...cold.catalog,error:{code:"offline" as const,message:"Unavailable"}}};

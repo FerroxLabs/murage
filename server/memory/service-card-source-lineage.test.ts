@@ -74,7 +74,7 @@ async function restartAndRecover(f: ReturnType<typeof fixture>): Promise<decisio
   f.producer.queue(reopened);
   releases.push(decision.installDecisionHost({ store: f.store, view: () => ({ title: 'Fixture action', subtitle: 'Fixture' }) }));
   expect(decision.openApprovals(), 'nothing was presented before the restart').toEqual([]);
-  await decision.recover();
+  await expect(decision.recover(), 'recovery re-ids the queued row and its approval index follows it').resolves.toBeUndefined();
   const recovered = reopened.pendingApprovals();
   expect(recovered).toHaveLength(1);
   expect(decision.readApproval(recovered[0]!.approvalId)?.state, 'recovery presented the queued card').toBe('open');

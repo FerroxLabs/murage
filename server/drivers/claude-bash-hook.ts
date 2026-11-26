@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import { connect } from 'node:net';
 import { captureWipeInput } from '../decision/wipe-input.ts';
 import { randomUUID } from 'node:crypto';
@@ -61,7 +62,7 @@ export function relayClaudeBash(socketPath: string, input: Record<string, unknow
       clearTimeout(connectTimer);
       if (!done) {
         responseTimer = setTimeout(recover, 10_000);
-        socket.write(JSON.stringify({ t: 'ask', id, tool: 'Bash', input }) + '\n');
+        NotModelRequest("Local Claude hook broker receives a proposed Bash tool for approval.", socket.write(JSON.stringify({ t: 'ask', id, tool: 'Bash', input }) + '\n'));
       }
     });
     socket.on('data', chunk => {

@@ -1,6 +1,6 @@
 # Synthetic oracle correction against MAIN r13b
 
-Authority: `/work/build/nolimint-redesign/RULING-toolid-r13b-MAIN.md`
+Authority: `/root/fuigo-builds/swarm-b/nolimint-redesign/RULING-toolid-r13b-MAIN.md`
 (2026-11-11). B6 is resolved: own hook/relay files are check+restore without a
 card. The old `expectations-v1.json` was explicitly awaiting dual review; its
 all-allow baseline cells were not measured baseline characterizations. They

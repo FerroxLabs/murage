@@ -295,8 +295,11 @@ export const FOLDER_TRUST_STORED_NO_NAME = "folder stored no:";
 /** The stored no sentence, byte for byte (MurageMain 11-01). */
 export const FOLDER_TRUST_STORED_NO_LINE = "This folder's instructions were left out because you said no to trusting it.";
 
+export const FOLDER_TRUST_PROCESS_NAME = "folder process choice sent:";
+export const folderTrustProcessName = () => FOLDER_TRUST_PROCESS_NAME;
+
 export interface FolderTrustNotice {
-  kind: "withheld" | "late" | "chosen" | "passed" | "storedNo";
+  kind: "withheld" | "late" | "chosen" | "passed" | "storedNo" | "process";
   sources: string;
   /** the stored key: a withheld notice's when a recorded "no" said it, a passed notice's always */
   key?: string;
@@ -305,6 +308,7 @@ export interface FolderTrustNotice {
 /** Any folder-trust notice, for the transcripts: what happened and to which
  * sources. Undefined for any other activity name. */
 export function folderTrustNotice(name: string | undefined | null): FolderTrustNotice | undefined {
+  if (name === FOLDER_TRUST_PROCESS_NAME) return { kind: "process", sources: "" };
   const withheld = folderTrustWithheld(name);
   if (withheld) {
     const key = folderTrustWithheldKey(name);
@@ -326,10 +330,31 @@ export function folderTrustNotice(name: string | undefined | null): FolderTrustN
 export function folderTrustDisplayName(name: string | undefined | null): string | undefined {
   const notice = folderTrustNotice(name);
   if (!notice) return undefined;
+  if (notice.kind === "process") return "Folder settings allowed for this turn. This does not save a trust decision.";
   if (notice.kind === "passed") return folderTrustPassedLine(notice.key!);
   if (notice.kind === "storedNo") return FOLDER_TRUST_STORED_NO_LINE;
   if (notice.kind === "chosen") return `You chose to trust this folder. Fuigo brings in ${notice.sources} when applying your choice. Instructions apply in a new conversation in this folder`;
   if (notice.kind === "late") return `Folder trusted: ${notice.sources} apply in a new conversation in this folder`;
   const left = `Folder not trusted: ${notice.sources} left out`;
   return notice.key ? `${left}. ${folderTrustForgetLine(notice.key)}` : left;
+}
+
+/** Execution routing producer: T3; consumers: ACP activity (-a), durable projection (-b), Settings. */
+export type FolderTrustDestination = "own-local-home" | "per-turn-local-home" | "cloud-home" | "refused";
+export type FolderTrustObservationKind = "process-choice-sent" | "saved-choice-sent" | "configuration-withheld" | "unknown";
+/** Fixed local codes only; never put paths or environment values in a reason. */
+export const FOLDER_TRUST_REASONS = ["none", "authority-unavailable", "store-unreadable", "seed-not-durable", "version-unsupported", "not-picked", "saved-decline", "coverage-incomplete", "ineligible-origin", "reply-failed", "unsafe-key", "unsupported-scope", "inactive-turn", "unknown"] as const;
+export type FolderTrustReason = (typeof FOLDER_TRUST_REASONS)[number];
+export interface FolderTrustObservation {
+  kind: FolderTrustObservationKind;
+  reason?: FolderTrustReason;
+  keyDigest?: string;
+  instanceId?: string;
+  generation?: 1 | 2;
+  destination?: FolderTrustDestination;
+  observedVersion?: string;
+  turnId?: string;
+  processId?: string;
+  requestId?: string;
+  revision: string;
 }

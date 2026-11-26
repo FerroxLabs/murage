@@ -47,7 +47,7 @@ beforeAll(async()=>{
       }
       if(!url.endsWith('/server/index.ts'))return loaded;
       let source=String(loaded.source);
-      const route='    const accessRoute =';
+      const route='    // GET/PUT /api/bots/:id/access lives in server/settings/access-routes.ts';
       if(!source.includes(route))throw Error('native shell fixture anchor missing');
       return {...loaded,source:source.replace(route,${JSON.stringify(bridge)}+route)};
     }});

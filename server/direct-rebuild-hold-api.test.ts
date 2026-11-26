@@ -16,7 +16,7 @@ import { launchVerificationServer, type VerificationServer } from "../scripts/co
 
 const LEGACY_JOBS = 122;
 const FIRST_LEGACY_ID = 710001;
-const INSTANCES = ["rbdel", "rbbot", "rbstop", "rbsend", "rbcrash", "rbrej", "rbrejq", "rbrejstop", "rbrun", "rbrejcb"] as const;
+const INSTANCES = ["rbdel", "rbbot", "rbstop", "rbsend", "rbcrash", "rbrej", "rbrejq", "rbrejstop", "rbrun", "rbrejcb", "rbcleanup", "rbpublish", "rbroutine"] as const;
 let fixture: VerificationServer, headers: Record<string, string>;
 const raw = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -124,11 +124,11 @@ const passUntilReply = async (hold: ReturnType<typeof holds>, botId: string, thr
   expect(await replies(threadId)).toBe(want);
 };
 /** An answered first turn, then the question the fence refuses at its send: resolved once the refused turn waits to be rebuilt. */
-const refuseAndWait = async (instance: string, hold: ReturnType<typeof holds>, botId: string, threadId: string) => {
+const refuseAndWait = async (instance: string, hold: ReturnType<typeof holds>, botId: string, threadId: string, sendId?: string) => {
   await api("POST", `/api/bots/${botId}/messages`, { threadId, text: "an earlier question" });
   await passUntilReply(hold, botId, threadId, 1);
   await expect.poll(async () => await taskBusy(botId, threadId), { timeout: 15000 }).toBe(false);
-  await api("POST", `/api/bots/${botId}/messages`, { threadId, text: "the question refused at its send" });
+  await api("POST", `/api/bots/${botId}/messages`, { threadId, text: "the question refused at its send", sendId });
   await hold.pass(botId, threadId, `Revoke before the ${instance} submission`);
   // the revoked send was refused before the engine took it; its rebuild is held at the test's rebuild gate, or else is the one send now
   // waiting at the engine's hold point. Either way it re-prepared once and cites nothing revoked.
@@ -270,15 +270,23 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a refused dire
     const hold = holds("rbstop");
     const bot = await newBot("Stop in the wait", "rbstop");
     const threadId = bot.threadId;
+    const sendId = "stop-held-rebuild";
+    const receipt = () => api("GET", `/api/bots/${bot.id}/turn-state?threadId=${threadId}&sendId=${sendId}`);
     // A spent write budget may end settlement immediately. Hold the intended
     // rebuild phase explicitly so Stop cannot race the next engine submission.
     const gate=join(fixture.info.dataDir,`rebuild-wait-${threadId}`);writeFileSync(gate,"");
     let sent=0;
     try {
-      sent = await refuseAndWait("rbstop", hold, bot.id, threadId);
+      sent = await refuseAndWait("rbstop", hold, bot.id, threadId, sendId);
       await expect.poll(()=>existsSync(gate+'.waiting'),{timeout:15000}).toBe(true);
       expect(await taskBusy(bot.id, threadId)).toBe(true);
+      expect(await receipt()).toMatchObject({ delivery: "not_submitted" });
       await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+      expect(await receipt()).toMatchObject({ terminalOutcome: "stopped", delivery: "not_submitted" });
+      const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+      try {
+        expect(db.prepare("SELECT cleanup_owed FROM send_attempts WHERE thread_id=? AND send_id=?").get(threadId, sendId)).toEqual({ cleanup_owed: 0 });
+      } finally { db.close(); }
       await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 15000 }).toBe(false);
     } finally { writeFileSync(gate+'.released',""); }
     // past the fixture recovery pause: the rebuild never reached the engine
@@ -288,10 +296,119 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a refused dire
     const all = await messages(threadId);
     expect(all.filter(isReply)).toHaveLength(1);
     expect(errorLines(all)).toEqual([]);
+    expect(all.filter(message => message.tool?.name === "Stopped by you")).toHaveLength(1);
     // the thread is free: the next send runs
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "after the stop" })).queued).not.toBe(true);
     await passUntilReply(hold, bot.id, threadId, 2);
   }, 180000);
+
+  it("retries failed rebuild cleanup and drains a send queued after Stop", async () => {
+    const hold = holds("rbcleanup");
+    const bot = await newBot("Cleanup retry", "rbcleanup"), threadId = bot.threadId;
+    const sendId = "stop-cleanup-retry";
+    const gate = join(fixture.info.dataDir, `rebuild-wait-${threadId}`);
+    writeFileSync(gate, "");
+    using db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"));
+    db.exec("PRAGMA busy_timeout=10000");
+    try {
+      await refuseAndWait("rbcleanup", hold, bot.id, threadId, sendId);
+      db.exec(`CREATE TRIGGER fail_rebuild_release BEFORE UPDATE OF status ON turn_cleanup_owed
+        WHEN OLD.thread_id='${threadId}' AND OLD.kind='release' AND NEW.status='done'
+        BEGIN SELECT RAISE(ABORT, 'fixture considers cleanup busy'); END`);
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+      expect(db.prepare("SELECT terminal_outcome, cleanup_owed FROM send_attempts WHERE thread_id=? AND send_id=?").get(threadId, sendId))
+        .toEqual({ terminal_outcome: "stopped", cleanup_owed: 1 });
+      expect(await api("POST", `/api/bots/${bot.id}/messages`, {
+        threadId, text: "queued during cleanup", sendId: "send-after-cleanup", noSteer: true,
+      })).toMatchObject({ queued: true, queueId: expect.any(String) });
+      expect(hold.idle()).toBe(true);
+      db.exec("DROP TRIGGER fail_rebuild_release");
+      await expect.poll(() => db.prepare("SELECT cleanup_owed FROM send_attempts WHERE thread_id=? AND send_id=?").get(threadId, sendId), { timeout: 8_000 })
+        .toEqual({ cleanup_owed: 0 });
+      await passUntilReply(hold, bot.id, threadId, 2);
+      expect((await messages(threadId)).filter(line => line.role === "user" && line.text === "queued during cleanup")).toHaveLength(1);
+    } finally {
+      db.exec("DROP TRIGGER IF EXISTS fail_rebuild_release");
+      writeFileSync(gate + ".released", "");
+    }
+  }, 180_000);
+
+  it("writes exactly one Stop line for a cancelled routine's held rebuild", async () => {
+    const hold = holds("rbroutine");
+    const bot = await newBot("Routine rebuild Stop", "rbroutine");
+    const { routine } = await api("POST", "/api/routines", {
+      botId: bot.id, name: "Routine rebuild", prompt: "Run the routine", schedule: { type: "once", at: Date.now() + 3_600_000 },
+    });
+    const { run } = await api("POST", `/api/routines/${routine.id}/run`);
+    const runThread = async () => (await api("GET", "/api/routines")).runs.find((candidate: any) => candidate.id === run.id)?.threadId;
+    await expect.poll(runThread, { timeout: 30_000 }).toEqual(expect.any(String));
+    const threadId = await runThread();
+    const gate = join(fixture.info.dataDir, `rebuild-wait-${threadId}`);
+    writeFileSync(gate, "");
+    try {
+      await hold.pass(bot.id, threadId, "Revoke before routine submission");
+      await expect.poll(() => existsSync(gate + ".waiting"), { timeout: 30_000 }).toBe(true);
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+      expect((await api("GET", "/api/routines")).runs.find((candidate: any) => candidate.id === run.id)?.status).toBe("cancelled");
+      expect((await messages(threadId)).filter(line => line.tool?.name === "Stopped by you")).toHaveLength(1);
+      expect(errorLines(await messages(threadId))).toEqual([]);
+    } finally {
+      writeFileSync(gate + ".released", "");
+    }
+  }, 180_000);
+
+  it("recovers a confirmed rebuild Stop line after its first append fails and the server stops", async () => {
+    const hold = holds("rbpublish");
+    const bot = await newBot("Stop publication retry", "rbpublish"), threadId = bot.threadId;
+    const sendId = "publication-retry";
+    const gate = join(fixture.info.dataDir, `rebuild-wait-${threadId}`);
+    writeFileSync(gate, "");
+    const file = join(fixture.info.dataDir, "messages.db");
+    const crash = async () => {
+      const exited = new Promise<void>(resolve => fixture.child.once("close", () => resolve()));
+      expect(fixture.child.kill("SIGKILL")).toBe(true);
+      await exited;
+    };
+    try {
+      await refuseAndWait("rbpublish", hold, bot.id, threadId, sendId);
+      {
+        using db = new DatabaseSync(file);
+        db.exec(`PRAGMA busy_timeout=10000;
+          CREATE TRIGGER fail_rebuild_stop_line BEFORE INSERT ON messages
+          WHEN NEW.thread_id='${threadId}' AND json_extract(NEW.json,'$.tool.name')='Stopped by you'
+          BEGIN SELECT RAISE(ABORT, 'fixture considers Stop append busy'); END`);
+      }
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+      expect(await api("GET", `/api/bots/${bot.id}/turn-state?threadId=${threadId}&sendId=${sendId}`)).toMatchObject({ terminalOutcome: "stopped" });
+      expect((await messages(threadId)).filter(line => line.tool?.name === "Stopped by you")).toEqual([]);
+      await crash();
+      {
+        using db = new DatabaseSync(file);
+        db.exec(`DROP TRIGGER fail_rebuild_stop_line;
+          CREATE TRIGGER fail_rebuild_stop_ack BEFORE DELETE ON turn_cleanup_owed
+          WHEN OLD.thread_id='${threadId}' AND OLD.status='owner_stop'
+          BEGIN SELECT RAISE(ABORT, 'fixture considers Stop acknowledgement busy'); END`);
+      }
+      writeFileSync(gate + ".released", "");
+      await fixture.restart();
+      await login();
+      const stopLines = async () => (await messages(threadId)).filter(line => line.tool?.name === "Stopped by you");
+      await expect.poll(stopLines, { timeout: 8_000 }).toHaveLength(1);
+      await crash();
+      using db = new DatabaseSync(file);
+      db.exec("PRAGMA busy_timeout=10000; DROP TRIGGER fail_rebuild_stop_ack");
+      const owed = () => db.prepare("SELECT count(*) AS n FROM turn_cleanup_owed WHERE thread_id=? AND status='owner_stop'").get(threadId);
+      expect(owed()).toEqual({ n: 1 });
+      await fixture.restart();
+      await login();
+      await expect.poll(owed, { timeout: 8_000 }).toEqual({ n: 0 });
+      expect(await stopLines()).toHaveLength(1);
+    } finally {
+      using db = new DatabaseSync(file);
+      db.exec("PRAGMA busy_timeout=10000; DROP TRIGGER IF EXISTS fail_rebuild_stop_line; DROP TRIGGER IF EXISTS fail_rebuild_stop_ack");
+      writeFileSync(gate + ".released", "");
+    }
+  }, 180_000);
 
   // Overlap: a second turn could start (and be refused, and wait) beside the first one's rebuild.
   it("a second send in the wait queues behind the refused turn, which is rebuilt first", async () => {
@@ -439,7 +556,10 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a refused dire
     await login();
     expect(await taskBusy(bot.id, threadId)).toBe(false);
     await sleep(7000);
-    expect(dispatches("rbcrash", threadId)).toBe(sent);
+    // 1.0.22 (presence-restart): the refused send had not reached the engine (a setup hold), so the next start answers it exactly once: one more
+    // engine send than before the restart, never two (before 1.0.22 the restart dropped it, and `sent` was the count)
+    expect(dispatches("rbcrash", threadId)).toBe(sent + 1);
+    await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 30000 }).toBe(false);
     expect((await raw("DELETE", `/api/bots/${bot.id}/tasks/${threadId}`)).status).toBe(200);
   }, 180000);
 });

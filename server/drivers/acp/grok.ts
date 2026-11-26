@@ -344,7 +344,7 @@ export function removeGrokLocalHost(
  *    the same name. `--no-leader` keeps it a local agent (`--plugin-dir` is
  *    ignored by a shared leader, which would also carry the owner's setup).
  *
- * Rig (build host, grok 1.0.0 / 1.0.6 / 1.0.20 / 1.0.35 / 1.0.45-1.0.50,
+ * Rig (Hetzner, grok 1.0.0 / 1.0.6 / 1.0.20 / 1.0.35 / 1.0.45-1.0.50,
  * synthetic owner home with 8 ~/.claude.json servers, a Cursor server, a
  * Claude plugin with 2 MCP servers + hooks + a skill, CLAUDE.md, rules,
  * skills, hooks): the cells and `--no-leader`/`--plugin-dir` are accepted from

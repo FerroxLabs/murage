@@ -144,8 +144,7 @@ describe("Bot settings > Voice & alerts > Calls (BOT-CALLS-UNREACHABLE)", () => 
     expect(BOT_CALL_WORDS.tierBHelp).toBe("Starts as a message. Rings once if you haven't seen it in 10 minutes, never during quiet hours, busy time or another call.");
     expect(BOT_CALL_WORDS.botCaps).toBe("Up to 2 calls an hour and 6 a day from this bot.");
     expect(BOT_CALL_WORDS.needsVoice).toBe("Calls need a voice. Connect Flux or add a voice provider in Settings > Models.");
-    const panel = read("../components/SettingsPanel.tsx");
-    const voice = panel.slice(panel.indexOf('<SettingsSection id="voice"'), panel.indexOf('<SettingsSection id="routines"'));
+    const voice = read("../components/bot-pages/BotVoicePage.tsx");
     expect(voice).toContain("{desktop === true && <BotCallsSettings");
     const settings = read("../components/BotCallsSettings.tsx");
     expect(settings).toContain("void put(switchBody(!on, view?.rules))");

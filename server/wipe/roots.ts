@@ -286,6 +286,8 @@ export class RootClassifier {
   const s=raw.startsWith('/')?posix.resolve('/',cleanText(raw)):canonicalPath(raw,this.ctx.platform);
   if(/^\/dev\/(?:null|zero|full|random|urandom|tty[^/]*|console|ptmx|fuse|std(?:in|out|err))$|^\/dev\/(?:fd|pts|shm|mqueue|net)\//.test(s))return false;
   if(/^\/dev\/disk\/by-id\/[^/]+$/.test(s))return true;
+  // Raw physical and kernel memory are destructive character devices.
+  if(/^\/dev\/(?:mem|kmem)$/.test(s))return true;
   if(/^\/dev\/(?:r?disk\d|sd[a-z]|hd[a-z]|nvme\d|mmcblk\d|vd[a-z]|xvd[a-z]|dm-\d|md\d|loop\d)/.test(s))return true;
   let block:boolean|null;try{block=this.port.isBlockDevice(raw);}catch{block=null;}
   return block===true||block===null&&/^\/dev\/(?:sd[a-z]|nvme\d|hd[a-z]|mmcblk\d|vd[a-z]|xvd[a-z]|dm-\d|md\d|loop\d)/.test(s);

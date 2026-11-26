@@ -1,3 +1,4 @@
+import { evidencePath, assertExternalEvidencePath } from '../../../../scripts/evidence-path.mjs';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -143,7 +144,7 @@ describe.skipIf(!process.env.CM_RUN)("clause mutants (CM_RUN=1)", () => {
     const count = (v: string) => rows.filter(r => r.verdict === v).length;
     const byPred: Record<string, number> = {};
     for (const r of rows.filter(x => x.verdict === "SURVIVED")) byPred[r.predicate] = (byPred[r.predicate] ?? 0) + 1;
-    fs.writeFileSync(path.join(DIR, GROUP ? "results-" + GROUP + ".json" : "results.json"), JSON.stringify(rows, null, 1));
+    fs.writeFileSync(evidencePath("clause-mutants/" + (GROUP ? "results-" + GROUP + ".json" : "results.json")), JSON.stringify(rows, null, 1));
     const esc = (s: string) => s.replace(/\|/g, "\\|");
     const eqs = rows.filter(r => r.verdict === "EQUIVALENT");
     const eqOf = (r: Row) => (r as Row & { eq?: EqKind }).eq;
@@ -157,7 +158,7 @@ describe.skipIf(!process.env.CM_RUN)("clause mutants (CM_RUN=1)", () => {
       "Survivors by direction: " + ["weaker", "stricter", "?"].map(d => d + " " + rows.filter(r => r.verdict === "SURVIVED" && (r.dir ?? "?") === d).length).join(", ") + " (weaker = removal only accepts more: needs a must-reject witness or a proven redundancy; stricter = removal only rejects more: needs a must-accept witness; ? = callback / initializer, not decidable from syntax).", "",
       "| id | kind | dir | line | clause | verdict | killing witness / redundancy proof |", "|---|---|---|---|---|---|---|",
       ...rows.map(r => "| " + r.id + " | " + r.kind + (r.chain ? " " + r.chain : "") + " | " + (r.dir ?? "?") + " | " + r.line + " | `" + esc(r.text) + "` | " + r.verdict + " | " + esc(r.killer + (r.how ? " (" + r.how + ")" : "")) + " |")];
-    fs.writeFileSync(process.env.CM_MD ?? (GROUP ? path.join(__dirname, "../../../..", "CLAUSE-MUTANTS-" + GROUP + ".md") : path.join(DIR, "CLAUSE-MUTANTS-r34d.md")), md.join("\n") + "\n");
+    fs.writeFileSync(assertExternalEvidencePath(process.env.CM_MD ?? evidencePath(GROUP ? "CLAUSE-MUTANTS-" + GROUP + ".md" : "clause-mutants/CLAUSE-MUTANTS-r34d.md")), md.join("\n") + "\n");
     console.log("clause mutants: " + rows.length + " total, KILLED " + count("KILLED") + ", REDUNDANT " + count("REDUNDANT") + ", EQUIVALENT " + count("EQUIVALENT") + ", SURVIVED " + count("SURVIVED") + " in " + ms + " ms");
     console.log(capLine);
     for (const x of step3) console.log(x);

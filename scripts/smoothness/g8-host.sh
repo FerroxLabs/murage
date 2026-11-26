@@ -7,6 +7,7 @@ lane=${1:?lane}; label=${2:?label}; sha=${3:?overlay}; mode=${4:?mode}; pb=${5:?
 H=${G8_HOST_ROOT:?set G8_HOST_ROOT to the worker scratch root}
 [[ $H == /* && $H != / && $H != /dev && $H != /dev/* && $label =~ ^v7-[a-z0-9-]+$ && $lane == "$H/smooth-$label" ]] || { echo 'g8-host: unsafe lane' >&2; exit 2; }
 [[ $sha =~ ^[a-f0-9]{40}$ && ( $mode == idle || $mode == load ) && ( $pb == 0 || $pb == 1 ) ]] || { echo 'g8-host: invalid arguments' >&2; exit 2; }
+source "$(dirname -- "${BASH_SOURCE[0]}")/../safe-wipe.sh"
 container=mm-smooth-$label; started=0; stress=''; stress_start=''
 cleanup() {
   local rc=$? now fields removed=1
@@ -26,7 +27,8 @@ cleanup() {
   fi
   # Evidence is outside both source and data. Never delete another lane/cache.
   if [[ $removed == 1 ]]; then
-    rm -rf -- "${lane:?}/data" "${lane:?}/src" || rc=4
+    SAFE_WIPE_WITHIN="$lane" safe_wipe "${lane:?}/data" || rc=4
+    SAFE_WIPE_WITHIN="$lane" safe_wipe "${lane:?}/src" || rc=4
   else
     echo 'g8-host: container removal failed; retaining its mounts' >&2
     cat "$lane/cleanup.log" >&2

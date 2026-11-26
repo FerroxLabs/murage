@@ -11,6 +11,11 @@ runs:
     - name: Prepare pinned historical restore and downgrade inspectors
       shell: bash
       run: node scripts/prepare-historical-test-fixtures.mjs --allow-fetch
+    - name: Restore archived qualification inputs outside the checkout
+      shell: bash
+      run: |
+        archive=$(node scripts/prepare-evidence-test-inputs.mjs --allow-fetch)
+        echo "MURAGE_EVIDENCE_ARCHIVE=$archive" >> "$GITHUB_ENV"
     - uses: ./.github/actions/linux-cage
       if: runner.os == 'Linux'
     - name: Restore the pinned local memory test model

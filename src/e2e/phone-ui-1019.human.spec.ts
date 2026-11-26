@@ -28,6 +28,8 @@ import { accountMenuTrigger } from "./sidebar-nav";
 let fixture: { info: { url: string; dataDir: string }; close(): Promise<void> };
 let vite: ViteDevServer;
 let origin: string;
+// Reads the busy bot's waiting approval card through the real transcript route (set in beforeAll).
+let waitingCard: () => Promise<unknown>;
 
 const BUSY = "Phone busy";
 const QUIET = "Phone quiet";
@@ -66,10 +68,9 @@ test.beforeAll(async () => {
     };
     const busyBot = (await api("/api/bots")).bots.find((b: { name: string }) => b.name === BUSY);
     await api(`/api/bots/${busyBot.id}/messages`, { method: "POST", body: JSON.stringify({ threadId: busyBot.threadId, text: "Remove the scratch folder __fixture_permission_tool__" }) });
-    const waiting = async () => ((await api(`/api/threads/${busyBot.threadId}/messages`)).messages as any[])
-      .find(m => m.kind === "options" && m.card?.approvalId && !m.card.answered && !m.card.expired);
-    for (const deadline = Date.now() + 60_000; !(await waiting()); await new Promise(r => setTimeout(r, 250)))
-      if (Date.now() > deadline) throw new Error(`the fake engine's approval never opened a waiting card; the thread ends: ${JSON.stringify(((await api(`/api/threads/${busyBot.threadId}/messages`)).messages as any[]).slice(-3)).slice(0, 2500)}`);
+    // The browser transcript projects a permission handle in place of the internal approval ID.
+    waitingCard = async () => ((await api(`/api/threads/${busyBot.threadId}/messages`)).messages as any[])
+      .find(m => m.kind === "options" && m.card?.requestHandle === `p.${m.id}` && !m.card.answered && !m.card.expired);
     const root = fileURLToPath(new URL("../../", import.meta.url));
     vite = await createServer({ configFile: false, root, envFile: false, cacheDir: join(fixture.info.dataDir, "phone-ui-vite-cache"),
       resolve: { alias: { "@": join(root, "src") } }, plugins: [react(), tailwindcss()],
@@ -139,6 +140,7 @@ const scrollChat = (page: Page, top: number) => page.evaluate((y) => { document.
 
 /** The waiting approval panel, the waiting strip, the settled card and a bubble: all must exist; edges must agree. */
 async function expectApprovalAligned(page: Page) {
+  await expect.poll(waitingCard, { timeout: 60_000, intervals: [250], message: "the fake engine's approval opens a waiting card carrying its projected permission handle" }).toBeTruthy();
   await expect(page.locator("[data-approval-queue]")).toBeVisible({ timeout: 30_000 });
   await expect(page.locator("[data-approval-waiting]")).toBeVisible();
   const settled = page.locator("[data-testid=chat-scroll] .max-w-\\[840px\\]:not([data-approval-waiting])").first();

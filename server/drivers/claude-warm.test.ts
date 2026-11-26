@@ -439,6 +439,16 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(b.trace).toContain("process=spawned reason=no-process");
   });
 
+  // MAIN-RULING warm-active-only through the real send path (OPUS 38cebb4cde High): an owner turn wakes its own bot and maps
+  // its thread on the shared warm pool; a non-owner (channel audience) turn wakes no bot and marks its thread non-owner.
+  it("W-DRV-C: an owner turn wakes its bot on the warm pool and maps its thread; a non-owner turn wakes none", async () => {
+    await create();
+    await run("t-drv-owner", "one", base);
+    expect(warmPool.activityFor("t-drv-owner")).toEqual({ bot: base.warmIdentity.botId, active: true, nonOwner: false }); // W-DRV-C:owner
+    await run("t-drv-guest", "one", { ...base, warmIdentity: identity("b-guest", "non-owner") });
+    expect(warmPool.activityFor("t-drv-guest")).toEqual({ bot: undefined, active: false, nonOwner: true }); // W-DRV-C:non-owner
+  });
+
   it("recycles the process after a Stop", async () => {
     await create();
     const one = await run("t-stop", "one", base);

@@ -542,3 +542,76 @@ describe("R3 fix-round response boundaries", () => {
     expect(read({ messages: [] }).ok.has("gmail")).toBe(true);
   });
 });
+
+// 1.0.19 owner report (HighLevel): an app the owner never finished connecting asked them to "sign in again",
+// said it twice with two buttons once they pressed Reconnect, and came back on every read.
+describe("an app that was never connected is never asked to sign in again", () => {
+  // a forced read every time: each one is a real inventory answer from the broker stub, never a remembered list
+  const read = async () => (await connectedInventory(cfg(), { force: true, fresh: true })).services!;
+
+  it.each(["INITIATED", "INITIALIZING", "FAILED", "INACTIVE"])("W1 a lone %s HighLevel row opens no incident, on any read", async status => {
+    accounts.highlevel = [{ id: "ca_hl_try", status }];
+    // not even an incident that opens and ends within one read: nothing is ever opened, so nothing is ever settled
+    let settled = 0;
+    const stop = connectorHealthStore().onResolved(() => { settled++; });
+    try {
+      for (let pass = 0; pass < 3; pass++) {
+        const services = await read();
+        expect(services.highlevel?.needsReconnect).toBeUndefined();
+        expect(appsNeedingReconnect(cfg()).map(app => app.slug)).not.toContain("highlevel");
+      }
+    } finally { stop(); }
+    expect(settled).toBe(0);
+    expect(reconnectSystemPrompt(cfg())).not.toMatch(/highlevel/i);
+  });
+
+  // CHANGED (1.0.20 owner report): W2-W4 ran on HighLevel. HighLevel's row alone no longer opens an incident (only a
+  // real call proves a lapse there: connector-reconnect-highlevel-1020.test.ts), so the same inventory rules are held
+  // on Freshdesk, an app with no connection of Murage's own beside the connected-apps one.
+  const fd = () => reconnectIncidents(cfg()).filter(incident => incident.slug === "freshdesk");
+  it("W2 a Reconnect in progress is still ONE incident: the sign-in being made is not a second lapsed account", async () => {
+    accounts.freshdesk = [{ id: "ca_fd_old", status: "EXPIRED" }];
+    await read();
+    expect(fd().map(incident => incident.accounts[0]?.id)).toEqual(["ca_fd_old"]);
+    accounts.freshdesk = [{ id: "ca_fd_old", status: "EXPIRED" }, { id: "ca_fd_new", alias: "second", status: "INITIATED" }];
+    await read();
+    await read();
+    expect(fd().map(incident => incident.accounts[0]?.id)).toEqual(["ca_fd_old"]);
+  });
+
+  it("W3 a stored incident for a sign-in in progress (written by 1.0.19) ends on the next read", async () => {
+    accounts.freshdesk = [{ id: "ca_fd_old", status: "EXPIRED" }];
+    await read();
+    const owner = fd()[0]!.owner;
+    // exactly what 1.0.19 left on disk: the lapsed row AND the sign-in the owner started from Reconnect
+    connectorHealthStore().update(owner, "freshdesk", { accounts: [{ id: "ca_fd_old" }, { id: "ca_fd_new", alias: "second" }] });
+    expect(fd()).toHaveLength(2);
+    accounts.freshdesk = [{ id: "ca_fd_old", status: "EXPIRED" }, { id: "ca_fd_new", alias: "second", status: "INITIATED" }];
+    await read();
+    expect(fd().map(incident => incident.accounts[0]?.id)).toEqual(["ca_fd_old"]);
+    // and an incident held ONLY for never-finished rows ends whole
+    accounts.freshdesk = [{ id: "ca_fd_old", status: "FAILED" }, { id: "ca_fd_new", alias: "second", status: "INITIATED" }];
+    await read();
+    expect(fd()).toEqual([]);
+    await read();
+    expect(fd()).toEqual([]);
+  });
+
+  it("W4 a finished Reconnect clears it for good; a working app never asks", async () => {
+    accounts.freshdesk = [{ id: "ca_fd_old", status: "EXPIRED" }];
+    await read();
+    expect(fd()).toHaveLength(1);
+    accounts.freshdesk = [{ id: "ca_fd_new", alias: "second", status: "ACTIVE" }, { id: "ca_fd_try", status: "FAILED" }];
+    for (let pass = 0; pass < 3; pass++) {
+      const services = await read();
+      expect(services.freshdesk?.needsReconnect).toBeUndefined();
+      expect(fd()).toEqual([]);
+    }
+  });
+
+  it("W5 unchanged: a sign-in that worked and lapsed still asks, beside a pending one", async () => {
+    accounts.gmail = [{ id: "ca_gmail1", alias: "work", status: "EXPIRED" }, { id: "ca_gmail9", alias: "work 2", status: "INITIATED" }];
+    await read();
+    expect(appsNeedingReconnect(cfg()).find(app => app.slug === "gmail")?.accounts).toEqual([{ id: "ca_gmail1", alias: "work" }]);
+  });
+});

@@ -10,6 +10,8 @@
 // loopback model gateway (./model-gateway.ts) accepts. There is no refresh
 // token here; the one refresher is in the main process.
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
+import { writeFileAtomic } from "./atomic.ts";
 import { z } from "zod";
 import { SIGNIN_CONNECTION_IDS, SIGNIN_PRESETS, SIGNIN_PROVIDERS, signInProviderEnabled } from "../electron/model-signin-presets.mjs";
 import type { ProviderConnectionRecord, SignInPreset } from "../shared/provider-connections.ts";
@@ -29,7 +31,12 @@ const entrySchema = z.object({
 const messageSchema = z.object({ type: z.literal("murage:model-signin"), entries: z.array(entrySchema).max(SIGNIN_PROVIDERS.length) }).strict();
 type Entry = z.infer<typeof entrySchema>;
 
+const planModelId = z.string().min(1).max(200).regex(/^[^\s\p{Cc}]+$/u);
+const planRefusalsSchema = z.object({ revision: z.string().min(1).max(100), models: z.array(planModelId).max(5000) }).strict();
+export const PLAN_MODEL_UNAVAILABLE = "This model isn't available on your ChatGPT plan. Choose another model.";
+
 export interface ModelSignInsOptions {
+  planRefusalsPath?: string;
   env?: Record<string, string | undefined>;
   now?: () => number;
   /** Ask the main process to refresh this provider's token. False when there
@@ -59,7 +66,42 @@ export class ModelSignIns {
   private readonly paused = new Map<string, number>();
   private readonly waiters = new Map<SignInPreset, Set<(ok: boolean) => void>>();
   private readonly options: ModelSignInsOptions;
-  constructor(options: ModelSignInsOptions = {}) { this.options = options; }
+  private planRefusals: { revision: string; models: Set<string> } | undefined;
+  private planRefusalsReadable = true;
+
+  constructor(options: ModelSignInsOptions = {}) {
+    this.options = options;
+    if (!options.planRefusalsPath) return;
+    try {
+      const stat = lstatSync(options.planRefusalsPath);
+      if (!stat.isFile() || stat.nlink !== 1 || stat.size > 8_000_000) throw new Error("Invalid model refusal file");
+      const saved = planRefusalsSchema.parse(JSON.parse(readFileSync(options.planRefusalsPath, "utf8")));
+      this.planRefusals = { revision: saved.revision, models: new Set(saved.models) };
+    } catch (error) {
+      this.planRefusalsReadable = (error as NodeJS.ErrnoException).code === "ENOENT";
+    }
+  }
+
+  chatGptPlanRevision(): string | undefined {
+    const entry = this.entryFor(SIGNIN_CONNECTION_IDS.chatgpt);
+    return entry?.state === "connected" ? entry.revision : undefined;
+  }
+
+  isPlanModelRefused(revision: string, model: string): boolean {
+    return revision === this.chatGptPlanRevision() && this.planRefusals?.revision === revision && this.planRefusals.models.has(model);
+  }
+
+  recordPlanModelRefusal(revision: string, model: string): void {
+    if (revision !== this.chatGptPlanRevision() || !planModelId.safeParse(model).success) return;
+    if (this.planRefusals?.revision !== revision) this.planRefusals = { revision, models: new Set() };
+    const { models } = this.planRefusals;
+    if (models.has(model) || models.size >= 5000) return;
+    models.add(model);
+    if (this.options.planRefusalsPath && this.planRefusalsReadable) {
+      try { writeFileAtomic(this.options.planRefusalsPath, JSON.stringify({ revision, models: [...models] }), { mode: 0o600 }); }
+      catch { /* The current process still knows the refusal. */ }
+    }
+  }
   private now() { return this.options.now?.() ?? Date.now(); }
   private env() { return this.options.env ?? process.env; }
 
@@ -82,6 +124,14 @@ export class ModelSignIns {
       else if (!after?.accessToken || after.state !== "connected") ended.push(provider);
       // A new account or a sign-out ends any pause the old one hit.
       if (before?.revision !== after?.revision) this.paused.delete(SIGNIN_CONNECTION_IDS[provider]);
+    }
+    const chatgpt = next.get("chatgpt");
+    if (this.planRefusals && (chatgpt?.state !== "connected" || chatgpt.revision !== this.planRefusals.revision)) {
+      this.planRefusals = undefined;
+      if (this.options.planRefusalsPath && this.planRefusalsReadable) {
+        try { writeFileAtomic(this.options.planRefusalsPath, JSON.stringify({ revision: chatgpt?.revision ?? "signed-out", models: [] }), { mode: 0o600 }); }
+        catch { /* A new sign-in uses a new revision. */ }
+      }
     }
     this.entries = next;
     for (const provider of refreshed) { for (const wake of this.waiters.get(provider) ?? []) wake(true); this.waiters.delete(provider); }

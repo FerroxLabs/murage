@@ -74,7 +74,7 @@ test("hostile page: the Cloud bridge appears only on its own home's document", (
 test("hostile page: whatever the page passes to the bridge, only cloud-safe / cloud-only channels are reached", async () => {
   const { exposed, sent, invoked, listened } = runCloudPreload({ argv: ["electron", `--murage-cloud-home=${HOME}`], location: { protocol: "murage-home:", hostname: HOME } });
   const bridge = exposed.value;
-  assert.deepEqual(Object.keys(bridge).sort(), ["approvalNotifications", "attention", "browserPopout", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "requestSignIn", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(bridge).sort(), ["approvalNotifications", "attention", "browserPopout", "disconnectThisComputer", "homeId", "openEngineSignIn", "openExternal", "platform", "reachable", "requestSignIn", "setUnreadCount"]);
   assert.deepEqual(Object.keys(bridge.attention).sort(), ["freed", "gone", "hello", "offer", "onShow", "present", "visible"]);
   assert.equal(Object.hasOwn(bridge, "ipcRenderer") || Object.hasOwn(bridge, "invoke") || Object.hasOwn(bridge, "send"), false, "no raw IPC handle");
   const hostile = [undefined, null, "../../x", { channel: "credential:set" }, { toString() { throw new Error("boom"); } }, JSON.parse('{"__proto__":{"channel":"credential:set"}}'), "x".repeat(1_000_000), -1, NaN, [], () => {}];
@@ -83,6 +83,7 @@ test("hostile page: whatever the page passes to the bridge, only cloud-safe / cl
       () => bridge.setUnreadCount(arg),
       () => bridge.reachable(arg),
       () => bridge.requestSignIn(arg),
+      () => bridge.openEngineSignIn(arg),
       () => bridge.disconnectThisComputer(arg),
       () => bridge.openExternal(arg),
       () => bridge.approvalNotifications.show(arg),
@@ -98,7 +99,7 @@ test("hostile page: whatever the page passes to the bridge, only cloud-safe / cl
   // `listened` is main -> page (approval-notification:open): the page can only receive it, never send on it.
   assert.deepEqual([...new Set(listened)], ["approval-notification:open"]);
   const reached = new Set([...sent, ...invoked]);
-  assert.deepEqual([...reached].sort(), ["approval-notification:show", "cloud-home:disconnect-this", "cloud-home:reachable", "cloud-home:request-sign-in", "desktop:open-external", "desktop:unread-count"]);
+  assert.deepEqual([...reached].sort(), ["approval-notification:show", "cloud-home:disconnect-this", "cloud-home:open-engine-sign-in", "cloud-home:reachable", "cloud-home:request-sign-in", "desktop:open-external", "desktop:unread-count"]);
   for (const channel of reached) assert.notEqual(channelClass(channel), CLASS_LOCAL_ONLY, channel);
 });
 

@@ -97,3 +97,11 @@ it.each([
   expect(() => create().add(value)).toThrow("INVALID_RESTORE_MESSAGE");
   expect(JSON.stringify(value)).toBe(before);
 });
+
+it.each(["turn_on", "turn_off", "delete"])("preserves a private %s skill card through installation validation", action => {
+  const graph = create();
+  const request = { version: 1, requestId: "fixture-request", botId: "fixture-bot", threadId: "fixture-thread", stagedId: "", action, name: "sample-skill", sha256: "a".repeat(64), createdAt: 1 };
+  expect(() => graph.add({ ...message("fixture-card"), role: "bot", kind: "options", card: { title: "Review this skill change", options: [action === "turn_on" ? "Turn on" : action === "turn_off" ? "Turn off" : "Delete", "Deny"], skillRequest: request } })).not.toThrow();
+  expect(() => graph.validate("fixture-card")).not.toThrow();
+  expect(request).not.toHaveProperty("preview"); expect(request).not.toHaveProperty("warnings");
+});

@@ -143,8 +143,15 @@ describe("stream scheduling, limits and completion", () => {
     const r = f.feed(input); expect(r.masked).toBe(false);
     expect(f.policy.stats().a2Deferred).toBeGreaterThan(0);
     expect(f.policy.stats().pending).toBeGreaterThan(0);
+    // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z SAFETY FLOOR: "If a chunk cannot be redacted, that chunk alone is withheld with a plain marker, never the
+    // whole turn." Work deferred to the turn end used to end the turn as exhausted (FC2). Now the turn end finishes it and the
+    // text is shown; with an allowance too small even for that (1 unit), that one chain is withheld under its marker (nothing
+    // unscanned shows), the decision says so, and the turn is not masked.
     const tail = f.policy.finish(f.cap, "complete");
-    expect(tail.exhausted).toBe(true); expect(shown(tail)).toBe("«redacted»");
+    expect(tail.exhausted).toBe(false); expect(tail.masked).toBe(false); expect(shown(r) + shown(tail)).toBe(input);
+    const z = policyWith({ streamAllowance: 1 }), zr = z.feed(input), zt = z.policy.finish(z.cap, "complete");
+    expect(zr.masked).toBe(false); expect(zt.exhausted).toBe(false); expect(zt.masked).toBe(false); expect(zt.withheld).toBe(true);
+    expect(shown(zt)).toBe("«redacted»"); expect(input.startsWith(shown(zr))).toBe(true); expect(shown(zr).length).toBeLessThan(input.length);
     // Inject the scanner's legal worst-case cap on the first consume only.
     let expensive = true;
     const g = policyWith({ scan: (s: string, o: { mode: "turn"; budget: number }) => {
@@ -158,19 +165,35 @@ describe("stream scheduling, limits and completion", () => {
     expect(shown(first) + shown(resumed) + shown(g.policy.finish(g.cap, "complete"))).toBe(long);
   });
   it("T40-BUDGET named FC1, FC-SCAN, FC3, ctx LOST", () => {
-    const f = fixture(); expect(f.feed("token\n".repeat(11_000)).masked).toBe(true);
-    const g = policyWith({ wholeAllowance: 1 }); expect(g.feed("ordinary prose", "field:x", "whole").exhausted).toBe(true);
+    // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z: "The audience display budgets ... are size cuts on shown text: remove them". FC1 (66 KiB of clean lines in
+    // one consume) was the pending cut: it is now shown. A whole field whose join the fixed test allowance cannot scan was a
+    // turn mask: now that field alone is withheld (SAFETY FLOOR: "that chunk alone is withheld ... never the whole turn").
+    const f = fixture(), many = f.feed("token\n".repeat(11_000)); expect(many.masked).toBe(false); expect(shown(many) + shown(f.policy.finish(f.cap, "complete"))).toBe("token\n".repeat(11_000));
+    const g = policyWith({ wholeAllowance: 1 }), fields = g.policy.consume(g.cap, multi([{ text: "ordinary prose", stream: "field:x", mode: "whole", path: "text" }, { text: "more prose", stream: "field:y", mode: "whole", path: "text" }]));
+    expect(fields.exhausted).toBe(false); expect(fields.masked).toBe(false); expect(fields.withheld).toBe(true);
+    expect(fields.operations.map(o => [o.stream, o.op, o.text])).toEqual([["field:x", "append", "ordinary prose"], ["field:y", "omit", "«redacted»"]]);
     const h = policyWith({ contexts: { assistant: LOST } }); expect(h.feed("hello\n").masked).toBe(true);
-    const m = new ScanMeter(); expect(() => m.check("z".repeat(200_000))).toThrow(new ScanLimit("FC-SCAN"));
+    // 200,000 characters no longer exhaust a scan (work is per character); FC-SCAN is a scanner that reports it could not finish.
+    const m = new ScanMeter(); expect(m.check("z".repeat(200_000)).exhausted).toBe(false);
+    const stuck = new ScanMeter(undefined, () => ({ text: "«redacted»", detected: true, exhausted: true, workUnits: 0, candidates: [] })); expect(() => stuck.check("z")).toThrow(new ScanLimit("FC-SCAN"));
   });
   it("odes3-M2 and osec2-H3: cumulative proof never forgets pending history", () => {
-    const f = fixture(); f.feed("unfinished"); expect(f.feed("replacement", "a:assistant", "snapshot").masked).toBe(true);
+    // 1.0.22 withheld (field gate, lane fix1022-withheld-fable): a completed message that is not what streamed used to mask the
+    // turn whenever an unfinished line was pending (asserted here as masked === true); a resent stream is that shape, so clean
+    // replies were withheld. The pending history is still never forgotten: it is scanned and stays the context of the
+    // replacement (R5a's label then its value, across the replacement, still masks), and only the replacement is shown.
+    const f = fixture(); f.feed("unfinished"); const replaced = f.feed("replacement", "a:assistant", "snapshot");
+    expect(replaced.masked).toBe(false); expect(replaced.operations.at(-1)!.op).toBe("replace"); expect(shown(replaced)).toBe("replacement");
+    const k = fixture(); k.feed("Bearer\n"); const value = k.feed(D + "\n", "a:assistant", "snapshot"); expect(value.masked).toBe(true); expect(shown(value)).not.toContain(D);
     const g = fixture();
     for (let i = 0; i < 80; i++) expect(g.feed("x".repeat(1023) + "\n").masked).toBe(false);
-    g.feed("unfinished"); expect(g.feed("replacement", "a:assistant", "snapshot").masked).toBe(true);
+    g.feed("Bearer\n"); const late = g.feed(D + "\n", "a:assistant", "snapshot"); expect(late.masked).toBe(true); expect(shown(late)).not.toContain(D);
   });
   it("T40-RESET/STOP/EXIT and T40-U6-SHAPE2", () => {
-    const f = fixture(); f.feed("Bearer\n"); expect(f.policy.reset(f.cap, "a:assistant").masked).toBe(true);
+    // 1.0.22 withheld (field gate): the reset no longer masks by itself (was masked === true); the open label it takes back is
+    // still the context of what follows, so its value after the reset masks and is never shown.
+    const f = fixture(); f.feed("Bearer\n"); expect(f.policy.reset(f.cap, "a:assistant").masked).toBe(false);
+    const afterReset = f.feed(D + "\n"); expect(afterReset.masked).toBe(true); expect(shown(afterReset)).not.toContain(D);
     const g = fixture(); g.feed("Bearer\n"); expect(shown(g.policy.finish(g.cap, "cancel"))).toBe(""); expect(g.feed(D).masked).toBe(true);
     const h = fixture(); h.feed("plain final line"); expect(shown(h.policy.finish(h.cap, "exit"))).toBe("plain final line");
     const j = fixture(); expect(shown(j.feed("You will need a token\n"))).toBe("");
@@ -248,7 +271,9 @@ describe("target oracles", () => {
 it("T41-CTX-LOST stores loss rather than retaining an oversized open tail", () => {
   const f = fixture(), head = "token" + " ".repeat(70_000);
   expect(f.feed(head, "a:assistant", "snapshot").masked).toBe(false);
-  expect(f.feed("ordinary prose.\n", "b:assistant").masked).toBe(true);
+  // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z (design T11): an open tail over 64 KiB used to be stored as LOST, which latched the next item of a clean
+  // turn for size. The tail is now carried whole, the next item is scanned joined to it, and it is shown.
+  const next = f.feed("ordinary prose.\n", "b:assistant"); expect(next.masked).toBe(false); expect(shown(next)).toBe("\nordinary prose.\n"); // the leading line end is the item separator of a flat stream
 });
 it("R8 keeps the partial line held until completion", () => {
   const input = "Authorization: Basic dXNl\n cjpw";

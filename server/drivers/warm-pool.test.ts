@@ -5,9 +5,20 @@ import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { awaitCliTreeStopped, killCliTree, spawnCli } from "../procs.ts";
-import { createPrewarmGate, createTurnMemory, createWarmPool, DEFAULT_WARM_MAX_AGE_MS, pastWarmMaxAge, spawnInputsOf, TAKEOVER_BOUND_MS, treeRss, warmMaxAgeMs, type WarmEngine, type WarmMember } from "./warm-pool.ts";
+import { createPrewarmGate, createTurnMemory, createWarmPool as createWarmPoolReal, DEFAULT_WARM_MAX_AGE_MS, pastWarmMaxAge, spawnInputsOf, TAKEOVER_BOUND_MS, treeRss, warmMaxAgeMs, type WarmEngine, type WarmMember } from "./warm-pool.ts";
 
 const MB = 1024 * 1024, GB = 1024 * MB;
+/** These rigs predate MAIN-RULING warm-active-only (one kept engine per active bot): each engine kind runs on its own bot, so
+ * "one engine per active bot" is the one spare per kind these cases were written for, and a bare noteUserActivity() is an owner
+ * turn on each of those bots. Per-bot behaviour (asleep bots, 3 per kind across bots, LRU bot) is warm-active-bot-1022.test.ts. */
+const createWarmPool: typeof createWarmPoolReal = (o) => {
+  const p = createWarmPoolReal(o);
+  return {
+    ...p,
+    noteUserActivity: (bot?: string, thread?: string) => { if (bot !== undefined) p.noteUserActivity(bot, thread); else for (const k of ["claude", "codex", "acp"]) p.noteUserActivity(`bot-${k}`); },
+    markIdle: (key: object, info: WarmMember) => p.markIdle(key, { bot: `bot-${info.engine}`, ...info }),
+  };
+};
 const WINDOW = 15 * 60_000;
 
 function rig(opts: { sizesMB?: Record<number, number>; budgetMB?: number; totalGB?: number; freeMB?: number; minFreeMB?: number; active?: boolean } = {}) {
@@ -208,19 +219,22 @@ describe("activity-scaled warm pool", () => {
     expect(sums.has(99)).toBe(false);
   });
 
-  it("a prewarmed engine (hold) keeps its place past the window's spare rules, then is released when no send follows", async () => {
+  // MAIN 2026-11-23 (binding, warm1022-presence-r6): "speculative parks must never evict owner engines via the same-bot path or memory-pressure checks" (answers QUESTION warm1022-presence-samebot with option A): an unclaimed hold never replaces the engine that settled an owner turn; it gives way.
+  it("a prewarmed engine (hold) never takes the one spare from an owner engine: the unclaimed prewarm gives way", async () => {
     const r = rig({ sizesMB: { 1: 100, 2: 100 }, budgetMB: 8000 });
     await r.settle(1).p; // a normal spare: the one this kind is allowed
     const [k, m] = r.member(2); // a second engine of the same kind, started on intent
     await r.pool.markIdle(k, { ...m, hold: true });
-    expect(r.pool.idleCount()).toBe(1); // the hold counts toward the one spare and replaces the old one
-    expect(r.closed).toEqual(["1:intent-moved"]);
+    expect(r.pool.idleCount()).toBe(1); // the hold counts toward the one spare, and the owner engine keeps it
+    expect(r.closed).toEqual(["2:spare limit"]);
     r.clock.t += WINDOW + 1;
     await r.pool.tick();
-    expect(r.closed).toEqual(["1:intent-moved", "2:activity window"]);
+    // the owner engine leaves at its own window end (the `prewarm unused` lapse is D2 in warm-presence-1022.test.ts)
+    expect(r.closed).toEqual(["2:spare limit", "1:activity window"]);
   });
 
-  it("a new intent hold replaces the previous idle spare of the same kind, not other kinds", async () => {
+  // MAIN 2026-11-23 (binding, warm1022-presence-r6): "speculative parks must never evict owner engines via the same-bot path or memory-pressure checks" (answers QUESTION warm1022-presence-samebot with option A): an unclaimed hold no longer replaces an owner engine's spare (t2 settled an owner turn); it gives way, other kinds untouched.
+  it("a new unclaimed intent hold never replaces an owner engine's idle spare, of its kind or another", async () => {
     const r = rig({ sizesMB: { 1: 100, 2: 100, 3: 100 }, budgetMB: 8000 });
     await r.settle(1, "claude").p; await r.settle(3, "codex").p;
     const [k, m] = r.member(2, "claude");
@@ -230,8 +244,8 @@ describe("activity-scaled warm pool", () => {
     expect(r.closed).toEqual(["1:spare limit"]);
     const [k4, m4] = r.member(4, "claude");
     await r.pool.markIdle(k4, { ...m4, hold: true });
-    expect(r.closed).toEqual(["1:spare limit", "2:intent-moved"]);
-    expect(r.pool.idleCount()).toBe(2); // t4 claude + t3 codex
+    expect(r.closed).toEqual(["1:spare limit", "4:spare limit"]);
+    expect(r.pool.idleCount()).toBe(2); // t2 claude + t3 codex
   });
 
   it("warmIntent on a thread whose engine is idle closes another thread's idle spare of that kind", async () => {
@@ -266,6 +280,57 @@ describe("activity-scaled warm pool", () => {
     await r.settle(2, "codex").p;
     r.clock.t += 11_000; await r.pool.tick(); // 1200 MB > 1000 MB budget
     expect(r.closed).toEqual(["1:pool budget"]);
+  });
+
+  // fix/1020-warm-pool-fable: Sean's 1.0.19 log, `evict reason=background turn` on the owner's own thread.
+  it("a background turn on an engine that already served the owner hands it back: not closed, not moved up, hold kept", async () => {
+    const r = rig({ sizesMB: { 1: 100, 2: 100 }, budgetMB: 8000 });
+    const [k, m] = r.member(1);
+    await r.pool.markIdle(k, m); // the owner's turn settled
+    r.pool.release(k); // a routine's turn on the same thread reuses the engine
+    await r.pool.markIdle(k, { ...m, background: true });
+    expect(r.closed).toEqual([]);
+    expect(r.pool.idleCount()).toBe(1);
+    expect(r.logs.filter((l) => l.includes("evict"))).toEqual([]);
+    // the owner's next turn finds it and settles it as before
+    r.pool.release(k);
+    await r.pool.markIdle(k, m);
+    expect(r.closed).toEqual([]);
+    // the borrowed return earns no priority: the engine the owner used later is the spare that stays
+    const [k2, m2] = r.member(2);
+    r.pool.release(k);
+    await r.pool.markIdle(k2, m2);
+    expect(r.closed).toEqual([]); // 1 is busy with the background turn, 2 is the one idle spare
+    await r.pool.markIdle(k, { ...m, background: true });
+    expect(r.closed).toEqual(["1:spare limit"]);
+    expect(r.pool.idleCount()).toBe(1);
+  });
+
+  it("a background turn on the owner's engine keeps the thread's intent hold and does not extend the activity window", async () => {
+    const r = rig({ sizesMB: { 1: 100, 2: 100 }, budgetMB: 8000 });
+    const [k, m] = r.member(1);
+    await r.pool.markIdle(k, m);
+    r.pool.warmIntent("t1"); // the owner is typing here
+    const [k2, m2] = r.member(2);
+    r.pool.release(k);
+    await r.pool.markIdle(k2, m2); // another thread's owner turn settled meanwhile
+    await r.pool.markIdle(k, { ...m, background: true });
+    expect(r.closed).toEqual(["2:spare limit"]); // the held thread's engine is the spare kept, as before the background turn
+    r.clock.t += WINDOW + 1;
+    await r.pool.tick();
+    expect(r.closed).toEqual(["2:spare limit", "1:activity window"]); // the background turn bought no extra time
+  });
+
+  it("a background turn on a fresh engine, or on a prewarm no send followed, is still released at once", async () => {
+    const r = rig({ sizesMB: { 1: 100, 2: 100 }, budgetMB: 8000 });
+    await r.settle(1, "claude", true).p;
+    expect(r.closed).toEqual(["1:background turn"]);
+    const [k, m] = r.member(2);
+    await r.pool.markIdle(k, { ...m, hold: true }); // started on intent, no send yet
+    r.pool.release(k);
+    await r.pool.markIdle(k, { ...m, background: true });
+    expect(r.closed).toEqual(["1:background turn", "2:background turn"]);
+    expect(r.pool.idleCount()).toBe(0);
   });
 
   it("a send after a prewarm ends its hold; a background turn never earns one", async () => {
@@ -387,7 +452,8 @@ describe("activity-scaled warm pool", () => {
     expect(route).toContain('warmThread(bot, threadId, "intent")');
     expect(route).not.toContain("noteUserActivity");
     const warm = source.slice(source.indexOf("function warmThread("), source.indexOf("K2 step 2: the failover ended"));
-    expect(warm).toContain("warmPool.warmIntent(threadId)");
+    // MAIN-RULING warm-active-only: the hold names the thread's bot, so it counts in that bot's one-engine slot (still no user activity)
+    expect(warm).toContain("warmPool.warmIntent(threadId, bot.id)");
     expect(warm).not.toContain("noteUserActivity");
   });
 

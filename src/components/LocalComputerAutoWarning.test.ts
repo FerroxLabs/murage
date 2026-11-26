@@ -15,6 +15,7 @@ import {
   LOCAL_COMPUTER_NO_LIMITS_WARNING,
   LocalComputerAutoWarning,
 } from "./LocalComputerAutoWarning";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
 const render = (mode?: "auto" | "full" | "unlimited") =>
@@ -66,6 +67,6 @@ describe("the this-computer warning names the mode being switched on", () => {
 
   it("is Auto's alone in both callers: a higher pick to Full access or No limits is the confirm card, which says this itself", () => {
     expect(read("./Composer.tsx")).toContain('<LocalComputerAutoWarning\n        open={autoWarn}\n        mode="auto"');
-    expect(read("./SettingsPanel.tsx")).toMatch(/<LocalComputerAutoWarning\s+open=\{localAutoWarning !== null\}\s+mode="auto"/);
+    expect(settingsPanelSource()).toMatch(/<LocalComputerAutoWarning\s+open=\{localAutoWarning !== null\}\s+mode="auto"/);
   });
 });

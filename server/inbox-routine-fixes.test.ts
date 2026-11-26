@@ -19,7 +19,7 @@ function fixture(runs = [run()]) {
   const manager = new RoutineManager({ file, now: () => NOW, botState: () => "busy", createTask: () => ({ threadId: "unused" }), startTurn: async () => {} }); cleanups.push(() => manager.stop());
   const db = new DatabaseSync(":memory:"); cleanups.push(() => db.close());
   db.exec("CREATE TABLE messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id))"); initializeInbox(db);
-  const store = { bots: [{ id: "bot", name: "Bot", threadId: "thread" }], groups: [], bot: () => ({ hidden: false }), botByThread: () => ({ hidden: false }), groupByThread: () => undefined, group: () => undefined, onChange: () => () => {} };
+  const store = { isMailboxSealed: () => false, bots: [{ id: "bot", name: "Bot", threadId: "thread" }], groups: [], bot: () => ({ hidden: false }), botByThread: () => ({ hidden: false }), groupByThread: () => undefined, group: () => undefined, onChange: () => () => {} };
   const legacy = () => manager.listRuns().map(r => ({ runId: r.id, routineId: r.routineId, routineName: r.routineName, threadId: r.threadId, at: r.startedAt ?? r.scheduledFor, status: r.status, error: r.error }));
   const access = () => inboxRollupBadgeAccess(db, store, manager, legacy);
   const badge = () => (inboxBadgeRequest(db, { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: 1 } }, access()).body as { decisions: number }).decisions;

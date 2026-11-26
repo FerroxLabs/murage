@@ -39,7 +39,9 @@ export function createInstallWitness(events) {
 //   recover({version, reason, staged})  bring the app back after the install stopped it (main.mjs relaunches)
 //   events               the native updater; its "update-downloaded" restarts the wait, "before-quit-for-update" ends it
 //   stallMs              how long Squirrel may stay silent after quitAndInstall
-export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null, verifyDownload = null, fallbackFeed = null, installerFallback = null, returnAuthority = null, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now, staleAfterMs } = {}) {
+// `launchPause` (electron/update-launch-pause.mjs) takes down the OS jobs that start the executable on a timer just
+// before quitAndInstall, and puts them back if the install stalls or fails (the next start puts them back otherwise).
+export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null, launchPause = null, verifyDownload = null, fallbackFeed = null, installerFallback = null, returnAuthority = null, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now, staleAfterMs } = {}) {
   let checkOperation = null;
   // The version the staged download carries; the installer offer names it.
   let downloadedVersion = null;
@@ -82,6 +84,17 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     setState(installerFallback.offer(version));
   }
 
+  const pauseLaunches = operation => {
+    if (!launchPause) return;
+    operation.launchPaused = true;
+    try { launchPause.pause(); } catch (error) { logWarn(`update launch pause failed: ${updateErrorMessage(error)}`); }
+  };
+  const resumeLaunches = operation => {
+    if (!operation?.launchPaused) return;
+    operation.launchPaused = false;
+    try { launchPause.resume(); } catch (error) { logWarn(`update launch resume failed: ${updateErrorMessage(error)}`); }
+  };
+
   // quitAndInstall was called and the app is still here: the server is stopped, so never leave it like this.
   function stallInstall(operation, reason) {
     operation.staged = operation.witness?.state().staged ?? operation.staged;
@@ -90,6 +103,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     operation.detachWatch?.();
     if (installOperation === operation) installOperation = null;
     if (returnAuthority?.userQuitRequested) return;
+    resumeLaunches(operation);
     try { operation.onFailure?.(new Error(`Update installation needs review: ${reason}`)); } catch { /* the startup observer owns fallback */ }
     offerInstaller(operation.version, reason);
     try {
@@ -138,6 +152,16 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   }
 
   const routeError = (manual, error) => {
+    // A check that refused the restart before anything stopped (work-in-progress probe, backup check): the card message stays
+    // plain, the reason code and message go to updater.log so a "could not check current work" has a cause to read.
+    const refusedBeforeRestart = Boolean(installOperation && !installOperation.launched);
+    const reasonIsCode = /^[A-Z][A-Z0-9_]{3,}$/.test(String(error?.message));
+    if (refusedBeforeRestart) {
+      const cause = error instanceof Error && error.cause ? ` cause=${error.cause?.name ?? "Error"}: ${error.cause?.message ?? error.cause}` : "";
+      // a refusal without a .code (the backup host throws Error("BACKUP_REVIEW_REQUIRED")) is its own code when its message reads as one
+      const reason = error?.code ?? (reasonIsCode ? error.message : "none");
+      logWarn(`restart to update refused before it started: code=${reason} message=${String(error?.message ?? error)}${cause}`);
+    }
     // After quitAndInstall the server is already stopped; an install error must bring the app back, not strand it.
     if (installerFallback && installOperation?.launched) {
       logWarn(`install failed after the restart was requested: ${updateErrorMessage(error)}`);
@@ -146,9 +170,11 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       return;
     }
     if(installOperation&&!installOperation.launched)returnAuthority?.releasePendingInstall?.();
+    // a refusal that is only a reason code (the backup host's) never reaches the card as that token: the log has it
+    const shown = refusedBeforeRestart && reasonIsCode ? "Murage could not start the update because a check before restarting did not pass. Try again later; the reason is in the update log." : updateErrorMessage(error);
     const message = installOperation?.prepared && !isUpdateVerificationError(error)
-      ? `Murage has finished closing. Retry the update, or quit and reopen Murage. ${updateErrorMessage(error)}`
-      : updateErrorMessage(error);
+      ? `Murage has finished closing. Retry the update, or quit and reopen Murage. ${shown}`
+      : shown;
     if (installOperation) retryAction = "install";
     else if (downloadOperation) retryAction = "download";
     actionOwnsState = manual;
@@ -156,6 +182,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     if (downloadOperation) downloadOperation.failed = true;
     if (checkOperation) checkOperation.failed = true;
     const continuationFailure = installOperation?.onFailure;
+    resumeLaunches(installOperation);
     if (installOperation) {
       installOperation.failed = true;
       clearTimeout(installOperation.timer);
@@ -436,6 +463,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       returnAuthority?.markNativeLaunch?.();
       if (revoked(operation)) return stop(operation);
       operation.launched = true;
+      pauseLaunches(operation);
       try { updater.quitAndInstall(true, true); }
       catch (error) { routeError(true, error); return; }
       // Start this bound only after readiness and owned shutdown have completed.
@@ -517,6 +545,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       returnAuthority?.markNativeLaunch?.();
       if (revoked(operation)) return stop(operation);
       operation.launched = true;
+      pauseLaunches(operation);
       updater.quitAndInstall(true, true);
       if (operation.failed && operation.launched) return { status: "install-requested" };
       active();

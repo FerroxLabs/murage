@@ -34,7 +34,7 @@ function setup({ token = "cp-secret-token", paired = [{ homeId: "home-1", origin
 describe("registerCloudHomeIpc", () => {
   it("registers exactly the twelve channels; the emailed-code channels are gone", () => {
     const channels = [...setup().handlers.keys()].sort();
-    expect(channels).toEqual(["cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:disconnect-this", "cloud-home:list-bots", "cloud-home:list-homes", "cloud-home:open", "cloud-home:reachable", "cloud-home:request-sign-in", "cloud-home:state"]);
+    expect(channels).toEqual(["cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:disconnect-this", "cloud-home:list-bots", "cloud-home:list-engines", "cloud-home:list-homes", "cloud-home:open", "cloud-home:open-engine-sign-in", "cloud-home:reachable", "cloud-home:request-sign-in", "cloud-home:state"]);
     expect(channels).not.toContain("cloud-home:start-pairing");
     expect(channels).not.toContain("cloud-home:pair");
   });
@@ -109,6 +109,19 @@ describe("registerCloudHomeIpc", () => {
     t.client.pasteDoorLink.mockClear();
     await handlers.get("cloud-home:connect-paste")({ sender: "e" }).catch(() => {});
     expect(t.client.pasteDoorLink).toHaveBeenCalledWith("");
+  });
+
+  it("state while Cloud is not live is a quiet unavailable answer, never a thrown error; work channels still refuse", async () => {
+    // meetgreet 1.0.19: the not-live gate threw "Cloud isn't available yet." from cloud-home:state on every Home render, so
+    // Electron logged "Error occurred in handler" again and again. The renderer reads any non-enabled state as off.
+    const handlers = new Map();
+    const client = { pairedHomes: vi.fn(async () => [{ homeId: "home-1", origin: "https://h.example" }]), listHomes: vi.fn(async () => []) };
+    registerCloudHomeIpc({ handle: (channel, fn) => handlers.set(channel, fn) }, { cloudHome: { client, open: vi.fn(), senderHomeId: () => null }, getCpToken: () => "cp-secret-token", active: () => false });
+    await expect(handlers.get("cloud-home:state")({ sender: "e" })).resolves.toEqual({ enabled: false });
+    expect(client.pairedHomes).not.toHaveBeenCalled();
+    await expect(handlers.get("cloud-home:state")({ sender: "e" }, "extra")).rejects.toThrow("Invalid request.");
+    expect(() => handlers.get("cloud-home:list-homes")({ sender: "e" })).toThrow("Cloud isn't available yet.");
+    expect(client.listHomes).not.toHaveBeenCalled();
   });
 
   it("disconnect validates the home id, revokes and forgets through the client, and closes that home's window", async () => {
