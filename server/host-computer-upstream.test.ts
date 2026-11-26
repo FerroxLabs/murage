@@ -32,14 +32,22 @@ it("the server-owned host transport charges raw replies without standalone proxy
   await broker.drain();
 });
 
-it("the host transport exhausts the captured raw-byte budget before parsing an invalid reply", async () => {
+// "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, the invalid reply was refused by crossing
+// the 64 MiB raw-byte budget; now the captured budget is sealed (a work crossing with no accepted release) after initialize and before
+// the action is sent, and the sealed budget must still refuse the invalid reply before it is parsed or counted.
+it("the host transport refuses on the captured sealed budget before parsing an invalid reply", async () => {
   const refuse = refusal(), budget = new ReleaseBudget(refuse);
-  budget.charge({ bytes: RELEASE_LIMITS.bytes - Buffer.byteLength(initialized) });
+  let checks = 0;
+  const authorize = () => {
+    if (++checks === 2) expect(() => budget.charge({ work: RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
+    return true;
+  };
   const broker = new HostComputerBroker();
   await expect(withUpstreamOwner({ budgets: [budget], refuse }, () =>
-    broker.dispatch(peer(true), "tools/call", { name: "fixture_observe" }, () => true))).rejects.toThrow(/refused|unavailable/);
+    broker.dispatch(peer(true), "tools/call", { name: "fixture_observe" }, authorize))).rejects.toThrow(/refused|unavailable/);
   expect(refuse).toHaveBeenCalledWith(BUDGET_VERDICT);
-  expect(budget.counts.bytes).toBe(RELEASE_LIMITS.bytes);
+  expect(budget.refused).toBe(true);
+  expect(budget.counts.bytes).toBe(Buffer.byteLength(initialized));
   // A malformed/missing action reply retains exclusion after cleanup.
   await expect(broker.drain()).rejects.toThrow("cleanup is unconfirmed");
 });

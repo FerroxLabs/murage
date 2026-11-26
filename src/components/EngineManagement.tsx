@@ -3,7 +3,8 @@ import { api, useStore, type InstanceInfo } from "@/state/store";
 import { t } from "@/lib/i18n";
 
 type Status = { supported: boolean; updateAvailable: boolean; installedVersion?: string | null; latestVersion?: string; message: string; busy: boolean;
-  source?: "managed" | "bundled" | "path" | "custom" | "unknown"; releaseSupported?: boolean; rollbackAvailable?: boolean; bundledAvailable?: boolean; progress?: Progress };
+  source?: "managed" | "bundled" | "path" | "custom" | "unknown"; releaseSupported?: boolean; rollbackAvailable?: boolean; bundledAvailable?: boolean;
+  bundledVersion?: string; olderThanBundled?: boolean; progress?: Progress };
 type Progress = { phase: "download" | "check" | "install"; received: number; total: number };
 const POLL_MS = 500;
 
@@ -91,8 +92,10 @@ export function EngineManagement({ instance }: { instance: InstanceInfo }) {
   const native = instance.install?.native === true;
   const claude = instance.driverKind === "claudeAgent";
   const claudeOutdated = claude && missing && !!instance.snapshot.version;
+  // A Fuigo the owner chose that is older than the built-in one: said plainly, with one way to switch.
+  const older = fuigo && status.supported && status.olderThanBundled === true && status.bundledAvailable === true;
   return <div className="mt-2 text-[12px] text-ink-secondary">
-    <p>{status.message}</p>
+    <p role={older ? "status" : undefined} className={older ? "font-medium text-warning" : undefined}>{status.message}</p>
     {fuigo && <p className="mt-2">Selected source: {status.source ?? "unknown"} · Installed: {status.installedVersion ?? "not detected"}{status.latestVersion ? ` · Latest Fuigo: ${status.latestVersion}` : ""}</p>}
     {status.updateAvailable && <p role="status" className="mt-2 font-medium text-ink">Engine update available · {status.latestVersion}</p>}
     <div className="mt-2 flex flex-wrap gap-2">
@@ -101,7 +104,7 @@ export function EngineManagement({ instance }: { instance: InstanceInfo }) {
       {status.supported && !optIn && (missing || status.updateAvailable) && <button type="button" disabled={busy || status.busy || status.releaseSupported === false} onClick={() => void perform(missing ? "install" : "update")} className="rounded-lg bg-accent px-3 py-2 font-medium text-white disabled:opacity-50">{fuigo ? missing ? "Install native Fuigo" : "Update Fuigo" : missing ? t("engineInstall.install", { name: instance.displayName }) : "Update"}</button>}
       {status.supported && optIn && <button type="button" disabled={busy || status.busy || status.releaseSupported === false} onClick={() => void perform("use-managed")} className="rounded-lg bg-accent px-3 py-2 font-medium text-white disabled:opacity-50">Use managed Fuigo</button>}
       {fuigo && status.supported && status.rollbackAvailable && <button type="button" disabled={busy || status.busy} onClick={() => void perform("rollback")} className="rounded-lg border border-hairline/40 px-3 py-2 text-ink disabled:opacity-50">Use previous managed version</button>}
-      {fuigo && status.supported && status.bundledAvailable && status.source !== "bundled" && <button type="button" disabled={busy || status.busy} onClick={() => void perform("use-bundled")} className="rounded-lg border border-hairline/40 px-3 py-2 text-ink disabled:opacity-50">Use bundled Fuigo</button>}
+      {(older || (fuigo && status.supported && status.bundledAvailable && status.source !== "bundled")) && <button type="button" disabled={busy || status.busy} onClick={() => void perform("use-bundled")} className={older ? "rounded-lg bg-accent px-3 py-2 font-medium text-white disabled:opacity-50" : "rounded-lg border border-hairline/40 px-3 py-2 text-ink disabled:opacity-50"}>{older ? "Use the built-in Fuigo" : "Use bundled Fuigo"}</button>}
     </div>
     {progress && <InstallProgress progress={progress} />}
     {error && <p role="alert" className="mt-2 text-danger">{error}</p>}

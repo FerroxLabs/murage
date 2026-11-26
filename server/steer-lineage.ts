@@ -39,7 +39,10 @@ export interface RunningTurnLineage { roots: OutputRoots; instanceId: string; se
   cursor?: string; incarnation?: number;
   /** Whole stretches of conversations the turn carries (server/turn-source-holds.ts): its own conversation up to the newest line when it began,
    * however long, and any a note it was shown rests on. A line it takes in that one of these already covers is not named again. */
-  ranges?: HeldRange[] }
+  ranges?: HeldRange[];
+  /** cause23: an owner turn that keeps its session under exactly checking:pending (index.ts ownerMayKeepPending); its steer door keeps the
+   * owner's own words the same way (memory/steer-door.ts). */
+  ownerKeepsPending?: boolean }
 /** A line a turn's context showed. `quoted`: shown in full by a renderer that judged it on its own (the working context's
  * quotes), so a replay that withheld the same id does not take its roots away. */
 export type ShownLine = { threadId: string; id: string; role?: string; copyOf?: Message["copyOf"]; quoted?: boolean };
@@ -319,7 +322,10 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
    *  line was written, so it carries a fresh one on top of the owner's words. */
   now?: string;
 }): Promise<"steer" | "queue" | "uncertain"> {
-  if (!opts.turn) return Promise.reject(Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" }));
+  // No running turn to take the words yet (the bot is already busy for a turn that has not started, e.g. the follow-up a
+  // delegated reply opens): nothing is written to the engine, and the line waits in the durable queue as its own turn.
+  // It used to reject here with no status, which the send route reported as "could not record that message" (503).
+  if (!opts.turn) return Promise.resolve("queue");
   // the steer's own allowance: its quote is checked when it is rendered and again at the write boundary
   const allowance = LineageAllowance.steer();
   const quoted = opts.quote ? shownLinesRoots(allowance, [opts.quote]) : undefined;
@@ -346,7 +352,10 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
       catch { verdict = undefined; }
       if (steerQuoteRefused(verdict)) throw new Error("MEMORY_CONTEXT_REVOKED");
     }
-    const proposal = opts.turn ? proposeTurnParents(opts.turn, refs) : undefined;
+    // cause23 r2: a steer with no quote adds no parents, so there is nothing to propose. Proposing the turn's held parents again would
+    // validate them as NEW context (prospective) and refuse the owner's running turn while a revoke walk is still pending (the A-5 and
+    // revokekeep rules only apply to held context). What the turn already holds is re-checked by the engine-input fence at this write.
+    const proposal = opts.turn && refs.length ? proposeTurnParents(opts.turn, refs) : undefined;
     if (proposal) commitTurnParents(proposal);
     if (quoted) addRootsToRunningTurn(threadId, opts.lineage, quoted);
     if (opts.quote) addSourcesToRunningTurn(opts.lineage, [opts.quote]);

@@ -1,6 +1,6 @@
 # Tool identity r1.2 executable fixtures
 
-Copied byte-identically from `/work/build/nolimint-redesign/spec` on 2026-11-10.
+Copied byte-identically from `/root/fuigo-builds/swarm-b/nolimint-redesign/spec` on 2026-11-10.
 
 - `hermes_traces.jsonl`: 104 hand-authored trace expectations; SHA-256 `b1c99df61d4943a0d1bad58bff648d908dfe95dc2e5882dff237eaa8337d0625`.
 - `hermes_fsm.py`: normative reference; SHA-256 `fbcd5429849e40ba096585e354938dcbed8be10a418ed3c0207bf3c47f0b5f41`.

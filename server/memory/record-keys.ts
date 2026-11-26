@@ -58,9 +58,12 @@ const charges: Charge[] = [];
 let charged = 0;
 type WalkCheckpoint = { rowid: number; at: number; from: number };
 let walkCheckpoints = new WeakMap<DatabaseSync, WalkCheckpoint>();
+/** WAL bytes per reserved unit (a keyed record, plus one for the transaction) on this connection's last trusted slices. */
+let measuredPerRow = new WeakMap<DatabaseSync, number[]>();
+const RECORD_KEYS_MEASURED_SLICES = 8;
 /** Test hooks: a fake clock for the ledger (none: the wall clock), and empty ledger/walk hints. */
 export function setRecordKeysBudgetClock(next?: () => number): void { budgetClock = next ?? (() => Date.now()); }
-export function resetRecordKeysWriteBudget(): void { charges.length = 0; charged = 0; walkCheckpoints = new WeakMap(); }
+export function resetRecordKeysWriteBudget(): void { charges.length = 0; charged = 0; walkCheckpoints = new WeakMap(); measuredPerRow = new WeakMap(); }
 function trimCharges(now: number): void {
   for (let i = charges.length - 1; i >= 0; i--) {
     if (charges[i]!.until <= now) { charged -= charges[i]!.bytes; charges.splice(i, 1); }
@@ -82,8 +85,23 @@ export function chargeRecordKeysWriteForTest(bytes: number, now: number): readon
 }
 /** Conservative WAL bytes per keyed record, for this file's page size. */
 export function recordKeysCostCeiling(db: DatabaseSync): number { return RECORD_KEYS_CHANGE_CEILING_FRAMES * frameBytes(db); }
-/** Admission never learns a cheaper per-row cost: small slices cannot amortize page splits like large rebuilds. */
-export function recordKeysCostPerRow(db: DatabaseSync): number { return recordKeysCostCeiling(db); }
+/** Headroom over the last measured cost: the next slice may touch more pages per record than the last one did. */
+export const RECORD_KEYS_MEASURED_MARGIN = 1.5;
+/** Admission reserves the measured WAL bytes per record (with headroom, at least one frame, never above the ceiling); the ceiling
+ * only until a trusted measurement exists. Every slice is still charged its measured bytes, so an underestimate becomes debt. */
+export function recordKeysCostPerRow(db: DatabaseSync): number {
+  const ceiling = recordKeysCostCeiling(db), seen = measuredPerRow.get(db);
+  if (!seen?.length) return ceiling;
+  return Math.min(ceiling, Math.max(frameBytes(db), Math.ceil(Math.max(...seen) * RECORD_KEYS_MEASURED_MARGIN)));
+}
+/** Learn the per-unit cost from a committed slice whose WAL growth was trusted: the most expensive of the recent slices. */
+function noteMeasuredCost(db: DatabaseSync, walBytes: number | null | undefined, keyed: number): void {
+  if (walBytes === null || walBytes === undefined || keyed < 1) return;
+  const seen = measuredPerRow.get(db) ?? [];
+  seen.push(walBytes / (keyed + 1));
+  if (seen.length > RECORD_KEYS_MEASURED_SLICES) seen.shift();
+  measuredPerRow.set(db, seen);
+}
 /** Admit a bounded normal slice, or one indivisible oversized unit when all earlier debt has expired. */
 export function recordKeysAdmission(db: DatabaseSync, now: number = budgetClock()): { rows: number; waitMs: number; oversized: boolean } {
   trimCharges(now);
@@ -303,6 +321,7 @@ export function startRecordKeysBuild(db: DatabaseSync, options: RecordKeysBuildO
       // Charge measured WAL bytes; if unreadable, charge the entire admitted reservation including transaction overhead.
       const written = step.walBytes ?? Math.ceil((Math.min(size, a.rows) + 1) * per);
       charge(written, budgetClock());
+      noteMeasuredCost(db, step.walBytes, step.keyed);
       stats.bytes += written;
       stats.slices++; stats.maxSliceMs = Math.max(stats.maxSliceMs, ms); stats.keyed += step.keyed;
       if (step.ready) {

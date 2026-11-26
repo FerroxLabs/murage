@@ -192,6 +192,7 @@ export function createPresenceGuard(deps) {
   return {
     /** The committed values only. Decisions use their own refresh() reply. */
     quiet: () => snap,
+    safeAreaTop: id => platform === "darwin" ? ensureAddon()?.safeAreaTop?.(id) ?? 0 : 0,
     refresh,
     noteEvent() { if (!disposed) rev += 1; return refresh(); },
     markConservative() { if (!disposed) recheck = true; },

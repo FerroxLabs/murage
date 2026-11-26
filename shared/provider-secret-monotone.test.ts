@@ -13,6 +13,11 @@ const hash=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,16);
 function noMaterial(out:string,material:string) {
   for(let at=0;at+8<=material.length;at++) expect(out).not.toContain(material.slice(at,at+8));
 }
+// MAIN-RULING cause22-no-transport-caps / 17:09:17Z cause22-E (1): a long reply is no longer swapped whole for the marker (user-text
+// scan work is per character, server/redact.ts redactUserLabels). The release golden pins chat and diagnostic to the marker for the
+// 512 KiB 'sink-exhaustion' text; they now give the same output the release preview/relay/owner/learning/gateway callers give for
+// it (golden 86caa5f3110ee72f). Every other row, and the monotone and material checks below, are unchanged.
+const RULED:Record<string,Record<string,string>>={chat:{'sink-exhaustion':'86caa5f3110ee72f'},diagnostic:{'sink-exhaustion':'86caa5f3110ee72f'}};
 for(const c of callers) describe(c.id,()=>{
   it('fail-first Google composite preserves base-hidden prefix',()=>{
     if(!['chat','home','preview','relay','owner','shared','turn','sink','diagnostic','learning'].includes(c.id)) return;
@@ -39,7 +44,7 @@ for(const c of callers) describe(c.id,()=>{
     expect(Object.keys(golden.outputs[c.id])).toEqual(corpus.map(x=>x.id));
     for(const x of corpus){
       const before=c.base(x.text),after=c.mask(x.text);
-      expect(hash(before),x.id).toBe(golden.outputs[c.id][x.id]);
+      expect(hash(before),x.id).toBe(RULED[c.id]?.[x.id]??golden.outputs[c.id][x.id]);
       monotone(before,after);
       if(!(vendor as any).vendorSecretSpans(x.text).length) expect(after,x.id).toBe(before);
     }

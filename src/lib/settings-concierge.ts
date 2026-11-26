@@ -37,6 +37,8 @@ export function settingsConciergeMdx(index: readonly SettingsIndexEntry[] = SETT
     "",
   ];
   for (const entry of index) {
+    // A transcription key saved by an older version renders only while in use (Sean 11-06), so Help does not list it.
+    if (entry.scope === "app" && entry.anchor === "voice-key-heading") continue;
     const path = where(entry).map(plain);
     const label = plain(entry.label());
     lines.push(`## ${path.slice(1).join(", ")}: ${label}`, "", `**${[...path, label].join(" → ")}**`, "");

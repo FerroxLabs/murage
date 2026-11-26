@@ -253,20 +253,22 @@ it("D6-R5 a live owner is never released by anyone else, however old; a replacem
 it("D6-R6 cross-minute execution: reserved at m:59.9, executed in m+1, dead before endCopy: never nothing charged", async () => {
   const dir = mkdtempSync(join(tmpdir(), "d6-r6-"));
   try {
+    // 1.0.21 B1/I8 (memv2-D): no OS counter proves coverage any more (admission sees only the application meter, the same on every OS),
+    // so the dead worker's real bytes reach the ledger as the meter counts them; "unmeasured" is the meter not continuously valid.
     const run = async (known: boolean) => {
-      const f = fx(M0 - 2 * MIN, true); f.st.osKnown = true; section(f);
+      const f = fx(M0 - 2 * MIN); section(f);
       f.st.at = M0 + 59_900; section(f);
       const d = await dying(f.buf, 4_000_000, f.st.at, 7, 3 * 1024 * 1024); reg(f, d.id, 7);
       f.st.at = M0 + MIN + 200;
-      await d.write();
-      f.st.osKnown = known;
+      await d.write(); f.st.meter += 3 * 1024 * 1024;
+      f.st.meterKnown = known;
       await exitOf(f, d, 7);
       return f;
     };
     const measured = await run(true);
     expect(measured.n(6)).toBe(0); expect(measured.owners()).toEqual([]);
     expect(measured.n(8), "covered: no charge").toBe(0);
-    expect(measured.n(11), "the real bytes are visible in the new minute's slot 11").toBeGreaterThan(0);
+    expect(measured.n(11), "the meter's bytes (the dead worker's, as the meter counts them) are visible in the new minute's slot 11").toBeGreaterThan(0);
     const unmeasured = await run(false);
     expect(unmeasured.n(8), "unmeasured: the ceiling is in slot 8 of m+1").toBe(4_000_000);
     expect(unmeasured.n(6)).toBe(0);

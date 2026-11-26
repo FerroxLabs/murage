@@ -7,6 +7,7 @@ import { appendFixtureMessage } from './testing/approval-card.ts';
 // its page; a 1.0.1 renderer, the phone and the companion never read that field
 // and are sent every open card inside their page, as they always were.
 
+import { REPLY_WITHHELD } from "./owner-display.ts";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
@@ -133,7 +134,9 @@ it("historical.bounded-known-fields-and-unknown-subtrees", () => {
   expect(sanitizeBotDisplayMessage(root, { authorship: "bot" })).toEqual({ id: "row", at: 1, role: "bot", kind: "text", text: "ordinary" });
   expect(getters).toBe(0);
   const huge = { ...root, text: "SIBLINGSECRET".repeat(30_000) };
-  expect(sanitizeBotDisplayMessage(huge, { authorship: "bot" })).toMatchObject({ id: "row", text: "«redacted»" });
+  // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z ("size cuts on shown text: remove them"; design X5): 390 KiB of clean stored text was
+  // returned as the marker for its size. It is now redacted per character and read back whole (the word is a fixture, not a secret).
+  expect(sanitizeBotDisplayMessage(huge, { authorship: "bot" })).toMatchObject({ id: "row", text: huge.text });
   const cycle: Record<string, unknown> = {}; cycle.preview = cycle;
   const serialized = JSON.stringify(sanitizeBotDisplayMessage({ ...root, tool: cycle }, { authorship: "bot" }));
   expect(serialized).toContain("«redacted»");
@@ -150,7 +153,10 @@ it("historical.approval-control-and-original-record", () => {
 
 
 it("historical.exhaustion-keeps-authoritative-controls", () => {
-  const row = { id: "host-question", at: 1, role: "bot", kind: "options", card: { title: "x".repeat(300_000), subtitle: "SIBLINGSECRET", requestId: "private-provider-id", answered: "", expired: true, questions: [{ id: "private-question-id", question: "SIBLINGSECRET", options: [{ label: "private label" }], allowOther: true, secret: true }] } };
+  // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z (design X5): a 300,000 character title no longer exhausts the row (the size cut is
+  // gone). The walk still gives up on a subtree deeper than its depth guard, which is the exhaustion this row now uses.
+  let deep: unknown = "x"; for (let i = 0; i < 45; i++) deep = { preview: deep };
+  const row = { id: "host-question", at: 1, role: "bot", kind: "options", card: { title: "x", preview: deep, subtitle: "SIBLINGSECRET", requestId: "private-provider-id", answered: "", expired: true, questions: [{ id: "private-question-id", question: "SIBLINGSECRET", options: [{ label: "private label" }], allowOther: true, secret: true }] } };
   const safe = sanitizeBotDisplayMessage(row, { authorship: "bot" });
   expect(safe).toMatchObject({ id: row.id, kind: "options", card: { requestHandle: "q.host-question", answered: "", expired: true, questions: [{ handle: "q.0", allowOther: true, secret: true, options: [{ handle: "o.0.0", label: "Option 1" }] }] } });
   expect(JSON.stringify(safe)).not.toMatch(/SIBLINGSECRET|private-provider|private-question|private label/);
@@ -232,4 +238,27 @@ it("historical status retains finite zero counts and excludes undeclared data", 
   let reads = 0;
   expect(JSON.stringify(project({ get met() { reads++; return 1; }, total: 1 }))).not.toContain('criteria_claim_corrected');
   expect(reads).toBe(0);
+});
+
+it("an old marker keeps its field without blanking its owner-only row siblings", () => {
+  const store = new Store(selection), bot = store.createBot();
+  const old = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "Before upgrade." });
+  const marker = "«redacted»";
+  const legacy = { ...old, text: marker, removedText: "Earlier stored detail." };
+  database().prepare("UPDATE messages SET text=?, json=? WHERE id=?").run(marker, JSON.stringify(legacy), old.id);
+  const reader = new Store(selection);
+  const page = { messages: reader.messagesFor(bot.threadId) };
+  const owner = wireThread(reader, bot.threadId, page, { ownerOnly: true });
+  // redact2-1020 (Sean report, routine thread): an assistant text row that is ONLY the marker reads as Murage's plain line for the owner,
+  // never a bare «redacted» bubble; its sibling fields still keep their own words (the point of this test).
+  expect(owner.messages.find(row => row.id === old.id)).toMatchObject({ text: REPLY_WITHHELD, removedText: legacy.removedText });
+  const shared = wireThread(reader, bot.threadId, page);
+  // MAIN-RULING 2026-11-23T00:58:16Z redact-marker ("a marker-only reply renders as the fixed held-back sentence for EVERY reader"): the
+  // shared read's text was the marker; its sibling field keeps the shared mask
+  expect(shared.messages.find(row => row.id === old.id)).toMatchObject({ text: REPLY_WITHHELD, removedText: marker });
+  const credential = "fixture" + "PrivateValue123";
+  const unsafe = { ...legacy, removedText: `password: ${credential}`, tool: { name: "A readable label." } };
+  const guarded = wireThread(reader, bot.threadId, { message: unsafe }, { ownerOnly: true });
+  expect(guarded.message.tool?.name).toBe(marker);
+  expect(guarded.message.removedText).not.toContain(credential);
 });

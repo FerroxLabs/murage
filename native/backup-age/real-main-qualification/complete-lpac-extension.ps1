@@ -3,7 +3,7 @@
 param([Parameter(Mandatory=$true)][string]$Extension)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-$prior='C:\Users\seand\AppData\Local\Temp\murage-b20-real-main-20260914-025600'
+$prior='C:\Users\exampleuser\AppData\Local\Temp\murage-b20-real-main-20260914-025600'
 if($Extension -ne (Join-Path $prior 'extension-20260914-035100')){throw 'Unexpected extension path'}
 $deadline='2026-09-14T04:21:55.6960312Z'
 if([DateTime]::UtcNow -ge [DateTime]::Parse($deadline).ToUniversalTime()){throw 'Extension expired'}

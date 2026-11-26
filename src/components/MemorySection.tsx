@@ -1,4 +1,3 @@
-import { LearningConsentNotice } from "./LearningConsentNotice";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -109,7 +108,6 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
   const composite = settings ? learnAsWeTalk(settings) : null;
   const memories = status.records?.active ?? 0;
   return <div className="min-w-0 space-y-4" data-testid="memory-section">
-    <LearningConsentNotice />
     <Part id="memory.overview">
     <section aria-label={t("memoryPage.title")}><Card>
       <div className="flex flex-wrap items-center justify-between gap-2"><h2 id="memory-status-heading" className="text-[15px] font-medium">{t("memoryPage.title")}</h2><ActionBtn label={t("memoryPage.refresh")} pending={t("memoryPage.refreshing")} blocked={busy || historyBusy} success={t("memoryPage.upToDate")} failure={t("memoryPage.refreshFailed")} run={onRefresh} /></div>

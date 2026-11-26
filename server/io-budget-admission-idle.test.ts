@@ -46,16 +46,24 @@ it("a poisoned ledger reads as idle even while the owner is active", () => {
   expect(budget.admissionIdle()).toBe(true);
 });
 
-it("on an idle minute only the owed capture is admitted, and not even that while the ledger is poisoned", () => {
+// CHANGED-EXPECTATION (MAIN-RULING 2026-11-25T05:54:59Z idle DO LESS, 11:49:12Z rewrite; was: on an idle minute the owed capture alone is
+// admitted, and not while the ledger is poisoned): (a) on the idle minute nothing is admitted, the owed capture included; (b) on the next
+// ACTIVE minute the same owed capture is admitted exactly once, and the poisoned ledger still refuses it (the strict rule).
+it("on an idle minute nothing is admitted, the owed capture lands on the next active minute exactly once, and not while the ledger is poisoned", () => {
   // A fixed clock early in a minute keeps the closing guard out of this row.
-  const at = 600 * 60_000 + 1000;
+  let at = 600 * 60_000 + 1000, idle = true;
   const budget = new IoBudget({ read: () => ({ ...reading, at }) as never, log: () => {} });
-  budget.setIsIdle(() => true);
+  budget.setIsIdle(() => idle);
   const capture = () => budget.withSource("memory-capture", () => budget.admit("BG", 8192, 4096));
   expect(budget.withSource("memory-worker", () => budget.admit("BG", 8192, 4096)), "unrelated background work stays refused").toBeNull();
+  expect(capture(), "idle DO LESS: the owed capture is refused on the idle minute").toBeNull();
+  expect(budget.admissionState(), "the idle minute reserved and charged nothing").toMatchObject({ bg: 0, debt: 0, reserved: 0 });
+  // the next minute, made active by the owner
+  at += 60_000; idle = false;
   const ticket = capture();
-  expect(ticket, "the owed capture drains while idle").not.toBeNull();
-  budget.settle(ticket!, 0);
+  expect(ticket, "the owed capture drains on the next active minute").not.toBeNull();
+  budget.settle(ticket!, 4096, { salt: "fixture", frame: 1 }, 4096);
+  expect(budget.admissionState(), "the capture landed exactly once").toMatchObject({ bg: 4096, debt: 4096, reserved: 0 });
   checkpointLedger(budget.checkpointAdmissionBuffer()).poison();
   expect(capture(), "a poisoned ledger applies the strict idle rule to the capture too").toBeNull();
 });

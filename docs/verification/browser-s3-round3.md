@@ -1,7 +1,7 @@
 # Browser S3, round 3
 
 Container evidence lives outside the repository at
-`/work/build/s3/evidence3`. Each HTTP suite launches its own
+`/root/fuigo-builds/swarm-b/s3/evidence3`. Each HTTP suite launches its own
 `launchVerificationServer`, logs its URL, PID, private data directory and log
 path, and closes the exact child it launched. Native Chrome and extension
 connections in these suites are explicit fixtures. These tests do not prove

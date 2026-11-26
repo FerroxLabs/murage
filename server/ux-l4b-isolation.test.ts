@@ -50,6 +50,8 @@ it.each(["browser","provider","provider-reject","frame"])("STOP-AWAITS: a replac
     replySpeakerTurns:{ended:()=>effects.push("reply-ended")},
     store:{setTaskActivity:()=>effects.push("idle")},
     trackStopAskedInterrupt:()=>{},
+    // 1.0.20 STOP-CHIP: the stop line of a run with no engine turn (its own witnesses: stop-chip-phases-1020-api)
+    stopWithoutEngineTurn:{arm:()=>{},noteArmed:()=>{},note:()=>{},dispatching:()=>false},
     projectTurnLeases:{releaseClosed,markStopAsked:()=>{},markStopRequested:()=>effects.push("lease")},
   };
   const stop=new Function(...Object.keys(deps),javascript+"\nreturn interruptDirectThread;")(...Object.values(deps));

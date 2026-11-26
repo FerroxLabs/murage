@@ -5,7 +5,9 @@
 //
 // ONE file, two names, never two files. A symlink is the first choice everywhere (the engine refreshes the login THROUGH it,
 // so the owner's real login is updated and never forked). Where a symlink cannot be made (Windows without the symlink
-// privilege, a volume that has no symlinks) the answer depends on HOW THE ENGINE WRITES ITS LOGIN:
+// privilege, a volume that has no symlinks) a FOLDER is shared as a directory junction (still one folder, and any Windows
+// account may make one), an entry the owner does not have yet is not linked ("absent"), and a FILE depends on HOW THE
+// ENGINE WRITES ITS LOGIN:
 //   - in place (open, truncate, write: Codex FileAuthStorage::save, Gemini cacheCredentials): a HARDLINK to the owner's file
 //     stays one file whatever either name is written through, so on one volume it is shared as a hardlink;
 //   - by temporary file and rename (Grok write_auth_json_atomic, Droid `atomically`, Qwen cacheQwenCredentials): a rename
@@ -27,6 +29,8 @@ import { prefixRebaseLinks } from "../link-removal.ts";
 export interface LinkStat {
   isFile(): boolean;
   isSymbolicLink(): boolean;
+  /** A folder (optional: an io without it never offers a junction). */
+  isDirectory?(): boolean;
   /** A file id: a bigint from the real file system (a Windows file index does not fit a double), compared for equality only. */
   ino: number | bigint;
   dev: number | bigint;
@@ -34,6 +38,8 @@ export interface LinkStat {
 
 export interface LinkIo {
   symlinkSync(target: string, path: string): void;
+  /** A Windows directory junction: one folder under two names, made without the symlink privilege (optional). */
+  junctionSync?(target: string, path: string): void;
   linkSync(existing: string, path: string): void;
   lstatSync(path: string): LinkStat;
   statSync(path: string): LinkStat;
@@ -48,6 +54,7 @@ export interface LinkIo {
 
 export const nodeLinkIo: LinkIo = {
   symlinkSync: (target, path) => symlinkSync(target, path),
+  junctionSync: (target, path) => symlinkSync(target, path, "junction"),
   linkSync: (existing, path) => linkSync(existing, path),
   lstatSync: (path) => lstatSync(path, { bigint: true }),
   statSync: (path) => statSync(path, { bigint: true }),
@@ -77,6 +84,7 @@ export class LoginLinkUnavailableError extends Error {
 const SYMLINK_UNAVAILABLE = new Set(["EPERM", "EACCES", "ENOSYS", "ENOTSUP", "EOPNOTSUPP", "UNKNOWN"]);
 const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | undefined)?.code;
 const exists = (io: LinkIo, path: string): boolean => { try { io.statSync(path); return true; } catch { return false; } };
+const isFolder = (io: LinkIo, path: string): boolean => { try { return io.statSync(path).isDirectory?.() === true; } catch { return false; } };
 
 export interface LinkOptions {
   /** The engine writes this file in place (open, truncate, write), so a hardlink stays one file. False (the default): the engine renames over it, and only a symlink can share it. */
@@ -98,9 +106,16 @@ export function linkSharedEntry(real: string, scoped: string, io: LinkIo = nodeL
   } catch (error) {
     if (!SYMLINK_UNAVAILABLE.has(codeOf(error) ?? "")) throw error;
   }
+  // A folder is shared as a junction where no symlink is allowed: it is still ONE folder (a rename inside it lands in the
+  // owner's folder), lstat reports it as a link, and Windows grants it to every account.
+  if (io.junctionSync && isFolder(io, real)) {
+    io.junctionSync(real, scoped);
+    return "symlink";
+  }
+  // Nothing to share yet: the engine writes it in the scope and retirement hands it to the owner (see above), never a refusal.
+  if (!exists(io, real)) return "absent";
   const hardlinkOk = options.hardlinkOk === true || options.lock === true;
   if (!hardlinkOk) throw new LoginLinkUnavailableError("symlink-needed");
-  if (!exists(io, real)) return "absent";
   try {
     io.linkSync(real, scoped);
     return "hardlink";

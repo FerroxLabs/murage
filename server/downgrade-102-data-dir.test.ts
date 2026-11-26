@@ -18,6 +18,7 @@ import { DataRoots } from "./data-roots.ts";
 import { SEARCH_FILES } from "./message-search-index.ts";
 import { DATA_DIR_DATABASES_AFTER_102, DATA_DIR_NAMES_AFTER_102, DATA_DIR_OWNER_NOTES_AFTER_102, DATA_DIR_RECORDS_AFTER_102, downgradeInstallationMemorySchema, removeDataDirNamesAfter102 } from "./installation-memory-downgrade.ts";
 import { readOwnerPrefs } from "./owner-prefs.ts";
+import { UPGRADE_COPY_NOTE } from "./memory/upgrade-copies.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 /** output_publications as 1.0.2 creates it (afbf549ba server/artifacts.ts initializeArtifacts). */
@@ -70,6 +71,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "about-me.md"), "owner words");
     writeFileSync(join(DATA_DIR, "memory-repairs.json"), JSON.stringify({ keepallUnwedge103: "x" }));
     writeFileSync(join(DATA_DIR, "memory-repairs.json.tmp"), "{"); // a repairs-note write cut short
+    // the 1.0.21 repair's progress, kept beside a repairs note it could not read (selfheal-1021.ts SELFHEAL_SIDE_FILE)
+    writeFileSync(join(DATA_DIR, "memory-repairs-selfheal.json"), "{}");
     writeFileSync(join(DATA_DIR, "memory-model-adopted.json"), "{}");
     writeFileSync(join(DATA_DIR, "memory-model-adopted.json.tmp"), "{}");
     writeFileSync(join(DATA_DIR, "learning-paused-left.json"), "{}");
@@ -128,9 +131,20 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     for (const suffix of ["-walstop", "-walok", "-walattempt"]) writeFileSync(join(DATA_DIR, "memory-index.db" + suffix), "fixture");
     // 2de8a7c65c: the derived search database and sidecars leave on the separate lifecycle path.
     for (const name of SEARCH_FILES) writeFileSync(join(DATA_DIR, name), "", { mode: 0o600 });
+    // the start-up note a start that died before listen leaves (1.0.20 boot-progress.ts; 1.0.2 never reads it)
+    writeFileSync(join(DATA_DIR, "boot-progress.json"), JSON.stringify({ v: 1, state: "starting", pid: 1, step: "database.memory", seq: 1, startedAt: 0, updatedAt: 0 }), { mode: 0o600 });
+    // the automation ancestry ledger (1.0.21 automation-ancestry.ts, owner-only; 1.0.2 never reads it)
+    writeFileSync(join(DATA_DIR, "automation-ancestry.json"), JSON.stringify({ v: 1, threads: {}, requests: {} }), { mode: 0o600 });
     // the S5 root record (1.0.18 data-roots.ts; 1.0.2 never reads it)
     writeFileSync(join(DATA_DIR, ".murage-root.json"), JSON.stringify({ schema: 1, root: DATA_DIR, previous: [] }), { mode: 0o600 });
-    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102, ...SEARCH_FILES].sort());
+    // the data-version marker (1.0.20 shared/data-version-marker.mjs: the newest Murage that wrote the folder; 1.0.2 never reads it)
+    writeFileSync(join(DATA_DIR, "data-version.json"), JSON.stringify({ v: 1, newest: "1.0.20" }), { mode: 0o600 });
+    // the pre-upgrade copies note and its unfinished write (1.0.22 memory/upgrade-copies.ts, left by any owner whose upgrade took a
+    // messages.pre-memory-v*.db copy; 1.0.2 never reads it). Named on its own below, so the folder after the downgrade decides, not the list.
+    const upgradeCopyNotes = [UPGRADE_COPY_NOTE, `${UPGRADE_COPY_NOTE}.tmp`];
+    writeFileSync(join(DATA_DIR, UPGRADE_COPY_NOTE), JSON.stringify({ "messages.pre-memory-v4.db": { size: 1, mtimeMs: 1, opens: 1, since: 1 } }), { mode: 0o600 });
+    writeFileSync(join(DATA_DIR, `${UPGRADE_COPY_NOTE}.tmp`), "{", { mode: 0o600 });
+    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...new Set([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102, ...SEARCH_FILES, ...upgradeCopyNotes])].sort());
 
     expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
 

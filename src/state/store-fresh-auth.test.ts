@@ -13,7 +13,8 @@ const between = (from: string, to: string) => {
 };
 
 describe("the store's Allow paths", () => {
-  const decide = between('case "decideRequest": {', 'case "answerQuestion": {');
+  // decideRequest's plain answer posts through postPermissionDecision (q1022-approvefix): both are the chat card's path.
+  const decide = between('case "decideRequest": {', 'case "answerQuestion": {') + between("export function postPermissionDecision(", "export function permissionDisplayAction(");
   const answerCard = between('case "answerCard": {', 'case "dismissCard": {');
 
   it("decideRequest posts through decideWithFreshAuth with its card, bot name and choice", () => {

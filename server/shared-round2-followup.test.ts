@@ -1,4 +1,3 @@
-import { highlevelEngineRequest } from "./highlevel/engine-policy.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -169,7 +168,6 @@ it("R2.7 real permission event denies cross-partition writes before Full access 
   // callSpeech: D24's call speech coordinator; no call is live, so no provider turn feeds call speech here
   const fold = seam("foldRuntimeEvent", { callSpeech: { provider: () => undefined }, fluxMemoryCapture: { begin() {}, observe() {} }, fluxFirstTokenProbe: { begin() {}, observe() {} }, providerReplyOf: () => undefined, accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
     // index.ts imports it from engine-env.ts and calls it for every permission event (Rule 74a): the real one, as in production
-    highlevelEngineRequest,
     noteStartupFileEvent,
     // index.ts imports it from outside-wire.ts and calls it for every request (NOLIMITS v1 V5): the real one, as in production
     noteAskItemUnseen,

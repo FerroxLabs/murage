@@ -73,16 +73,16 @@ describe("M3: the marker stays inside its write budget and yields to foreground 
     const fx = storm(8);
     let busy = true;
     try {
-      flipAll(fx);
+      flipAll(fx); const c0 = changes(fx);
       wakeMemoryRevocation(() => fx.db, { busy: () => busy, busyPauseMs: 40, pauseMs: 1 });
       await new Promise(resolve => setTimeout(resolve, 100));
-      // under the turn the marker moved (a flip drained or a job walked), at the busy cadence: at most a handful of slices in 100 ms
+      // under the turn the marker moved (rows changed) but had not finished (a job still walking), at the busy cadence: each live tick paused the busy pause
       expect(memoryRevocationStats.markerYields).toBeGreaterThan(0);
       expect(memoryRevocationStats.markerYields).toBeLessThanOrEqual(4);
-      expect(num(fx, "SELECT count(*) AS n FROM memory_receipt_flips") + num(fx, "SELECT count(*) AS n FROM memory_revoke_jobs")).toBeGreaterThan(0);
+      expect({ moved: changes(fx) > c0, walking: num(fx, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE state IN ('active','seeding')") > 0, pausedMs: memoryRevocationStats.pauseMs }).toEqual({ moved: true, walking: true, pausedMs: 40 * (memoryRevocationStats.markerYields + memoryRevocationStats.busyPauses) });
       busy = false;
       await memoryRevocationIdle();
-      expect(num(fx, "SELECT count(*) AS n FROM memory_receipt_flips")).toBe(0);
+      expect({ flips: num(fx, "SELECT count(*) AS n FROM memory_receipt_flips"), walking: num(fx, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE state IN ('active','seeding')") }).toEqual({ flips: 0, walking: 0 });
       expect(num(fx, "SELECT count(*) AS n FROM memory_deny_session")).toBe(8);
     } finally { stopMemoryRevocation(); fx.close(); }
   });
@@ -258,7 +258,7 @@ describe("S2: C is measured only on the runner's own commits, seeded at the ceil
     try {
       fx.db.exec("CREATE TABLE budget_probe(x INTEGER, y TEXT)");
       fx.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      expect(walSize(fx)).toBe(0);
+      expect(budget.walIndexMark(fx.db)).toMatchObject({ mxFrame: 0, nBackfill: 0 }); // the product's own read of the log: empty
       // a transaction of known rows: measured whole, the log's header included, and C moves by exactly that
       let m = beginRevokeMeasure(fx.db);
       fx.db.exec("BEGIN IMMEDIATE");
@@ -274,7 +274,7 @@ describe("S2: C is measured only on the runner's own commits, seeded at the ceil
       expect(revokeCostPerChange(fx.db)).toBeCloseTo(next(W, bytes!, 300, W), 6);
       // the log is checkpointed and truncated: the next runner transaction restarts it, with a new salt and frames counted from one
       fx.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      expect(walSize(fx)).toBe(0);
+      expect(budget.walIndexMark(fx.db)).toMatchObject({ mxFrame: 0, salt: expect.stringMatching(new RegExp(`^(?!${m.mark!.salt}$)[0-9a-f]{16}$`)) }); // restarted: no frames, a new 8-byte salt
       fx.db.exec("BEGIN IMMEDIATE");
       m = beginRevokeMeasure(fx.db);
       budgetedMarkerSlice(fx.db, 4096, 1_000_000);
@@ -742,13 +742,23 @@ describe("targeted settlement admission", () => {
       expect(result).toEqual({ admitted: true, outcome: "idle", changed: 0 });
       expect(run).not.toHaveBeenCalled();
     });
-    it("legacy only with a queued flip remains false and uncharged", () => {
+    // 1.0.21 mem-f3 c changed the budgeted half on purpose (it asserted false and uncharged): the owner's inline walk now commits the queued
+    // head flip first and is charged for it. The marker's own `only` walk, without the option, is as it was: false, nothing written.
+    it("legacy only with a queued flip remains false and uncharged in the marker; the owner's budgeted walk commits the flip and is charged", () => {
       const fx = fresh(1); flipAll(fx);
       fx.db.exec("BEGIN");
-      expect(budget.budgetedMarkerSlice(fx.db, 64, 1000, null, { only: 1 })).toBe(false);
-      fx.db.exec("ROLLBACK");
+      const before = marker.totalChanges(fx.db);
+      expect(marker.markerSlice(fx.db, 64, 1000, null, 1000, { only: 1 })).toBe(false);
+      expect(marker.totalChanges(fx.db)).toBe(before);
       expect(budget.revokeBytesWritten()).toBe(0);
       expect(budget.revokeWriteMeter.slices).toBe(0);
+      expect(budget.budgetedMarkerSlice(fx.db, 64, 1000, null, { only: 1 })).toBe(true);
+      expect(fx.db.prepare("SELECT count(*) AS n FROM memory_receipt_flips").get()).toEqual({ n: 0 });
+      const changed = marker.totalChanges(fx.db) - before;
+      fx.db.exec("ROLLBACK");
+      expect(changed).toBeGreaterThan(0);
+      expect(budget.revokeBytesWritten()).toBe(Math.ceil(changed * budget.revokeCostPerChange(fx.db)));
+      expect(budget.revokeWriteMeter.slices).toBe(1);
     });
     it("rejects mutually exclusive marker options before writes", () => {
       const { db } = fresh();
@@ -889,8 +899,10 @@ describe("targeted settlement admission", () => {
         expect(budget.revokeBytesWritten()).toBe(0);
       });
       expect(budget.revokeWriteMeter.slices).toBe(0);
-      expect(budget.revokeBytesWritten()).toBe(budget.revokeWriteMeter.osBeyond);
-      expect(budget.revokeWriteMeter.osBeyond).toBeGreaterThan(0);
+      // 1.0.21 B1 (MEMORY-V2-DESIGN 4.8): no OS byte is charged to admission any more (was osBeyond > 0 here); the pace still charges the
+      // transaction's own frames
+      expect(budget.revokeBytesWritten()).toBe(0);
+      expect(budget.revokeWriteMeter.osBeyond).toBe(0);
       expect(budget.revokePacedBytes()).toBeGreaterThan(0);
     });
     it("a pinned copy blocks all drain targets; release is measured by the next wait", () => {

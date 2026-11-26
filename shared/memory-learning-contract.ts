@@ -53,7 +53,9 @@ export interface LearningCeilingStatus {
 export type SemanticIndexState = "ready" | "indexing" | "keyword-only";
 /** `status.semantic`: smart search over memories. `indexing` while the records
  *  indexed before the bundled model was adopted get their embeddings. */
-export interface SemanticIndexStatus { state: SemanticIndexState; done: number; total: number }
+/** capacityHitAt (q1022-recallperf item 4): when a meaning search last stopped at its scan budget (8 chunks of 12,000 records or 700 ms)
+ *  with records left unscored, so the owner learns that the memory outgrew one search; absent when no search has since process start. */
+export interface SemanticIndexStatus { state: SemanticIndexState; done: number; total: number; capacityHitAt?: number }
 
 /** One slice a consolidation gave up on after SLICE_ATTEMPT_LIMIT attempts (r3.2). */
 export interface SkippedSlice { cursor: number; length: number; reason: string; at: number }

@@ -10,7 +10,7 @@ arguments/grants, own tools, stop lines and stored Murage refusal rules do not
 raise permission cards. Actual questions still wait for the person's answer.
 
 The wipe check runs on every request, including tainted and unreadable input.
-Visible home/work/project wipes, disk/volume erasure, database destruction,
+Visible home/root/project wipes, disk/volume erasure, database destruction,
 Git history destruction, backup deletion and the existing catastrophe rows
 must card. Reader failure alone must run. Quoted documentation and file bodies
 remain data; fake replay commands are never executed.

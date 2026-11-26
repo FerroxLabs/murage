@@ -57,7 +57,7 @@ const STATUS_SENTENCES = {
 /** Backend and vendor names customer text never carries. Seeded with the one
  * src/copy-rules.test.ts refuses (the connection service) and the services
  * behind Murage that a person never picks. */
-const BANNED_NAMES = ["Composio", "AgentMail", "Cua", "Help Scout", "build host", "Vercel", "Supabase", "Cloudflare", "Requesty"];
+const BANNED_NAMES = ["Composio", "AgentMail", "Cua", "Help Scout", "Hetzner", "Vercel", "Supabase", "Cloudflare", "Requesty"];
 const ROOTS = { settings: "Settings", bot: "Bot settings" };
 const ARROW = " → ";
 const ENTRY_KEYS = new Set(["id", "name", "status", "questions", "answer", "limits", "ask_your_bot", "settings_path", "platforms", "engines",

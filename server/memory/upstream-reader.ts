@@ -1,15 +1,16 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BUDGET_VERDICT, checkReleaseAvailable, chargeUpstream, reserveRelease, RELEASE_CHUNK_MAX, ReleaseBudget, UPSTREAM_COLLECTION_MAX, UPSTREAM_EVENT_MAX } from "./release-budget.ts";
+import { BUDGET_VERDICT, checkReleaseAvailable, chargeUpstream, reserveRelease, RELEASE_CHUNK_MAX, ReleaseBudget } from "./release-budget.ts";
 import type { LineageVerdict } from "./lineage-types.ts";
 
-/** Tracks raw SSE delimiters without decoding. CRLF and LF may be split across reads.
- * Reserve bytes and event work before the caller can decode or retain a chunk. */
+/** Charges every raw chunk before the caller can decode or retain it.
+ *
+ * 1.0.21 cause22-no-transport-caps (MAIN-RULING, Sean 2026-11-22: no transport size or count caps, on every turn). Owners: this class
+ * owns reading upstream bytes into the turn's budgets; release-budget.ts owns the counters. The 1 MiB SSE event cap, the 8 MiB
+ * collected-body cap, the 64 MiB owner ceiling and the work unit per raw byte are gone: a large event or body is read whole on any
+ * turn. Kept: a read with no budget refuses, a sealed budget (any earlier refusal) refuses the next chunk, and a refusal stays sticky
+ * for the rest of this read. */
 export class UpstreamAccounting {
-  private pending = 0;
-  private total = 0;
-  private lineBytes = 0;
-  private previousCR = false;
   private failed = false;
   // red-at-b530c7532: spawned proxies use strip-only TypeScript loading.
   readonly budgets: readonly ReleaseBudget[];
@@ -23,29 +24,12 @@ export class UpstreamAccounting {
   }
   accept(chunk: Uint8Array): void {
     if (this.failed) this.refuse(BUDGET_VERDICT);
-    try {
-    chargeUpstream(this.budgets, chunk.byteLength, 0);
-    this.total += chunk.byteLength;
-    if ((this.mode === "collection" || this.collect) && this.total > UPSTREAM_COLLECTION_MAX) this.refuse(BUDGET_VERDICT);
-    if (this.mode !== "sse") return;
-    reserveRelease(this.budgets, { work: chunk.byteLength });
-    for (const byte of chunk) {
-      if (++this.pending > UPSTREAM_EVENT_MAX) this.refuse(BUDGET_VERDICT);
-      if (byte === 10) {
-        if (this.lineBytes === 0 || this.lineBytes === 1 && this.previousCR) {
-          reserveRelease(this.budgets, { work: 1 });
-          this.pending = 0;
-        }
-        this.lineBytes = 0;
-      } else this.lineBytes++;
-      this.previousCR = byte === 13;
-    }
-    } catch (error) { this.failed = true; throw error; }
+    try { chargeUpstream(this.budgets, chunk.byteLength); }
+    catch (error) { this.failed = true; throw error; }
   }
   end(): void {
     if (this.failed) this.refuse(BUDGET_VERDICT);
-    if (this.mode === "sse" && this.pending) reserveRelease(this.budgets, { work: 1 });
-    this.pending = 0;
+    if (this.mode === "sse") reserveRelease(this.budgets, { work: 1 });
   }
 }
 
@@ -56,6 +40,11 @@ type UpstreamOwner = { budgets: readonly ReleaseBudget[]; refuse: (verdict: Line
 const upstreamOwner = new AsyncLocalStorage<UpstreamOwner>();
 export function withUpstreamOwner<T>(owner: UpstreamOwner, work: () => T): T {
   return upstreamOwner.run(Object.freeze({ budgets: Object.freeze([...owner.budgets]), refuse: owner.refuse }), work);
+}
+/** cause22 caps: the admitted request in scope belongs to the owner's own turn (every budget of it is owner-kept). False outside any. */
+export function upstreamOwnerTurn(): boolean {
+  const owner = upstreamOwner.getStore();
+  return owner !== undefined && owner.budgets.length > 0 && owner.budgets.every(budget => budget.ownerKept);
 }
 export function reserveUpstreamRequest(bytes: number): void {
   const owner = upstreamOwner.getStore();

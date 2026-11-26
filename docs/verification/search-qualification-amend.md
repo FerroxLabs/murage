@@ -28,8 +28,8 @@ bash scripts/qualify-search/run.sh q2-diskfull
 
 The shell entry points set `IT_JOB=qual-fts-amend`, the requested
 `IT_qual-fts-amend` environment entry, `IT_W`, and
-`IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`, and launch through
-`/work/fuigo-builds/tools/it-remote.sh`. Two job-local advisory locks cap this
+`IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`, and launch through
+`/root/fuigo-builds/tools/it-remote.sh`. Two job-local advisory locks cap this
 lane at two containers. Each launch waits while host load exceeds 60.
 UID 2001, network none, six CPUs, 16 GiB RAM and a fresh `/data` tmpfs are
 specified for every qualification container. Extra mounts select it-remote's

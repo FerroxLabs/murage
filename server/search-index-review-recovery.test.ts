@@ -64,6 +64,22 @@ it('R1 admission: a refused WAL gate prevents the reset genesis transaction',asy
  expect(Number(db.prepare('SELECT COUNT(*) AS n FROM search_intents').get()!.n)).toBe(0);
  expect(admission).toHaveBeenCalled();
 });
+it('busy storm 1022: a held write lock makes recovery back off (few attempts, one summary line per doubling) and it completes once the lock is released',async()=>{
+ const {file,db}=fixture();const holder=new DatabaseSync(file);cleanup.push(()=>holder.close());
+ holder.exec('PRAGMA busy_timeout=0');
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+ let attempts=0;const realExec=db.exec.bind(db);
+ vi.spyOn(db,'exec').mockImplementation((sql:string)=>{if(/BEGIN IMMEDIATE/.test(sql))attempts++;return realExec(sql);});
+ // The backfill prep writes, so the lock is taken right after start, before the first reset acknowledgement runs.
+ search.startSearchIndex(db,file);holder.exec('BEGIN IMMEDIATE');await pause(2500);
+ // Base: busy never counted, so the delay stayed at 100 ms: ~25 attempts and ~25 warn lines in this window.
+ expect(attempts).toBeLessThanOrEqual(6);
+ expect(warn.mock.calls.filter(c=>String(c[0]).includes('recovery failed')).length).toBeLessThanOrEqual(5);
+ expect(search.recovery(db).state).not.toBe('PARKED');
+ holder.exec('ROLLBACK');
+ await until(()=>search.messageSearchIndexReady(db),10000);
+ expect(search.messageSearchIndexReady(db)).toBe(true);
+},20000);
 it('R2: busy reset explicitly retries and becomes ready after the lock releases',async()=>{
  const {dir,file,db}=fixture();search.prepareMessageSearchBackfill(db);
  // One deterministic SQLITE_BUSY from the actual worker reset handler. This
@@ -140,7 +156,9 @@ it('T-REC-RESET: successful rebuilds replenish only the consecutive budget',{tim
  const foreign=new DatabaseSync(file);foreign.enableDefensive(false);cleanup.push(()=>foreign.close());
  for(let i=0;i<11;i++) {
   if(i<5||i===10)search.disableMessageSearchIndex(db,Error('fixture invalidation'));
-  else foreign.exec('PRAGMA schema_version='+ (Number(foreign.prepare('PRAGMA schema_version').get()!.schema_version)+1));
+  // A bare schema-cookie bump no longer invalidates (start-up migrations move it on every start, W-SEARCH-RESTART);
+  // a rotated search owner is the foreign invalidation that still must reset.
+  else foreign.exec("UPDATE transcript_index_state SET done=hex(randomblob(16)) WHERE name='search_owner'");
   try { await oracleUntil(()=>ready===i+2&&search.recovery(db).state==='HEALTHY','T-REC-RESET'); } catch(error) { console.log('REC RESET TRACE',i,JSON.stringify(trace)); throw error; }
   expect(search.recovery(db).consecutive,'ORACLE:T-REC-RESET').toBe(0);
  }

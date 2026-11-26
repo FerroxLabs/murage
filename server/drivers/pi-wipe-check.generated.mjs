@@ -3789,7 +3789,8 @@ function scanOpaque(text4, elevated, visitor2, ctx, input = {}) {
   if (scanWritten(text4, ctx, input.key) === "incomplete") {
     if (ownerDeny() && wipeWordIn(text4) !== void 0) throw new HardFinding("deny", "unknown-target", "incomplete-executable-code");
     if (input.strict) doubt("tokenizer");
-    if (input.strict) throw new Unreadable("opaque", "runs code the reader cannot follow");
+    if (input.strict && (input.key === void 0 || input.unfollowed)) throw new Unreadable("opaque", "runs code the reader cannot follow");
+    if (input.strict) scanWrittenFamilies(text4, visitor2);
   }
   const key2 = input.key;
   const { code, bare, strings: strings2, ranges, tops } = opaqueParts(text4, key2);
@@ -4043,6 +4044,28 @@ function namesWritten(named, ctx) {
   }
   return false;
 }
+var WRITTEN_HOME = /\b(HOME|USERPROFILE|expanduser|homedir|GetFolderPath|SpecialFolder|UserProfile)\b/;
+var WRITTEN_EXIT = /\b(os\.execute|execute|system|popen|subprocess|child_process|execSync|execFileSync|execFile|exec|spawnSync|spawn|Start-Process|Invoke-Expression|iex|os\.remove|os\.unlink|unlink|rmtree|rmSync|rimraf|unlinkSync|rmdirSync|Remove-Item)\b|`|%x/;
+function scanWrittenFamilies(text4, visitor2) {
+  for (let i = 0; i < text4.length; i++) {
+    const quote = text4[i];
+    if (quote !== "'" && quote !== '"' && quote !== "`") continue;
+    let s = "";
+    let j = i + 1;
+    for (; j < text4.length && text4[j] !== quote; j++) {
+      if (text4[j] === "\\" && (text4[j + 1] === "\\" || text4[j + 1] === "'" || text4[j + 1] === '"')) {
+        s += text4[j + 1];
+        j++;
+        continue;
+      }
+      s += text4[j];
+    }
+    if (visitor2.catastrophic?.(s) || deviceInWord(s) !== void 0) throw new Unreadable("opaque", "names a catastrophe");
+    i = j;
+  }
+  if (WRITTEN_HOME.test(text4)) throw new Unreadable("opaque", "looks up the home folder");
+  if (WRITTEN_EXIT.test(text4)) throw new Unreadable("opaque", "deletes or runs something the reader cannot see");
+}
 function scanWritten(text4, ctx, key2) {
   if (text4.length > SCAN_GATE_CHARS) doubt("scan-gate");
   if (interpolated(text4)) doubt("tokenizer");
@@ -4078,6 +4101,13 @@ function shebangInterpreter(text4) {
   if (!first) return void 0;
   const program = (first[1].replace(/^.*\//, "") === "env" ? first[2] ?? "" : first[1]).replace(/^.*\//, "").toLowerCase();
   return SHELLS.has(program) ? void 0 : program;
+}
+var SHEBANG_FOLDERS = "(?:/bin|/usr/bin|/usr/local/bin|/opt/homebrew/bin|/opt/local/bin)";
+var SHEBANG_PLAIN = new RegExp(`^#![ \\t]*(?:${SHEBANG_FOLDERS}/([A-Za-z0-9._+-]+)|(?:/usr/bin|/bin)/env[ \\t]+([A-Za-z0-9._+][A-Za-z0-9._+-]*))[ \\t]*(?:\\n|$)`);
+function shebangFollowed(text4) {
+  const plain2 = SHEBANG_PLAIN.exec(text4);
+  const name = plain2?.[1] ?? plain2?.[2];
+  return name === void 0 || name === "env" ? void 0 : interpreterKey(name);
 }
 function bindPositionals(inner, values2, zero) {
   const empty = [{ parts: [{ kind: "lit", text: "", quote: "none" }] }];
@@ -4811,8 +4841,10 @@ function runWritten(written, positionals, ctx, visitor2, elevated, direct, hops 
   switch (written.kind) {
     case "literal":
       if (direct && shebangInterpreter(written.text)) {
-        const key2 = interpreterKey(shebangInterpreter(written.text));
-        scanOpaque(written.text, elevated, visitor2, ctx, { strict: true, ...key2 ? { key: key2 } : {} });
+        const named = shebangInterpreter(written.text);
+        const key2 = interpreterKey(named);
+        const followed = key2 !== void 0 && shebangFollowed(written.text) === key2 && !namesWritten([named], ctx);
+        scanOpaque(written.text, elevated, visitor2, ctx, { strict: true, ...key2 ? { key: key2 } : {}, ...followed ? {} : { unfollowed: true } });
         return null;
       }
       return walkWithPositionals(written.text, void 0, positionals, ctx, visitor2, elevated, stdin);
@@ -13101,6 +13133,30 @@ function readHost(input, host, raw = []) {
   return finish();
 }
 var shHost = hosts[0];
+function pagerCommands(args) {
+  const commands = [];
+  const valuedLong = /* @__PURE__ */ new Set(["buffers", "color", "max-back-scroll", "jump-target", "lesskey-file", "lesskey-src", "log-file", "LOG-FILE", "pattern", "prompt", "tag", "tag-file", "tabs", "max-forw-scroll", "window", "quotes", "shift", "line-num-width", "rscroll", "status-col-width", "wheel-lines"]);
+  for (let at = 0; at < args.length; at++) {
+    const arg = args[at];
+    if (arg === "--") break;
+    if (["--help", "--version", "-V", "-?"].includes(arg ?? "")) return [];
+    if (arg?.startsWith("--")) {
+      if (!arg.includes("=") && valuedLong.has(arg.slice(2))) at++;
+    } else if (arg?.startsWith("-")) {
+      for (let offset = 1; offset < arg.length; offset++) {
+        if ('bDhjkoOpPtTxyz"#'.includes(arg[offset])) {
+          if (offset === arg.length - 1) at++;
+          break;
+        }
+        if (arg[offset] === "V" || arg[offset] === "?") return [];
+      }
+    } else {
+      const m = /^\+\+?!/.exec(arg ?? "");
+      if (m) commands.push(arg.slice(m[0].length));
+    }
+  }
+  return commands;
+}
 var quoteSh = (word) => /^[\w@%+=:,./-]+$/.test(word) ? word : "'" + word.replaceAll("'", "'\\''") + "'";
 function inspectHost(host, input, x) {
   const read2 = readHost(input, host, x.raw), argv = read2.argv, { child } = x;
@@ -15475,6 +15531,10 @@ function walk(script, st) {
     if (shellHost?.kind === "shell") {
       inspectHost(shellHost, argv, hostCtx(program, raw));
       return;
+    }
+    if (program === "less" && child.dialect !== "cmd") {
+      const sh2 = hostFor("sh");
+      for (const source2 of pagerCommands(argv.map(text3))) hostCtx(program, raw).run(source2, sh2, child);
     }
     if (program === "trap" && child.dialect === "sh") {
       const args = text3(argv[0]) === "--" ? argv.slice(1) : argv, source2 = text3(args[0]);

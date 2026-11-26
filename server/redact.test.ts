@@ -1154,9 +1154,13 @@ it("redact-md-user-text.detector-failure", () => {
   } finally { scan.mockRestore(); legacy.mockRestore(); }
 });
 it("redact-md-user-text.budget-no-second-walk", () => {
+  // MAIN-RULING cause22-no-transport-caps / 17:09:17Z cause22-E (1): a reply over 1 MiB is no longer swapped whole for the marker
+  // (scan work is granted per character, redact.ts redactUserLabels perChar); this row asserted that old size cut. It now asserts
+  // the clean text is shown whole, and still that no second (legacy) walk runs.
   const scan = vi.spyOn(secretLabels, "findSecretLabels");
+  const big = "x".repeat(1_048_577);
   try {
-    expect(redactSecretsInText("x".repeat(1_048_577))).toBe("«redacted»");
+    expect(redactSecretsInText(big) === big).toBe(true);
     expect(scan).not.toHaveBeenCalled();
   } finally { scan.mockRestore(); }
 });

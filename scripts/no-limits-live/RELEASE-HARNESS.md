@@ -14,8 +14,8 @@ node scripts/no-limits-live/release-engines.mjs /work/engines.json
 node --experimental-strip-types scripts/no-limits-live/run.mjs \
   --live --release --platform linux --candidate CANDIDATE_SHA \
   --engines-file /work/engines.json \
-  --corpus /work/build/_private/nolim-cards \
-  --corpus-sha256 /work/build/_private/nolim-cards/labels-v1.sha256 \
+  --corpus /root/fuigo-builds/swarm-b/_private/nolim-cards \
+  --corpus-sha256 /root/fuigo-builds/swarm-b/_private/nolim-cards/labels-v1.sha256 \
   --shard 0 --shards 6 --scenario-timeout-ms 10000 --out NEW_OUTPUT
 ```
 

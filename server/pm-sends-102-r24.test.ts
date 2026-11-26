@@ -262,7 +262,7 @@ describe("r23#6. recovery reads one page per event-loop pass", () => {
   it("100,000 held rows: at most one page of 100 per pass, with the event loop yielding between pages", { tags: ["perf-budget"], timeout: 120_000 }, async () => {
     const db = database();
     // What this measures is the paging and the yielding, not the disk: each released row is its own commit, and with the product's
-    // synchronous=FULL that is one fsync per row (about 1.7 ms on a build host cpx62 volume, so 100,000 rows took 195 s against the 120 s
+    // synchronous=FULL that is one fsync per row (about 1.7 ms on a Hetzner cpx62 volume, so 100,000 rows took 195 s against the 120 s
     // timeout, every run; 14 s without the fsync). The fixture's file is thrown away, so durability is switched off for it alone.
     db.exec("PRAGMA synchronous=OFF");
     const w = ownerWorld("owner");

@@ -40,16 +40,19 @@ describe("Use my Chrome choice", () => {
 describe("a locked browser page, told to the owner", () => {
   const render = (reason: "owner-input" | "sensitive-page" | null | undefined, held = false) =>
     renderToStaticMarkup(createElement(ProtectedBrowserNotice, { botName: "Petra", reason, held, pending: false, onReopen: () => {} }));
-  it("says the owner's typing locked it and how to give the bot its browser back", () => {
+  // Sean 1.0.20 ruling: the owner is never asked to hand a browser back; the bot goes on in a new blank tab by itself.
+  it("says the owner's typing locked it, that the page stays the owner's, and that the bot goes on in a new tab", () => {
     const html = render("owner-input");
     expect(html).toContain("Petra can&#x27;t use this page because you typed or clicked in it.");
-    expect(html).toContain("Take control, then reopen a blank page to give Petra its browser back.");
+    expect(html).toContain("The page stays yours: Petra goes on in a new blank tab of its own.");
+    expect(html).not.toContain("its browser back");
     expect(html).not.toContain("protected interaction");
   });
   it("names the sensitive page as the cause and that the bot can leave it itself", () => {
     const html = render("sensitive-page");
     expect(html).toContain("Petra can&#x27;t use this page because it has a password, code or card field, an embedded frame, or content Murage can&#x27;t check.");
-    expect(html).toContain("Petra can open a different page itself");
+    expect(html).toContain("Petra goes on in a new blank tab of its own and never reads this page.");
+    expect(html).not.toContain("its browser back");
   });
   it("reads a lock with no recorded cause as the owner's", () => {
     expect(render(undefined)).toContain("because you typed or clicked in it");

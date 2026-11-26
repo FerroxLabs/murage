@@ -4,15 +4,15 @@
 // real `--watch` loop (server/sentinel/cli.ts) against one owner-only folder. platform "darwin" takes the same
 // non-Linux fallback (the independent supervisor) that Windows takes, on POSIX paths.
 import { EventEmitter } from "node:events";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import * as boundary from "../server/health/host-boundary.ts";
 import { main as sentinelCli } from "../server/sentinel/cli.ts";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
-import { createSentinelHost } from "./sentinel-host.mjs";
-import { sentinelInvocation } from "./sentinel-schedule.mjs";
+import { createSentinelHost, SENTINEL_HOST_STATUS_FILE } from "./sentinel-host.mjs";
+import { buildSentinelRegistration, sentinelInvocation } from "./sentinel-schedule.mjs";
 
 const POSIX = process.platform !== "win32";
 const roots = [];
@@ -93,6 +93,72 @@ const revisionOf = descriptorPath => {
   expect(loaded.ok, JSON.stringify(loaded)).toBe(true);
   return loaded.value.scheduleRevision;
 };
+
+it.skipIf(!POSIX)("macOS startup retires both legacy Sentinel launch routes without executing the app", async () => {
+  const fx = installationFolders();
+  fx.executable = path.join(fx.home, "Applications", "Murage.app", "Contents", "MacOS", "Murage");
+  const installationId = boundary.sentinelInstallationId(fx.dataDir);
+  const outputRoot = boundary.defaultOutputRoot(installationId, { platform: "darwin", home: fx.home, env: {} });
+  expect(boundary.ensureOutputRoot(outputRoot, { platform: "darwin" }).ok).toBe(true);
+  const descriptorPath = path.join(outputRoot, boundary.DESCRIPTOR_FILE);
+  const inputRoot = path.join(fx.dataDir, boundary.HEALTH_DIR);
+  const descriptor = { version: boundary.DESCRIPTOR_VERSION, installationId, installationRoot: fx.dataDir, inputRoot, outputRoot,
+    sources: boundary.sourcePaths(inputRoot, "darwin"), executable: { path: fx.executable, entry: fx.entrySource, sha256: null }, scheduleRevision: 1 };
+  expect(boundary.writeDescriptor(descriptor, { platform: "darwin" }).ok).toBe(true);
+  const agent = buildSentinelRegistration({ platform: "darwin", home: fx.home, descriptor, descriptorPath });
+  const [plist] = agent.files;
+  mkdirSync(path.dirname(plist.path), { mode: 0o700 });
+  writeFileSync(plist.path, plist.text, { mode: 0o600 });
+  const other = path.join(path.dirname(plist.path), "example.other.plist");
+  writeFileSync(other, "other job");
+  const calls = [];
+  const logs = [];
+  const probe = vi.fn(async () => boundary.EXIT.notProven);
+  const spawnWatcher = vi.fn(() => 5000);
+  const host = createSentinelHost({
+    ...fx, platform: "darwin", env: {}, uid: process.getuid(), loadBoundary: async () => boundary, probe, spawnWatcher,
+    log: line => logs.push(line), scheduleRun: async ({ executable, args }) => {
+      calls.push([executable, ...args]);
+      return { code: executable === "/bin/launchctl" && args[0] === "bootout" ? 0 : 1, stdout: "" };
+    },
+  });
+  try {
+    const watcher = startWatcher(descriptorPath);
+    await settle();
+    expect(watcher.retired).toBe(false);
+    await host.initialize();
+    expect(await host.reconcile()).toMatchObject({ state: "registration-needed", reason: "mac-sentinel-paused" });
+    await watcher.scan();
+    await watcher.scan();
+    expect(watcher.retired).toBe(true);
+    expect(await watcher.running).toBe(boundary.EXIT.ok);
+    await host.check();
+    await host.reconcile();
+    expect(calls).toEqual([["/bin/launchctl", "bootout", `gui/${process.getuid()}/${agent.name}`]]);
+    expect(existsSync(plist.path)).toBe(false);
+    expect(JSON.parse(readFileSync(`${descriptorPath}.suspended`, "utf8"))).toEqual(descriptor);
+    expect(readFileSync(other, "utf8")).toBe("other job");
+    expect(probe).not.toHaveBeenCalled();
+    expect(spawnWatcher).not.toHaveBeenCalled();
+    expect(logs.filter(line => line.includes("mac-sentinel-paused"))).toHaveLength(1);
+  } finally { await host.shutdown(); }
+});
+
+it.skipIf(!POSIX)("macOS pause preserves files outside the owned Sentinel state directory", async () => {
+  const fx = installationFolders();
+  fx.executable = path.join(fx.home, "Applications", "Murage.app", "Contents", "MacOS", "Murage");
+  const outputRoot = boundary.defaultOutputRoot(boundary.sentinelInstallationId(fx.dataDir), { platform: "darwin", home: fx.home, env: {} });
+  mkdirSync(path.dirname(outputRoot), { mode: 0o700 });
+  const unrelated = path.join(fx.userData, SENTINEL_HOST_STATUS_FILE);
+  writeFileSync(unrelated, "untouched");
+  symlinkSync(fx.userData, outputRoot, "dir");
+  const host = createSentinelHost({ ...fx, platform: "darwin", env: {}, uid: process.getuid(), loadBoundary: async () => boundary });
+  try {
+    await host.initialize();
+    expect(await host.reconcile()).toMatchObject({ reason: "mac-sentinel-paused" });
+    expect(readFileSync(unrelated, "utf8")).toBe("untouched");
+  } finally { await host.shutdown(); }
+});
 
 it.skipIf(!POSIX)("a failed readback after the watcher fallback moves the revision on, so the older watcher retires", async () => {
   const fx = installationFolders();

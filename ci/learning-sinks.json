@@ -1261,13 +1261,6 @@
    "reason": "not-learning"
   },
   {
-   "file": "server/highlevel/client.ts",
-   "fn": "<module>",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
    "file": "server/bot-calls-routes.ts",
    "fn": "handleUpgrade",
    "anchor": "socket.write(\"HTTP/1.1403Forbidden\\r\\nConnection:close\\r\\nContent-Length:0\\r\\n\\r\\n\")",
@@ -2596,70 +2589,6 @@
    "anchor": "fork(SPAWNED_PROXIES.memoryWorker,[],withHideInherit({execArgv:[\"--experimental-strip-types\"],stdio:[\"ignore\",\"ignore\",\"pipe\",\"ipc\"],env:{ELECTRON_RUN_AS_NODE:\"",
    "kind": "spawn",
    "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/approval-journal-storage.ts",
-   "fn": "assertJournalStorage",
-   "anchor": "execFileSync(\"/sbin/mount\",[],{encoding:\"utf8\",timeout:15000})",
-   "kind": "spawn",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/approval-idempotency.ts",
-   "fn": "#publish",
-   "anchor": "writeFileSync(fd,bytes)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/rpc-approval-replay.ts",
-   "fn": "bindRpc",
-   "anchor": "writeFileSync(fd,canonicalBindingJson(record))",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/opportunity-recovery-plan.ts",
-   "fn": "saveOpportunityPlan",
-   "anchor": "writeFileSync(fd,bytes)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/journal-file.ts",
-   "fn": "#append",
-   "anchor": "writeSync(fd,`${JSON.stringify(line)}\\n`)",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/journal-file.ts",
-   "fn": "#compactIfLong",
-   "anchor": "writeSync(fd,body?`${body}\\n`:\"\")",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/private-token.ts",
-   "fn": "<module>",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/private-token.ts",
-   "fn": "writeAtomic",
-   "anchor": "writeFileSync(temp,text,{mode:0o600})",
-   "kind": "fs-write",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/highlevel/credential-connection.ts",
-   "fn": "<module>",
-   "anchor": "fetch",
-   "kind": "fetch",
-   "reason": "not-learning",
-   "note": "Default fetch dependency for the fixed-origin CRM credential broker. Requests carry enrollment, grant, connection epoch and signed credential lifecycle metadata for begin, complete, lease and disconnect; no chat text, learning extraction, model prompt or deferred learning hook payload is dispatched."
   },
   {
    "file": "server/mcp-access.ts",
@@ -4214,13 +4143,6 @@
    "fn": "hostRequest",
    "anchor": "fetch",
    "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/highlevel-proxy.ts",
-   "fn": "post",
-   "anchor": "httpRequest(url,{method:\"POST\",signal,agent:false,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",\"content-length\":Buffer.byteLength(b",
-   "kind": "alias-call",
    "reason": "not-learning"
   },
   {

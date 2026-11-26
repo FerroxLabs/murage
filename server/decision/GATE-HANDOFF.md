@@ -1,6 +1,6 @@
 # Mandatory twenty-file gate: OPEN
 
-The exact twenty HANDOFF S1 files in `/work/build/reds-nlgate/DONE`
+The exact twenty HANDOFF S1 files in `/root/fuigo-builds/swarm-b/reds-nlgate/DONE`
 are pinned in `verify-gate.mjs`. Run it with `S1_TIP=<sha>` and
 `DECISION_EVIDENCE=<directory>` inside the required networkless container. A
 missing file, empty collection, skipped assertion or failing assertion prevents

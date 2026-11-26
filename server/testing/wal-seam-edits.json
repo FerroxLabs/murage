@@ -72,8 +72,8 @@
   },
   {
    "name": "wal-maintenance.ts@343",
-   "anchor": "const timer = setInterval(() => {\n  if (pendingEnd) retryPendingEnd();",
-   "insert": "const timer = setInterval(() => {\n  if (trace) tickNo++;\n  const sampledGen = paceGen ? Atomics.load(paceGen, 0) : -1; // program order: before this tick reads data_version\n  if (pendingEnd) retryPendingEnd();"
+   "anchor": "function poll() {\n  Atomics.add(shared, 11, 1); // slot 11: polls (each one a data_version read and a log header read), diagnostics and G-IDLE-PROCESS\n  if (pendingEnd) retryPendingEnd();",
+   "insert": "function poll() {\n  Atomics.add(shared, 11, 1); // slot 11: polls (each one a data_version read and a log header read), diagnostics and G-IDLE-PROCESS\n  if (trace) tickNo++;\n  const sampledGen = paceGen ? Atomics.load(paceGen, 0) : -1; // program order: before this tick reads data_version\n  if (pendingEnd) retryPendingEnd();"
   },
   {
    "name": "wal-maintenance.ts@350",
@@ -82,8 +82,8 @@
   },
   {
    "name": "wal-maintenance.ts@363",
-   "anchor": "  due ||= debtFd >= 0 && unsyncedBytes >= debtBytes && now >= debtRetryAt;\n  if (due) runPass(\"timed\", null, sample);\n}, pollMs);",
-   "insert": "  due ||= debtFd >= 0 && unsyncedBytes >= debtBytes && now >= debtRetryAt;\n  const before = trace ? Atomics.load(shared, 6) : 0;\n  if (due) runPass(\"timed\", null, 0, sample);\n  if (trace) parentPort.postMessage({ type: \"pace\", tick: tickNo, now, lastAt: lastThen, work, changed: changedNow, timed: wasTimed, retry: retrying, started: Atomics.load(shared, 6) !== before, startedAt: timedStartedAt, deferredAt, gen: sampledGen, committedFrames: sample?.h.index?.mxFrame });\n}, pollMs);"
+   "anchor": "  due ||= debtFd >= 0 && unsyncedBytes >= debtBytes && now >= debtRetryAt;\n  owed = (changedNow || retrying) && !due;\n  if (due) runPass(\"timed\", null, sample);\n}\nlet stopped = false",
+   "insert": "  due ||= debtFd >= 0 && unsyncedBytes >= debtBytes && now >= debtRetryAt;\n  owed = (changedNow || retrying) && !due;\n  const before = trace ? Atomics.load(shared, 6) : 0;\n  if (due) runPass(\"timed\", null, 0, sample);\n  if (trace) parentPort.postMessage({ type: \"pace\", tick: tickNo, now, lastAt: lastThen, work, changed: changedNow, timed: wasTimed, retry: retrying, started: Atomics.load(shared, 6) !== before, startedAt: timedStartedAt, deferredAt, gen: sampledGen, committedFrames: sample?.h.index?.mxFrame });\n}\nlet stopped = false"
   },
   {
    "name": "wal-maintenance.ts@370",
@@ -107,8 +107,8 @@
   },
   {
    "name": "wal-maintenance.ts@573",
-   "anchor": "  try { worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: {\n    file, shared: shared.buffer, copied: copied.buffer, admission:(ioBudget.rebuildAdmissionIfPoisoned(), ioBudget.checkpointAdmissionBuffer()), admissionSource:checkpointLedger.toString(), nativeMeterPath:ioMeterNativePath(), nativeMeterId:ioMeterNativeId(), osPageSize:ioMeterPageSize(), stepBytes: STEP_BYTES, pollMs: STEP_POLL_MS, dueMs: DUE_MS, debtBytes: DEBT_SYNC_BYTES, debtFd: { debt: debtFdFor(file), index: indexFdFor(file) },\n  } }); }",
-   "insert": "  try { worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: {\n    file, shared: shared.buffer, copied: copied.buffer, admission:(ioBudget.rebuildAdmissionIfPoisoned(), ioBudget.checkpointAdmissionBuffer()), admissionSource:checkpointLedger.toString(), admissionClockOffsetMs:admissionClockOffset(), nativeMeterPath:ioMeterNativePath(), nativeMeterId:ioMeterNativeId(), osPageSize:ioMeterPageSize(), stepBytes: STEP_BYTES, pollMs: STEP_POLL_MS, dueMs: DUE_MS, debtBytes: DEBT_SYNC_BYTES, debtFd: { debt: debtFdFor(file), index: indexFdFor(file) }, barrier: walWorkerSeam.barrier, trace: walMaintenanceTestHooks.paceTrace !== null, paceGen: walMaintenanceTestHooks.paceGen?.buffer ?? null,\n  } }); }"
+   "anchor": "  try { worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: {\n    file, shared: shared.buffer, copied: copied.buffer, admission:(ioBudget.rebuildAdmissionIfPoisoned(), ioBudget.checkpointAdmissionBuffer()), admissionSource:checkpointLedger.toString(), nativeMeterPath:ioMeterNativePath(), nativeMeterId:ioMeterNativeId(), osPageSize:ioMeterPageSize(), stepBytes: STEP_BYTES, pollMs: STEP_POLL_MS, dueMs: DUE_MS, notice, idleCheckMs: Math.min(WAL_IDLE_CHECK.ms, Math.floor(stallMs / 2)), debtBytes: DEBT_SYNC_BYTES, debtFd: { debt: debtFdFor(file), index: indexFdFor(file) },\n  } }); }",
+   "insert": "  try { worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: {\n    file, shared: shared.buffer, copied: copied.buffer, admission:(ioBudget.rebuildAdmissionIfPoisoned(), ioBudget.checkpointAdmissionBuffer()), admissionSource:checkpointLedger.toString(), admissionClockOffsetMs:admissionClockOffset(), nativeMeterPath:ioMeterNativePath(), nativeMeterId:ioMeterNativeId(), osPageSize:ioMeterPageSize(), stepBytes: STEP_BYTES, pollMs: STEP_POLL_MS, dueMs: DUE_MS, notice, idleCheckMs: Math.min(WAL_IDLE_CHECK.ms, Math.floor(stallMs / 2)), debtBytes: DEBT_SYNC_BYTES, debtFd: { debt: debtFdFor(file), index: indexFdFor(file) }, barrier: walWorkerSeam.barrier, trace: walMaintenanceTestHooks.paceTrace !== null, paceGen: walMaintenanceTestHooks.paceGen?.buffer ?? null,\n  } }); }"
   },
   {
    "name": "wal-maintenance.ts@616",
