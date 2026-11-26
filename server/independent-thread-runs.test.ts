@@ -657,3 +657,95 @@ it("ISO-14: an isolated held run transfers isolation before takeover drops it", 
   expect(next.isolated).toBe(true);
   runs.release(next); expect(runs.admit("bot", "thread", {}).isolated).toBe(false);
 });
+
+// ── BROWSERQ-1020 (customer-seen on 1.0.19: "1st in line for the browser profile ... About 252 min.") ──
+// User failure: the minutes were position x an average of every past hold, however long, and never looked at the turn holding the browser.
+type Seen = Array<[number, number | undefined]>;
+async function estimateFixture(typicalMinutes: number, resource = "browser:p") {
+  vi.setSystemTime(1_000_000);
+  const runs = new IndependentThreadRuns<object>();
+  for (const id of ["t1", "t2", "t3"]) {
+    const run = runs.admit(id, id, {}, [resource]);
+    await vi.advanceTimersByTimeAsync(typicalMinutes * 60_000);
+    runs.release(run);
+  }
+  const waitFor = (id: string) => {
+    const seen: Seen = [];
+    const wait = runs.acquire(runs.admit(id, id, {}), [resource], (_blockers, position, estimate) => seen.push([position, estimate]));
+    return { seen, wait };
+  };
+  return { runs, resource, waitFor };
+}
+it("BROWSERQ-1020 E1: one fourteen-hour hold never becomes the estimate", async () => {
+  vi.useFakeTimers();
+  try {
+    const { runs, resource, waitFor } = await estimateFixture(1);
+    // a turn that sat across a slept machine, or was retained after an unconfirmed stop
+    const stuck = runs.admit("stuck", "stuck", {}, [resource]);
+    await vi.advanceTimersByTimeAsync(14 * 60 * 60_000);
+    runs.release(stuck);
+    runs.admit("holder", "holder", {}, [resource]);
+    // 1.0.19 said about 253 min here (0.3 x 840 + 0.7 x 1)
+    expect(waitFor("w").seen).toEqual([[1, 60_000]]);
+  } finally { vi.useRealTimers(); }
+});
+it("BROWSERQ-1020 E2: the estimate is what is left of the holder's turn, not a whole one", async () => {
+  vi.useFakeTimers();
+  try {
+    const { runs, resource, waitFor } = await estimateFixture(10);
+    runs.admit("holder", "holder", {}, [resource]);
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(waitFor("w").seen).toEqual([[1, 6 * 60_000]]);
+  } finally { vi.useRealTimers(); }
+});
+it("BROWSERQ-1020 E3: no minutes once the holder is past a typical turn", async () => {
+  vi.useFakeTimers();
+  try {
+    const { runs, resource, waitFor } = await estimateFixture(10);
+    runs.admit("holder", "holder", {}, [resource]);
+    await vi.advanceTimersByTimeAsync(11 * 60_000);
+    expect(waitFor("w").seen).toEqual([[1, undefined]]);
+  } finally { vi.useRealTimers(); }
+});
+it("BROWSERQ-1020 E4: the minutes count down with the holder, go away when its time is up, and leave no timer behind", async () => {
+  vi.useFakeTimers();
+  try {
+    const { runs, resource, waitFor } = await estimateFixture(10);
+    const holder = runs.admit("holder", "holder", {}, [resource]);
+    const { seen, wait } = waitFor("w");
+    expect(seen).toEqual([[1, 10 * 60_000]]);
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(seen.at(-1)).toEqual([1, 7 * 60_000]);
+    await vi.advanceTimersByTimeAsync(7 * 60_000);
+    expect(seen.at(-1)).toEqual([1, undefined]);
+    expect(seen.every(([, estimate]) => estimate === undefined || estimate <= 10 * 60_000)).toBe(true);
+    // unknown from here: the line is still looked at every 30 s, by one timer
+    expect(vi.getTimerCount()).toBe(1);
+    runs.release(holder);
+    expect(await wait).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it("BROWSERQ-1020 E5: no wait over an hour is ever put in minutes", async () => {
+  vi.useFakeTimers();
+  try {
+    const { runs, resource, waitFor } = await estimateFixture(25);
+    runs.admit("holder", "holder", {}, [resource]);
+    expect(waitFor("w1").seen).toEqual([[1, 25 * 60_000]]);
+    expect(waitFor("w2").seen).toEqual([[2, 50 * 60_000]]);
+    expect(waitFor("w3").seen).toEqual([[3, undefined]]);
+  } finally { vi.useRealTimers(); }
+});
+it("BROWSERQ-1020 E6: a stopped holder that still keeps its lease is never given minutes", async () => {
+  vi.useFakeTimers();
+  try {
+    const { runs, waitFor } = await estimateFixture(10, "workspace:/p");
+    const holder = runs.admit("holder", "holder", {}, ["workspace:/p"]);
+    const { seen } = waitFor("w");
+    expect(seen).toEqual([[1, 10 * 60_000]]);
+    // Stop, close unconfirmed: the folder lease is kept by design (A2); how long is unknown
+    runs.cancel(holder);
+    expect(seen).toEqual([[1, 10 * 60_000], [1, undefined]]);
+    expect(runs.owns(holder, "workspace:/p")).toBe(true);
+  } finally { vi.useRealTimers(); }
+});

@@ -10,7 +10,7 @@ import { Loader2, PhoneOff, X } from "lucide-react";
 
 import { currentCall, deferCallCleanup, endCall } from "@/lib/call";
 import { publishCallBarState } from "@/lib/call-bar";
-import { freshAuthSpoken, type FreshAuthCode } from "@/lib/fresh-auth";
+import { freshAuthCodeOf, freshAuthSpoken, type DeliveryCode, type FreshAuthCode } from "@/lib/fresh-auth";
 import { CallBarContent } from "./CallBarContent";
 import { useCallSlot } from "@/lib/call-slot";
 import { CALL_ENDPOINT_LONG_MS, CALL_ENDPOINT_MS, groupBusyStep } from "@/lib/call-turns";
@@ -743,7 +743,8 @@ export function GroupCall({
             message: allow ? undefined : "Denied by the user, on a group call.",
             card: openApproval.card,
             botName: openApproval.member?.name,
-            onError: (error: string, code?: FreshAuthCode) => {
+            onError: (error: string, answerCode?: FreshAuthCode | DeliveryCode) => {
+              const code = freshAuthCodeOf(answerCode);
               const pending = askedApproval.current;
               if (
                 !alive.current ||

@@ -15,7 +15,8 @@ import { inertBot } from "./store.ts";
 // rewriteInitializeCapabilities, relayTimeoutFor, safeSessionId,
 // safeProtocolVersion, relayFailure.
 import { Readable } from "node:stream";
-import { accountedChunks, reserveUpstreamRequest } from "./memory/upstream-reader.ts";
+import { accountedChunks, reserveUpstreamRequest, upstreamOwnerTurn } from "./memory/upstream-reader.ts";
+import { OVERSIZE_RESULT_LINE, isOversizeCut } from "./owner-turn-caps.ts";
 import { GuardedHttpError, guardedRequest } from "../shared/guarded-http.mjs";
 import { LIMITS } from "../shared/remote-mcp-url.mjs";
 import type { StoredRemoteMcpServer } from "./mcp-registry.ts";
@@ -172,6 +173,12 @@ export type RelayResult =
   | ({ ok: false; stepUpScopes?: string[] } & RelayFailure);
 
 const failed = (reason: McpProbeFailureReason, host: string, extra: { suggestUrl?: string } = {}): RelayResult => ({ ok: false, ...relayFailure(reason, host, extra) });
+/** cause22 caps: one answer of an owner turn went over the 64 MiB ceiling (the upstream reader's cut, or the body bound that follows
+ * it). A completed decision for that one call (status below 500, a fixed code and line), so the proxy answers the call and seals
+ * nothing; the turn continues. */
+const cutAnswer = (error: unknown): RelayResult | undefined =>
+  isOversizeCut(error) || upstreamOwnerTurn() && error instanceof GuardedHttpError && error.code === "body-too-large"
+    ? { ok: false, status: 413, body: { code: "too-large" as McpProbeFailureReason, error: OVERSIZE_RESULT_LINE } } : undefined;
 
 /** Send one engine message to the link server and return its answer. */
 export async function relayMcpCall(ctx: RelayContext): Promise<RelayResult> {
@@ -249,6 +256,8 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
     reserveUpstreamRequest(Buffer.byteLength(JSON.stringify(message)));
     response = await guardedRequest({
       url, method: "POST", kind: "mcp", mode: "request", confirmed: ctx.server.local ?? null, responseMode: "stream",
+      // MAIN-RULING cause22-no-transport-caps: no byte ceiling on a remote MCP answer (the upstream reader's own marks are not this lane's).
+      maxBytes: Number.POSITIVE_INFINITY,
       signal: ctx.signal, resolver: ctx.resolver, totalMs: timeoutMs, body: JSON.stringify(message),
       headers: {
         "content-type": "application/json", accept: "application/json, text/event-stream", ...auth.headers,
@@ -262,16 +271,32 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
     return failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
   }
   const { status } = response;
+  // A notification, or the engine's answer to the server's own request: the server owes no answer.
+  const awaitsNoAnswer = message.id === undefined || message.method === undefined;
+  const accepted = (): RelayResult => {
+    response.close();
+    return { ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0), ...sessionOf(response) };
+  };
   if (status === 200 || status === 202) {
     const type = String(Array.isArray(response.headers["content-type"]) ? response.headers["content-type"][0] : response.headers["content-type"] ?? "");
     const contentType = /^application\/json/i.test(type) ? "application/json" : /^text\/event-stream/i.test(type) ? "text/event-stream" : null;
-    if (status === 202) {
-      response.close();
-      return { ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0), ...sessionOf(response) };
-    }
+    if (status === 202) return accepted();
     if (!contentType) {
-      response.close();
-      return failed("wrong-address", host);
+      // A message that waits for no answer: a 200 in another type is the server taking it, as
+      // Settings Test reads it. Its body is closed unread. 1.0.20: this was a 502, and the proxy
+      // sealed the whole mount.
+      if (awaitsNoAnswer) return accepted();
+      // An answer labelled another type (text/plain) is still read, bounded, the way Test reads
+      // it; only one JSON-RPC object passes, as JSON. Anything else stays the wrong address.
+      let body: Buffer;
+      try {
+        body = await readAll(response, deadline);
+      } catch (error) {
+        if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+        return cutAnswer(error) ?? failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
+      }
+      if (!jsonObjectBody(body)) return failed("wrong-address", host);
+      return { ok: true, status: 200, contentType: "application/json", body, ...sessionOf(response) };
     }
     // An SSE answer has no deadline here: the engine's proxy owns the call's
     // bound (paused while the owner answers the server's question), and the
@@ -288,10 +313,12 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
       body = await readAll(response, deadline);
     } catch (error) {
       if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
-      return failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
+      return cutAnswer(error) ?? failed(reasonForGuardedError(error instanceof GuardedHttpError ? error.code : "unreachable"), host);
     }
     return { ok: true, status: 200, contentType, body, ...sessionOf(response) };
   }
+  // Any other 2xx (204 No Content) for a message that waits for no answer: the server took it.
+  if (awaitsNoAnswer && status >= 200 && status < 300) return accepted();
   // nothing below reads the body
   response.close();
   if (status === 401 || status === 403) {
@@ -304,11 +331,27 @@ async function viaStreamableHttp(ctx: RelayContext, url: string, host: string, m
     return failed(classified.reason, host);
   }
   if ([301, 302, 307, 308].includes(status)) return failed("moved", host);
+  // 1.0.21 cause6: a 404 to a call that named a session is the server saying it no longer holds that
+  // session (MCP streamable HTTP: the client starts a new one). Nothing was run; the proxy opens a new
+  // session with the engine's own initialize and sends the call once more. It used to be a 502, and
+  // the proxy sealed the whole server for the turn. Never a tool call: a server that answers 404 after
+  // running one would run it twice.
+  if (status === 404 && ctx.sessionId && message.method !== "initialize" && message.method !== "tools/call") return failed("session-gone", host);
   if (!ctx.server.transport && !ctx.sessionId && message.method === "initialize" && [400, 404, 405].includes(status)) {
     // A link that was never tested may be a legacy SSE server.
     return viaSse(ctx, url, host, message, timeoutMs, auth);
   }
   return failed(status >= 500 ? "server-error" : "wrong-address", host);
+}
+
+/** True when the body is exactly one JSON-RPC object (the only answer shape read without its content type). */
+function jsonObjectBody(body: Buffer): boolean {
+  try {
+    const value: unknown = JSON.parse(body.toString("utf8"));
+    return value !== null && typeof value === "object" && !Array.isArray(value) && (value as { jsonrpc?: unknown }).jsonrpc === "2.0";
+  } catch {
+    return false;
+  }
 }
 
 function sessionOf(response: Pick<StreamedResponse, "headers">): { sessionId?: string } {

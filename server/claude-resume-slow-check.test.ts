@@ -94,7 +94,10 @@ describe("a chat's native session across a restart on a slow machine", () => {
     (readBotRecords(join(home, ".murage")) as BotRow[]).find((row) => row.id === bot.id)?.tasks?.find((task) => task.threadId === bot.threadId);
 
   const turn = async (bot: BotView, text: string): Promise<{ argv: string[]; prompt: string }> => {
-    await prepareFixtureRecall(join(home, ".murage"), bot.id, bot.threadId);
+    // q1022-idlefix (MAIN-RULING 2026-11-25T12:40:11Z): the bounded fixture wait (30 s) is itself the guarded behaviour: after a boot
+    // or restart with nobody active, the bot's recall view is ready for its turn. Named assertion, not a fixture Error.
+    const recall = await prepareFixtureRecall(join(home, ".murage"), bot.id, bot.threadId).then(() => "ready", (error: unknown) => String((error as Error)?.message ?? error));
+    expect(recall, "the bot's recall view is ready for its turn after a boot or restart on an idle minute (a turn never loses memory because the app was idle)").toBe("ready");
     rmSync(dump, { force: true });
     expect((await request("POST", `/api/bots/${bot.id}/messages`, { text })).status).toBe(202);
     await expect.poll(() => existsSync(dump), { timeout: 20_000 }).toBe(true);

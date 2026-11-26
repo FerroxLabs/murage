@@ -19,17 +19,13 @@ import { WebhookManager, type WebhookManagerOptions } from "../webhooks.ts";
 import { RoutineRequestService, type RoutineRequestServiceOptions } from "../routine-requests.ts";
 import { RoutineManager, type RoutineManagerOptions } from "../routines.ts";
 import { AppTriggerStore } from "../app-trigger-store.ts";
-import { HighLevelConnectionSource } from "../highlevel/connection-source.ts";
-import { HighLevelTurnSignals } from "../highlevel/host.ts";
-import { createHighLevelRuntime, type HighLevelRuntimeOptions } from "../highlevel/runtime.ts";
-import { PrivateTokenLeaseSource, defaultHighLevelConnectionFile } from "../highlevel/private-token.ts";
 import { database } from "../database.ts";
 import type { InternalPortContext } from "./internal-port-context.ts";
 import type { StatePort } from "./source-extract.ts";
 import { registerPortConstructor } from "./port-integrity.ts";
 
 // Capture imported constructor and ancestor methods before any case hook.
-for (const Constructor of [ModelSignIns, ProviderConnectionsService, ImageGenerationService, PublishOperations, ImageOperations, EmailRuntime, PhoneJobs, RemoteSseSessions, WebhookManager, RoutineRequestService, RoutineManager, AppTriggerStore, HighLevelConnectionSource, HighLevelTurnSignals, PrivateTokenLeaseSource]) if (typeof Constructor === "function") registerPortConstructor(Constructor);
+for (const Constructor of [ModelSignIns, ProviderConnectionsService, ImageGenerationService, PublishOperations, ImageOperations, EmailRuntime, PhoneJobs, RemoteSseSessions, WebhookManager, RoutineRequestService, RoutineManager, AppTriggerStore]) if (typeof Constructor === "function") registerPortConstructor(Constructor);
 
 type Fn = (...args: any[]) => any;
 type ProviderOptions = ConstructorParameters<typeof ProviderConnectionsService>[0];
@@ -232,26 +228,5 @@ export function providerFixturePorts(context: InternalPortContext): StatePort[] 
         cardHost,
       });
     }, value => value.stop()),
-    port("highlevelTokenSource", () => new PrivateTokenLeaseSource({
-      token: production<ConstructorParameters<typeof PrivateTokenLeaseSource>[0]["token"]>("highlevelTokenSource.token"),
-      file: defaultHighLevelConnectionFile(context.dataDir),
-      fetch: unavailableProviderNetwork,
-    })),
-    port("highlevelCredentialConnection", () => null),
-    port("highlevelConnectionSource", () => new HighLevelConnectionSource(
-      instance(context, "highlevelTokenSource", PrivateTokenLeaseSource), null,
-    )),
-    port("highlevel", () => createHighLevelRuntime({
-      dataDir: context.dataDir,
-      capabilities: context.capabilities,
-      signals: instance(context, "highlevelCalls", HighLevelTurnSignals),
-      leases: instance(context, "highlevelConnectionSource", HighLevelConnectionSource),
-      userCreateOwner: production<NonNullable<HighLevelRuntimeOptions["userCreateOwner"]>>("highlevel.userCreateOwner"),
-      threadMarkState: production<HighLevelRuntimeOptions["threadMarkState"]>("highlevel.threadMarkState"),
-      bot: production<HighLevelRuntimeOptions["bot"]>("highlevel.bot"),
-      operationScopes: production<NonNullable<HighLevelRuntimeOptions["operationScopes"]>>("highlevel.operationScopes"),
-      onJournalHeld: production<NonNullable<HighLevelRuntimeOptions["onJournalHeld"]>>("highlevel.onJournalHeld"),
-      fetch: unavailableProviderNetwork,
-    }), value => value.close()),
   ];
 }

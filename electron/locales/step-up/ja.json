@@ -1,5 +1,5 @@
 {
-  "@source": "968d807cca562a743b79127e48954176f04baabf",
+  "@source": "f5be60d75f8dfdae69794bd6aeba3a92fb69cfc5",
   "label.cloudPairing": "Cloud ホームに新しいデバイスを追加する",
   "label.cloudDevicesAccount": "Cloud ホームのデバイスまたはアカウントを変更する",
   "label.modelSigninStart": "Cloud ホームでモデルのログインを開始する",
@@ -103,11 +103,6 @@
   "label.connectorDisconnect": "アプリの接続を解除する",
   "label.phoneCalls": "ボットの電話を管理する",
   "label.dataDirConfirmRoot": "リンクされたデータフォルダの現在の参照先を確認する",
-  "label.highlevelCheck": "HighLevelのロケーションを確認する",
-  "label.highlevelConnect": "HighLevelのロケーションを接続する",
-  "label.highlevelAccess": "ボットがHighLevelで読み取れる内容を変更する",
-  "label.highlevelDisconnect": "HighLevelのロケーションを切断する",
-  "label.highlevelChange": "HighLevelの接続を変更する",
   "label.fallback": "Cloud ホームで変更を行う",
   "flag.fullAccess": "フルアクセス",
   "flag.noLimits": "制限なし",

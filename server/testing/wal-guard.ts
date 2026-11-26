@@ -148,7 +148,8 @@ export const PINS = {
   overrideAllowed: "60fadd187e73002860ea77879bafa8f51ab0308d7fbaef600da296321837d750",
   explicitOverride: "58586fa2246420147392651082e62050bb043ef40a3b2547a880163d5937d29e",
   candidates: "d2be05d29a76a863c82cd55ce99d5e0548dd7583caccb684f2f1573569fa8278",
-  loadIoMeterAddon: "57a73c4508ef5f1e878df92a8c94a095e007de9a95d645616e67a9b7c69b645f",
+  loadIoMeterAddon: "a364a2fd8a1630df08c1d3de23dc203b548ac4f7381f58a0fc9c9fda260185b8", // re-pinned (METERDL): a worker returns the main thread's handed copy and never makes its own
+  loadHandedIoMeter: "2a29cc9d35d74114cf8ec22a3cc28d4502e36d7c423af2a8e29ec94534af654c", // METERDL: the worker's re-check of the handed copy (canonical file, dev/ino/size/sha256) before require
   privateCopy: "640e758ca00036f5a34b0010da9ab6322bcda6f9b0feecb5f6790b2bc4eb220e", // re-pinned: the copy is written in full and proven by a no-follow read-back (inode, size, sha256) like the worker's loadNativeMeter, instead of fsync barriers
   loadExclusionAddon: "05390c26b2a0ef62b3e1dc0f14f4d182375b6576b064c5473172d7424b88254c", // re-pinned for bd9a612caa: the catch records the Windows code-integrity verdict only (no candidate is admitted differently)
   ensureIoMeter: "d143eff95191a0309976397ef9ed8ae229bbae4dde643537d7af6286ebc406d8",
@@ -170,7 +171,7 @@ export function walGuard(src: GuardSources): string[] {
     walk(sfs[f], n => { if (ts.isVariableDeclaration(n) || ts.isFunctionDeclaration(n)) { const nm = (n as { name?: ts.Node }).name; if (nm && ts.isIdentifier(nm) && /TestHooks|Seam|ForFixture/.test(nm.text)) v.push(`seam: ${f} declares "${nm.text}"`); } });
   }
   if (/workerData\.(barrier|trace|admissionClockOffsetMs)\b/.test(bare[WM])) v.push("seam: wal-maintenance.ts reads a workerData field only tests set");
-  for (const k of spawnProps(sfs[WM]).keys()) if (!["file", "shared", "copied", "admission", "admissionSource", "nativeMeterPath", "nativeMeterId", "osPageSize", "stepBytes", "pollMs", "dueMs", "debtBytes", "debtFd"].includes(k)) v.push(`seam: workerData field "${k}" is not on the production list`);
+  for (const k of spawnProps(sfs[WM]).keys()) if (!["file", "shared", "copied", "admission", "admissionSource", "nativeMeterPath", "nativeMeterId", "osPageSize", "stepBytes", "pollMs", "dueMs", "debtBytes", "debtFd", "notice", "idleCheckMs"].includes(k)) v.push(`seam: workerData field "${k}" is not on the production list`);
   const rap = findFn(sfs[IB], "readAdmissionProcess");
   if (rap.length !== 1 || rap[0]!.parameters.length !== 0) v.push("seam: readAdmissionProcess takes a parameter (a dependency override only tests pass)");
   // ---- P3: exactly one eval-family call, the (0,eval) at the admission site; none anywhere else in the five files
@@ -211,8 +212,11 @@ export function walGuard(src: GuardSources): string[] {
   if (lio.length !== 1) v.push("P5a: engine-exclusion.ts does not hold exactly one loadIoMeterAddon");
   else {
     const rets: ts.ReturnStatement[] = []; walk(lio[0]!, n => { if (ts.isReturnStatement(n)) rets.push(n); });
-    const nonNull = rets.filter(r => !(r.expression && r.expression.kind === ts.SyntaxKind.NullKeyword));
     const cond = (r: ts.Node) => { let p: ts.Node | undefined = r.parent; while (p && !ts.isIfStatement(p)) p = p.parent; return p && ts.isIfStatement(p) ? norm(p.expression, sfs[EE]).replace(/\s+/g, "") : ""; };
+    // METERDL: off the main thread the loader returns only the main thread's proven copy (loadHandedIoMeter, pinned below), never a copy of its own.
+    const handed = rets.filter(r => r.expression && norm(r.expression, sfs[EE]).replace(/\s+/g, "") === "loadHandedIoMeter(require)");
+    if (handed.length !== 1 || cond(handed[0]!) !== "!isMainThread") v.push("P5a: off the main thread loadIoMeterAddon does not return only the handed copy (one copy per worker)");
+    const nonNull = rets.filter(r => !(r.expression && r.expression.kind === ts.SyntaxKind.NullKeyword) && !handed.includes(r));
     if (nonNull.length !== 1 || cond(nonNull[0]!) !== "usable(addon,Boolean(explicit)&&file===explicit)&&addon.ioMeterAdd&&addon.ioMeterTotal&&addon.ioMeterBytes" || norm(nonNull[0]!.expression!, sfs[EE]).replace(/\s+/g, "") !== "{addon,path:held.copy,id:held.id}") v.push("P5a: loadIoMeterAddon returns a non-null value other than the qualified private copy (qualification bypass)");
   }
   const ens = findFn(sfs[IM], "ensureIoMeter");
@@ -228,7 +232,7 @@ export function walGuard(src: GuardSources): string[] {
   if (inp) { const rs: ts.ReturnStatement[] = []; walk(inp, n => { if (ts.isReturnStatement(n)) rs.push(n); }); if (rs.length !== 1 || !rs[0]!.expression || norm(rs[0]!.expression, sfs[IM]) !== "nativeMeterPath") v.push("P4: ioMeterNativePath returns something other than nativeMeterPath"); }
   // ---- P5c-P5g: exact pins on the loader chain (hash of the printed function) and the worker's own check
   const eeTexts: Record<string, string | null> = {};
-  for (const n of ["overrideAllowed", "explicitOverride", "candidates", "loadIoMeterAddon", "privateCopy", "loadExclusionAddon"]) eeTexts[n] = fnText(sfs[EE], n);
+  for (const n of ["overrideAllowed", "explicitOverride", "candidates", "loadIoMeterAddon", "privateCopy", "loadExclusionAddon", "loadHandedIoMeter"]) eeTexts[n] = fnText(sfs[EE], n);
   for (const [n, t] of Object.entries(eeTexts)) if (t === null || sha(t) !== (PINS as Record<string, string>)[n]) v.push(`P5: engine-exclusion.ts ${n} differs from its pin`);
   const ensT = fnText(sfs[IM], "ensureIoMeter"), nat = fnText(sfs[IM], "ioMeterNativePath");
   if (ensT === null || sha(ensT) !== PINS.ensureIoMeter) v.push("P5b: io-meter.ts ensureIoMeter differs from its pin");

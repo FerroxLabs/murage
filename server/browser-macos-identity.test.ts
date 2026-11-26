@@ -175,6 +175,17 @@ describe.skipIf(process.platform === "win32")("arm64 packaged browser identity",
     chrome[100] ^= 1;
     try { expect(packagedMacBrowserState(root, exe)).toBe("failed"); } finally { chrome[100] = original; }
   });
+  // 1.0.19 refused every Apple Silicon browser with nothing in the log: a refusal says once which tool and which check, never per turn, never a path.
+  it("logs one line naming the tool and the check when the byte check refuses it", async () => {
+    const exe = "/fixture/Murage.app/Contents/MacOS/Murage", warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const engine = images.get("engine")!, original = engine[100];
+    engine[100] ^= 1;
+    try {
+      expect(packagedMacBrowserState(root, exe)).toBe("failed");
+      expect(packagedMacBrowserState(root, exe)).toBe("failed");
+      expect(warn.mock.calls).toEqual([[`[browser] packaged engine refused: signature layout does not match the pinned build (100 bytes)`]]);
+    } finally { engine[100] = original; warn.mockRestore(); }
+  });
   // P1: the remembered codesign answer is keyed on ctime (and dev), so a change that keeps size, mtime and inode asks again.
   it("asks codesign again when a tool's ctime changes", async () => {
     const exe = "/fixture/Murage.app/Contents/MacOS/Murage";

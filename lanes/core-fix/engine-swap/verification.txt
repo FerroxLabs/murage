@@ -1,0 +1,16 @@
+Offline regression command:
+node node_modules/vitest/vitest.mjs run --config lanes/core-fix/engine-swap/vitest.offline.config.mjs --reporter=dot
+Result: 15 files passed, 233 tests passed.
+
+Type checks, no emitted files:
+node node_modules/typescript/bin/tsc --noEmit --incremental false --composite false -p tsconfig.server.json
+node node_modules/typescript/bin/tsc --noEmit --incremental false --composite false -p tsconfig.json
+Both exited 0.
+
+git diff --check: passed.
+Added product and test lines: no literal U+2014 or prohibited copy terms found.
+
+Original-code baseline: 22 failures; see baseline-results.txt for scope and limitations.
+Old malformed-quote scanner: exceeded the 2000 ms worker deadline.
+
+Fixture: launchVerificationServer was attempted directly and through the workflow suite. Loopback port allocation failed before server startup. The real-server workflow and real-reply release qualification remain unverified.

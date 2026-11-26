@@ -279,8 +279,8 @@ async function world(engine: 'claude' | 'acp', forceRecovery: 'none' | 'readines
         }\`+needle);
       }
       if (${JSON.stringify(forceRecovery !== 'none')} && url.endsWith('/server/memory/recall-view.ts')) {
-        source=source.replace('export function assertRecallView(db: DatabaseSync, view: RecallViewHandle, binding?: RecallViewBinding): void {',
-          'export function assertRecallView(db: DatabaseSync, view: RecallViewHandle, binding?: RecallViewBinding): void { if(globalThis.fixtureRecallHeld)db.prepare("DELETE FROM memory_recall_contexts WHERE view_id=? AND generation=?").run(view.viewId,view.generation);');
+        source=source.replace('export function assertRecallView(db: DatabaseSync, view: RecallViewHandle, binding?: RecallViewBinding): number {',
+          'export function assertRecallView(db: DatabaseSync, view: RecallViewHandle, binding?: RecallViewBinding): number { if(globalThis.fixtureRecallHeld)db.prepare("DELETE FROM memory_recall_contexts WHERE view_id=? AND generation=?").run(view.viewId,view.generation);');
       }
       return {...result,source};
     }});

@@ -64,6 +64,9 @@ export function limitTurnImagePaths(text: string): { kept: string[]; overCount: 
 
 export interface CollectedTurnImages {
   images: NonNullable<SendTurnInput["images"]>;
+  /** The attachment path of each image, in the same order: which message
+   * named a picture decides which turn may carry it (memoryFreeTurnImages). */
+  imagePaths: string[];
   /** Canonical uploads this conversation never bound: carried as text by
    * most engines, a refusal on Fuigo (unboundImagePolicy). */
   unbound: string[];
@@ -85,6 +88,18 @@ export function removedImagePaths(dataDir: string, texts: readonly string[]): st
   const home = attachmentsHomeOf(dataDir);
   const paths = new Set(texts.flatMap(text => splitTranscriptAttachments(text).images));
   return [...paths].filter(path => {
+    const name = attachmentNameOf(home, path);
+    return name !== null && attachmentRemoved(home, name);
+  });
+}
+
+/** Which of these attachment paths were removed from storage, asked of each
+ * marker now. The dispatch asks it at the adapter's write for the pictures a
+ * turn carries, so a Remove made after collect() read them still keeps them
+ * out (SL-H). */
+export function removedAttachmentPaths(dataDir: string, paths: readonly string[]): string[] {
+  const home = attachmentsHomeOf(dataDir);
+  return paths.filter(path => {
     const name = attachmentNameOf(home, path);
     return name !== null && attachmentRemoved(home, name);
   });
@@ -167,11 +182,11 @@ export class TurnImages {
    * the count is checked before anything is read. */
   async collect(threadId: string, botId: string, text: string, fit: TurnImageFit = DEFAULT_TURN_IMAGE_FIT): Promise<CollectedTurnImages> {
     const { kept: paths, overCount } = limitTurnImagePaths(text);
-    const images: CollectedTurnImages["images"] = [];
+    let images: CollectedTurnImages["images"] = [];
     const unbound: string[] = [];
     const tooLarge: string[] = [];
     const removed: string[] = [];
-    if (!paths.length) return { images, unbound, overCount, tooLarge, removed };
+    if (!paths.length) return { images, imagePaths: [], unbound, overCount, tooLarge, removed };
     if (!turnImageAudience(this.store, threadId, botId)) throw fail();
     const allowed = new Set(this.store.boundAttachments(threadId, paths).keys());
     // A forged path inside the count is refused before anything is read,
@@ -183,7 +198,7 @@ export class TurnImages {
     // the bot sees is the first images in order, never a gap. An unbound tag
     // costs no bytes and keeps its engine's own rule.
     let spent = false;
-    const included: string[] = [];
+    let included: string[] = [];
     for (const path of paths) {
       if (!allowed.has(path)) { unbound.push(path); continue; }
       if (spent) { tooLarge.push(path); continue; }
@@ -239,8 +254,18 @@ export class TurnImages {
       if (!turnImageAudience(this.store, threadId, botId)) throw fail();
       const bound = this.store.boundAttachments(threadId, included);
       if (included.some(path => !bound.has(path))) throw fail();
+      // A Remove made while a later picture was read or shrunk leaves this
+      // one out too: the marker is asked again here, after the last await
+      // (SL-H; Astra f212385: removal race).
+      const home = attachmentsHomeOf(this.dataDir);
+      const gone = new Set(included.filter(path => attachmentRemoved(home, attachmentNameOf(home, path)!)));
+      if (gone.size) {
+        removed.push(...gone);
+        images = images.filter((_, i) => !gone.has(included[i]!));
+        included = included.filter(path => !gone.has(path));
+      }
     }
-    return { images, unbound, overCount, tooLarge, removed };
+    return { images, imagePaths: included, unbound, overCount, tooLarge, removed };
   }
   /** `collect`, but an unbound path is a refusal of the whole turn. This is
    * what the Fuigo dispatch has done since inline images arrived; see

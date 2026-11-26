@@ -13,6 +13,7 @@ import { basename, dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { SendRow } from "../send-store.ts";
 import type { TargetRefusal } from "./target.ts";
+import { coverageComplete } from "../storage-attachments.ts";
 
 export type ReceiptKind = "share" | "ask";
 export type ReceiptState = "received" | "committed" | "refused";
@@ -155,6 +156,32 @@ function plannedNames(raw: unknown): string[] {
     return `${p.uploadId}${p.ext.startsWith(".") ? "" : "."}${p.ext}`.toLowerCase();
   });
 }
+
+/** The restart sweep's `messageNames` (index.ts): a keyed range read of the attachment-name index (message-db.ts trackAttachmentNames) over
+ * every indexed name that starts with this file's `<uuid>.`, each pointer re-checked against its row for the exact name, never a scan of every
+ * message. Any message text that contains the name contains `<uuid>.` plus at least one letter or digit, which the index holds under that
+ * prefix whatever follows (`<uuid>.pngx` for `<uuid>.png`), so this answers as the old LIKE read did. A name not of that shape, or an index
+ * whose backfill has not reached every row yet, falls back to the full LIKE read, so a file a message names is never removed. */
+export function shareMessageNames(db: DatabaseSync): (name: string) => boolean {
+  const scan = (name: string) => db.prepare("SELECT 1 FROM messages WHERE json LIKE ? LIMIT 1").get(`%${name}%`) !== undefined;
+  if (!coverageComplete(db)) return scan;
+  const pointers = db.prepare("SELECT thread_id, id FROM attachment_name WHERE name >= ? AND name < ?");
+  // The indexer's matches do not overlap: in `<a>.<file uuid>.png` the name `<a>.` takes five letters or digits, which ends with the start of
+  // the file's uuid, and the file's own name is not indexed. Those rows are the indexed names whose 5-character extension ends with a 1-5
+  // character prefix of this uuid (a read of the narrow name index, never of messages).
+  const overlapping = db.prepare(`SELECT thread_id, id FROM attachment_name WHERE length(name) = 42 AND (substr(name, 42, 1) = ? OR substr(name, 41, 2) = ?
+    OR substr(name, 40, 3) = ? OR substr(name, 39, 4) = ? OR substr(name, 38, 5) = ?)`);
+  const confirm = db.prepare("SELECT 1 FROM messages WHERE thread_id = ? AND id = ? AND instr(lower(json), ?) > 0 LIMIT 1");
+  return (name) => {
+    const key = name.toLowerCase();
+    if (!UUID_DOT.test(key)) return scan(name);
+    const named = (rows: unknown[]) => (rows as Array<{ thread_id: string; id: string }>).some((row) => confirm.get(row.thread_id, row.id, key) !== undefined);
+    // '/' is the character after '.', so the range is exactly the names that start with `<uuid>.`
+    return named(pointers.all(key.slice(0, 37), `${key.slice(0, 36)}/`))
+      || named(overlapping.all(...[1, 2, 3, 4, 5].map((n) => key.slice(0, n))));
+  };
+}
+const UUID_DOT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\./;
 
 /** Restart cleanup by references (S37). Reclaims only files that a `received` or `refused` receipt lists (in `files`, or by identity in
  * `planned`) and that nothing else names: no queued, dispatched, unconfirmed or refused row, no committed receipt, no message. Fails

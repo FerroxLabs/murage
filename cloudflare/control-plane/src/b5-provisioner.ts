@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// B5 provisioner: one HostingAdapter interface, a real build host adapter and a Vultr adapter,
+// B5 provisioner: one HostingAdapter interface, a real Hetzner adapter and a Vultr adapter,
 // the plan ladder with live stock checks, and the ProviderAdapter the frozen B3 lifecycle drives in live mode.
 import { claimFleetLabels, claimLabelsOk } from "./fleet-labels";
 import { persistAlert } from "./ops-monitor";
@@ -22,17 +22,17 @@ export type HostFetch = (input: string, init?: RequestInit) => Promise<Response>
 export class PoolLeaseLost extends Error { constructor() { super("pool_lease_lost"); } }
 /** How far a renewed lease reaches (B3's PROVISION_LEASE_MS). */
 const POOL_LEASE_RENEW_MS = 2 * 60_000;
-/** Worker and build host clocks differ: an action counts as started after the intent within this margin. */
+/** Worker and Hetzner clocks differ: an action counts as started after the intent within this margin. */
 const ACTION_CLOCK_SKEW_MS = 2 * 60_000;
 /** A refusal that means the provider has no stock of that server type at that place (a different type or place may have). */
 export const stockRefusal = (e: unknown) => e instanceof HostError && ["resource_unavailable", "placement_error"].includes(e.code);
-/** build host's 422 service_error when the image's disk is larger than the server type's disk. The rung can never take this image, so it is
+/** Hetzner's 422 service_error when the image's disk is larger than the server type's disk. The rung can never take this image, so it is
  *  closed like a stock refusal and the next rung is tried; retrying the same rung can only fail the same way. */
 export const IMAGE_TOO_BIG_MESSAGE = /image disk is bigger than server type disk/i;
 export const imageTooBigRefusal = (e: unknown) => e instanceof HostError && e.status === 422 && IMAGE_TOO_BIG_MESSAGE.test(e.providerMessage ?? "");
 /** The one platform alert for a ladder that met an image no rung could hold. Deduplicated by the open-alert index (kind, home). */
 export const IMAGE_TOO_BIG_ALERT = "image.too_big_for_server_type";
-/** True unless BOTH sizes are known and the image is larger than the server type's disk. An unknown size never blocks a rung: build host's own
+/** True unless BOTH sizes are known and the image is larger than the server type's disk. An unknown size never blocks a rung: Hetzner's own
  *  422 (imageTooBigRefusal) still catches it at create time. */
 export const diskFits = (imageGb: number | null | undefined, typeGb: number | null | undefined): boolean =>
   !(typeof imageGb === "number" && typeof typeGb === "number" && imageGb > typeGb);
@@ -52,7 +52,7 @@ export async function raiseImageTooBig(env: Env, misses: { image: string; server
     detail: `image is bigger than the disk of server type ${named}; use a smaller image or drop the rung`.slice(0, 300) }, now).catch(() => false);
 }
 export class HostError extends Error {
-  /** `providerMessage` is the provider's own words (build host body.error.message), raw: operator-only, store it through
+  /** `providerMessage` is the provider's own words (Hetzner body.error.message), raw: operator-only, store it through
    *  sanitizeProviderMessage, never show it to a customer. */
   constructor(public readonly status: number, public readonly code: string, public readonly providerMessage: string | null = null) { super(code); }
 }
@@ -98,7 +98,7 @@ export interface HostingAdapter {
   readonly provider: "hetzner" | "vultr";
   /** Locations (subset of `candidates`, same order) where this type can be created right now. */
   availableLocations(serverType: string, candidates: string[]): Promise<string[]>;
-  /** The image's disk in GB (build host `disk_size`), null when the provider does not say. Optional: Vultr has no such limit. */
+  /** The image's disk in GB (Hetzner `disk_size`), null when the provider does not say. Optional: Vultr has no such limit. */
   imageDiskGb?(image: string, signal?: AbortSignal): Promise<number | null>;
   /** The server type's disk in GB, null when unknown. */
   serverTypeDiskGb?(serverType: string, signal?: AbortSignal): Promise<number | null>;
@@ -138,18 +138,18 @@ export interface PoolServer { id: string; status: string; imageId: string | null
 export interface ServerTypeInfo { name: string; cores: number; /** Disk in GB; absent or null when unknown. */ diskGb?: number | null; arch: "x86" | "arm" | "unknown"; deprecated: boolean;
   locations: Record<string, { available: boolean; deprecated?: boolean; monthlyNetCents: number | null }> }
 export interface PoolActionResult { actionId: string | null; status: PowerStatus }
-/** build-host-only methods the warm pool uses. Nothing in the live lifecycle calls these. */
+/** Hetzner-only methods the warm pool uses. Nothing in the live lifecycle calls these. */
 export interface HetznerPoolAdapter {
   /** ONE `GET /server_types?per_page=50`: every type with per-location stock and monthly net price. Not paged on purpose (the plan fixes it at one call). */
   serverTypes(signal?: AbortSignal): Promise<ServerTypeInfo[]>;
-  /** The image's disk in GB (build host `disk_size`), null when unknown. Optional so a host that cannot say never blocks a rung. */
+  /** The image's disk in GB (Hetzner `disk_size`), null when unknown. Optional so a host that cannot say never blocks a rung. */
   imageDiskGb?(image: string, signal?: AbortSignal): Promise<number | null>;
   /** Creates a server that stays OFF (`start_after_create:false`), IPv4 only, no volume. The caller labels the call (`murage/call`) so a lost answer is adopted via listByLabel. */
   createPoolServer(i: { name: string; type: string; location: string; image: VerifiedImage; labels: Record<string, string>; userData: string;
     firewallIds: number[]; sshKeyIds: number[]; signal?: AbortSignal }): Promise<PoolServer>;
   /** PUT /servers/{id}: only the fields given are sent. */
   updateServer(id: string, patch: { name?: string; labels?: Record<string, string> }, signal?: AbortSignal): Promise<PoolServer>;
-  /** POST rebuild, then re-read the server. build host POWERS THE SERVER ON after a rebuild even if it was off (spike 2026-10-16), so the caller
+  /** POST rebuild, then re-read the server. Hetzner POWERS THE SERVER ON after a rebuild even if it was off (spike 2026-10-16), so the caller
    *  must check `server.status` and power it off again when it wants a pool server. The root password in the answer is dropped. */
   rebuildServer(id: string, image: VerifiedImage, signal?: AbortSignal): Promise<PoolActionResult & { server: PoolServer | undefined; serverError?: string }>;
   powerOn(id: string, signal?: AbortSignal): Promise<PoolActionResult>;
@@ -161,9 +161,9 @@ export interface HetznerPoolAdapter {
   listByLabel(selector: string, signal?: AbortSignal): Promise<PoolServer[]>;
   /** Named apart from HostingAdapter.getServer (which returns the lean NativeServer the live lifecycle uses). */
   getServerDetail(id: string, signal?: AbortSignal): Promise<PoolServer>;
-  /** What the whole build host project uses right now: vCPUs of every server, primary IPs, volume GB (every page of three listings). */
+  /** What the whole Hetzner project uses right now: vCPUs of every server, primary IPs, volume GB (every page of three listings). */
   projectUsage(signal?: AbortSignal): Promise<{ vcpu: number; primaryIps: number; volumeGb: number }>;
-  /** DELETE /servers/{id} keeping build host's deletion action (the delete is asynchronous). `gone` = the provider said 404: already deleted. */
+  /** DELETE /servers/{id} keeping Hetzner's deletion action (the delete is asynchronous). `gone` = the provider said 404: already deleted. */
   deleteServer(id: string, signal?: AbortSignal): Promise<PoolActionResult & { gone: boolean }>;
   /** GET /actions/{id}: "none" when the provider no longer knows the action. */
   actionStatus(actionId: string, signal?: AbortSignal): Promise<PowerStatus>;
@@ -189,16 +189,16 @@ async function parse<T>(response: Response, ignore404 = false): Promise<T> {
     if (ignore404 && response.status === 404) return {} as T;
     const body = await response.json().catch(() => null) as { error?: { code?: string; message?: unknown } | string } | null;
     const code = typeof body?.error === "object" ? body.error?.code : undefined;
-    const message = typeof body?.error === "object" ? body.error?.message : body?.error; // build host: error.message; Vultr: error (a string)
+    const message = typeof body?.error === "object" ? body.error?.message : body?.error; // Hetzner: error.message; Vultr: error (a string)
     throw new HostError(response.status, code ?? `http_${response.status}`, typeof message === "string" ? message : null);
   }
   if (response.status === 204) return {} as T;
   return await response.json().catch(() => ({})) as T;
 }
 
-// ---- build host Cloud -----------------------------------------------------------------------------------------------
+// ---- Hetzner Cloud -----------------------------------------------------------------------------------------------
 
-/** build host label selector: comma-separated terms `key`, `!key`, `key=v`, `key!=v`, `key in (a,b)`, `key notin (a,b)`. */
+/** Hetzner label selector: comma-separated terms `key`, `!key`, `key=v`, `key!=v`, `key in (a,b)`, `key notin (a,b)`. */
 const SEL_KEY = "[A-Za-z0-9](?:[A-Za-z0-9_.\\/-]{0,100}[A-Za-z0-9])?";
 const SEL_VAL = "[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?";
 const SEL_TERM = new RegExp(`^(?:!?${SEL_KEY}|${SEL_KEY}!?=${SEL_VAL}|${SEL_KEY} (?:in|notin) \\(${SEL_VAL}(?:,${SEL_VAL})*\\))$`);
@@ -241,7 +241,7 @@ export function hetznerAdapter(token: string, config: Pick<ProvisionerConfig, "s
         body: body ? JSON.stringify(body) : undefined, ...(signal ? { signal } : {}) }), ignore404);
     } catch (error) { throw method === "GET" ? markNotAnAnswer(error) : error; } // Astra MAILRETRY-16 P1: a GET error answers no create
   };
-  /** Astra MAILRETRY-16 P1: every page of a listing (build host paginates at 25 by default); any page failing fails the listing. */
+  /** Astra MAILRETRY-16 P1: every page of a listing (Hetzner paginates at 25 by default); any page failing fails the listing. */
   const all = async <K extends string, T>(path: string, key: K, signal?: AbortSignal): Promise<T[]> => {
     const out: T[] = [];
     for (let page = 1; page <= 100; page++) {
@@ -481,7 +481,7 @@ export function vultrAdapter(apiKey: string, config: Pick<ProvisionerConfig, "vu
       return block(r.block);
     },
     async createServer(i) {
-      assertVerifiedImage(i.image, { provider: "vultr", now: Date.now() }); // no Vultr image can be verified: customer homes are build host only
+      assertVerifiedImage(i.image, { provider: "vultr", now: Date.now() }); // no Vultr image can be verified: customer homes are Hetzner only
       if (!config.vultr) throw markNotSent(new Error("vultr_firewall_missing")); // never create an unfirewalled home
       const r = await call<{ instance: VuInstance }>("POST", "/instances", { ...(config.vultr.sshKeyIds.length ? { sshkey_id: config.vultr.sshKeyIds } : {}),
         firewall_group_id: config.vultr.firewallGroupId, region: i.location, plan: i.serverType,
@@ -573,7 +573,7 @@ function route(id: string): { provider: "hetzner" | "vultr"; role: ResourceRole;
   throw new Error("provider_identity_conflict");
 }
 
-/** The build host adapter carries the pool methods; the Vultr one and test doubles may not. */
+/** The Hetzner adapter carries the pool methods; the Vultr one and test doubles may not. */
 const isPoolAdapter = (a: HostingAdapter): a is HostingAdapter & HetznerPoolAdapter => typeof (a as Partial<HetznerPoolAdapter>).updateServer === "function";
 
 export interface LiveDeps { fetch?: HostFetch; now?: () => number; adapters?: Record<"hetzner" | "vultr", HostingAdapter | null>;
@@ -609,7 +609,7 @@ export function createLiveProvider(env: Env, deps: LiveDeps = {}): ProviderAdapt
     hetzner: env.HCLOUD_TOKEN ? hetznerAdapter(env.HCLOUD_TOKEN, { ...config, quarantineFirewallId: config.quarantineFirewallId }, deps.fetch, deps.now) : null,
     vultr: env.VULTR_API_KEY ? vultrAdapter(env.VULTR_API_KEY, config, deps.fetch) : null,
   };
-  // G3: before the first provisioning mutation of this provider instance, every configured build host image must be approved for this
+  // G3: before the first provisioning mutation of this provider instance, every configured Hetzner image must be approved for this
   // environment and readable with this credential. Not cached across instances; a failure is remembered for this instance only.
   // Injected adapters (tests) have no real credential to check.
   let imagesChecked: Promise<void> | null = null;
@@ -698,7 +698,7 @@ export function createLiveProvider(env: Env, deps: LiveDeps = {}): ProviderAdapt
     }
     return out;
   }
-  /** Verifies a stored choice's image. A permanent refusal (not a transient build host re-check failure) of a ladder choice is repaired once with the
+  /** Verifies a stored choice's image. A permanent refusal (not a transient Hetzner re-check failure) of a ladder choice is repaired once with the
    *  CURRENT configured image of the same provider and arch, which must itself verify; location and volume are unchanged. */
   async function verifyChoice(homeId: string, gen: number, choice: { provider: "hetzner" | "vultr"; arch: "x86" | "arm"; image: string; pool_id: string | null }) {
     try { return await verify({ provider: choice.provider, image: choice.image, arch: choice.arch }); }
@@ -794,7 +794,7 @@ export function createLiveProvider(env: Env, deps: LiveDeps = {}): ProviderAdapt
     return { adapter, choice, existing: undefined, userData, volumeNative: route(input.volume.id).native, pool, verified };
   }
 
-  /** A build host action that locks the server (an attach in flight) answers 423 `locked` to the next one: wait and retry briefly. */
+  /** A Hetzner action that locks the server (an attach in flight) answers 423 `locked` to the next one: wait and retry briefly. */
   const whenUnlocked = async <T>(op: () => Promise<T>): Promise<T> => {
     for (let waited = 0; ; waited += 2000) {
       try { return await op(); } catch (e) {
@@ -840,7 +840,7 @@ export function createLiveProvider(env: Env, deps: LiveDeps = {}): ProviderAdapt
     const found = (await hz.listServerActions(p.serverNative, "start", p.signal)).find((a) => a.startedMs >= intentMs - ACTION_CLOCK_SKEW_MS);
     return found ? (found.status === "none" ? "unknown" : found.status) : "unknown";
   }
-  /** The pool server's real image (what build host says it runs) must be the pool row's image and pass verifyImageForUse. */
+  /** The pool server's real image (what Hetzner says it runs) must be the pool row's image and pass verifyImageForUse. */
   async function poolImageOk(detail: PoolServer, poolImage: string, arch: "x86" | "arm", choiceImage?: string): Promise<boolean> {
     if (detail.imageId === null || detail.imageId !== poolImage || (choiceImage !== undefined && detail.imageId !== choiceImage)) return false;
     try { await verify({ provider: "hetzner", image: detail.imageId, arch }); return true; }
@@ -1143,7 +1143,7 @@ export function createLiveProvider(env: Env, deps: LiveDeps = {}): ProviderAdapt
       const { ref, actionId: snapshotAction } = await adapter.snapshotServer(server.id, { ...labels, role: "snapshot" });
       await recordOwnProviderAction(db, { homeId, generation, actionId: snapshotAction, kind: "provider_snapshot", actor: "system",
         reason: "snapshot of the server taken at the hosting company" });
-      // Honest receipt: a provider snapshot covers the root disk only. Neither build host nor Vultr snapshots attached volumes.
+      // Honest receipt: a provider snapshot covers the root disk only. Neither Hetzner nor Vultr snapshots attached volumes.
       await db.prepare(`INSERT INTO volume_snapshots (home_id,resource_generation,kind,ref,covers_volume,created_at) VALUES (?,?,?,?,0,?)
         ON CONFLICT(home_id,resource_generation) DO NOTHING`).bind(homeId, generation, "server_snapshot", `${choice.provider}:${ref}`, now()).run();
     },

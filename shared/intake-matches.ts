@@ -177,8 +177,6 @@ export const INTAKE_MATCH_TERMS: Readonly<Record<string, string>> = {
   "game-3d": "adventure based contained containing file game games generating html immediately platformer requests runnable runs self single star",
   "human-3-coach": "burnout coach coaching dan discipline habits holistic human koe mindset motivation personal procrastination purpose vocation wellbeing",
   ignition: "beginner business ignition income landing page website",
-  "moltbook-skills": "browses comments communities ember moltbook network posts published social upvotes",
-  moltbook: "agents helping interact moltbook network registered social",
   "morph-ppt-3d": "built cinematic deck glb models morph ppt pptx presentations smooth transitions",
   "morph-ppt": "animated animation beautiful deck morph ppt pptx presentations slides",
   "pitch-deck-creator": "creator deck investor narrative officecli pitch powerpoint pptx presentation presentations slides",

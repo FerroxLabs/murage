@@ -52,7 +52,7 @@ describe.skipIf(process.platform==="win32")("a refusal after a released attempt 
     expect(resend[0].resendOf).toEqual({messageId:sent[0].id,threadId:bot.threadId,botId:bot.id});
     expect(all.filter(message=>message.tool?.ok===false&&String(message.tool?.name).startsWith("error:"))).toHaveLength(0);
     expect(JSON.stringify(all)).not.toContain("The earlier submission may have started.");
-    expect(JSON.stringify(all)).not.toContain("could not start this reply");
+    expect(JSON.stringify(all)).not.toMatch(/could not start this reply|couldn't start this reply/);
     // 1.0.19 L1: Send again is claimed once on the server (a lost answer then a reload cannot offer it again)
     const claimPath=`/api/threads/${bot.threadId}/messages/${resend[0].id}/resend-used`;
     expect(await api("POST",claimPath,{})).toEqual({claimed:true});

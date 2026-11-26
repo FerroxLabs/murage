@@ -9,7 +9,7 @@
 # .github/workflows/scale-budget.yml (manual and nightly only). With SCALE_SLOPE_CAP_MS=600000 and
 # SCALE_SCENARIOS limited to the non-slope set it fits in about 12 minutes, at the cost of the slope check.
 set -eu
-RIG_HOST=${RIG_HOST:-build-host}   # any ssh host with the rig layout (see README, "Other hosts")
+RIG_HOST=${RIG_HOST:-hetzner-dsm}   # any ssh host with the rig layout (see README, "Other hosts")
 label=${1:?}; commit=${2:?}; base=${3:-}
 here=${0:A:h}
 extra=()

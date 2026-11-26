@@ -10,8 +10,8 @@ import { DATA_DIR } from '../config.ts';
 import { closeDatabase, database, databaseGeneration } from '../database.ts';
 import { removeTempDirSync } from '../testing/cleanup.ts';
 import { OWNER_PIN } from './schema.ts';
-import { RecallPreparationPending, RecallViewLost, recallPreparationFailure, MemoryPinProjectionPending } from './recall-recovery.ts';
-import { RecallReadiness, RecallHeld, RecallDispatchPending, RecallWait, RecallViewNotReady, REBUILD_VIEW_WAIT_MS, assertRecallDispatch } from './recall-readiness.ts';
+import { RecallCapacityPending, RecallPreparationPending, RecallViewLost, recallPreparationFailure, MemoryPinProjectionPending } from './recall-recovery.ts';
+import { RecallReadiness, RecallHeld, RecallDispatchPending, RecallCapacityRefused, RecallWait, RecallViewNotReady, REBUILD_VIEW_WAIT_MS, assertRecallDispatch } from './recall-readiness.ts';
 beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});database().exec(OWNER_PIN.sql);});
 afterEach(()=>{vi.useRealTimers();closeDatabase();});
 const pending=()=>{throw new RecallPreparationPending();};
@@ -49,7 +49,7 @@ it('S1: dispatch rejects missing mode, empty persona, missing integrations and l
   expect(()=>assertRecallDispatch(input)).not.toThrow();
   for(const delta of [{recall:undefined},{system:''},{integrations:{}},{transcript:[]}])expect(()=>assertRecallDispatch({...input,...delta})).toThrow();
 });
-it('TRAINRED-FENCE: a memory-free rebuild dispatches only under the withheld label, prepared memory-free, with an empty system and no memory tools',()=>{
+it('TRAINRED-FENCE: a memory-free rebuild dispatches only under the withheld label, prepared memory-free, with its prepared memory-free system (empty when none was prepared) and no memory tools',()=>{
   const prepared={system:'Fixture persona',integrations:['agents','memory'],historyPrepared:true,resumed:false,memoryFree:true as const};
   const input={recall:'withheld' as const,system:'',integrations:{agents:{}},transcript:[],recallPrepared:prepared};
   expect(()=>assertRecallDispatch(input)).not.toThrow();
@@ -58,6 +58,11 @@ it('TRAINRED-FENCE: a memory-free rebuild dispatches only under the withheld lab
   // The label and the fact only work together: the same dispatch without the memory-free fact is refused, and so is
   // a fully prepared request that only puts the label on.
   expect(()=>assertRecallDispatch({...input,recallPrepared:{...prepared,memoryFree:undefined}})).toThrow('still being prepared');
+  // SABLE-IDENTITY-1020: a direct memory-free request carries exactly its prepared memory-free system, never the empty one and never the full one
+  const direct={...prepared,memoryFreeSystem:'Fixture persona only'};
+  expect(()=>assertRecallDispatch({...input,system:'Fixture persona only',recallPrepared:direct})).not.toThrow();
+  expect(()=>assertRecallDispatch({...input,system:'',recallPrepared:direct})).toThrow('still being prepared');
+  expect(()=>assertRecallDispatch({...input,system:'Fixture persona',recallPrepared:direct})).toThrow('still being prepared');
   expect(()=>assertRecallDispatch({recall:'withheld',system:'Fixture persona',integrations:{agents:{},memory:{}},transcript:[{role:'user',text:'Earlier fixture'}],recallPrepared:{...prepared,memoryFree:undefined}})).toThrow('still being prepared');
 });
 
@@ -203,4 +208,44 @@ it('S1: a redispatch after a context change gets a fresh probe schedule with the
  const fourth=readiness.access(pending,signal).catch(error=>error);
  await vi.advanceTimersByTimeAsync(300);
  expect(await fourth).toBeInstanceOf(RecallDispatchPending);
+});
+
+// OWNERFB 1020 (MAIN 07:24Z FIX SET): the owner audience is never refused because recall is unavailable; every other audience is.
+const fixturePin=()=>database().exec("INSERT INTO memory_scopes VALUES('fixture-scope','bot','fixture-reader','{}',0); INSERT INTO memory_records VALUES('fixture-pin',1,'fixture-scope','constraint','Fixture rule','owner-statement','active',1,1,NULL,NULL,1)");
+it('OWNERFB-U1: with pins and no view the owner takes the held path; a non-owner still gets the pin refusal',async()=>{
+  fixturePin();
+  const owner=new RecallReadiness();
+  await expect(owner.access(pending,new AbortController().signal,undefined,{owner:true})).rejects.toBeInstanceOf(RecallHeld);
+  expect(()=>owner.assertHeld(true)).not.toThrow();
+  const other=new RecallReadiness();
+  await expect(other.access(pending,new AbortController().signal)).rejects.toBeInstanceOf(MemoryPinProjectionPending);
+  expect(()=>other.assertHeld()).toThrow(MemoryPinProjectionPending);
+},10000);
+it('OWNERFB-U2: every view in use: the owner is held, a non-owner is refused on its card',async()=>{
+  const owner=new RecallReadiness();
+  await expect(owner.access(()=>{throw new RecallCapacityPending();},new AbortController().signal,undefined,{owner:true})).rejects.toBeInstanceOf(RecallHeld);
+  const other=new RecallReadiness();
+  await expect(other.access(()=>{throw new RecallCapacityPending();},new AbortController().signal)).rejects.toBeInstanceOf(RecallCapacityRefused);
+});
+it('OWNERFB-U3: Stop still detaches an owner wait, and an owner that never probed holds no proof',async()=>{
+  fixturePin();
+  expect(()=>new RecallReadiness().assertHeld()).toThrow(MemoryPinProjectionPending);
+  const stopped=new RecallReadiness(),controller=new AbortController();
+  const result=stopped.access(pending,controller.signal,undefined,{owner:true});controller.abort(stop);
+  await expect(result).rejects.toBe(stop);
+});
+it('OWNERFB-U4: an owner hold cannot authorize a redispatch after the audience narrows', async () => {
+  const readiness = new RecallReadiness();
+  await expect(readiness.access(() => { throw new RecallCapacityPending(); }, new AbortController().signal, undefined, { owner: true }))
+    .rejects.toBeInstanceOf(RecallHeld);
+  expect(() => readiness.assertHeld(true)).not.toThrow();
+  expect(() => readiness.assertHeld(false)).toThrow(MemoryPinProjectionPending);
+});
+it('OWNERFB-U5: a pin added after a zero-pin owner hold still fences submission', async () => {
+  const readiness = new RecallReadiness();
+  await expect(readiness.access(pending, new AbortController().signal, undefined, { owner: true }))
+    .rejects.toBeInstanceOf(RecallHeld);
+  expect(() => readiness.assertHeld(true)).not.toThrow();
+  fixturePin();
+  expect(() => readiness.assertHeld(true)).toThrow(MemoryPinProjectionPending);
 });

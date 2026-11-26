@@ -60,7 +60,7 @@ export interface HeadlessRunOptions {
   stdinText?: string;
   /** The call's learning gate (TextOnlyTurnInput.transport.gate): the physical write is released through it, under the write lock. */
   gate?: LearningGate;
-  /** Fuigo and Grok: write the prepared prompt and spawn together under the gate lock. */
+  /** Fuigo and Grok: the prepared prompt, written and spawned right after the gate commits its release (never under the lock). */
   promptText?: string;
   cleanup?: () => void; allowedHomeNew?: RegExp[]; allowedRootNew?: RegExp[];
   /** After the result line, the child gets this long to exit on its own before the tree is stopped. */
@@ -118,27 +118,29 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
   } catch (error) { finish(true); throw error; }
 
   let child: ReturnType<typeof spawnCli>;
-  let spawned: ReturnType<typeof spawnCli> | undefined, commitFailed: MemorySendCommitFailed | undefined;
+  let commitFailed: MemorySendCommitFailed | undefined;
   // The bot this reflection runs for: the launcher refuses a Cloud run that names none.
   const env: Record<string, string | undefined> = { ...o.env };
   cloudTurnBot(env, o.context?.botId);
-  const spawnIt = () => spawned = spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job);
-  // Each attempt owns a unique root. Still keep the prompt write and spawn in the same
-  // admission fence: a refused send must not write the private words. Encoding is done above.
+  const spawnIt = () => spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job);
+  // Each attempt owns a unique root. A refused send must not write the private words: the gate decides and commits the release first
+  // (a refusal, busy lock or failed COMMIT throws and nothing is written or launched), then the prompt file and the spawn follow in the
+  // same synchronous turn, with no await between COMMIT and the launch. The write lock is never held across a file write or a process
+  // launch (MAIN-RULING 1.0.22 learning-send-transports :56). A failed write or spawn after the release still counts as released and
+  // surfaces its own error below, exactly as it did from inside the gate. Encoding is done above.
   const promptText = o.promptText;
   const writeAndSpawn = () => {
     if (promptBytes !== undefined) writeFileSync(o.temp.promptFile, promptBytes, { mode: 0o600 });
     return spawnIt();
   };
-  try { child = o.gate && promptText !== undefined ? o.gate.send(() => writeAndSpawn()) : spawnIt(); }
-  catch (error) {
-    if (spawned && error instanceof MemorySendCommitFailed) { child = spawned; commitFailed = error; }
-    else {
+  try {
+    if (o.gate && promptText !== undefined) { o.gate.send(() => undefined); child = writeAndSpawn(); }
+    else child = spawnIt();
+  } catch (error) {
     finish(true);
     // No job, no CLI: the run is refused for isolation, exactly as a failed assignment is (jobRefusal below).
     if (error instanceof PipJobRefusedError) return settledWithout({ state: "refused", reason: "isolation", detail: "job-assignment-failed", counted: false });
     throw error;
-    }
   }
 
   let exitCode: number | null = null;

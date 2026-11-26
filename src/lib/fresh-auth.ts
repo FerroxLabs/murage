@@ -118,10 +118,20 @@ const pendingAllows = new Map<string, Promise<{ failed: boolean; error?: unknown
 /** What a call site runs for an Allow: respond with fresh auth, and sort the
  * outcome. A Face ID cancel is not an error (the card stays pending); every
  * other failure is shown and handed to the caller with its code. */
+/** The server's codes for an answer that was not delivered (1021): the card can no longer be answered, or it can be retried. */
+export type DeliveryCode = "delivery_failed_terminal" | "delivery_retry";
+/** A fresh-auth code to speak or show, never a delivery code (a call has no line for those: it says its plain fallback). */
+export const freshAuthCodeOf = (code?: FreshAuthCode | DeliveryCode): FreshAuthCode | undefined =>
+  code === "delivery_failed_terminal" || code === "delivery_retry" ? undefined : code;
+const deliveryCode = (error: unknown): DeliveryCode | undefined => {
+  const code = ((error ?? {}) as { status?: number; body?: { code?: unknown } }).body?.code;
+  return (error as { status?: number })?.status === 503 && (code === "delivery_failed_terminal" || code === "delivery_retry") ? code : undefined;
+};
+
 export async function decideWithFreshAuth(
   post: (extra?: Record<string, unknown>) => Promise<unknown>,
   context: DecideContext,
-  report: { onError?: (message: string, code?: FreshAuthCode) => void; /** The answer was posted (after a signed retry too). */ onSuccess?: () => void; showError: (error: unknown) => void },
+  report: { onError?: (message: string, code?: FreshAuthCode | DeliveryCode) => void; /** The answer was posted (after a signed retry too). */ onSuccess?: () => void; showError: (error: unknown) => void },
 ): Promise<void> {
   const key = context.decision ? `${context.threadId}\n${context.requestId}` : "";
   const sort = (error: unknown, shown: boolean) => {
@@ -130,7 +140,7 @@ export async function decideWithFreshAuth(
       if (error instanceof FreshAuthError && error.code === "computerOnly") markComputerOnly(context.threadId, context.requestId);
       report.showError(error);
     }
-    report.onError?.(error instanceof Error ? error.message : String(error), error instanceof FreshAuthError ? error.code : undefined);
+    report.onError?.(error instanceof Error ? error.message : String(error), error instanceof FreshAuthError ? error.code : deliveryCode(error));
   };
   const joined = key ? pendingAllows.get(key) : undefined;
   if (joined) {

@@ -79,7 +79,9 @@ it('builtin locked-page recovery and restart execute through owner HTTP with the
  const act=async(action:string,extra:Record<string,unknown>={})=>call('/api/bots/direct/browser',{action,expectedKey:status.sessionKey,expectedRevision:status.selectionRevision,generation:status.generation,control:status.control,...extra});
  status=(await act('take')).body;
  expect((await act('input',{event:{type:'input_keyboard',eventType:'char',text:'fixture'}})).status).toBe(200);
- const admission=await call('/api/fixture/admission');expect(admission.body.result.unavailable).toContain('browser-cause:builtin_page_locked:0|');
+ // Sean 1.0.20 ruling: the owner is never asked to hand a browser back. While the owner holds control the turn keeps its browser
+ // (each step meets "the owner has taken control"), with no locked-page notice; the bot's new tab comes once control is back.
+ const admission=await call('/api/fixture/admission');expect(admission.body.result.unavailable).toBeUndefined();expect(admission.body.result.integration,JSON.stringify(admission.body)).toBeTruthy();
  const reopened=await act('reopen');expect(reopened).toMatchObject({status:200,body:{protectedDocument:false}});status=reopened.body;
  const released=await act('release');expect(released.status).toBe(200);status=released.body;
  expect(await act('restart')).toMatchObject({status:200,body:{protectedDocument:false}});

@@ -13,13 +13,13 @@ export const MAX_FILE_BYTES = 8192;
 
 const isPlainObject = value => value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 
-/** Defaults for one origin on one platform (spec section 2 table and 6.3). Upgrades are exactly yesterday's behaviour. */
+/** Defaults for one origin on one platform (spec section 2 table and 6.3). Upgrades retain the previous count mode. */
 export function notifySurfaceDefaults(origin, platform) {
   if (origin === "upgrade") {
     return {
       v: NOTIFY_SURFACES_VERSION, origin: "upgrade",
       surfaces: { notify: true, receipt: true, tray: false, pill: false, badge: true, bubble: false, dock: false, shortcut: false },
-      notifyActions: false, quietSummary: false, badgeMenu: false, badgeCount: "unread",
+      notifyActions: false, quietSummary: false, badgeCount: "unread",
       receiptMinMinutes: 0, nudgeMinutes: 0, hideFullscreen: false, respectFocus: false,
       pinnedBotId: null, shortcut: null, chooser: "done", asks: { backgroundApproval: true, longJob: true },
     };
@@ -27,7 +27,7 @@ export function notifySurfaceDefaults(origin, platform) {
   return {
     v: NOTIFY_SURFACES_VERSION, origin: "new",
     surfaces: { notify: true, receipt: true, tray: platform !== "darwin", pill: platform === "darwin", badge: true, bubble: false, dock: false, shortcut: false },
-    notifyActions: true, quietSummary: true, badgeMenu: true, badgeCount: "needs-you",
+    notifyActions: true, quietSummary: true, badgeCount: "needs-you",
     receiptMinMinutes: 2, nudgeMinutes: 5, hideFullscreen: true, respectFocus: true,
     pinnedBotId: null, shortcut: null, chooser: "unseen", asks: { backgroundApproval: false, longJob: false },
   };
@@ -48,7 +48,7 @@ export function validAccelerator(value) {
   return /^[A-Za-z0-9]$/.test(key) || /^f([1-9]|1\d|2[0-4])$/.test(lower) || NAMED_KEYS.has(lower);
 }
 
-const BOOLEAN_KEYS = ["notifyActions", "quietSummary", "badgeMenu", "hideFullscreen", "respectFocus"];
+const BOOLEAN_KEYS = ["notifyActions", "quietSummary", "hideFullscreen", "respectFocus"];
 const CHOICES = { badgeCount: ["needs-you", "unread"], receiptMinMinutes: [0, 2, 5], nudgeMinutes: [0, 5, 15], chooser: CHOOSER_STATES };
 
 /** Check ONE key. Keys: a top-level key, `surfaces.<id>` or `asks.<name>`. Returns {ok:true,value} or {ok:false}. */

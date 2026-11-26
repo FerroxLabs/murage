@@ -52,6 +52,9 @@ export interface StopHit {
   /** Everyone a message goes to, normalized, so an approved send can be
    * remembered and the next message to them is not "new". */
   recipients?: string[];
+  /** The stop line could not read the call at all and holds it. The kind is then only how the hold is filed: no delete,
+   * payment or message was found, so the card must not word it as one. */
+  unread?: true;
 }
 
 export interface StopLinePlace {
@@ -1864,7 +1867,7 @@ export function classifyAsk(
   given: StopLinePlace,
 ): StopHit | null {
   const stamped = stampedToolCall(ask);
-  if (stamped === null) return { kind: "delete", what: "Murage could not tell which tool this runs, so it is waiting for you." };
+  if (stamped === null) return { kind: "delete", unread: true, what: "Murage could not tell which tool this runs, so it is waiting for you." };
   // ISSUE-PERMS-1010 Rev 3 G2: the Codex driver's apply_patch ask carries what the patch takes away as `removed` on its
   // edit call; each is a delete, judged from the delivery's folder. A Murage-built input only ever adds a stop: a
   // `removed` that is not a list of paths stops as a delete nobody can place. It is judged BEFORE the contract below
@@ -1881,7 +1884,7 @@ export function classifyAsk(
     : null;
   if (editHit && ask.engine === "codex") return editHit;
   // Rule 25: a call its driver's contract cannot read whole stops too.
-  if (!requiredFields(ask.engine, resolveCall(ask), ask).ok) return { kind: "delete", what: "Murage could not read this call whole, so it is waiting for you." };
+  if (!requiredFields(ask.engine, resolveCall(ask), ask).ok) return { kind: "delete", unread: true, what: "Murage could not read this call whole, so it is waiting for you." };
   const first = stamped ? classifyStopLine(stamped.name, stamped.input, ask.summary, given) : null;
   // ISSUE-PERMS-1010 B: a stamped codex apply_patch is judged by what it does to each path: every file it deletes, and the
   // old name of every file it moves, is a delete for the stop line (an unreadable patch already stopped on its contract)

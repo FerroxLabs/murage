@@ -30,7 +30,20 @@ export const childIoCensusSnapshot=()=>({...runCounts,OWNED_NODE:runCounts.OWNED
  * child calls this BEFORE its final sample, so reporting cannot add a late tail. */
 export function reportChildIoCensus():void {
  if(launchState.reported)return;launchState.reported=true;
- if(Object.values(childIoCensusSnapshot()).some(Boolean))try{writeSync(2,"[io-census] "+JSON.stringify(childIoCensusSnapshot())+"\n");}catch{markIoMeterUnknown();}
+ if(Object.values(childIoCensusSnapshot()).some(Boolean)&&!writeExitLineSync("[io-census] "+JSON.stringify(childIoCensusSnapshot())+"\n"))markIoMeterUnknown();
+}
+const EXIT_LINE_ATTEMPTS=256,exitPause=new Int32Array(new SharedArrayBuffer(4));
+/** One line on fd 2 on the exit path, synchronously. In the packaged server fd 2 is a pipe the desktop reads, and Node makes it
+ * non-blocking: a reader that is behind refuses the write with EAGAIN, and before 1.0.22 that refusal dropped the census, which then
+ * read in the owner's log like a server killed before its exit (cause12). EAGAIN is retried, bounded (this runs while the process
+ * dies and must end); any other failure gives up. Partial writes continue from where they stopped. */
+export function writeExitLineSync(line:string,write:(fd:number,data:Uint8Array,offset:number,length:number)=>number=writeSync,fd=2):boolean {
+ const bytes=Buffer.from(line,"utf8");let at=0;
+ for(let attempt=0;attempt<EXIT_LINE_ATTEMPTS&&at<bytes.length;attempt++){
+  try{at+=write(fd,bytes,at,bytes.length-at);}
+  catch(error){if((error as NodeJS.ErrnoException)?.code!=="EAGAIN")return false;try{Atomics.wait(exitPause,0,0,1);}catch{/* retry at once */}}
+ }
+ return at>=bytes.length;
 }
 export type ChildIoClass=keyof typeof runCounts;
 function nodeEntry(args:readonly string[],cwd:string):string|undefined {

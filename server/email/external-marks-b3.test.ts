@@ -729,9 +729,18 @@ describe("B3 outside turn durability", () => {
   });
   it("B3-app-close and SIGTERM use the same final seal", async () => {
     const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
-    expect(source).toContain('process.on(signal, closeRequested)');
-    expect(source).toContain('if (isAppCloseRequest(message)) closeRequested()');
-    expect(source).toContain('finalCleanup: sealOutsideStore');
+    // closeRequested now takes the reason it was asked (cause12 records why the server child ended); the seal path is unchanged:
+    // every signal and the app-close message reach the one function, and it begins the app close before the graceful shutdown.
+    expect(source).toContain('process.on(signal, () => closeRequested(signal))');
+    expect(source).toContain('if (isAppCloseRequest(message)) closeRequested("message")');
+    expect(source).not.toMatch(/process\.on\(signal, closeRequested\)/);
+    const fnStart = source.indexOf("function closeRequested(");
+    const body = source.slice(fnStart, source.indexOf("\n}\n", fnStart));
+    expect(fnStart).toBeGreaterThan(0);
+    expect(body.indexOf("beginAppClose()")).toBeGreaterThan(0);
+    expect(body.indexOf("gracefulShutdown()")).toBeGreaterThan(body.indexOf("beginAppClose()"));
+    expect(source).toContain('finalCleanup: () => { sealOutsideStore(); shutdownStep("sealed"); }');
+    // The runtime order is pinned against a real server process in server-close-order.test.ts.
     const { isAppCloseRequest } = await import("../graceful-shutdown.ts");
     expect(begin()).toBe(true);
     expect(isAppCloseRequest({ type: "murage:close" })).toBe(true);

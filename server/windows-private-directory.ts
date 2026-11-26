@@ -40,7 +40,7 @@ function contained(root: string, path: string): boolean {
 function assertChain(root: string, path: string): void {
   for (let dir = path; ; dir = dirname(dir)) {
     const stat = fs.lstatSync(dir);
-    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Unsafe private directory');
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Private directory refused');
     if (dir === root) return;
   }
 }
@@ -48,7 +48,7 @@ function readPending(root: string): Map<string, DirectoryIdentity> {
   const pending = new Map<string, DirectoryIdentity>();
   try {
     const path = join(root, MARKER), stat = fs.lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 65_536) throw new Error('Unsafe ACL marker');
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 65_536) throw new Error('ACL marker refused');
     const marker = JSON.parse(fs.readFileSync(path, 'utf8'));
     if (marker.version !== 1 || !Array.isArray(marker.directories) || marker.directories.length > 512) throw new Error('Invalid ACL marker');
     assertSameDirectory(root, {dev:BigInt(marker.root.dev), ino:BigInt(marker.root.ino)});
@@ -174,7 +174,7 @@ export function createPrivateWindowsDirectories(paths: readonly string[], option
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
           fs.mkdirSync(dir, {mode:0o700}); stat = fs.lstatSync(dir, {bigint:true}); created.set(dir, stat);
         }
-        if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Unsafe private directory');
+        if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Private directory refused');
       }
     }
     if (options.retryProtection) {

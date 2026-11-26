@@ -71,7 +71,8 @@ export class MemoryEligibility {
     const chunk=eligibleLimits.chunk,over=rows.length>chunk;
     return {allowed:over?rows.slice(0,chunk):rows,capacity:over,nextCursor:over?encodeEligibleCursor(rows[chunk-1]):undefined};
   }
-  lexical(query:string,view:RecallViewHandle,budget=new RecallWorkBudget(8192)) { return lexicalViewPage(this.db,query,view,1000,0,budget); }
+  /** `historical`: also the superseded and archived versions, whose words are read from their text (they store no terms, memv2 A5). */
+  lexical(query:string,view:RecallViewHandle,budget=new RecallWorkBudget(8192),historical=false) { return lexicalViewPage(this.db,query,view,1000,0,budget,false,historical); }
   validate(view:RecallViewHandle,reader:RecallViewBinding) {assertRecallView(this.db,view,reader);}
   /** Ids of every PIP record, any state: what the derived index must not hold. */
   pipRecordIds():string[]{

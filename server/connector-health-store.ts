@@ -82,6 +82,7 @@ export class ConnectorHealthStore {
   }
   get(owner: string, slug: string) { return this.state.marks[owner]?.[slug]; }
   slugs(owner: string) { return Object.keys(this.state.marks[owner] ?? {}).sort(); }
+  owners() { return Object.keys(this.state.marks).sort(); }
   update(owner: string, slug: string, patch: Partial<Omit<AppHealthMark, "at" | "cause">>) {
     const mark = this.get(owner, slug);
     if (!mark || (!(patch.accounts && !mark.accountIncidents) && Object.entries(patch).every(([key, value]) => JSON.stringify(mark[key as keyof AppHealthMark]) === JSON.stringify(value)))) return false;

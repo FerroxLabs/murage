@@ -1,5 +1,8 @@
+import { useRef } from "react";
 import { Share, X } from "lucide-react";
 
+import { cn } from "@/lib/cn";
+import { NOTICE_CORNER, useClearOfComposer, useNoticeTurn } from "@/lib/notice-lane";
 import { useInstallPrompt } from "@/lib/use-install-prompt";
 
 /** The invitation to put Murage on a home screen.
@@ -11,16 +14,25 @@ import { useInstallPrompt } from "@/lib/use-install-prompt";
  * It says nothing at all over plain HTTP. Installation is impossible outside
  * a secure context whatever the manifest declares, and the door serves plain
  * HTTP until remote access is turned on — so an invitation there would be
- * instructions for something that cannot happen. */
+ * instructions for something that cannot happen.
+ *
+ * One of the corner notices (lib/notice-lane.ts), the lowest: it waits while
+ * any other one is up, and never covers the composer. */
 export function InstallPrompt() {
   const { invite, install, dismiss } = useInstallPrompt();
-  if (invite === "hidden") return null;
+  const wants = invite !== "hidden";
+  const turn = useNoticeTurn("install", wants);
+  const frame = useRef<HTMLDivElement>(null);
+  const clear = useClearOfComposer(frame, wants && turn);
+  if (!wants || !turn) return null;
   return (
     <div
+      ref={frame}
       role="complementary"
       aria-label="Add Murage to your home screen"
-      className="fixed inset-x-3 z-30 rounded-2xl border border-hairline/50 bg-panel/95 p-4 shadow-2xl shadow-black/50 backdrop-blur"
-      style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" }}
+      data-testid="install-prompt"
+      className={cn(NOTICE_CORNER, "rounded-2xl border border-hairline/50 bg-panel/95 p-4 shadow-2xl shadow-black/50 backdrop-blur")}
+      style={clear.bottom === undefined ? { bottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" } : clear}
     >
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">

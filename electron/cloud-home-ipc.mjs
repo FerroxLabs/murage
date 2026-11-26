@@ -59,8 +59,13 @@ export function registerCloudHomeIpc(rawGate, { cloudHome, getCpToken, cpEnviron
   // before any work runs. The one exception is `continuing`: a channel an ALREADY-OPEN Cloud window uses for the task it is
   // in the middle of (going not-live never closes that window, so it must keep working until the person closes it).
   const fromOpenCloudWindow = (event) => { try { return typeof cloudHome.senderHomeId === "function" && cloudHome.senderHomeId(event) !== null; } catch { return false; } };
-  const gate = { handle: (channel, fn, { continuing = false } = {}) => rawGate.handle(channel, (event, ...args) => {
-    if (!active() && !(continuing && fromOpenCloudWindow(event))) throw new Error(NOT_LIVE);
+  // `notLive` answers a read-only channel quietly while Cloud is not live (cloud-home:state is polled on every Home render;
+  // throwing there filled the log with "Error occurred in handler" and told the person nothing).
+  const gate = { handle: (channel, fn, { continuing = false, notLive } = {}) => rawGate.handle(channel, (event, ...args) => {
+    if (!active() && !(continuing && fromOpenCloudWindow(event))) {
+      if (notLive) return (async () => notLive(args))();
+      throw new Error(NOT_LIVE);
+    }
     return fn(event, ...args);
   }) };
   /** Back to the Connect panel: the Cloud window closes, the local window shows Connect. */
@@ -75,7 +80,7 @@ export function registerCloudHomeIpc(rawGate, { cloudHome, getCpToken, cpEnviron
   gate.handle("cloud-home:state", (_event, ...args) => guard(async () => {
     noArgs(args);
     return { enabled: true, cpSignedIn: Boolean(getCpToken()), paired: await client.pairedHomes() };
-  }));
+  }), { notLive: (args) => { noArgs(args); return { enabled: false }; } });
 
   gate.handle("cloud-home:list-homes", (_event, ...args) => guard(async () => {
     noArgs(args);

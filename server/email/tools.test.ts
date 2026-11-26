@@ -117,6 +117,14 @@ describe("emailMounts (3.1, 3.2, F17)", () => {
   ] as Array<[string, Partial<EmailMountInput>]>)("F17: never on a %s, and the primer says nothing", (_name, patch) => {
     expect(emailMounts({ ...base, ...patch })).toEqual({ mounted: false, line: null });
   });
+  // PHONEAUD (Astra 5): No limits is an approval level, not an audience. A turn with automation ancestry (automationThread carries it: a
+  // routine's hand-off, ask, wake or retry) mounts nothing; the routine's own scheduled or manual run keeps No limits.
+  it("No limits mounts on the owner's turn and the routine's own run, never on a turn with automation ancestry", () => {
+    expect(emailMounts({ ...base, noLimits: true })).toMatchObject({ mounted: true, turn: { kind: "no-limits" } });
+    expect(emailMounts({ ...base, noLimits: true, origin: undefined, automationSource: "schedule", automationThread: true })).toMatchObject({ mounted: true, turn: { kind: "no-limits" } });
+    expect(emailMounts({ ...base, noLimits: true, automationThread: true, handoffTurn: true, commsDepth: 1, chainRootThreadId: "routine" })).toEqual({ mounted: false, line: null });
+    expect(emailMounts({ ...base, noLimits: true, automationThread: true })).toEqual({ mounted: false, line: null });
+  });
   it("binding states: active, paused and billing_hold mount; any other, none, or the probe off do not", () => {
     for (const binding of ["paused", "billing_hold"] as const) expect(emailMounts({ ...base, binding })).toMatchObject({ mounted: true });
     for (const binding of ["provisioning", "failed", "removing", "account_off", "restored_unverified", null] as const) expect(emailMounts({ ...base, binding })).toEqual({ mounted: false, line: null });

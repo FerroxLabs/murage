@@ -1,0 +1,29 @@
+Baseline: e21fcde9a822fe04e9b2e39c9aaf01117ccdceb7
+Production files were temporarily restored from HEAD for this run, then restored to the fixes.
+The scanner timing case was tested separately with a bounded worker.
+Some failures are missing newly introduced APIs; the fold, exclusions, capture and queue assertions also expose the old behavior.
+
+FAIL  server/engine-swap-audit.test.ts > F1 excludes held actions from replay and quote targets while retaining plain teammate questions
+FAIL  server/engine-swap-audit.test.ts > F2 a tool-capable owner turn cannot consume or receive a held continuation
+FAIL  server/engine-swap-audit.test.ts > F4 requires relevant completed structured outcomes
+FAIL  server/engine-swap-audit.test.ts > F5 checks all authored pieces and retains piece-aware spans on the terminal verdict
+FAIL  server/engine-swap-audit.test.ts > F7 retains omission and continuity metadata even with no rows, native=false
+FAIL  server/engine-swap-audit.test.ts > F7 retains omission and continuity metadata even with no rows, native=true
+FAIL  server/engine-swap-audit.test.ts > F7 recovery renders the shared metadata and engine headers
+FAIL  server/engine-swap-audit.test.ts > F8 budgets rendered replay including expanded quotes, roles and headers
+FAIL  server/engine-swap-audit.test.ts > F12 excludes quoted and conditional claims: 'I sent it.'
+FAIL  server/engine-swap-audit.test.ts > F12 excludes quoted and conditional claims: The file is saved if you click Save.
+FAIL  server/engine-swap-audit.test.ts > F12 keeps coordinated first-person actions distinct from reported speech
+FAIL  server/engine-swap-audit.test.ts > durable queue and capture > F2 and F11 retain identity, original dispatch authority and every accepted item across restart
+FAIL  server/engine-swap-audit.test.ts > durable queue and capture > F13 updates the action verdict metadata without recapturing text or scheduling extraction
+FAIL  server/engine-swap-audit.test.ts > durable queue and capture > F14 captures only the active authored branch using the shared whole-turn representation
+FAIL  server/engine-swap-audit.test.ts > F16 keeps the engine-swap regression punctuation assertion escaped
+FAIL  server/engine-swap-fold.test.ts > F3 production fold stamps tool start, completion and options rows for the guard
+FAIL  server/engine-swap-fold.test.ts > F10 reported model updates the capability hash used by subsequent folded rows
+FAIL  server/engine-swap-fold.test.ts > F10 a delayed final screen frame retains the settled turn's immutable provenance
+FAIL  server/engine-swap-fold.test.ts > F2 resumes held requests through their original dispatcher after authority revalidation
+FAIL  server/engine-swap-fold.test.ts > F7 production ACP recovery preserves headers, omissions and the continuity rule
+FAIL  src/components/engine-swap-notes.test.ts > F15 keeps folded runs on engine boundaries and exposes the narration seam
+FAIL  server/memory/reveal-capture.test.ts > F14 reveals from the authoritative multi-piece turn captured by memory
+Test Files  4 failed (4)
+Tests  22 failed | 3 passed | 12 skipped (37)

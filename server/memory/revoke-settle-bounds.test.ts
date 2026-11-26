@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commitRevoke } from "./revoke-commit.ts";
 import { admitMarkerSlice, beginRevokeMeasure, endRevokeMeasure, resetRevokeWriteBudget, revokePaceTestHooks, type SliceTarget } from "./revoke-budget.ts";
-import { markerSlice, markerSliceDetailed, setFoldHooks } from "./revoke-marker.ts";
+import { INLINE_PRUNE, markerSlice, markerSliceDetailed, setFoldHooks } from "./revoke-marker.ts";
 import { SETTLE_ACTIVE_FLOW, SETTLE_SEEDING_FOLD } from "./schema.ts";
 import { storm } from "./testing/revoke-storm-fixture.ts";
 
@@ -133,7 +133,19 @@ describe("targeted settlement work bounds", () => {
     fx.db.exec("BEGIN IMMEDIATE");
     expect(markerSlice(fx.db, 4096, 1000, null, 10000, { only: selected })).toBe(true);
     fx.db.exec("COMMIT");
-    expect(fx.db.prepare("SELECT revoke_id FROM memory_revoke_jobs ORDER BY revoke_id").all()).toEqual([{ revoke_id: selected + 1 }]);
+    // 1.0.21 cause5 r2 (Astra BLOCK on 4ae3fb12c5): was "only the newest row is left". The wrapper still prunes, but an owner's inline
+    // walk now takes one page of the finished rows (revoke-marker.ts INLINE_PRUNE), never the whole backlog in the owner's transaction:
+    // of the 101 finished rows below the newest (ids 1..100 and the selected job), a page goes and the rest waits for the next finish.
+    const left = fx.db.prepare("SELECT revoke_id,state FROM memory_revoke_jobs ORDER BY revoke_id").all() as Array<{ revoke_id: number; state: string }>;
+    expect(left.length).toBe(102 - INLINE_PRUNE.rows);
+    expect(left.at(-1)).toEqual({ revoke_id: selected + 1, state: "done" });
+    expect(left.every(row => row.state === "done")).toBe(true);
     expect(pending(selected)).toEqual([]);
+    // the next finished inline walk takes the next page: the backlog is gone in two
+    const next = content("next", 4000);
+    fx.db.exec("BEGIN IMMEDIATE");
+    while (job(next)?.state === "active") expect(markerSlice(fx.db, 4096, 1000, null, 10000, { only: next })).toBe(true);
+    fx.db.exec("COMMIT");
+    expect(fx.db.prepare("SELECT revoke_id FROM memory_revoke_jobs ORDER BY revoke_id").all()).toEqual([{ revoke_id: next }]);
   });
 });

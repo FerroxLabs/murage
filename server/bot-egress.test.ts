@@ -78,10 +78,10 @@ describe("the runtime backstop", () => {
 
 describe("provider failure detail reaches a bot only as a code", () => {
   it.each([
-    ["HTTP 429 Too Many Requests: slow down for /home/sean/secret", "rate_limit"],
+    ["HTTP 429 Too Many Requests: slow down for /home/exampleuser/secret", "rate_limit"],
     ["401 Unauthorized: api key sk-abc123", "auth"],
     ["request timed out after 120s", "timeout"],
-    ["upstream returned 503 while reading /Users/alex/private.txt", "provider_error"],
+    ["upstream returned 503 while reading /Users/exampleuser/private.txt", "provider_error"],
     ["the model said something odd", "other"],
   ])("%s", (detail, code) => {
     expect(failureCodeFrom(detail)).toBe(code);
@@ -91,7 +91,7 @@ describe("provider failure detail reaches a bot only as a code", () => {
     }
   });
   it("an older receipt's free-text note reads as a plain line, never as the note", () => {
-    expect(outboundWords(statusFromNote("rate limit hit on /home/sean/x with key sk-live"))).toBe("The request finished.");
+    expect(outboundWords(statusFromNote("rate limit hit on /home/exampleuser/x with key sk-live"))).toBe("The request finished.");
     expect(outboundWords(statusFromNote("cancelled"))).toBe("cancelled");
     expect(outboundWords(statusFromNote(undefined))).toBe("The request finished.");
   });

@@ -325,8 +325,8 @@ describe.skipIf(process.platform === "win32")("Linux CUA discovery", () => {
 });
 
 describe("Linux private primary group proof", () => {
-  const identity = { uid: 1000, gid: 1000, username: "kesleydev" };
-  const getent = ({ group = "kesleydev:x:1000:", passwd = "kesleydev:x:1000:1000::/home/kesleydev:/bin/bash" } = {}) =>
+  const identity = { uid: 1000, gid: 1000, username: "exampledev" };
+  const getent = ({ group = "exampledev:x:1000:", passwd = "exampledev:x:1000:1000::/home/exampledev:/bin/bash" } = {}) =>
     vi.fn((args) => ({
       ok: true,
       stdout: args[0] === "group" ? `${group}\n` : `${passwd}\n`,
@@ -336,21 +336,21 @@ describe("Linux private primary group proof", () => {
     expect(privatePrimaryGroup(identity, { getent: getent() })).toEqual({
       exclusive: true,
       gid: 1000,
-      name: "kesleydev",
+      name: "exampledev",
     });
   });
 
   it("rejects explicit supplementary members and another primary-GID account", () => {
     expect(
       privatePrimaryGroup(identity, {
-        getent: getent({ group: "kesleydev:x:1000:other" }),
+        getent: getent({ group: "exampledev:x:1000:other" }),
       }),
     ).toMatchObject({ exclusive: false, reason: "primary-group-shared" });
     expect(
       privatePrimaryGroup(identity, {
         getent: getent({
           passwd: [
-            "kesleydev:x:1000:1000::/home/kesleydev:/bin/bash",
+            "exampledev:x:1000:1000::/home/exampledev:/bin/bash",
             "other:x:1001:1000::/home/other:/bin/bash",
           ].join("\n"),
         }),
@@ -371,7 +371,7 @@ describe("Linux private primary group proof", () => {
       privatePrimaryGroup(identity, {
         getent: getent({
           passwd: [
-            "kesleydev:x:1000:1000::/home/kesleydev:/bin/bash",
+            "exampledev:x:1000:1000::/home/exampledev:/bin/bash",
             "malformed-entry",
           ].join("\n"),
         }),
@@ -380,10 +380,10 @@ describe("Linux private primary group proof", () => {
   });
 
   it("uses absolute getent argv without a shell and with bounded resources", () => {
-    const spawnCommand = vi.fn(() => ({ status: 0, stdout: "kesleydev:x:1000:\n", stderr: "" }));
+    const spawnCommand = vi.fn(() => ({ status: 0, stdout: "exampledev:x:1000:\n", stderr: "" }));
     expect(runGetent(["group", "1000"], { spawnCommand })).toEqual({
       ok: true,
-      stdout: "kesleydev:x:1000:\n",
+      stdout: "exampledev:x:1000:\n",
     });
     expect(spawnCommand).toHaveBeenCalledWith(
       "/usr/bin/getent",

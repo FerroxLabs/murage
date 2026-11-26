@@ -335,6 +335,13 @@ describe("PiDriver catalog (fake CLI)", () => {
     expect(catalog.default).toBe("ollama-cloud/glm-5.2");
   });
 
+  // cause22 (MAIN-RULING cause22-no-transport-caps): the probe's own reader had the 32 MiB frame cap and resolved empty past it.
+  it("reads a catalog line over the old 32 MiB frame cap whole and returns its models", async () => {
+    const catalog = await fetchPiModels(FAKE_CLI, { PATH: process.env.PATH ?? "", HOME: join(tmpdir(), "murage-pi-large-catalog"), FAKE_PI_MODE: "large-catalog" });
+    expect(catalog.options.map((option) => option.id), "the models of a catalog line over the old cap").toEqual(["ollama-cloud/glm-5.2", "openai/gpt-4o"]);
+    expect(catalog.default).toBe("ollama-cloud/glm-5.2");
+  }, 60_000);
+
   it("keeps an empty catalog when the probe reports no models", async () => {
     const catalog = await fetchPiModels(FAKE_CLI, {
       PATH: process.env.PATH ?? "",
@@ -1695,7 +1702,9 @@ describe("PiDriver snapshot", () => {
     await instance.dispose();
   });
 });
-// A4: pi RPC stdout is framed with a byte bound before any parse.
+// A4: pi RPC stdout is framed by line before any parse. MAIN-RULING cause22-no-transport-caps (1.0.21) deleted the 32 MiB frame
+// cap: a frame over it is read whole and its turn completes (this row asserted frame_too_large before). An unterminated frame no
+// longer fails early (held until its newline or the process end, as upstream), so its two rows (turn and catalog probe) are gone.
 describe("PiDriver bounded ingress (A4)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
@@ -1711,9 +1720,6 @@ describe("PiDriver bounded ingress (A4)", () => {
     bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
-  /** No event on the thread may carry the dropped frame's content. */
-  const noLargePayload = (threadId: string) =>
-    recorder.events.filter((e) => e.threadId === threadId).every((e) => JSON.stringify(e).length < 1024 * 1024);
 
   beforeEach(() => {
     ensureDirs();
@@ -1724,35 +1730,21 @@ describe("PiDriver bounded ingress (A4)", () => {
     await instance?.dispose();
   });
 
-  it("fails only the turn whose frame is over the limit, even when turn_end follows it", async () => {
+  it("reads a frame over the old 32 MiB cap whole and its turn completes, beside an ordinary turn", async () => {
     await create();
     const oversized = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oversize", text: "__fixture_oversize_frame__", model: "ollama-cloud/glm-5.2" });
     const ordinary = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ordinary", text: "hi", model: "ollama-cloud/glm-5.2" });
-    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
-    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
+    // A lost or cut frame leaves the turn open: the wait ends quietly so that case fails at the completion assertion below.
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId, 60_000).catch(() => undefined);
+    const other = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId, 20_000).catch(() => undefined);
 
-    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
-    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
-    expect(recorder.events).toContainEqual(expect.objectContaining({
-      type: "runtime.error",
-      threadId: "t-oversize",
-      message: expect.stringMatching(/^pi sent a protocol message larger than 32 MiB/),
-    }));
-    expect(recorder.events).toContainEqual(expect.objectContaining({
-      type: "item.completed", itemType: "assistant_text", threadId: "t-ordinary", text: "Hello from pi",
-    }));
-    expect(noLargePayload("t-oversize")).toBe(true);
+    expect(done, "the turn whose frame is over 32 MiB completes").toMatchObject({ ok: true });
+    expect(other).toMatchObject({ ok: true, stopReason: "end_turn" });
+    const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.threadId === "t-oversize");
+    expect(Buffer.byteLength((reply as { text: string } | undefined)?.text ?? ""), "the whole frame reached the turn").toBe(32 * 1024 * 1024 + 1024 + Buffer.byteLength("Hello from pi"));
+    expect(recorder.events.some((e) => e.type === "runtime.error" && e.threadId === "t-oversize")).toBe(false);
     expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === oversized.turnId)).toHaveLength(1);
-  });
-
-  it("fails an unterminated oversized frame without waiting for a newline", async () => {
-    await create();
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-open", text: "__fixture_oversize_open_frame__", model: "ollama-cloud/glm-5.2" });
-    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
-
-    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
-    expect(noLargePayload("t-open")).toBe(true);
-  });
+  }, 120_000);
 
   it("still carries a valid 14 MiB multibyte frame intact", async () => {
     await create();
@@ -1765,18 +1757,6 @@ describe("PiDriver bounded ingress (A4)", () => {
     expect(text.startsWith("éé")).toBe(true);
     expect(Buffer.byteLength(text)).toBe(14 * 1024 * 1024 + Buffer.byteLength("Hello from pi"));
   }, 120_000);
-
-  it("resolves the catalog probe empty on an oversized frame instead of waiting for its timeout", async () => {
-    const started = Date.now();
-    const catalog = await fetchPiModels(FAKE_CLI, {
-      PATH: process.env.PATH ?? "",
-      HOME: join(tmpdir(), "murage-pi-oversize"),
-      FAKE_PI_MODE: "oversize-catalog",
-    });
-    expect(catalog).toEqual({ default: "", options: [] });
-    // the probe's own fallback timer is 15 s; the frame bound answers first
-    expect(Date.now() - started).toBeLessThan(10_000);
-  });
 });
 
 // Pi runs its tools without asking anybody. pi-permission-gate.ts asks Murage

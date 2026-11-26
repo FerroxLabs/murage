@@ -167,7 +167,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(srv.keys, [])
 
     def test_none_only_console_types_login_and_command(self):
-        # build host's web console offers only type 1; the one-time wss URL is the credential.
+        # Hetzner's web console offers only type 1; the one-time wss URL is the credential.
         r, srv = self.run_helper("ignored", types=(1,))
         self.assertEqual(r.returncode, 0, r.stderr)
         text, _ = typed_text(srv.keys)
