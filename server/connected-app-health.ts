@@ -36,7 +36,14 @@ export function toolkitOfTool(tool: string): string | null {
   return slug;
 }
 
+/**
+ * 1.0.20 (Sean 11-19, Murage's own HighLevel removed; MAIN 12:40Z): HighLevel never asks to sign in again, from the
+ * row or from a call. No band, no Needs you row, no tray or push and no bot reconnect line; a refused call still fails
+ * as itself. One mark gate, so every surface that reads the incidents follows.
+ */
+export const NEVER_ASKS_SIGN_IN: ReadonlySet<string> = new Set(["highlevel"]);
 export function markNeedsReconnect(owner: string, slug: string, cause: string, accountKey: string | null): boolean {
+  if (NEVER_ASKS_SIGN_IN.has(slug)) return false;
   return connectorHealthStore().mark(owner, slug, cause, accountKey);
 }
 

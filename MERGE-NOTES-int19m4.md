@@ -37,7 +37,7 @@ Original conflict diffs are retained in `../evidence/`. No test is removed or as
 
 ## Verification method
 
-Verification used `/work/fuigo-builds/tools/it-remote.sh`, `IT_JOB=int19m4`, `IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`, network none, and the integration worktree as `IT_W`. The separate detached base worktree used the same runner for comparison. The job ran at most two containers concurrently and waited while the host load exceeded 60. All engines and providers were fakes in isolated fixture homes and data directories. No live app/data, billable provider, or Mac was used.
+Verification used `/root/fuigo-builds/tools/it-remote.sh`, `IT_JOB=int19m4`, `IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`, network none, and the integration worktree as `IT_W`. The separate detached base worktree used the same runner for comparison. The job ran at most two containers concurrently and waited while the host load exceeded 60. All engines and providers were fakes in isolated fixture homes and data directories. No live app/data, billable provider, or Mac was used.
 
 The full `pnpm typecheck` passed after each of the five merges, before the next merge; the base also passed. G-MARC's first attempt ran prematurely against a truncated JSON resolution and failed TS1005. That precommit resolution was restored from the index and corrected; the committed G-MARC merge passed the full check. The first hlf2 attempt fell back to the local generic container without dependencies (`tsc: not found`); the remote retry passed. Both failed attempts and corrected runs are retained. Typecheck logs are `typecheck-base.log`, `typecheck-marc-fixed.log`, `typecheck-sable.log`, `typecheck-ftsdrain.log`, `typecheck-s6.log`, and `typecheck-hlf2-retry.log`.
 
@@ -102,6 +102,6 @@ On resume, HEAD was `c5a81515f93bc368d0fb6628ef41241ae2da2b06` with all five ord
 
 The resume audit independently checked every lane's changed test list and references by path, filename, and extension-free filename to all six conflicted files. Every discovered test is in the executed inventory (`resume-coverage-audit.json`). The original base and every requested lane tip are ancestors of HEAD, so no merges are repeated on resume. None was skipped in the original integration; all five are already ancestors now.
 
-Cleanup removes job-created node_modules, generated native/build outputs, tsbuildinfo and bytecode while retaining fixture evidence and tracked build inputs. The cleanup record is `cleanup.log`. A normal non-force push targets `HEAD:refs/heads/dev/1019-int19m4` in the shared bare hub `/work/mb-105-git.git`; because this worktree owns that hub ref, the push may report it is already up to date. No history is rewritten.
+Cleanup removes job-created node_modules, generated native/build outputs, tsbuildinfo and bytecode while retaining fixture evidence and tracked build inputs. The cleanup record is `cleanup.log`. A normal non-force push targets `HEAD:refs/heads/dev/1019-int19m4` in the shared bare hub `/root/mb-105-git.git`; because this worktree owns that hub ref, the push may report it is already up to date. No history is rewritten.
 
 The requested `ijfw_memory_prelude` tool is unavailable and `.ijfw/memory/` is absent.

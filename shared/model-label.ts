@@ -17,7 +17,7 @@
 //
 // Order, most authoritative first:
 //   1. the provider's own label (`name` / `display_name` from its catalog)
-//   2. the Flux tier table, for Murage's own routing aliases
+//   2. the bundled Flux labels for routing tiers and named pins
 //   3. the bundled models.dev name (renderer only — see src/lib/model-metadata.ts)
 //   4. a title-cased id
 //
@@ -38,6 +38,12 @@ export const FLUX_TIER_LABELS: Readonly<Record<string, string>> = Object.freeze(
   "flux-standard": "Flux Standard",
   "flux-fast": "Flux Fast",
 });
+
+const FLUX_PINNED_LABELS: ReadonlyMap<string, string> = new Map([
+  ["flux-pinned-gemini-4-neon", "Gemini 4 Neon"],
+  ["flux-pinned-gpt-6-2-sol", "GPT-6.2 Sol"],
+  ["flux-pinned-gpt-6-2-astra", "GPT-6.2 Astra"],
+]);
 
 /** codex encodes a Flux pick as `flux::flux-auto` (server/flux-routing.ts),
  *  and local engines encode a host as `llamacpp::model`. Both are separators
@@ -109,11 +115,7 @@ export function isDerivedLabel(id: string, label: string | null | undefined): bo
   return trimmed === id || trimmed === bareModelId(id) || trimmed === titleCaseModelId(id) || trimmed === legacyTitleCaseModelId(id);
 }
 
-/** The Flux tier label for a routing alias, or "" for anything else.
- *
- *  Exact ids only. `flux-pinned-*` is deliberately NOT handled here: a pinned
- *  route names a concrete model and belongs to the title-case rule, which is
- *  what produces Sean's "Flux Pinned Deepseek Flash Max". */
+/** The Flux tier label for a routing alias, or "" for anything else. */
 export function fluxTierLabel(id: string): string {
   return FLUX_TIER_LABELS[bareModelId(id)] ?? "";
 }
@@ -126,8 +128,8 @@ export function resolveModelLabel(
   { catalogLabel, metadataName }: { catalogLabel?: string | null; metadataName?: string | null } = {},
 ): string {
   if (!isDerivedLabel(id, catalogLabel)) return catalogLabel!.trim();
-  const tier = fluxTierLabel(id);
-  if (tier) return tier;
+  const bundledLabel = fluxTierLabel(id) || FLUX_PINNED_LABELS.get(bareModelId(id));
+  if (bundledLabel) return bundledLabel;
   if (!isDerivedLabel(id, metadataName)) return metadataName!.trim();
   return titleCaseModelId(id) || id;
 }

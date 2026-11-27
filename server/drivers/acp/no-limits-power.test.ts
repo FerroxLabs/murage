@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
-import { hostPowerDeps, hostPowerProbeDeps, HOST_POWER_TEST_UNWRAPPED } from "../../host-power.ts";
+import { hostPowerDeps, hostPowerProbeDeps, HOST_POWER_TEST_UNWRAPPED, resetSeatbeltSelectionsForTests } from "../../host-power.ts";
 import { recordEvents } from "../../testing/events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
@@ -14,7 +14,7 @@ let instance: ProviderInstance | undefined;
 let scratch: string | undefined;
 afterEach(async () => {
   await instance?.dispose(); instance = undefined;
-  Object.assign(hostPowerDeps, deps); Object.assign(hostPowerProbeDeps, probes);
+  Object.assign(hostPowerDeps, deps); Object.assign(hostPowerProbeDeps, probes); resetSeatbeltSelectionsForTests();
   (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = true;
   vi.restoreAllMocks();
   if (scratch) await removeTempDir(scratch); scratch = undefined;

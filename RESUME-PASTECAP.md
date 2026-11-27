@@ -2,8 +2,8 @@
 
 Base: 7c5807db7 (feat/104-learn-about-me). Design: 0161/lanes/release104/designs/PASTE-CAPTURE-FIX.md, r2 (line 305 on) supersedes.
 Decisions: S8 mask MEMORY.md at load, file untouched. S7 nothing beyond the flux_capture_hold.
-Base suite: DONE (31 failures incl. chunk 07 rerun) on build-host lane pc104-base (worktree /mnt/Fixture/ExampleWorkspace/104-pastecap-base, results /work/mb-0161-hz/pc104-base/src/full).
-build host lane for this branch: pc104 (/work/mb-0161-hz/pc104). Helpers in .hzpc/ (untracked, info/exclude).
+Base suite: DONE (31 failures incl. chunk 07 rerun) on hetzner-dsm lane pc104-base (worktree /Volumes/Fixture/ExampleWorkspace/104-pastecap-base, results /root/mb-0161-hz/pc104-base/src/full).
+Hetzner lane for this branch: pc104 (/root/mb-0161-hz/pc104). Helpers in .hzpc/ (untracked, info/exclude).
 
 ## Milestones
 - [x] M1 shared/financial-ids.ts + vectors.json + test; redact.ts FINANCIAL_ID rule; redact.test S1, chain idempotence, financial clocks
@@ -12,7 +12,7 @@ build host lane for this branch: pc104 (/work/mb-0161-hz/pc104). Helpers in .hzp
 - [x] M4 Flux number hold: flux_capture_hold (messages.db, snapshot allowlist), hold write in both append paths, numberHold decision, fluxCaptureHold set in sendProjectUsageTurn; X1-X5. Hold keys on a real rule match (containsFinancialIdentifier), per Grok r2 on S7
 - [x] M5 export paste: detect.ts, capture exclusion + reply exclusion, chat mark (memoryNote) + ExportPasteNote under the user row (1:1 and rooms), LearnAboutMe initialText + lam-handoff, parse mask flag, prompt sentence; C1-C4 (capture-export.test.ts), ExportPasteNote.test, LAM/parse tests
 - [x] M6 scrub pass (scrub-pass.ts + scrub-state.ts: versions, records, details, feedback, settle), H5 hash recompute, index.ts rewrite merge debt + finishRewrite (worker message, controller requestFinishRewrite, 120 s ack), upgrade-background job "scrub" after integrity, phases masking/settling (contract, labels, en strings); scrub-pass.test D1-D8 + D16, index-upsert rewrite test
-- [x] M7 locales (8) + source-hashes (generate-locale --check passes on the build host), MemoryReview Chat excerpt label, paused sentence (S1); MemoryReview and LearningPausedCard tests
+- [x] M7 locales (8) + source-hashes (generate-locale --check passes on Hetzner), MemoryReview Chat excerpt label, paused sentence (S1); MemoryReview and LearningPausedCard tests
 - [x] M8 fail-before: all 16 changed test files fail on base (new-module files at import; others 1 to 4 tests each). Full suite vs base: 19 NEW at first; fixed in 10475d6a2 (scrub log clear via wal-maintenance scrubWalAfterDelete, downgrade drops UPGRADE_104_TABLES, dispatch golden gains the S8 sentence, supervisor seam dep, record-write walker skips hidden fixture dirs); the rest passed in isolation except worker-slices 50 ms and wal-maintenance 256 MB timing, which fail the same way on base under the same load (A/B, 3 runs each). Both typechecks pass. Grok REVIEW.md unchanged at r2 (all handled).
 
 ## Departures so far

@@ -1,3 +1,4 @@
+import { evidencePath } from '../evidence-path.mjs';
 import {runNodeFixture} from './native-launcher.mjs';
 // Container only. Mutate the real boundary, run its tests, and restore in finally.
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ for(const m of mutants){
   const r=runNodeFixture(['--test',...m.tests.map(p=>'scripts/windows/'+p)],{encoding:'utf8',timeout:60000});
   assert.equal(r.signal,null);assert.notEqual(r.status,0,`SURVIVED: ${m.name}`);
   assert.match(r.stdout,/AssertionError|ERR_ASSERTION|Missing expected exception/,'must fail assertions, not import/setup');
-  writeFileSync(new URL(`evidence/cfix4-prior-mutant-${m.name}.log`,import.meta.url),r.stdout+r.stderr);
+  writeFileSync(evidencePath(`scripts/windows/evidence/cfix4-prior-mutant-${m.name}.log`),r.stdout+r.stderr);
   console.log(`RED ${m.name}: tests rejected mutant (exit ${r.status})`);
  }finally{writeFileSync(file,original);}
 }
@@ -27,7 +28,7 @@ for(const m of mutants){
   writeFileSync(file,mutated);
   const r=runLinuxFixture(pwsh,['-NoProfile','-File','scripts/windows/safety-check.ps1'],{encoding:'utf8',timeout:60000});
   assert.notEqual(r.status,0);assert.match(r.stdout+r.stderr,/Expected rejection: reparse ancestor under runs/);
-  writeFileSync(new URL('evidence/cfix4-prior-mutant-accept-reparse-powershell.log',import.meta.url),r.stdout+r.stderr);
+  writeFileSync(evidencePath('scripts/windows/evidence/cfix4-prior-mutant-accept-reparse-powershell.log'),r.stdout+r.stderr);
   console.log('RED accept-reparse-powershell: actual PowerShell ancestor guard rejected mutant');
  }finally{writeFileSync(file,original);}
 }

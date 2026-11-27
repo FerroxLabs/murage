@@ -1,12 +1,10 @@
-import { LearningConsentNotice } from "./LearningConsentNotice";
 import { BotReviewSheet } from './BotReviewSheet';
 import { useSlashSkills } from "@/lib/use-slash-skills";
 import { CallMeWhenDone } from "./CallMeWhenDone";
-import { track } from "@/lib/analytics";
 import { closedComposerLine } from "@/lib/shared-teams";
 import { FOCUS_COMPOSER_EVENT } from "./useTrayIntents";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type SetStateAction } from "react";
 import { ArrowUp, BookOpen, Clock, ListChecks, Megaphone, Mic, Paperclip, Sparkles, Square, Target, Terminal, Users, X } from "lucide-react";
 import { POST_IN_LABEL, postInOffered, postInTooltip, postPickFields, type VenuePickState } from "@/lib/venue-post-pick";
 import { useWarmIntent } from "@/hooks/use-warm-intent";
@@ -95,6 +93,7 @@ import { escapeCancelsReply } from "@/lib/replies";
 import { t } from "@/lib/i18n";
 import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { ComposerPlusMenu } from "./ComposerPlusMenu";
+import { hasNativeUserAgent } from "@/lib/native-shell";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import {
   cleanupEnabled,
@@ -123,6 +122,7 @@ import { AudioAttachmentIntake } from "./AudioAttachmentIntake";
 import { ComposerSendNotice, type ComposerSendNoticeState } from "./ComposerSendNotice";
 import { fluxBridge, readFluxStatus, saveFluxKey } from "@/lib/flux-key-paste";
 import { isMessageSizeRefusal, messageIsTooLarge, messageTextBytes } from "../../shared/message-limits";
+import { isFuigoPendingRefusal } from "../../shared/fuigo-pending";
 import { RoutineSavedNotice } from "./RoutineGrantParts";
 import { clearRoutineSaved, useRoutineSaved } from "@/lib/routine-grant-saved";
 
@@ -879,6 +879,15 @@ export function Composer({
     else if (bot) dispatch({ type: "cancelQueued", botId: bot.id, queueId });
   };
   const fileInput = useRef<HTMLInputElement>(null);
+  // Android's native chooser ignores the capture attribute.
+  const androidApp = hasNativeUserAgent() && navigator.userAgent.endsWith(" (android)");
+  const cameraInput = useRef<HTMLInputElement>(null);
+  const photosInput = useRef<HTMLInputElement>(null);
+  const pickedFrom = (event: ChangeEvent<HTMLInputElement>) => {
+    void pickFiles(event.currentTarget.files).finally(refocusInput);
+    // Clearing the selection lets a second pick of the same file fire change.
+    event.currentTarget.value = "";
+  };
   // which level the Auto-on-this-computer warning is confirming, if open
   const [autoWarn, setAutoWarn] = useState(false);
   // the one-time Full access warning, and whether it also covers this computer
@@ -1088,7 +1097,13 @@ export function Composer({
         }
       }
     });
-    const failedSend = (error: unknown) => refusedForSize(error);
+    // CLOUD-FUIGO-FIRST: a send refused as pending shows the approved ready line; the words stay in the box (its record).
+    const refusedPending = (error: unknown) => {
+      if (!isFuigoPendingRefusal(error)) return false;
+      setSendNotice({ kind: "fuigo-pending" });
+      return true;
+    };
+    const failedSend = (error: unknown) => refusedForSize(error) || refusedPending(error);
     const outboxDraft = {
       draftId,
       attemptId,
@@ -1110,7 +1125,6 @@ export function Composer({
         mode: groupMode,
         onError: failedSend,
       });
-      track("message_sent", { room: true, mode: effectiveChannelMode, queued: busy });
     } else if (bot) {
       // A SETUP QUESTION ON THE TABLE HEARS THE ANSWER. IT DOES NOT TAKE IT.
       //
@@ -1161,7 +1175,6 @@ export function Composer({
           if (outcome === "recorded") setIntakeNotice(null);
           else if (outcome === "refused") setIntakeNotice(INTAKE_NOT_RECORDED);
         });
-      track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
     }
     };
     void beginDraftSend(draftId, shown, (sendId, content): DraftOutboxEntry => ({
@@ -1306,7 +1319,6 @@ export function Composer({
     : <BotReviewSheet botIds={[bot.id]} />;
   return (
     <div data-composer className="pointer-events-none relative px-5 pb-3" data-composer-compact={compact ? "" : undefined}>
-      <LearningConsentNotice />
       {bot && <div className="pointer-events-auto mb-2 empty:hidden"><LazyBoundary inline onRetry={SpendPauseChunk.retry}><Suspense fallback={null}><SpendPauseChunk.Component model={bot.modelSelection.model} connectionId={bot.modelSelection.connectionId} onOpenUsage={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })} /></Suspense></LazyBoundary></div>}
       {/* No fill or hairline on this wrapper — those were the black frame
           in the pill's top corners. The dock overlays the transcript. */}
@@ -1540,6 +1552,11 @@ export function Composer({
         <div className={phoneComposer ? "flex items-end gap-2" : "contents"}>
         {!compact && phoneComposer && !locked && !approval && (
           <ComposerPlusMenu
+            sources={{
+              camera: engineSupportsImages && !androidApp ? () => cameraInput.current?.click() : undefined,
+              photos: engineSupportsImages ? () => photosInput.current?.click() : undefined,
+              files: () => fileInput.current?.click(),
+            }}
             onAttach={() => fileInput.current?.click()}
             attachDisabled={sendPending}
             goal={group && !group.dm ? { on: effectiveChannelMode === "goal", disabled: sendPending, onToggle: toggleGoal } : undefined}
@@ -1584,14 +1601,13 @@ export function Composer({
             type="file"
             multiple
             className="hidden"
-            onChange={(e) => {
-              // The picker leaves focus on the attach button; hand it back
-              // to the draft once the files land (upstream #1599).
-              void pickFiles(e.target.files).finally(refocusInput);
-              // same file twice in a row still fires onChange
-              e.target.value = "";
-            }}
+            onChange={pickedFrom}
           />
+          {/* Keep pending picker inputs mounted when the viewport rotates. */}
+          {!compact && desktopSurface === false && <>
+            {!androidApp && <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="hidden" data-composer-camera-input onChange={pickedFrom} />}
+            <input ref={photosInput} type="file" accept="image/*" multiple className="hidden" data-composer-photos-input onChange={pickedFrom} />
+          </>}
           <textarea dir="auto"
           ref={inputRef}
           rows={1}

@@ -79,7 +79,7 @@ const instrumentation = `
   cfg.instances.earlyWarm=make({FAKE_CLAUDE_INIT_AT_START:'1'});
   cfg.instances.mountedWarm=make({FAKE_CLAUDE_START_DELAY_MS:'1',FAKE_CLAUDE_START_LOG:gate('mounted-warm-starts.log')});
   fs.writeFileSync(cfgFile,JSON.stringify(cfg));
-  process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS='250';
+  process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS='250';// the prewarm start path runs at its production default (OPEN, MAIN-RULING presence-held); each /warm carries the owner gesture (presence P-SIG 1a)
   const {Store}=await import(${JSON.stringify(STORE_URL)});
   const watch=await import(${JSON.stringify(WATCH_URL)});
   // a resume after a restart must not meet the 50 ms budget of a cold lineage check (reason=lineage-warming, fail closed): a slow runner proves nothing here
@@ -443,12 +443,12 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     const baseline = starts();
     expect(baseline).toBe(2);
     await seal(sealed); // its session is below this release: nothing may resume it, not even a warm
-    const refused = await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: sealed.threadId });
+    const refused = await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: sealed.threadId, gesture: true });
     expect(refused.status).toBe(200);
     expect(refused.body).toEqual({ warming: true, started: false });
     await sleep(2_000);
     expect(starts()).toBe(baseline);
-    const warmed = await call("POST", `/api/bots/${open.id}/warm`, { threadId: open.threadId });
+    const warmed = await call("POST", `/api/bots/${open.id}/warm`, { threadId: open.threadId, gesture: true });
     expect(warmed.status).toBe(200);
     expect(warmed.body.warming).toBe(true);
     expect(warmed.body.started).toBe(true);
@@ -458,13 +458,13 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     await bound(sealed, "warmable");
     await sleep(3_000);
     const beforeClean = starts();
-    expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: sealed.threadId })).body).toEqual({ warming: true, started: true });
+    expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: sealed.threadId, gesture: true })).body).toEqual({ warming: true, started: true });
     await expect.poll(starts, { timeout: 15_000 }).toBe(beforeClean + 1);
     await sleep(3_000);
     // the next release refuses it again, until the next fresh session binds
     await seal(sealed);
     const afterRelease = starts();
-    expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: sealed.threadId })).body).toEqual({ warming: true, started: false });
+    expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: sealed.threadId, gesture: true })).body).toEqual({ warming: true, started: false });
     await sleep(1_000);
     expect(starts()).toBe(afterRelease);
     // a chat's own engine: the warm is judged on and sent to the instance the chat's turn would use, never the bot's
@@ -477,12 +477,12 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     await bound(sealed, "verification", threadId);
     await sleep(2_000);
     const before = starts();
-    const warmed2 = await call("POST", `/api/bots/${sealed.id}/warm`, { threadId });
+    const warmed2 = await call("POST", `/api/bots/${sealed.id}/warm`, { threadId, gesture: true });
     expect(warmed2.body, warmed2.text).toEqual({ warming: true, started: true });
     await sleep(1_000);
     expect(starts()).toBe(before); // nothing started on the bot's own engine
     await seal(sealed, threadId);
-    expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId })).body).toEqual({ warming: true, started: false });
+    expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId, gesture: true })).body).toEqual({ warming: true, started: false });
   }, 120_000);
 
   it("ten turns on a sealed thread raise no reset-loop warning and only the tainted one is counted", async () => {
@@ -1070,7 +1070,7 @@ posixOnly("a session bound to the seal it started under (THREAD-SEAL 3.3 to 3.5)
     await bound(bot, "earlyWarm");
     await sleep(2_500); // the (shortened) activity window lets the idle engine go, so a warm has something to start
     const savedBefore = savesOf(sessionOf(first.argv)).length;
-    const warmed = await call("POST", `/api/bots/${bot.id}/warm`, { threadId: bot.threadId });
+    const warmed = await call("POST", `/api/bots/${bot.id}/warm`, { threadId: bot.threadId, gesture: true });
     expect(warmed.body.started, warmed.text).toBe(true);
     await sleep(1_000);
     expect(savesOf(sessionOf(first.argv)).length).toBe(savedBefore); // the warm holds its init, so nothing folds until a turn takes the process
@@ -1094,7 +1094,7 @@ posixOnly("a session bound to the seal it started under (THREAD-SEAL 3.3 to 3.5)
     const starts = () => readFileSync(file("mounted-warm-starts.log"), "utf8").split("\n").filter(Boolean).length;
     const count = starts();
     expect(count).toBe(1);
-    const warmed = await call("POST", `/api/bots/${bot.id}/warm`, { threadId: bot.threadId });
+    const warmed = await call("POST", `/api/bots/${bot.id}/warm`, { threadId: bot.threadId, gesture: true });
     expect(warmed.status).toBe(200);
     expect(warmed.body).toEqual({ warming: true, started: false });
     await sleep(600);

@@ -30,7 +30,20 @@ export interface TurnLineFacts {
   skippedReason?: string;
 }
 
-const lagMonitor = (() => { try { const m = monitorEventLoopDelay({ resolution: 10 }); m.enable(); return m; } catch { return undefined; } })();
+/** 1.0.22 idle: the 10 ms lag monitor runs only while a turn is being prepared. It is enabled when a timer starts and disabled when the
+ * last one finishes, or at the latest LAG_MONITOR_IDLE_MS after the last start (a turn that returns early never calls finish). */
+export const LAG_MONITOR_IDLE_MS = 60_000;
+const lagMonitor = (() => { try { return monitorEventLoopDelay({ resolution: 10 }); } catch { return undefined; } })();
+let lagUsers = 0, lagOff: ReturnType<typeof setTimeout> | undefined;
+function lagStop(): void { lagUsers = 0; if (lagOff) clearTimeout(lagOff); lagOff = undefined; try { lagMonitor?.disable(); } catch { /* best effort */ } }
+function lagStart(): void {
+  if (!lagMonitor) return;
+  if (lagUsers++ === 0) { try { lagMonitor.enable(); } catch { /* best effort */ } }
+  lagMonitor.reset();
+  if (lagOff) clearTimeout(lagOff);
+  lagOff = setTimeout(lagStop, LAG_MONITOR_IDLE_MS); lagOff.unref?.();
+}
+function lagRelease(): void { if (lagUsers > 0 && --lagUsers === 0) lagStop(); }
 const round = (value: number) => Math.round(value);
 
 export class PreDispatchTimer {
@@ -38,7 +51,7 @@ export class PreDispatchTimer {
   private readonly totals = new Map<string, number>();
   private finished = false;
   private readonly emit: (line: string) => void;
-  constructor(emit: (line: string) => void = observeLine) { this.emit = emit; lagMonitor?.reset(); }
+  constructor(emit: (line: string) => void = observeLine) { this.emit = emit; lagStart(); }
   /** Start a span; call the returned function to end it (more than one span of a name adds up). */
   span(name: string): () => void {
     const at = performance.now();
@@ -69,6 +82,7 @@ export class PreDispatchTimer {
     this.finished = true;
     turns++;
     const summary = this.summary(facts);
+    lagRelease();
     // (every turn while the turn trace is on: the timing runs read the line of each turn)
     if (!turnTraceEnabled() && Number(summary.pre) <= SLOW_TURN_LINE_MS && turns % TURN_LINE_SAMPLE !== 0) return false;
     void now;

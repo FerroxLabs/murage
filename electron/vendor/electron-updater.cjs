@@ -11896,9 +11896,9 @@ var require_lodash = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/DownloadedUpdateHelper.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/DownloadedUpdateHelper.js
 var require_DownloadedUpdateHelper = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/DownloadedUpdateHelper.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/DownloadedUpdateHelper.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DownloadedUpdateHelper = void 0;
@@ -11995,9 +11995,10 @@ var require_DownloadedUpdateHelper = __commonJS({
           logger.info(message);
           return null;
         }
-        const isCachedInfoFileNameValid = (cachedInfo === null || cachedInfo === void 0 ? void 0 : cachedInfo.fileName) !== null;
+        const cachedFileName = cachedInfo === null || cachedInfo === void 0 ? void 0 : cachedInfo.fileName;
+        const isCachedInfoFileNameValid = typeof cachedFileName === "string" && cachedFileName.length > 0 && path2.basename(cachedFileName) === cachedFileName;
         if (!isCachedInfoFileNameValid) {
-          logger.warn(`Cached update info is corrupted: no fileName, directory for cached update will be cleaned`);
+          logger.warn(`Cached update info is corrupted: invalid fileName, directory for cached update will be cleaned`);
           await this.cleanCacheDirForPendingUpdate();
           return null;
         }
@@ -12006,7 +12007,7 @@ var require_DownloadedUpdateHelper = __commonJS({
           await this.cleanCacheDirForPendingUpdate();
           return null;
         }
-        const updateFile = path2.join(this.cacheDirForPendingUpdate, cachedInfo.fileName);
+        const updateFile = path2.join(this.cacheDirForPendingUpdate, cachedFileName);
         if (!await (0, fs_extra_12.pathExists)(updateFile)) {
           logger.info("Cached update file doesn't exist");
           return null;
@@ -12059,9 +12060,9 @@ var require_DownloadedUpdateHelper = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/AppAdapter.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/AppAdapter.js
 var require_AppAdapter = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/AppAdapter.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/AppAdapter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getAppCacheDir = getAppCacheDir;
@@ -12082,9 +12083,9 @@ var require_AppAdapter = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/ElectronAppAdapter.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/ElectronAppAdapter.js
 var require_ElectronAppAdapter = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/ElectronAppAdapter.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/ElectronAppAdapter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ElectronAppAdapter = void 0;
@@ -12130,9 +12131,9 @@ var require_ElectronAppAdapter = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/electronHttpExecutor.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/electronHttpExecutor.js
 var require_electronHttpExecutor = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/electronHttpExecutor.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/electronHttpExecutor.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ElectronHttpExecutor = exports2.NET_SESSION_NAME = void 0;
@@ -12206,9 +12207,9 @@ var require_electronHttpExecutor = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/util.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/util.js
 var require_util = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/util.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/util.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.newBaseUrl = newBaseUrl;
@@ -12280,9 +12281,9 @@ var require_lodash2 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/Provider.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/Provider.js
 var require_Provider = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/Provider.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/Provider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Provider = void 0;
@@ -12422,9 +12423,9 @@ var require_Provider = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/GenericProvider.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/GenericProvider.js
 var require_GenericProvider = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/GenericProvider.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/GenericProvider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GenericProvider = void 0;
@@ -12475,9 +12476,9 @@ var require_GenericProvider = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/BitbucketProvider.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/BitbucketProvider.js
 var require_BitbucketProvider = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/BitbucketProvider.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/BitbucketProvider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.BitbucketProvider = void 0;
@@ -12521,9 +12522,9 @@ var require_BitbucketProvider = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/GitHubProvider.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/GitHubProvider.js
 var require_GitHubProvider = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/GitHubProvider.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/GitHubProvider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GitHubProvider = exports2.BaseGitHubProvider = void 0;
@@ -12737,9 +12738,9 @@ ${feedXml}`, "ERR_UPDATER_INVALID_RELEASE_FEED");
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/GitLabProvider.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/GitLabProvider.js
 var require_GitLabProvider = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/GitLabProvider.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/GitLabProvider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GitLabProvider = void 0;
@@ -12991,9 +12992,9 @@ var require_GitLabProvider = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/KeygenProvider.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/KeygenProvider.js
 var require_KeygenProvider = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/KeygenProvider.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/KeygenProvider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.KeygenProvider = void 0;
@@ -13041,9 +13042,9 @@ var require_KeygenProvider = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/PrivateGitHubProvider.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/PrivateGitHubProvider.js
 var require_PrivateGitHubProvider = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providers/PrivateGitHubProvider.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providers/PrivateGitHubProvider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.PrivateGitHubProvider = void 0;
@@ -13136,9 +13137,9 @@ var require_PrivateGitHubProvider = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providerFactory.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providerFactory.js
 var require_providerFactory = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/providerFactory.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/providerFactory.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.isUrlProbablySupportMultiRangeRequests = isUrlProbablySupportMultiRangeRequests;
@@ -13207,9 +13208,9 @@ var require_providerFactory = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/downloadPlanBuilder.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/downloadPlanBuilder.js
 var require_downloadPlanBuilder = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/downloadPlanBuilder.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/downloadPlanBuilder.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.OperationKind = void 0;
@@ -13316,9 +13317,9 @@ rel: ${lastOperation.start - min} until ${lastOperation.end - min} and ${operati
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/DataSplitter.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/DataSplitter.js
 var require_DataSplitter = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/DataSplitter.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/DataSplitter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DataSplitter = void 0;
@@ -13327,7 +13328,22 @@ var require_DataSplitter = __commonJS({
     var fs_1 = require("fs");
     var stream_1 = require("stream");
     var downloadPlanBuilder_1 = require_downloadPlanBuilder();
-    var DOUBLE_CRLF = Buffer.from("\r\n\r\n");
+    var CRLF_HEADER_LIST_END = Buffer.from("\r\n\r\n");
+    var LF_HEADER_LIST_END = Buffer.from("\n\n");
+    var HEADER_LIST_END_CARRY = CRLF_HEADER_LIST_END.length - 1;
+    var CRLF_DELIMITER_PREFIX_LENGTH = "\r\n--".length;
+    var LF_DELIMITER_PREFIX_LENGTH = "\n--".length;
+    function findHeaderListEnd(data) {
+      const crlf = data.indexOf(CRLF_HEADER_LIST_END);
+      const lf = data.indexOf(LF_HEADER_LIST_END);
+      if (lf !== -1 && (crlf === -1 || lf < crlf)) {
+        return { end: lf + LF_HEADER_LIST_END.length, lineFeedOnly: true };
+      }
+      if (crlf !== -1) {
+        return { end: crlf + CRLF_HEADER_LIST_END.length, lineFeedOnly: false };
+      }
+      return null;
+    }
     var ReadState;
     (function(ReadState2) {
       ReadState2[ReadState2["INIT"] = 0] = "INIT";
@@ -13363,11 +13379,12 @@ var require_DataSplitter = __commonJS({
         this.transferred = 0;
         this.delta = 0;
         this.partIndex = -1;
-        this.headerListBuffer = null;
+        this.headerListTail = null;
         this.readState = ReadState.INIT;
         this.ignoreByteCount = 0;
         this.remainingPartDataCount = 0;
         this.actualPartLength = 0;
+        this.boundaryTextLength = boundary.length;
         this.boundaryLength = boundary.length + 4;
         this.ignoreByteCount = this.boundaryLength - 2;
       }
@@ -13423,7 +13440,6 @@ var require_DataSplitter = __commonJS({
           }
           start = headerListEnd;
           this.readState = ReadState.BODY;
-          this.headerListBuffer = null;
         }
         while (true) {
           if (this.readState === ReadState.BODY) {
@@ -13491,16 +13507,16 @@ var require_DataSplitter = __commonJS({
         });
       }
       searchHeaderListEnd(chunk, readOffset) {
-        const headerListEnd = chunk.indexOf(DOUBLE_CRLF, readOffset);
-        if (headerListEnd !== -1) {
-          return headerListEnd + DOUBLE_CRLF.length;
+        const tail = this.headerListTail;
+        const carried = tail == null ? 0 : tail.length;
+        const data = tail == null ? chunk.subarray(readOffset) : Buffer.concat([tail, chunk.subarray(readOffset)]);
+        const found = findHeaderListEnd(data);
+        if (found != null) {
+          this.headerListTail = null;
+          this.boundaryLength = this.boundaryTextLength + (found.lineFeedOnly ? LF_DELIMITER_PREFIX_LENGTH : CRLF_DELIMITER_PREFIX_LENGTH);
+          return readOffset + found.end - carried;
         }
-        const partialChunk = readOffset === 0 ? chunk : chunk.slice(readOffset);
-        if (this.headerListBuffer == null) {
-          this.headerListBuffer = partialChunk;
-        } else {
-          this.headerListBuffer = Buffer.concat([this.headerListBuffer, partialChunk]);
-        }
+        this.headerListTail = Buffer.from(data.subarray(Math.max(0, data.length - HEADER_LIST_END_CARRY)));
         return -1;
       }
       onPartEnd() {
@@ -13538,9 +13554,9 @@ var require_DataSplitter = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js
 var require_multipleRangeDownloader = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.executeTasksUsingMultipleRangeRequests = executeTasksUsingMultipleRangeRequests;
@@ -13624,11 +13640,28 @@ var require_multipleRangeDownloader = __commonJS({
           reject(new Error(`Content-Type "multipart/byteranges" is expected, but got "${contentType}"`));
           return;
         }
-        const dicer = new DataSplitter_1.DataSplitter(out, options, partIndexToTaskIndex, m[1] || m[2], partIndexToLength, resolve, grandTotalBytes, differentialDownloader.options.onProgress);
+        let isBatchFinished = false;
+        let watchdog = null;
+        const onBatchFinished = () => {
+          isBatchFinished = true;
+          if (watchdog != null) {
+            clearTimeout(watchdog);
+            watchdog = null;
+          }
+          resolve();
+        };
+        const dicer = new DataSplitter_1.DataSplitter(out, options, partIndexToTaskIndex, m[1] || m[2], partIndexToLength, onBatchFinished, grandTotalBytes, differentialDownloader.options.onProgress);
         dicer.on("error", reject);
         response.pipe(dicer);
         response.on("end", () => {
-          setTimeout(() => {
+          if (isBatchFinished) {
+            return;
+          }
+          watchdog = setTimeout(() => {
+            watchdog = null;
+            if (isBatchFinished) {
+              return;
+            }
             request.abort();
             reject(new Error("Response ends without calling any handlers"));
           }, 1e4);
@@ -13654,9 +13687,9 @@ var require_multipleRangeDownloader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/ProgressDifferentialDownloadCallbackTransform.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/ProgressDifferentialDownloadCallbackTransform.js
 var require_ProgressDifferentialDownloadCallbackTransform = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/ProgressDifferentialDownloadCallbackTransform.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/ProgressDifferentialDownloadCallbackTransform.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ProgressDifferentialDownloadCallbackTransform = void 0;
@@ -13745,9 +13778,9 @@ var require_ProgressDifferentialDownloadCallbackTransform = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js
 var require_DifferentialDownloader = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/DifferentialDownloader.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DifferentialDownloader = void 0;
@@ -13994,9 +14027,9 @@ var require_DifferentialDownloader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/GenericDifferentialDownloader.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/GenericDifferentialDownloader.js
 var require_GenericDifferentialDownloader = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/GenericDifferentialDownloader.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/GenericDifferentialDownloader.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GenericDifferentialDownloader = void 0;
@@ -14010,9 +14043,9 @@ var require_GenericDifferentialDownloader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/types.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/types.js
 var require_types = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/types.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/types.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.UpdaterSignal = exports2.UPDATE_DOWNLOADED = exports2.DOWNLOAD_PROGRESS = exports2.CancellationToken = void 0;
@@ -14058,9 +14091,9 @@ var require_types = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/AppUpdater.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/AppUpdater.js
 var require_AppUpdater = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/AppUpdater.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/AppUpdater.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NoOpLogger = exports2.AppUpdater = void 0;
@@ -14419,7 +14452,7 @@ var require_AppUpdater = __commonJS({
         }
         if (this.downloadPromise != null) {
           this._logger.info("Downloading update (already in progress)");
-          return this.downloadPromise;
+          return this.downloadPromise.then(toDownloadedFilesArray);
         }
         this._logger.info(`Downloading update from ${(0, builder_util_runtime_1.asArray)(updateInfoAndProvider.info.files).map((it) => it.url).join(", ")}`);
         const errorHandler = (e) => {
@@ -14443,7 +14476,7 @@ var require_AppUpdater = __commonJS({
         }).finally(() => {
           this.downloadPromise = null;
         });
-        return this.downloadPromise;
+        return this.downloadPromise.then(toDownloadedFilesArray);
       }
       dispatchError(e) {
         this.emit("error", e, (e.stack || e).toString());
@@ -14550,17 +14583,20 @@ var require_AppUpdater = __commonJS({
         const updateFileName = getCacheUpdateFileName();
         let updateFile = path2.join(cacheDir, updateFileName);
         const packageFile = packageInfo == null ? null : path2.join(cacheDir, `package-${version}${path2.extname(packageInfo.path) || ".7z"}`);
+        const pendingBlockMapFile = path2.join(cacheDir, "current.blockmap");
+        const cachedBlockMapFile = path2.join(downloadedUpdateHelper.cacheDir, "current.blockmap");
         const done = async (isSaveCache) => {
           await downloadedUpdateHelper.setDownloadedFile(updateFile, packageFile, updateInfo, fileInfo, updateFileName, isSaveCache);
           await taskOptions.done({
             ...updateInfo,
             downloadedFile: updateFile
           });
-          const currentBlockMapFile = path2.join(cacheDir, "current.blockmap");
-          if (await (0, fs_extra_12.pathExists)(currentBlockMapFile)) {
-            await (0, fs_extra_12.copyFile)(currentBlockMapFile, path2.join(downloadedUpdateHelper.cacheDir, "current.blockmap"));
+          if (await (0, fs_extra_12.pathExists)(pendingBlockMapFile)) {
+            await (0, fs_extra_12.copyFile)(pendingBlockMapFile, cachedBlockMapFile);
+          } else if (!taskOptions.downloadUpdateOptions.disableDifferentialDownload) {
+            await (0, fs_extra_12.remove)(cachedBlockMapFile);
           }
-          return packageFile == null ? [updateFile] : [updateFile, packageFile];
+          return packageFile == null ? { updateFile } : { updateFile, packageFile };
         };
         const log = this._logger;
         const cachedUpdateFile = await downloadedUpdateHelper.validateDownloadedPath(updateFile, updateInfo, fileInfo, log);
@@ -14574,6 +14610,7 @@ var require_AppUpdater = __commonJS({
           return await (0, fs_extra_12.unlink)(updateFile).catch(() => {
           });
         };
+        await (0, fs_extra_12.remove)(pendingBlockMapFile);
         const tempUpdateFile = await (0, DownloadedUpdateHelper_1.createTempUpdateFile)(`temp-${updateFileName}`, cacheDir, log);
         try {
           await taskOptions.task(tempUpdateFile, downloadOptions, packageFile, removeFileIfAny);
@@ -14593,6 +14630,8 @@ var require_AppUpdater = __commonJS({
           if (e instanceof builder_util_runtime_1.CancellationError) {
             log.info("cancelled");
             this.emit("update-cancelled", updateInfo);
+          } else if (e.code === "ERR_CHECKSUM_MISMATCH") {
+            log.warn(`sha512 checksum mismatch after full download of ${updateFileName}: the downloaded file is corrupted or the published update metadata does not match the uploaded file`);
           }
           throw e;
         }
@@ -14600,6 +14639,7 @@ var require_AppUpdater = __commonJS({
         return await done(true);
       }
       async differentialDownloadInstaller(fileInfo, downloadUpdateOptions, installerPath, provider, oldInstallerFileName) {
+        let isOldBlockMapFromCache = false;
         try {
           if (this._testOnlyOptions != null && !this._testOnlyOptions.isUseDifferentialDownload) {
             return true;
@@ -14651,12 +14691,17 @@ var require_AppUpdater = __commonJS({
           const newBlockMapData = await downloadBlockMap(blockmapFileUrls[1]);
           await saveBlockMapToCacheDir(newBlockMapData, this.downloadedUpdateHelper.cacheDirForPendingUpdate);
           let oldBlockMapData = await getBlockMapFromCacheDir(this.downloadedUpdateHelper.cacheDir);
+          isOldBlockMapFromCache = oldBlockMapData != null;
           if (oldBlockMapData == null) {
+            this._logger.info(`No cached blockmap for the old installer, downloading it from "${blockmapFileUrls[0]}"`);
             oldBlockMapData = await downloadBlockMap(blockmapFileUrls[0]);
           }
           await new GenericDifferentialDownloader_1.GenericDifferentialDownloader(fileInfo.info, this.httpExecutor, downloadOptions).download(oldBlockMapData, newBlockMapData);
           return false;
         } catch (e) {
+          if (e.code === "ERR_CHECKSUM_MISMATCH") {
+            this._logger.warn(`sha512 checksum mismatch after differential download (old blockmap ${isOldBlockMapFromCache ? "was read from the local cache" : "was downloaded from the server"}): cached "${oldInstallerFileName}" is likely out of sync with the old blockmap, e.g. because one of them was replaced or evicted independently of the other`);
+          }
           this._logger.error(`Cannot download differentially, fallback to full download: ${e.stack || e}`);
           if (this._testOnlyOptions != null) {
             throw e;
@@ -14682,12 +14727,15 @@ var require_AppUpdater = __commonJS({
       }
     };
     exports2.NoOpLogger = NoOpLogger;
+    function toDownloadedFilesArray({ updateFile, packageFile }) {
+      return packageFile == null ? [updateFile] : [updateFile, packageFile];
+    }
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/BaseUpdater.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/BaseUpdater.js
 var require_BaseUpdater = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/BaseUpdater.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/BaseUpdater.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.BaseUpdater = void 0;
@@ -14839,9 +14887,9 @@ var require_BaseUpdater = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/FileWithEmbeddedBlockMapDifferentialDownloader.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/FileWithEmbeddedBlockMapDifferentialDownloader.js
 var require_FileWithEmbeddedBlockMapDifferentialDownloader = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/differentialDownloader/FileWithEmbeddedBlockMapDifferentialDownloader.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/differentialDownloader/FileWithEmbeddedBlockMapDifferentialDownloader.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileWithEmbeddedBlockMapDifferentialDownloader = void 0;
@@ -14880,9 +14928,9 @@ var require_FileWithEmbeddedBlockMapDifferentialDownloader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/AppImageUpdater.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/AppImageUpdater.js
 var require_AppImageUpdater = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/AppImageUpdater.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/AppImageUpdater.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.AppImageUpdater = void 0;
@@ -14994,9 +15042,9 @@ var require_AppImageUpdater = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/LinuxUpdater.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/LinuxUpdater.js
 var require_LinuxUpdater = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/LinuxUpdater.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/LinuxUpdater.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.LinuxUpdater = void 0;
@@ -15105,9 +15153,9 @@ var require_LinuxUpdater = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/DebUpdater.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/DebUpdater.js
 var require_DebUpdater = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/DebUpdater.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/DebUpdater.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DebUpdater = void 0;
@@ -15189,9 +15237,9 @@ var require_DebUpdater = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/PacmanUpdater.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/PacmanUpdater.js
 var require_PacmanUpdater = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/PacmanUpdater.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/PacmanUpdater.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.PacmanUpdater = void 0;
@@ -15256,9 +15304,9 @@ var require_PacmanUpdater = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/RpmUpdater.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/RpmUpdater.js
 var require_RpmUpdater = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/RpmUpdater.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/RpmUpdater.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.RpmUpdater = void 0;
@@ -15325,9 +15373,9 @@ var require_RpmUpdater = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/MacUpdater.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/MacUpdater.js
 var require_MacUpdater = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/MacUpdater.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/MacUpdater.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.MacUpdater = void 0;
@@ -15572,9 +15620,9 @@ var require_MacUpdater = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js
 var require_windowsExecutableCodeSignatureVerifier = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/windowsExecutableCodeSignatureVerifier.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.verifySignature = verifySignature;
@@ -15588,9 +15636,9 @@ var require_windowsExecutableCodeSignatureVerifier = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/NsisUpdater.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/NsisUpdater.js
 var require_NsisUpdater = __commonJS({
-  "node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/NsisUpdater.js"(exports2) {
+  "node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/NsisUpdater.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.NsisUpdater = void 0;
@@ -15749,7 +15797,7 @@ var require_NsisUpdater = __commonJS({
   }
 });
 
-// node_modules/.pnpm/electron-updater@6.8.9/node_modules/electron-updater/out/main.js
+// node_modules/.pnpm/electron-updater@6.8.11/node_modules/electron-updater/out/main.js
 var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
   if (k2 === void 0) k2 = k;
   var desc = Object.getOwnPropertyDescriptor(m, k);

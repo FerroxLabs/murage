@@ -16,8 +16,8 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
 import { preloadModelMetadata } from "@/lib/model-metadata";
 import { isThreadModelMutationLocked, refreshModelPickerCatalog } from "./ModelPicker";
-import { EngineListNote, EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, modelPickerMaxHeight, modelPickerViewportOffset } from "./ModelPickerDialog";
-import { PRICE_UNKNOWN, priceBandNote, type PickerEngine, type PickerModel } from "@/lib/provider-model-picker";
+import { ModelPickerDialog, type ModelPickerDialogProps, EngineListNote, EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, modelPickerMaxHeight, modelPickerViewportOffset } from "./ModelPickerDialog";
+import { PRICE_UNKNOWN, priceBandNote, pickerModels, type PickerEngine, type PickerModel } from "@/lib/provider-model-picker";
 import { ENGINE_DISABLED_SUFFIX, engineMenuFamilies } from "@/lib/provider-model-picker-dialog";
 
 const connection = (id: string, catalog: Partial<PublicProviderConnection["catalog"]> = {}): PublicProviderConnection => ({
@@ -507,4 +507,64 @@ it("keeps focus on Refresh models while a refresh runs (aria-disabled, never dis
   const dialogSource = readFileSync(new URL("./ModelPickerDialog.tsx", import.meta.url), "utf8");
   expect(dialogSource).toMatch(/aria-label="Refresh models" aria-disabled=\{refreshing\|\|undefined\}/);
   expect(dialogSource).not.toMatch(/aria-label="Refresh models" disabled/);
+});
+
+
+// MAIN RULING 1115-NO-SILENT-CAP: browsing another engine must move the note with its rows.
+vi.mock("@/state/store", async (original) => ({
+  ...await original<typeof import("@/state/store")>(),
+  useStore: () => ({ state: { instances: [], bots: [], engineNote: "", localOnlyEngines: [] }, dispatch: vi.fn() }),
+}));
+
+describe("browsed engine catalog notices", () => {
+  const engine = (instanceId: string, note?: string) => ({
+    instanceId, driverKind: instanceId === "fuigo" ? "fuigoAgent" : "ompAgent", displayName: instanceId, enabled: true,
+    snapshot: { state: "available" as const },
+    models: { default: "fixture/model", options: [{ id: "fixture/model", label: "Fixture model" }], note },
+  });
+  function render(engine: ModelPickerDialogProps["engine"], active: ModelPickerDialogProps["active"]) {
+    const noop = () => {};
+    const props: ModelPickerDialogProps = {
+      bot: { id: "fixture-bot", name: "Fixture", modelSelection: { instanceId: active!.instanceId, model: "fixture/model" } } as ModelPickerDialogProps["bot"],
+      contained: true, root: { current: null }, engine, active,
+      rows: engine ? pickerModels(engine, []) : [],
+      query: "", setQuery: noop, limit: 30, setLimit: noop, setEngineId: noop, connections: [], error: "", fleetError: "", refreshing: false,
+      refresh: async () => {}, prefs: { favorites: [], recent: [] }, save: noop, pick: noop, manage: noop, manageLocal: noop, openOwnAccount: noop,
+      selectedKey: "fixture", selectedLabel: "Fixture model", threadModelMutationLocked: false,
+    };
+    return renderToStaticMarkup(createElement(ModelPickerDialog, props));
+  }
+  it("retains the cap from fake CLI discovery through registry filtering into the browsed picker", async () => {
+    const { resolveOmpModels } = await import("../../server/drivers/acp/omp.ts");
+    const { ProviderRegistry } = await import("../../server/harness/registry.ts");
+    const { makeFakeDriver } = await import("../../server/testing/fake-driver.ts");
+    const catalog = await resolveOmpModels({ ...process.env,
+      FAKE_ACP_MODELS: ["flux-auto", ...Array.from({ length: 129 }, (_, index) => `fixture/model-${index}`)].join(","),
+    }, { cli: fileURLToPath(new URL("../../server/testing/fake-acp-cli.ts", import.meta.url)) });
+    const fake = makeFakeDriver({ kind: "ompAgent" });
+    Object.assign(fake.driver, { models: catalog });
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ omp: { driver: "ompAgent" } });
+    try {
+      const [omp] = await registry.describe();
+      expect(omp.models.options.some(option => option.id === "flux-auto")).toBe(false);
+      const markup = render(omp, engine("fuigo"));
+      expect(markup).toContain("Showing 128 of 130 models.");
+      expect(pickerModels(omp, []).map(row => row.selection.model)).toContain("fixture/model-1");
+      // The renderer title-cases this fixture ID through resolveModelLabel.
+      expect(markup).toContain(">Model 1<");
+    } finally {
+      await registry.disposeAll();
+    }
+  });
+  it("shows OMP's cap when a Fuigo bot browses OMP, then clears it when browsing back", () => {
+    const fuigo = engine("fuigo"), omp = engine("omp", "Showing 128 of 130 models.");
+    expect(render(omp, fuigo)).toContain("Showing 128 of 130 models.");
+    expect(render(fuigo, fuigo)).not.toContain("data-model-catalog-note");
+  });
+  it("does not carry the active OMP bot's cap to Fuigo, then restores it when browsing back", () => {
+    const fuigo = engine("fuigo"), omp = engine("omp", "Showing 128 of 130 models.");
+    expect(render(fuigo, omp)).not.toContain("data-model-catalog-note");
+    expect(render(omp, omp)).toContain("Showing 128 of 130 models.");
+  });
 });

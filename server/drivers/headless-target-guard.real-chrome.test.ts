@@ -1,6 +1,6 @@
 // Real Chrome, not a fake socket: proves a tab the engine creates with Target.createTarget gets the
 // beforeunload guard before its own page scripts run, and that the guard adds almost nothing to tab
-// creation. Runs only where CHROME_BIN names a Chrome (build host container); writes a CDP trace to
+// creation. Runs only where CHROME_BIN names a Chrome (Hetzner container); writes a CDP trace to
 // CHROME_TRACE when set.
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";

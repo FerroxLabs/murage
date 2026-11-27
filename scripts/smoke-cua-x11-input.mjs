@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { HostComputerBroker, hostComputerSession } from "../server/host-computer-broker.ts";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -74,8 +75,6 @@ driverProcess.stderr.setEncoding("utf8");
 driverProcess.stderr.on("data", (chunk) => {
   driverError += chunk;
 });
-let proxy;
-let proxyError = "";
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 async function until(probe, description, timeout = 10_000) {
@@ -114,57 +113,27 @@ function driverRequest(method) {
   });
 }
 
-function createMcpClient() {
-  proxy = spawn(driver, ["mcp", "--socket", socketPath], {
-    env: {
-      ...process.env,
-      HOME: home,
-      XDG_RUNTIME_DIR: runtime,
-      XDG_SESSION_TYPE: "x11",
-      CUA_DRIVER_EMBEDDED: "1",
-      CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
-      CUA_DRIVER_RS_UPDATE_CHECK: "false",
-    },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const pending = new Map();
-  let buffer = "";
-  let nextId = 1;
-  proxy.stderr.setEncoding("utf8");
-  proxy.stderr.on("data", (chunk) => {
-    proxyError += chunk;
-  });
-  proxy.stdout.setEncoding("utf8");
-  proxy.stdout.on("data", (chunk) => {
-    buffer += chunk;
-    let newline;
-    while ((newline = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      if (!line.trim()) continue;
-      const message = JSON.parse(line);
-      const settle = pending.get(message.id);
-      if (settle) {
-        pending.delete(message.id);
-        settle(message);
-      }
-    }
-  });
-  return (method, params = {}) =>
-    new Promise((resolve, reject) => {
-      const id = nextId++;
-      const timer = setTimeout(() => {
-        pending.delete(id);
-        reject(new Error(`${method} timed out${proxyError ? `: ${proxyError.trim()}` : ""}`));
-      }, 20_000);
-      pending.set(id, (message) => {
-        clearTimeout(timer);
-        if (message.error) reject(new Error(message.error.message));
-        else resolve(message.result);
-      });
-      proxy.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-    });
-}
+// Every action goes through the server's own broker, one dispatch per tool
+// call, exactly as /api/internal/host-computer does (server/index.ts). The
+// driver remembers which windows were read per MCP connection, so this is the
+// path that has to keep a turn's read and its next click together.
+const mcpSpec = {
+  command: driver,
+  args: ["mcp", "--embedded", "--socket", socketPath],
+  env: {
+    HOME: home,
+    XDG_RUNTIME_DIR: runtime,
+    XDG_SESSION_TYPE: "x11",
+    CUA_DRIVER_EMBEDDED: "1",
+    CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
+    CUA_DRIVER_RS_UPDATE_CHECK: "false",
+  },
+};
+const broker = new HostComputerBroker();
+// the server's own session key (server/index.ts /api/internal/host-computer)
+const turn = (bot, revision = 0, thread = `thread-${bot}`) => hostComputerSession(bot, thread, `generation-${bot}`, revision);
+const call = (session, name, args) =>
+  broker.dispatch(mcpSpec, "tools/call", { name, arguments: args }, () => true, undefined, session);
 
 function assertToolResult(result, name) {
   if (result?.isError) throw new Error(result.content?.[0]?.text || `${name} failed`);
@@ -195,6 +164,9 @@ try {
     return stdout.trim().split(/\s+/)[0] || null;
   }, "the unrelated X11 test window");
   if (!windowId) throw new Error("xev test window did not appear");
+  // 0.55.0 sends foreground input only to the window a window manager made active.
+  await until(async () => /window id/.test((await execFileAsync("xprop", ["-root", "_NET_SUPPORTING_WM_CHECK"])).stdout),
+    "an EWMH window manager (run one, e.g. xfwm4 --compositor=off, before this smoke)");
 
   const metadata = await until(
     async () => {
@@ -204,7 +176,7 @@ try {
     },
     "the overlay-free driver handshake",
   );
-  if (metadata.driver_version !== "0.19.3" || metadata.embedded !== true) {
+  if (metadata.driver_version !== "0.55.0" || metadata.embedded !== true) {
     throw new Error(`unexpected driver metadata: ${JSON.stringify(metadata)}`);
   }
 
@@ -213,54 +185,49 @@ try {
     throw new Error("Cua created its full-screen cursor overlay despite --no-overlay");
   }
 
-  const rpc = createMcpClient();
-  await rpc("initialize", {
-    protocolVersion: "2024-11-05",
-    capabilities: {},
-    clientInfo: { name: "murage-x11-input-smoke", version: "1" },
-  });
-  proxy.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
-  const listed = await rpc("tools/list");
+  const listed = await broker.dispatch(mcpSpec, "tools/list", {}, () => true, undefined, turn("bot-a"));
   const toolNames = new Set(listed.tools.map(({ name }) => name));
-  for (const required of ["start_session", "click", "type_text"]) {
+  for (const required of ["get_window_state", "click", "type_text", "press_key"]) {
     if (!toolNames.has(required)) throw new Error(`Cua MCP did not expose ${required}`);
   }
 
-  const session = `murage-x11-smoke-${process.pid}`;
-  assertToolResult(
-    await rpc("tools/call", {
-      name: "start_session",
-      arguments: { session, capture_scope: "window" },
-    }),
-    "start_session",
-  );
   xevOutput = "";
-  const target = {
-    session,
-    pid: xev.pid,
-    window_id: Number(windowId),
-    x: 80,
-    y: 80,
-    scope: "window",
-    delivery_mode: "foreground",
-  };
-  assertToolResult(
-    await rpc("tools/call", { name: "click", arguments: target }),
-    "click",
-  );
-  assertToolResult(
-    await rpc("tools/call", { name: "type_text", arguments: { ...target, text: "a" } }),
-    "type_text",
-  );
+  const ident = { pid: xev.pid, window_id: Number(windowId) };
+  const target = { ...ident, x: 80, y: 80, scope: "window", delivery_mode: "foreground" };
+  // 0.55.0 refuses a pixel action on a window this connection has not read.
+  // Another bot (and the same bot after a person took control, a new control
+  // revision) must not act on bot A's read.
+  assertToolResult(await call(turn("bot-a"), "get_window_state", ident), "get_window_state");
+  for (const [who, session] of [["another bot", turn("bot-b")], ["a new control revision", turn("bot-a", 1)]]) {
+    const refused = await call(session, "click", target);
+    if (!refused?.isError || !/not been read yet|belongs to another session/.test(refused.content?.[0]?.text ?? "")) {
+      throw new Error(`${who} clicked on a window it never read: ${JSON.stringify(refused)}`);
+    }
+  }
+  if (/ButtonPress event/.test(xevOutput)) throw new Error("a refused click still reached the window");
+  // bot-a's revision-0 session was replaced above, so it reads again first.
+  assertToolResult(await call(turn("bot-a"), "get_window_state", ident), "get_window_state");
+  // A second thread of the same bot mounts this computer (tools/list) and reads
+  // on its own connection; that must not retire the first thread's read.
+  const sibling = turn("bot-a", 0, "thread-bot-a-2");
+  await broker.dispatch(mcpSpec, "tools/list", {}, () => true, undefined, sibling);
+  assertToolResult(await call(sibling, "get_window_state", ident), "get_window_state (second thread)");
+  assertToolResult(await call(turn("bot-a"), "click", target), "click");
+  assertToolResult(await call(turn("bot-a"), "type_text", { ...target, text: "a" }), "type_text");
+  assertToolResult(await call(turn("bot-a"), "press_key", { ...target, key: "Return" }), "press_key");
+  assertToolResult(await call(sibling, "click", target), "click (second thread, on its own read)");
   await until(
     async () => /ButtonPress event/.test(xevOutput) && /KeyPress event/.test(xevOutput),
     "an unrelated X11 window to receive pointer and keyboard input",
   );
   console.log(
-    "[smoke-cua-x11-input] OK: no full-screen Cua overlay; Cua click and type_text reached an unrelated window",
+    "[smoke-cua-x11-input] OK: no full-screen Cua overlay; through HostComputerBroker.dispatch (one call each) get_window_state, click, type_text and press_key reached an unrelated window, a second thread of the same bot read and clicked without retiring the first thread's read, and another bot or control revision could not act on that read",
   );
 } finally {
-  if (proxy) await stop(proxy);
+  await broker.drain().catch((error) => {
+    console.error(`[smoke-cua-x11-input] broker cleanup: ${error.message}`);
+    process.exitCode = 1;
+  });
   await stop(driverProcess);
   if (xev.exitCode === null && xev.signalCode === null) xev.kill("SIGTERM");
   safeWipeSync(sandbox);

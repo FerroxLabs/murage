@@ -1,7 +1,23 @@
 import type { Bot, InstanceInfo } from "@/state/store";
 
-/** Windows has no host-control destination; this says what it has instead. */
+/** Windows without a usable driver for a platform reason; this says what it has instead. */
 export const WINDOWS_COMPUTER_TEXT = "On Windows, bots work on a cloud computer or a local VM. Pick one in Computer settings.";
+
+/** The Windows Local control card's reason for each runtime code (DESIGN 1022-cua-windows P7, D8, D9, section 4). */
+export const WINDOWS_LOCAL_CONTROL_COPY: Readonly<Record<string, string>> = Object.freeze({
+  "windows-elevated": "Murage is running as administrator, so Local control is off. Start Murage normally, not with Run as administrator. If this Windows account always runs apps as administrator (UAC turned off, or the built-in Administrator account), Local control can't be used on it.",
+  "windows-integrity-unknown": "Murage couldn't confirm it is running without administrator rights, so Local control is off. Restart Murage to try again.",
+  "windows-arm64-unsupported": "Local control isn't available on Windows on Arm yet.",
+  "driver-integrity": "This computer's driver failed its integrity check, so nothing was performed. The owner can reinstall Murage.",
+  "start-failed": "Computer control's driver didn't start. Use Retry to try again.",
+  "driver-exited": "Computer control's driver stopped. Use Retry to start it again.",
+  "driver-stuck": "Computer control's driver didn't stop when asked. Restart Murage to use Local control again.",
+});
+export const WINDOWS_LOCAL_CONTROL_GENERIC = "Local control isn't ready on this PC. Use Retry, or restart Murage.";
+
+export function windowsLocalControlReason(code: string | undefined): string {
+  return (code && Object.hasOwn(WINDOWS_LOCAL_CONTROL_COPY, code) ? WINDOWS_LOCAL_CONTROL_COPY[code] : undefined) ?? WINDOWS_LOCAL_CONTROL_GENERIC;
+}
 
 export function instanceSupportsLocalComputer(
   instances: InstanceInfo[],
@@ -36,7 +52,14 @@ export function localComputerDisabledReason({
   capabilities: DesktopCapabilities;
   providerSupportsLocal: boolean;
 }): string | null {
-  if (capabilities.host.platform === "win32") return WINDOWS_COMPUTER_TEXT;
+  if (capabilities.host.platform === "win32") {
+    // The blanket text only when the driver is out for a platform reason; otherwise the card's own reason.
+    if (capabilities.localComputer.reasonCode === "unsupported-platform") return WINDOWS_COMPUTER_TEXT;
+    if (!providerSupportsLocal) return "The selected provider cannot request approvals for local computer actions.";
+    if (capabilities.localComputer.available) return null;
+    if (!capabilities.localComputer.enabled) return "Switch Local control on in Settings > Computer first.";
+    return windowsLocalControlReason(capabilities.localComputer.reasonCode);
+  }
   if (!providerSupportsLocal) {
     return "The selected provider cannot request approvals for local computer actions.";
   }
@@ -74,7 +97,8 @@ export function autoSelectsLocalComputer({
   capabilitiesReady: boolean;
   localSelectable: boolean;
 }): boolean {
-  return platform !== "linux" && computer !== "cloud" && capabilitiesReady && localSelectable;
+  // Auto is shown as this computer only where Auto really mounts it (macOS); never on Linux or Windows.
+  return platform === "darwin" && computer !== "cloud" && capabilitiesReady && localSelectable;
 }
 
 /** What the harness says about itself on `GET /api/config` (`harness` in
@@ -167,7 +191,7 @@ export function autoMountsThisComputer({
   platform: DesktopCapabilities["host"]["platform"];
   computer: Bot["computer"];
 }): boolean {
-  if (computer === "local") return platform === "darwin" || platform === "linux";
+  if (computer === "local") return platform === "darwin" || platform === "linux" || platform === "win32";
   return computer === undefined && platform === "darwin";
 }
 

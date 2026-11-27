@@ -31,7 +31,13 @@ function complete(text:string,options:{id?:string;speaker?:string;kind?:string;o
   const id=options.id??`message:${threadId}:${randomUUID()}`;
   const messageId=randomUUID();storeAnchorMessage(database(),threadId,messageId,text,options.speaker&&options.speaker!=="owner"?"bot":"user");
   captureSource(database(),{id,threadId,messageId,origin:{kind:"attended"},kind:options.kind??"text",speaker:options.speaker??"owner",outcome:options.outcome??"recorded",turnId:options.turnId,text});
-  const work=claimMemoryJob("p09-worker")!;if(!work)throw new Error("fixture did not claim a real capture job");
+  const work=claimMemoryJob("p09-worker");
+  if(!work){
+    // memv2 E2: a tool outcome or a turn row is born complete in its capture transaction (never claimed or published): its job is that one
+    const born=database().prepare("SELECT j.id,j.source_revision AS revision FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision WHERE j.source_id=? AND j.status='complete'").get(id);
+    if(!born||(options.kind!=="tool-outcome"&&options.kind!=="turn"))throw new Error("fixture did not claim a real capture job");
+    return {id,jobId:String(born.id),revision:Number(born.revision),messageId};
+  }
   publishMemoryWork(work,"p09-worker",captureWork(work));return {id,jobId:work.id,revision:work.revision,messageId};
 }
 function access(){const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId),token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});return memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);}

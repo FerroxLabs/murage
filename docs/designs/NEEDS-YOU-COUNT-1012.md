@@ -104,7 +104,7 @@ Astra r1 confirmed this arithmetic for live, snoozed and cleared rows with `expi
 
 **The honest bound.** The added SQL work after a write is one walk of `OWED_ALL` index entries, file-wide (not per scope, not per view). `OWED_ALL` is every item still owed and unexpired: open cards, pending connections, runs on cards, goals waiting for input, snoozed or cleared or outside the caller's scope included. It does not grow with answered, finished, expired or missed history. It does grow with things left unanswered, and since 1.0.8 cards never expire, so it is not bounded by a constant: an owner who never answers keeps adding to it. That is the same population the Needs you badge shows him (plus what he snoozed or cleared), so the cost grows with the thing he is being asked to act on, never with the archive. Growth tests below set the numbers and the action.
 
-**Growth tests (build host lane container, never the Mac; `df -h` first, at most 2 containers).** Fixture: hotpath-r6 (200k rows) on a file database with the server's pragmas. Protocol for every timing: 20 warm-up calls, then 200 timed calls, statistic p95 (p50 recorded), one process, warm page cache; the baseline is the same protocol on 1.0.10 candidate Y `49a54e2fae`. Results and the sha go in the lane handoff.
+**Growth tests (Hetzner lane container, never the Mac; `df -h` first, at most 2 containers).** Fixture: hotpath-r6 (200k rows) on a file database with the server's pragmas. Protocol for every timing: 20 warm-up calls, then 200 timed calls, statistic p95 (p50 recorded), one process, warm page cache; the baseline is the same protocol on 1.0.10 candidate Y `49a54e2fae`. Results and the sha go in the lane handoff.
 
 | # | What grows | Points | Pass | Proves |
 |---|---|---|---|---|
@@ -126,7 +126,7 @@ Astra r1 confirmed this arithmetic for live, snoozed and cleared rows with `expi
 
 **Fallback (B), candidate keys from the routine records: dropped in revision 3.** Astra round 2 found a High in it (its count rechecked the rule but its page, item and clear guard used the raw candidate keys, so a room goal at `needs-input` could be hidden and cleared). Under "cut a sub-feature at its first new High" it is removed, not fixed. If (A) misses its gates, the fix leaves 1.0.12 (section 3, Action).
 
-## 5. Tests (all run on the build host in the lane container; never on the Mac)
+## 5. Tests (all run on Hetzner in the lane container; never on the Mac)
 
 Existing, kept as written (they test output, not layout): `server/inbox-needs-you-count.test.ts` all 7 cases; `server/inbox.test.ts`; `server/inbox-backup-notices.test.ts`; `server/inbox-access.test.ts`; the hotpath perf test `inbox.hotpath-r6`.
 
@@ -160,12 +160,12 @@ Gap test: not a feature, a counting defect Sean reported from his own use (one r
 5. Appetite first: this is the design pass after the lane's second failed review (INT-1011 HIGH). If the gates trip, the fix leaves 1.0.12 (no fallback); the train does not wait.
 6. Derived data follows its source: the projection is still rebuilt from messages by the same DDL; no index or cache moves or alters a source row.
 7. Every surface declares itself: no new surface, setting, hold or provider.
-8. Nothing first found after the cut: the downgrade test is a GATE row and runs in the scoped ci/try; evidence names the sha and the build host numbers.
+8. Nothing first found after the cut: the downgrade test is a GATE row and runs in the scoped ci/try; evidence names the sha and the Hetzner numbers.
 9. Say what it does: no product copy changes; release note line: "Needs you now counts an approval raised by a routine once."
 
 ## 7. Review record
 
-**Build result (lane fix/1012-needs-you-count, base 49a54e2fa, build host, valid run 4).** G2 TIMING MISSED. Every other gate passed. p95 in ms, 1.0.10 tree / this lane.
+**Build result (lane fix/1012-needs-you-count, base 49a54e2fa, Hetzner, valid run 4).** G2 TIMING MISSED. Every other gate passed. p95 in ms, 1.0.10 tree / this lane.
 
 | Gate | Limit | Result |
 |---|---|---|
@@ -185,7 +185,7 @@ G2 detail: the index walk alone is flat (0.053 to 0.054), so history adds no wal
 
 **Revision 4 (coordinator ruling, 2026-10-30): clearing a run on a card CUT.** Code review (Astra, gpt-6-astra, read-only, snapshot `scratchpad/astra-nyc-code-20261030144357`, commit `0c5321bdc`): BLOCK on one High. Clearing a run on a card left a clear mark that outlives the card; when the same receipt later asked a real question with its original `at`, `live` stayed 0 and the question left the badges and the default pages. Under "cut a sub-feature at its first new High" the shipped rule is back: raw `row.decision === 1` guards the clear and sets `clearable` (2.4, tests 4 and 6, new 4b and 4c; the oracle follows on `listed_decision`). Medium fixed: on the corrected tree G1k and G5 now fail when a baseline entry is missing, where they used to pass silently. Low (`projectOwedBeyondCards` not called by the route) and the test notes (3b cannot alone prove answer-cache expiry; G1k oracle comparison stops at k = 500) go to the follow-up list; they do not block.
 
-Revision 4 evidence (build host, `d089468bc`): server tsc clean, 9 touched suites 152 of 152, growth gates 6 of 6 against a fresh 1.0.10 baseline, missing-baseline run fails G5 as required, G2 report-only at 1.21× with walked entries unchanged. Astra confirm on this change (snapshot `scratchpad/astra-nyc-confirm-20261030151538`): AGREE, no findings.
+Revision 4 evidence (Hetzner, `d089468bc`): server tsc clean, 9 touched suites 152 of 152, growth gates 6 of 6 against a fresh 1.0.10 baseline, missing-baseline run fails G5 as required, G2 report-only at 1.21× with walked entries unchanged. Astra confirm on this change (snapshot `scratchpad/astra-nyc-confirm-20261030151538`): AGREE, no findings.
 
 **Revision 3 (coordinator, 2026-10-30).** (B) dropped entirely (its round 2 High is gone with it; round 2 Medium 3 about (B)'s fixtures and assertions falls away too). Round 2 Medium 2 answered by G1k (k grows to 10,000, many groups, all runs before the requested page). Round 2 Low 4 answered in test 6 (production cursor walk compared with the oracle's offset order). If (A) misses a gate: ship 1.0.12 without this fix and report.
 

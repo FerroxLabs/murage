@@ -131,6 +131,8 @@ export interface RoutineRun {
 }
 
 export interface RoutineInput {
+  /** Create only: a one-time moment that passed within the last 10 minutes is accepted as "run now". */
+  runNow?: boolean;
   name: string;
   prompt: string;
   target?: RoutineTarget;

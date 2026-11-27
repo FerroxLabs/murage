@@ -253,9 +253,9 @@ describe("a remembered list is never shown after it stopped being true", () => {
     await connectionStatus(cfg(), ["gmail"]); // the broker says ACTIVE
     const next = await connectedServices(cfg(), { fresh: true });
     expect(next.gmail?.connected).toBe(true);
-    // A non-ACTIVE account now has a durable incident. Disappearing from an
-    // inventory is not proof of recovery (the account may still need signing in).
-    expect(next.slack).toMatchObject({ needsReconnect: true, accounts: [{ id: "ca_9", status: "EXPIRED" }] });
+    // CHANGED (hl-optional, 1.0.19 owner report): a sign-in that was only ever INITIATED was never connected, so it
+    // opens no "sign in again" incident and leaves nothing behind when it goes. (Was: a durable needsReconnect row.)
+    expect(next.slack).toBeUndefined();
   });
 
   it("refetches when the panel asks with force", async () => {

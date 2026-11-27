@@ -30,6 +30,7 @@ import { reuseStats } from "./reuse-stats.ts";
 import { TurnSubmissionBoundary } from "../turn-dispatch-guard.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
 import { HOOK_CONTROL_FRAMES, hookSocketPath } from "./codex-hook.ts";
+import { setWarmS2rSource, warmS2rOn } from "./warm-s2r-flag.ts";
 
 // The process probe, replaceable per test: `probe.override` answers instead of `ps`.
 const probe = vi.hoisted(() => ({ override: null as null | ((pid: number) => Promise<Set<number> | null>) }));
@@ -206,6 +207,16 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await removeTempDir(scratch);
   });
 
+  // MAIN-RULING warm-active-only through the real send path (OPUS 38cebb4cde High): an owner turn wakes its own bot and maps
+  // its thread on the shared warm pool; a non-owner (channel audience) turn wakes no bot and marks its thread non-owner.
+  it("W-DRV-X: an owner turn wakes its bot on the warm pool and maps its thread; a non-owner turn wakes none", async () => {
+    await create();
+    await run("t-drv-owner", "one", base);
+    expect(warmPool.activityFor("t-drv-owner")).toEqual({ bot: base.warmIdentity.botId, active: true, nonOwner: false }); // W-DRV-X:owner
+    await run("t-drv-guest", "one", { ...base, warmIdentity: identity("b-guest", "non-owner") });
+    expect(warmPool.activityFor("t-drv-guest")).toEqual({ bot: undefined, active: false, nonOwner: true }); // W-DRV-X:non-owner
+  });
+
   it("a second mounted turn starts a fresh app-server and resumes the conversation", async () => {
     pinQuietProbe();
     await create();
@@ -224,6 +235,24 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     expect(methods.filter((m) => m === "turn/start")).toHaveLength(1);
     expect(closes()).toEqual(["codex close thread=t-hot reason=mounted-single-use", "codex close thread=t-hot reason=mounted-single-use"]);
     expect(recorder.events.filter((e) => e.type === "turn.completed" && (e as any).ok === true)).toHaveLength(2);
+  });
+
+  // WARM W1 r3.5 W-FLAG (Codex part) [R3.1-2]: the flag reads OFF with no setting written, and in this build `warm.s2r` ON keeps every
+  // mounted Codex turn single use too (fail closed: the CODEX-REUSE short design has no Fable AGREE yet, warm1022-codex QUESTIONS.md).
+  it.each([false, true])("W-FLAG warm.s2r=%s: mounted Codex turns 2+ spawn fresh (mounted-single-use) and resume", async (flag) => {
+    expect(warmS2rOn()).toBe(false);
+    if (flag) setWarmS2rSource(() => ({ warmS2r: true }));
+    try {
+      expect(warmS2rOn()).toBe(flag);
+      pinQuietProbe();
+      await create();
+      const first = await run("t-flag", "one", base);
+      const second = await run("t-flag", "two", { ...base, integrations: agents("tok-2") });
+      const third = await run("t-flag", "three", { ...base, integrations: agents("tok-3") });
+      expect(new Set([first.pid, second.pid, third.pid]).size).toBe(3);
+      expect(closes()).toEqual(Array(3).fill("codex close thread=t-flag reason=mounted-single-use"));
+      expect((third.seen.calls as Array<{ method: string }>).filter((c) => c.method === "thread/resume")).toHaveLength(1);
+    } finally { setWarmS2rSource(() => undefined); }
   });
 
   it("memory r3: a submission fence that refuses during adapter setup sends no turn/start, cold or on the reused app-server", async () => {
@@ -806,7 +835,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     });
 
     it("8. binds a Windows credential path so its backslashes survive in the generated config", () => {
-      const winPath = "C:\\Users\\sean\\AppData\\Local\\Temp\\murage-cred-ab12\\cred.json";
+      const winPath = "C:\\Users\\exampleuser\\AppData\\Local\\Temp\\murage-cred-ab12\\cred.json";
       const arg = `mcp_servers.agents.env.MURAGE_CRED_FILE=${JSON.stringify(CRED_FILE_PLACEHOLDER)}`;
       const [bound] = bindCredentialPathInArgs([arg], winPath);
       const value = bound!.slice(bound!.indexOf("=") + 1);
@@ -856,7 +885,8 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       const methods = readFileSync(callLog, "utf8").split("\n").filter((l) => l.startsWith(`${secondPid} `)).map((l) => l.split(" ")[1]);
       expect(methods).toContain("thread/resume");
       expect(methods.filter((m) => m === "thread/start" || m === "thread/compact/start" || m === "turn/start")).toEqual([]);
-      expect(recorder.events.filter((e) => e.type === "runtime.error").map((e: any) => e.message)).toEqual(["The model for this conversation changed. Send a message first, then run /compact again."]);
+      // resume_model_changed is presented by the server as a localized send notice.
+      expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
       expect(sessions.get("t-f16")).toBe("codex-thread-1");
     });
 
@@ -1291,7 +1321,10 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     await warming;
   });
 
-  it("unmounted: a takeover that cannot end the prewarm fails the send clearly within its bound, never already running", async () => {
+  // Changed with presence P-FENCE 2 (MAIN-RULING presence-held 2026-11-22T21:52Z, "an owner send never fails behind a prewarm"): this cell
+  // used to expect the send to FAIL with TAKEOVER_FAILED_MESSAGE when the prewarm would not stop. The send now detaches the hung prewarm
+  // and dispatches cold at once; the same setup (a prewarm whose process ignores the kill) is kept.
+  it("unmounted: a prewarm that cannot be ended never fails the send: it is detached and the send dispatches cold within its bound, never already running", async () => {
     await create();
     await goColdUnmounted("t-pw-stuck");
     process.env.FAKE_CODEX_RESUME_GATE = join(scratch, "never-opens");
@@ -1301,19 +1334,24 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     await eventually(() => spawns().length === 2);
     hooks.stuck = true;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let sent: { turnId: string } | null = null;
     try {
       const t0 = Date.now();
-      const error = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pw-stuck", text: "two", ...unmounted }).then(() => null, (e: Error) => e);
-      expect(error?.message).toMatch(/did not stop in time/);
-      expect(error?.message).not.toMatch(/already running/);
+      const before = dispatches().filter((l) => l.startsWith("codex dispatch thread=t-pw-stuck ")).length;
+      const result = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pw-stuck", text: "two", ...unmounted }).then((r) => ({ r, error: null }), (e: Error) => ({ r: null, error: e }));
+      expect(result.error?.message ?? null).toBeNull();
+      sent = result.r;
+      await eventually(() => dispatches().filter((l) => l.startsWith("codex dispatch thread=t-pw-stuck ")).length === before + 1);
       expect(Date.now() - t0).toBeLessThan(3_000);
-      expect(warn.mock.calls.some(([l]) => String(l).startsWith("codex prewarm takeover thread=t-pw-stuck failed=true"))).toBe(true);
+      expect(lines.some((l) => l === "codex prewarm detach thread=t-pw-stuck reason=hung")).toBe(true);
+      expect(warn.mock.calls.some(([l]) => String(l).startsWith("codex prewarm takeover thread=t-pw-stuck failed=true"))).toBe(false);
     } finally {
       warn.mockRestore();
       hooks.stuck = false;
       writeFileSync(process.env.FAKE_CODEX_RESUME_GATE!, "open");
       delete process.env.MURAGE_PREWARM_TAKEOVER_MS;
     }
+    if (sent) await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent!.turnId);
     await warming;
   });
 

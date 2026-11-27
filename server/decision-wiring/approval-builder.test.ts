@@ -31,7 +31,7 @@ it('H1 production boot captures before consumers and installs the builder after 
       const code=calls.map(node=>node.getText(ast)).join('\n');
       vm.runInNewContext(ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.None}}).outputText,{
         installDecisionHost:d.installDecisionHost,installEngineApprovalBuilder:d.installEngineApprovalBuilder,
-        installRequestIngress:()=>{},wipeContextFor,store:f.store,decisionEngineView:()=>({title:'Approval',subtitle:''}),
+        installRequestIngress:()=>{},wipeContextFor,store:f.store,decisionEngineView:()=>({title:'Approval',subtitle:''}),skillSettlementPreflight:()=>({kind:"stale",retire:true}),
         decisionEngineApprovalAction,bus:{},
       });
       const result=d.decide(f.open(),baseCard);

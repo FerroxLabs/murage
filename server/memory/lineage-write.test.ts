@@ -19,6 +19,10 @@ vi.doMock("./revoke-commit.ts", () => ({
   // DRAIN-104 2.11's late-edge inheritance (capture.ts and the record writers call it): not this file's subject
   inheritEdge: vi.fn(),
   inheritEdges: vi.fn(),
+  // CTXREV H2 A-2 (capture.ts asks whether a reply is hidden; a noReplay turn's reply and records take their own marks): not this file's subject
+  replyHiddenFromBots: vi.fn(() => false),
+  hideReplyLine: vi.fn(() => false),
+  hideTurnRecord: vi.fn(),
   // a stand-in for S3's inheritMarks: a marked line inside a carried range marks the child (a line, or a turn: its turn_lsn position)
   inheritMarks: vi.fn((tx: import("node:sqlite").DatabaseSync, child: { kind: string; threadId?: string; lsn: number }, _refs: unknown[], ranges: Array<{ threadId: string; from: number; to: number }> = []) => {
     if (!child.threadId) return;

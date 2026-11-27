@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "muragemain-copyrev",
+    "account": "claude opus 5.5, MurageMain copy review"
+  },
+  "author": "row45-u8-locales",
+  "date": "2026-11-22",
+  "base": "6f38c6b6baaadd652af154ce7c7bd341de339944",
+  "scope": "Six skill approval strings across the main locale packs",
+  "strings": {
+    "en:approval.skillTurnedOn": {
+      "text": "Skill turned on",
+      "en": "Skill turned on",
+      "verdict": "pass"
+    },
+    "en:approval.skillTurnedOff": {
+      "text": "Skill turned off",
+      "en": "Skill turned off",
+      "verdict": "pass"
+    },
+    "en:approval.skillDeleted": {
+      "text": "Skill deleted",
+      "en": "Skill deleted",
+      "verdict": "pass"
+    },
+    "en:approval.skillTakenOff": {
+      "text": "Skill taken off",
+      "en": "Skill taken off",
+      "verdict": "pass"
+    },
+    "en:approval.skillNotChanged": {
+      "text": "Not changed",
+      "en": "Not changed",
+      "verdict": "pass"
+    },
+    "en:approval.skillReviewChange": {
+      "text": "Review the current SKILL.md before approving this change",
+      "en": "Review the current SKILL.md before approving this change",
+      "verdict": "pass"
+    },
+    "de:approval.skillTurnedOn": {
+      "text": "Fähigkeit eingeschaltet",
+      "en": "Skill turned on",
+      "verdict": "pass"
+    },
+    "de:approval.skillTurnedOff": {
+      "text": "Fähigkeit ausgeschaltet",
+      "en": "Skill turned off",
+      "verdict": "pass"
+    },
+    "de:approval.skillDeleted": {
+      "text": "Fähigkeit gelöscht",
+      "en": "Skill deleted",
+      "verdict": "pass"
+    },
+    "de:approval.skillTakenOff": {
+      "text": "Fähigkeit entfernt",
+      "en": "Skill taken off",
+      "verdict": "pass"
+    },
+    "de:approval.skillNotChanged": {
+      "text": "Nicht geändert",
+      "en": "Not changed",
+      "verdict": "pass"
+    },
+    "de:approval.skillReviewChange": {
+      "text": "Prüfe die aktuelle SKILL.md, bevor du diese Änderung genehmigst",
+      "en": "Review the current SKILL.md before approving this change",
+      "verdict": "pass"
+    },
+    "es:approval.skillTurnedOn": {
+      "text": "Habilidad activada",
+      "en": "Skill turned on",
+      "verdict": "pass"
+    },
+    "es:approval.skillTurnedOff": {
+      "text": "Habilidad desactivada",
+      "en": "Skill turned off",
+      "verdict": "pass"
+    },
+    "es:approval.skillDeleted": {
+      "text": "Habilidad eliminada",
+      "en": "Skill deleted",
+      "verdict": "pass"
+    },
+    "es:approval.skillTakenOff": {
+      "text": "Habilidad retirada",
+      "en": "Skill taken off",
+      "verdict": "pass"
+    },
+    "es:approval.skillNotChanged": {
+      "text": "Sin cambios",
+      "en": "Not changed",
+      "verdict": "pass"
+    },
+    "es:approval.skillReviewChange": {
+      "text": "Revisa el SKILL.md actual antes de aprobar este cambio",
+      "en": "Review the current SKILL.md before approving this change",
+      "verdict": "pass"
+    },
+    "fr:approval.skillTurnedOn": {
+      "text": "Compétence activée",
+      "en": "Skill turned on",
+      "verdict": "pass"
+    },
+    "fr:approval.skillTurnedOff": {
+      "text": "Compétence désactivée",
+      "en": "Skill turned off",
+      "verdict": "pass"
+    },
+    "fr:approval.skillDeleted": {
+      "text": "Compétence supprimée",
+      "en": "Skill deleted",
+      "verdict": "pass"
+    },
+    "fr:approval.skillTakenOff": {
+      "text": "Compétence retirée",
+      "en": "Skill taken off",
+      "verdict": "pass"
+    },
+    "fr:approval.skillNotChanged": {
+      "text": "Aucune modification",
+      "en": "Not changed",
+      "verdict": "pass"
+    },
+    "fr:approval.skillReviewChange": {
+      "text": "Relis le SKILL.md actuel avant d'approuver cette modification",
+      "en": "Review the current SKILL.md before approving this change",
+      "verdict": "pass"
+    },
+    "hi:approval.skillTurnedOn": {
+      "text": "स्किल चालू की गई",
+      "en": "Skill turned on",
+      "verdict": "pass"
+    },
+    "hi:approval.skillTurnedOff": {
+      "text": "स्किल बंद की गई",
+      "en": "Skill turned off",
+      "verdict": "pass"
+    },
+    "hi:approval.skillDeleted": {
+      "text": "स्किल डिलीट की गई",
+      "en": "Skill deleted",
+      "verdict": "pass"
+    },
+    "hi:approval.skillTakenOff": {
+      "text": "स्किल हटाई गई",
+      "en": "Skill taken off",
+      "verdict": "pass"
+    },
+    "hi:approval.skillNotChanged": {
+      "text": "कोई बदलाव नहीं हुआ",
+      "en": "Not changed",
+      "verdict": "pass"
+    },
+    "hi:approval.skillReviewChange": {
+      "text": "इस बदलाव को मंज़ूरी देने से पहले मौजूदा SKILL.md देखें",
+      "en": "Review the current SKILL.md before approving this change",
+      "verdict": "pass"
+    },
+    "ja:approval.skillTurnedOn": {
+      "text": "スキルをオンにしました",
+      "en": "Skill turned on",
+      "verdict": "pass"
+    },
+    "ja:approval.skillTurnedOff": {
+      "text": "スキルをオフにしました",
+      "en": "Skill turned off",
+      "verdict": "pass"
+    },
+    "ja:approval.skillDeleted": {
+      "text": "スキルを削除しました",
+      "en": "Skill deleted",
+      "verdict": "pass"
+    },
+    "ja:approval.skillTakenOff": {
+      "text": "スキルを外しました",
+      "en": "Skill taken off",
+      "verdict": "pass"
+    },
+    "ja:approval.skillNotChanged": {
+      "text": "変更なし",
+      "en": "Not changed",
+      "verdict": "pass"
+    },
+    "ja:approval.skillReviewChange": {
+      "text": "この変更を承認する前に、現在の SKILL.md を確認してください",
+      "en": "Review the current SKILL.md before approving this change",
+      "verdict": "pass"
+    },
+    "pt-br:approval.skillTurnedOn": {
+      "text": "Habilidade ativada",
+      "en": "Skill turned on",
+      "verdict": "pass"
+    },
+    "pt-br:approval.skillTurnedOff": {
+      "text": "Habilidade desativada",
+      "en": "Skill turned off",
+      "verdict": "pass"
+    },
+    "pt-br:approval.skillDeleted": {
+      "text": "Habilidade excluída",
+      "en": "Skill deleted",
+      "verdict": "pass"
+    },
+    "pt-br:approval.skillTakenOff": {
+      "text": "Habilidade removida",
+      "en": "Skill taken off",
+      "verdict": "pass"
+    },
+    "pt-br:approval.skillNotChanged": {
+      "text": "Não alterada",
+      "en": "Not changed",
+      "verdict": "pass"
+    },
+    "pt-br:approval.skillReviewChange": {
+      "text": "Revise o SKILL.md atual antes de aprovar esta alteração",
+      "en": "Review the current SKILL.md before approving this change",
+      "verdict": "pass"
+    },
+    "zh:approval.skillTurnedOn": {
+      "text": "技能已开启",
+      "en": "Skill turned on",
+      "verdict": "pass"
+    },
+    "zh:approval.skillTurnedOff": {
+      "text": "技能已关闭",
+      "en": "Skill turned off",
+      "verdict": "pass"
+    },
+    "zh:approval.skillDeleted": {
+      "text": "技能已删除",
+      "en": "Skill deleted",
+      "verdict": "pass"
+    },
+    "zh:approval.skillTakenOff": {
+      "text": "技能已移除",
+      "en": "Skill taken off",
+      "verdict": "pass"
+    },
+    "zh:approval.skillNotChanged": {
+      "text": "未更改",
+      "en": "Not changed",
+      "verdict": "pass"
+    },
+    "zh:approval.skillReviewChange": {
+      "text": "批准此更改前，请先查看当前的 SKILL.md",
+      "en": "Review the current SKILL.md before approving this change",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

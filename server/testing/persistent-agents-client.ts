@@ -7,7 +7,12 @@ type Result = { isError?: boolean; content?: Array<{ type: string; text?: string
 
 /** Test-only persistent stdio client. Never logs config, credentials or payloads. */
 export async function persistentAgentsClient(env: Record<string, string>) {
-  const child = await spawnBoundProxy("agents", process.execPath, [fileURLToPath(new URL("../drivers/agents-proxy.ts", import.meta.url))], {
+  const client = await persistentBoundProxyClient("agents", process.execPath, [fileURLToPath(new URL("../drivers/agents-proxy.ts", import.meta.url))], env);
+  return { ...client, call: (name: "list_bots" | "list_image_models") => client.request("tools/call", { name, arguments: {} }) };
+}
+
+export async function persistentBoundProxyClient(role: string, command: string, args: string[], env: Record<string, string>) {
+  const child = await spawnBoundProxy(role, command, args, {
     windowsHide: true,
     env: { PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...env },
     stdio: ["pipe", "pipe", "pipe"],
@@ -33,11 +38,18 @@ export async function persistentAgentsClient(env: Record<string, string>) {
     if (message.error) request.reject(new Error(`fixture MCP error ${message.error.code}`));
     else request.resolve(message.result ?? {});
   });
-  const request = (method: string, params: object = {}) => new Promise<Result>((resolve, reject) => {
+  const request = (method: string, params: object = {}, options?: { signal?: AbortSignal }) => new Promise<Result>((resolve, reject) => {
     if (child.exitCode !== null || child.signalCode !== null) return reject(new Error("fixture proxy exited"));
+    const signal = options?.signal;
+    if (signal?.aborted) return reject(signal.reason);
     const id = ++nextId;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error("fixture MCP request timed out")); }, 5_000);
-    pending.set(id, { resolve, reject, timer });
+    const cancel = () => {
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id } }) + "\n");
+    };
+    const failed = (error: Error) => { signal?.removeEventListener("abort", cancel); reject(error); };
+    const timer = setTimeout(() => { pending.delete(id); failed(new Error("fixture MCP request timed out")); }, 5_000);
+    pending.set(id, { resolve: result => { signal?.removeEventListener("abort", cancel); resolve(result); }, reject: failed, timer });
+    signal?.addEventListener("abort", cancel, { once: true });
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
   });
   return {
@@ -49,7 +61,6 @@ export async function persistentAgentsClient(env: Record<string, string>) {
     },
     terminal: () => boundProxyTerminal(child),
     state: () => boundProxyState(child),
-    call: (name: "list_bots" | "list_image_models") => request("tools/call", { name, arguments: {} }),
     async close() { child.stdin.end(); await waitForExit(child); lines.close(); },
   };
 }

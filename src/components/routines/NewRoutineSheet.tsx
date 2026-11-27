@@ -9,6 +9,7 @@
 // Reading the When straight from the sentence (schedule-words.ts) is not wired
 // in here: Astra r2 blocked it twice, so it is a FIX-LEDGER row of its own.
 
+import { imeComposing } from "@/lib/composer-enter";
 import { useCalendarLayer, type CalendarLayerProps } from "@/components/CalendarLayer";
 import { LayerSurface } from "@/components/LayerSurface";
 import { useRef, useState } from "react";
@@ -22,6 +23,7 @@ import { composeIo, type ComposeIo } from "@/lib/compose-link";
 import { t } from "@/lib/i18n";
 import { levelName } from "@/lib/fold-words";
 import { permissionModeOf } from "@/lib/permission-mode";
+import { defaultOnceMoment } from "@/lib/routine-calendar";
 import { routineInstructionsLimit } from "@/lib/routine-instructions-limit";
 import type { RoutineSchedule } from "@/lib/routines";
 import { useStore, type Bot } from "@/state/store";
@@ -102,7 +104,7 @@ export function NewRoutineSheet({ lifecycle,
 
   const pickTime = () => {
     if (!bot || !hasWords) return;
-    onChange({ botId: bot.id, name: sentenceRoutineName(task), prompt: task, schedule: null, at: Date.now() });
+    onChange({ botId: bot.id, name: sentenceRoutineName(task), prompt: task, schedule: null, at: defaultOnceMoment(Date.now()) });
   };
 
   const askInChat = () => {
@@ -125,7 +127,7 @@ export function NewRoutineSheet({ lifecycle,
                 <textarea
                   value={sentence}
                   onChange={(event) => setSentence(event.target.value)}
-                  onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && hasWords) { event.preventDefault(); askInChat(); } }}
+                  onKeyDown={(event) => { if (event.key === "Enter" && !imeComposing(event.nativeEvent) && !event.shiftKey && hasWords) { event.preventDefault(); askInChat(); } }}
                   placeholder={t("ux.l5b.new.placeholder")}
                   rows={3}
                   className="mt-1.5 w-full resize-none rounded-xl border border-hairline/60 bg-inset px-3 py-2.5 text-[13px] text-ink outline-none focus:border-accent"

@@ -9,7 +9,7 @@ import { createLocalEngineLogin, LOCAL_ENGINE_LOGIN_CHANNELS, LOCAL_ENGINE_LOGIN
 const recipe = (over = {}) => ({ kind: "headless", argv: ["/bin/grok", "login", "--oauth"], env: { PATH: "/p", HOME: "/h" }, unsetKeys: ["XAI_API_KEY"], accountRoot: "/h/.grok", accountEnv: {}, label: "Grok", ...over });
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 
-function fixture({ reply = recipe(), signedIn = [false], setupCheck = { status: 200, body: { result: "ready" } }, spawnThrows = false, launchTerminal, closeOnKill = true } = {}) {
+function fixture({ reply = recipe(), signedIn = [false], apiKeyConfigured = false, setupCheck = { status: 200, body: { result: "ready" } }, spawnThrows = false, launchTerminal, closeOnKill = true } = {}) {
   const order = [];
   const sent = [];
   const child = Object.assign(new EventEmitter(), { pid: 4242 });
@@ -23,7 +23,7 @@ function fixture({ reply = recipe(), signedIn = [false], setupCheck = { status: 
   const api = vi.fn(async (path, body) => {
     order.push(path);
     if (path === "/api/engine-signin-recipe") return { status: 200, body: reply };
-    if (path === "/api/engine-signin-probe") return { status: 200, body: { authenticated: readings.length > 1 ? readings.shift() : readings[0] } };
+    if (path === "/api/engine-signin-probe") return { status: 200, body: { authenticated: readings.length > 1 ? readings.shift() : readings[0], apiKeyConfigured } };
     if (path === "/api/engine-setup-check") return setupCheck;
     return { status: 404, body: { path, body } };
   });
@@ -70,6 +70,17 @@ describe("opening the dialog starts nothing", () => {
     expect(rig.spawn).not.toHaveBeenCalled();
     expect(rig.runner.isOpen()).toBe(false);
   });
+  it("preserves a configured Codex API key on either sign-in entry point", async () => {
+    const launchTerminal = vi.fn();
+    const rig = fixture({ signedIn: [true], apiKeyConfigured: true, launchTerminal });
+    const input = { sender: rig.sender, instanceId: "codex" };
+    await expect(rig.runner.start(input)).resolves.toMatchObject({ ok: false, code: "api-key-configured" });
+    await expect(rig.runner.openTerminal(input)).resolves.toMatchObject({ ok: false, code: "api-key-configured" });
+    expect(rig.spawn).not.toHaveBeenCalled();
+    expect(launchTerminal).not.toHaveBeenCalled();
+    expect(rig.runner.isOpen()).toBe(false);
+  });
+
   it("one sign-in at a time, seen before any await", async () => {
     const rig = fixture();
     const first = rig.runner.start({ sender: rig.sender, instanceId: "grok" });

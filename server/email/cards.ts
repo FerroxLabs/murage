@@ -33,6 +33,7 @@ export interface EmailCardFields {
 }
 
 export interface EmailCardHost {
+  mailboxSealed?(threadId: string): boolean;
   botName(botId: string): string;
   threadExists(threadId: string): boolean;
   /** The card message on the thread, through the card index. */
@@ -47,6 +48,21 @@ export interface EmailCardHost {
   /** An owner-only Murage-voice activity row (3.5), never in BOT_VISIBLE_STATUS. */
   activity(threadId: string, line: string, ok: boolean): void;
   notify(kind: "email-status" | "email-digest", botId: string, threadId: string, body: string): void;
+}
+
+/** fprod3 N6: one wrapper around the card host. For a fenced bot (archived or archiving) nothing lands in its thread: no card row, outcome, activity or
+ *  notification, and `threadExists` is false. `patchCard` is display only, so an existing card is shown answered with no options (never an action). */
+export function fencedEmailHost(host: EmailCardHost, fenced: (botId: string) => boolean, botOfThread: (threadId: string) => string | undefined): EmailCardHost {
+  const blocked = (threadId: string): boolean => { const id = botOfThread(threadId); return id !== undefined && fenced(id); };
+  return {
+    ...host,
+    threadExists: threadId => !blocked(threadId) && host.threadExists(threadId),
+    appendCard: (threadId, botId, card) => fenced(botId) || blocked(threadId) ? "" : host.appendCard(threadId, botId, card),
+    patchCard: (threadId, messageId, display) => host.patchCard(threadId, messageId, blocked(threadId) ? { ...display, options: [], answered: display.answered ?? "answered" } : display),
+    outcome: (threadId, data) => { if (!blocked(threadId)) host.outcome(threadId, data); },
+    activity: (threadId, line, ok) => { if (!blocked(threadId)) host.activity(threadId, line, ok); },
+    notify: (kind, botId, threadId, body) => { if (!fenced(botId) && !blocked(threadId)) host.notify(kind, botId, threadId, body); },
+  };
 }
 
 export interface EmailCardsOptions {
@@ -148,7 +164,7 @@ export function emailCardView(row: SendRow, input: { botName: string; text: stri
   };
 }
 
-export type ResolveResult = { status: number; body: { ok: boolean; outcome?: string; card?: EmailCardFields | null; error?: string; replacedBy?: string } };
+export type ResolveResult = { status: number; body: { ok: boolean; outcome?: string; card?: EmailCardFields | null; error?: string; code?: string; replacedBy?: string } };
 
 export class EmailCards {
   private readonly options: EmailCardsOptions;
@@ -229,10 +245,13 @@ export class EmailCards {
   }
 
   /** The answer route (4.2): claims `email-` ids before any adapter. Re-reads the row; a second click returns the final state (F5). */
-  async resolve(requestId: string, action: EmailCardAction, input: { revision?: number; device?: string; draft?: Partial<EmailDraft> } = {}): Promise<ResolveResult> {
+  async resolve(requestId: string, action: EmailCardAction, input: { revision?: number; device?: string; ownerComputer?: boolean; draft?: Partial<EmailDraft> } = {}): Promise<ResolveResult> {
     const sendId = sendIdOf(requestId);
     const row = this.store.getSend(sendId);
     if (!row) return { status: 404, body: { ok: false, error: "This email is no longer waiting.", card: null } };
+    if (this.host.mailboxSealed?.(row.threadId) && input.ownerComputer !== true) {
+      return { status: 403, body: { ok: false, code: "mailbox_desktop_only", error: "Send this email from Murage on your computer." } };
+    }
     const revision = typeof input.revision === "number" ? input.revision : row.revision;
     const final = (outcome: string, current: SendRow | null = this.store.getSend(sendId)): ResolveResult => {
       if (current) this.sync(current);

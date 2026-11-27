@@ -1,3 +1,4 @@
+import { fixtureDisplayedResponse, fixtureDisplayRequest } from "./testing/display-http-fixture.ts";
 import { fakeEngineServerArgs } from "./testing/fake-engine-server.ts";
 // What Settings says about folder trust, proved on the outcome and not the
 // sentence: a Forget does what its row says (test 18, 13(e)), the engine's own
@@ -17,7 +18,6 @@ import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
-const posixOnly = describe.skipIf(process.platform === "win32");
 
 let base: string;
 let desktopHeaders: Record<string, string>;
@@ -30,9 +30,10 @@ const homeOf = (name: string) => join(home, `home-${name}`);
 const trustFile = (name: string) => join(homeOf(name), "trusted_folders.toml");
 
 const request = async (method: string, path: string, body?: unknown): Promise<{ status: number; text: string; body: any }> => {
+  body = fixtureDisplayRequest(join(home, ".murage/messages.db"), path, body);
   const res = await fetch(`${base}${path}`, { method, headers: { ...desktopHeaders, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
-  return { status: res.status, text, body: text ? JSON.parse(text) : null };
+  return { status: res.status, text, body: fixtureDisplayedResponse(join(home, ".murage/messages.db"), text ? JSON.parse(text) : null) };
 };
 const messages = async (threadId: string) => (await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const openCard = async (threadId: string) => (await messages(threadId)).filter((m) => m.card?.folderTrust && !m.card.answered).at(-1);
@@ -163,7 +164,7 @@ const noteFor = async (bot: Bot) => {
 };
 const forget = (key: string) => request("DELETE", `/api/folder-trust?key=${encodeURIComponent(key)}`);
 
-posixOnly("what Settings promises, through the harness", () => {
+describe("what Settings promises, through the harness", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1]);
     base = `http://127.0.0.1:${port}`;

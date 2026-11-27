@@ -64,6 +64,51 @@ it('R1 admission: a refused WAL gate prevents the reset genesis transaction',asy
  expect(Number(db.prepare('SELECT COUNT(*) AS n FROM search_intents').get()!.n)).toBe(0);
  expect(admission).toHaveBeenCalled();
 });
+it('B1 sweep-1021: a refused WAL gate backs off and warns on doublings, then recovers when the log catches up',async()=>{
+ const {file,db}=fixture();let refuse=true;const real=wal.assertWalWriteAdmission;
+ const admission=vi.spyOn(wal,'assertWalWriteAdmission').mockImplementation((f?:string|null)=>{if(refuse)throw new DatabaseBusyError('wal-recovery',0);return real(f);});
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+ search.startSearchIndex(db,file);await pause(1200);
+ // Base: delay stayed 100 ms because only a passed gate counted, so ~10 attempts and ~10 warn lines in this window.
+ expect(admission.mock.calls.length).toBeLessThanOrEqual(5);
+ expect(warn.mock.calls.filter(c=>String(c[0]).includes('recovery failed')).length).toBeLessThanOrEqual(4);
+ expect(search.recovery(db).consecutive).toBe(0);
+ refuse=false;await until(()=>search.messageSearchIndexReady(db),4000);
+ expect(search.messageSearchIndexReady(db)).toBe(true);
+},15000);
+it('B1 prune holdoff: once the index is ready, a refused WAL gate holds the idle prune off (250 ms doubling) instead of retrying on every idle reply',async()=>{
+ const {file,db}=fixture();let refuse=false;let prunes=0;const real=wal.assertWalWriteAdmission;
+ const admission=vi.spyOn(wal,'assertWalWriteAdmission').mockImplementation((f?:string|null)=>{if(refuse){prunes++;throw new DatabaseBusyError('wal-recovery',0);}return real(f);});
+ vi.spyOn(console,'warn').mockImplementation(()=>{});
+ const clock=1_000_000;let now=clock;search.searchIndexTestHooks.now=()=>now;
+ search.startSearchIndex(db,file);await until(()=>search.messageSearchIndexReady(db),4000);
+ expect(search.messageSearchIndexReady(db)).toBe(true);
+ refuse=true;admission.mockClear();prunes=0;
+ // idle replies keep arriving every ~250 ms; the clock is frozen, so a hold set by the first refusal never expires
+ await until(()=>prunes>=1,3000);expect(prunes).toBe(1);
+ await pause(1200);expect(prunes).toBe(1);
+ // past the first hold (250 ms) the prune tries once more, then holds for 500 ms
+ now=clock+251;await until(()=>prunes>=2,3000);expect(prunes).toBe(2);
+ await pause(1200);expect(prunes).toBe(2);
+ now=clock+251+499;await pause(1200);expect(prunes).toBe(2);
+ now=clock+251+501;await until(()=>prunes>=3,3000);expect(prunes).toBe(3);
+},20000);
+it('busy storm 1022: a held write lock makes recovery back off (few attempts, one summary line per doubling) and it completes once the lock is released',async()=>{
+ const {file,db}=fixture();const holder=new DatabaseSync(file);cleanup.push(()=>holder.close());
+ holder.exec('PRAGMA busy_timeout=0');
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+ let attempts=0;const realExec=db.exec.bind(db);
+ vi.spyOn(db,'exec').mockImplementation((sql:string)=>{if(/BEGIN IMMEDIATE/.test(sql))attempts++;return realExec(sql);});
+ // The backfill prep writes, so the lock is taken right after start, before the first reset acknowledgement runs.
+ search.startSearchIndex(db,file);holder.exec('BEGIN IMMEDIATE');await pause(2500);
+ // Base: busy never counted, so the delay stayed at 100 ms: ~25 attempts and ~25 warn lines in this window.
+ expect(attempts).toBeLessThanOrEqual(6);
+ expect(warn.mock.calls.filter(c=>String(c[0]).includes('recovery failed')).length).toBeLessThanOrEqual(5);
+ expect(search.recovery(db).state).not.toBe('PARKED');
+ holder.exec('ROLLBACK');
+ await until(()=>search.messageSearchIndexReady(db),10000);
+ expect(search.messageSearchIndexReady(db)).toBe(true);
+},20000);
 it('R2: busy reset explicitly retries and becomes ready after the lock releases',async()=>{
  const {dir,file,db}=fixture();search.prepareMessageSearchBackfill(db);
  // One deterministic SQLITE_BUSY from the actual worker reset handler. This
@@ -140,7 +185,9 @@ it('T-REC-RESET: successful rebuilds replenish only the consecutive budget',{tim
  const foreign=new DatabaseSync(file);foreign.enableDefensive(false);cleanup.push(()=>foreign.close());
  for(let i=0;i<11;i++) {
   if(i<5||i===10)search.disableMessageSearchIndex(db,Error('fixture invalidation'));
-  else foreign.exec('PRAGMA schema_version='+ (Number(foreign.prepare('PRAGMA schema_version').get()!.schema_version)+1));
+  // A bare schema-cookie bump no longer invalidates (start-up migrations move it on every start, W-SEARCH-RESTART);
+  // a rotated search owner is the foreign invalidation that still must reset.
+  else foreign.exec("UPDATE transcript_index_state SET done=hex(randomblob(16)) WHERE name='search_owner'");
   try { await oracleUntil(()=>ready===i+2&&search.recovery(db).state==='HEALTHY','T-REC-RESET'); } catch(error) { console.log('REC RESET TRACE',i,JSON.stringify(trace)); throw error; }
   expect(search.recovery(db).consecutive,'ORACLE:T-REC-RESET').toBe(0);
  }

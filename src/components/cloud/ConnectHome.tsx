@@ -81,6 +81,8 @@ const button = "rounded-md bg-control px-3 py-1.5 text-[13px] font-medium text-i
 export function ConnectHomeView(props: ConnectHomeViewProps) {
   const { phase, busy, error, notice, lastResult, retrySeconds } = props;
   const waiting = retrySeconds > 0;
+  // The ten minutes are up here before main's next status read has said so (main discards the key then): never a live wait at 0:00.
+  const expiredNow = phase === "pending" && props.secondsLeft <= 0;
   const result = lastResult && phase !== "paired" && phase !== "closed" ? (
     <div className="flex flex-col gap-1">
       <p role={ALERT_CODES.has(lastResult.code) ? "alert" : "status"} className={ALERT_CODES.has(lastResult.code) ? "text-danger" : "text-ink-secondary"}>{resultText(lastResult)}</p>
@@ -88,8 +90,7 @@ export function ConnectHomeView(props: ConnectHomeViewProps) {
     </div>
   ) : null;
   return (
-    <section aria-label={cloudCopy.connectButton} className="flex flex-col gap-3 rounded-lg bg-card p-4 text-[13px] text-ink">
-      <h2 className="text-[15px] font-semibold">{cloudCopy.pairTitle}</h2>
+    <div data-connect-home="" className="flex flex-col gap-3 rounded-lg bg-card p-4 text-[13px] text-ink">
       {notice && phase !== "paired" ? <p role="status" className="text-ink-secondary">{notice}</p> : null}
       {phase === "paired" ? (
         <ul className="flex flex-col gap-2">
@@ -108,12 +109,16 @@ export function ConnectHomeView(props: ConnectHomeViewProps) {
         <p role="status" className="text-ink-secondary">{cloudCopy.cloudNotOpen}</p>
       ) : phase === "idle" ? (
         <>
+          {/* One plain line and one button (Sean 1.0.23): the line says where things stand, the button says what to do. */}
+          <p>{t("cloudConnect.notConnected")}</p>
           {result}
-          <div><button type="button" className={button} disabled={busy || waiting} onClick={props.onConnect}>{cloudCopy.connectButton}</button></div>
+          <div><button type="button" className={button} disabled={busy || waiting} onClick={props.onConnect}>{t("cloudConnect.connect")}</button></div>
         </>
       ) : (
         <div className="flex flex-col gap-3">
-          {phase === "pending" ? (
+          {expiredNow ? (
+            <p role="alert" data-connect-expired="" className="text-danger">{t("cloudConnect.result.expired")}</p>
+          ) : phase === "pending" ? (
             <>
               <p>{cloudCopy.connectPending}</p>
               <p className="text-ink-secondary">{cloudCopy.connectBrowserNote}</p>
@@ -122,22 +127,22 @@ export function ConnectHomeView(props: ConnectHomeViewProps) {
           ) : null}
           {result}
           <div className="flex flex-wrap gap-2">
-            {phase === "attempted" ? <button type="button" className={button} disabled={busy || waiting} onClick={props.onConnect}>{cloudCopy.connectAgain}</button> : null}
-            <button type="button" className={button} disabled={busy} onClick={props.onPaste}>{t("cloudConnect.useCopiedLink")}</button>
+            {phase === "attempted" || expiredNow ? <button type="button" className={button} disabled={busy || waiting} onClick={props.onConnect}>{cloudCopy.connectAgain}</button> : null}
+            {expiredNow ? null : <button type="button" className={button} disabled={busy} onClick={props.onPaste}>{t("cloudConnect.useCopiedLink")}</button>}
             <button type="button" className={button} disabled={busy} onClick={props.onCancel}>{cloudCopy.connectCancel}</button>
           </div>
-          <p className="text-ink-secondary">{t("cloudConnect.useCopiedLinkNote")}</p>
+          {expiredNow ? null : <p className="text-ink-secondary">{t("cloudConnect.useCopiedLinkNote")}</p>}
         </div>
       )}
       {error ? <p role="alert" className="text-danger">{error}</p> : null}
-    </section>
+    </div>
   );
 }
 
 const messageOf = (cause: unknown) => (cause instanceof Error && cause.message ? cause.message : "Something went wrong. Try again.");
 
 /** `onChanged` runs after the computer connects or disconnects so the switch can reread what is paired. */
-export function ConnectHome({ bridge = cloudHomeBridge(), paired, onChanged, signInRequest, onSignInRequestHandled }: { bridge?: CloudHomeBridge; paired: PairedHome[]; onChanged?: () => void; signInRequest?: SignInRequest | null; onSignInRequestHandled?: () => void }) {
+export function ConnectHome({ bridge = cloudHomeBridge(), paired, onChanged, onCancelled, signInRequest, onSignInRequestHandled }: { bridge?: CloudHomeBridge; paired: PairedHome[]; onChanged?: () => void; onCancelled?: () => void; signInRequest?: SignInRequest | null; onSignInRequestHandled?: () => void }) {
   const [pendingSince, setPendingSince] = useState<number | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [lastResult, setLastResult] = useState<ConnectResult | null>(null);
@@ -188,7 +193,7 @@ export function ConnectHome({ bridge = cloudHomeBridge(), paired, onChanged, sig
       phase={phase} secondsLeft={secondsLeft} paired={paired} lastResult={lastResult} retrySeconds={retrySecondsLeft(lastResult, now)}
       busy={busy} error={error} notice={notice}
       onConnect={() => void run(async () => { const started = await bridge.connectStart(); setNotice(""); setLastResult(null); setNow(Date.now()); setPendingSince(started.startedAt); })}
-      onCancel={() => void run(async () => { await bridge.connectCancel(); setPendingSince(null); await readStatus(); })}
+      onCancel={() => void run(async () => { await bridge.connectCancel(); setPendingSince(null); await readStatus(); onCancelled?.(); })}
       onPaste={() => void run(async () => {
         let done: { homeId: string };
         try { done = await bridge.connectPaste(); }

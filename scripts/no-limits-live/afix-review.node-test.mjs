@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync,readFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
@@ -8,6 +8,7 @@ import {installBindings} from './bindings.mjs';
 import {begin} from './fakes/common.mjs';
 import {startApiFixture} from './fakes/api-service.mjs';
 import {cappedScenario} from './scenario-timeout.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 test('H1 live binding rejects an interruption outside the two durable queried tables',async()=>{
  const data=mkdtempSync(join(tmpdir(),'gnl-accounting-red-'));
@@ -17,7 +18,7 @@ test('H1 live binding rejects an interruption outside the two durable queried ta
   const f={data,client:{url:'http://127.0.0.1:1',headers:{}}};installBindings(f);
   const got=await f.observeRow({spec:{id:'cd',level:'unlimited',actor:'owner',expected:'RUN'},threadIds:['t']});
   assert.equal(got.verdict,'FAIL');assert.ok(got.errors.some(e=>/surface|receipt|registration/.test(e)));
- }finally{rmSync(data,{recursive:true,force:true});}
+ }finally{safeWipeSync(data);}
 });
 
 test('H2 private replay traverses registration delivery and final release',()=>{
@@ -70,7 +71,7 @@ test('M1 Git setup yields and obeys the same deadline',async()=>{
  const {scenarioGit}=await import('./scenario-timeout.mjs');
  const root=mkdtempSync(join(tmpdir(),'gnl-slow-git-'));const fake=join(root,'git');writeFileSync(fake,'#!/bin/sh\nexec /bin/sleep 2\n',{mode:0o700});
  try{const started=Date.now();await assert.rejects(cappedScenario(()=>scenarioGit(['status'],root,{...process.env,PATH:root}),30),/Scenario timed out/);assert.ok(Date.now()-started<500);}
- finally{rmSync(root,{recursive:true,force:true});}
+ finally{safeWipeSync(root);}
 });
 
 test('H2 actual product replay catches late release refusal and forbids persistence',async()=>{
@@ -100,7 +101,7 @@ test('H1 service accounting needs the exact native operation and a successful re
  try{
   assert.equal(observe(spec,normalizeLiveAccounting(snapshot(),{dataDir:data,events,threadIds:['t']})).verdict,'PASS');
   for(const bad of [events.slice(0,1),events.slice(1),[events[0],{...events[1],ok:false}],[{...events[0],input:{name:'Different operation'}},events[1]]])assert.equal(observe(spec,normalizeLiveAccounting(snapshot(),{dataDir:data,events:bad,threadIds:['t']})).verdict,'FAIL');
- }finally{rmSync(data,{recursive:true,force:true});}
+ }finally{safeWipeSync(data);}
 });
 
 test('H1 actual text questions require their own record and independent question request',async()=>{
@@ -119,7 +120,7 @@ test('H2 sealed private worker still writes a valid aggregate failure report',as
   const result=spawnSync(process.execPath,['--experimental-strip-types',new URL('./private-replay-worker.mjs',import.meta.url).pathname,join(root,'absent-corpus'),'invalid',out],{encoding:'utf8',timeout:15000,env:{...process.env,HOME:home,MURAGE_DATA_DIR:data,NODE_ENV:'test'}});
   assert.equal(result.status,1);assert.equal(result.stdout,'');assert.equal(result.stderr,'');
   assert.deepEqual(JSON.parse(readFileSync(out,'utf8')),{verdict:'FAIL',rows:0,pass:0,nonwipe_cards:0,refusals:0,skipped:0,harness_errors:1});
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });
 
 test('H2 private report admission rejects worker failure and every non-count field',async()=>{
@@ -140,7 +141,7 @@ test('H1 even seven empty readable surfaces cannot qualify a row without a nativ
  for(const file of ['channel-mirror-outbox.ndjson','nolim-protocol.ndjson','nolim-native-events.ndjson','nolim-registrations.ndjson','nolim-service-protocol.ndjson'])writeFileSync(join(data,file),'');
  const {createServer}=await import('node:http');const server=createServer((req,res)=>{res.setHeader('content-type','application/json');res.end('{"open":[]}');});await new Promise(r=>server.listen(0,'127.0.0.1',r));
  try{const f={data,client:{url:`http://127.0.0.1:${server.address().port}`,headers:{},events:[],declared:new Map()}};installBindings(f);const result=await f.observeRow({spec:{id:'cd',expected:'RUN',actor:'owner',level:'unlimited'},threadIds:['t']});assert.equal(result.verdict,'FAIL');assert.ok(result.errors.includes('Native request and receipt absent'));}
- finally{await new Promise(r=>server.close(r));rmSync(data,{recursive:true,force:true});}
+ finally{await new Promise(r=>server.close(r));safeWipeSync(data);}
 });
 
 
@@ -163,7 +164,7 @@ test('H3 native browser enablement is confined to the release fixture',async()=>
   assert.equal(Object.hasOwn(patches[0],'browser'),false);
   c.releaseFixture=true;await c.bot('Release',{id:'verification',model:'fixture'},dir,'unlimited');
   assert.equal(patches[1].browser,true);
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{safeWipeSync(dir);}
 });
 
 test('H3 a failed queued native turn is observed before waiting for queue admission',async()=>{
@@ -223,7 +224,7 @@ test('H3 native mounted questions use their wire schema and cannot execute befor
   await assert.rejects(nativePlay('Use the question tool to ask a fixture color.',{...options,beforeMounted:async()=>false}),/native approval/);assert.equal(existsSync(receipt),false);
   let called=0;await nativePlay('Use the question tool to ask a fixture color.',{...options,beforeMounted:async detail=>{called++;assert.equal(detail.server,'agents');assert.equal(detail.tool,'ask_user');return true;}});
   assert.equal(called,1);assert.equal(JSON.parse(readFileSync(receipt)).questions[0].question,'Choose a fixture color');
- }finally{if(prior===undefined)delete process.env.NOLIM_RELEASE_FAKE;else process.env.NOLIM_RELEASE_FAKE=prior;rmSync(dir,{recursive:true,force:true});}
+ }finally{if(prior===undefined)delete process.env.NOLIM_RELEASE_FAKE;else process.env.NOLIM_RELEASE_FAKE=prior;safeWipeSync(dir);}
 });
 
 test('H1 unasked native tools require actual starts and successful results and cannot hide another surface',async()=>{
@@ -239,7 +240,7 @@ test('H1 unasked native tools require actual starts and successful results and c
   assert.equal((await run()).verdict,'PASS');
   orphan=true;assert.equal((await run()).verdict,'FAIL');orphan=false;
   for(const events of [[],[start],[start,{...end,ok:false}],[{...start,input:{url:'http://another.test/'}},end],[start,{...end,threadId:'other'}],[start,{...end,providerInstanceId:'another-engine'}],[{...start,providerInstanceId:'another-engine'},end],[{...start,providerInstanceId:'another-engine'},{...end,providerInstanceId:'another-engine'}],[start,end,{...end,eventId:'duplicate'}]]){save(events);assert.equal((await run()).verdict,'FAIL');}
- }finally{await new Promise(r=>server.close(r));rmSync(data,{recursive:true,force:true});}
+ }finally{await new Promise(r=>server.close(r));safeWipeSync(data);}
 });
 
 test('H1 email service receipts bind the full canonical native payload and registered intent',async()=>{
@@ -255,7 +256,7 @@ test('H1 email service receipts bind the full canonical native payload and regis
   for(const changed of [{...service,input:{...service.input,payloadHash:'0'.repeat(64)}},{...service,input:{...service.input,summary:{...service.input.summary,to:['other@example.test']}}},{...service,input:{...service.input,text:'different'}},{...service,input:{...service.input,sendId:'another'}}])assert.equal(run(changed).verdict,'FAIL');
   assert.equal(run(service,events,s=>{s.registrations[0].inputHash='0'.repeat(64);}).verdict,'FAIL');
   assert.equal(run(service,[events[0],{...events[1],ok:false}]).verdict,'FAIL');
- }finally{rmSync(data,{recursive:true,force:true});}
+ }finally{safeWipeSync(data);}
 });
 
 test('H1 ACP command titles and API fixture aliases retain exact native input binding',async()=>{

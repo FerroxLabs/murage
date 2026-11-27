@@ -401,12 +401,18 @@ export function waitForReleaseBarrier(kind, env = process.env, run = execute, at
       if (jobs.length >= response.total_count) break;
       if (page === 10 || response.jobs.length === 0) throw new Error('release jobs pagination incomplete');
     }
-    const matches = jobs.filter(job => job.name === name && String(job.run_id) === env.GITHUB_RUN_ID && String(job.run_attempt) === env.GITHUB_RUN_ATTEMPT);
+    const sameAttempt = job => String(job.run_id) === env.GITHUB_RUN_ID && String(job.run_attempt) === env.GITHUB_RUN_ATTEMPT;
+    const matches = jobs.filter(job => job.name === name && sameAttempt(job));
     if (matches.length > 1) throw new Error('ambiguous release barrier job');
     const job = matches[0];
     if (!job) continue;
     const target = kind === 'probe' ? job.steps?.find(step => step.name === 'Probe release token before builds') : job;
     if (target?.status === 'completed') {
+      if (kind === 'stage' && target.conclusion === 'skipped') {
+        const ciFailed = jobs.some(job => job.name === 'CI must have passed on the pinned commit' &&
+          sameAttempt(job) && job.status === 'completed' && job.conclusion === 'failure');
+        throw new Error(ciFailed ? 'stage skipped after CI gate failure; release stopped' : 'stage skipped; release stopped');
+      }
       if (target.conclusion !== 'success') throw new Error(`${kind} failed; release stopped`);
       if (kind === 'probe' && job.status === 'completed' && job.conclusion !== 'success') throw new Error('probe job failed; release stopped');
       return;

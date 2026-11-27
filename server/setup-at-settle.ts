@@ -1,5 +1,7 @@
+import {skillSettlementWork} from './skill-settlement-work.ts';
 import { decide } from './outside-authority.ts';
 import type { Ledger, SettleVerdict, SetupEntry } from './turn-settle.ts';
+// Setup ledger/selection owner: decision lane. Skill acceptance owner: skills lane.
 interface SetupHooks { open: () => boolean; option: () => boolean; apply: () => boolean | Promise<boolean>; push: () => void }
 export class SetupAtSettle {
   private pending = new Map<string, Array<{ entry: SetupEntry; hooks: SetupHooks }>>();
@@ -13,20 +15,21 @@ export class SetupAtSettle {
     this.pending.set(generation, [...(this.pending.get(generation) ?? []), { entry, hooks }]);
     return input.push_suppressed;
   }
+  private processedSinceYield=0;
+  private drain: Promise<void> = Promise.resolve();
   settle(generation: string, verdict: SettleVerdict) {
     const pending = this.pending.get(generation) ?? []; this.pending.delete(generation);
-    for (const { entry, hooks } of pending) {
-      const [result, notify] = decide({ kind: 'setup_at_settle', entry }, { verdict, option_now: hooks.option(), card_open: hooks.open() });
-      const finish = (applied: boolean) => {
-        if (!applied && hooks.open() && (notify === 'push' || result === 'resolve')) hooks.push();
-      };
-      if (result === 'resolve') {
-        try {
-          const applied = hooks.apply();
-          if (typeof applied === 'boolean') finish(applied);
-          else void applied.then(finish, () => finish(false));
-        } catch { finish(false); }
-      } else finish(false);
-    }
+    // Each generation is already indexed by the ledger. Consume its iterator in bounded serial batches.
+    const run=async()=>{
+      for(const {entry,hooks} of pending){
+        const [result,notify]=decide({kind:'setup_at_settle',entry},{verdict,option_now:hooks.option(),card_open:hooks.open()});
+        let applied=false;
+        if(result==='resolve')try{applied=await hooks.apply();}catch{/* Leave the existing card where policy permits it. */}
+        if(!applied&&hooks.open()&&(notify==='push'||result==='resolve'))hooks.push();
+        if(++this.processedSinceYield>=16){this.processedSinceYield=0;await new Promise<void>(resolve=>setImmediate(resolve));}
+      }
+    };
+    this.drain=this.drain.then(()=>skillSettlementWork.drain(run),()=>skillSettlementWork.drain(run));
+    return this.drain;
   }
 }

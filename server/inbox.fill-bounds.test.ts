@@ -12,7 +12,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { INBOX_FILL_SQL, fillInboxProjection, initializeInbox, inboxProjectionReady, inboxProjectionSlice, listInbox, startInboxProjectionFill } from "./inbox.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
@@ -76,8 +76,7 @@ describe("a fill slice costs the slice, not the history", () => {
 });
 
 /** A disk that takes `msPerMiB` per MiB of message JSON read by the fill's insert. */
-function slowDisk(db: DatabaseSync, msPerMiB: number): DatabaseSync {
-  const burn = (ms: number) => { const until = performance.now() + ms; while (performance.now() < until) { /* a slow read */ } };
+function slowDisk(db: DatabaseSync, msPerMiB: number, burn: (ms: number) => void): DatabaseSync {
   return new Proxy(db, {
     get(target, property) {
       const value = Reflect.get(target, property) as unknown;
@@ -116,8 +115,15 @@ describe("a slice never holds the loop", () => {
         json_object('id','big' || i,'at',1800000000000 + i,'role','bot','kind','activity','tool',json_object('name','run','ok',json('false'),'providerError',json_object('httpStatus',500,'provider','x'),'output',replace(hex(zeroblob(6000)),'0','x')))
       FROM n`, 1_500);
     initializeInbox(db);
-    const fill = startInboxProjectionFill(slowDisk(db, 60));
-    expect(await fill.done).toEqual({ filled: true });
+    // Deterministic clock: performance.now() reads only the simulated disk time, so the 50 ms bound
+    // measures the slice's budget, not how long a loaded host descheduled the test process.
+    let virtualMs = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => virtualMs);
+    let fill: ReturnType<typeof startInboxProjectionFill>;
+    try {
+      fill = startInboxProjectionFill(slowDisk(db, 60, ms => { virtualMs += ms; }));
+      expect(await fill.done).toEqual({ filled: true });
+    } finally { clock.mockRestore(); }
     console.log(`[slow-disk] slices=${fill.stats.slices} max=${fill.stats.maxSliceMs.toFixed(1)} ms`);
     expect(fill.stats.maxSliceMs).toBeLessThan(50);
     expect(inboxProjectionReady(db)).toBe(true);

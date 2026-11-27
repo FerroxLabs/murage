@@ -1,3 +1,4 @@
+import { evidencePath } from './evidence-path.mjs';
 // Mutants live only in private container copies. Never edit the working tree.
 import { safeWipeSync } from '../server/testing/safe-wipe.mjs';
 import assert from 'node:assert/strict';
@@ -5,7 +6,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSyn
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-const root=resolve('.'), evidence=join(root,'evidence/bld3-toolid-s4a');
+const root=resolve('.'), evidence=evidencePath('evidence/bld3-toolid-s4a');
 const scratch=mkdtempSync(join(tmpdir(),'r13-mutants-'));
 const results=[];
 try {

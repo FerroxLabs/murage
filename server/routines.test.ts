@@ -13,6 +13,7 @@ import * as routineExports from "./routines.ts";
 import {
   nextOccurrence,
   routineInstructionRevision,
+  routineOnceInPastRefusal,
   routineRecoveredLine,
   RoutineManager,
   type RoutineManagerOptions,
@@ -2800,4 +2801,24 @@ it("PAUSE100 a hold arriving during a routine start returns it to the durable qu
   h.setNow(h.nowValue() + 1000);
   await h.manager.tick();
   expect(h.manager.listRuns().find(run => run.routineId === routine.id)).toMatchObject({ status: "queued", spendWait: "Flux work waits" });
+});
+
+it("the create route refuses a switched-on one-time routine whose moment has long passed, so none is created to come up Paused", () => {
+  const now = 1_800_000_000_000;
+  const old = { enabled: true, schedule: { type: "once", at: now - 11 * 60_000 } };
+  expect(routineOnceInPastRefusal(old, now)).toEqual({ code: "once_in_past", error: expect.stringContaining("already passed") });
+  expect(routineOnceInPastRefusal({ ...old, runNow: true }, now)).toMatchObject({ code: "once_in_past" });
+  expect(routineOnceInPastRefusal({ enabled: true, schedule: { type: "once", at: now + 60_000 } }, now)).toBeNull();
+  expect(routineOnceInPastRefusal({ enabled: false, schedule: { type: "once", at: now - 1000 } }, now)).toBeNull();
+  expect(routineOnceInPastRefusal({ enabled: true, schedule: { type: "interval", everyMinutes: 30, anchorAt: now - 1000 } as never }, now)).toBeNull();
+});
+
+it("a one-time moment that passed within 10 minutes is offered as run now, and accepted as run now only when the client asked", () => {
+  const now = 1_800_000_000_000;
+  for (const ago of [0, 1000, 9 * 60_000, 10 * 60_000]) {
+    const body = { schedule: { type: "once", at: now - ago } };
+    expect(routineOnceInPastRefusal(body, now)).toEqual({ code: "once_just_passed", error: "That time just passed. Run it now instead?" });
+    expect(routineOnceInPastRefusal({ ...body, runNow: true }, now)).toEqual({ runNowAt: now });
+  }
+  expect(routineOnceInPastRefusal({ schedule: { type: "once", at: now - 10 * 60_000 - 1 }, runNow: true }, now)).toMatchObject({ code: "once_in_past" });
 });

@@ -126,7 +126,7 @@ const paths = { memory_search: "search", memory_get: "get", memory_save: "save",
 const requestIdOk = (id: unknown): boolean => id === undefined || (typeof id === "string" && Buffer.byteLength(id, "utf8") <= 256) || (typeof id === "number" && Number.isFinite(id));
 type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json => value !== null && typeof value === "object" && !Array.isArray(value);
-const catalog = createMcpCatalogWriter(process.env, process.stdout, "memory");
+const catalog = NotModelRequest("MCP catalog observer emits local tool discovery metadata to child stdout.", createMcpCatalogWriter(process.env, process.stdout, "memory"));
 const fatal = () => { process.exitCode = 1; process.stdin.destroy(); };
 const send = (req: McpRequest, id: unknown, result: unknown) => { void req.respond({ jsonrpc: "2.0", id, result }).catch(fatal); };
 const rpcError = (req: McpRequest, id: unknown, code: number, message: string) => { void NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond({ jsonrpc: "2.0", id, error: { code, message } })).catch(fatal); };
@@ -136,9 +136,9 @@ const result = (req: McpRequest, id: unknown, value: unknown, isError = false) =
   const text = typeof value === "string" ? value : JSON.stringify(value);
   const envelope = { content: [{ type: "text", text }], isError };
   if (Buffer.byteLength(JSON.stringify({ jsonrpc: "2.0", id, result: envelope })) + 1 > 32768) {
-    return send(req, id, { content: [{ type: "text", text: "MEMORY_RESPONSE_TOO_LARGE" }], isError: true });
+    return NotModelRequest("Oversize memory tool error on the local MCP protocol.", send(req, id, { content: [{ type: "text", text: "MEMORY_RESPONSE_TOO_LARGE" }], isError: true }));
   }
-  return send(req, id, envelope);
+  return NotModelRequest("Memory tool reply on the existing local MCP request.", send(req, id, envelope));
 };
 
 async function readResponse(response: Response): Promise<unknown> {

@@ -74,6 +74,10 @@ export async function pollServerIdentity({
   progressFresh = () => false,
   // True while a one-time step's heartbeat is moving (the owner-pin index): that wait has no absolute limit. The owner can still quit from the window.
   liveWithoutLimit = () => false,
+  // True while the child's own start-up note (server/boot-progress.ts, every step before listen) is its pid's, moving, and its step advanced
+  // within the last 5 minutes (electron/boot-progress-watch.mjs): the 5-minute budget then moves on in steps, up to BOOT_EXTEND_ABSOLUTE_MS.
+  // 1.0.20 startup-all; a heartbeat alone (bootwait) buys no time.
+  bootProgressFresh = () => false,
   // Called with the 503 body each time our own child answers that it is upgrading (see below).
   onUpgrading = () => {},
   // True while the machine is asleep (the shell's suspend/resume events): the boot budget does not run down meanwhile.
@@ -112,6 +116,10 @@ export async function pollServerIdentity({
     const liveIndex = liveWithoutLimit();
     if (liveIndex) sawLiveIndex = true;
     if (now() < deadline) return false;
+    // A start whose own note keeps moving and whose steps advance is working: wait on in steps, never past the absolute limit. Not `extended`:
+    // the note ends only at listen, so a note that stops moving is a child that stopped, with no fresh budget after it. A memory-upgrade
+    // note keeps its own rules below (its 30-minute cap and stall), so this never lengthens an upgrade's wait.
+    if (now() < startedAt + BOOT_EXTEND_ABSOLUTE_MS && !extendWhile() && !upgradingRecently() && bootProgressFresh()) { deadline = now() + BOOT_EXTEND_STEP_MS; return false; }
     if (now() >= startedAt + BOOT_EXTEND_LIMIT_MS) {
       if (now() >= startedAt + BOOT_EXTEND_ABSOLUTE_MS) {
         if (liveIndex) { extended = true; deadline = now() + BOOT_EXTEND_STEP_MS; return false; }

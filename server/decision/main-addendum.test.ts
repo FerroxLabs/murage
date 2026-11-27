@@ -1,7 +1,6 @@
 import {expect,it,vi} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {DATA_DIR} from '../config.ts';
-import {HIGHLEVEL_REQUEST_PREFIX} from '../highlevel/review-cards.ts';
 import {fixture,d,card,baseCard,baseRun} from './fixture.ts';
 const sync=d as any;
 function queued(){
@@ -57,7 +56,7 @@ it('CA3 Allowed and legacy allow reach both specified index reply branches',asyn
  expect(start).toBeGreaterThan(anchor);
  // Keep producer and provider calls in the extracted production block so a
  // dismissed-card regression fails on behaviour, rather than on extraction.
- const evaluate=new Function('card','behavior','isAllowedAnswer','registry','imageOperations','publishOperations','registered','HIGHLEVEL_REQUEST_PREFIX','return (async()=>{const threadId="t",requestId="r",instanceId="p",message=undefined,answers=undefined;'+block+'\nreturn "unavailable";})();');
+ const evaluate=new Function('card','behavior','isAllowedAnswer','registry','imageOperations','publishOperations','registered','return (async()=>{const threadId="t",requestId="r",instanceId="p",message=undefined,answers=undefined;'+block+'\nreturn "unavailable";})();');
  const provider=vi.fn(async()=> 'allowed-once');
  const registry={get:vi.fn(()=>({adapter:{respondToRequest:provider}}))};
  const imageOperations={resolve:vi.fn()},publishOperations={resolve:vi.fn()};
@@ -65,7 +64,7 @@ it('CA3 Allowed and legacy allow reach both specified index reply branches',asyn
  expect(registry.get).not.toHaveBeenCalled();expect(provider).not.toHaveBeenCalled();
  // A registry label written before transport acceptance is not a successful
  // legacy replay. Its unconfirmed delivery cannot authorize a second send.
- expect(await evaluate({answered:'Allowed'},'allow',sync.isAllowedAnswer,registry,imageOperations,publishOperations,{state:'answered',delivery:'unconfirmed'},HIGHLEVEL_REQUEST_PREFIX)).toBe('unavailable');
+ expect(await evaluate({answered:'Allowed'},'allow',sync.isAllowedAnswer,registry,imageOperations,publishOperations,{state:'answered',delivery:'unconfirmed'})).toBe('unavailable');
  expect(provider).not.toHaveBeenCalled();
  expect(imageOperations.resolve).not.toHaveBeenCalled();expect(publishOperations.resolve).not.toHaveBeenCalled();
  const skill=source.slice(source.indexOf('// Settlement is durable before cleanup.'),source.indexOf('  if (args.behavior !== "allow")',source.indexOf('// Settlement is durable before cleanup.')));
@@ -86,7 +85,8 @@ it('accepted question receipts retain their recorded answer when a different cli
   const receipt={delivery:'accepted',answer:{behavior,answers:[{id:'q',selected:['Original']}]}};
   const row={id:'message',card:{questions:[{id:'q'}],answered:behavior==='deny'?'skipped':'answer',answers:receipt.answer.answers}};
   const store={messageById:()=>row,patchMessagePoint:vi.fn((_thread:any,_id:any,patch:any)=>Object.assign(row,patch))};
-  const evaluate=new Function('answerApproval','readApprovalExecution','readApproval','store','isQuestionCard','recordableAnswers','questionsForCard','return async function(ref,answer)'+body)(
+  // MAIN RULING F §1.3: this source-evaluation fixture supplies the new server-only argument; OPEN for GrokBuild.
+  const evaluate=new Function('answerApproval','readApprovalExecution','readApproval','store','isQuestionCard','recordableAnswers','questionsForCard','return async function(ref,answer,settlement={kind:"automatic",cause:"replay"})'+body)(
    vi.fn(async()=>{}),()=>receipt,()=>({threadId:'t',chatMessageId:'message'}),store,()=>true,(_questions:any,answers:any)=>answers,()=>[]);
   await evaluate({approvalId:'approval'},{behavior:behavior==='deny'?'answer':'deny'});
   expect(row.card.answered).toBe(behavior==='deny'?'skipped':'answer');

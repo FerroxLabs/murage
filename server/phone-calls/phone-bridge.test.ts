@@ -48,19 +48,19 @@ describe("tool bridge on every engine (item 3)", () => {
   });
   it("mounts on an owner turn of an engine with Murage tools; plain line on OpenClaw/Antigravity; nothing without key or for others", () => {
     _resetPhoneSecretsForTest();
-    expect(phoneMount({ agentsMcp: true, ownerAudience: true })).toEqual({ mounted: false, line: null });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: true, botAllowed: true })).toEqual({ mounted: false, line: null });
     desktopNoKey();
-    expect(phoneMount({ agentsMcp: true, ownerAudience: true })).toEqual({ mounted: false, line: null });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: true, botAllowed: true })).toEqual({ mounted: false, line: null });
     desktopWithKey();
-    expect(phoneMount({ agentsMcp: true, ownerAudience: true })).toEqual({ mounted: true });
-    expect(phoneMount({ agentsMcp: false, ownerAudience: true })).toEqual({ mounted: false, line: PHONE_ENGINE_ABSENT });
-    expect(phoneMount({ agentsMcp: true, ownerAudience: false })).toEqual({ mounted: false, line: null });
-    expect(phoneMount({ agentsMcp: true, ownerAudience: true, projectRole: true })).toEqual({ mounted: false, line: null });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: true, botAllowed: true })).toEqual({ mounted: true });
+    expect(phoneMount({ agentsMcp: false, ownerAudience: true, botAllowed: true })).toEqual({ mounted: false, line: PHONE_ENGINE_ABSENT });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: false, botAllowed: true })).toEqual({ mounted: false, line: null });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: true, botAllowed: true, projectRole: true })).toEqual({ mounted: false, line: null });
     expect(PHONE_ENGINE_ABSENT).not.toMatch(/MCP|vapi|key/i);
   });
   it.each(["openclaw", "antigravity"])("carries the no-tools fallback through %s's rendered primer before settings are saved", (driverKind) => {
     desktopWithKey();
-    const verdict = phoneMount({ agentsMcp: false, ownerAudience: true });
+    const verdict = phoneMount({ agentsMcp: false, ownerAudience: true, botAllowed: true });
     const facts = turnCapabilityFacts({
       instance: { driverKind, models: { default: "model", options: [] }, adapter: { capabilities: {} } },
       integrations: {}, ownerAudience: true, peers: 0, memory: "off", imageProvider: false, canAskOwner: true,

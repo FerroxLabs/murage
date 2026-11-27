@@ -1,1 +1,0 @@
-PASS driver equals baseline plus exactly the approved assertion-wrapper patch; no other driver changes.

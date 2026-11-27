@@ -14,18 +14,18 @@ afterEach(() => { vi.unstubAllGlobals(); for (const root of fixtures.splice(0)) 
 
 describe("pinned desktop browser preparation", () => {
   it("pins the exact headless vendor archives for only shipped targets", () => {
-    expect(CHROME_VERSION).toBe("152.0.7977.82");
+    expect(CHROME_VERSION).toBe("158.0.8127.36");
     expect(SUPPORTED_BROWSER_TARGETS).toEqual(["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]);
     const pins = {
-      "darwin-arm64": [97760996, "1615f063c894aa824fd55c89f8f05e9904f63cce0c95d0cbce7394d77884fba5"],
-      "darwin-x64": [102895824, "c903707292c6aaed7c6e572c0bb5e6645454e45d9e0e6db27e876b18e9165f31"],
-      "linux-x64": [119454769, "0ca12ea26b502a83e32db334a17883c315348845efc071d908de7a6d94a97eff"],
-      "win32-x64": [119768220, "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845"],
+      "darwin-arm64": [105057133, "c24d40a3786322ff3a5e3ac6eed162226cbaf07ebe468715407827226b0f8897"],
+      "darwin-x64": [112306247, "e0c5d07d8f5bcc5bdd5ef370e7daf3770856b585fcc9eecf441c7e3bb2e3d1cf"],
+      "linux-x64": [132087165, "2d3a23017323c54fd457a678e4351f895c4076d8050e39d5aa6247f93448b73a"],
+      "win32-x64": [127876264, "9655950dfeddf565561cd64cfe8ee716ccd6482fa3798503b632219efc65a71e"],
     };
     for (const target of SUPPORTED_BROWSER_TARGETS) {
       const spec = browserBundleSpec(target);
       expect([spec.chrome.bytes, spec.chrome.sha256]).toEqual(pins[target]);
-      expect(spec.chrome.url).toMatch(/^https:\/\/storage.googleapis.com\/chrome-for-testing-public\/152\.0\.7977\.82\/[^/]+\/chrome-headless-shell-[^/]+\.zip$/);
+      expect(spec.chrome.url).toMatch(/^https:\/\/storage.googleapis.com\/chrome-for-testing-public\/158\.0\.8127\.36\/[^/]+\/chrome-headless-shell-[^/]+\.zip$/);
       const [platform, arch] = target.split("-");
       const engine = resolveAgentBrowserReleaseAsset(platform, arch);
       expect(spec.engine).toMatchObject({ bytes: engine.bytes, sha256: engine.sha256, asset: engine.asset });

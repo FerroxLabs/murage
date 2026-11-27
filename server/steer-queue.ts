@@ -19,6 +19,7 @@
 // Unlike the delegation drain, an interrupted or failed turn does NOT discard
 // these: they are the user's own words (stop-then-steer is the feature).
 
+import type { SendNoticeCode } from "../shared/send-notice.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { sendFingerprint } from "./send-idempotency.ts";
@@ -87,11 +88,12 @@ export function queueSteeredMessage(
 
 /** What one drain runs: the leading run of plain owner rows (they join, as always), or exactly the first row when it is a
  * share or ask-intent. Third-party words never join an owner line and never ride in an owner turn; the rest waits for the next drain. */
-export function drainBatch(rows: SendRow[]): SendRow[] {
+export function drainBatch(rows: SendRow[], isCommand?: (row: SendRow) => boolean): SendRow[] {
   const first = rows[0];
   if (!first) return [];
-  if (first.via !== null || first.isolated) return [first];
-  const end = rows.findIndex((row) => row.via !== null || row.isolated);
+  const isBoundary = (row: SendRow) => row.via !== null || row.isolated || isCommand?.(row);
+  if (isBoundary(first)) return [first];
+  const end = rows.findIndex(isBoundary);
   return end === -1 ? rows : rows.slice(0, end);
 }
 
@@ -181,7 +183,7 @@ function watch(threadId: string, again: () => void): void {
  * The dispatched marker is committed for every row BEFORE anything runs, so
  * a settle racing another settle can never fire the same row twice, and a
  * crash after the marker never sends it again. */
-export function drainSteeredMessages(
+export function drainSteeredMessages<Command>(
   store: SteerStore,
   run: (
     botId: string,
@@ -190,7 +192,7 @@ export function drainSteeredMessages(
     userMessage: Message,
     excludeIds: string[],
     /** Which kind of batch this is: a share or ask-intent line runs alone, from the phone named here. */
-    batch: { via: "share" | "ask-intent" | null; viaDevice: string | null; viaProof: SendRow["viaProof"]; isolated?: boolean; seqs?: number[] },
+    batch: { via: "share" | "ask-intent" | null; viaDevice: string | null; viaProof: SendRow["viaProof"]; isolated?: boolean; seqs?: number[]; command?: Command; noSessionAllowed?: boolean; commandStale?: boolean },
   ) => void | Promise<unknown>,
   /** Holds a queue the thread's own busy flag cannot see, such as the bot
    * speaking in a room turn (upstream OpenMausBot #1664). */
@@ -201,8 +203,12 @@ export function drainSteeredMessages(
   /** True while a turn holds the thread (the server's direct run, which the busy flag can lag): a re-queued start is not tried
    * into it, and a start that was admitted does not drain its thread again (that turn's own end drains). */
   isOccupied?: (botId: string, threadId: string) => boolean,
+  commands?: {
+    recognize: (row: SendRow) => Command | null;
+    admit: (row: SendRow, command: Command) => { notice?: SendNoticeCode; noSessionAllowed?: boolean };
+  },
 ): void {
-  const again = () => drainSteeredMessages(store, run, isBlocked, bindAttachments, isOccupied);
+  const again = () => drainSteeredMessages(store, run, isBlocked, bindAttachments, isOccupied, commands);
   const occupied = (botId: string, threadId: string): boolean => { try { return isOccupied?.(botId, threadId) ?? false; } catch { return true; } };
   // One pass for one thread. True when a share or ask-intent batch was refused whole: nothing ran, so the owner lines queued behind it
   // are drainable now and the thread goes again (each pass settles at least the rows it refused, so the passes end).
@@ -229,8 +235,19 @@ export function drainSteeredMessages(
     // The turn is over, so an unconfirmed steer can no longer be folded into it:
     // it stays unconfirmed (never re-sent) and stops holding the line.
     sendStore.releaseThreadLate(threadId);
-    const rows = drainBatch(sendStore.drainable(threadId, "bot"));
+    const rows = drainBatch(sendStore.drainable(threadId, "bot"), row => Boolean(commands?.recognize(row)));
     if (!rows.length) return false;
+    const command = rows.length === 1 ? commands?.recognize(rows[0]!) : null;
+    let noSessionAllowed = false, commandStale = false;
+    if (command && commands) {
+      const decision = commands.admit(rows[0]!, command);
+      if (decision.notice && !rows[0]!.existingMessageId) {
+        try { sendStore.refuse(rows[0]!.seq, decision.notice); } catch { return false; }
+        return true;
+      }
+      noSessionAllowed = decision.noSessionAllowed === true;
+      commandStale = decision.notice !== undefined;
+    }
     // committed to draining: the marker is durable before anything runs
     try { sendStore.markDispatchedMany(rows.map((row) => row.seq)); } catch { return false; }
     const appended: Message[] = [];
@@ -310,7 +327,7 @@ export function drainSteeredMessages(
         prompt,
         last,
         appended.map((message) => message.id),
-        { via: first.via, viaDevice: first.via ? first.viaDevice : null, viaProof: first.via === "ask-intent" && committed.length === 1 ? committed[0]!.viaProof : null, ...(first.isolated ? { isolated: true } : {}), ...(sendStore.attempts() ? { seqs: committed.map(row => row.seq) } : {}) },
+        { via: first.via, viaDevice: first.via ? first.viaDevice : null, viaProof: first.via === "ask-intent" && committed.length === 1 ? committed[0]!.viaProof : null, ...(first.isolated ? { isolated: true } : {}), ...(command ? { command, noSessionAllowed, commandStale } : {}), ...(sendStore.attempts() ? { seqs: committed.map(row => row.seq) } : {}) },
       );
     } catch {
       // Settle by captured queue identities, including anonymous sends.

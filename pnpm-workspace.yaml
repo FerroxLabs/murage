@@ -33,7 +33,7 @@ packageExtensions:
 overrides:
   sharp: ">=0.35.5"
   # mermaid 12.1 still allows dompurify 3.4.13. Force the patched release.
-  dompurify: 3.4.17
+  dompurify: 3.4.18
   # osv Highs with a fix inside the same major (1.0.4 U12). Range-scoped, so each
   # copy moves only to its own patched release. js-yaml also ships inside the
   # vendored electron-updater (it parses the update feed).

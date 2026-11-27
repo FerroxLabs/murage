@@ -8,6 +8,7 @@ import { removeTempDirSync } from './testing/cleanup.ts';
 import * as permissions from './routine-permissions.ts';
 import * as shared from './shared-work.ts';
 import { restoreHeldPeerAuthority } from './held-peer-authority.ts';
+import { requestAutomationAncestry, threadAutomationAncestry } from './automation-ancestry.ts';
 import { insertRoomRequest, roomRequest } from './room-requests.ts';
 import { _resetPending, queueDelegation } from './delegations.ts';
 import { _resetOwnerMigration } from './pending-delegations-schema.ts';
@@ -58,7 +59,7 @@ function capture(routinePeerSource: any, botId: string, threadId: string, unatte
   const code = productionFunction(boundary, 'captureHeldPeerAuthority');
   const original = 'routineAuthority: routine ? { permissionMode: routine.permissionMode, triggerSource: routine.triggerSource } : null';
   if (drop) expect(code.split(original)).toHaveLength(2);
-  const fn = evaluate(drop ? code.replace(original, 'routineAuthority: null') : code, { restoreHeldPeerAuthority, randomUUID }, 'captureHeldPeerAuthority');
+  const fn = evaluate(drop ? code.replace(original, 'routineAuthority: null') : code, { restoreHeldPeerAuthority, randomUUID, threadAutomationAncestry }, 'captureHeldPeerAuthority');
   return fn({ internalClaim: { threadId, botId, generation: 'original', depth: 0 }, isUnattended: () => unattended,
     ownerSurfacesByThread: new Map(), routinePeerSource, sourceExecutionAudience: () => null, roomAskParent: () => null,
     coordinationBudget: { advance: () => ({ rootId: randomUUID(), path: [botId, 'B'] }) }, internalOwner: {},
@@ -72,7 +73,7 @@ async function releasedCeiling(kind: 'delegate' | 'ask' | 'assign', mode: permis
   w.store.patchBot(w.target.id, { autoApprove: true, fullAccess: true, noLimits: true });
   let released: any;
   const base: Record<string, any> = { store: w.store, connectorThread: () => true, authorizeWork: () => ({ ok: true }),
-    restoreHeldPeerAuthority, MAX_COMMS_DEPTH: 4, scheduleCoordinationDrain: () => {}, database,
+    restoreHeldPeerAuthority, MAX_COMMS_DEPTH: 4, scheduleCoordinationDrain: () => {}, database, requestAutomationAncestry,
     roomRequest, routinePeerSource: admission.routinePeerSource, recordHeldAssignmentRoutineAuthority: (shared as any).recordHeldAssignmentRoutineAuthority,
     pumpRoomDispatcher: () => {}, botOutsideWrites: { hold: (_id: string, work: any) => { released = work; } },
     boundaryCommsPort: { queueDelegation: (...args: any[]) => (queueDelegation as any)(w.bus, ...args) } };
@@ -91,7 +92,7 @@ async function releasedCeiling(kind: 'delegate' | 'ask' | 'assign', mode: permis
     hooks.dispatchHeldBotWork(w.target, released);
     const options = evaluate(['sharedQueuedCeiling', 'governingSharedSource', 'sharedTurnOptions'].map(name => productionFunction(index, name)).join('\n'), {
       ...shared, store: w.store, requestSourceThread: () => threadId, peerRoutineTurnOptions: peerOptions,
-      requestRunCoordination: () => undefined, routinePeerSources: new Map(), routines: undefined, readContinuation }, 'sharedTurnOptions')(request);
+      requestRunCoordination: () => undefined, routinePeerSources: new Map(), routines: undefined, readContinuation, requestAutomationAncestry }, 'sharedTurnOptions')(request);
     expect(admitted(mode, 'peer', w.target.threadId, w.target.id, options).applied).toBe(options.routineAuthority?.permissionMode ?? 'unlimited');
     return { applied: admission.applied, ceiling: options.routineAuthority?.permissionMode ?? 'unlimited' };
   }

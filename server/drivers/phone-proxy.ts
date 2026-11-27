@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import "../../shared/win-hide-child-process.mjs";
 import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { sendProxyFrame, proxyTransportLost, collectProxyUpstream } from "../proxy-turn-release.ts";
@@ -8,31 +10,17 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { delimiter, join } from "node:path";
 import { homedir } from "node:os";
+import { PHONE_KEYS, PHONE_STEP_TOOLS, PhoneInputError, parsePhoneSteps, validatePhoneAction, type PhoneStep } from "../../shared/phone-steps.ts";
 import { murageToolOnThisServer } from "../murage-tool-surface.ts";
 
 type Json = Record<string, unknown>;
 type Device = { serial: string; state: string; model: string; connection: "usb" | "network" | "emulator" };
 type UiNode = { text: string; description: string; id: string; className: string; bounds: [number, number, number, number] };
 
-const MAX_ADB_OUTPUT = 16 * 1024 * 1024;
 const PACKAGE = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
 const COMPONENT = /^([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)\/\S+$/;
 const SAFE_TEXT = /^[A-Za-z0-9 _.,@-]+$/;
-const KEYCODES: Record<string, string> = {
-  back: "KEYCODE_BACK",
-  delete: "KEYCODE_DEL",
-  down: "KEYCODE_DPAD_DOWN",
-  enter: "KEYCODE_ENTER",
-  escape: "KEYCODE_BACK",
-  home: "KEYCODE_HOME",
-  left: "KEYCODE_DPAD_LEFT",
-  recent: "KEYCODE_APP_SWITCH",
-  return: "KEYCODE_ENTER",
-  right: "KEYCODE_DPAD_RIGHT",
-  space: "KEYCODE_SPACE",
-  tab: "KEYCODE_TAB",
-  up: "KEYCODE_DPAD_UP",
-};
+const KEYCODES = PHONE_KEYS;
 const KNOWN_PACKAGES: Record<string, string> = {
   skyscanner: "net.skyscanner.android.main",
   uber: "com.ubercab",
@@ -68,8 +56,8 @@ export async function runAdb(args: string[], options: { binary?: boolean; timeou
   if (!adb) throw new Error("Android platform tools are unavailable. Reopen Murage or install adb.");
   return new Promise((resolve, reject) => {
     const child = spawn(adb, [...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    const stdout = collectProxyUpstream("phone", child.stdout, MAX_ADB_OUTPUT);
-    const stderr = collectProxyUpstream("phone", child.stderr, MAX_ADB_OUTPUT);
+    const stdout = collectProxyUpstream("phone", child.stdout);
+    const stderr = collectProxyUpstream("phone", child.stderr);
     void stdout.catch(() => child.kill());
     void stderr.catch(() => child.kill());
     const timer = setTimeout(() => {
@@ -117,13 +105,16 @@ export function parseDevices(output: string): Device[] {
   return devices;
 }
 
-async function usbDevices() {
-  if (!resolveAdbPath()) return [];
-  return parseDevices((await runAdb(["devices", "-l"])).toString("utf8")).filter((device) => device.connection === "usb");
+type Adb = typeof runAdb;
+type OnDevice = (serial: string, args: string[], binary?: boolean) => Promise<Buffer>;
+
+async function usbDevices(adb: Adb = runAdb) {
+  if (adb === runAdb && !resolveAdbPath()) return [];
+  return parseDevices((await adb(["devices", "-l"])).toString("utf8")).filter((device) => device.connection === "usb");
 }
 
-async function readySerial(requested?: unknown): Promise<string> {
-  const devices = await usbDevices();
+async function readySerial(requested: unknown, adb: Adb): Promise<string> {
+  const devices = await usbDevices(adb);
   const serial = typeof requested === "string" && requested ? requested : process.env.PH_ANDROID_SERIAL;
   const candidates = serial ? devices.filter((device) => device.serial === serial) : devices;
   if (!candidates.length) throw new Error("No physical USB Android device is connected");
@@ -132,10 +123,6 @@ async function readySerial(requested?: unknown): Promise<string> {
   if (device.state === "unauthorized") throw new Error("Unlock the phone and accept Allow USB debugging");
   if (device.state !== "device") throw new Error(`The Android device is ${device.state}`);
   return device.serial;
-}
-
-async function onDevice(serial: string, args: string[], binary = false) {
-  return runAdb(["-s", serial, ...args], { binary });
 }
 
 function normalize(value: string) {
@@ -169,7 +156,7 @@ export function findPackages(name: string, packages: string[]) {
   return [];
 }
 
-async function launchablePackages(serial: string) {
+async function launchablePackages(serial: string, onDevice: OnDevice) {
   const output = await onDevice(serial, [
     "shell", "cmd", "package", "query-activities", "--brief",
     "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER",
@@ -209,7 +196,7 @@ export function parseUiNodes(xml: string): UiNode[] {
   return nodes;
 }
 
-async function readNodes(serial: string) {
+async function readNodes(serial: string, onDevice: OnDevice) {
   const streamed = (await onDevice(serial, ["shell", "uiautomator", "dump", "/dev/tty"])).toString("utf8");
   const streamedStart = streamed.indexOf("<?xml");
   if (streamedStart >= 0) return parseUiNodes(streamed.slice(streamedStart));
@@ -231,7 +218,7 @@ function nodeLines(nodes: UiNode[]) {
 
 // Sibling tools in these descriptions are named on this server: the list
 // cannot know the caller's engine or the name it mounted the phone under.
-export const TOOLS = [
+const SINGLE_TOOLS = [
   { name: "status", description: "Check physical USB Android devices and USB-debugging authorization before any Android phone task.", inputSchema: { type: "object", properties: {} } },
   { name: "read_screen", description: "Read visible text, accessibility labels, resource ids, and pixel bounds from the connected Android screen. Use after every action to verify the result.", inputSchema: { type: "object", properties: { serial: { type: "string" } } } },
   { name: "screenshot", description: "Capture the connected Android screen when accessibility text is insufficient. Returns a PNG image.", inputSchema: { type: "object", properties: { serial: { type: "string" } } } },
@@ -240,35 +227,89 @@ export const TOOLS = [
   { name: "tap_text", description: `Tap visible Android text or an accessibility label, then use ${murageToolOnThisServer("read_screen")} to verify.`, inputSchema: { type: "object", properties: { text: { type: "string" }, exact: { type: "boolean" }, index: { type: "integer", minimum: 0 }, serial: { type: "string" } }, required: ["text"] } },
   { name: "tap", description: `Tap Android screen pixel coordinates obtained from ${murageToolOnThisServer("read_screen")} or ${murageToolOnThisServer("screenshot")}.`, inputSchema: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, serial: { type: "string" } }, required: ["x", "y"] } },
   { name: "swipe", description: `Swipe the Android screen in a direction, then use ${murageToolOnThisServer("read_screen")} to verify.`, inputSchema: { type: "object", properties: { direction: { type: "string", enum: ["up", "down", "left", "right"] }, serial: { type: "string" } }, required: ["direction"] } },
-  { name: "type_text", description: "Type basic ASCII text into the focused Android field. Never enter passwords, payment details, or one-time codes.", inputSchema: { type: "object", properties: { text: { type: "string", maxLength: 256 }, serial: { type: "string" } }, required: ["text"] } },
-  { name: "press", description: "Press an Android navigation or keyboard key.", inputSchema: { type: "object", properties: { key: { type: "string", enum: Object.keys(KEYCODES) }, serial: { type: "string" } }, required: ["key"] } },
+  { name: "type_text", description: "Type into the focused Android field. Letters, digits, spaces and _.,@- use Android input; other text needs ADBKeyBoard selected on the phone. Set clear to true to empty the field first (also needs ADBKeyBoard). Tap the field first and read the screen afterward. Never enter passwords, payment details, or one-time codes.", inputSchema: { type: "object", properties: { text: { type: "string", minLength: 1, maxLength: 256 }, clear: { type: "boolean" }, serial: { type: "string" } }, required: ["text"] } },
+  { name: "press", description: "Press an Android navigation or keyboard key. wakeup turns the screen on; sleep turns it off. Ask the owner to unlock any PIN, pattern or password lock.", inputSchema: { type: "object", properties: { key: { type: "string", enum: Object.keys(KEYCODES) }, serial: { type: "string" } }, required: ["key"] } },
 ] as const;
+
+// Step schemas reuse the individual tools, without allowing a device change.
+export const TOOLS = [...SINGLE_TOOLS, {
+  name: "batch",
+  description: `Run 1 to 10 phone steps in order on one phone. Each step has action (the bare name of ${PHONE_STEP_TOOLS.map(name => murageToolOnThisServer(name)).join(", ")}, or wait) and that tool's fields. All steps are checked before any run. Wait seconds defaults to 2, at most 60 seconds total. Add ${murageToolOnThisServer("read_screen")} last to verify; stop where the next screen is uncertain. On failure, earlier steps may have run: read the screen before retrying.`,
+  inputSchema: { type: "object", additionalProperties: false, required: ["steps"], properties: {
+    serial: { type: "string" }, steps: { type: "array", minItems: 1, maxItems: 10, items: { oneOf: [
+      ...SINGLE_TOOLS.filter(tool => (PHONE_STEP_TOOLS as readonly string[]).includes(tool.name)).map(tool => ({
+        type: "object", additionalProperties: false,
+        properties: { action: { type: "string", enum: [tool.name] }, ...Object.fromEntries(Object.entries(tool.inputSchema.properties).filter(([key]) => key !== "serial")) },
+        required: ["action", ...("required" in tool.inputSchema ? tool.inputSchema.required : [])],
+      })),
+      { type: "object", additionalProperties: false, properties: { action: { type: "string", enum: ["wait"] }, seconds: { type: "number", minimum: 0, maximum: 60 } }, required: ["action"] },
+    ] } },
+  } },
+}] as const;
 
 type ToolResult = { content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>; isError?: boolean };
 const textResult = (text: string, isError = false): ToolResult => ({ content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) });
 
-async function callTool(name: string, args: Json): Promise<ToolResult> {
+async function callTool(name: string, args: Json, adb: Adb, cancelled: () => boolean): Promise<ToolResult> {
   if (name === "status") {
-    const adb = resolveAdbPath();
-    const devices = adb ? await usbDevices() : [];
-    return textResult(JSON.stringify({ available: Boolean(adb), devices }, null, 2));
+    const available = adb !== runAdb || Boolean(resolveAdbPath());
+    const devices = available ? await usbDevices(adb) : [];
+    return textResult(JSON.stringify({ available, devices }, null, 2));
   }
-  const serial = await readySerial(args.serial);
-  if (name === "read_screen") return textResult(nodeLines(await readNodes(serial)));
+  const steps = name === "batch" ? parsePhoneSteps(args.steps) : undefined;
+  if (!steps) {
+    if (!SINGLE_TOOLS.some(tool => tool.name === name)) throw new PhoneInputError("Unknown phone tool");
+    if ((PHONE_STEP_TOOLS as readonly string[]).includes(name)) validatePhoneAction(name as PhoneStep["action"], args);
+  }
+  const checkCancelled = () => { if (cancelled()) throw new PhoneInputError("The client cancelled this call"); };
+  checkCancelled();
+  const serial = await readySerial(args.serial, adb);
+  const onDevice: OnDevice = (target, command, binary = false) => {
+    checkCancelled();
+    return adb(["-s", target, ...command], { binary });
+  };
+  if (!steps) return callToolOn(serial, name, args, onDevice);
+  const lines: string[] = [];
+  for (const [index, { action, ...fields }] of steps.entries()) {
+    try {
+      checkCancelled();
+      let output: string;
+      if (action === "wait") {
+        const deadline = Date.now() + Number(fields.seconds ?? 2) * 1000;
+        while (Date.now() < deadline) {
+          checkCancelled();
+          await new Promise(resolve => setTimeout(resolve, Math.min(100, deadline - Date.now())));
+        }
+        output = "Waited";
+      } else {
+        const result = await callToolOn(serial, action, fields, onDevice);
+        output = result.content.filter(item => item.type === "text").map(item => item.text).join("\n");
+      }
+      lines.push(`${index + 1}. ${action}: ${output}`);
+    } catch (error) {
+      const reason = error instanceof PhoneInputError ? error.message : "Android command failed";
+      return textResult([...lines, `Step ${index + 1} failed: ${reason}. Its effect is unknown; read_screen or screenshot before retrying. Earlier steps completed; do not repeat them. Later steps were not performed.`].join("\n"), true);
+    }
+  }
+  return textResult(lines.join("\n"));
+}
+
+async function callToolOn(serial: string, name: string, args: Json, onDevice: OnDevice): Promise<ToolResult> {
+  if (name === "read_screen") return textResult(nodeLines(await readNodes(serial, onDevice)));
   if (name === "screenshot") {
     const png = await onDevice(serial, ["exec-out", "screencap", "-p"], true);
     if (!png.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) throw new Error("Android returned an invalid screenshot");
     return { content: [{ type: "text", text: `Android screenshot from ${serial}` }, { type: "image", data: png.toString("base64"), mimeType: "image/png" }] };
   }
   if (name === "list_apps") {
-    const packages = await launchablePackages(serial);
+    const packages = await launchablePackages(serial, onDevice);
     const query = typeof args.query === "string" ? args.query : "";
     return textResult((query ? findPackages(query, packages) : packages).join("\n") || "No matching launchable app found");
   }
   if (name === "open_app") {
     const appName = String(args.name ?? "").trim();
     if (!appName) throw new Error("name is required");
-    const matches = findPackages(appName, await launchablePackages(serial));
+    const matches = findPackages(appName, await launchablePackages(serial, onDevice));
     if (matches.length !== 1) throw new Error(matches.length ? `App name is ambiguous: ${matches.join(", ")}` : `No installed launchable app matches ${JSON.stringify(appName)}`);
     await onDevice(serial, ["shell", "monkey", "-p", matches[0], "-c", "android.intent.category.LAUNCHER", "1"]);
     return textResult(`Opened ${appName} (${matches[0]})`);
@@ -277,7 +318,7 @@ async function callTool(name: string, args: Json): Promise<ToolResult> {
     const query = String(args.text ?? "").trim().toLowerCase();
     if (!query) throw new Error("text is required");
     const exact = args.exact === true;
-    const hits = (await readNodes(serial)).filter((node) => {
+    const hits = (await readNodes(serial, onDevice)).filter((node) => {
       const labels = [node.text, node.description].filter(Boolean).map((value) => value.toLowerCase());
       return labels.some((label) => exact ? label === query : label.includes(query));
     });
@@ -312,39 +353,72 @@ async function callTool(name: string, args: Json): Promise<ToolResult> {
     return textResult(`Swiped ${direction}`);
   }
   if (name === "type_text") {
-    const value = String(args.text ?? "");
-    if (!value || value.length > 256 || !SAFE_TEXT.test(value)) throw new Error("Android text supports only basic ASCII text up to 256 characters");
-    await onDevice(serial, ["shell", "input", "text", value.replaceAll(" ", "%s")]);
-    return textResult("Typed text into the focused Android field");
+    const value = String(args.text);
+    if (args.clear !== true && SAFE_TEXT.test(value)) {
+      await onDevice(serial, ["shell", "input", "text", value.replaceAll(" ", "%s")]);
+      return textResult("Typed text into the focused Android field");
+    }
+    const keyboard = (await onDevice(serial, ["shell", "settings", "get", "secure", "default_input_method"])).toString("utf8").trim();
+    if (keyboard !== "com.android.adbkeyboard/.AdbIME") throw new PhoneInputError("Set up ADBKeyBoard (https://github.com/senzhk/ADBKeyBoard) and choose it as the phone's keyboard to type this text or clear a field");
+    const broadcast = (action: string, ...extras: string[]) => onDevice(serial, ["shell", "am", "broadcast", "-a", action, "-p", "com.android.adbkeyboard", ...extras]);
+    if (args.clear === true) {
+      const state = (await onDevice(serial, ["shell", "dumpsys", "input_method"])).toString("utf8");
+      // Fail closed on an absent or null served connection: older keyboards
+      // can crash when asked to clear without a field taking input.
+      const connection = /\bmServedInputConnection(?:Wrapper)?=(\S+)/.exec(state)?.[1];
+      if (!connection || connection === "null") throw new PhoneInputError("No text field is taking input, so nothing was cleared or typed. Tap the field first");
+      await broadcast("ADB_CLEAR_TEXT");
+    }
+    await broadcast("ADB_INPUT_B64", "--es", "msg", Buffer.from(value, "utf8").toString("base64"));
+    return textResult("Sent text to ADBKeyBoard. Use read_screen to check the field before continuing");
   }
   if (name === "press") {
     const key = String(args.key ?? "").toLowerCase();
-    if (!KEYCODES[key]) throw new Error("Unsupported Android key");
-    await onDevice(serial, ["shell", "input", "keyevent", KEYCODES[key]]);
+    if (!Object.hasOwn(KEYCODES, key)) throw new Error("Unsupported Android key");
+    await onDevice(serial, ["shell", "input", "keyevent", KEYCODES[key as keyof typeof KEYCODES]]);
     return textResult(`Pressed ${key}`);
   }
   throw new Error(`Unknown phone tool: ${name}`);
 }
 
+// Injectable transport keeps phone verification isolated from physical devices.
+export async function callPhoneTool(name: string, args: Json, adb: Adb = runAdb, cancelled = () => false): Promise<ToolResult> {
+  try { return await callTool(name, args, adb, cancelled); }
+  catch (error) {
+    if (error instanceof PhoneInputError) return textResult(error.message, true);
+    throw error;
+  }
+}
+
 const send = (message: Json) => sendProxyFrame("phone", message);
-const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
-const rpcError = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
+const ok = (id: unknown, result: unknown) => NotModelRequest("Local phone MCP tool reply or error.", send({ jsonrpc: "2.0", id, result }));
+const rpcError = (id: unknown, code: number, message: string) => NotModelRequest("Local phone MCP tool reply or error.", send({ jsonrpc: "2.0", id, error: { code, message } }));
+
+const pendingBatches = new Map<unknown, { cancelled: boolean }>();
 
 async function handle(message: Json) {
   const id = message.id;
   const method = message.method;
   const params = (message.params ?? {}) as Json;
   if (method === "initialize") return ok(id, { protocolVersion: String(params.protocolVersion ?? "2024-11-05"), capabilities: { tools: {} }, serverInfo: { name: "murage-phone", version: "1" } });
+  if (method === "notifications/cancelled") {
+    const batch = pendingBatches.get(params.requestId);
+    if (batch) batch.cancelled = true;
+  }
   if (method === "notifications/initialized" || method === "notifications/cancelled") return;
   if (method === "ping") return ok(id, {});
   if (method === "tools/list") return ok(id, { tools: TOOLS });
   if (method === "tools/call") {
     const name = String(params.name ?? "");
     if (!TOOLS.some((tool) => tool.name === name)) return rpcError(id, -32602, `Unknown tool: ${name}`);
+    const batch = { cancelled: false };
+    if (name === "batch") pendingBatches.set(id, batch);
     try {
-      return ok(id, await callTool(name, (params.arguments ?? {}) as Json));
+      return ok(id, await callPhoneTool(name, (params.arguments ?? {}) as Json, runAdb, () => batch.cancelled));
     } catch {
       return proxyTransportLost("phone");
+    } finally {
+      pendingBatches.delete(id);
     }
   }
   if (id !== undefined) rpcError(id, -32601, `Method not found: ${String(method)}`);

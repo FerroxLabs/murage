@@ -172,18 +172,24 @@ describe("rail pins and the team count", () => {
     expect(railRecency({})).toBe(0);
   });
 
-  it("a folded section's header carries its count", () => {
+  it("a folded department keeps an unsuffixed label and an expand control", () => {
     const sidebar = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
     expect(sidebar).toContain('if (id === BOTS_SECTION_ID) return "Your team";');
-    const html = renderToStaticMarkup(createElement(SidebarSectionHeader, { name: "Your team", collapsed: false, count: 18, onToggle: () => {}, reorderable: false, dragging: false }));
-    expect(html).toContain("Your team · 18");
-    expect(renderToStaticMarkup(createElement(SidebarSectionHeader, { name: "Your team", collapsed: false, onToggle: () => {}, reorderable: false, dragging: false }))).not.toContain("·");
+    const collapsed = {
+      name: "Planning", collapsed: true, count: 18, onToggle: () => {}, reorderable: false, dragging: false,
+    };
+    const html = renderToStaticMarkup(createElement(SidebarSectionHeader, collapsed));
+    expect(html).toContain("Planning");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("Planning · 18");
   });
 
-  it("the sidebar ranks unpinned sections, budgets the pins and passes the count", () => {
+  it("the sidebar ranks unpinned sections, budgets the pins and omits department counts", () => {
     const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
     expect(source).toContain("railBotsLimit(sectionCollapsed(PINNED_SECTION_ID) ? 0 : pinnedBots.length)");
     expect(source).toContain("rank: pins ? undefined : railRecency");
-    expect(source).toContain("count={(collapsed || fold.hidden.length > 0) && sectionBotItems.length");
+    const header = source.slice(source.indexOf("<SidebarSectionHeader"), source.indexOf("name={sectionLabel(id)}") + 300);
+    expect(header).toContain("name={sectionLabel(id)}");
+    expect(header).not.toContain("count=");
   });
 });

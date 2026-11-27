@@ -1,8 +1,8 @@
 # Backups v1
 
-## Decision: restic over SFTP to a build host Storage Box, one sub-account per home
+## Decision: restic over SFTP to a Hetzner Storage Box, one sub-account per home
 
-- build host server backups skip volumes, and a build host volume has no snapshot feature, so neither can protect `/data`
+- Hetzner server backups skip volumes, and a Hetzner volume has no snapshot feature, so neither can protect `/data`
   (the LUKS volume). That leaves file-level backup from inside the home.
 - restic is already Murage's backup engine. Its repository is encrypted client-side (AES-256 + Poly1305) before it leaves the
   home; the storage box only ever sees ciphertext.
@@ -14,7 +14,7 @@
   own repository. A compromised home could delete its own repo; enable Storage Box snapshots (daily) as the second layer.
 - Schedule: `murage-backup.timer`, 02:00 UTC plus up to 1 h random delay. Retention in the script: `--keep-daily 7 --keep-weekly 4`
   with prune. The heartbeat reports `lastBackupAt`; the control plane alerts `home.backup_stale` after 26 h.
-- The unit is inert until `/etc/murage-home/backup.json` exists. Provisioning (B5 build host adapter or operator) must write
+- The unit is inert until `/etc/murage-home/backup.json` exists. Provisioning (B5 Hetzner adapter or operator) must write
   `backup.json`, `backup.pass` (from the backup-password route), `backup.key` and `backup.known_hosts` (all root 0600).
 
 ## Never backed up (hard requirement, Anthropic hosting terms)
@@ -43,11 +43,11 @@ Assumptions: Storage Box BX11, 1 TB, about EUR 3.20/month (fixed, shared by the 
 |---|---|
 | Storage 15-20 GB at EUR 3.20/TB | about EUR 0.05 to 0.07 |
 | Fixed box share at 50 homes | EUR 0.06 (EUR 3.20 / 50) |
-| Transfer (SFTP to a Storage Box, build host-internal) | EUR 0 |
+| Transfer (SFTP to a Storage Box, Hetzner-internal) | EUR 0 |
 | **Total** | **about EUR 0.10 to 0.15 (about $0.12 to $0.16)** |
 
 A 1 TB box holds about 50 to 60 homes at these sizes; a heavy home at 100 GB data costs about EUR 0.50/month. For comparison,
-build host server backups (20% of server price, about EUR 0.80 for a CX23) would cost more and would not include the volume.
+Hetzner server backups (20% of server price, about EUR 0.80 for a CX23) would cost more and would not include the volume.
 
 ## Measured on a throwaway CX23 (mcq-b5bk, deleted afterwards)
 20 MB data: first backup 5 s; repo 21 MB; `restic check` ok; restore byte-identical; credentials and cookies absent;
@@ -59,7 +59,7 @@ When: home destroyed, volume lost or corrupt, or customer asks to roll back.
 1. **Get the old home id** (`HOME_ID`) from the control plane / portal. Do not delete its row or key rows yet: the repository password derives from its data key.
 2. **Provision a fresh home** the normal way (new server and volume, enroll). It gets a NEW home id `NEW_ID` and new keys.
 3. **Derive the repository password**: `curl -s -X POST https://<cp>/v1/machines/$HOME_ID/backup-password -H "authorization: Bearer $CLOUD_ADMIN_TOKEN"` and store the answer in `/etc/murage-home/backup.pass` on the fresh home (root 0600). Never print it in chat or logs.
-4. **Give the fresh home read access** to the old repository: a temporary read credential for the old home's Storage Box sub-account, in `/work/restore.json` style env (`RESTIC_REPOSITORY=sftp:...`, `RESTIC_PASSWORD_FILE`). Remove it after.
+4. **Give the fresh home read access** to the old repository: a temporary read credential for the old home's Storage Box sub-account, in `/root/restore.json` style env (`RESTIC_REPOSITORY=sftp:...`, `RESTIC_PASSWORD_FILE`). Remove it after.
 5. **Stop the home** (`systemctl stop murage-home murage-proxy murage-egress-proxy`), keep `/data` mounted.
 6. **Pick the snapshot**: `restic snapshots` (latest is last night; weekly ones go back 4 weeks).
 7. **Restore**: `restic restore <snapshot> --target /restore-tmp`, check, then `rsync -a /restore-tmp/data/ /data/` and `chown` per the image's ownership (engine homes `root:engine 2770` are re-created by the launcher on first start).

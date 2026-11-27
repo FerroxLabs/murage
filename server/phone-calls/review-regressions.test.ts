@@ -72,10 +72,10 @@ it("settings save invalidates a pending Ask's turn; a fresh turn can execute", a
     expect(f.service.askPreview(args)?.settings_revision).toBe(1);
     await f.service.saveSettings({ ...defaultSettings("other", "Owner"), recordAudio: true });
     const before = f.fetch.mock.calls.length;
-    expect(await servePhoneTool(() => f.service, "phone_call_place", claim, args)).toEqual({ error: "not_set_up" });
+    expect(await servePhoneTool(() => f.service, "phone_call_place", claim, args, { botMayPhone: () => true })).toEqual({ error: "not_set_up" });
     expect(f.fetch).toHaveBeenCalledTimes(before);
     recordPhoneTurn("new", claim);
-    expect(await servePhoneTool(() => f.service, "phone_call_place", { ...claim, generation: "new" }, args)).toMatchObject({ settings_revision: 2 });
+    expect(await servePhoneTool(() => f.service, "phone_call_place", { ...claim, generation: "new" }, args, { botMayPhone: () => true })).toMatchObject({ settings_revision: 2 });
   } finally { f.db.close(); }
 });
 it("a 500 response retains the uncertain call and its superseded assistant", async () => {

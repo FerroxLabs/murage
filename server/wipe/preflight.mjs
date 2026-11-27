@@ -2,9 +2,10 @@
 import "../../shared/win-hide-child-process.mjs";
 import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 import assert from 'node:assert/strict';
-import {readFileSync,writeFileSync,mkdirSync,symlinkSync,rmSync,cpSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,symlinkSync,cpSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
+import { safeWipeSync } from '../testing/safe-wipe.mjs';
 
 /** Keep every test assertion intact. A pre-existing integration failure must
  * reproduce at that exact integration tip before it can be distinguished from
@@ -33,7 +34,7 @@ export function verifyPreflight(directory,status) {
   const inherited=failures.map(f=>f.name).sort();
   for(const name of inherited)assert.ok(prior.includes(name),'Inherited assertion must reproduce at the integration tip: '+name);
   writeFileSync(join(directory,'preflight-comparison.json'),JSON.stringify({passed:report.numPassedTests,total:report.numTotalTests,inherited,baselineFailures:prior,fixed:prior.filter(name=>!inherited.includes(name)),newFailures:0},null,2)+'\n');
- } finally {rmSync(scratch,{recursive:true,force:true});}
+ } finally {safeWipeSync(scratch, { within: directory });}
 }
 
 /** V3 gates the same current assertions against its W0 merge, including all
@@ -72,5 +73,5 @@ export function verifyV3Preflight(directory,status,resultDirectory) {
   assert.equal(status,inherited.length+newFailures.length?1:0);
   writeFileSync(join(directory,'preflight-comparison.json'),JSON.stringify({base,head:candidate,passed:report.numPassedTests,total:report.numTotalTests,inherited,newFailures},null,2)+'\n');
   assert.deepEqual(newFailures,[],'V3 mutation preflight has new broad failures');
- }finally{rmSync(scratch,{recursive:true,force:true});}
+ }finally{safeWipeSync(scratch, { within: directory });}
 }

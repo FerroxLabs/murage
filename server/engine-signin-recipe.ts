@@ -18,16 +18,16 @@ export const SIGNIN_BASE_ENV = Object.freeze(["PATH", "HOME", "USERPROFILE", "Sy
 /** Rev 4 C5: the only names a row may add. Each says where an engine keeps its sign-in, and nothing else. A row with any
  * other name is refused here, so SSL_CERT_FILE, BASH_ENV, a proxy or a blocked name can never come back through a row. */
 export const SIGNIN_ACCOUNT_ROOT_KEYS = Object.freeze(["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", "KIMI_CODE_HOME", "CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
-  "OPENCODE_CONFIG_DIR", "CLINE_DIR", "CLINE_DATA_DIR", "FACTORY_HOME_OVERRIDE", "HERMES_HOME", "FUIGO_HOME", "COPILOT_HOME"]);
+  "OPENCODE_CONFIG_DIR", "CLINE_DIR", "CLINE_DATA_DIR", "FACTORY_HOME_OVERRIDE", "HERMES_HOME", "FUIGO_HOME", "COPILOT_HOME", "LOCALAPPDATA", "APPDATA"]);
 const ACCOUNT_ROOT_KEY_SET = new Set<string>(SIGNIN_ACCOUNT_ROOT_KEYS);
 /** What the engine's own browser opener needs, and nothing else (amends G5). Read from the desktop session only, never from
- * instance environment, so an instance cannot point a sign-in at another display or shell. Mac needs no name past the base list. */
+ * instance environment, except for the approved account-root keys above. An instance cannot choose another display or shell. */
 export const SIGNIN_OPENER_ENV: Readonly<Partial<Record<NodeJS.Platform, readonly string[]>>> = Object.freeze({
   linux: Object.freeze(["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS"]),
   win32: Object.freeze(["ComSpec", "windir", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"]),
 });
 
-interface SigninRoot { key?: string; fallback: readonly string[]; suffix?: readonly string[] }
+interface SigninRoot { key?: string; fallback: readonly string[]; suffix?: readonly string[]; platforms?: Partial<Record<NodeJS.Platform, SigninRoot>> }
 
 export interface EngineSigninRow {
   kind: EngineSigninKind;
@@ -56,6 +56,22 @@ export const ENGINE_SIGNIN_TABLE: Readonly<Record<string, EngineSigninRow>> = Ob
   opencodeGo: terminal(["auth", "login"], ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "OPENCODE_CONFIG_DIR"], { key: "XDG_DATA_HOME", fallback: [".local", "share", "opencode"], suffix: ["opencode"] }, "a picker, not headless"),
   // Not measured in a container: `copilot login` is GitHub's device flow, which shows a one-time code to type.
   copilotAgent: terminal(["login"], ["COPILOT_HOME"], { key: "COPILOT_HOME", fallback: [".copilot"] }, "device flow: shows a one-time code"),
+  // Not measured in a container: `cmd login` opens a browser; COMMAND_CODE_API_KEY signs a server in without it.
+  // Not measured in a container: `kiro-cli login` offers a method picker.
+  kiroAgent: terminal(["login"], ["XDG_DATA_HOME", "LOCALAPPDATA"], {
+    key: "XDG_DATA_HOME", fallback: [".local", "share", "kiro-cli"], suffix: ["kiro-cli"],
+    platforms: {
+      darwin: { fallback: ["Library", "Application Support", "kiro-cli"] },
+      win32: { key: "LOCALAPPDATA", fallback: ["AppData", "Local", "kiro-cli"], suffix: ["kiro-cli"] },
+    },
+  }, "not measured; a terminal until a container proves it headless"),
+  // Not measured in a container: `omp login` is the CLI's own sign-in and needs a terminal.
+  ompAgent: terminal(["login"], [], { fallback: [".omp"] }, "not measured; a terminal until a container proves it headless"),
+  devinAgent: terminal(["auth", "login"], ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "APPDATA"], {
+    key: "XDG_DATA_HOME", fallback: [".local", "share", "devin"], suffix: ["devin"],
+    platforms: { win32: { key: "APPDATA", fallback: ["AppData", "Roaming", "devin"], suffix: ["devin"] } },
+  }, "explicit terminal sign-in"),
+  commandCodeAgent: terminal(["login"], [], { fallback: [".commandcode"] }, "not measured; a terminal until a container proves it headless"),
   clineAgent: terminal(["auth"], ["CLINE_DIR", "CLINE_DATA_DIR"], { key: "CLINE_DIR", fallback: [".cline"] }, "refuses without a TTY"),
   // Not measured yet (GAP-MUSE-PROBES.md probe 6): `muse login` comes from upstream and OpenClaw, and a terminal works
   // whether or not it needs a TTY. Muse keeps its sign-in under $XDG_CONFIG_HOME/muse or ~/.config/muse.
@@ -121,6 +137,8 @@ export function buildSigninEnv({ row, source, instanceEnvironment, searchPath, p
   }
   const session = mergedEnv(source, undefined, platform);
   for (const name of SIGNIN_OPENER_ENV[platform] ?? []) {
+    // An approved account-root override (Kiro's LOCALAPPDATA) already won over the desktop session.
+    if (env[name]) continue;
     const value = clean(session(name));
     if (value) env[name] = value;
   }
@@ -186,11 +204,12 @@ export interface EngineSigninRecipeInput {
 function accountRootOf(row: EngineSigninRow, read: (name: string) => string | undefined, platform: NodeJS.Platform): string {
   const home = read("HOME") || read("USERPROFILE") || homedir();
   const paths = platform === "win32" ? win32 : posix;
-  if (row.root.key) {
-    const set = clean(read(row.root.key));
-    if (set && paths.isAbsolute(set)) return paths.join(set, ...(row.root.suffix ?? []));
+  const root = row.root.platforms?.[platform] ?? row.root;
+  if (root.key) {
+    const set = clean(read(root.key));
+    if (set && paths.isAbsolute(set)) return paths.join(set, ...(root.suffix ?? []));
   }
-  return row.root.fallback.length ? paths.join(home, ...row.root.fallback) : "";
+  return root.fallback.length ? paths.join(home, ...root.fallback) : "";
 }
 
 /** The one recipe for an instance. A row with nothing to run, or a command that cannot be resolved, is kind "none" with an empty argv. */

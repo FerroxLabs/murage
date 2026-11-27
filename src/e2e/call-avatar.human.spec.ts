@@ -27,7 +27,7 @@ test.beforeAll(async () => {
   }]});await server.listen(0);const address=server.httpServer!.address();if(!address||typeof address==='string')throw new Error('No fixture port');origin=`http://127.0.0.1:${address.port}`;
 });
 test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
-test("call overlay honors a stored portrait/crops and retains animated mascot fallbacks",async({page},info)=>{
+test("call overlay honors a stored portrait and its crops, with mascot and initials fallbacks",async({page},info)=>{
   // Deterministic PNG portrait fixture; no remote photo, personal data or image API.
   const png=await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=320;canvas.height=400;const c=canvas.getContext('2d')!;c.fillStyle='#16384a';c.fillRect(0,0,320,400);c.fillStyle='#7ad6c3';c.fillRect(0,300,320,100);c.fillStyle='#e9b78e';c.beginPath();c.ellipse(160,165,85,110,0,0,Math.PI*2);c.fill();c.fillStyle='#352827';c.beginPath();c.ellipse(160,82,93,52,0,Math.PI,Math.PI*2);c.fill();c.fillRect(118,157,13,9);c.fillRect(190,157,13,9);c.strokeStyle='#873b35';c.lineWidth=7;c.beginPath();c.arc(160,205,33,0.2,Math.PI-0.2);c.stroke();return canvas.toDataURL('image/png').split(',')[1];});
   await page.route('**/api/attachments/portrait.png',route=>route.fulfill({contentType:'image/png',body:Buffer.from(png,'base64')}));
@@ -39,20 +39,24 @@ test("call overlay honors a stored portrait/crops and retains animated mascot fa
   await page.emulateMedia({reducedMotion:'reduce'});await expect(aura).toHaveAttribute('data-aura-mode','static');
   await page.emulateMedia({reducedMotion:'no-preference'});
   await page.evaluate(()=>document.documentElement.dataset.skin='light');
-  const portrait=page.getByRole('img',{name:'Ada avatar',exact:true});
+  const portrait=page.locator('[data-call-avatar-phase]')
+    .getByRole('img',{name:'Ada',exact:true})
+    .locator('img[src="/api/attachments/portrait.png"]');
+  // Absence checks match the portrait by URL alone: a stale portrait that lost its named wrapper must still fail them.
+  const anyPortrait=page.locator('img[src="/api/attachments/portrait.png"]');
   for(const[crop,radius]of[['circle','50%'],['rounded','22%'],['square','0px']]){
     await page.evaluate(crop=>(window as any).setAvatar({avatarCrop:crop}),crop);
-    await expect(portrait).toBeVisible();await expect(portrait).toHaveCSS('border-radius',radius);await expect(portrait).toHaveCSS('object-fit','cover');
+    await expect(portrait).toBeVisible();await expect(portrait).toHaveAttribute('alt','');await expect(portrait).toHaveCSS('border-radius',radius);await expect(portrait).toHaveCSS('object-fit','cover');
     expect(await portrait.evaluate(image=>(image as HTMLImageElement).naturalWidth)).toBe(320);
     expect(await portrait.boundingBox()).toMatchObject({width:220,height:220});
     await page.screenshot({path:info.outputPath(`portrait-${crop}.png`)});
   }
   await page.evaluate(()=>document.documentElement.dataset.skin='dark');await page.screenshot({path:info.outputPath('portrait-dark.png')});
   await page.evaluate(()=>(window as any).setAvatar({avatarCrop:'mascot'}));
-  const mascot=page.locator('svg[role="img"][aria-label="Ada"]');await expect(mascot).toBeVisible();await expect(portrait).toHaveCount(0);
+  const mascot=page.locator('svg[role="img"][aria-label="Ada"]');await expect(mascot).toBeVisible();await expect(anyPortrait).toHaveCount(0);
   const before=await mascot.evaluate(node=>node.outerHTML);await page.mouse.move(20,20);await expect.poll(()=>mascot.evaluate(node=>node.outerHTML)).not.toBe(before);
   await page.screenshot({path:info.outputPath('mascot.png')});
   await page.evaluate(()=>(window as any).setAvatar({avatarCrop:'circle',avatarUrl:null}));await expect(mascot).toBeVisible();
-  await page.evaluate(()=>(window as any).setAvatar({avatarUrl:'/api/attachments/missing.png'}));await expect(mascot).toBeVisible();await expect(portrait).toHaveCount(0);
+  await page.evaluate(()=>(window as any).setAvatar({avatarUrl:'/api/attachments/missing.png'}));await expect(page.locator('[data-call-avatar-phase]').getByText('A',{exact:true})).toBeVisible();await expect(page.locator('img[src="/api/attachments/missing.png"]')).toBeHidden();await expect(anyPortrait).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
 });

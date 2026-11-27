@@ -3,7 +3,7 @@
 import {readFileSync,realpathSync,statSync} from 'node:fs';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-export const PRIVATE_CORPUS='/work/build/_private/nolim-cards';
+export const PRIVATE_CORPUS='/root/fuigo-builds/swarm-b/_private/nolim-cards';
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const jsonl=path=>readFileSync(path,'utf8').split(/\r?\n/).filter(Boolean).map(s=>JSON.parse(s));
 const requireThat=value=>{if(!value)throw Error('Approved private corpus admission failed');};

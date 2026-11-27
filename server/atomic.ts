@@ -6,8 +6,9 @@
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "./counted-fs.ts";
-import { chmodSync, closeSync, fsyncSync, lstatSync, openSync, renameSync, unlinkSync } from "node:fs";
+import { chmodSync, closeSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
+import { loadExclusionAddon } from "./engine-exclusion.ts";
 import { registerTestHandle } from "./test-handle-registry.ts";
 import { assertFileWriteAdmission } from "./read-only-start.ts";
 
@@ -100,6 +101,27 @@ export function syncParentDirectoryStatus(path: string, platform: NodeJS.Platfor
   finally { closeSync(fd); }
 }
 
+/** What a published name guarantees: "synced" the rename reached the disk (POSIX directory fsync, or the Windows write-through move);
+ * "uncertain" the name is published but nothing proves the directory entry is durable (Windows without the native move, or a
+ * filesystem that refuses a directory sync). Never "synced" without a real barrier. */
+export type PublishDurability = "synced" | "uncertain";
+export interface PublishDurableOptions { platform?: NodeJS.Platform; /** test seam: the native move; default is the packaged addon's export when present */ renameDurable?: ((from: string, to: string) => number) | null }
+
+/** Renames `temp` onto `final` and says how durable the new name is. Windows: the addon's `renameDurable` (MoveFileExW
+ * REPLACE_EXISTING|WRITE_THROUGH) when present; otherwise a plain rename plus a flush of the re-opened file, reported "uncertain". */
+export function renameAndSyncParent(temp: string, final: string, options: PublishDurableOptions = {}): PublishDurability {
+  const platform = options.platform ?? process.platform;
+  if (platform === "win32") {
+    const native = options.renameDurable === undefined ? loadExclusionAddon()?.renameDurable?.bind(loadExclusionAddon()) : options.renameDurable;
+    if (native) { native(temp, final); return "synced"; }
+    renameSync(temp, final);
+    try { const fd = openSync(final, "r+"); try { fsyncSync(fd); } finally { closeSync(fd); } } catch { /* the name is published; durability stays uncertain */ }
+    return "uncertain";
+  }
+  renameSync(temp, final);
+  return syncParentDirectoryStatus(final, platform) === "synced" ? "synced" : "uncertain";
+}
+
 /** `syncDir` (opt-in): also fsync the parent directory after the rename, for stores whose loss across a power
  * cut matters (the browser restore store). Off by default: every other caller keeps the file-only fsync. */
 export type WriteFileAtomicOptions = { mode?: number; syncDir?: boolean; /** Opt-in custody protocols retain failed temporaries, including partial writes. */ keepFailedTemp?: boolean; rename?: (from: string, to: string) => void; /** Custom checked renames can own the retry schedule; do not nest two schedules. */ renameHandlesRetry?: boolean; platform?: NodeJS.Platform; /** test-only fault and order seams for the tmp file: open, write, fsync */ ops?: { open?: typeof openSync; write?: typeof writeFileSync; fsync?: typeof fsyncSync } };
@@ -108,6 +130,30 @@ export function writeFileAtomic(path: string, data: string | Uint8Array, options
   assertFileWriteAdmission(path);
   writeFileAtomicInner(path, data, options);
   atomicWriteCounts.set(path, (atomicWriteCounts.get(path) ?? 0) + 1);
+}
+
+/** Whether `path` is a plain file (not a link) holding exactly `bytes`, with `mode` where POSIX modes are real. */
+function holdsExactBytes(path: string, bytes: Buffer, mode: number | undefined, platform: NodeJS.Platform): boolean {
+  try {
+    const st = lstatSync(path);
+    if (!st.isFile() || st.size !== bytes.length) return false;
+    if (mode !== undefined && platform !== "win32" && (st.mode & 0o777) !== mode) return false;
+    return readFileSync(path).equals(bytes);
+  } catch { return false; }
+}
+
+/** FUIGO2BOT (1.0.20) r2: `writeFileAtomic` for a file that several bots' children share and may hold open (one
+ *  engine home's config). Windows refuses a rename onto a file another process holds open, so a second bot's launch
+ *  that rewrote the same bytes failed its turn with EPERM. A plain file that already holds exactly `data` is left
+ *  alone (no temp, no rename), and a refused replace is accepted only when the file then holds exactly `data` (two
+ *  first launches racing). Missing or different content is still written, or the refusal thrown. Returns whether it wrote. */
+export function writeFileAtomicUnlessSame(path: string, data: string | Uint8Array, options: WriteFileAtomicOptions = {}): boolean {
+  const bytes = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
+  const platform = options.platform ?? process.platform;
+  if (holdsExactBytes(path, bytes, options.mode, platform)) return false;
+  try { writeFileAtomic(path, bytes, options); }
+  catch (error) { if (holdsExactBytes(path, bytes, options.mode, platform)) return false; throw error; }
+  return true;
 }
 
 function writeFileAtomicInner(path: string, data: string | Uint8Array, options: WriteFileAtomicOptions = {}): void {

@@ -20,8 +20,6 @@ import { cdpUrlFromCli, startTargetGuard, type TargetGuard } from "./headless-ta
 import { HEADLESS_MODEL_TOOLS, listHeadlessBrowserTools, validateHeadlessBrowserCall } from "../browser-engine-policy.ts";
 import { turnSecret, turnSecretWired } from "../turn-credential.ts";
 
-const MAX_REQUEST_BYTES = 64 * 1024;
-const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const TOOL_NOT_AVAILABLE = "That browser tool is not available to bots.";
 const FAILURE = "Headless browser request refused or unavailable; the turn may have ended or control changed.";
 type Authority = { spec: AgentBrowserSpec; held: boolean };
@@ -40,20 +38,19 @@ export interface EngineClient {
   }) => Promise<unknown>;
   notify?: (method: string, params?: Record<string, unknown>) => Promise<void>;
   close: () => Promise<void>;
+  /** True once the engine process is gone (exit, spawn error, broken pipe, bad output): every later request refuses. */
+  ended?: () => boolean;
 }
 
-export async function boundedJson(response: Response, maxBytes: number): Promise<unknown> {
+export async function boundedJson(response: Response): Promise<unknown> {
   response = proxyUpstreamResponse("headlessBrowser", response);
   if (!response.ok || !response.body) throw new Error(FAILURE);
   const reader = response.body.getReader();
-  let size = 0;
   const chunks: Buffer[] = [];
   try {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      size += value.length;
-      if (size > maxBytes) throw new Error(FAILURE);
       chunks.push(Buffer.from(value));
     }
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -79,7 +76,7 @@ export function createHeadlessAuthorityReader(env: NodeJS.ProcessEnv, fetchImpl:
     const value = await boundedJson(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", fetchImpl(url, {
       headers: { authorization: `Bearer ${turnSecret("MURAGE_CONTROL_TOKEN", env)}` },
       redirect: "error", signal: AbortSignal.timeout(5000),
-    })), MAX_REQUEST_BYTES) as Partial<Authority> | null;
+    }))) as Partial<Authority> | null;
     const spec = value?.spec;
     if (typeof value?.held !== "boolean" || !spec || typeof spec.command !== "string" || !spec.command
       || !Array.isArray(spec.args) || !spec.args.every((arg) => typeof arg === "string")
@@ -96,7 +93,7 @@ export async function closeHeadlessAuthority(env: NodeJS.ProcessEnv, fetchImpl: 
     method: "DELETE", headers: { authorization: `Bearer ${turnSecret("MURAGE_CONTROL_TOKEN", env)}` },
     redirect: "error", signal: AbortSignal.timeout(15_000),
   }));
-  const receipt = await boundedJson(response, MAX_REQUEST_BYTES) as { closed?: unknown } | null;
+  const receipt = await boundedJson(response) as { closed?: unknown } | null;
   if (receipt?.closed !== true) throw new Error(FAILURE);
 }
 
@@ -124,6 +121,9 @@ export function startHeadlessEngine(spec: AgentBrowserSpec, upstreamRole: "headl
     pending.clear();
   };
   const closed = new Promise<void>((resolve) => child.once("close", () => { fail(); resolve(); }));
+  // The engine's stderr is discarded; its exit code, signal or spawn error code (never output) is what names an early death.
+  child.once("exit", (code, signal) => { if (!closePromise) console.warn(`[browser-engine] engine process ended code=${code ?? "-"} signal=${signal ?? "-"}`); });
+  child.once("error", (error) => console.warn(`[browser-engine] engine process failed to start code=${String((error as { code?: unknown }).code ?? "error").slice(0, 32)}`));
   // 'close' also waits for every stdio pipe to end. The engine's daemon inherits those pipes and
   // outlives the MCP process until its idle timeout (60 s), so 'exit' is the real end of the child.
   const exited = new Promise<void>((resolve) => child.once("exit", () => { fail(); resolve(); }));
@@ -139,7 +139,7 @@ export function startHeadlessEngine(spec: AgentBrowserSpec, upstreamRole: "headl
     clearTimeout(item.timer);
     if (message.error || !Object.hasOwn(message, "result")) item.reject(new Error(FAILURE));
     else item.resolve(message.result);
-  }, MAX_RESPONSE_BYTES);
+  });
   let reads = Promise.resolve();
   child.stdout.on("data", (chunk: Buffer) => {
     child.stdout.pause();
@@ -152,6 +152,7 @@ export function startHeadlessEngine(spec: AgentBrowserSpec, upstreamRole: "headl
   child.stdout.on("end", () => { void reads.then(() => splitter.flush()).catch(() => fail()); });
   return {
     engineTransport: true,
+    ended: () => stopped,
     async notify(method, params) {
       if (stopped) throw new Error(FAILURE);
       await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method, params })));
@@ -166,7 +167,7 @@ export function startHeadlessEngine(spec: AgentBrowserSpec, upstreamRole: "headl
           const item = pending.get(id);
           if (stopped || !item) return;
           if (upstreamRole) proxyTransportLost(upstreamRole);
-          void writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id } })).catch(fail);
+          void NotModelRequest("MCP cancellation notification to the local browser child.", writeMcpLine(child.stdin, JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id } }))).catch(fail);
           // a request with no clock still ends after a Stop
           if (options?.timeoutMs === null) { clearTimeout(item.timer); item.timer = setTimeout(kill, WITHDRAW_GRACE_MS); }
         };
@@ -260,7 +261,7 @@ export function createHeadlessBrowserProxy(options: {
   };
   const clean = (value: unknown) => {
     let serialized = JSON.stringify(value);
-    if (serialized === undefined || Buffer.byteLength(serialized) > MAX_RESPONSE_BYTES) throw new Error(FAILURE);
+    if (serialized === undefined) throw new Error(FAILURE);
     for (const secret of [...(typeof options.secrets === "function" ? options.secrets() : options.secrets ?? []), spec?.env.AGENT_BROWSER_ENCRYPTION_KEY]) {
       if (secret) serialized = serialized.replaceAll(secret, "[redacted]");
     }
@@ -355,14 +356,14 @@ export async function runHeadlessBrowserProxy(input: Readable = process.stdin, o
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
   const lines: string[] = [];
-  const splitter = createLineSplitter((line) => { lines.push(line); }, MAX_REQUEST_BYTES);
+  const splitter = createLineSplitter((line) => { lines.push(line); });
   const drain = async () => {
     for (const line of lines.splice(0)) {
       let message: Rpc;
       try { message = JSON.parse(line); } catch { seal(); throw new Error("MEMORY_CONTEXT_REVOKED"); }
       if (!message || typeof message !== "object") { seal(); throw new Error("MEMORY_CONTEXT_REVOKED"); }
       const response = await proxy.handle(message);
-      if (response !== undefined) await writeMcpLine(output, JSON.stringify(response), "headlessBrowser");
+      if (response !== undefined) await NotModelRequest("MCP response to the browser tool client.", writeMcpLine(output, JSON.stringify(response), "headlessBrowser"));
     }
   };
   try {
@@ -377,5 +378,5 @@ export async function runHeadlessBrowserProxy(input: Readable = process.stdin, o
   }
 }
 if (process.argv[1] && existsSync(process.argv[1]) && /headless-browser-proxy\.(?:ts|js)$/.test(process.argv[1])) {
-  void runHeadlessBrowserProxy().catch(() => { process.stderr.write("proxy cleanup failures=1\n"); process.exitCode = 1; });
+  void runHeadlessBrowserProxy().catch(() => { NotModelRequest("Process diagnostic to stderr before exit.", process.stderr.write("proxy cleanup failures=1\n")); process.exitCode = 1; });
 }

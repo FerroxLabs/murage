@@ -17,6 +17,7 @@ import { PARK_SQL, parkRetiredLeasedJobs } from "./park.ts";
 import { addTarget, bringInCopiesOf, deferRecordsScan, endSourceWork, forgetJob, INLINE_REVOCATION, noteSource, startRevocationJob, type RevocationJob, type RevocationTarget } from "./memory-revocation.ts";
 import { noteRevocation, RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL, revocationIndexReady, revokeAllDisclosures } from "./revocation.ts";
 import { REF_MATCH } from "./revocation-ref-match.ts";
+import { completeLegacyForgetsBeforeRestore } from "./legacy-forget-keys.ts";
 export { RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL };
 
 /** Main holds both stopped installations' leases until selection publication. */
@@ -181,6 +182,7 @@ export function pauseRestoredMemory(db: DatabaseSync) {
 
 /** Existing destination is held by the installation restore lease. */
 export function mergeDestinationMemoryDeletions(destination: string, candidate: string) {
+  completeLegacyForgetsBeforeRestore(join(destination,"messages.db")); // cause10 v2 r4: an older build's queued Forget is keyed before its ledger is read (legacy-forget-keys.ts)
   const original=join(destination,"messages.db"), target=join(candidate,"messages.db");
   if(!existsSync(original))return {merged:0,history:"backup-only"};
   const stat=lstatSync(original);

@@ -1,0 +1,249 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "held1022-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 held rows 21 (Fuigo Trust) and 29 (Sentinel Health)"
+  },
+  "author": "fuigotrust-fin-1021-wf1121",
+  "date": "2026-11-21",
+  "base": "f68bccc8c5",
+  "scope": "1.0.22 row 21 Fuigo Trust v2 folder trust strings, round 2: the copy seat's fixes and two clearer English reasons with new translations",
+  "strings": {
+    "en:folderTrust.reason.seed-not-durable": {
+      "text": "Fuigo's starting trust data could not be saved.",
+      "en": "Fuigo's starting trust data could not be saved.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "en:folderTrust.reason.ineligible-origin": {
+      "text": "This turn was not started by an eligible owner.",
+      "en": "This turn was not started by an eligible owner.",
+      "verdict": "pass",
+      "note": "Clear; no rule issues."
+    },
+    "de:folderTrust.reason.seed-not-durable": {
+      "text": "Die anfänglichen Vertrauensdaten von Fuigo konnten nicht gespeichert werden.",
+      "en": "Fuigo's starting trust data could not be saved.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "de:folderTrust.reason.ineligible-origin": {
+      "text": "Dieser Durchgang wurde nicht von einem berechtigten Eigentümer gestartet.",
+      "en": "This turn was not started by an eligible owner.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "es:folderTrust.processLabel": {
+      "text": "Ajustes de carpeta permitidos para este turno.",
+      "en": "Folder settings allowed for this turn.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "es:folderTrust.observationUnknown": {
+      "text": "No hay resultado de ajustes de carpeta.",
+      "en": "No folder settings result is available.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "es:folderTrust.withheldObservation": {
+      "text": "Se omitieron los ajustes de carpeta.",
+      "en": "Folder settings withheld.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "es:folderTrust.reason.seed-not-durable": {
+      "text": "No se pudieron guardar los datos de confianza iniciales de Fuigo.",
+      "en": "Fuigo's starting trust data could not be saved.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "es:folderTrust.reason.ineligible-origin": {
+      "text": "Este turno no lo inició un propietario autorizado.",
+      "en": "This turn was not started by an eligible owner.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "fr:folderTrust.processLabel": {
+      "text": "Réglages de dossier autorisés pour ce tour.",
+      "en": "Folder settings allowed for this turn.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "fr:folderTrust.processDescription": {
+      "text": "Cela n’enregistre pas de décision d’approbation.",
+      "en": "This does not save a trust decision.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "fr:folderTrust.observationUnknown": {
+      "text": "Aucun résultat pour les réglages de dossier.",
+      "en": "No folder settings result is available.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "fr:folderTrust.withheldObservation": {
+      "text": "Réglages de dossier non transmis.",
+      "en": "Folder settings withheld.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "fr:folderTrust.reason.store-unreadable": {
+      "text": "Impossible de lire les décisions d’approbation enregistrées.",
+      "en": "The saved trust store could not be read.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "fr:folderTrust.reason.seed-not-durable": {
+      "text": "Impossible d’enregistrer les données d’approbation initiales de Fuigo.",
+      "en": "Fuigo's starting trust data could not be saved.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "fr:folderTrust.reason.ineligible-origin": {
+      "text": "Ce tour n’a pas été lancé par un propriétaire autorisé.",
+      "en": "This turn was not started by an eligible owner.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "hi:folderTrust.processLabel": {
+      "text": "इस टर्न के लिए फ़ोल्डर की सेटिंग की अनुमति है।",
+      "en": "Folder settings allowed for this turn.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "hi:folderTrust.processDescription": {
+      "text": "इससे भरोसे का निर्णय सहेजा नहीं जाता।",
+      "en": "This does not save a trust decision.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "hi:folderTrust.lastTurn": {
+      "text": "पिछला टर्न",
+      "en": "Last turn",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "hi:folderTrust.savedChoiceSent": {
+      "text": "सहेजा गया जवाब Fuigo को भेजा गया।",
+      "en": "Saved answer sent to Fuigo.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "hi:folderTrust.searchAnswers": {
+      "text": "सहेजे गए जवाब खोजें",
+      "en": "Search saved answers",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "hi:folderTrust.withheldObservation": {
+      "text": "फ़ोल्डर की सेटिंग रोक दी गई।",
+      "en": "Folder settings withheld.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "hi:folderTrust.reason.seed-not-durable": {
+      "text": "Fuigo का शुरुआती भरोसे का डेटा सहेजा नहीं जा सका।",
+      "en": "Fuigo's starting trust data could not be saved.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "hi:folderTrust.reason.ineligible-origin": {
+      "text": "यह टर्न किसी पात्र स्वामी ने शुरू नहीं किया।",
+      "en": "This turn was not started by an eligible owner.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "ja:folderTrust.savedChoiceSent": {
+      "text": "保存された回答を Fuigo に送信しました。",
+      "en": "Saved answer sent to Fuigo.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "ja:folderTrust.reason.seed-not-durable": {
+      "text": "Fuigo の初期の信頼データを保存できませんでした。",
+      "en": "Fuigo's starting trust data could not be saved.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "ja:folderTrust.reason.ineligible-origin": {
+      "text": "このターンは対象となる所有者から開始されていません。",
+      "en": "This turn was not started by an eligible owner.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "pt-br:folderTrust.processLabel": {
+      "text": "Configurações da pasta permitidas neste turno.",
+      "en": "Folder settings allowed for this turn.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "pt-br:folderTrust.lastTurn": {
+      "text": "Último turno",
+      "en": "Last turn",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "pt-br:folderTrust.reason.seed-not-durable": {
+      "text": "Não foi possível salvar os dados de confiança iniciais do Fuigo.",
+      "en": "Fuigo's starting trust data could not be saved.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "pt-br:folderTrust.reason.ineligible-origin": {
+      "text": "Este turno não foi iniciado por um proprietário autorizado.",
+      "en": "This turn was not started by an eligible owner.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "zh:folderTrust.processLabel": {
+      "text": "已允许本回合使用文件夹设置。",
+      "en": "Folder settings allowed for this turn.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "zh:folderTrust.lastTurn": {
+      "text": "上一回合",
+      "en": "Last turn",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "zh:folderTrust.destination.per-turn-local-home": {
+      "text": "本回合专用的 Fuigo 本地目录",
+      "en": "Per-turn local Fuigo home",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "zh:folderTrust.destination.refused": {
+      "text": "回合不可用",
+      "en": "Turn unavailable",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "zh:folderTrust.withheldObservation": {
+      "text": "已暂不采用文件夹设置。",
+      "en": "Folder settings withheld.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "zh:folderTrust.reason.seed-not-durable": {
+      "text": "无法保存 Fuigo 的初始信任数据。",
+      "en": "Fuigo's starting trust data could not be saved.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "zh:folderTrust.reason.ineligible-origin": {
+      "text": "此回合并非由符合条件的所有者发起。",
+      "en": "This turn was not started by an eligible owner.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    },
+    "zh:folderTrust.reason.inactive-turn": {
+      "text": "此回合已不再运行。",
+      "en": "The turn is no longer active.",
+      "verdict": "pass",
+      "note": "Accurate; matches neighbour terms and house style."
+    }
+  },
+  "files": {}
+}

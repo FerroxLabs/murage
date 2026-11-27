@@ -10,11 +10,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { OptionCardData } from "@/state/store";
 
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { InboxQuickAnswer, quickAnswerOf, quickAnswerChoices, requestSummary, ALLOW_ONCE_BODY, DENY_BODY } = await import("../InboxRequest");
 const { NeedsRow } = await import("./NeedsRow");
 

@@ -46,7 +46,13 @@ belongs to old source and cannot satisfy the changed-main candidate. Verify Vali
 Ferrox Labs, LLC signatures on app/helper and exact shared/windows-backup-tools.mjs
 raw age/keygen/LICENSE hashes; no signing-policy or PATH changes.
 
-Use the already available FIXTURE-PC\\fixture-user Interactive/Limited session. A new
+Use the already admitted Interactive/Limited session. Staging, journey registration,
+LPAC extension preparation and completion, and the neighboring Backup-age task
+launchers require `-Account`, `-DesktopSid` and `-ProfileRoot`. Supply the account
+from the admitted session and its registered Windows profile directory. Each
+script resolves the account to the supplied SID and confirms the profile path
+against its ProfileList entry before proceeding. Task registration also checks
+the interactive account. A new
 task name, if needed, uses the existing scheduled-task mechanism only after root
 admits it. No new account/password/global install. Pin the existing executable
 tools by absolute paths. Refuse any other process already executing the extracted

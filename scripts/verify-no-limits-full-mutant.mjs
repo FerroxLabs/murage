@@ -1,9 +1,10 @@
+import { evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Isolated-container Full access byte-isolation mutant. Restore exact source.
 import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 const file='server/decision/action.ts',original=readFileSync(file,'utf8'),stamp=statSync(file);
-const directory='evidence/nlsym/C1-full-mutant';mkdirSync(directory,{recursive:true});
+const directory=evidencePath('evidence/nlsym/C1-full-mutant');mkdirSync(directory,{recursive:true});
 function run(label){
   const result=spawnSync('node_modules/.bin/vitest',['run','server/no-limits-symlink-r31.test.ts'],{
     encoding:'utf8',timeout:60000,env:{...process.env,NLSYM_FULL_ONLY:'1'},

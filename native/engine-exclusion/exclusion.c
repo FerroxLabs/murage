@@ -42,7 +42,7 @@
 //                                  HashMismatch, NotTrusted, UnknownError); `publisher` is the signer certificate's simple name when
 //                                  Valid, else ""; `code` is WinVerifyTrust's own result. Murage checks its own signed files with it,
 //                                  so opening Murage starts no PowerShell (murage-releases #1).
-//   jobCreate / jobAssign / jobClose / jobStop, processStart, driveInfo, fileOwnerSid, accountSid, machineSid, speechVoices,
+//   jobCreate / jobAssign / jobClose / jobStop, processStart, terminateIfStart, processPresence, driveInfo, fileOwnerSid, accountSid, machineSid, speechVoices,
 //   speechToWave                   Windows (version 8): the calls that replaced every PowerShell Murage used to start itself: the
 //                                  memory-maintenance job object, a process's exact creation time, a folder's drive type and format,
 //                                  a file's owner SID and account-name lookups, and SAPI speech. Each is described where it is defined.
@@ -880,6 +880,36 @@ static napi_value rename_no_replace(napi_env env, napi_callback_info info) {
   return fail_code(env, errname(error), "renameNoReplace failed");
 #endif
 }
+
+// ── renameDurable(from, to): Windows only (FUIGO-TRUST-V2 seed barrier) ─────
+
+#ifdef _WIN32
+/* Replaces `to` with `from` and returns only after the move reached the disk (MOVEFILE_WRITE_THROUGH). Windows has no
+ * directory fsync, so this is the one barrier for a published name. Additive: not a WINDOWS_NATIVE_FUNCTIONS member and
+ * no version bump; an older build simply lacks the export and the caller reports the seed as uncertain. */
+static napi_value rename_durable(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 2) return fail(env, "renameDurable needs two paths");
+  size_t from_length = 0, to_length = 0;
+  if (napi_get_value_string_utf16(env, argv[0], NULL, 0, &from_length) != napi_ok || napi_get_value_string_utf16(env, argv[1], NULL, 0, &to_length) != napi_ok)
+    return fail(env, "a path must be a string");
+  char16_t *from = malloc((from_length + 1) * sizeof(char16_t));
+  char16_t *to = malloc((to_length + 1) * sizeof(char16_t));
+  if (!from || !to) { free(from); free(to); return fail(env, "out of memory"); }
+  napi_get_value_string_utf16(env, argv[0], from, from_length + 1, &from_length);
+  napi_get_value_string_utf16(env, argv[1], to, to_length + 1, &to_length);
+  BOOL moved = MoveFileExW((LPCWSTR)from, (LPCWSTR)to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+  DWORD error = GetLastError();
+  free(from); free(to);
+  if (moved) return make_int(env, 0);
+  if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return fail_code(env, "ENOENT", "renameDurable: not found");
+  if (error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION) return fail_code(env, "EBUSY", "renameDurable: in use");
+  if (error == ERROR_ACCESS_DENIED) return fail_code(env, "EACCES", "renameDurable: access denied");
+  return fail_code(env, "EIO", "renameDurable failed");
+}
+#endif
 
 // ── writers(path), fullSync(fd): macOS, Linux ──────────────────────────
 
@@ -2170,6 +2200,61 @@ static napi_value process_start(napi_env env, napi_callback_info info) {
   return out;
 }
 
+// processPresence(pid): "absent" when no live process holds the pid (OpenProcess fails with ERROR_INVALID_PARAMETER, the
+// kernel's "no such process", or the process object it opens has already exited, so the pid cannot be reused while we
+// look), "present" when a running process holds it, "unknown" for anything else (access denied, any other error: the
+// caller fails closed). Locale-independent, unlike a parse of tasklist's no-match line (DESIGN 1022-cua-windows D19).
+static napi_value process_presence(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1], out;
+  uint32_t pid = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 1 || napi_get_value_uint32(env, argv[0], &pid) != napi_ok || pid == 0) return fail(env, "processPresence needs a pid");
+  const char *answer = "unknown";
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
+  if (!process) {
+    if (GetLastError() == ERROR_INVALID_PARAMETER) answer = "absent";
+  } else {
+    DWORD wait = WaitForSingleObject(process, 0);
+    if (wait == WAIT_OBJECT_0) answer = "absent";
+    else if (wait == WAIT_TIMEOUT) answer = "present";
+    CloseHandle(process);
+  }
+  napi_create_string_utf8(env, answer, NAPI_AUTO_LENGTH, &out);
+  return out;
+}
+
+// terminateIfStart(pid, start): identity and termination on ONE process handle (DESIGN 1022-cua-windows D19). Opens the
+// process once, reads its creation time from THAT handle and calls TerminateProcess on the same handle only when it
+// equals `start` (the FILETIME decimal processStart gives). "terminated", "mismatch" (another process holds the pid)
+// or "unknown" (could not open or read: the caller fails closed). A check by pid then a kill by pid could hit a pid
+// reused in between; this cannot.
+static napi_value terminate_if_start(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2], out;
+  uint32_t pid = 0;
+  char expected[32];
+  size_t expected_len = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc < 2 || napi_get_value_uint32(env, argv[0], &pid) != napi_ok || pid == 0) return fail(env, "terminateIfStart needs a pid");
+  if (napi_get_value_string_utf8(env, argv[1], expected, sizeof expected, &expected_len) != napi_ok || expected_len == 0 || expected_len >= sizeof expected - 1)
+    return fail(env, "terminateIfStart needs a start");
+  const char *answer = "unknown";
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
+  if (process) {
+    FILETIME created, exited, kernel, user;
+    if (GetProcessTimes(process, &created, &exited, &kernel, &user)) {
+      char text[32];
+      snprintf(text, sizeof text, "%llu", ((unsigned long long)created.dwHighDateTime << 32) | created.dwLowDateTime);
+      if (strcmp(text, expected) != 0) answer = "mismatch";
+      else if (TerminateProcess(process, 1)) answer = "terminated";
+    }
+    CloseHandle(process);
+  }
+  napi_create_string_utf8(env, answer, NAPI_AUTO_LENGTH, &out);
+  return out;
+}
+
 // driveInfo(path): { type, format } of the volume that holds `path` (GetVolumePathNameW, GetDriveTypeW, GetVolumeInformationW),
 // with .NET DriveInfo's type names; null when it cannot be told.
 static napi_value drive_info(napi_env env, napi_callback_info info) {
@@ -2592,6 +2677,7 @@ NAPI_MODULE_INIT() {
 #endif
 #endif
 #ifdef _WIN32
+  add(env, exports, "renameDurable", rename_durable);
   add(env, exports, "openFile", open_file);
   add(env, exports, "handleRead", handle_read);
   add(env, exports, "handleWrite", handle_write);
@@ -2608,6 +2694,8 @@ NAPI_MODULE_INIT() {
   add(env, exports, "jobClose", job_close);
   add(env, exports, "jobStop", job_stop);
   add(env, exports, "processStart", process_start);
+  add(env, exports, "terminateIfStart", terminate_if_start);
+  add(env, exports, "processPresence", process_presence);
   add(env, exports, "driveInfo", drive_info);
   add(env, exports, "fileOwnerSid", file_owner_sid);
   add(env, exports, "accountSid", account_sid);

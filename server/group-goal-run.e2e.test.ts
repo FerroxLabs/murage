@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,6 +13,7 @@ import { pollWhileProgressing } from "./testing/progress-poll.ts";
 import { redactSecrets } from "./redact.ts";
 import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 import { memoryVerificationMeter } from "./testing/memory-verification-fixture.ts";
+import { openSse } from "./testing/sse.ts";
 
 /** A goal run is finished once it leaves "working". Each turn taken buys another
  * idle window; `maxMs` stays inside the test's own timeout. */
@@ -92,6 +94,16 @@ beforeAll(async () => {
           FAKE_CLAUDE_MODE: "happy",
           FAKE_CLAUDE_REPLIES: JSON.stringify(completeReplies),
           FAKE_CLAUDE_REPLY_STATE: join(home, "complete-replies.txt"),
+        },
+        config: { cli: FAKE_CLAUDE },
+      },
+      maskedGoal: {
+        driver: "claudeAgent",
+        displayName: "Withheld reply fixture",
+        environment: {
+          FAKE_CLAUDE_REPLIES: JSON.stringify([
+            'Coordinator reply.\n<murage-goal>{"status":"completed","detail":"Finished the goal."}</murage-goal>',
+          ]),
         },
         config: { cli: FAKE_CLAUDE },
       },
@@ -224,6 +236,12 @@ beforeAll(async () => {
     const create = ClaudeDriver.create;
     ClaudeDriver.create = async function(input) {
       const instance = await create.call(this, input);
+      if (input.instanceId === 'maskedGoal') {
+        const adapter = instance.adapter, onEvent = adapter.onEvent.bind(adapter);
+        adapter.onEvent = listener => onEvent((event, source) => listener(
+          event.type === 'item.started' && event.itemType === 'tool' && event.origin === 'engine'
+            ? { ...event, summary: 'password: fixture-only-value' } : event, source));
+      }
       if (input.instanceId !== 'routineGoal') return instance;
       const adapter = instance.adapter, send = adapter.sendTurn.bind(adapter);
       const log = row => appendFileSync(${JSON.stringify(join(home, "routine-lifecycle.jsonl"))}, JSON.stringify(row) + '\\n');
@@ -284,6 +302,59 @@ afterAll(async () => {
 });
 
 describe("goal-driven channel runs", () => {
+  it("shows a withholding notice for the masked coordinator reply and tool", async () => {
+    const lead = (await api("POST", "/api/bots", {
+      name: "Room lead",
+      modelSelection: { instanceId: "maskedGoal", model: "claude-sonnet-5" },
+      requireAvailableModel: true,
+    })).body.bot;
+    const room = (await api("POST", "/api/groups", {
+      name: "Room display fixture",
+      memberIds: [lead.id],
+      setup: { bulletin: "", defaultResponder: { kind: "member", botId: lead.id } },
+    })).body.group;
+    const stream = await openSse(`${base}/api/events`, {
+      "x-murage-surface": "desktop",
+      "x-murage-surface-secret": DESKTOP_SECRET,
+    });
+    try {
+      const sent = await desktopApi("POST", `/api/groups/${room.id}/messages`, {
+        text: "Complete the goal", mode: "goal", sendId: "goal-send-withheld-reply",
+      });
+      expect(sent.status, JSON.stringify(sent.body)).toBe(202);
+      const readRoom = async () => (await desktopApi("GET", "/api/bots?messages=30")).body.groups
+        .find((candidate: { id: string }) => candidate.id === room.id);
+      const goal = await pollWhileProgressing(async () => (await readRoom()).messages
+        .find((row: { kind: string }) => row.kind === "goal.run")?.goalRun, GOAL_RUN_WAIT(30_000));
+      expect(goal).toMatchObject({ status: "completed", turnCount: 1 });
+      const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+      const rows = (() => {
+        try {
+          return db.prepare("SELECT json FROM messages WHERE thread_id = ? AND role = 'bot' ORDER BY rowid")
+            .all(room.threadId).map(row => JSON.parse(String(row.json)));
+        } finally {
+          db.close();
+        }
+      })();
+      const replies = rows.filter((row: { kind: string }) => row.kind === "text");
+      const tools = rows.flatMap((row: { tool?: { name: string; summary?: string } }) => row.tool ? [row.tool] : []);
+      const liveReply = stream.frames.find(frame => frame.kind === "runtime"
+        && frame.event.threadId === room.threadId && frame.event.eventId.endsWith("-goal-text"));
+      expect.soft(replies.map((row: { text: string }) => row.text)).toEqual([
+        "Murage held back this message because it may repeat something that must stay hidden.",
+      ]);
+      expect.soft(liveReply?.event.text).toBe(
+        "Murage held back this message because it may repeat something that must stay hidden.",
+      );
+      expect.soft(tools).toContainEqual(expect.objectContaining({ name: "Tool details withheld" }));
+      expect.soft(tools.every((tool: { summary?: string }) => tool.summary === undefined)).toBe(true);
+      expect(JSON.stringify(tools)).not.toContain("Bash");
+      expect(JSON.stringify({ rows, frames: stream.frames })).not.toMatch(/fixture-only-value|Coordinator reply\./);
+    } finally {
+      stream.close();
+    }
+  }, 40_000);
+
   it("returns to the lead until the goal is completed and appends a clean receipt", async () => {
     const lead = (await api("POST", "/api/bots", {
       name: "Lead",

@@ -1817,6 +1817,35 @@ describe("Fuigo keeps one engine process per thread, opt-in (upstream #1575, MUR
     expect(lines("peer-capabilities.jsonl").map(line => JSON.parse(line)).at(-1).capability).toBe(fixtureCredentialFingerprint("turn-two"));
   });
 
+  // W-W1 (DESIGN 1022-cua-windows R19, warm-active-only): a turn that mounts the Windows host computer never leaves a warm engine
+  // behind. Two layers hold it (core.ts `poolable` excludes integrations.localComputer; mountedTurn counts it as a mount), so the mutant removes
+  // both; the same thread without a computer IS reused (the control). No pool change in this build: green on the base by design (a pin).
+  it.skipIf(process.platform === "win32")("W-W1 a turn holding the win32 host computer is not pooled: its second turn starts a fresh process, the plain thread reuses one", async () => {
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-pool-win-computer",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const adapter = instance.adapter;
+    const events = recorder;
+    const spawns = () => readFileSync(join(dumps, "spawns.log"), "utf8").split("\n").filter(Boolean).length;
+    const turn = async (threadId: string, text: string, withComputer: boolean, resumeCursor?: string) => {
+      const sent = await adapter.sendTurn({
+        cwd: fixtureBotFolder(), threadId, text, ...(resumeCursor ? { resumeCursor } : {}),
+        ...(withComputer ? { integrations: { localComputer: { command: process.execPath, args: [IDLE_MCP, "mcp"], env: {}, platform: "win32", scope: "local-computer" } } } : {}),
+      });
+      await events.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    };
+    await turn("t-pool-plain", "one", false);
+    await turn("t-pool-plain", "two", false, "fake-fuigo-session");
+    expect(spawns(), "control: the plain thread's second turn reuses the warm process").toBe(1);
+    await turn("t-pool-win", "one", true);
+    await turn("t-pool-win", "two", true, "fake-fuigo-session");
+    expect(spawns(), "the win32 computer thread started a process per turn and parked none").toBe(3);
+  });
   it("a warm second turn that picks a different model sends set_model with the new id before its prompt", async () => {
     process.env.MURAGE_ACP_POOL = "1";
     onTestFinished(() => { delete process.env.MURAGE_ACP_POOL; });

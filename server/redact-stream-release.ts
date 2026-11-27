@@ -28,13 +28,16 @@ export const A2_WHOLE = 8 * SECRET_SCAN_BUDGET;
 export const A2_ROW = A2_STREAM;
 export const H_ROW = 256;
 export const CONTEXT_LIMIT = 65_536;
+/** cause22-E (b) (MAIN-RULING 2026-11-22T17:47:36Z, designs/REDACT-AUDIENCE-1021.md 5.3): scan work is granted per character of
+ * the text scanned, never as a fixed amount, so no text is withheld because it is long. */
+export const SCAN_RATE = 64;
 
-export type Scanner = (text: string, options: { mode: "turn"; budget: number }) => SecretScanResult;
+export type Scanner = (text: string, options: { mode: "turn"; budget: number; perChar?: number }) => SecretScanResult;
 export type UnitResult = Readonly<{ text: string; detected: boolean; exhausted: boolean; workUnits: number; spans?: readonly { from: number; to: number }[] }>;
 
 /** The policy and its oracle use this very same composite checker. */
 export function checkTurnUnit(text: string, budget = SECRET_SCAN_BUDGET, scan: Scanner = scanTurnText): UnitResult {
-  return scan(text, { mode: "turn", budget: Math.min(SECRET_SCAN_BUDGET, budget) });
+  return scan(text, { mode: "turn", budget: Math.min(SECRET_SCAN_BUDGET, budget), perChar: SCAN_RATE });
 }
 
 export class ScanLimit extends Error {
@@ -46,15 +49,25 @@ export class ScanLimit extends Error {
 export class ScanMeter {
   work = 0;
   scanExhausted = 0;
-  readonly allowance: number;
+  /** 1.0.22 cause B (masked values): every unit this meter found a hit in, with the scan's spans, for the life of the meter (one
+   * consume, reset or finish). The policy turns them into its latch payload (redact-turn.ts latchOf); raw text never outlives the call. */
+  readonly hits: { text: string; spans: readonly { from: number; to: number; wrapped?: boolean }[] }[] = [];
+  /** More hit units than the meter keeps: the payload cannot name every value (the latch is then unproven). */
+  hitsOverflow = false;
+  allowance: number;
   readonly scan: Scanner;
   constructor(allowance = A2_STREAM, scan: Scanner = scanTurnText) { this.allowance = allowance; this.scan = scan; }
   get remaining(): number { return this.allowance - this.work; }
+  /** The allowance grows with the text offered to this consume or finish (a rate, design 5.3): size can never reach it. */
+  grant(chars: number): void { this.allowance += 4 * SCAN_RATE * chars; }
   check(text: string): UnitResult {
     const remaining = this.remaining;
     if (remaining <= 0) throw new ScanLimit("DEFER");
-    const result = checkTurnUnit(text, Math.min(SECRET_SCAN_BUDGET, remaining), this.scan);
-    if (!Number.isInteger(result.workUnits) || result.workUnits < 0 || result.workUnits > Math.min(SECRET_SCAN_BUDGET, remaining)) {
+    let result: UnitResult;
+    // A scanner that throws has not cleared this unit: it is UNREDACTABLE (design 5.5), the same outcome as exhausted work.
+    try { result = checkTurnUnit(text, Math.min(SECRET_SCAN_BUDGET, remaining), this.scan); }
+    catch { this.scanExhausted++; throw new ScanLimit("FC-SCAN"); }
+    if (!Number.isInteger(result.workUnits) || result.workUnits < 0 || result.workUnits > Math.min(SECRET_SCAN_BUDGET, remaining) + SCAN_RATE * text.length) {
       throw new Error("Invalid scanner work accounting");
     }
     this.work += result.workUnits;
@@ -63,8 +76,13 @@ export class ScanMeter {
       this.scanExhausted++;
       throw new ScanLimit("FC-SCAN");
     }
+    if (result.detected) {
+      if (this.hits.length >= ScanMeter.HITS_MAX) this.hitsOverflow = true;
+      else this.hits.push({ text, spans: result.spans ?? [] });
+    }
     return result;
   }
+  static readonly HITS_MAX = 64;
   clean(text: string): boolean { const r = this.check(text); return !r.detected && r.text === text; }
 }
 

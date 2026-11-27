@@ -60,6 +60,11 @@ function localComputerReady(platform, connection) {
   if (platform === "darwin") {
     return connection?.mode === "embedded" || connection?.mode === "standalone";
   }
+  if (platform === "win32") {
+    // DESIGN 1022-cua-windows: the supervised runtime's own status (electron/cua-windows-runtime.cjs)
+    return connection?.mode === "windows-supervised" && connection?.platform === "win32"
+      && connection?.enabled === true && connection?.status === "ready";
+  }
   if (
     platform !== "linux" ||
     connection?.schemaVersion !== 1 ||
@@ -167,7 +172,7 @@ function desktopCapabilities({
 
 function connectionEnabled(platform, connection) {
   if (platform === "darwin") return localComputerReady(platform, connection);
-  return platform === "linux" && connection?.enabled === true;
+  return (platform === "linux" || platform === "win32") && connection?.enabled === true;
 }
 
 module.exports = {

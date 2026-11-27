@@ -14,6 +14,9 @@ import { LINUX_HOME_TESTS } from "./server/testing/linux-home-tests";
 // started by scripts/ci-windows-standard-user.ps1, the only place that sets MURAGE_TEST_STANDARD_USER_RT=1. The variable
 // only allows collection; the file's own first assertion (a token that is not elevated) still has to pass. This list
 // sits outside the test.exclude literal on purpose, so scripts/ci-test-tiers.mjs still classifies the file as a gate test.
+// Keep image-only and POSIX crash tests discoverable by the tier inventory.
+const MAILTEST_ONLY = "server/mailbox/testing/mail-server.test.ts";
+const MAILBOX_CRASH_TEST = "server/mailbox/testing/commit-gate.test.ts";
 const STANDARD_USER_ONLY_TESTS = ["server/installation-windows-backup-roundtrip.test.ts"];
 const standardUserRun = process.env.MURAGE_TEST_STANDARD_USER_RT === "1";
 
@@ -50,7 +53,7 @@ export default defineConfig({
     },
   },
   test: {
-    // Missing snapshots are failures on every runner, including local build host
+    // Missing snapshots are failures on every runner, including local Hetzner
     // and vt shells without CI. Re-recording requires an explicit --update.
     update: "none",
     environment: "node",
@@ -71,8 +74,14 @@ export default defineConfig({
       "src/attention-ui/AttentionPanel.test.tsx",
       "src/float/*.test.tsx",
       "src/components/PinToEdgeMenuItem.test.tsx",
+      "src/components/NotifyMeSettings.test.tsx",
       "src/pill/Pill.test.tsx",
       "src/components/DataFolderSettings.test.tsx",
+      "src/components/ReconnectAppsBanner.panel.test.tsx",
+      "src/components/notice-lane.test.tsx",
+      "src/components/command-notice-1021.test.tsx",
+      "src/hooks/use-warm-intent-presence.test.tsx",
+      "src/components/LinuxLocalControl.test.tsx",
       "shared/**/*.test.ts",
       "tools/**/*.test.ts",
       "companion/**/*.test.ts",
@@ -81,7 +90,7 @@ export default defineConfig({
     // electron/signed-fetch.test.mjs is test support (imported by the node:test files), not a test: vitest finds no suite in it.
     // On Windows the Cloud home tests that drive its Linux-only pieces are left out (the reason and the list are in
     // server/testing/linux-home-tests.ts); every other OS runs them.
-    exclude: [...configDefaults.exclude, "electron/signed-fetch.test.mjs", "scripts/nolim-replay/j1-availability.test.mjs", "scripts/probes/native-deny/tests/fixture.test.mjs", "scripts/probes/native-deny/tests/helpers.test.mjs", "scripts/probes/native-deny/tests/results.test.mjs", "scripts/probes/native-deny/tests/review-regressions.test.mjs", "scripts/probes/native-deny/tests/runner.test.mjs", ...(process.platform === "win32" ? LINUX_HOME_TESTS : []), ...(standardUserRun ? [] : STANDARD_USER_ONLY_TESTS)],
+    exclude: [...configDefaults.exclude, MAILTEST_ONLY, "electron/signed-fetch.test.mjs", "scripts/nolim-replay/j1-availability.test.mjs", "scripts/probes/native-deny/tests/fixture.test.mjs", "scripts/probes/native-deny/tests/helpers.test.mjs", "scripts/probes/native-deny/tests/results.test.mjs", "scripts/probes/native-deny/tests/review-regressions.test.mjs", "scripts/probes/native-deny/tests/runner.test.mjs", ...(process.platform === "win32" ? [...LINUX_HOME_TESTS, MAILBOX_CRASH_TEST] : []), ...(standardUserRun ? [] : STANDARD_USER_ONLY_TESTS)],
     setupFiles: ["server/testing/setup.ts"],
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win
@@ -96,7 +105,7 @@ export default defineConfig({
     // (scripts/release-ci-gate.mjs). The rule is in .github/workflows/nightly.yml.
     tags: [
       { name: "nightly", description: "Over 60 s on a hosted runner: runs in nightly.yml on all three OSes, not in the per-push shards (memory-timing-nightly.yml also runs the WebAssembly parity test with the pinned model prepared)." },
-      { name: "perf-budget", description: "Asserts a wall-clock budget measured on dedicated hardware: runs on the build host perf job in nightly.yml, not on hosted runners." },
+      { name: "perf-budget", description: "Asserts a wall-clock budget measured on dedicated hardware: runs on the Hetzner perf job in nightly.yml, not on hosted runners." },
     ],
   },
   resolve: {

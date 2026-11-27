@@ -135,7 +135,10 @@ describe.skipIf(process.platform === "win32")("io-budget: a real drain on a real
     expect(first.counted).toBeGreaterThan(10 * MB); // Linux and macOS alike (r3.6: the macOS floor is the addon's diskWritten)
   });
 
-  it("M-exhaust: a commit's OS bytes beyond its charge are charged to admission, stop the drain, and the next minute resumes it", () => {
+  // 1.0.21 B1 (MEMORY-V2-DESIGN 4.8, "never another writer's bytes; the OS term is removed on every OS"): this case asserted the opposite
+  // (the autocheckpoint's OS bytes on the drain's thread were charged and stopped the drain). It now asserts that they are not: the rows x C
+  // charge alone holds admission, so the next slice still fits this minute. The io watchdog still counts those bytes.
+  it("M-exhaust: a commit's OS bytes are never charged to admission; the rows x C charge alone decides, on every OS", () => {
     revokeBudget.REVOKE_PACE.bytesPerMinute = Number.POSITIVE_INFINITY; // admission alone
     const fx = storm(2000);
     try {
@@ -159,17 +162,13 @@ describe.skipIf(process.platform === "win32")("io-budget: a real drain on a real
       const wait = revokeBudget.revokeWriteWaitMs(revokeBudget.revokeSliceNeed(fx.db), now);
       console.log(`IODRAIN EXH platform=${process.platform} slices=${meter("slices") - slices0} rowsCharge=${rowsCharge} beyond=${beyond} added=${added} wait=${wait}`);
       expect(pending).toBe(true);
-      if (process.platform !== "linux") return; // the thread OS counter is Linux's
-      expect(beyond).toBeGreaterThan(4 * MB); // forced past: the checkpoint's OS bytes on the drain's thread
-      expect(added).toBe(rowsCharge + beyond); // admission holds the rows x C charge AND the overhead, exactly
-      expect(ledger0 + rowsCharge + revokeBudget.revokeSliceNeed(fx.db)).toBeLessThanOrEqual(budget); // without the overhead there was room for the next slice
-      expect(wait).toBeGreaterThan(0); // with it there is none: the stop is the overhead's (a mutant that drops it fails here)
+      expect(rowsCharge).toBeGreaterThan(0);
+      expect(beyond).toBe(0); // the checkpoint's OS bytes on the drain's thread are not the drain's charge
+      expect(added).toBe(rowsCharge); // admission holds the rows x C charge, exactly
+      expect(ledger0 + rowsCharge + revokeBudget.revokeSliceNeed(fx.db)).toBeLessThanOrEqual(budget); // so there is room for the next slice
+      expect(wait).toBe(0); // and it is not stopped (a mutant that charges the OS term back fails here on Linux and macOS)
       expect(drainRevokeMarkerBounded(fx.db, { rows: 256, ms: 1_000_000 })).toBe(true);
-      expect(meter("slices") - slices0).toBe(1); // nothing more was admitted this minute
-      now += MINUTE + 1; // recovery
-      expect(revokeBudget.revokeWriteWaitMs(revokeBudget.revokeSliceNeed(fx.db), now)).toBe(0);
-      drainRevokeMarkerBounded(fx.db, { rows: 256, ms: 1_000_000 });
-      expect(meter("slices") - slices0).toBe(2);
+      expect(meter("slices") - slices0).toBe(2); // admitted in the same minute
     } finally { fx.close(); }
   });
 

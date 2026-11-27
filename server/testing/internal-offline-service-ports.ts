@@ -45,7 +45,8 @@ export function offlineInternalServicePorts(context?: InternalPortContext): Stat
   ] as const;
   const unopened = [
     ["routines", "Production declares the routine manager null before runtime wiring; positive cases supply the real manager."],
-    ["phoneCallService", "Production starts with no phone call service and creates it lazily."],
+    ["phoneCallService", "The isolated installation has no started phone call service."],
+    ["phoneCallStore", "The isolated installation has no opened phone call history."],
     ["calendarCalls", "Production starts with no calendar call manager before service wiring."],
   ] as const;
   return [

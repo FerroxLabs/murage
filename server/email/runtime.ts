@@ -21,7 +21,7 @@ import { authorizeEmailCall, emailMounts, EMAIL_UNAVAILABLE, EMAIL_OFF, EMAIL_DI
 import { recordEmailTurn } from "./email-turns.ts";
 import { isEmailToolName } from "../drivers/email-tool-schemas.ts";
 import type { SendRow } from "./email-store.ts";
-import { EmailCards, type EmailCardHost } from "./cards.ts";
+import { EmailCards, fencedEmailHost, type EmailCardHost } from "./cards.ts";
 import { deleteScope, tokensFor, type ParkRecord } from "./owner-view.ts";
 import { isGateRefusal } from "./removal-gate.ts";
 import { EmailBindingService, commitDeletionIntent, recordDeletionIntent, withdrawDeletionIntent } from "./binding-service.ts";
@@ -50,6 +50,10 @@ export interface EmailRuntimeOptions {
   restoreWindow?: () => boolean;
   /** The saved Flux account key (flux-config.ts fluxKey()); only #31 uses it. */
   accountKey: () => string | null;
+  /** fprod3 N5: the server's botFenced; the client refuses a send for such a bot before it leaves */
+  botFenced?: (botId: string) => boolean;
+  /** the bot whose conversation a thread is (the card host's fence resolves a thread call to its bot) */
+  botOfThread?: (threadId: string) => string | undefined;
   /** database.ts database() */
   database: () => DatabaseSync;
   /** database.ts transaction, as fn => transaction(() => fn()) */
@@ -145,6 +149,7 @@ export class EmailRuntime {
       // EMAIL-ACCOUNT-CHANGE r3: a bot key is used only when the database names it (retired-keys.ts) and the shell has it on disk
       credentials: emailCredentialProvider(this.secrets, account, (botId, inboxId) => { const store = this.services()?.store; return store ? expectedBotKey(store, botId, inboxId) : null; }),
       observe: (ref, outcome) => this.health.observe(ref, outcome),
+      ...(options.botFenced ? { botFenced: options.botFenced } : {}),
       // r6 F1b: a charge (send, reply) on an inbox whose owner is unproven is refused here with no request, even if it slipped past the fence
       gate: ref => (ref.kind === "bot" && ref.charge === true && this.current?.bindings.ownerProven(ref.botId) === false ? { kind: "local_refused", code: "owner_unproven" } as const : this.health.gate(ref)),
       restoreOutcomes: {
@@ -213,7 +218,7 @@ export class EmailRuntime {
     const cardsRef: { current: EmailCards | null } = { current: null };
     const bindingsRef: { current: EmailBindingService | null } = { current: null };
     cardsRef.current = this.options.cardHost ? new EmailCards({
-      store, send, host: this.options.cardHost, now: this.options.now,
+      store, send, host: this.options.botFenced ? fencedEmailHost(this.options.cardHost, this.options.botFenced, threadId => this.options.botOfThread?.(threadId)) : this.options.cardHost, now: this.options.now,
       // earned trust (3.5): Add writes the exact address to Flux with the email:owner token, then the local list
       addTrusted: async (botId, address) => {
         const inboxId = store.getBinding(botId)?.inboxId;
@@ -262,6 +267,7 @@ export class EmailRuntime {
   /** 5.2: one owner notice per bot per batch; filtered mail makes none. */
   private arrived(botId: string, arrivals: EmailArrival[]): void {
     const shown = arrivals.filter(item => !item.filtered);
+    if (this.options.botFenced?.(botId)) return;
     const threadId = this.options.bot(botId)?.threadId;
     if (!shown.length || !threadId) return;
     this.options.onArrival?.(botId, threadId, { from: shown[0]!.from, more: shown.length - 1 });

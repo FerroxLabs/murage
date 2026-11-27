@@ -31,7 +31,6 @@ export const CLOUD_REFUSED_PATTERNS = Object.freeze([
   "desktop:pick-folder",
   "desktop:surface-secret", // sync: the refused sender gets ""
   "credential:set",
-  "highlevel:*", // local encrypted capability bank; never commit credentials from a Cloud window
   "model-signin:*",
   "backup-*",
   "companion:*",
@@ -63,6 +62,7 @@ export const CLOUD_ONLY_CHANNELS = Object.freeze([
   "cloud-home:browser-popout:state-now", // list only the sender's home or own pop-out
   "cloud-home:browser-popout:state", // main pushes a view's state to its owning Cloud window
   "cloud-home:request-sign-in", // sender-home bot and engine only; opens the existing local Connect sign-in
+  "cloud-home:open-engine-sign-in", // S2: an engine name only; the sender's home's sign-in row in the local Connect panel
   "cloud-home:reachable", // is the home this window belongs to answering (main reads the sender's home; the window passes nothing)
   "cloud-home:disconnect-this", // Settings: disconnect this computer from the window's own home (sender's home only; no arguments)
 ]);
@@ -158,6 +158,7 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "cloud-home:connect-status",
   "cloud-home:disconnect",
   "cloud-home:list-bots",
+  "cloud-home:list-engines",
   "cloud-home:list-homes",
   "cloud-home:open",
   "cloud-home:state",
@@ -166,7 +167,6 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "composio:reconnect",
   // credential
   "credential:set",
-  "highlevel:commit",
   // cua
   "cua:connection",
   "cua:linux-disable",
@@ -191,10 +191,12 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "desktop:artifact-action",
   "desktop:capabilities",
   "desktop:export-diagnostics",
+  "desktop:open-chat",
   "desktop:pick-folder",
   "desktop:quit",
   "desktop:reveal-workspace",
   "desktop:save-file",
+  "desktop:server-launch",
   "desktop:skin",
   "desktop:surface-secret",
   "desktop:workspace-file-action",
@@ -223,6 +225,7 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "mcp-servers:save-secrets",
   "mcp-servers:sign-in",
   "mcp-servers:sign-out",
+  "mcp-servers:use-own-app",
   // model-provider
   "model-provider:mutate",
   // model-signin
@@ -288,7 +291,7 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
  * preload calls them by their expanded names. All local-only.
  */
 // attention-window:* is the attention windows' own gate (electron/attention-ipc.mjs), registered there and never from a Cloud window.
-export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:", "local-engine-login:", "attention-window:"]);
+export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:", "local-engine-login:", "attention-window:", "lent-computer:"]);
 
 const mainOnlyCloud = new Set(MAIN_ONLY_CLOUD_CHANNELS);
 

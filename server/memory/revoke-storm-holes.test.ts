@@ -9,10 +9,10 @@
 // 4. An owner's inline walk runs under the same budget and deadline, moves only its own revoke and never drains the queued flips.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { commitRevoke } from "./revoke-commit.ts";
-import { headFlipCost, markerSlice } from "./revoke-marker.ts";
+import { headFlipCost, markerSlice, MARKER_STEP_RESERVE } from "./revoke-marker.ts";
 import { refsLookup } from "./deny-read.ts";
-import { drainRevokeMarkerBounded, memoryRevocationIdle, memoryRevocationStats, resetMemoryRevocationStats, stopMemoryRevocation, wakeMemoryRevocation } from "./memory-revocation.ts";
-import { bytesPerChange, noteRevokeBytes, REVOKE_PACE, REVOKE_PACE_COMMIT, REVOKE_WRITE_BUDGET, resetRevokeWriteBudget, revokeBytesWritten, setRevokeBudgetClock } from "./revoke-budget.ts";
+import { drainRevokeMarkerBounded, INLINE_REVOCATION, memoryRevocationIdle, memoryRevocationStats, resetMemoryRevocationStats, stopMemoryRevocation, wakeMemoryRevocation } from "./memory-revocation.ts";
+import { bytesPerChange, noteRevokeBytes, REVOKE_PACE, REVOKE_PACE_COMMIT, REVOKE_WRITE_BUDGET, resetRevokeWriteBudget, revokeBytesWritten, revokeCostPerChange, setRevokeBudgetClock } from "./revoke-budget.ts";
 import { OBJECT_EDGE_LSN, type MemoryRef } from "./lineage-types.ts";
 import { CONTENT, WritetimeFixture } from "./testing/writetime-fixture.ts";
 import { changes, flipAll, num, storm, THREADS } from "./testing/revoke-storm-fixture.ts";
@@ -160,7 +160,9 @@ describe("revoke storm build review: no revocation is lost or stalled by the wri
     }
   });
 
-  it("4: an owner's inline walk never drains the queued flips and never walks another revoke", () => {
+  // 1.0.21 mem-f3 c changed the first half on purpose: one queued flip stopped every inline walk, so each owner commit left a job and a
+  // machine-wide window behind. The walk now commits the queued head flips first (the order rule 1 needs) and still never walks another revoke.
+  it("4: an owner's inline walk commits the queued head flips first and never walks another revoke", () => {
     const fx = storm(2);
     try {
       const X: MemoryRef = { kind: "record", id: "rec-x", version: 1 };
@@ -171,7 +173,7 @@ describe("revoke storm build review: no revocation is lost or stalled by the wri
       fx.db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id='b0'").run();
       expect(flips(fx)).toBe(1);
       slice(fx, () => commitRevoke(fx.db, { kind: "line", threadId: THREADS[1]!, messageIds: ["r1"], cause: "forget" }));
-      expect(flips(fx)).toBe(1);
+      expect(flips(fx)).toBe(0); // was 1 before mem-f3 c (see above)
       expect(jobState(fx, older)).toBe("active");
       expect(cursor()).toBe(held);
       drainAll(fx);
@@ -180,21 +182,37 @@ describe("revoke storm build review: no revocation is lost or stalled by the wri
     } finally { fx.close(); }
   });
 
-  it("4: an owner's inline walk stays inside the write budget: a spent minute leaves it to the runner", () => {
-    const fx = storm(1);
+  // MEMORY V2 lane C changed the first half on purpose. Design 4.3 V13: "Owner roots always walk inline up to the inline cap, whatever
+  // the minute holds (F31)"; cost after: "An owner forget: closed in its own commit up to 576 rows." Before, a spent minute left the owner's
+  // forget queued ('active') and charged nothing. Kept: the walk is charged to the ledger (the next minute pays for it), it stays inside
+  // the inline cap, and a walk the inline cap does not let run is left to the runner, which finishes it (nothing lost or stalled).
+  it("4: an owner's inline walk stays inside the inline cap and is charged: a spent minute no longer leaves it queued; a walk past the cap is left to the runner", () => {
+    const fx = storm(2);
     let now = 9_000_000;
     setRevokeBudgetClock(() => now);
     resetRevokeWriteBudget();
+    const inlineMs = INLINE_REVOCATION.ms;
     try {
       const page = bytesPerChange(fx.db);
       REVOKE_WRITE_BUDGET.bytesPerMinute = 1400 * page;
       noteRevokeBytes(1400 * page);
       const R = slice(fx, () => commitRevoke(fx.db, { kind: "line", threadId: THREADS[0]!, messageIds: ["r0"], cause: "forget" })) as number;
-      expect(jobState(fx, R)).toBe("active");
-      expect(revokeBytesWritten()).toBe(1400 * page);
+      expect(jobState(fx, R)).toBe("done"); // was "active" before V13 (see above)
+      // charged, row by row, and never more than the inline cap (64 rows and the one step the marker may run past them)
+      const over = revokeBytesWritten() - 1400 * page;
+      expect(over).toBeGreaterThan(0);
+      expect(over).toBeLessThanOrEqual(Math.ceil((64 + MARKER_STEP_RESERVE) * revokeCostPerChange(fx.db)));
+      // the inline cap's other half, its time: with none of it left the walk does not run, is charged nothing and waits for the runner
+      INLINE_REVOCATION.ms = Number.MIN_VALUE;
+      const spent = revokeBytesWritten();
+      const Q = slice(fx, () => commitRevoke(fx.db, { kind: "line", threadId: THREADS[1]!, messageIds: ["r1"], cause: "forget" })) as number;
+      INLINE_REVOCATION.ms = inlineMs;
+      expect(jobState(fx, Q)).toBe("active");
+      expect(revokeBytesWritten()).toBe(spent);
       now += 61_000;
       for (let minutes = 0; drainRevokeMarkerBounded(fx.db, { rows: 1_000_000, ms: 1_000_000 }); minutes++) { expect(minutes).toBeLessThan(60); now += 61_000; }
       expect(jobState(fx, R)).toBe("done");
-    } finally { fx.close(); }
+      expect(jobState(fx, Q)).toBe("done");
+    } finally { INLINE_REVOCATION.ms = inlineMs; fx.close(); }
   });
 });

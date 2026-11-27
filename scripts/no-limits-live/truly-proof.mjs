@@ -1,3 +1,4 @@
+import { assertExternalEvidencePath, evidencePath } from '../evidence-path.mjs';
 // Isolated fake engine HTTP/SSE replay. No requested command is executed.
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
@@ -9,7 +10,7 @@ import {ProductClient} from './run.mjs';
 import {trulyRows} from './truly-rows.mjs';
 import {featureOffErrors} from './feature-off.mjs';
 import {captureIngressWindow} from './ingress-window.mjs';
-const out=resolve(process.argv[2]??'evidence/nolim-truly/raw/live');mkdirSync(out,{recursive:true});
+const out=assertExternalEvidencePath(resolve(process.argv[2]??evidencePath('evidence/nolim-truly/raw/live')));mkdirSync(out,{recursive:true});
 const preload=`import {installTrulyFixture} from ${JSON.stringify(new URL('./truly-fixture.mjs',import.meta.url).href)};await installTrulyFixture();`;
 let fixture,client;const report={mode:'isolated fake native relay + HTTP/SSE',ruling:'Sean 2026-11-12 08:05Z correction',rows:[],verdict:'FAIL'};
 class ProofClient extends ProductClient {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { knownSurface, surface, type SurfaceAnswer } from "./surface";
+import { knownComputer, knownSurface, surface, type SurfaceAnswer } from "./surface";
 
 /** Which door this renderer came through, as a React value.
  *
@@ -22,6 +22,11 @@ import { knownSurface, surface, type SurfaceAnswer } from "./surface";
  */
 export function useDesktopSurface(): boolean | undefined {
   return useSurfaceState().desktop;
+}
+
+export function useOwnersComputer(): boolean {
+  const { confirmed } = useSurfaceState();
+  return confirmed && knownComputer() === true;
 }
 
 /** The same answer, plus whether the harness has confirmed it. `false` after a

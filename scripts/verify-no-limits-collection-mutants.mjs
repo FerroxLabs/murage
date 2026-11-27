@@ -1,9 +1,10 @@
+import { evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Run only inside the lane's isolated test container. Always restore the source.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 const file='server/no-limits-collect.ts', original=readFileSync(file,'utf8');
-const directory='evidence/nlsym/C1-mutants';mkdirSync(directory,{recursive:true});
+const directory=evidencePath('evidence/nlsym/C1-mutants');mkdirSync(directory,{recursive:true});
 const mutants=[
   ['M-NL-eval-legacy-null',"if(name==='eval'){","if(false && name==='eval'){"],
   ['M-NL-procsub-parent-separated',"if(p.kind==='subst'||p.kind==='procsub')","if(p.kind==='subst')"],

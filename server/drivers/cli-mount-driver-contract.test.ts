@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ClaudeDriver } from "./claude.ts";
+import { ClaudeDriver, resetClaudeMcpReadinessForTests } from "./claude.ts";
 import { CodexDriver } from "./codex.ts";
 import type { ProviderInstance, SendTurnInput } from "../contracts.ts";
-import { bindFixtureAdapter, fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
+import { bindFixtureAdapter, fixtureBoundTurn, fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { SPAWNED_PROXIES } from "../proxy-paths.ts";
+import { createLedgerLease, LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
+import { consumingFixture } from "../testing/consuming-fixture.ts";
+import * as procs from "../procs.ts";
 const relayApi = existsSync(new URL("./cli-mount-relay.ts", import.meta.url)) ? await import("./cli-mount-relay.ts") : undefined;
 
 // Observe the actual spawn boundary, not a subsequent prompt-time dump. The
@@ -73,7 +79,7 @@ describe.each(["claude", "codex"])("S1 %s launch contract", engine => {
     const cli = fileURLToPath(new URL(engine === "claude" ? "../testing/fake-claude-cli.ts" : "../testing/fake-codex-app-server.ts", import.meta.url));
     chmodSync(cli, 0o755);
     instance = await (engine === "claude" ? ClaudeDriver : CodexDriver).create({
-      instanceId: `s1-${engine}`, displayName: "S1 fixture", enabled: true, environment: {},
+      instanceId: `s1-${engine}`, displayName: "S1 fixture", enabled: true, environment: { FIELD_REPLAY_MAILBOX: scratch },
       config: (engine === "claude" ? { cli, permissionMode: "acceptEdits" } : { cli, fullAuto: false }) as never,
     });
     bindFixtureAdapter(instance.adapter); recorder = recordEvents(instance.adapter);
@@ -135,6 +141,149 @@ describe.each(["claude", "codex"])("S1 %s launch contract", engine => {
     expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(refused).not.toHaveBeenCalled();
   });
+  it.each(engine === "claude" ? ["browser", "computer", "wipe", "non-owner"] : [])("T-MOUNT-FAILURE: %s", async kind => {
+    vi.stubEnv("FAKE_CLAUDE_START_DELAY_MS", "700");
+    const exits = { command: process.execPath, args: ["-e", "setTimeout(() => process.exit(7), 300)"], env: {} };
+    const integrations = kind === "browser" || kind === "non-owner" ? { browser: exits } : kind === "computer" ?
+      { localComputer: { command: join(scratch, "missing-computer"), args: [], env: {} } } :
+      { custom: { notes: { command: process.execPath, args: [SPAWNED_PROXIES.wipeMcp, "notes",
+        JSON.stringify({ command: process.execPath, args: ["-e", "process.stdin.resume()"] })], env: {} } } };
+    if (kind === "wipe") {
+      const launch = procs.spawnCli;
+      vi.spyOn(procs, "spawnCli").mockImplementation((...args) => {
+        const child = launch(...args);
+        if (args[1][0] === SPAWNED_PROXIES.wipeMcp) setTimeout(() => child.kill("SIGKILL"), 300).unref();
+        return child;
+      });
+    }
+    const turn = input();
+    const { threadId } = turn;
+    if (kind === "non-owner") turn.warmIdentity = { ...turn.warmIdentity!, audience: "non-owner" };
+    const sent = await instance.adapter.sendTurn({ ...turn, integrations });
+    const done = await recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+    const notices = recorder.events.filter(event => event.type === "item.started" && event.itemType === "tool" && event.toolKind === "notice");
+    const dump = join(scratch, "dump.json");
+    // MAIN 11:08Z allows transport loss on both audiences and drops tools whose wipe wrapper died.
+    const name = kind === "wipe" ? "notes" : kind === "non-owner" ? "browser" : kind;
+    expect(done).toMatchObject({ ok: true });
+    expect(existsSync(dump)).toBe(true);
+    expect(notices).toEqual([expect.objectContaining({ threadId, title: `Murage couldn't use the ${name} for this reply.` })]);
+  }, 15_000);
+  it.each(engine === "claude" ? ["browser", "computer"] : [])("T-MOUNT-PROXY-TERMINAL: %s backend failure", async kind => {
+    const replyGate = join(scratch, "allow-reply");
+    const dump = join(scratch, "dump.json");
+    vi.stubEnv("FAKE_CLAUDE_MODE", "slow");
+    vi.stubEnv("FAKE_CLAUDE_REPLY_GATE", replyGate);
+    resetClaudeMcpReadinessForTests();
+    const warning = vi.spyOn(console, "warn");
+    const requests: string[] = [];
+    const endpoint = createServer((req, res) => {
+      requests.push(req.url!);
+      res.writeHead(503).end();
+    });
+    await new Promise<void>(resolve => endpoint.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(endpoint.address() as AddressInfo).port}`;
+    const stopEndpoint = () => new Promise<void>((resolve, reject) => endpoint.close(error => error ? reject(error) : resolve()));
+    if (kind === "computer") await stopEndpoint();
+    try {
+      const turn = input();
+      const mount = { command: process.execPath, args: [kind === "browser" ? SPAWNED_PROXIES.unifiedBrowser : SPAWNED_PROXIES.hostComputer],
+        env: { MURAGE_CONTROL_URL: url, MURAGE_CONTROL_TOKEN: "fixture-control", MURAGE_BOT_ID: turn.warmIdentity!.botId, MURAGE_THREAD_ID: turn.threadId } };
+      const sent = await instance.adapter.sendTurn({ ...turn, integrations: kind === "browser" ? { browser: mount } : { localComputer: mount } });
+      await expect.poll(() => existsSync(dump), { timeout: 5_000 }).toBe(true);
+      const { pid } = JSON.parse(readFileSync(dump, "utf8")) as { pid: number };
+      const request = join(scratch, "proxy-request.pending");
+      writeFileSync(request, JSON.stringify({ id: "backend", server: kind, name: "unused", args: {} }));
+      renameSync(request, join(scratch, `${pid}-request.json`));
+      await expect.poll(() => warning.mock.calls.some(([line]) => {
+        const message = String(line);
+        return message.includes(`mount="${kind}" cause=ipc`) || message.includes("seals the relay type=turn-release-terminal");
+      }), { timeout: 6_000 }).toBe(true);
+      if (kind === "browser") expect(requests).toEqual([expect.stringContaining("/api/internal/unified-browser?")]);
+      writeFileSync(replyGate, "1");
+      expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId)).toMatchObject({ ok: true });
+      expect(recorder.events.filter(event => event.type === "item.started" && event.itemType === "tool" && event.toolKind === "notice"))
+        .toEqual([expect.objectContaining({ title: `Murage couldn't use the ${kind} for this reply.` })]);
+    } finally { if (endpoint.listening) await stopEndpoint(); }
+  }, 15_000);
+  it.each(engine === "claude" ? ["silent", "initialized"] : [])("T-MOUNT-DOWNSTREAM: %s owner server", async mode => {
+    const replyGate = join(scratch, "allow-reply");
+    const exitGate = join(scratch, "exit-server");
+    const listing = join(scratch, "listed");
+    const received = join(scratch, "received");
+    resetClaudeMcpReadinessForTests();
+    vi.stubEnv("FAKE_CLAUDE_MCP_STATUS", "");
+    vi.stubEnv("FAKE_CLAUDE_MODE", "slow");
+    vi.stubEnv("FAKE_CLAUDE_REPLY_GATE", replyGate);
+    vi.stubEnv("FAKE_CLAUDE_MCP_LIST_LOG", listing);
+    const warning = vi.spyOn(console, "warn");
+    const server = { command: process.execPath, args: ["-e", `
+      const fs = require("node:fs");
+      require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+        const { id, method } = JSON.parse(line);
+        if (method === "initialize") fs.writeFileSync(process.argv[1], "1");
+        if (process.argv[3] === "silent" || id === undefined) return;
+        const result = method === "tools/list" ? { tools: [] } : { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "notes", version: "1" } };
+        console.log(JSON.stringify({ jsonrpc: "2.0", id, result }));
+      });
+      setInterval(() => { if (fs.existsSync(process.argv[2])) process.exit(7); }, 25);`, received, exitGate, mode] };
+    const sent = await instance.adapter.sendTurn({ ...input(), integrations: { custom: {
+      notes: { command: process.execPath, args: [SPAWNED_PROXIES.wipeMcp, "notes", JSON.stringify(server)], env: {} },
+    } } });
+    await expect.poll(() => existsSync(received), { timeout: 5_000 }).toBe(true);
+    if (mode === "initialized") {
+      await expect.poll(() => existsSync(listing) && readFileSync(listing, "utf8").includes('"name":"notes"'), { timeout: 5_000 }).toBe(true);
+      writeFileSync(exitGate, "1");
+    }
+    await expect.poll(() => warning.mock.calls.some(([line]) => String(line).includes('mount="notes" cause=server')),
+      { timeout: mode === "silent" ? 13_000 : 5_000 }).toBe(true);
+    writeFileSync(replyGate, "1");
+    expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId)).toMatchObject({ ok: true });
+    expect(recorder.events.filter(event => event.type === "item.started" && event.itemType === "tool" && event.toolKind === "notice"))
+      .toEqual([expect.objectContaining({ title: "Murage couldn't use the notes for this reply." })]);
+  }, 40_000);
+  it.each(engine === "claude" ? ["owner", "non-owner"] as const : [])("T-MOUNT-FIRST-FRAME-REFUSAL: %s", async audience => {
+    resetClaudeMcpReadinessForTests();
+    vi.stubEnv("FAKE_CLAUDE_MCP_STATUS", "");
+    const signal = join(scratch, "initialize-requested");
+    const allow = join(scratch, "send-initialize");
+    const args = ["-e", `
+      const fs = require("node:fs");
+      require("node:readline").createInterface({ input: process.stdin }).once("line", line => {
+        const { id } = JSON.parse(line);
+        fs.writeFileSync(process.argv[1], "1");
+        const timer = setInterval(() => {
+          if (!fs.existsSync(process.argv[2])) return;
+          clearInterval(timer);
+          console.log(JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
+        }, 10);
+      });`, signal, allow];
+    const original = input();
+    let lease: ReturnType<typeof createLedgerLease>;
+    const f = consumingFixture(undefined, { threadId: original.threadId, botId: original.warmIdentity!.botId,
+      onRefused: verdict => lease.onLedgerRefused(verdict) });
+    const present = vi.fn();
+    const settle = vi.fn();
+    lease = createLedgerLease(f.binding.identity, { seal: f.replace, settle, present, quarantine: vi.fn(),
+      interrupt: async id => (await instance.adapter.interruptTurn(original.threadId, id))?.closeConfirmed === true });
+    try {
+      const sending = instance.adapter.sendTurn(fixtureBoundTurn({
+        ...original, warmIdentity: { ...original.warmIdentity!, audience },
+        integrations: { browser: { command: process.execPath, args, env: {} } },
+        releaseBinding: f.binding,
+      }));
+      await expect.poll(() => existsSync(signal), { timeout: 5_000 }).toBe(true);
+      f.flip();
+      writeFileSync(allow, "1");
+      const sent = await sending;
+      lease.attach(sent.turnId);
+      await expect.poll(() => present.mock.calls).toEqual([[LEDGER_REFUSAL_LINE, undefined]]);
+      expect(settle).toHaveBeenCalledExactlyOnceWith("memory-refused", { state: "withheld", reason: "deny-line" });
+      expect(f.refusals).toBe(1);
+      expect(existsSync(join(scratch, "dump.json"))).toBe(false);
+      expect(recorder.events.some(event => event.type === "item.started" && event.itemType === "tool" && event.toolKind === "notice")).toBe(false);
+    } finally { await instance.dispose(); f.close(); }
+  }, 15_000);
   it("T-CRED-ORDER: secrets and relay ticket precede CLI spawn and Codex thread/start", async () => {
     await run();
     expect(observed.spawns).toHaveLength(1);

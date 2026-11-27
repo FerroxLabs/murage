@@ -262,3 +262,13 @@ it('a second gate row never loosens the checks: a bad row, an extended twin or a
   write('ci/extended-tests.txt', 'shared/twice.test.ts\textended\nshared/twice.test.ts\textended\n');
   expect(() => readLists(root)).toThrow(/ci\/extended-tests\.txt:2: shared\/twice\.test\.ts is listed twice/);
 }));
+
+it('runs positive file-store skill approvals on Linux and Mac and keeps the Windows refusal witness', () => {
+  const positive = ['api', 'bounds', 'crash-process', 'settlement'].map(name => `server/skill-switch-${name}.test.ts`);
+  for (const os of ['linux', 'mac']) {
+    expect(select({ tier: 'gate', os }).files).toEqual(expect.arrayContaining(positive));
+  }
+  const windows = select({ tier: 'gate', os: 'windows' }).files;
+  for (const file of positive) expect(windows).not.toContain(file);
+  expect(windows).toContain('server/skill-switch-storage.test.ts');
+});

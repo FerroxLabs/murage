@@ -273,6 +273,20 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
     expect(retainedSessionInvalid(LineageAllowance.tool(), "desk", "fuigo-steer", "s-desk")).toBe(false);
   }, 30_000);
 
+  // Real leg s5 (Fuigo, 1.0.20): the owner's next send arrived after three delegated replies had made the bot busy for
+  // their follow-up turn, but before that turn started, so no running turn existed to take the words. The steer rejected
+  // with no status and the send route answered 503 "Murage couldn't record that message"; the words were refused, not queued.
+  it("a send that finds the bot busy but no running turn yet waits in the queue: no rejection, nothing written", async () => {
+    const { adapter, methods } = await runningFuigo(300);
+    const before = methods().filter(method => method === "_fuigo/interject").length;
+    for (const allowed of [false, true]) {
+      const delivery = await steerWithQuoteLineage(adapter, "desk", "Run `sleep 150` in the shell, then reply SLEPT.", allowed, { holds: () => false, steerId: `steer-noturn-${allowed}`, lineage: undefined, turn: undefined });
+      expect(delivery).toBe("queue");
+    }
+    expect(methods().filter(method => method === "_fuigo/interject")).toHaveLength(before);
+    expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
+  }, 30_000);
+
   it("a quote whose source is revoked after its text was rendered, before the fence runs, is refused: nothing written, nothing recorded", async () => {
     await memoryDerivedReply();
     const { adapter, lineage, methods } = await runningFuigo(300);
@@ -419,11 +433,13 @@ posixOnly("ACP steer final writer", () => {
     const source = readFileSync(new URL("./drivers/acp/core.ts", import.meta.url), "utf8");
     expect(source.replace(/\s+/g, " ")).toContain(`if (steerWrite) return emitEngineWire(beforeWrite, wire, write, () => {
       if (turnHalted()) throw new Error("ACP_TURN_STOPPED");
+      checkTrustEpoch();
       if (!beforeWrite) throw new Error("MEMORY_CONTEXT_REVOKED");
       beforeWrite();
     });
     return fencedSubmit(turn, write, wire, () => {
       if (turnHalted()) throw new Error("ACP_TURN_STOPPED");
+      checkTrustEpoch();
       fenceBeforeWrite(fence, state, obj, settleHalted);
     });
     } catch (error) { if (!steerWrite) submissionRefused = true; throw error; }`.replace(/\s+/g, " "));
@@ -437,7 +453,8 @@ posixOnly("ACP steer final writer", () => {
       ts.forEachChild(node, walk);
     };
     walk(tree);
-    expect(callers).toEqual(['request("session/prompt", { sessionId, prompt: [{ type: "text", text }] }, undefined, acpPromptIdleTimeoutMs(), undefined, undefined, undefined, beforeWrite, true)']);
+    // design-1022-grokwarm B3: the steer prompt carries its prompt id when this dispatch classifies frames (flag ON + capability)
+    expect(callers).toEqual(['request("session/prompt", { sessionId, prompt: [{ type: "text", text }], ...(pscope.on ? promptMetaOf() : {}) }, undefined, acpPromptIdleTimeoutMs(), undefined, undefined, undefined, beforeWrite, true)']);
   });
 });
 

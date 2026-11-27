@@ -164,6 +164,17 @@ function analyse(program: ts.Program, only?: string): Analysis {
   const bannedNames = new Set(BANNED_INTERNALS.map(([, banned]) => banned));
   /** The functions of index.ts that own the start of a hand-off's turn; the rest of the file is held to the same rules as any other source. */
   const INDEX_CONSUMERS = new Set(["startTurn", "startTurnAdmitting", "recordHandoffAccepted"]);
+  // Leaving held recall clears its flag; a start retains one readiness record across rebuilds.
+  const recallBookkeepingCopies = new Set(["{ ...opts, recallHeld: undefined }", "{ ...opts, recallReadiness }"]);
+  const updatesOwnRecallOptions = (literal: ts.ObjectLiteralExpression, spread: ts.SpreadAssignment): boolean => {
+    const assignment = literal.parent;
+    const target = symbolAt(spread.expression);
+    const parameter = target?.valueDeclaration;
+    return ts.isBinaryExpression(assignment) && assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      && ts.isIdentifier(assignment.left) && symbolAt(assignment.left) === target
+      && !!parameter && ts.isParameter(parameter) && ts.isFunctionDeclaration(parameter.parent)
+      && parameter.parent.name?.text === "startTurnAdmitting" && recallBookkeepingCopies.delete(literal.getText());
+  };
   /** A memory re-dispatch hands the SAME options on again, with the turn's own prompt: the spread comes first, `userMessage` is the turn's `userMessage` variable (the one
    * startTurnAdmitting declares, never undefined or a literal) and comes after it, `memoryRedispatch: attempt` too, and no later property puts a run or another prompt back. */
   const redispatchOf = (literal: ts.ObjectLiteralExpression, spread: ts.SpreadAssignment): boolean => {
@@ -196,7 +207,17 @@ function analyse(program: ts.Program, only?: string): Analysis {
       const flag = yes.properties[0];
       return ts.isPropertyAssignment(flag) && keyOf(flag.name) === "packSuppressed" && strip(flag.initializer).kind === ts.SyntaxKind.TrueKeyword;
     };
-    return after.every((p) => { const key = keyOf(p.name); return suppression(p) || key === "threadId" || key === "userMessage" || key === "memoryRedispatch" || (key === "rebuildOf" && heldGeneration(p)); });
+    // The late-recall rebuild reuses its readiness record and adds two literal flags for held recall and the one setup retry.
+    const recall = after.slice(-4, -1);
+    const recallRetry = recall.length === 3 && ts.isShorthandPropertyAssignment(recall[0]!)
+      && bound(recall[0]!, "recallReadiness")
+      && recall[1]?.getText() === "...(heldRecall ? {recallHeld:true as const} : {})"
+      && recall[2]?.getText() === '...("setupRetry" in rebuild ? { setupRetried: true as const } : {})'
+      && suppression(after.at(-1)!);
+    return after.every((p) => {
+      const key = keyOf(p.name);
+      return suppression(p) || (recallRetry && recall.includes(p)) || key === "threadId" || key === "userMessage" || key === "memoryRedispatch" || (key === "rebuildOf" && heldGeneration(p));
+    });
   };
   /** Whether the node sits anywhere inside a function declaration with one of these names (an arrow or a closure nested in it counts: it is its code). */
   const insideFunction = (node: ts.Node, names: ReadonlySet<string>): boolean => { for (let at: ts.Node | undefined = node; at; at = at.parent) if (ts.isFunctionDeclaration(at) && at.name && names.has(at.name.text)) return true; return false; };
@@ -237,7 +258,7 @@ function analyse(program: ts.Program, only?: string): Analysis {
                 // (the clear only counts when it comes AFTER the spread: a spread that comes later puts the run back)
                 const at = node.properties.indexOf(property);
                 const cleared = node.properties.some((p, index) => index > at && ts.isPropertyAssignment(p) && keyOf(p.name) === "delegationRun" && ts.isIdentifier(p.initializer) && p.initializer.text === "undefined");
-                const sameTurn = cleared || name === "index.ts" && redispatchOf(node, property);
+                const sameTurn = cleared || name === "index.ts" && (updatesOwnRecallOptions(node, property) || redispatchOf(node, property));
                 if (!sameTurn) report(file, property, "R2 spread", "options that carry a hand-off's run are spread");
               }
               continue;

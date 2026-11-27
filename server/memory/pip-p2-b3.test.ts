@@ -957,9 +957,17 @@ describe("Astra audit2 production regressions", () => {
     expect(r.calls).toHaveLength(0);
   });
 
-  it("26: records a single oversized source as unreflected and never dispatches it", async () => {
-    seedConversation(1, "You are " + "reliable ".repeat(4000)); const r = rig();
-    await run(r); expect(r.calls).toHaveLength(0);
+  // 1.0.22, MAIN ruling Q5 (2026-11-22): an oversized source is split, never skipped. This row asserted the skip (no call, unreflected for
+  // good); it now asserts the split's first piece, and pip-split-1022.test.ts follows a split through to its last piece. The fitSnapshot
+  // half below is unchanged: that helper still drops whole sources and never cuts one.
+  it("26: a single oversized source goes out piece by piece and stays unreflected until its last piece", async () => {
+    const text = "You are " + "reliable ".repeat(4000);
+    seedConversation(1, text); const r = rig();
+    await run(r); expect(r.calls).toHaveLength(1);
+    const first = (JSON.parse(r.calls[0].text) as { turns: Array<{ text?: string; sentences?: unknown[]; part?: { start: number; end: number; of: number; cut?: boolean } }> }).turns[0];
+    expect(first.part).toEqual({ start: 0, end: Buffer.byteLength(first.text!), of: Buffer.byteLength(text), cut: true });
+    expect(text.startsWith(first.text!)).toBe(true); expect(first.sentences).toEqual([]);
+    expect(Buffer.byteLength(JSON.stringify([{ role: "user", content: r.calls[0].text }]))).toBeLessThanOrEqual(REQUEST_BYTES);
     expect(reflectionStatus("moss", r.clock.now).unreflected).toBe(1);
     expect(state().threads.private.cursorMessageId).toBeNull();
     const huge = { ...admissibleOwnerSources(database(), "moss", { threadId: "private" })[0], text: "You are " + "reliable ".repeat(10000) };

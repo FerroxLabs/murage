@@ -24,7 +24,11 @@ beforeAll(async()=>{
   headers={'x-murage-surface':'desktop','x-murage-surface-secret':(await api('GET','/api/desktop-secret')).body.secret};
 },120_000);
 afterAll(async()=>{await fixture?.close();});
-it('split items stay masked in actual SSE, stored transcript and logs while execution stays original; a fresh turn releases clean text',async()=>{
+// q1023-ownermask (MAIN PREPARED OPTION B, "in the OWNER OWN private direct chat: NEVER hold back a reply; mask in place only
+// high-precision credential shapes ... show everything else word for word"): this is the owner's own chat and `hunter2` is a label-only
+// value, so the stored replies (and the message frames carrying them) are the bot's words; the provider-event frames and the event log
+// keep the turn's mask. Replaces the 1.0.21 expectation of two held-back lines and no value in the page or any frame.
+it('split items: the owner reads both replies (never held back) while provider-event frames and the event log stay masked; a fresh turn releases clean text',async()=>{
   const engines=(await api('GET','/api/instances')).body.instances;
   const model=engines.find((value:any)=>value.instanceId==='verification').models.options[0].id;
   const made=await api('POST','/api/bots',{name:'Output boundary fixture',modelSelection:{instanceId:'verification',model}});
@@ -35,13 +39,19 @@ it('split items stay masked in actual SSE, stored transcript and logs while exec
     expect((await api('POST',`/api/bots/${bot.id}/messages`,{threadId:bot.threadId,text:'Show the split fixture.'})).status).toBe(202);
     await stream.until(frame=>frame.kind==='runtime'&&frame.event.type==='turn.completed'&&frame.event.threadId===bot.threadId,30_000);
     const page=(await api('GET',`/api/threads/${bot.threadId}/messages?limit=100`)).body;
-    expect(JSON.stringify(page)).toContain('redacted');
-    expect(JSON.stringify({frames:stream.frames,page})).not.toMatch(/hunter2|TAILSECRET/);
+    const replies = page.messages.filter((row: { role: string; kind: string; provenance?: string }) =>
+      row.role === 'bot' && row.kind === 'text' && row.provenance === 'provider');
+    // MAIN-RULING 2026-11-27T03:17:37Z labelled-value floor: `hunter2` (7 characters, no credential shape) is the value right after the
+    // `**password**:` label, but a labelled value is masked in place in the owner chat only at 16 or more characters: both lines are shown
+    expect(replies.map((row: { text: string }) => row.text)).toEqual(['**password**: «redacted 0 chars»', 'hunter2\nTAILSECRET']);
+    const runtimeFrames=()=>stream.frames.filter((frame:any)=>frame?.kind==='runtime');
+    expect(runtimeFrames().length).toBeGreaterThan(0);
+    expect(JSON.stringify(runtimeFrames())).not.toMatch(/hunter2|TAILSECRET/);
     expect(readFileSync(join(fixture.info.dataDir,'execution.txt'),'utf8')).toContain('hunter2\nTAILSECRET');
     expect(readFileSync(join(fixture.info.dataDir,'events',`${bot.threadId}.ndjson`),'utf8')).not.toMatch(/hunter2|TAILSECRET/);
     await expect.poll(async()=>!(await api('GET','/api/bots?messages=0')).body.bots.find((value:any)=>value.id===bot.id).busy).toBe(true);
     expect((await api('POST',`/api/bots/${bot.id}/messages`,{threadId:bot.threadId,text:'Show a clean fresh reply.'})).status).toBe(202);
     await expect.poll(async()=>JSON.stringify((await api('GET',`/api/threads/${bot.threadId}/messages?limit=100`)).body),{timeout:30_000}).toContain('A fresh reply stays visible.');
-    expect(JSON.stringify(stream.frames)).not.toMatch(/hunter2|TAILSECRET/);
+    expect(JSON.stringify(runtimeFrames())).not.toMatch(/hunter2|TAILSECRET/);
   }finally{stream.close();}
 },60_000);

@@ -74,7 +74,7 @@ async function scheduledWorkflow(noLimits: boolean) {
       expect((await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, ask)).status).toBe(200);
     }
     const scheduled = await api("POST", "/api/routines", { name: "Check GitHub queue", botId: bot.id, prompt: "Check the GitHub queue without publishing anything.",
-      schedule: { type: "once", at: Date.now() - 1000 }, permissionMode: noLimits ? "unlimited" : "ask" });
+      schedule: { type: "once", at: Date.now() - 1000 }, runNow: true, permissionMode: noLimits ? "unlimited" : "ask" });
     expect(scheduled.status).toBe(201); const routine = scheduled.body.routine;
     const runs = async () => (await api("GET", "/api/routines")).body.runs.filter((r: any) => r.routineId === routine.id);
     await expect.poll(async () => ["completed", "failed"].includes((await runs()).find((r: any) => r.triggerSource === "schedule")?.status), { timeout: 80000 }).toBe(true);

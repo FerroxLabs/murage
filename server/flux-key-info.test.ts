@@ -253,4 +253,14 @@ describe("evidence order for /key/info", () => {
     expect((await checkFluxKey(KEY, { fetchImpl: async () => ok(), now: 0 })).state).toBe("valid");
     expect(fluxKeyRefused(KEY)).toBe(false);
   });
+
+  it("a Cloud home never asks /key/info with its home key: no request, and unknown never blocks a run", async () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      const fetchImpl = vi.fn<typeof fetch>(async () => new Response("no", { status: 403 }));
+      expect(await checkFluxKey(KEY, { fetchImpl, now: 0, manual: true })).toEqual({ state: "unknown" });
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(fluxKeyRefused(KEY)).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
+  });
 });

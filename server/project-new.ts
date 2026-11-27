@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../shared/flux-route.ts";
 import { inertBot } from "./store.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
@@ -65,7 +66,7 @@ export function readProposalReply(text: string, nonce: string, members: ProjectM
       // a model that fences its JSON inside the block
       const fenced = /^```(?:json)?[ \t]*\n([\s\S]*?)\n?```$/i.exec(inner);
       if (fenced) inner = fenced[1]!.trim();
-      try { return validateProjectProposal(JSON.parse(inner),members); }
+      try { return validateProjectProposal(registerBusyloopPayloadSite("read", JSON.parse(inner)),members); }
       catch { /* a longer span, or an earlier block, may still be the Chief's */ }
     }
   }
@@ -229,7 +230,7 @@ export function projectCreationRecord(db:DatabaseSync,groupId:string): GroupReco
   const row = db.prepare("SELECT detail,at FROM project_activity WHERE group_id=? AND kind='settings' AND json_extract(detail,'$.creation')='pending' ORDER BY rowid LIMIT 1").get(groupId);
   const settings = projectSettingsFor(db,groupId);
   if (!row || !settings) return null;
-  const detail = JSON.parse(String(row.detail)) as {name:string;members:string[];threadId:string};
+  const detail = registerBusyloopPayloadSite("read", JSON.parse(String(row.detail))) as {name:string;members:string[];threadId:string};
   const at = Number(row.at);
   return {id:groupId,threadId:detail.threadId,name:detail.name,memberIds:detail.members,defaultResponder:settings.leadBotId ? {kind:'member',botId:settings.leadBotId} : {kind:'member',botId:detail.members[0]!},
     bulletin:currentProjectBrief(db,groupId)?.rules ?? '',unread:false,createdAt:at,busyBotId:null,mentionChain:false,setupCompletedAt:at,setupSkippedAt:null,

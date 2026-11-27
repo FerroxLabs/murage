@@ -5,11 +5,12 @@ export interface ChatToolCall {
   id: string;
   type: "function";
   function: { name: string; arguments: string };
+  /** Opaque provider metadata, including Gemini's signed thought blocks. */
+  extra_content?: Record<string, unknown>;
 }
 
-/** Calls one model reply may carry (its index bound). */
-export const MAX_REPLY_TOOL_CALLS = 32;
-export const MAX_ARGUMENT_CHARS = 256_000;
+// MAIN-RULING cause22-no-transport-caps (1.0.21): no size cap on a reply's tool-call arguments or reasoning details and no cap on
+// how many calls one reply carries; they are read whole. A call still needs a valid index or id, name and JSON shape.
 
 export class ChatProtocolError extends Error {}
 
@@ -22,23 +23,23 @@ export function object(value: unknown): Record<string, unknown> | undefined {
  * OpenRouter streams the sequence as arrays of blocks, not tool-call deltas. */
 export class ChatReasoningDetails {
   readonly blocks: Record<string, unknown>[] = [];
-  private chars = 0;
 
   add(value: unknown): void {
     if (value === undefined || value === null) return;
     if (!Array.isArray(value) || value.some((block) => !object(block))) {
       throw new ChatProtocolError("provider returned invalid reasoning details");
     }
-    this.chars += JSON.stringify(value).length;
-    if (this.chars > 256_000) throw new ChatProtocolError("provider reasoning details exceeded the size limit");
-    this.blocks.push(...value);
+    // one push per block: a spread of a very long array exceeds the engine's argument limit (RangeError), and no count is a limit here
+    for (const block of value) this.blocks.push(block);
   }
 }
 
 /** One accumulator per completion: indexes identify deltas; IDs correlate results. */
 export class ChatToolCalls {
   private calls = new Map<number, ChatToolCall>();
-  private argumentChars = 0;
+  /** each call's slot by its id, and the highest slot: an id-only reply of any length is placed in one step per call */
+  private slots = new Map<string, number>();
+  private last = -1;
 
   add(value: unknown, streaming: boolean): void {
     if (value === undefined || value === null) return;
@@ -47,16 +48,23 @@ export class ChatToolCalls {
     for (const [position, raw] of value.entries()) {
       const delta = object(raw);
       const index = !streaming ? position : delta?.index ?? this.slotOf(delta?.id);
-      if (!delta || !Number.isInteger(index) || Number(index) < 0 || Number(index) >= MAX_REPLY_TOOL_CALLS) {
+      if (!delta || !Number.isInteger(index) || Number(index) < 0) {
         throw new ChatProtocolError("provider returned an invalid tool-call index");
       }
       const call = this.calls.get(Number(index)) ?? { id: "", type: "function", function: { name: "", arguments: "" } };
       if (!omitted(delta.type) && delta.type !== "function") throw new ChatProtocolError("unsupported tool-call type");
-      if (!omitted(delta.id)) {
+      if (!omitted(delta.id) && !(streaming && delta.id === "")) {
         if (typeof delta.id !== "string" || !delta.id || delta.id.length > 256 || (call.id && call.id !== delta.id)) {
           throw new ChatProtocolError("provider changed or omitted a tool-call ID");
         }
         call.id = delta.id;
+        this.slots.set(delta.id, Number(index));
+      }
+      if (!omitted(delta.extra_content)) {
+        const extra = object(delta.extra_content);
+        if (!extra) throw new ChatProtocolError("provider returned invalid tool-call metadata");
+        // Whole metadata is repeated on some continuation chunks; it replaces the earlier copy. No size limit (MAIN-RULING cause22-no-transport-caps).
+        call.extra_content = extra;
       }
       if (!omitted(delta.function)) {
         const fn = object(delta.function);
@@ -65,13 +73,13 @@ export class ChatToolCalls {
           if (omitted(fn[field])) continue;
           if (typeof fn[field] !== "string") throw new ChatProtocolError("provider returned invalid tool-call arguments or name");
           call.function[field] += fn[field];
-          if (field === "arguments") this.argumentChars += fn[field].length;
         }
       }
-      if (call.function.name.length > 64 || this.argumentChars > MAX_ARGUMENT_CHARS) {
+      if (call.function.name.length > 64) {
         throw new ChatProtocolError("provider tool calls exceeded the size limit");
       }
       this.calls.set(Number(index), call);
+      if (Number(index) > this.last) this.last = Number(index);
     }
   }
 
@@ -79,8 +87,8 @@ export class ChatToolCalls {
    * 0cd63a7db): the slot of the call with that id, else the one after the last. Neither index nor id is still refused. */
   private slotOf(id: unknown): number | undefined {
     if (typeof id !== "string" || !id) return undefined;
-    for (const [slot, call] of this.calls) if (call.id === id) return slot;
-    return this.calls.size ? Math.max(...this.calls.keys()) + 1 : 0;
+    // the slot after the highest one (a spread of every slot exceeds the argument limit on a long reply, and a scan per call is quadratic)
+    return this.slots.get(id) ?? this.last + 1;
   }
 
   finish(reason: string | null, malformedFrame: boolean): ChatToolCall[] {

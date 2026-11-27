@@ -1,3 +1,4 @@
+import { REPLY_MEMORY_CHANGED } from "../../shared/memory-reply-copy.ts";
 import { initializeFreshSessionProof, proveRetainedSession, proveRetainedSessionAtSubmission, type SessionProofContext } from './session-proof.ts';
 import type { FreshReplaySessionConfirmation } from './fresh-replay-session.ts';
 import { noteSessionFrame, sessionHadFrame } from './session-proof-schema.ts';
@@ -11,7 +12,7 @@ import { onRollback } from "../tx-scope.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import type { MemorySearchBridge } from "./search.ts";
 import { contentRevoked, isLineageLimit, JudgeMemo, LineageAllowance, outputRootsBad, preLineageSessionRevoked, sessionLineageBad, sessionOutputRoots } from "./replay-lineage.ts";
-import { assertMemoryBundle, buildMemoryBundle, memoryHandleRecord } from "./bundle.ts";
+import { assertMemoryBundle, revalidateMemoryBundle, buildMemoryBundle, memoryHandleRecord } from "./bundle.ts";
 import { assertMemoryDisclosureCurrent, bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, linkMemoryDisclosureOutput, noteMemoryLookup, prepareMemoryDisclosure, receiptJoinsTurn } from "./disclosures.ts";
 import { heldStep } from "../observe.ts";
 import { doorEpochVerdict, lineageLive, sessionLookup } from "./deny-read.ts";
@@ -20,6 +21,7 @@ import { setSendFenceDeps } from "./send-fence-deps.ts";
 import type { LineageReader, LineageVerdict, TurnLineage } from "./lineage-types.ts";
 import { withSecondLook } from "./lineage-allowance.ts";
 import { sessionKeyOf } from "./session-incarnation.ts";
+import { steerProofState, type SteerSessionState } from "./steer-door.ts";
 import { drainBranchChanges } from "./branch-change.ts";
 import { classifyDirectSettle } from "./settle-target.ts";
 
@@ -62,10 +64,10 @@ export function memorySessionRevoked(threadId:string,instanceId:string,session:s
  * session must reset and rebuild its authorized replay. The full check is
  * skipped only while the authority epoch is unmoved since `checkedStamp`, the stamp
  * taken right after the last full check passed. */
-export function resumedSessionInvalid(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string}):boolean { return heldStep("memory.session-check", () => resumedSessionInvalidUnheld(allowance, threadId, instanceId, session, access, checkedStamp, why)); }
-function resumedSessionInvalidUnheld(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string}):boolean {
+export function resumedSessionInvalid(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why?:{reason?:string},checkpoint=true):boolean { return heldStep("memory.session-check", () => resumedSessionInvalidUnheld(allowance, threadId, instanceId, session, access, checkedStamp, why, checkpoint)); }
+function resumedSessionInvalidUnheld(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,access:MemoryAccess,checkedStamp:string|undefined,why:{reason?:string}|undefined,checkpoint:boolean):boolean {
   void checkedStamp;
-  return continuationMemoryRevoked(allowance,threadId,instanceId,session,access,why);
+  return continuationMemoryRevoked(allowance,threadId,instanceId,session,access,why,false,checkpoint);
 }
 /** A retained native session checked in EVERY memory mode, with no reader
  * access (memory off mints none): true when it was shown memory and that
@@ -138,7 +140,8 @@ function revokedIfUnknown(run: () => void): void {
  */
 export class MemoryDispatchReceipt {
   readonly bundle: MemoryBundle;
-  readonly access: MemoryAccess;
+  private currentAccess: MemoryAccess;
+  get access(): MemoryAccess { return this.currentAccess; }
   readonly instanceId: string;
   turnId?: string;
   /** Listeners run once each, in registration order, after the disclosure became
@@ -151,13 +154,15 @@ export class MemoryDispatchReceipt {
   private observedOutput = false;
   private failure: unknown;
   private readonly retainedTurn?: TurnLineage;
-  constructor(bundle: MemoryBundle, access: MemoryAccess, instanceId: string, retainedTurn?: TurnLineage) {
+  private readonly checkpoint: boolean;
+  constructor(bundle: MemoryBundle, access: MemoryAccess, instanceId: string, retainedTurn?: TurnLineage, checkpoint = true) {
     // A rebuilt dispatch owns one concrete generation, including later lookups.
     this.retainedTurn=retainedTurn;
-    this.bundle=bundle; this.access=access; this.instanceId=instanceId;
+    this.checkpoint=checkpoint;
+    this.bundle=bundle; this.currentAccess=access; this.instanceId=instanceId;
     // 1.0.7 routine-replay-limit: preparing re-proves the frame (assertMemoryBundle, a tool read's 100 ms): a record not proven within it
     // is "not known now", refused as a revoked context so the turn takes the rebuild path, never a raw MEMORY_REPLAY_LIMIT that fails it
-    revokedIfUnknown(()=>prepareMemoryDisclosure(bundle,access,instanceId));
+    revokedIfUnknown(()=>{this.currentAccess=revalidateMemoryBundle(bundle,this.access);prepareMemoryDisclosure(bundle,this.access,instanceId);});
     // write-time: the frame joins the running turn (its replies, notes and session carry it)
     receiptJoinsTurn(access.threadId,access.botId,bundle.bundleId,this.retainedTurn);
   }
@@ -175,8 +180,10 @@ export class MemoryDispatchReceipt {
    * lose its empty-session bit before its first frame can reach an adapter.
    * The real reader checkpoint is proved here with ordinary retained S1. */
   private bindFirstRetainedFrame(session:string) {
+    if(!this.checkpoint)return;
     const key=sessionKeyOf(this.access.threadId,this.instanceId,session);
     if(sessionHadFrame(database(),key)!==false)return;
+    this.currentAccess=revalidateMemoryBundle(this.bundle,this.access);
     const bind=()=>{noteSessionFrame(database(),key,true);bindMemoryDisclosureSession(this.bundle.bundleId,session);};
     initializeFreshSessionProof(key,this.access,bind,{fresh:false});
     this.boundSession=session;
@@ -192,14 +199,20 @@ export class MemoryDispatchReceipt {
   submissionReplayConfirmation(confirmation:FreshReplaySessionConfirmation){this.replayConfirmation=confirmation;}
   private assertSessionCurrent(submission=false) {
     if(this.resumedSession===undefined)return;
-    const key=sessionKeyOf(this.access.threadId,this.instanceId,this.resumedSession),ctx={access:this.access,disclosed:this.retainedContext?.disclosed??true};
+    const key=sessionKeyOf(this.access.threadId,this.instanceId,this.resumedSession),ctx={access:this.access,disclosed:this.retainedContext?.disclosed??true,checkpoint:this.checkpoint};
     const proof=submission&&this.replayConfirmation&&!this.retainedContext?proveRetainedSessionAtSubmission(LineageAllowance.tool(),key,ctx,this.replayConfirmation):proveRetainedSession(LineageAllowance.tool(),key,ctx);
-    if(proof.kind==='fresh'){console.warn(`memory continuation refused thread=${this.access.threadId} engine=${this.instanceId} reason=${proof.reason}`);throw sessionCheckRefusal({reason:proof.cause==='checking'?'lineage-warming':proof.reason});}
+    if(proof.kind==='fresh'){
+      console.warn(`memory continuation refused thread=${this.access.threadId} engine=${this.instanceId} reason=${proof.reason}`);
+      const refusal=sessionCheckRefusal({reason:proof.cause==='checking'?'lineage-warming':proof.reason});
+      if(proof.cause==='denied')this.failure=refusal;
+      throw refusal;
+    }
   }
-  assertCurrent(submission=false) { if(this.failure)throw this.failure; revokedIfUnknown(()=>assertMemoryBundle(this.bundle,this.access)); this.assertSessionCurrent(submission); }
+  assertCurrent(submission=false) { if(this.failure)throw this.failure; revokedIfUnknown(()=>{this.currentAccess=revalidateMemoryBundle(this.bundle,this.access);assertMemoryBundle(this.bundle,this.access);}); this.assertSessionCurrent(submission); }
   private boundSession?: string;
   /** Native-start producer owner: recall-fix-a (index.ts); first-reader consumer owner: recall-fix-a. */
   sessionStarted(sessionId:string,fresh=false,birthConfirmation?:FreshReplaySessionConfirmation) {
+    this.currentAccess=revalidateMemoryBundle(this.bundle,this.access);
     const key=sessionKeyOf(this.access.threadId,this.instanceId,sessionId);
     const bind=()=>{noteSessionFrame(database(),key,true);bindMemoryDisclosureSession(this.bundle.bundleId,sessionId);};
     initializeFreshSessionProof(key,this.access,bind,{fresh,confirmation:this.replayConfirmation??birthConfirmation});
@@ -209,13 +222,17 @@ export class MemoryDispatchReceipt {
    * every pre-submit check runs, over every source disclosed to the session.
    * False when it no longer holds (or cannot be checked): the message is then
    * not steered but routed as its own turn, which resets the session. */
-  steerable(): boolean {
+  steerable(): boolean { return this.steerState()==='holds'; }
+  /** The same check, telling exactly checking:pending apart from a refusal (cause23): the steer door keeps an owner turn's steer under
+   * pending (steer-door.ts), as the owner turn's own continuation check does. A failure, a revoked frame or any other proof is refused. */
+  steerState(): SteerSessionState {
     try {
-      if(this.failure)return false;
+      if(this.failure)return 'refused';
+      this.currentAccess=revalidateMemoryBundle(this.bundle,this.access);
       assertMemoryBundle(this.bundle,this.access);
       const session=this.boundSession??this.resumedSession;
-      return session===undefined||proveRetainedSession(LineageAllowance.tool(),sessionKeyOf(this.access.threadId,this.instanceId,session),{access:this.access,disclosed:true}).kind==='resume';
-    } catch { return false; }
+      return session===undefined?'holds':steerProofState(proveRetainedSession(LineageAllowance.tool(),sessionKeyOf(this.access.threadId,this.instanceId,session),{access:this.access,disclosed:true}));
+    } catch { return 'refused'; }
   }
   /** Acceptance, run by every adapter write (SendTurnInput.beforeSubmit) and
    * by the server's own acceptance: the receipt and the whole session are
@@ -226,7 +243,7 @@ export class MemoryDispatchReceipt {
   private validateAcceptance(submission:boolean):boolean {
     if(this.failure)throw this.failure;
     if(this.finished&&this.delivered)return false;
-    revokedIfUnknown(()=>assertMemoryDisclosureCurrent(this.bundle.bundleId,this.access));
+    revokedIfUnknown(()=>{this.currentAccess=revalidateMemoryBundle(this.bundle,this.access);assertMemoryDisclosureCurrent(this.bundle.bundleId,this.access);});
     this.assertSessionCurrent(submission);
     return true;
   }
@@ -375,16 +392,24 @@ export class MemoryRefusalCauses {
 }
 /** D7: the one plain line under a blocked rebuild; the single shared constant lives in shared/resend-offer.ts. */
 export { RESEND_OFFER_LINE };
-/** The owner-facing line for a turn refused at its send (1.0.2 Keep all P0: a refusal is never silent). Plain words naming the engine, never
- * the code: what happened and, when the reply did not run, what to do. */
-export function turnRefusedLine(engine: string, kind: TurnRefusedKind): string {
+/** 1.0.22 (field gate): the line for a send Murage refused to repeat on an engine that last said it needs signing in (a login that
+ * expired, then the message sent again). It says what to do; the plain refusal line only says a check did not pass. Undefined for
+ * every refusal that is not about repeating a send. */
+export function turnRefusedSignInLine(engine: string, kind: TurnRefusedKind): string | undefined {
+  if (kind !== "after-submission" && kind !== "after-submission-uncertain") return undefined;
+  return `${engine} needs you to sign in again, so Murage did not send your message again. Sign in to ${engine} in Settings, Models & engines, then send it again.`;
+}
+/** Plain copy for the turn's memory outcome and the next action when a reply could not run. */
+export function turnRefusedLine(_engine: string, kind: TurnRefusedKind): string {
   if (kind === "unknown-submission") return "Context changed; previous attempt may have started. Review its output before trying again.";
   if (kind === "resend-offer") return RESEND_OFFER_LINE;
   if (kind === "after-submission" || kind === "after-submission-uncertain") return `${kind === "after-submission" ? "The original message was submitted." : "The earlier submission may have started."} Murage could not send it again because the submission checks failed. It was not automatically sent again.`;
   return kind === "without-memory-checking" ? MESSAGE_ONLY_NOTE
     : kind === "without-memory-unknown" ? "This reply ran without remembered context."
-    : kind === "without-memory" ? `Memory changed while ${engine} was starting, so this reply ran without remembered context.`
-    : `${engine} could not start this reply. Send it again.`;
+    : kind === "without-memory" ? REPLY_MEMORY_CHANGED
+    // 1.0.20 A-2: a turn refused at its send was stopped by Murage's own checks, never by the engine (Fuigo had started correctly): the
+    // line names Murage (src/lib/recall-copy.ts memoryRecall.murageNotStarted). Inline: FencePendingCard.test.ts runs this function's source.
+    : "Murage couldn't start this reply. Send it again.";
 }
 /** How many times a turn refused over revoked memory context and proven unwritten (refused before its write, or at a late write by an engine
  * that hands its id back first: ACP, Codex, Grok, OpenCode, Gemini, openai-chat) is rebuilt and sent again, each time against the deny

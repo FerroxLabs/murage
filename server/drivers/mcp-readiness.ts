@@ -73,6 +73,20 @@ export const mcpRequiredWaitMs = (): number => envMs("MURAGE_MCP_REQUIRED_WAIT_M
 export const mcpRecoveryMs = (): number => envMs("MURAGE_MCP_RECOVERY_MS", MCP_TURN_RECOVERY_MS);
 export const mcpReconnectWaitMs = (): number => envMs("MURAGE_MCP_RECONNECT_WAIT_MS", MCP_RECONNECT_WAIT_MS);
 export const mcpOptionalWaitMs = (): number => envMs("MURAGE_MCP_OPTIONAL_WAIT_MS", MCP_OPTIONAL_WAIT_MS);
+/** 1.0.22 winfu: a turn bound to its mounts (acp/core.ts boundMounted) is never prompted without them, so when its window ends it
+ * is refused, and the owner reads "Murage couldn't start this reply". A mount the engine itself still lists as STARTING is not a
+ * failed mount: on a cold computer (the first Fuigo turn of a fresh Windows install starts two new processes per mount) the 15 to
+ * 20 s above ran out with every mount still coming up, and each proxy reached the server just after its turn was refused. Such a
+ * turn waits this long in all, measured from its first readiness check, for as long as the engine keeps reporting the mount as
+ * starting (a mount its list does not name keeps the first window). Three reconnect waits (the "roughly 3x" start-up stretch measured above), below the 60 s floor
+ * of the stall watchdog and the 90 s release wait. It never lengthens anything else: a mount the engine reports failed is decided
+ * at once, and one still not ready when this ends is refused as before (fail closed). */
+export const MCP_BOUND_STARTING_WAIT_MS = 3 * MCP_RECONNECT_WAIT_MS;
+const envGiven = (name: string): boolean => process.env[name] !== undefined && process.env[name] !== "";
+/** A box (or a test) that set the turn's own window (MURAGE_MCP_RECOVERY_MS, MURAGE_MCP_RECONNECT_WAIT_MS) asked for exactly that
+ * window: nothing is added to it unless this wait is named itself. */
+export const mcpBoundStartingWaitMs = (): number => envGiven("MURAGE_MCP_BOUND_STARTING_WAIT_MS") ? envMs("MURAGE_MCP_BOUND_STARTING_WAIT_MS", MCP_BOUND_STARTING_WAIT_MS)
+  : envGiven("MURAGE_MCP_RECOVERY_MS") || envGiven("MURAGE_MCP_RECONNECT_WAIT_MS") ? 0 : MCP_BOUND_STARTING_WAIT_MS;
 
 /** The plain name of a required server, or null for an optional one. */
 export function requiredMcpLabel(name: string): string | null {

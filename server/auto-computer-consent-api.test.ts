@@ -46,7 +46,7 @@ fs.writeFileSync(path.join(dataDir, 'cua-connection.json'), JSON.stringify({
   socketPath: path.join(dataDir, 'cua.sock'),
   mcpCommand: driver,
   mcpArgs: ['mcp'],
-  mcpEnv: { FIXTURE_HOST_LOG: path.join(dataDir, 'host-calls.log') },
+  mcpEnv: { FIXTURE_HOST_LOG: path.join(dataDir, 'host-calls.log'), CUA_DRIVER_RS_TELEMETRY_ENABLED: '0', CUA_DRIVER_RS_UPDATE_CHECK: 'false' },
 }));
 process.env.FAKE_CLAUDE_DUMP_EACH_TURN = '1';
 `;

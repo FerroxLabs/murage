@@ -1,8 +1,9 @@
+import { evidencePath } from '../../scripts/evidence-path.mjs';
 // Targeted review regressions: restore each reported gate independently.
 import {readFileSync, writeFileSync, mkdirSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-const out='evidence/gnl-apps-r2/mutants';mkdirSync(out,{recursive:true});
+const out=evidencePath('evidence/gnl-apps-r2/mutants');mkdirSync(out,{recursive:true});
 const cases=[
  {id:'H1-whole-batch',source:'server/composio.ts',anchor:'    if (options.noLimits) {\n      const owner = inventoryOwner(cfg)!;',replacement:'    if (options.noLimits) return { ...textReply(action.id, "Reconnect gmail"), delivery: "not-sent" };\n    if (options.noLimits) {\n      const owner = inventoryOwner(cfg)!;',test:'server/gnl-apps-preflight-api.test.ts',name:'H1 preflight',failure:/expected .* to contain .*account|expected .* to contain .*home/s},
  {id:'H2-task-default',source:'server/index.ts',anchor:'if (!noLimitsChannelMessagesOff(origin, effective)) return undefined;',replacement:'if (!noLimitsChannelMessagesOff(origin, store.bot(botId))) return undefined;',test:'server/gnl-apps-capabilities-api.test.ts',name:'GNL-A3 paired owner channel',failure:/gnl-channel-task-ask/},

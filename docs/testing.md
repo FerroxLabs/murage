@@ -31,3 +31,18 @@ Complete-source comparisons must preserve every tracked path (including
 export-ignored development fixtures), stage verified backup tools, and report
 new failures and failures on both sides by file plus full assertion name.
 A timeout or missing report is a failure, never evidence of a pass.
+
+## Windows identity custody
+
+The CI custody step checks added text lines between the merge base and the
+checked-out commit for Windows account SIDs and drive-letter profile paths.
+Pull requests use the target SHA, pushes use the previous tip, and manual
+runs use the default branch (the first parent when already at its tip).
+`node scripts/check-repository-custody.mjs --windows-private --added-since <ref>`
+reproduces the scan. Omit `--added-since <ref>` for a whole-index Windows audit.
+
+The profile names `Public` and `Default` are Windows system folders. The scanner
+also permits the synthetic `testuser` profile in `server/protected-folders.test.ts`,
+where it exercises Windows folder discovery with fake inputs. The exception
+applies to that exact name and file. Construct other synthetic profiles and
+SIDs from pieces in tests so they never enter source as literal identities.

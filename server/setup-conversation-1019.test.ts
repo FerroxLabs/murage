@@ -129,7 +129,15 @@ describe("F5 detect:move-grok", () => {
     const blank = live({ agents: [], moveIn: { grok: 1 } });
     expect(keys(plan(blank, state(), [HELLO]).append)).toContain(MOVE);
   });
-  it("never once flux:key is present", () => {
-    expect(keys(plan(live({ moveIn: { grok: 2 } }), state({ detect: DETECTED }), [HELLO, DETECT, FLUX]).append)).not.toContain(MOVE);
+  it("never once Flux has been passed over", () => {
+    expect(keys(plan(live({ moveIn: { grok: 2 } }), afterFlux, [HELLO, DETECT, FLUX, NO_KEY]).append)).not.toContain(MOVE);
+  });
+  it("still arrives after flux:key when the first reading outlived the bounded hold and Flux is open", () => {
+    expect(keys(plan(live({ moveIn: { grok: 2 } }), state({ detect: DETECTED }), [HELLO, DETECT, FLUX]).append)).toContain(MOVE);
+  });
+  it("offers notifications after an empty discovery result when Flux was already passed", () => {
+    const transcript = [HELLO, DETECT, NO_KEY];
+    expect(keys(plan(live({ moveInPending: true }), afterFlux, transcript).append)).toEqual([]);
+    expect(keys(plan(live({ moveIn: { grok: 0 } }), afterFlux, transcript).append)).toEqual([NOTIFY]);
   });
 });

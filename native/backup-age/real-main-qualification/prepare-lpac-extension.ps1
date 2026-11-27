@@ -1,14 +1,17 @@
-param([Parameter(Mandatory=$true)][string]$Extension)
+param([Parameter(Mandatory=$true)][string]$Account,[Parameter(Mandatory=$true)][string]$DesktopSid,[Parameter(Mandatory=$true)][string]$ProfileRoot,[Parameter(Mandatory=$true)][string]$Extension)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-$prior='C:\Users\seand\AppData\Local\Temp\murage-b20-real-main-20260914-025600'
+. (Join-Path $PSScriptRoot 'qualification-identity.ps1')
+$ProfileRoot=Confirm-QualificationProfile $Account $DesktopSid $ProfileRoot
+$prior=Join-Path $ProfileRoot 'AppData\Local\Temp\murage-b20-real-main-20260914-025600'
 $candidate=Join-Path $prior 'candidate-d70fe5a145d0'
 if($Extension -ne (Join-Path $prior 'extension-20260914-035100')){throw 'Unexpected extension root'}
 $deadline='2026-09-14T04:21:55.6960312Z'
 if([DateTime]::UtcNow -ge [DateTime]::Parse($deadline).ToUniversalTime()){throw 'Extension deadline elapsed'}
+$manifest=Get-Content -LiteralPath (Join-Path $prior 'journey-manifest.json') -Raw|ConvertFrom-Json
+if($manifest.sid -ne $DesktopSid -or $manifest.sessionId -ne 1){throw 'Manifest desktop binding mismatch'}
 if(Test-Path -LiteralPath (Join-Path $Extension 'lpac-extension-invoked.txt')){throw 'Extension already prepared'}
 if(@(Get-CimInstance Win32_Process|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($candidate,[StringComparison]::OrdinalIgnoreCase)}).Count){throw 'Candidate process exists'}
-$manifest=Get-Content -LiteralPath (Join-Path $prior 'journey-manifest.json') -Raw|ConvertFrom-Json
 if($manifest.candidateSha -ne 'd70fe5a145d06fe57b16dc6b58e19893ff24cb81' -or $manifest.artifactId -ne '10331553736' -or $manifest.executable -ne (Join-Path $candidate 'Murage.exe')){throw 'Exact signed candidate binding mismatch'}
 function Assert-UnchangedCode {
   if((Get-FileHash -LiteralPath $manifest.executable -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.exeSha256){throw 'Executable bytes changed'}

@@ -12,7 +12,7 @@ function world(): InboxRosterStore {
     { id: "secret", name: "Secret", threadId: "t-secret", hidden: true, tasks: [] },
   ];
   const groups: InboxRosterStore["groups"] = [];
-  return {
+  return { isMailboxSealed: () => false,
     bots, groups,
     bot: id => bots.find(bot => bot.id === id) ?? null,
     botByThread: threadId => bots.find(bot => bot.threadId === threadId) ?? null,

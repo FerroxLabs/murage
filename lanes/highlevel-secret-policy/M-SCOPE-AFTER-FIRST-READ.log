@@ -1,0 +1,157 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/highlevel/scope-policy.test.ts (85 tests | 36 failed | 49 skipped) 57ms
+     ↓ pins exactly all implemented ready rows with handwritten vectors
+     ↓ contacts.search
+     × contacts.search: removal of any required scope is before all I/O 9ms
+     ↓ contacts.get
+     × contacts.get: removal of any required scope is before all I/O 2ms
+     ↓ contacts.create
+     × contacts.create: removal of any required scope is before all I/O 3ms
+     ↓ contacts.update
+     × contacts.update: removal of any required scope is before all I/O 2ms
+     ↓ contacts.upsert
+     × contacts.upsert: removal of any required scope is before all I/O 2ms
+     ↓ contacts.delete
+     × contacts.delete: removal of any required scope is before all I/O 1ms
+     ↓ contacts.tags.add
+     × contacts.tags.add: removal of any required scope is before all I/O 1ms
+     ↓ contacts.tags.remove
+     × contacts.tags.remove: removal of any required scope is before all I/O 1ms
+     ↓ contacts.tags.bulk
+     × contacts.tags.bulk: removal of any required scope is before all I/O 2ms
+     ↓ contacts.notes.list
+     × contacts.notes.list: removal of any required scope is before all I/O 1ms
+     ↓ contacts.notes.get
+     × contacts.notes.get: removal of any required scope is before all I/O 1ms
+     ↓ contacts.notes.create
+     × contacts.notes.create: removal of any required scope is before all I/O 1ms
+     ↓ contacts.notes.update
+     × contacts.notes.update: removal of any required scope is before all I/O 1ms
+     ↓ contacts.notes.delete
+     × contacts.notes.delete: removal of any required scope is before all I/O 1ms
+     ↓ contacts.tasks.list
+     × contacts.tasks.list: removal of any required scope is before all I/O 1ms
+     ↓ contacts.tasks.get
+     × contacts.tasks.get: removal of any required scope is before all I/O 1ms
+     ↓ contacts.tasks.create
+     × contacts.tasks.create: removal of any required scope is before all I/O 1ms
+     ↓ contacts.tasks.update
+     × contacts.tasks.update: removal of any required scope is before all I/O 1ms
+     ↓ contacts.tasks.complete
+     × contacts.tasks.complete: removal of any required scope is before all I/O 1ms
+     ↓ contacts.tasks.delete
+     × contacts.tasks.delete: removal of any required scope is before all I/O 1ms
+     ↓ contacts.appointments.list
+     × contacts.appointments.list: removal of any required scope is before all I/O 1ms
+     ↓ contacts.followers.add
+     × contacts.followers.add: removal of any required scope is before all I/O 1ms
+     ↓ contacts.followers.remove
+     × contacts.followers.remove: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.pipelines.list
+     × opportunities.pipelines.list: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.search
+     × opportunities.search: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.get
+     × opportunities.get: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.create
+     × opportunities.create: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.update
+     × opportunities.update: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.status
+     × opportunities.status: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.upsert
+     × opportunities.upsert: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.delete
+     × opportunities.delete: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.followers.add
+     × opportunities.followers.add: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.followers.remove
+     × opportunities.followers.remove: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.pipelines.create
+     × opportunities.pipelines.create: removal of any required scope is before all I/O 2ms
+     ↓ opportunities.pipelines.update
+     × opportunities.pipelines.update: removal of any required scope is before all I/O 1ms
+     ↓ opportunities.pipelines.delete
+     × opportunities.pipelines.delete: removal of any required scope is before all I/O 1ms
+   ↓ G2 custom-field IDs and names both require one definitions read, empty fields none
+   ↓ G2 six/500 target preparation batches are distinct from bounded direct recovery
+   ↓ G2 body-ID upsert chooses direct lookup and response-dependent pipeline membership
+   ↓ G2 zero/one/many unique users choose no read, one direct read or a single membership list
+   ↓ G2 course import has no invented recovery reader and only its exact mutation scope
+   ↓ G2 invalid/uncovered rows fail closed; PIT location proof grants no writes
+   ↓ G2 deterministic immutable plans bind arguments, selectors and generation
+   ↓ G2 family coverage distinguishes conditional missing permissions, restrictions and absent implementations
+   ↓ G2 no declared-but-unreachable read can broaden a concrete plan
+   ↓ G2 projections cover all 17 families without treating provider absence as permission
+   ↓ G2 permission labels carry locale inventory keys
+   ↓ G2 duplicate bulk IDs and malformed passive generations fail before credentials
+
+ Test Files  1 failed (1)
+      Tests  36 failed | 49 skipped (85)
+   Start at  14:16:06
+   Duration  4.29s (transform 3.18s, setup 3.72s, import 366ms, tests 57ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 36 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.search: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.get: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.create: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.update: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.upsert: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.delete: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.tags.add: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.tags.remove: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.tags.bulk: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.notes.list: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.notes.get: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.notes.create: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.notes.update: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.notes.delete: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.tasks.list: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.tasks.get: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.tasks.create: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.tasks.update: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.tasks.complete: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.tasks.delete: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.appointments.list: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.followers.add: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > contacts.followers.remove: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.pipelines.list: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.search: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.get: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.create: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.update: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.status: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.upsert: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.delete: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.followers.add: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.followers.remove: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.pipelines.create: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.pipelines.update: removal of any required scope is before all I/O
+ FAIL  server/highlevel/scope-policy.test.ts > G2 independent implemented operation plans > opportunities.pipelines.delete: removal of any required scope is before all I/O
+AssertionError: expected { credentials: +0, reads: 1, …(2) } to deeply equal { credentials: +0, reads: +0, …(2) }
+
+- Expected
++ Received
+
+  {
+    "credentials": 0,
+-   "reads": 0,
++   "reads": 1,
+    "reviews": 0,
+    "writes": 0,
+  }
+
+ ❯ server/highlevel/scope-policy.test.ts:39:24
+     37|         const result = planInvocation(vector.operation, vector.args, {…
+     38|         if (result.ok) { counts.credentials++; counts.reads++; counts.…
+     39|         expect(counts).toEqual({ credentials: 0, reads: 0, writes: 0, …
+       |                        ^
+     40|         expect(result).toMatchObject({ ok: false, refusal: { code: "mi…
+     41|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/36]⎯
+

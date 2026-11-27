@@ -22,8 +22,8 @@ async function boundedResponse(response: Response): Promise<unknown> {
   if (response.status === 401 || response.status === 403) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
   if (!response.ok) throw Object.assign(new Error("Unavailable"), { refusal: await readBrowserRefusal(response) });
   if (!response.body) throw new Error("Unavailable");
-  const reader=response.body.getReader();const chunks:Uint8Array[]=[];let bytes=0;
-  try {for (;;) {const chunk=await reader.read();if(chunk.done)break;bytes+=chunk.value.length;if(bytes>16*1024*1024)throw new Error("Oversized response");chunks.push(chunk.value);}return JSON.parse(Buffer.concat(chunks).toString("utf8"));}
+  const reader=response.body.getReader();const chunks:Uint8Array[]=[];
+  try {for (;;) {const chunk=await reader.read();if(chunk.done)break;chunks.push(chunk.value);}return JSON.parse(Buffer.concat(chunks).toString("utf8"));}
   catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
 }
 /** Protocol progress metadata (RMCP sends params._meta.progressToken). Only that one key, string or safe integer; never forwarded, the upstream body is rebuilt from name and arguments. */
@@ -39,7 +39,7 @@ function validProgressMeta(meta: unknown): boolean {
 }
 export async function runBrowserExtensionMcp(options: { config: BrowserExtensionMcpConfig; input?: Readable; output?: Writable; fetch?: typeof fetch }): Promise<void> {
   const config=parseBrowserExtensionMcpConfig(options.config),input=options.input??process.stdin,request=options.fetch??fetch;
-  const lines:string[]=[];const splitter=createLineSplitter(line=>lines.push(line),64*1024);
+  const lines:string[]=[];const splitter=createLineSplitter(line=>lines.push(line));
   // Requests run side by side (a slow click no longer holds a ping or a list behind it), each with its own abort, so the client's
   // notifications/cancelled reaches the request it names: its HTTP call is aborted and, as MCP asks, no reply is written for it.
   const inflight=new Map<string,AbortController>();const running=new Set<Promise<void>>();let failure:unknown;
@@ -57,7 +57,7 @@ export async function runBrowserExtensionMcp(options: { config: BrowserExtension
           const supplied=rpc.params as Record<string,unknown>;params=validateHeadlessBrowserCall(supplied.name,supplied.arguments??{});
         } else if(rpc.params!==undefined && (!rpc.params||typeof rpc.params!=="object"||Array.isArray(rpc.params)||Object.keys(rpc.params).length))throw new Error("Invalid tool list request");
         readingUpstream = true;
-        const response=proxyUpstreamResponse("browser-extension",await request(config.endpoint,{method:"POST",headers:{authorization:`Bearer ${config.token}`,"x-murage-browser-client":config.clientId,"content-type":"application/json"},body:JSON.stringify({method:rpc.method,params}),redirect:"error",signal:AbortSignal.any([AbortSignal.timeout(BROWSER_EXTENSION_CALL_TIMEOUT_MS),cancel.signal])}));
+        const response=proxyUpstreamResponse("browser-extension",await NotModelRequest("Sends a browser extension tool request to its registered local broker.", request(config.endpoint,{method:"POST",headers:{authorization:`Bearer ${config.token}`,"x-murage-browser-client":config.clientId,"content-type":"application/json"},body:JSON.stringify({method:rpc.method,params}),redirect:"error",signal:AbortSignal.any([AbortSignal.timeout(BROWSER_EXTENSION_CALL_TIMEOUT_MS),cancel.signal])})));
         readingUpstream = false;
         result=await boundedResponse(response);
         if(rpc.method==="tools/list")result={tools:listHeadlessBrowserTools((result as {tools?:unknown}|null)?.tools)};
@@ -97,7 +97,7 @@ export async function runBrowserExtensionMcp(options: { config: BrowserExtension
     running.add(task);
   }};
   try {
-    for await(const chunk of input){await reserveProxyUpstream("browser-extension",Buffer.byteLength(chunk));if(Buffer.byteLength(chunk)>64*1024)throw new Error("MCP frame exceeds bridge limit");splitter.push(chunk);await drain();}
+    for await(const chunk of input){await reserveProxyUpstream("browser-extension",Buffer.byteLength(chunk));splitter.push(chunk);await drain();}
     if(!failure){splitter.flush();await drain();}
   } catch(error) {failure??=error;for(const controller of inflight.values())controller.abort();input.destroy();}
   while(running.size)await Promise.all([...running]);

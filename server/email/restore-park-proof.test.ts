@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Restore park Batch D proof (r3.1 section 12): an end-to-end walk of the owner surface on the REAL EmailRuntime, store, gate, ParkPort and emailOwnerRoute, against a scripted
-// fake Flux. Registered in CI and driven by proof/run-proof.sh in an isolated fixture. Each step asserts on the owner-view rows AND the email_parks / binding state.
+// fake Flux. Registered in CI and run in an isolated fixture. Each step asserts on the owner-view rows AND the email_parks / binding state.
 // The marker "NEEDS-INT:" in a step name means the step is expected red on the B tip (A3 / J / int wiring missing) and green on the int branch.
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

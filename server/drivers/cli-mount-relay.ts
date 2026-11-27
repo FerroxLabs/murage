@@ -1,6 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../shared/win-hide-child-process.mjs";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import {isObservedChildIoMessage} from "../sentinel/io-child-receipts.ts";
 import { cliStdinEnd } from "./cli-stdin-eof.ts";
 import { probeFolder } from "../probe-folder.ts";
@@ -9,25 +10,48 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, statSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { refuseConsumingTurn } from "../consuming-turn-response.ts";
+import { refuseConsumingTurn, refuseEngineOwnTurn } from "../consuming-turn-response.ts";
+import { logSwallowedConsumingError } from "../consuming-error-log.ts";
+import { terminalReasonWord } from "../proxy-turn-release.ts";
+import { TURN_RELEASE_WAIT_MS } from "../turn-release-wait.ts";
 import { isMemoryRefusal } from "./engine-input.ts";
-import type { SendTurnInput } from "../contracts.ts";
+import { isPendingFenceDeferral } from "../memory/send-fence.ts";
+import { PENDING_FENCE_WAIT_MS } from "../memory/fence-pending.ts";
+import type { RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { CLOUD_BROKER_DIR } from "../cloud-home/turn-process.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { brokerSocketPath, spawnCli, engineJob, killCliTree, awaitCliTreeStopped, cliTreeStoppedSignal, CLI_CALLER_DEADLINE_MS } from "../procs.ts";
 import { CRED_FILE_ENV, CRED_SERVER_ENV } from "../turn-credential.ts";
+import { unavailableLabels } from "./mcp-readiness.ts";
+import { isConnectedAppsServer } from "../../shared/connected-app-names.ts";
 import { admittedMcpMount, assertConsumingMountAdmission, type AdmittedMcpMount } from "./mcp-mounts.ts";
 import { bindCredentialPath, type TurnCredentialStore, type TurnSecrets } from "./turn-credentials.ts";
-import { CHAT_MCP_FRAME_CAP_BYTES, CHAT_MCP_MAX_FRAMES, ChatMcpDescendants, chatMcpTeardown, chatMcpChildEnv } from "./chat-mcp-client.ts";
+import { ChatMcpDescendants, chatMcpTeardown, chatMcpChildEnv } from "./chat-mcp-client.ts";
+/** The most bytes read from a connection before it has shown its ticket (the one small line the relay client writes first). It bounds a
+ * stranger on the socket, never a call: once the ticket is read, a line of any size passes (MAIN-RULING cause22-no-transport-caps). */
+const TICKET_LINE_MAX_BYTES = 2 * 1024 * 1024;
 
+type MountLoss = "spawn" | "exit" | "stdin" | "stdout" | "ipc" | "socket" | "duplicate" | "server";
+const optionalMountNames = new Set(["browser", "murage-browser", "computer", "agents", "murage-memory", "phone", "phoneJobs", "dweb", "highlevel"]);
+/** The terminal frame's error code only (never its message or id). */
+const terminalFrameCode = (frame: unknown): string => terminalReasonWord((frame as { error?: { data?: { code?: unknown } } } | null)?.error?.data?.code);
 const transportClosed = () => Object.assign(new Error("MCP_TRANSPORT_CLOSED"), { code: "MCP_TRANSPORT_CLOSED" });
 
 /** Shared by ChatMcpConnection and the CLI relay. One immutable admission owns
  * all stdin, stdout, IPC and transport failure for this child. */
 export class RelayedMount {
+  declare readonly engineTransport: true;
+  /** 1.0.20 revkill: the longest a call waits for a pending memory check before only that call is answered with an error. */
+  static pendingWaitMs = PENDING_FENCE_WAIT_MS;
+  // Engine frames held, in order, while the first of them waits for its pending memory check.
+  #waiting: string[] | undefined;
+  // 1.0.20 revkill2: child output held, in order, behind a tool reply that waits for its pending memory check.
+  #held: Buffer[] | undefined;
+  // 1.0.21 revkill3: the held bytes (bounded by one frame cap, not a chunk count) and the early end of that wait when they pass it.
   #parts: Buffer[] = [];
   #bytes = 0;
-  #frames = 0;
+  // cause22 caps (owner turn only): why the child's stdout is paused. A busy engine socket or a full held queue waits; it never seals.
+  readonly #paused = new Set<"flow" | "held">();
   stopping = false;
   readonly child: ChildProcess;
   readonly mount: AdmittedMcpMount;
@@ -35,25 +59,60 @@ export class RelayedMount {
   readonly failed: (nativeError?: unknown, refusal?: unknown) => void;
   readonly accepted: () => void;
   readonly pendingBarrier: () => boolean;
+  readonly drop: (cause: MountLoss, reason?: string) => boolean;
+  /** cause22 caps: resolves when the engine connection can take more (it needs drain now); undefined when it is not busy. */
+  readonly flow: () => Promise<void> | undefined;
+  // The first bytes of the child's stderr. Only the content-free site/class/code words of its
+  // "[consuming] swallowed error" lines ever reach the log (stderrCause), never the text itself.
+  #stderrHead = "";
   constructor(child: ChildProcess, mount: AdmittedMcpMount,
-    write: (frame: string) => void, failed: (nativeError?: unknown, refusal?: unknown) => void, accepted: () => void = () => {}, pendingBarrier: () => boolean = () => false) {
+    write: (frame: string) => void, failed: (nativeError?: unknown, refusal?: unknown) => void, accepted: () => void = () => {}, pendingBarrier: () => boolean = () => false,
+    drop: (cause: MountLoss, reason?: string) => boolean = () => false, flow: () => Promise<void> | undefined = () => undefined) {
     this.child = child; this.mount = mount; this.write = write; this.failed = failed; this.accepted = accepted;
-    this.pendingBarrier = pendingBarrier;
+    this.pendingBarrier = pendingBarrier; this.drop = drop; this.flow = flow;
     for (const event of ["error", "exit", "close", "end", "disconnect"]) child.prependOnceListener(event, () => {
       if (this.pendingBarrier()) { this.retire(); this.failed(); }
     });
     mount.ingress.supervise(child);
-    child.on("message", message => { if(!isObservedChildIoMessage(child,message))this.fail(); });
-    child.on("error", error => this.fail(error));
-    child.once("exit", () => this.fail(transportClosed()));
-    child.stdin?.on("error", error => this.fail(error));
-    child.stderr?.on("error", () => {}); child.stderr?.resume();
-    child.stdout?.on("error", error => this.fail(error));
-    child.stdout?.on("end", () => this.fail(transportClosed()));
+    child.on("message", message => {
+      if (isObservedChildIoMessage(child, message)) return;
+      // Name only the shape: a frame or token never reaches the log.
+      const shape = message && typeof message === "object" ? message as Record<string, unknown> : {};
+      if (shape.type === "mcp-server-unavailable" && this.drop("server")) return;
+      // Bundled proxies also use terminal IPC when their own backend disappears.
+      // The parent denial and approval-broker guards in dropMount still take precedence.
+      if (shape.type === "turn-release-terminal" && shape.instanceId === mount.ingress.identity.proxyInstanceId && this.drop("ipc", terminalReasonWord(shape.reason))) return;
+      if (!this.stopping) console.warn(`[mount-relay] mount ipc message seals the relay type=${typeof shape.type === "string" ? shape.type.slice(0, 40) : typeof message}`
+        + ` keys=${Object.keys(shape).slice(0, 8).join(",").slice(0, 120)}`
+        // The terminal's frame is the fixed refusal; its reason is the child's code word for the first refusing check.
+        + (shape.type === "turn-release-terminal" ? ` frame=${terminalFrameCode(shape.frame)} reason=${terminalReasonWord(shape.reason)}` : ""));
+      this.fail();
+    });
+    child.on("error", error => this.transportLost("spawn", error));
+    child.once("disconnect", () => this.transportLost("ipc", undefined, "disconnect"));
+    child.once("exit", (code, signal) => {
+      if (!this.stopping) console.warn(`[mount-relay] mount child exited code=${code ?? "-"} signal=${signal ?? "-"}`);
+      this.transportLost("exit");
+    });
+    child.stdin?.on("error", error => this.transportLost("stdin", error));
+    child.stderr?.on("error", () => {});
+    child.stderr?.on("data", (chunk: Buffer | string) => { if (this.#stderrHead.length < 4096) this.#stderrHead = (this.#stderrHead + String(chunk)).slice(0, 4096); });
+    child.stderr?.resume();
+    child.stdout?.on("error", error => this.transportLost("stdout", error));
+    child.stdout?.on("end", () => this.transportLost("stdout"));
     child.stdout?.on("data", (chunk: Buffer | string) => this.data(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-    if (!child.stdin || !child.stdout) this.fail(transportClosed());
+    if (!child.stdin || !child.stdout) this.transportLost("spawn");
   }
-  retire(): void { this.stopping = true; this.mount.ingress.retire(); this.#parts = []; this.#bytes = 0; }
+  transportLost(cause: MountLoss, error: unknown = transportClosed(), reason?: string): void {
+    if (!this.stopping && !this.drop(cause, reason)) this.fail(error);
+  }
+  /** The child's own first refusing checks, as code words: site/class/code of each "[consuming] swallowed error" line (at most 3). */
+  stderrCause(): string {
+    const words = [...this.#stderrHead.matchAll(/^\[consuming\] swallowed error site=(\S+) n=\S+ class=(\S+) code=(\S+)/gm)].slice(0, 3)
+      .map(match => [match[1], match[2], match[3]].map(terminalReasonWord).join("/"));
+    return words.join(",") || "none";
+  }
+  retire(): void { this.stopping = true; this.mount.ingress.retire(); this.#parts = []; this.#bytes = 0; this.#paused.clear(); }
   /** G0-LLM: `refusal` is the fenced refusal error itself (a pre-entry ledger denial); the relay hands it to the consumer, which claims it
    * with refusalFor(target null) so the lease closes it. It never counts as a native failure. */
   fail(nativeError?: unknown, refusal?: unknown): void {
@@ -63,43 +122,136 @@ export class RelayedMount {
     else this.mount.ingress.seal();
     if (refusal === undefined) this.failed(nativeError); else this.failed(nativeError, refusal);
   }
-  request(frame: string): void {
+  request(frame: string, retried = false): void {
     if (this.stopping) return;
+    if (this.#waiting) { if (this.#waiting.length < 256) this.#waiting.push(frame); else this.refuseCall(frame); return; }
     let entered = false;
     try {
-      if (!this.child.stdin || this.child.stdin.writableNeedDrain || this.child.stdin.destroyed) throw new Error("MEMORY_CONTEXT_REVOKED");
-      this.mount.ingress.request(frame, () => { entered = true; this.child.stdin!.write(frame + "\n"); }, "\n");
-    } catch (error) { this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error); }
+      if (!this.child.stdin || this.child.stdin.destroyed) { this.transportLost("stdin"); return; }
+      // MAIN-RULING cause22-no-transport-caps: a busy child stdin never seals a turn. The write is taken and the engine side waits
+      // (stdinBusy, asked by the relay's connection reader).
+      NotModelRequest("Local MCP admission checks a capability-bound tool request.", this.mount.ingress.request(frame, () => { entered = true; NotModelRequest("Writes a capability-bound MCP request to the local child.", this.child.stdin!.write(frame + "\n")); }, "\n"));
+    } catch (error) {
+      // 1.0.20 revkill: held context still checking:pending is not a revoke. Only this call waits (bounded) and is offered once more;
+      // the relay and the turn stay open. A proven revoke on that retry refuses as before.
+      if (!entered && isPendingFenceDeferral(error)) { this.waitPending(frame, error, retried); return; }
+      if (!this.stopping) logSwallowedConsumingError(entered ? "relay.mount:entered" : "relay.mount", error);
+      this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error);
+    }
   }
+  private waitPending(frame: string, error: unknown, retried: boolean): void {
+    const waiting = this.#waiting = [frame];
+    console.warn(`[mount-relay] a call waits for a pending memory check retried=${retried}`);
+    void (retried ? Promise.resolve(false) : this.mount.ingress.waitPending(error, () => this.stopping, RelayedMount.pendingWaitMs))
+      .catch(() => false).then(cleared => {
+        if (this.#waiting !== waiting) return;
+        this.#waiting = undefined;
+        if (this.stopping) return;
+        const [first, ...rest] = waiting;
+        if (cleared) NotModelRequest("Retries the held MCP request after its local context check.", this.request(first!, true));
+        else this.refuseCall(first!);
+        for (const next of rest) NotModelRequest("Drains queued MCP requests held behind a local context check.", this.request(next));
+      });
+  }
+  /** The fixed, content-free answer for the one call whose check did not settle in time. Nothing of the call is forwarded. */
+  private refuseCall(frame: string): void {
+    console.warn("[mount-relay] a call still waiting for its memory check was answered with an error; the turn continues");
+    let id: unknown;
+    try { const rpc = JSON.parse(frame) as { id?: unknown; method?: unknown }; if (typeof rpc.method === "string") id = rpc.id; } catch { return; }
+    if (typeof id !== "string" && typeof id !== "number") return;
+    try { NotModelRequest("Local MCP reply reports that the context check is still pending.", this.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message: "Murage is still checking remembered context. Try this again in a moment." } }) + "\n")); }
+    catch { /* the engine connection is gone; that loss is handled by the relay */ }
+  }
+  /** cause22 caps: resolves when the child's stdin can take more; undefined when it is not busy. The relay pauses the engine connection on it. */
+  stdinBusy(): Promise<void> | undefined {
+    const stdin = this.child.stdin;
+    if (this.stopping || !stdin || stdin.destroyed || !stdin.writableNeedDrain) return undefined;
+    return new Promise<void>(resolve => { const done = () => { stdin.off("drain", done); stdin.off("close", done); stdin.off("error", done); resolve(); };
+      stdin.once("drain", done); stdin.once("close", done); stdin.once("error", done); });
+  }
+  private pause(why: "flow" | "held"): void { if (!this.#paused.size) this.child.stdout?.pause(); this.#paused.add(why); }
+  private resume(why: "flow" | "held"): void { if (this.#paused.delete(why) && !this.#paused.size && !this.stopping) this.child.stdout?.resume(); }
   data(chunk: Buffer): void {
     if (this.stopping) return;
-    let entered = false;
+    try { this.mount.ingress.upstream(chunk.byteLength); } // before buffering or scanning
+    catch (error) { this.dataFailed(false, error); return; }
+    // 1.0.20 revkill2: while a reply waits for its pending check, later child output is held behind it, in order (already charged).
+    if (this.#held) {
+      // MAIN-RULING cause22-no-transport-caps: no count of held chunks seals a turn. Past 256 the chunk is kept and the child waits.
+      // rel/1023: no count of held BYTES ends the wait either (MAIN-RULING cause22-no-transport-caps; the 1.0.21 revkill3 byte bound is gone).
+      this.#held.push(chunk);
+      if (this.#held.length > 256) this.pause("held");
+      return;
+    }
+    this.scan(chunk);
+    // A busy engine connection makes the child wait, on every turn; it never seals the relay.
+    if (!this.stopping && !this.#paused.has("flow")) {
+      const wait = this.flow();
+      if (wait) { this.pause("flow"); void wait.catch(() => {}).then(() => this.resume("flow")); }
+    }
+  }
+  /** `retried`: a held reply offered once more before the held bytes after it are scanned. */
+  private scan(chunk: Buffer, retried?: string): void {
+    let entered = false, line = retried, start = 0, onRetry = retried !== undefined;
     try {
-      this.mount.ingress.upstream(chunk.byteLength); // before buffering or scanning
-      let start = 0;
+      if (line !== undefined) this.deliverLine(line, () => { entered = true; });
       while (start < chunk.length && !this.stopping) {
+        line = undefined; entered = false; onRetry = false;
         const end = chunk.indexOf(10, start);
         const part = chunk.subarray(start, end < 0 ? chunk.length : end);
-        if (this.#bytes + part.length > CHAT_MCP_FRAME_CAP_BYTES) throw new Error("MEMORY_CONTEXT_REVOKED");
         this.#parts.push(part); this.#bytes += part.length;
         if (end < 0) return;
-        const line = Buffer.concat(this.#parts).toString("utf8");
+        line = Buffer.concat(this.#parts).toString("utf8");
         this.#parts = []; this.#bytes = 0; start = end + 1;
-        if (++this.#frames > CHAT_MCP_MAX_FRAMES) throw new Error("MEMORY_CONTEXT_REVOKED");
-        entered = false;
-        const envelope = this.mount.accept(line, frame => { entered = true; return this.write(frame); }, "\n");
-        entered = false;
-        this.accepted();
-        if (envelope) {
-          // The response has already left. Losing the acknowledgement cannot
-          // turn that release into a ledger denial or authorize a replay.
-          try {
-            if (!this.child.connected || !this.child.send) throw transportClosed();
-            this.child.send({ type: "turn-release-ack", instanceId: envelope.instanceId, sequence: envelope.sequence }, error => { if (error) this.fail(error); });
-          } catch (error) { this.fail(error ?? transportClosed()); }
-        }
+        this.deliverLine(line, () => { entered = true; });
       }
-    } catch (error) { this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error); }
+    } catch (error) {
+      // 1.0.20 revkill2: a reply that meets held context still checking:pending is not a revoke. It and everything after it wait (bounded)
+      // for that exact check and are offered once more; nothing unchecked is forwarded. A proven revoke on that retry refuses as before.
+      if (!entered && line !== undefined && isPendingFenceDeferral(error) && !this.stopping) { this.holdReply(line, error, onRetry, chunk.subarray(start)); return; }
+      this.dataFailed(entered, error);
+    }
+  }
+  private holdReply(line: string, error: unknown, retried: boolean, rest: Buffer): void {
+    const held = this.#held = rest.length ? [rest] : [];
+    console.warn(`[mount-relay] a tool reply waits for a pending memory check retried=${retried}`);
+    void (retried ? Promise.resolve(false) : this.mount.ingress.waitPending(error, () => this.stopping || this.#held !== held, RelayedMount.pendingWaitMs))
+      .catch(() => false).then(cleared => {
+        if (this.#held !== held) return;
+        this.#held = undefined;
+        this.resume("held");
+        if (this.stopping) return;
+        // Held bytes are replayed through the same scan, in order; a later deferral holds again from there.
+        const bytes = Buffer.concat(held.splice(0));
+        if (cleared) this.scan(bytes, line);
+        else { this.dropReply(); this.scan(bytes); }
+      });
+  }
+  /** The one reply whose check did not settle in time is never released; the call it answered gets the fixed, content-free error. */
+  private dropReply(): void {
+    console.warn("[mount-relay] a tool reply still waiting for its memory check was dropped; the turn continues");
+    // 1.0.21 revkill3: the call id comes from the frame the ingress checked, so an enveloped (bundled proxy) reply is answered too.
+    let id: string | number | undefined;
+    try { id = this.mount.drop?.(); } catch { /* the permit then lapses at its own deadline */ }
+    if (id === undefined) return;
+    try { NotModelRequest("Local MCP reply reports that the context check is still pending.", this.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message: "Murage is still checking remembered context. Try this again in a moment." } }) + "\n")); }
+    catch { /* the engine connection is gone; that loss is handled by the relay */ }
+  }
+  private deliverLine(line: string, enter: () => void): void {
+    const envelope = this.mount.accept(line, frame => { enter(); return NotModelRequest("Local CLI relay writes a capability-bound MCP response.", this.write(frame)); }, "\n");
+    this.accepted();
+    if (envelope) {
+      // The response has already left. Losing the acknowledgement cannot
+      // turn that release into a ledger denial or authorize a replay.
+      try {
+        if (!this.child.connected || !this.child.send) throw transportClosed();
+        NotModelRequest("IPC acknowledges an accepted local MCP response.", this.child.send({ type: "turn-release-ack", instanceId: envelope.instanceId, sequence: envelope.sequence }, error => { if (error) this.transportLost("ipc", error); }));
+      } catch (error) { this.transportLost("ipc", error); }
+    }
+  }
+  private dataFailed(entered: boolean, error: unknown): void {
+    if (!this.stopping) logSwallowedConsumingError(entered ? "relay.mount:entered" : "relay.mount", error);
+    this.fail(entered ? error ?? new Error("MCP_WRITE_FAILED") : undefined, entered || !isMemoryRefusal(error) ? undefined : error);
   }
 }
 
@@ -151,9 +303,10 @@ function allocateMounts(turn: SendTurnInput, servers: Record<string, unknown>, s
   assertConsumingMountAdmission(turn, "server", true);
   const entries = new Map<string, Record<string, unknown>>();
   for (const [name, entry] of Object.entries(servers)) {
-    if (!name || Buffer.byteLength(name) > 128) refuseConsumingTurn(turn.releaseBinding!);
+    // 1.0.20 busy-engines: a mount name or env the relay cannot carry is its own refusal (ENGINE_OWN_REFUSAL): a rebuild meets it again.
+    if (!name || Buffer.byteLength(name) > 128) refuseEngineOwnTurn(turn.releaseBinding!);
     const spec = entry as Record<string, unknown>;
-    if (spec?.env !== undefined && (!spec.env || typeof spec.env !== "object" || Array.isArray(spec.env) || Object.values(spec.env).some(value => typeof value !== "string"))) refuseConsumingTurn(turn.releaseBinding!);
+    if (spec?.env !== undefined && (!spec.env || typeof spec.env !== "object" || Array.isArray(spec.env) || Object.values(spec.env).some(value => typeof value !== "string"))) refuseEngineOwnTurn(turn.releaseBinding!);
     entries.set(name, turn.mountAdmission!.mount({ ...spec, env: { ...(spec?.env as Record<string, string> ?? {}), ...secrets[name] } }));
   }
   return entries;
@@ -173,6 +326,7 @@ export class CliMountRelay {
   readonly socketPath: string;
   readonly servers: Record<string, unknown> = {};
   readonly mounts = new Map<string, RelayedMount>();
+  readonly #unavailable = new Set<string>();
   readonly #entries = new Map<string, Record<string, unknown>>();
   readonly #connections = new Map<string, Socket>();
   readonly #sockets = new Set<Socket>();
@@ -265,19 +419,51 @@ export class CliMountRelay {
         if (ingress.sealed || ingress.retired) throw new Error("MEMORY_CONTEXT_REVOKED");
       }
       for (const [name, entry] of relay.#entries) {
-        const child = launchMount(entry.command as string, entry.args as string[], chatMcpChildEnv(entry.env), turn.cwd ?? probeFolder());
+        const admitted = admittedMcpMount(entry);
+        let child: ChildProcess;
+        try { child = launchMount(entry.command as string, entry.args as string[], chatMcpChildEnv(entry.env), turn.cwd ?? probeFolder()); }
+        catch (error) {
+          if (["ENOENT", "EACCES", "EPERM"].includes((error as NodeJS.ErrnoException | null)?.code ?? "") && relay.dropMount(name, "spawn")) continue;
+          throw error;
+        }
         const descendants = new ChatMcpDescendants(child);
         const teardown = chatMcpTeardown(child, descendants);
-        const transport = new RelayedMount(child, admittedMcpMount(entry), frame => {
+        const transport = new RelayedMount(child, admitted, frame => {
           const socket = relay.#connections.get(name);
-          if (!socket || socket.destroyed || socket.writableNeedDrain) throw new Error("MEMORY_CONTEXT_REVOKED");
-          socket.write(frame);
-        }, (error, refusal) => relay.seal(error, refusal), () => descendants.track(), () => !!relay.#onTicketFailure);
-        relay.mounts.set(name, transport); relay.#children.push({ transport, descendants, teardown });
+          // MAIN-RULING cause22-no-transport-caps: a busy engine connection never seals a turn. The write is taken and the child waits (flow).
+          if (!socket || socket.destroyed) throw new Error("MEMORY_CONTEXT_REVOKED");
+          NotModelRequest("Local MCP relay delivers a capability-bound tool response.", socket.write(frame));
+        }, (error, refusal) => {
+          // Name the mount whose child, IPC or frame sealed the relay (name and cause kind only).
+          if (!relay.#stopping && !relay.#sealed) console.warn(`[mount-relay] mount failure seals the relay mount=${name.slice(0, 64)}`
+            + ` cause=${error !== undefined ? "native" : refusal !== undefined ? "refusal" : "none"}`);
+          relay.seal(error, refusal);
+        }, () => descendants.track(), () => !!relay.#onTicketFailure, (cause, reason) =>
+          relay.dropMount(name, cause, reason, () => {
+            teardown.markStopRequested();
+            void descendants.ready().then(() => {
+              killCliTree(child);
+              return descendants.stop();
+            }).catch(() => {});
+          }), () => {
+          const socket = relay.#connections.get(name);
+          if (!socket || socket.destroyed || !socket.writableNeedDrain) return undefined;
+          return new Promise<void>(resolve => { const done = () => { socket.off("drain", done); socket.off("close", done); resolve(); };
+            socket.once("drain", done); socket.once("close", done); });
+        });
+        // One bounded line per dropped mount, once its child has gone: how it ended and its own first refusing checks.
+        child.once("close", (code, signal) => {
+          if (relay.mountUnavailable(name)) console.warn(`[mount-relay] dropped mount child closed mount=${JSON.stringify(name.slice(0, 64))}`
+            + ` code=${code ?? "-"} signal=${signal ?? "-"} stderr=${transport.stderrCause()}`);
+        });
+        if (relay.mountUnavailable(name)) transport.retire();
+        else relay.mounts.set(name, transport);
+        relay.#children.push({ transport, descendants, teardown });
         descendants.track();
       }
       return relay;
     } catch (error) {
+      logSwallowedConsumingError("relay.build", error);
       const memoryRefusal = (error as { code?: string } | null)?.code === "MEMORY_CONTEXT_REVOKED"
         || (error as { message?: string } | null)?.message === "MEMORY_CONTEXT_REVOKED";
       if (previous) relay.retire();
@@ -306,41 +492,110 @@ export class CliMountRelay {
     if (endCli) this.#endCli = endCli;
     if (this.#sealed) { killCliTree(cli); if (this.#refusal === undefined) onFailure(this.#nativeFailure); else onFailure(this.#nativeFailure, this.#refusal); }
   }
+  mountUnavailable(name: string): boolean { return this.#unavailable.has(name); }
+  reportUnavailable(base: () => Pick<RuntimeEvent, "eventId" | "provider" | "threadId" | "turnId" | "createdAt">, emit: (event: RuntimeEvent) => void): void {
+    if (!this.#unavailable.size || this.#sealed) return;
+    const labels = unavailableLabels([...this.#unavailable].map(name => name.replace(/[\p{C}\p{Z}]+/gu, " ").trim()));
+    const list = new Intl.ListFormat("en").format(labels);
+    const title = `Murage couldn't use the ${list} for this reply.`;
+    const event = base();
+    const itemId = `mount-unavailable-${event.turnId}`;
+    emit({ ...event, type: "item.started", itemType: "tool", origin: "murage", toolKind: "notice", itemId, title });
+    emit({ ...base(), type: "item.completed", itemType: "tool", itemId, ok: false });
+  }
+  /** The engine reports this mount settled without coming up (unavailable, failed...): an optional mount is retired for the turn, like one
+   * whose child exited (dropMount decides which names may be dropped; a name it refuses stays, and the caller's gate refuses). */
+  retireSettledMount(name: string, status: string): boolean { return this.dropMount(name, "exit", status); }
+  private dropMount(name: string, cause: MountLoss, reason?: string, stopChild?: () => void): boolean {
+    if (this.#unavailable.has(name)) return true;
+    if (this.#stopping || this.#sealed || this.#onTicketFailure || name === "muragebox") return false;
+    const entry = this.#entries.get(name)!;
+    const mount = admittedMcpMount(entry);
+    const proxy = entry.command === process.execPath ? (entry.args as string[])[0] : undefined;
+    // Only the wipe proxy itself can report loss of the server behind it.
+    if (mount.ingress.ledgerRefused || proxy === SPAWNED_PROXIES.permission || (cause === "server" && proxy !== SPAWNED_PROXIES.wipeMcp)) return false;
+    const integrations = this.turn.integrations;
+    if (!optionalMountNames.has(name) && !isConnectedAppsServer(name) && integrations?.agents?.serverName !== name
+      && !Object.hasOwn(integrations?.custom ?? {}, name)) return false;
+    this.#unavailable.add(name);
+    this.mounts.get(name)?.retire();
+    mount.ingress.retire();
+    this.mounts.delete(name);
+    this.#connections.get(name)?.destroy();
+    this.#connections.delete(name);
+    stopChild?.();
+    console.warn(`[mount-relay] mount unavailable mount=${JSON.stringify(name.slice(0, 64))} cause=${cause}${reason ? ` reason=${terminalReasonWord(reason)}` : ""}`);
+    return true;
+  }
+  private dropConnection(name: string, cause: "socket" | "duplicate"): boolean {
+    return this.mountUnavailable(name) || (this.mounts.get(name)?.drop(cause) ?? false);
+  }
   private connect(socket: Socket): void {
     this.#sockets.add(socket);
     let name: string | undefined;
-    let buffer = Buffer.alloc(0);
-    const timer = setTimeout(() => socket.destroy(), 5000); timer.unref();
-    socket.on("error", error => { if (name && !this.#stopping) this.seal(error); });
+    // One engine line at a time: its parts as they arrive (never re-copied per chunk), and whether the rest of a cut line is being discarded.
+    let parts: Buffer[] = [], held = 0;
+    // Closed before its ticket was read: one line with the reason word only (never the bytes), then the close.
+    const refuse = (reason: "timeout" | "ticket" | "mount" | "frame") => {
+      if (!this.#stopping && !this.#sealed) console.warn(`[mount-relay] engine connection closed before its ticket reason=${reason}`);
+      socket.destroy();
+    };
+    // A hang guard for a connection that never sends its ticket, not a deadline for a slow server: the shim writes the
+    // ticket the moment it connects, and a busy main loop reads it late, not never (cause17: a 5 s guard closed every
+    // shim of a turn after one late loop turn). A wrong ticket still closes at once below.
+    const timer = setTimeout(() => refuse("timeout"), TURN_RELEASE_WAIT_MS); timer.unref();
+    socket.on("error", error => {
+      if (!name || this.#stopping || this.#sealed || this.dropConnection(name, "socket")) return;
+      console.warn(`[mount-relay] engine connection error seals the relay mount=${name.slice(0, 64)}`);
+      this.seal(error);
+    });
     socket.on("close", () => {
       clearTimeout(timer); this.#sockets.delete(socket);
-      if (name && !this.#stopping) this.seal(transportClosed());
+      if (!name || this.#stopping || this.#sealed || this.dropConnection(name, "socket")) return;
+      console.warn(`[mount-relay] engine connection closed seals the relay mount=${name.slice(0, 64)}`);
+      this.seal(transportClosed());
     });
     socket.on("data", (chunk: Buffer) => {
-      if (this.#stopping || this.#sealed) { socket.destroy(); return; }
-      if (buffer.length + chunk.length > CHAT_MCP_FRAME_CAP_BYTES) { if (name) this.seal(); socket.destroy(); return; }
-      buffer = Buffer.concat([buffer, chunk]);
-      for (;;) {
-        const end = buffer.indexOf(10); if (end < 0) return;
-        const line = buffer.subarray(0, end).toString("utf8"); buffer = buffer.subarray(end + 1);
+      if (this.#stopping || this.#sealed || (name && this.mountUnavailable(name))) { socket.destroy(); return; }
+      // MAIN-RULING cause22-no-transport-caps: a call of any size is read once the connection has named its mount. Only the first line
+      // of a connection that has not shown its ticket yet keeps a bound.
+      if (!name) { const end = chunk.indexOf(10); if (held + (end < 0 ? chunk.length : end) > TICKET_LINE_MAX_BYTES) { refuse("frame"); return; } }
+      let start = 0;
+      while (start < chunk.length) {
+        if (socket.destroyed || this.#stopping || this.#sealed) return;
+        const end = chunk.indexOf(10, start);
+        const part = chunk.subarray(start, end < 0 ? chunk.length : end);
+        parts.push(part); held += part.length;
+        if (end < 0) return;
+        const line = (parts.length === 1 ? parts[0]! : Buffer.concat(parts, held)).toString("utf8"); parts = []; held = 0; start = end + 1;
         if (!name) {
           try {
             const auth = JSON.parse(line);
             const ticket = Buffer.from(typeof auth.ticket === "string" ? auth.ticket : "");
-            if (ticket.length !== Buffer.byteLength(this.ticket) || !timingSafeEqual(ticket, Buffer.from(this.ticket))
-              || typeof auth.server !== "string" || !this.mounts.has(auth.server)) {
+            const ticketOk = ticket.length === Buffer.byteLength(this.ticket) && timingSafeEqual(ticket, Buffer.from(this.ticket));
+            if (!ticketOk || typeof auth.server !== "string" || !this.mounts.has(auth.server)) {
               // An expected mount with a stale/unknown ticket fails only the
               // S2 barrier. Authentication never acquires a consuming ingress.
               if (typeof auth.server === "string" && this.mounts.has(auth.server)) {
                 try { this.#onTicketFailure?.(); } catch {}
               }
-              socket.destroy(); return;
+              refuse(ticketOk ? "mount" : "ticket"); return;
             }
             // Authentication precedes association: strangers cannot refuse a turn.
-            if (this.#connections.has(auth.server)) { this.seal(); socket.destroy(); return; }
+            if (this.#connections.has(auth.server)) {
+              if (this.dropConnection(auth.server, "duplicate")) { socket.destroy(); return; }
+              if (!this.#stopping && !this.#sealed) console.warn(`[mount-relay] second engine connection for one mount seals the relay mount=${auth.server.slice(0, 64)}`);
+              this.seal(); socket.destroy(); return;
+            }
             name = auth.server as string; this.#connections.set(name, socket); clearTimeout(timer);
-          } catch { socket.destroy(); return; }
-        } else this.mounts.get(name)!.request(line);
+          } catch { refuse("frame"); return; }
+        } else {
+          const target = this.mounts.get(name);
+          NotModelRequest("Local MCP relay dispatches to the mounted tool channel.", target?.request(line));
+          // A child whose stdin is busy makes the engine connection wait, on every turn.
+          const busy = target?.stdinBusy();
+          if (busy && !socket.isPaused()) { socket.pause(); void busy.then(() => { if (!socket.destroyed) socket.resume(); }); }
+        }
       }
     });
   }
@@ -354,6 +609,9 @@ export class CliMountRelay {
     }
     this.#sealed = true;
     this.#nativeFailure = nativeError; this.#refusal = refusal;
+    // The first cause of a sealed relay: a native transport failure, a ledger refusal, or neither (a protocol seal).
+    logSwallowedConsumingError(nativeError !== undefined ? "relay.seal:native" : refusal !== undefined ? "relay.seal:refusal" : "relay.seal",
+      nativeError ?? refusal ?? new Error("RELAY_SEALED"));
     if (nativeError !== undefined) {
       // Invalidate every mount before teardown; native failure is not a ledger denial.
       for (const mount of this.mounts.values()) mount.retire();
@@ -433,6 +691,14 @@ export class CliMountRelay {
     return this.#finish ??= this.#generationStop
       ? this.#generationStop.then(() => this.settle(cli)) : this.settle(cli);
   }
+  /** A stop's end of the engine (stdin end, then the tree signal). It runs one microtask after the stop began, never inside the
+   *  caller's step: ACP's interrupt starts the stop and then writes session/cancel in the same step, and an engine signalled
+   *  before that line went out never reads its cancellation (1.0.21: cause9 had moved this end above the stop's first await). */
+  async endEngine(cli: ChildProcess): Promise<boolean> {
+    await null;
+    try { this.#endCli(cli); } catch {}
+    try { killCliTree(cli); return true; } catch { return false; }
+  }
   private async settle(cli?: ChildProcess): Promise<boolean> {
     let confirmed = false;
     const owner = this.turn.warmIdentity?.botId ?? this.turn.threadId;
@@ -445,6 +711,10 @@ export class CliMountRelay {
     try {
       let stopFailed = false;
       try { this.retire(); } catch { stopFailed = true; }
+      // The engine is ended first, beside the mount servers' process list and never behind it. It is not a parent of the mount
+      // servers (Murage starts them), so their descendant snapshot does not need it alive, and a Stop must not leave it running
+      // while a slow process list is waited for.
+      const engineEnded = cli ? this.endEngine(cli).catch(() => false) : Promise.resolve(true);
       await Promise.all(this.#children.map(async ({ transport, descendants, teardown }) => {
         try {
           teardown.markStopRequested();
@@ -453,7 +723,7 @@ export class CliMountRelay {
           killCliTree(transport.child);
         } catch { stopFailed = true; }
       }));
-      if (cli) { try { this.#endCli(cli); } catch {} try { killCliTree(cli); } catch { stopFailed = true; } }
+      if (!(await engineEnded)) stopFailed = true;
       const results = await Promise.all([
         cli ? awaitCliTreeStopped(cli, undefined, CLI_CALLER_DEADLINE_MS) : Promise.resolve(true),
         ...this.#children.map(async ({ teardown, descendants }) => {

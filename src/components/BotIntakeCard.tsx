@@ -1,3 +1,4 @@
+import { imeComposing } from "@/lib/composer-enter";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, BookOpen, Sparkles, X } from "lucide-react";
 
@@ -236,6 +237,7 @@ function IntakeQuestion({
               value={answer}
               onChange={(event) => setAnswer(event.target.value)}
               onKeyDown={(event) => {
+                if (imeComposing(event.nativeEvent)) return;
                 if (event.key === "Enter") {
                   event.preventDefault();
                   void ask();

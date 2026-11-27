@@ -1,3 +1,4 @@
+import { hostConsentState } from "./host-computer-consent.ts";
 import { describe, expect, it } from "vitest";
 import { autoMountsLocalComputer, botUsesHostComputer, shouldMountLocalComputer } from "./local-routing.ts";
 
@@ -49,13 +50,27 @@ describe("local computer routing", () => {
         }),
       ).toBe(false);
     }
-    expect(
-      shouldMountLocalComputer({
-        requested: "local",
-        hostPlatform: "win32",
-        providerSupportsLocal: true,
-      }),
-    ).toBe(false);
+  });
+});
+
+// DESIGN 1022-cua-windows R9 / W-C1 (D7). The win32 "local" cells above used to pin false: there was no Windows
+// driver. D7 makes an explicit "This computer" mount on win32 (Linux parity); Auto stays darwin-only.
+describe("W-C1 win32 server routing", () => {
+  it("Auto on win32 never mounts the host", () => {
+    expect(shouldMountLocalComputer({ requested: undefined, hostPlatform: "win32", providerSupportsLocal: true })).toBe(false);
+  });
+  it("an explicit This computer on win32 mounts the host", () => {
+    expect(shouldMountLocalComputer({ requested: "local", hostPlatform: "win32", providerSupportsLocal: true })).toBe(true);
+  });
+  it("an explicit This computer on win32 with a provider that cannot ask approvals mounts nothing", () => {
+    expect(shouldMountLocalComputer({ requested: "local", hostPlatform: "win32", providerSupportsLocal: false })).toBe(false);
+  });
+  it("botUsesHostComputer(local, win32) is true", () => {
+    expect(botUsesHostComputer("local", "win32")).toBe(true);
+  });
+  it("hostConsentState stays not-needed on win32 (Auto never reaches the host there)", () => {
+    expect(hostConsentState({ computer: undefined, hostComputerConsent: undefined } as never, "win32")).toBe("not-needed");
+    expect(hostConsentState({ computer: "local", hostComputerConsent: undefined } as never, "win32")).toBe("not-needed");
   });
 });
 
@@ -69,7 +84,6 @@ describe("autoMountsLocalComputer (the one Auto-consent rule for both PATCH rout
   it("never mounts the desktop for a default destination off macOS, or for any other destination", () => {
     expect(autoMountsLocalComputer(undefined, "linux")).toBe(false);
     expect(autoMountsLocalComputer(undefined, "win32")).toBe(false);
-    expect(autoMountsLocalComputer("local", "win32")).toBe(false);
     for (const computer of ["cloud", "vm", "browser", "off"] as const) {
       expect(autoMountsLocalComputer(computer, "darwin"), computer).toBe(false);
       expect(autoMountsLocalComputer(computer, "linux"), computer).toBe(false);
@@ -91,7 +105,6 @@ describe("botUsesHostComputer (the one \"is this bot on my desktop?\" rule)", ()
   it("does not sweep in a whole workspace on a platform where Auto never reaches the desktop", () => {
     expect(botUsesHostComputer(undefined, "linux")).toBe(false);
     expect(botUsesHostComputer(undefined, "win32")).toBe(false);
-    expect(botUsesHostComputer("local", "win32")).toBe(false);
   });
 
   it("never counts a destination that is not the person's own machine", () => {

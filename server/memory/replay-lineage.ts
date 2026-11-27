@@ -1,7 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Which generated messages a memory receipt still vouches for (0.1.61).
+// Which generated messages a memory receipt still vouches for (0.1.61 lane T
+// and T2).
 //
 // A bot reply made with recalled memory is linked to the receipt of that
 // recall (memory_disclosures.output_message_ids). When what the receipt used
@@ -28,14 +29,16 @@ import { accountedPrepare, chargeReleaseWork, chargeReleaseStatement } from "./r
 import { ReplayWalk, walkOf, replayShadowEnabled, replayNodeKey, adoptReplayProof } from "./replay-walk.ts";
 import { advanceDurableReplay, durableReplayAlive, invalidateDurableReplay, loadDurableReplay, saveDurableReplayBase, type SendReplayWriteReceipt } from "./replay-durable.ts";
 export type { SendReplayWriteReceipt } from "./replay-durable.ts";
-import { setReplayEligibilityObserver, type ReplayEligibilityChange } from "../send-attempt-state.ts";
+import { setReplayEligibilityObserver, type BindingKey, type ReplayEligibilityChange } from "../send-attempt-state.ts";
 import { onRollback } from "../tx-scope.ts";
 import type { DatabaseSync } from "node:sqlite";
-import { ancestryUnrepaired, connectionId, database } from "../database.ts";
+import { ancestryUnrepaired, connectionId, database, transaction } from "../database.ts";
 import { memoryGate } from "./memory-gate.ts";
 import { setMemoryCheckingSource } from "./integrity-flags.ts";
 import { authorityParts } from "./authority-epoch.ts";
-import { statementReusePassId, withStatementReuse, writeStamp } from "../io-budget.ts";
+import { ioBudget, statementReusePassId, withStatementReuse, writeStamp } from "../io-budget.ts";
+import { isDatabaseBusy } from "../db-busy.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { supersededThreadCheckpoint, threadCheckpointId } from "./checkpoints.ts";
 import { ancestryThreadRepaired, TOMBSTONE_FORGETS_INDEX } from "./schema.ts";
 import { allowanceHooks, LineageAllowance, ROWS_PER_NODE, TURN_LINEAGE_NODES, setTurnLineageNodesForTest } from "./lineage-allowance.ts";
@@ -358,6 +361,29 @@ export function sendReplaySessionCurrent(threadId: string, instanceId: string, s
       && stmt(db, "SELECT 1 FROM send_restore_generation WHERE id=1").get();
     return !restored && (!sendReplaySchema(db) || !stmt(db, "SELECT 1 FROM send_replay_epochs WHERE revision>0 UNION ALL SELECT 1 FROM send_replay_epochs WHERE revision<0 LIMIT 1").get());
   } catch (error) { rethrowReplayShadow(error); return false; }
+}
+// N5's terminal fold proves that this command ended before a model write.
+// The replay store can remove that attempt's hold while keeping its delivery receipt intact.
+export function confirmUnwrittenCommandReplay(key: SessionKey, binding: BindingKey, providerTurnId: string): void {
+  transaction(db => {
+    if (binding.threadId !== key.threadId || binding.providerInstanceId !== key.driverInstance) return;
+    const session = heldReplaySession(db, key.threadId, key.driverInstance, key.nativeSession);
+    if (!session || session.invalid || session.pending.size !== 1 || session.walk.witnessCurrent(db) !== "current") return;
+    const row = stmt(db, `SELECT a.message_id FROM send_attempts a JOIN send_attempt_bindings b
+      ON b.attempt_id=a.attempt_id AND b.binding_epoch=a.binding_epoch
+      WHERE a.attempt_id=? AND a.thread_id=? AND a.binding_epoch=? AND a.phase='terminal'
+        AND a.terminal_outcome='failed' AND a.delivery='uncertain'
+        AND b.generation=? AND b.provider_instance_id=? AND b.provider_turn_id=?
+        AND b.active=0 AND b.released_writes=0`)
+      .get(binding.attemptId, key.threadId, binding.bindingEpoch, binding.generation, key.driverInstance, providerTurnId);
+    if (typeof row?.message_id !== "string") return;
+    const node = replayNodeKey(key.threadId, row.message_id);
+    if (session.pending.get(node) !== binding.attemptId || session.walk.touched.has(node)) return;
+    const pending = session.pending;
+    if (session.written) advanceDurableReplay(db, session.key, session.walk, [], false);
+    onRollback(() => { session.pending = pending; });
+    session.pending = new Map();
+  });
 }
 // Producer owner: recall-s1s2j (MAIN RULING 1115-RECALL-GROK-Q1Q2).
 // Consumer owner: recall-s1s2j, MemoryDispatchReceipt submission checks only.
@@ -2545,17 +2571,62 @@ function invalidationSet(schema: string): readonly InvalidationRow[] {
 /** What every lineage cache trigger invalidates (see InvalidationRow). */
 export const INVALIDATION_SET: readonly InvalidationRow[] = invalidationSet(EPOCH_SCHEMA);
 const epochReady = new WeakMap<object, boolean>();
+/** (LINTRIG 1.0.20) A refusal that is only "not now" (the background write budget deferred the caller, BG_DEFERRED, or a lock wait ran out)
+ * is never kept as the answer: the install is tried again, on the next look from outside a transaction and on a timer of its own, until it
+ * succeeds or the connection is gone. Other errors keep the per-write fallback. The temp triggers write no page of the main file. */
+interface EpochRetry { at: number; delayMs: number; timer: ReturnType<typeof setTimeout> | null; attempts: number }
+const epochRetry = new WeakMap<object, EpochRetry>();
+/** The bounds of the timer's retry: first after the floor, doubling, never more than the ceiling apart. */
+export const EPOCH_RETRY_FLOOR_MS = 250, EPOCH_RETRY_CEILING_MS = 60_000;
+/** Runs a function in the context this module was loaded in: the timer's retry is no background source's write (a timer keeps the
+ * context it was set in, so one set inside a deferred capture would be deferred again). */
+const outsideSource: <R>(fn: () => R) => R = AsyncLocalStorage.snapshot();
+function scheduleEpochRetry(db: ReturnType<typeof database>, retry: EpochRetry): void {
+  if (retry.timer) return;
+  retry.timer = setTimeout(() => outsideSource(() => {
+    retry.timer = null;
+    // a closed connection is not retried (its successor makes its own first look); the shared handle is never opened from here
+    if (!db.isOpen || epochReady.get(db) !== undefined || epochRetry.get(db) !== retry) return;
+    if (db.isTransaction) { scheduleEpochRetry(db, retry); return; }
+    retry.at = 0;
+    try { installEpoch(db); } catch { /* a connection closed under the look: nothing to retry */ }
+  }), Math.max(EPOCH_RETRY_FLOOR_MS, retry.at - Date.now()));
+  retry.timer.unref?.();
+}
+const budgetedSource = (): boolean => { const source = ioBudget.currentSource(); return Boolean(source?.startsWith("memory-") || source === "owner-notebook"); };
 function installEpoch(db: ReturnType<typeof database>): boolean {
-  let ready = epochReady.get(db);
-  if (ready === undefined) {
-    try { db.exec(withoutDroppedTableTriggers(db, EPOCH_SCHEMA)); ready = true; }
-    catch (error) {
-      ready = false;
-      if (!epochWarned) { epochWarned = true; console.warn(`[memory] lineage cache triggers could not be installed; every write drops the verdict cache (${error instanceof Error ? error.message : String(error)})`); }
+  const ready = epochReady.get(db);
+  if (ready !== undefined) return ready;
+  // A rollback would undo the triggers but leave a cached success.
+  if (db.isTransaction) return false;
+  const retry = epochRetry.get(db);
+  if (retry && retry.at > Date.now() && budgetedSource()) return false;
+  try {
+    // sweep-1021 B3: the temp triggers write no page of the main file, so the install is never the background budget's write. A caller inside a
+    // memory-* source (the start-up capture) and a timer whose context snapshot was taken inside one would both be charged and refused (BG_DEFERRED).
+    ioBudget.withSource("lineage-epoch", () => db.exec(withoutDroppedTableTriggers(db, EPOCH_SCHEMA)));
+    epochReady.set(db, true);
+    if (retry) {
+      if (retry.timer) clearTimeout(retry.timer);
+      epochRetry.delete(db);
+      console.info(`[memory] lineage cache triggers installed after ${retry.attempts} deferred attempt(s)`);
     }
-    epochReady.set(db, ready);
+    return true;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (!isDatabaseBusy(error)) epochReady.set(db, false);
+    else {
+      const next = retry ?? { at: 0, delayMs: 0, timer: null, attempts: 0 };
+      next.attempts++;
+      // the timer's look is outside the deferred source, so it need not wait out the budget's minute: floor, doubling, ceiling
+      next.delayMs = Math.min(EPOCH_RETRY_CEILING_MS, Math.max(EPOCH_RETRY_FLOOR_MS, next.delayMs * 2));
+      next.at = Date.now() + next.delayMs;
+      epochRetry.set(db, next);
+      scheduleEpochRetry(db, next);
+    }
+    if (!epochWarned) { epochWarned = true; console.warn(`[memory] lineage cache triggers could not be installed; every write drops the verdict cache (${reason})${epochReady.get(db) === undefined ? "; retrying" : ""}`); }
+    return false;
   }
-  return ready;
 }
 let epochWarned = false;
 /** Whether the lineage cache triggers are installed on the shared connection (installs them if not tried yet). */
@@ -3043,6 +3114,35 @@ function recordRestsOnWithheldMessageWork(allowance: LineageAllowance, recordId:
   });
 }
 
+/** 1.0.23 fencebundle: recordRestsOnWithheldMessage's per-message rules (a failed owner input or its copy, a withheld generated reply, the
+ * reader's own rule) judged for each line of a checkpoint read by lines (readable.ts CheckpointLines), never for the record as a whole: the
+ * lines it returns rest on a withheld message and are left out. The record's own mark is judged by the caller (checkpointLineRefusal), and a
+ * checkpoint derives from no record (one that does is refused whole there), so there is no chain to walk. */
+export function checkpointLinesOnWithheldMessage<T extends { sourceId: unknown }>(allowance: LineageAllowance, lines: readonly T[], alsoWithheld?: (threadId: string, messageId: string, allowance: LineageAllowance, verdict?: { checking?: boolean }) => boolean, seen?: { checking?: boolean }): Set<T> {
+  return allowance.timed(() => {
+    const db = database(), out = new Set<T>();
+    allowance.reserveRows("", Math.max(1, lines.length) * 2);
+    const read = stmt(db, "SELECT thread_id,message_id,speaker FROM memory_sources WHERE id=? AND thread_id IS NOT NULL AND message_id IS NOT NULL");
+    const rows = lines.map(line => ({ line, row: read.get(String(line.sourceId)) }));
+    allowance.spendRows("", Math.max(1, lines.length) * 2);
+    for (const { line, row } of rows) {
+      if (!row) continue;
+      const thread = String(row.thread_id), message = String(row.message_id);
+      if (captureSendReplayProof(thread, [message]).excludedIds.size) { out.add(line); continue; }
+      if (generatedSpeaker(row.speaker)) {
+        // r3 (Astra 47ebd52cfd): a reply withheld only because it is not proven yet (unproven: still being checked) is checking, not settled
+        const captured = capturedMessageVerdict(allowance, thread, message);
+        if (captured.withheld) { out.add(line); if (captured.unproven && seen) seen.checking = true; continue; }
+      }
+      // r3 (Astra 34edc0e4a5): the rule's own "checking" (not known now) reaches the caller, so a line it leaves out as checking is never
+      // taken as settled (readable.ts CheckpointLines.checking: told as left out, never settledEmpty)
+      const verdict: { checking?: boolean } = {};
+      if (alsoWithheld?.(thread, message, allowance, verdict) === true) { out.add(line); if (verdict.checking && seen) seen.checking = true; }
+    }
+    return out;
+  });
+}
+
 /** A reply made under a memory receipt, built on one (its output roots),
  * or a copy of one: what a reader whose words were not proven may not be quoted. */
 export function messageMadeWithMemory(threadId: string, messageId: string): boolean;
@@ -3375,6 +3475,8 @@ function requestProof(id: string, reader: ProofReader | null = null): string {
  * (CONFIRM_TRIES + RECOVER_SLICES_MAX per send); null outside. */
 let proofActivation: { record: string; budget: number } | null = null;
 export function setProofActivationContext(context: { record: string; budget: number } | null): void { proofActivation = context; }
+/** A warmer confirm is running: the checks it reads are the ones the next real entry will find, so they are settled rather than coalesced. */
+export const warmConfirmActive = (): boolean => proofActivation !== null;
 let activationsExhausted: (record: string) => void = () => {};
 /** Told when a proof stops because its record's activations ran out (the record reads RECOVERING-exhausted, "checking"). */
 export function onProofActivationsExhausted(hook: ((record: string) => void) | null): void { activationsExhausted = hook ?? (() => {}); }
