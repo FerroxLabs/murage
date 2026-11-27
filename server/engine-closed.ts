@@ -624,3 +624,32 @@ function windowsHoldersClearOf(pids: readonly number[], targets: readonly string
   }
   return { proven: true };
 }
+
+/** The look a deletion retry takes before it plans again (conversation-deletion.ts probeHomes; SELF-OVERLOAD-105 item 2): the process
+ * list alone (no worker, no pause, no plan) says, per home, whether it is open and by which programs. The attempt runs only once that
+ * changes. `nativeDir` is the worker's view of a private scope (engine-history-run.ts), so the probe judges the same way.
+ * DELETE-LOOP-1020: only programs Murage did NOT start count, as in the attempt's own gate (foreignEngineHolders). Murage's own engine is
+ * never a reason to skip: the attempt's hold closes an idle session of its own, and a running own turn wakes the deletion when it ends
+ * (whenEnginesFree). Counting it made a warm session read as "the same program" for good (the attempt that closes it never ran), and
+ * each new own turn process changed the holders, so a full attempt ran at every look. */
+export function probeDeletionHomes(homes: ReadonlyArray<{ engine: string; home: string; identities?: string[] }>, nativeDir: string): Array<{ key: string; open: boolean; holders: string }> {
+  return homes.map((home) => {
+    configureScopes(nativeDir);
+    const key = `${home.engine}\0${home.home}`;
+    const identities = home.identities ?? [];
+    const verdict = engineState(home.engine, home.home, { identities });
+    if (verdict.state !== "open") return { key, open: false, holders: "" };
+    // a lock file names no process: it stands as it is (the attempt judges it the same way)
+    if (verdict.via !== "process") return { key, open: true, holders: `via:${verdict.via}` };
+    const foreign = foreignEngineHolders(home.engine, home.home, { identities });
+    if (foreign.state !== "open") return { key, open: false, holders: "" };
+    // Open by a program Murage did not start, and no more than that (cause7-1021). The fingerprint was every such holder by pid: the
+    // owner's own Claude Code starts a shell or a search under its own program for every tool call, and each terminal is a new pid, so
+    // it changed at nearly every look and a full attempt (worker jobs, and every sixth one a pause, a hold and Murage's idle sessions
+    // closed) ran at every look of every pending deletion. Which programs hold the home changes nothing an attempt can do: it finishes
+    // the home only once none does, and that reads `open: false` here. A holder the probe misplaces still gets the attempt the looks
+    // force (OPEN_LOOKS_MAX), as before.
+    // MUTANT:probe-holders-by-pid (`holders: (foreign.holders ?? []).map((item) => `${item.pid}:${item.name ?? ""}`).sort().join(",")`)
+    return { key, open: true, holders: "via:other-program" };
+  });
+}

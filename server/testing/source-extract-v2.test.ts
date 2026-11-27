@@ -495,3 +495,21 @@ it("H-SCOPE-ATTENTION approvalAttention binds a fresh real attention service thr
     expect(fresh.stats().scopes).toBe(0);
   } finally { await clearInternalAuthorityFixtures(); }
 });
+// 1.0.20 FULL-3 triage: the dispatch closure reads three module constants added late in 1.0.20 (turn-errors T1/B2, T3 pending).
+// Their ports carry production's own values, read from the source; the code list is never an empty or case-supplied set.
+it("H-SCOPE-1020 the not-started line, Murage's own setup codes and the pending wait are production's literals", async () => {
+  const { indexSourceData } = await import("./internal-source-data.ts");
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(file, "utf8");
+  const listed = /const MURAGE_INTERNAL_CODES: ReadonlySet<string> = new Set\(\[([\s\S]*?)\]\);/.exec(source)![1]!;
+  const expected = [...listed.matchAll(/^\s*"([^"]+)",/gm)].map(match => match[1]);
+  expect(expected.length).toBeGreaterThanOrEqual(6);
+  const codes = indexSourceData<ReadonlySet<string>>("MURAGE_INTERNAL_CODES");
+  expect(codes).toBeInstanceOf(Set);
+  expect([...codes]).toEqual(expected);
+  expect(indexSourceData("MURAGE_NOT_STARTED_LINE")).toBe("Murage couldn't start this reply. Send it again.");
+  // OWNER_PENDING_HURRY_MS was deleted with the owner turn's marker hurry (MAIN-RULING 2026-11-27T02:36:43Z REMOVAL, q1023-ownerfence)
+  const ports = new Map(freshIndexPorts().map(port => [port.name, port]));
+  for (const name of ["MURAGE_INTERNAL_CODES", "MURAGE_NOT_STARTED_LINE"]) expect(ports.has(name), name).toBe(true);
+  expect([...(ports.get("MURAGE_INTERNAL_CODES")!.fresh() as ReadonlySet<string>)]).toEqual(expected);
+});

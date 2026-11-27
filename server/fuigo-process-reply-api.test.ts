@@ -17,6 +17,21 @@ async function api(method: string, path: string, body?: unknown) {
 beforeAll(async () => {
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
     const fs = await import('node:fs'), path = await import('node:path');
+    const { registerHooks, syncBuiltinESMExports } = await import('node:module');
+    const { default: cp } = await import('node:child_process');
+    const mark = name => fs.writeFileSync(path.join(process.env.MURAGE_DATA_DIR, name), '');
+    registerHooks({ load(url, context, next) {
+      if (/\\/host\\/(hosted-forwarder|host-main|host-launch)\\.ts$/.test(url)) mark('loaded-fuigo-host');
+      return next(url, context);
+    } });
+    for (const name of ['spawn', 'spawnSync', 'fork', 'execFile', 'execFileSync', 'exec', 'execSync']) {
+      const original = cp[name];
+      cp[name] = function (...args) {
+        if (args.slice(0, 2).flat().some(arg => typeof arg === 'string' && /host-main\\.[tj]s(?:$|["'\\s])/.test(arg))) mark('spawned-fuigo-host');
+        return original.apply(this, args);
+      };
+    }
+    syncBuiltinESMExports();
     const file = path.join(process.env.MURAGE_DATA_DIR, 'config.json');
     const config = JSON.parse(fs.readFileSync(file, 'utf8'));
     const cli = path.join(process.cwd(), 'server/testing/fake-acp-cli.ts');
@@ -27,6 +42,7 @@ beforeAll(async () => {
     config.instances.processReply = { driver: 'fuigoAgent', displayName: 'Fuigo fixture', config: { cli, fullAuto: false },
       environment: { FAKE_ACP_MODE: 'folder-trust', FAKE_ACP_TRUST_V: '2', FAKE_ACP_VERSION: '1.0.40',
         FAKE_ACP_MCP_READY: '1', FAKE_ACP_TRUST_DELAY_MS: '300',
+        FAKE_ACP_PARENT_LOG: path.join(process.env.MURAGE_DATA_DIR, 'fuigo-parent'),
         FAKE_ACP_TRUST_LOG: path.join(process.env.MURAGE_DATA_DIR, 'process-trust.jsonl'),
         FAKE_ACP_DUMP: path.join(process.env.MURAGE_DATA_DIR, 'process-dump.json') } };
     fs.writeFileSync(file, JSON.stringify(config));
@@ -78,6 +94,20 @@ it('an owner-picked folder reaches the process reply through the real server adm
   expect(dump.argv).not.toContain('--trust');
   expect((await api('GET', recordPath)).body.record).toEqual(before);
   expect(existsSync(ownerStore) ? readFileSync(ownerStore, 'utf8') : null).toBe(nativeBefore);
+  // T-S1A-COORD-BOOT includes a real turn, with the gate and module observer active for both boot and dispatch.
+  const reason = process.platform === 'win32' ? 'dump_policy_unavailable' : 'hosted_unqualified';
+  const mode = readFileSync(fixture.info.logPath, 'utf8').split(/\r?\n/).find(line => line.startsWith('[fuigo-mode]'));
+  expect(mode).toBe(`[fuigo-mode] mode=COORDINATOR reason=${reason} driver=FuigoAgentDriver hello=none forwarderInits=0 custodyUnresolved=0`);
+  for (const name of ['spawned-fuigo-host', 'loaded-fuigo-host', 'hosted-custody.jsonl']) {
+    expect(existsSync(join(fixture.info.dataDir, name)), name).toBe(false);
+  }
+  const parents = new Set(readFileSync(join(fixture.info.dataDir, 'fuigo-parent'), 'utf8').trim().split('\n').map(Number));
+  if (process.platform === 'win32') {
+    expect([...parents].every(pid => Number.isSafeInteger(pid) && pid > 1)).toBe(true);
+    expect(parents.has(fixture.info.pid)).toBe(false);
+  } else {
+    expect(parents).toEqual(new Set([fixture.info.pid]));
+  }
   results.push({ action: 'send to owner-picked No limits folder', status: 202, instructionRead: true,
     result: JSON.parse(reply.raw).result, order, durableLaunchFlag: dump.argv.includes('--trust'),
     pickerRecordUnchanged: true, nativeStoreUnchanged: true });

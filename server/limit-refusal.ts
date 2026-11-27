@@ -57,10 +57,12 @@ function fromClockTime(text: string, now: number): number | undefined {
   if (!match) return undefined;
   let hour = Number(match[1]) % 12; if (match[3].toLowerCase() === "pm") hour += 12;
   const minute = Number(match[2] ?? 0);
-  const at = new Date(now); at.setHours(hour, minute, 0, 0);
-  let value = at.getTime();
-  if (value <= now) value = now - value <= MINUTE_END_MS ? value + MINUTE_END_MS : value + 86_400_000;
-  return value;
+  const value = laterOfRepeated(new Date(now).setHours(hour, minute, 0, 0));
+  if (value > now) return value;
+  if (now - value <= MINUTE_END_MS) return value + MINUTE_END_MS;
+  // tomorrow's clock time, not 24 hours on: a DST change makes that night 23 or 25 hours long
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
+  return laterOfRepeated(tomorrow.setHours(hour, minute, 0, 0));
 }
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];

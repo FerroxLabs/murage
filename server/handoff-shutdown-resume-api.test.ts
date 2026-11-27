@@ -80,8 +80,27 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
       cfg.instances.gated={driver:'grokAgent',displayName:'Gated fixture',environment:{...ready,FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'teammate-gate')},config:{cli,fullAuto:true}};
       cfg.instances.gatedLead={driver:'grokAgent',displayName:'Gated lead fixture',environment:{...ready,FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'lead-gate')},config:{cli,fullAuto:true}};
       cfg.instances.setupHeld={driver:'grokAgent',displayName:'Setup held fixture',environment:{...ready,FAKE_ACP_MCP_READY_GATE_FILE:path.join(data,'setup-gate'),FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'lead-gate')},config:{cli,fullAuto:true}};
+      cfg.instances.fuigo={driver:'fuigoAgent',displayName:'Fuigo fixture',environment:{...ready,FAKE_ACP_MCP_READY_METHOD:'_fuigo/mcp_initialized',FAKE_ACP_MODE:'echo-gated'},config:{cli,fullAuto:false}};
       cfg.instances.codexHold={driver:'codex',displayName:'Codex hold fixture',config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true},environment:{FAKE_CODEX_MODE:'tool-hold'}};
       fs.writeFileSync(file,JSON.stringify(cfg));
+      const fuigoHome=path.join(process.env.HOME,'.fuigo');fs.mkdirSync(fuigoHome,{recursive:true});fs.writeFileSync(path.join(fuigoHome,'auth.json'),'{}');
+      const wakeGate=threadId=>path.join(data,'fuigo-wake-'+threadId);
+      globalThis.__holdFuigoWake=async (threadId, current, writer)=>{
+        const gate=wakeGate(threadId);
+        if(!fs.existsSync(gate))return;
+        fs.writeFileSync(gate+'.waiting',JSON.stringify({current,writer}));
+        while(!fs.existsSync(gate+'.released'))await new Promise(resolve=>setTimeout(resolve,10));
+      };
+      const {registerHooks}=await import('node:module');
+      registerHooks({load(url,context,next){
+        if(!url.endsWith('/server/index.ts'))return next(url,context);
+        const source=fs.readFileSync(new URL(url),'utf8');
+        const replay='  const replayInputs = await turnReplayInputs({ store, threadId, botId: bot.id,';
+        if(!source.includes(replay))throw Error('Fuigo fixture anchor moved');
+        const observe="import { currentTurnLineage as fixtureCurrentTurn } from './memory/lineage-write.ts';";
+        const wait='  if (opts?.askerWakeId) await globalThis.__holdFuigoWake(threadId, turnLineage !== undefined && fixtureCurrentTurn(threadId) === turnLineage, Boolean(writerTurnFor(threadId, bot.id)));';
+        return {format:'module-typescript',shortCircuit:true,source:observe+'\\n'+source.replace(replay,wait+'\\n'+replay)};
+      }});
     ` });
     chmodSync(FAKE_CODEX, 0o755);
     gate = join(fixture.info.dataDir, "teammate-gate");
@@ -104,6 +123,37 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
     await expect.poll(async () => (await messages(leadThread)).some(message => /they're busy \(retry 1\//.test(line(message))), { timeout: 30_000 }).toBe(true);
   };
   const reachesAsker = (threadId: string, name: string) => expect.poll(async () => (await messages(threadId)).some(message => message.kind === "text" && line(message).startsWith(`@${name} replied to the delegated task`)), { timeout: 60_000 });
+
+  it("Fuigo queues an owner send while a delegated reply's wake has no unique writer", async () => {
+    const lead = await createBot("FuigoWakeLead", "lead"), helper = await createBot("FuigoWakeHelper", "gated");
+    await onlyThese(lead.id, helper.id);
+    const wakeGate = join(fixture.info.dataDir, `fuigo-wake-${lead.threadId}`);
+    const route = `/api/bots/${lead.id}/messages`;
+    const words = { text: "Owner words after the handoff", sendId: "owner-after-handoff", threadId: lead.threadId };
+    try {
+      await parkOn(helper, lead.threadId, async () => { expect((await api("POST", route, { text: "please pick this up" })).status).toBe(202); });
+      await expect.poll(() => busy(lead.id), { timeout: 30_000 }).toBe(false);
+      const switched = await api("PATCH", `/api/bots/${lead.id}`, { modelSelection: { instanceId: "fuigo", model: "fake-acp-model" } });
+      expect(switched.status, JSON.stringify(switched.body)).toBe(200);
+      writeFileSync(wakeGate, "");
+      writeFileSync(gate, "go");
+      await reachesAsker(lead.threadId, "FuigoWakeHelper").toBe(true);
+      await expect.poll(() => existsSync(wakeGate + ".waiting"), { timeout: 30_000 }).toBe(true);
+      expect(await busy(lead.id)).toBe(true);
+      // The new lineage is open, but the earlier lineage has not yet been superseded.
+      expect(JSON.parse(readFileSync(wakeGate + ".waiting", "utf8"))).toEqual({ current: true, writer: false });
+      const sent = await api("POST", route, words);
+      expect(sent).toMatchObject({ status: 202, body: { queued: true, queueId: expect.any(String) } });
+      expect(await api("POST", route, words)).toMatchObject({ status: 202, body: { queued: true, queueId: sent.body.queueId } });
+    } finally {
+      writeFileSync(gate, "go");
+      writeFileSync(wakeGate + ".released", "");
+    }
+    const ownerCopies = async () => (await messages(lead.threadId)).filter(message => message.role === "user" && message.text === words.text);
+    await expect.poll(async () => (await messages(lead.threadId)).some(message => message.role === "bot" && line(message).includes(words.text)), { timeout: 60_000 }).toBe(true);
+    expect(await ownerCopies()).toHaveLength(1);
+    expect((await ownerCopies())[0]?.steered).toBeUndefined();
+  }, 180_000);
 
   it("a hand-off parked on a busy teammate runs on the new server, once, and wakes the bot that asked", async () => {
     const leadPrompt = join(fixture.info.dataDir, "lead-prompt.json");

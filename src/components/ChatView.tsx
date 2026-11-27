@@ -90,6 +90,7 @@ import { toolFailureSummary } from "../../shared/tool-activity";
 import { resourceWaitLabel } from "@/lib/resource-wait";
 import { liveActivityLabel, modelStillThinking, turnStatusLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { RawMarkdownToggle } from "./RawMarkdownToggle";
 import { LiveReplyBubble, useStreamPaint } from "./LiveReplyBubble";
 import { streamPaintText } from "@/lib/stream-paint";
 import { OptionCard, shouldHideOnboardingCard, permissionCardRenderable } from "./OptionCard";
@@ -150,11 +151,11 @@ import { useFocusMessage } from "@/lib/focus-message";
 import { ExportPasteNote } from "./ExportPasteNote";
 import { FromPhoneLine } from "./FromPhoneLine";
 import { canEditLine } from "@/lib/compose-link";
-import { describeRunRaw, groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
+import { describeRunRaw, groupTranscript, interimSteps, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
 import { TranscriptTail } from "./TranscriptTail";
 import { tailOf } from "@/lib/transcript-tail";
 import { VirtualTranscript } from "./VirtualTranscript";
-import { ActivityRun } from "./ActivityRun";
+import { ActivityRun, InterimStepsRow } from "./ActivityRun";
 import { TurnNarrationRun } from "./TurnNarrationRun";
 import { WEBHOOK_LOADING_TEXT, useWebhookDisplayText, useWebhookMessageView } from "@/lib/webhook-message-lazy";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
@@ -867,7 +868,7 @@ function Bubble({
                   className={text ? "justify-start" : "mb-0 justify-start"}
                 />
               ) : null}
-              {text ? <ChatMarkdown text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
+              {text ? <RawMarkdownToggle text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} voiceNote={message.role === "bot" ? { threadId: bot.threadId, messageId: message.id } : undefined} /> : null}
               {message.kind === "text" && <ServedModelNote served={message.servedModel} />}
               {message.withheldFromBots && (
@@ -984,13 +985,14 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
   // bot⇄bot comm chip: opens the channel where the exchange lives
   const comm = message.comm;
   if (comm) {
+    const commFailed = tool.ok === false;
     if (commChipAction({ phone: isPhoneClient(), groupId: comm.groupId, groups: groupVisible ? [{ id: comm.groupId }] : [] }) === "blocked") {
       return (
         <div className="flex justify-start">
           <div
             aria-disabled="true"
             title={`This conversation between ${botName} and ${comm.withName} is only on your Mac.`}
-            className={cn(CHIP, "cursor-default text-left text-ink-secondary")}
+            className={cn(CHIP, "cursor-default text-left", commFailed ? "text-danger" : "text-ink-secondary")}
           >
             <span className="shrink-0">
               <CommAvatar comm={comm} bots={peer ? [peer] : []} />
@@ -1005,7 +1007,7 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
         <button
           onClick={() => dispatch({ type: "select", id: comm.groupId })}
           title={`Open the conversation with ${comm.withName}`}
-          className={cn(CHIP, "text-left text-ink-secondary hover:bg-raised hover:text-ink")}
+          className={cn(CHIP, "text-left hover:bg-raised", commFailed ? "text-danger" : "text-ink-secondary hover:text-ink")}
         >
           <span className="shrink-0">
             <CommAvatar comm={comm} bots={peer ? [peer] : []} />
@@ -1164,6 +1166,8 @@ export const MessagesList = memo(function MessagesList({
   // becomes one reversible turn row while the terminal answer stays visible.
   const helperRuns = useStreamHelpers().runs[bot.threadId];
   const items = useMemo(() => groupTranscript(messages, helperRuns), [messages, helperRuns]);
+  // 1020: a step between two texts of one turn stays named between them, so they read as one reply
+  const stepsBetween = useMemo(() => interimSteps(messages, showToolCalls), [messages, showToolCalls]);
   // QW Q2: the bot messages whose question fences became cards, read across the whole active branch
   const fenceCards = useMemo(() => questionFenceCards(transcript), [transcript]);
   const instances = state.instances;
@@ -1461,12 +1465,14 @@ export const MessagesList = memo(function MessagesList({
           }
         })();
         if (!row) return divider ? <div key={m.id}>{divider}</div> : null;
+        const between = stepsBetween.get(m.id);
         return (
           <div key={m.id} data-row={m.id} className="transcript-row flex flex-col gap-3" data-mid={m.id}>
             {newDay && <DaySeparator at={m.at} />}
             {dividers.has(m.id) && (
               <div role="separator" data-testid="engine-divider" className="px-2 py-1 text-center text-[11.5px] text-ink-secondary">{dividers.get(m.id)}</div>
             )}
+            {between && <InterimStepsRow messages={between} />}
             {m.role === "bot" && m.engine ? <div className="contents" title={engineHoverLabel(m.engine, engineLabel)}>{row}</div> : row}
           </div>
         );

@@ -110,7 +110,7 @@ import { fixtureDumpEnvironment } from "./fixture-dump.ts";
 import { serveToolMailbox } from "../memory/testing/field-tool-mailbox.ts";
 import { fixtureRequested } from "./fixture-request.ts";
 import { fakeReviewReply } from "./fake-review.ts";
-import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv } from "./fake-custom-tool.ts";
+import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv, type CustomToolOutcome } from "./fake-custom-tool.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { replayWebRead } from "./fake-web-read.ts";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
@@ -241,6 +241,10 @@ if (argv[0] === "auth" && argv[1] === "status") {
     process.stderr.write("error: unknown command 'auth'\n");
     process.exit(1);
   }
+  if (auth === "nonboolean") {
+    process.stdout.write('{"loggedIn":"false"}\n');
+    process.exit(0);
+  }
   if (auth === "malformed") {
     process.stdout.write("not json\n");
     process.exit(0);
@@ -320,7 +324,7 @@ if (process.env.FAKE_CLAUDE_LAUNCH_WRITE) writeFileSync(process.env.FAKE_CLAUDE_
 if (process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS && process.env.FAKE_CLAUDE_STATE) {
   const launched = countLaunch();
   if (launched < (Number(process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS) || 0)) {
-    process.stderr.write("claude: API error: read ECONNRESET\n", () => process.exit(5));
+    process.stderr.write(`${process.env.FAKE_CLAUDE_PRE_ACCEPT_STDERR ?? "claude: API error: read ECONNRESET"}\n`, () => process.exit(5));
     await new Promise(() => {});
   }
 }
@@ -710,13 +714,23 @@ const playCustomTool = async (name: string, prompt: JsonValue): Promise<void> =>
   } catch {
     server = undefined;
   }
-  const toolUseId = `toolu_fake_custom_${process.pid}_${Date.now()}`;
-  const outcome = server
-    ? await callFirstCustomTool("claude", name, { command: server.command, args: server.args ?? [], env: server.env ?? {} }, promptText(prompt),
-      claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} }), mcpSession(name) ?? undefined)
-    : { tools: [], text: `no ${name} server was mounted`, isError: true };
-  out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: `mcp__${name}__${outcome.tool ?? "unknown"}`, input: {} }] } });
-  out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: outcome.isError, content: outcome.text }] } });
+  // FAKE_CUSTOM_TOOL_REPEAT=N (real-size rig, scripts/rig-realsize): one long multi-step turn, N sequential calls on the
+  // same mounted session, FAKE_CUSTOM_TOOL_STEP_MS apart, each its own tool_use/tool_result as a long No limits turn emits.
+  const steps = Math.min(Math.max(Number(process.env.FAKE_CUSTOM_TOOL_REPEAT) || 1, 1), 500);
+  const stepMs = Math.max(Number(process.env.FAKE_CUSTOM_TOOL_STEP_MS) || 0, 0);
+  let outcome: CustomToolOutcome = { tools: [], text: `no ${name} server was mounted`, isError: true };
+  for (let step = 0; step < steps; step++) {
+    if (step > 0 && stepMs) await new Promise((resolve) => setTimeout(resolve, stepMs));
+    if (step > 0 && !turnRunning) return; // interrupted mid-turn: no more steps
+    const toolUseId = `toolu_fake_custom_${process.pid}_${Date.now()}_${step}`;
+    outcome = server
+      ? await callFirstCustomTool("claude", name, { command: server.command, args: server.args ?? [], env: server.env ?? {} }, promptText(prompt),
+        claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} }), mcpSession(name) ?? undefined)
+      : outcome;
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: `mcp__${name}__${outcome.tool ?? "unknown"}`, input: {} }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: outcome.isError, content: outcome.text }] } });
+    if (steps > 1) out({ type: "assistant", message: { content: [{ type: "text", text: `Step ${step + 1} of ${steps} done.` }] } });
+  }
   out({ type: "assistant", message: { content: [{ type: "text", text: customToolReply(outcome) }] } });
   out({ type: "result", is_error: process.env.FAKE_CUSTOM_TOOL_FAIL_TURN === "1" && outcome.isError, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
   turnRunning = false;
@@ -733,12 +747,20 @@ const playCustomTool = async (name: string, prompt: JsonValue): Promise<void> =>
  *   FAKE_CLAUDE_BG_TASKS  number of tasks (default 3)
  *   FAKE_CLAUDE_BG_ASKS   asks the subagents raise after the first result (default 2)
  *   FAKE_CLAUDE_BG_HOLD   "1": the tasks never finish (Stop and cap tests)
+ *   FAKE_CLAUDE_BG_GATE   file: the turn works silently, with no first result, until it exists
  *   FAKE_CLAUDE_BG_LOG    file that gets one line per ask verdict and per finish
  *   FAKE_CLAUDE_BG_STAGGER_DIR  rendered-proof mode: each helper has its own label and
  *                       reports task_progress (2, 4, 6 tools); helper N then finishes only
  *                       when the file `finish-N` (1-based) appears in this folder (it is consumed), so
  *                       they end at different times, as real ones do. No tool asks. */
 const playBackground = async (): Promise<void> => {
+  // FAKE_CLAUDE_BG_GATE: the turn is still working (nothing sent, no result yet) until this file exists, so a line can be steered into it first
+  const bgGate = process.env.FAKE_CLAUDE_BG_GATE;
+  if (bgGate) {
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu-bg-gate", name: "Bash", input: { command: "echo working" } }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-bg-gate", content: "working" }] } });
+  }
+  while (bgGate && !existsSync(bgGate)) await new Promise((resolve) => setTimeout(resolve, 20));
   const count = Number(process.env.FAKE_CLAUDE_BG_TASKS ?? "3");
   const askCount = Number(process.env.FAKE_CLAUDE_BG_ASKS ?? (process.env.FAKE_CLAUDE_BG_STAGGER_DIR ? "0" : "2"));
   const log = (line: string) => {
@@ -1045,6 +1067,38 @@ const playTurn = (prompt: JsonValue) => {
     finishIfDone();
     return;
   }
+  // cause22 counts: 513 tool uses still open at once (one over the old 512-entry name table), then the
+  // last one answers with an image; its name is what the driver routes the image by.
+  if (fixtureRequested(promptText(prompt), "__fixture_many_open_tools__")) {
+    out({ type: "system", subtype: "init", session_id: sessionId, model });
+    out({ type: "assistant", message: { content: Array.from({ length: 513 }, (_, i) => ({ type: "tool_use", id: `tu-open-${i + 1}`, name: i === 512 ? "mcp__omarchy__screenshot" : "mcp__omarchy__read", input: { n: i + 1 } })) } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-open-513", is_error: false, content: [
+      { type: "text", text: "captured" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: FIXTURE_TOOL_IMAGE } },
+    ] }] } });
+    out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+    turnRunning = false;
+    finishIfDone();
+    return;
+  }
+  // cause22 counts: 1,025 background helpers open at once (one over the old 1,024-entry owner table); the
+  // first one then completes, then the rest, then the closing follow-up.
+  if (fixtureRequested(promptText(prompt), "__fixture_many_bg_tasks__")) {
+    const ids = Array.from({ length: 1025 }, (_, i) => `bgmany${i + 1}`);
+    const frames: unknown[] = [{ type: "assistant", message: { content: [{ type: "text", text: "Many helpers are reading." }] } }];
+    for (const id of ids) frames.push({ type: "system", subtype: "task_started", task_id: id, tool_use_id: `toolu_${id}`, description: `Helper ${id}`, subagent_type: "Explore", is_backgrounded: true, spawn_depth: 1, task_type: "local_agent" });
+    frames.push({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", terminal_reason: "completed", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 },
+      subagent_stats: { spawned: ids.length, started_in_background: ids.length, completed: 0, failed: 0 } });
+    for (const id of ids) frames.push({ type: "system", subtype: "task_notification", task_id: id, tool_use_id: `toolu_${id}`, status: "completed", output_file: "", summary: `Helper ${id} done` });
+    frames.push({ type: "system", subtype: "init", session_id: "fake-bg-session", cwd: process.cwd(), tools: [], model: "fake" });
+    frames.push({ type: "assistant", message: { content: [{ type: "text", text: "All 1,025 helpers reported." }] } });
+    frames.push({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", terminal_reason: "completed", total_cost_usd: 0, origin: { kind: "task-notification", producer: "session-task" },
+      usage: { input_tokens: 1, output_tokens: 1 }, subagent_stats: { spawned: ids.length, started_in_background: ids.length, completed: ids.length, failed: 0 } });
+    process.stdout.write(frames.map((frame) => JSON.stringify(frame) + "\n").join(""));
+    turnRunning = false;
+    finishIfDone();
+    return;
+  }
   if (fixtureRequested(promptText(prompt), "__fixture_large_frame__")) {
     out({ type: "system", subtype: "init", session_id: sessionId, model });
     out({ type: "assistant", message: { content: [{ type: "text", text: fixtureLargeText() }] } });
@@ -1211,6 +1265,9 @@ const playTurn = (prompt: JsonValue) => {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
     // V5 stall test: write this call's tool_use to stdout once the test touches the file, then note when it was written.
+    // cause22 counts: FAKE_CLAUDE_STARTED_ITEMS=N: N Bash calls (`echo 1` .. `echo N`) are started on stdout, then the turn stays open
+    const startedItems = Number(process.env.FAKE_CLAUDE_STARTED_ITEMS ?? 0);
+    if (startedItems > 0) out({ type: "assistant", message: { content: Array.from({ length: startedItems }, (_, i) => ({ type: "tool_use", id: `toolu_started_${i + 1}`, name: "Bash", input: { command: `echo ${i + 1}` } })) } });
     const itemWhen = process.env.FAKE_CLAUDE_ITEM_WHEN_FILE;
     if (itemWhen) {
       const poll = setInterval(() => {
@@ -1333,6 +1390,38 @@ const playTurn = (prompt: JsonValue) => {
     });
   }
 
+  // FAKE_CLAUDE_SCRIPT (1.0.22 cause B witnesses): a JSON array of turns, each an array of steps played as the real CLI's frames:
+  //   ["text", s]  a completed assistant message        ["delta", s]  a streamed partial-message text delta
+  //   ["tool", s]  a tool call and its tool_result text  ["die", stderr, code]  the process writes stderr and exits before a result
+  //   ["read", path]  a Read of that file, its bytes as the tool_result   ["quote", prefix]  a reply quoting the read line starting with prefix
+  if (process.env.FAKE_CLAUDE_SCRIPT) {
+    const turns = JSON.parse(process.env.FAKE_CLAUDE_SCRIPT) as Array<Array<[string, string?, number?]>>;
+    const index = scriptedReplyIndex++;
+    let tools = 0;
+    let lastRead = "";
+    for (const [kind, text = "", code = 1] of turns[index] ?? [["text", "hello from fake claude"]]) {
+      if (kind === "text") out({ type: "assistant", message: { content: [{ type: "text", text }] } });
+      else if (kind === "delta") out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text } } });
+      else if (kind === "tool") {
+        const id = `tu-script-${index}-${tools++}`;
+        out({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Bash", input: { command: "fixture step" } }] } });
+        out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: false, content: text }] } });
+      } else if (kind === "read") {
+        // a Read of a real workspace file: the tool_result is the file's bytes as they are on disk now
+        const id = `tu-script-${index}-${tools++}`;
+        lastRead = readFileSync(text, "utf8");
+        out({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Read", input: { file_path: text } }] } });
+        out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: false, content: lastRead }] } });
+      } else if (kind === "quote") {
+        // the engine echoes the line of the last read file that starts with `text`, as a model quoting it word for word
+        const lines = lastRead.split("\n"), at = lines.findIndex(line => line.startsWith(text));
+        out({ type: "assistant", message: { content: [{ type: "text", text: `Line ${at + 1} of the file reads:\n\n\`${lines[at] ?? ""}\`` }] } });
+      } else if (kind === "die") { process.stderr.write(text, () => process.exit(code)); return; }
+    }
+    out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0.01, usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 } });
+    turnRunning = false; finishIfDone(); return;
+  }
+
   // lane review: a review run answers with its verdict (fake-review.ts)
   const reviewText = fakeReviewReply(promptText(prompt));
   const mentionMarker = process.env.FAKE_CLAUDE_MENTION_MARKER;
@@ -1413,8 +1502,20 @@ const playTurn = (prompt: JsonValue) => {
     };
     const gate = process.env.FAKE_CLAUDE_REPLY_GATE;
     const gateSteers = Number(process.env.FAKE_CLAUDE_REPLY_GATE_STEERS ?? 0) || 0;
+    // FAKE_CLAUDE_FAIL_GATE: once this file exists the turn ends without its reply (the file is removed, so a later turn replies):
+    // FAKE_CLAUDE_FAIL_KIND "exit" = the CLI dies mid-turn, anything else = an error result
+    const failGate = process.env.FAKE_CLAUDE_FAIL_GATE;
     if (gate) {
       const timer = setInterval(() => {
+        if (failGate && existsSync(failGate)) {
+          clearInterval(timer);
+          unlinkSync(failGate);
+          if (process.env.FAKE_CLAUDE_FAIL_KIND === "exit") { process.exit(1); }
+          out({ type: "assistant", is_api_error_message: true, message: { model: "<synthetic>", content: [{ type: "text", text: "API Error: 400 fixture" }] } });
+          out({ type: "result", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error" });
+          turnRunning = false; finishIfDone();
+          return;
+        }
         if (!existsSync(gate) || steered.length < gateSteers) return;
         clearInterval(timer);
         finishSlow();
@@ -1456,6 +1557,15 @@ if (wedged) {
   }
 }
 
+// FAKE_CLAUDE_HANG_FILE  path: a CLI started while this file exists hangs at start (reads and writes nothing), appends its pid to
+// FAKE_CLAUDE_HANG_LOG and outlives a SIGTERM by FAKE_CLAUDE_HANG_TERM_MS (a slow shutdown). One started after the file is gone runs normally.
+if (process.env.FAKE_CLAUDE_HANG_FILE && existsSync(process.env.FAKE_CLAUDE_HANG_FILE)) {
+  if (process.env.FAKE_CLAUDE_HANG_LOG) appendFileSync(process.env.FAKE_CLAUDE_HANG_LOG, `${process.pid}\n`);
+  process.stdin.pause();
+  process.on("SIGTERM", () => { setTimeout(() => process.exit(0), Number(process.env.FAKE_CLAUDE_HANG_TERM_MS ?? 0)); });
+  setInterval(() => {}, 60_000);
+  await new Promise<never>(() => {});
+}
 // A slow start (a wrapper, a loaded machine): nothing is read or written for
 // FAKE_CLAUDE_START_DELAY_MS, then the CLI reads its --mcp-config and
 // --append-system-prompt-file, the way the real one does at startup, and

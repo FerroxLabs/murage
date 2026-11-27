@@ -1,3 +1,5 @@
+// MAIN RULING design F §1.3/§2.5/§3.2: server-only settlement and indexed receipt contracts; OPEN for GrokBuild approval.
+import type { Settlement } from '../skill-switch-settlement.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -64,6 +66,8 @@ const publicFunctions = [
   "cancelRequests",
   "answerQuestionReply",
   "relistQuestions",
+  // 1021 Retry (RETRY-DESIGN-r2): re-send a delivery-failed engine card's stored answer through the release gate.
+  "retryDelivery",
   "saveContinuation", "readContinuation", "deleteContinuation", "executeService", "installDecisionObserver"
 ].sort();
 const publicTypes = [
@@ -138,7 +142,7 @@ describe('A13a: frozen r3.1 contract', () => {
       decide: (handle: RequestHandle, base: BaseVerdictFn) => Outcome;
       presentApproval: (ref: ApprovalRef, view: ApprovalView) => Promise<void>;
       attachQueue: (ref: ApprovalRef, queue: QueueAttachment) => void;
-      answerApproval: (ref: ApprovalRef, answer: ApprovalAnswer) => Promise<void>;
+      answerApproval: (ref: ApprovalRef, answer: ApprovalAnswer, settlement?: Settlement) => Promise<void>;
       onLevelChange: (botId: string) => Promise<void>;
       installProvenanceReader: (reader: ProvenanceReader) => void;
       installDenySources: (sources: DenySources) => void;
@@ -158,6 +162,7 @@ describe('A13a: frozen r3.1 contract', () => {
       cancelRequests: (scope: RequestCancellation, state: 'cancelled' | 'expired' | 'superseded') => Promise<void>;
       answerQuestionReply: (threadId: string, text: string) => Promise<QuestionReplyResult>;
       relistQuestions: (threadId: string) => Promise<void>;
+      retryDelivery: (ref: ApprovalRef) => Promise<'accepted' | 'delivery_pending' | 'delivery_retry' | 'delivery_failed_terminal' | 'delivery_unconfirmed'>;
       saveContinuation: (key: ContinuationKey, parent: TurnIdentity) => Promise<void>;
       readContinuation: (key: ContinuationKey) => ContinuationProvenance | undefined;
       deleteContinuation: (key: ContinuationKey) => Promise<void>;
@@ -165,13 +170,15 @@ describe('A13a: frozen r3.1 contract', () => {
       installDecisionObserver: (observer: DecisionObserver) => () => void;
       presentApprovalSync: (ref: ApprovalRef, view: ApprovalView) => void;
       installSynchronousQueueDeliveries: (deliveries: readonly import('./types.ts').SynchronousQueueDelivery[]) => () => void;
-      answerApprovalSync: (ref: ApprovalRef, answer: ApprovalAnswer) => RequestDelivery;
+      answerApprovalSync: (ref: ApprovalRef, answer: ApprovalAnswer, settlement?: Settlement) => RequestDelivery;
       isAllowedAnswer: (answer: unknown) => boolean;
       executeServiceSync: <T>(handle: RequestHandle, execute: (call: ServiceCall) => T) => ServiceExecution<T>;
       executeService: <T>(handle: RequestHandle, execute: (call: ServiceCall) => Promise<T>) => Promise<ServiceExecution<T>>;
     };
     expectTypeOf<typeof api>().toEqualTypeOf<ExpectedApi>();
-    expectTypeOf<typeof implementation>().toEqualTypeOf<ExpectedApi>();
+    // initiatorKindFor is the one read-only provenance export the trust origin accessor reads (K15-0); it is not part of the public API.
+    expectTypeOf<Omit<typeof implementation, 'initiatorKindFor'>>().toEqualTypeOf<ExpectedApi>();
+    expectTypeOf<typeof implementation.initiatorKindFor>().toEqualTypeOf<(generation: string) => import('./types.ts').TurnProvenance | undefined>();
     expectTypeOf<typeof publicDecision>().toEqualTypeOf<ExpectedApi>();
   });
   it('pins the shared read-only record view and queue call binding', () => {
@@ -253,7 +260,10 @@ describe('final S0 cross-slice amendment', () => {
   it('pins all exported types and forwarding bodies for the implemented decision API', async () => {
     expect(exportsOf('server/decision/types.ts')).toEqual(publicTypes);
     expect(exportsOf('server/decision/api.ts')).toEqual(publicFunctions);
-    expect(exportsOf('server/decision/implementation.ts')).toEqual(publicFunctions);
+    // the implementation holds the public functions plus exactly one read-only provenance export for the trust origin accessor (K15-0)
+    const implementationExports = exportsOf('server/decision/implementation.ts');
+    expect(implementationExports.filter(name => name !== 'initiatorKindFor')).toEqual(publicFunctions);
+    expect(implementationExports.filter(name => name === 'initiatorKindFor')).toHaveLength(1);
     for (const node of source('server/decision/api.ts').statements) {
       if (!ts.isFunctionDeclaration(node) || !node.name || !node.body) continue;
       const args = node.parameters.map(p => p.name.getText()).join(', ');
@@ -270,18 +280,28 @@ describe('final S0 cross-slice amendment', () => {
     }>();
     expectTypeOf<DecisionTransport>().toEqualTypeOf<{
       respond: (target: DecisionEngineTarget, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>) => Promise<RequestDelivery>;
-      interrupt: (target: DecisionEngineTarget) => Promise<void>;
+      // 1020 perm-deliver: a decision-builder stop names its host reason, so it is never shown as the owner's Stop
+      interrupt: (target: DecisionEngineTarget, hostStopReason?: string) => Promise<void>;
+      // 1021 Retry (RETRY-DESIGN-r2 D3/step 5): the driver's open map proves the ask is still held; re-arm its failed slot
+      canRedeliver?(target: DecisionEngineTarget): boolean;
+      rearmRetry?(target: DecisionEngineTarget): boolean;
     }>();
     expectTypeOf<DecisionHost>().toEqualTypeOf<{
       readonly store: Store; view: (registration: Readonly<Registration>) => ApprovalView;
       recoveredAttention?: { present(record: ApprovalRecordView): void; close(threadId: string, approvalId: string): void };
+      skillSettlementPolicy?: (item:PendingQueueApproval,cause:string) => {kind:'eligible'|'needs-review'|'stale';retire:boolean;message?:string};
       featureOff?: (threadId:string,botId:string,tool:string) => string | undefined;
       // Registered roots and resolved data-directory facts for the narrow breaker.
       executionContext?: (threadId:string,botId:string) => {cwd?:string;project?:string;home?:string;projects?:readonly string[];dataDir?:string};
+      // 1021 Retry: a failed engine card that ended settles its attention
+      deliveryEnded?(ref: ApprovalRef): void;
     }>();
     expectTypeOf<ProviderInstance['decisionAdapter']>().toEqualTypeOf<DecisionProviderAdapter | undefined>();
     expectTypeOf<DecisionProviderAdapter>().toEqualTypeOf<Pick<ProviderAdapter<RequestDelivery>,
-      'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'>>();
+      'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'> & {
+      canRedeliver?(threadId: string, requestId: string): boolean;
+      rearmRetry?(threadId: string, requestId: string): boolean;
+    }>();
     expectTypeOf<Extract<GateTapEvent, { type: 'posture' }>>().toEqualTypeOf<{
       type: 'posture'; threadId: string; generation: string;
       state: 'requested' | 'accepted' | 'failed' | 'interrupted'; level: 'ask' | 'auto' | 'full' | 'unlimited';
@@ -316,9 +336,15 @@ describe('final S0 cross-slice amendment', () => {
     expectTypeOf<QueueRecoverySource>().toEqualTypeOf<{
       readonly kind: ServiceId;
       pendingApprovals: () => readonly PendingQueueApproval[];
+      approval?: (approvalId:string) => PendingQueueApproval | undefined;
+      receipt?: (item:PendingQueueApproval) => RequestDelivery | undefined;
+      switchDeliverySlotAvailable?: () => boolean;
+      hasPendingProof?: (proof:unknown) => boolean;
+      refuseBeforeEffect?: (item:PendingQueueApproval,code:string,message:string) => RequestDelivery;
+      pendingPage?: (after?:string,limit?:number) => {items:readonly PendingQueueApproval[];next?:string};
       reopen: (item: PendingQueueApproval) => Extract<RequestSource, { kind: 'service' }> | undefined;
       base: BaseVerdictFn;
-      respond: (item: PendingQueueApproval, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>) => Promise<RequestDelivery>;
+      respond: (item: PendingQueueApproval, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>, settlement?: Settlement) => Promise<RequestDelivery>;
       cancel: (item: PendingQueueApproval, reason: QueueCancellationReason) => Promise<void>;
       renew: (item: PendingQueueApproval, identity: QueueRenewal) => Promise<PendingQueueApproval>;
     }>();
@@ -417,7 +443,7 @@ describe('CONTRACT-ADD: frozen engine approval action builder', () => {
 
 it('CA contract pins durable delivery and the synchronous queue ack',()=>{
  expectTypeOf<ApprovalRecordView['delivery']>().toEqualTypeOf<import('./types.ts').DeliveryState>();
- expectTypeOf<import('./types.ts').SynchronousQueueDelivery['respondNow']>().toEqualTypeOf<(item:PendingQueueApproval,answer:ApprovalAnswer,options:Readonly<RequestAnswerOptions>)=>RequestDelivery>();
+ expectTypeOf<import('./types.ts').SynchronousQueueDelivery['respondNow']>().toEqualTypeOf<(item:PendingQueueApproval,answer:ApprovalAnswer,options:Readonly<RequestAnswerOptions>,settlement?:Settlement)=>RequestDelivery>();
 });
 
 it('CONTRACT-ADD: producer authority and queue binding preserve the verifier/recovery boundary', () => {
@@ -442,6 +468,6 @@ it('pins additive synchronous service/queue contracts without changing async sig
   expectTypeOf<typeof publicDecision.executeServiceSync>().toEqualTypeOf<typeof api.executeServiceSync>();
   expectTypeOf<typeof publicDecision.executeServiceSync>().toEqualTypeOf<typeof implementation.executeServiceSync>();
   expectTypeOf<typeof publicDecision.presentApprovalSync>().toEqualTypeOf<(ref:ApprovalRef,view:ApprovalView)=>void>();
-  expectTypeOf<typeof publicDecision.answerApprovalSync>().toEqualTypeOf<(ref:ApprovalRef,answer:ApprovalAnswer)=>RequestDelivery>();
-  expectTypeOf<import('./types.ts').SynchronousQueueDelivery['respondNow']>().toEqualTypeOf<(item:PendingQueueApproval,answer:ApprovalAnswer,options:Readonly<RequestAnswerOptions>)=>RequestDelivery>();
+  expectTypeOf<typeof publicDecision.answerApprovalSync>().toEqualTypeOf<(ref:ApprovalRef,answer:ApprovalAnswer,settlement?:Settlement)=>RequestDelivery>();
+  expectTypeOf<import('./types.ts').SynchronousQueueDelivery['respondNow']>().toEqualTypeOf<(item:PendingQueueApproval,answer:ApprovalAnswer,options:Readonly<RequestAnswerOptions>,settlement?:Settlement)=>RequestDelivery>();
 });

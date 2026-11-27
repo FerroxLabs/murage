@@ -403,13 +403,16 @@ export function setupConversationPlan(
 
   // MOVE FROM GROK BOT, only when Grok Bot data was found, once, right after
   // the detect card (after hello on a blank machine, which has no detect
-  // card), and never once the Flux card is in the thread, so a finder answer
-  // that changes later never drops a card into the middle of the conversation.
+  // card). Leave room for the initial result before posting the Flux card.
+  const fluxKey = setupCardKey("flux", "key");
+  const waitingForMoveIn = newCardsOwed && view.moveInPending === true
+    && !present.has(fluxKey) && !present.has(setupCardKey("detect", "move-grok"));
   if (
     newCardsOwed
     && (hello?.done === true || hello?.skipped === true)
     && view.moveIn.grok > 0
-    && !present.has(setupCardKey("flux", "key"))
+    // A reading that outlived the bounded hold lands after the Flux card: the offer still comes while Flux is open.
+    && (!present.has(fluxKey) || (stepView(view, "flux")?.done !== true && stepView(view, "flux")?.skipped !== true))
   ) {
     wanted.push(plan("detect", "move-grok"));
   }
@@ -432,13 +435,14 @@ export function setupConversationPlan(
   const notifyKey = setupCardKey("flux", "notify");
   const hireKey = setupCardKey("chat", "hire");
   // (b) once Flux is done or passed over, the notification chooser.
-  if (newCardsOwed && fluxPassed) wanted.push(plan("flux", "notify"));
+  if (newCardsOwed && fluxPassed && !waitingForMoveIn) wanted.push(plan("flux", "notify"));
   // (c) once the chooser is settled, the hire card.
   if (newCardsOwed && fluxPassed && settled.has(notifyKey)) wanted.push(plan("chat", "hire"));
 
   // (d) the jobs card is withheld until the hire card is settled, but only for
   // the cohort that owes it. Everyone else gets the flow as it was.
-  const withheld = newCardsOwed && view.next === "chat" && !settled.has(hireKey);
+  const withheld = (waitingForMoveIn && view.next === "flux")
+    || (newCardsOwed && view.next === "chat" && !settled.has(hireKey));
   if (view.next !== null && !withheld) wanted.push(plan(view.next, variantForCurrentStep(view.next, view)));
 
   // The closing card carries the first backup: setup ends VERIFIED, so once

@@ -44,22 +44,23 @@ export function checkpointReferences(records: Array<{id:string;version:number;te
 export function supersededThreadCheckpoint(id: string, version: number, access: Pick<MemoryAccess,"threadId">): boolean {
   const db = database();
   const row = db.prepare("SELECT scope_id,kind,state,owner_pinned FROM memory_records WHERE id=? AND version=?").get(id,version);
-  if (!row || row.kind !== "checkpoint" || !["active","archived"].includes(String(row.state)) || row.owner_pinned === 1) return false;
+  if (!row || row.kind !== "checkpoint" || row.owner_pinned === 1) return false;
   const family=threadCheckpointId(String(row.scope_id),access.threadId);
-  // Append-only publications retain their state; the exact member and newer live head prove supersession.
-  if(id!==family)return Boolean(db.prepare(`SELECT 1 FROM memory_checkpoint_members m
-    JOIN memory_checkpoint_heads h ON h.family_id=m.family_id
+  // Append-only publication leaves the old row active; an owner's archive of it is a revocation, not a succession.
+  if(row.state==="active"&&db.prepare(`SELECT 1 FROM memory_checkpoint_members m JOIN memory_checkpoint_heads h ON h.family_id=m.family_id
     JOIN memory_records r ON r.id=h.record_id AND r.version=h.record_version
-    WHERE m.family_id=? AND m.record_id=? AND m.record_version=? AND h.sequence>m.sequence AND h.state='active'
-      AND r.state='active' AND r.kind='checkpoint' AND r.owner_pinned=0 AND r.scope_id=?`).get(family,id,version,row.scope_id));
-  if(row.state!=="archived")return false;
+    WHERE m.record_id=? AND m.record_version=? AND h.family_id=? AND h.thread_id=? AND h.scope_id=?
+      AND h.sequence>m.sequence AND h.state='active' AND r.state='active' AND r.kind='checkpoint' AND r.owner_pinned=0 AND r.scope_id=h.scope_id LIMIT 1`).get(id,version,family,access.threadId,row.scope_id))return true;
+  if(row.state!=="archived"||id!==family)return false;
   // Newest first: the active version of a rolling checkpoint is its newest, so this is one probe. In ascending order it read
   // every version between this one and the newest, and a resumed session's receipts cite one version each (perf102 long500).
   return Boolean(db.prepare("SELECT 1 FROM memory_records WHERE id=? AND version>? AND state='active' ORDER BY version DESC LIMIT 1").get(id,version));
 }
 
-/** Discovery selects one head; exact citation lookup deliberately does not use this filter. */
-export const CURRENT_CHECKPOINT_SQL = `NOT EXISTS(SELECT 1 FROM memory_checkpoint_members cm WHERE cm.record_id=r.id AND NOT EXISTS(SELECT 1 FROM memory_checkpoint_heads ch WHERE ch.family_id=cm.family_id AND ch.record_id=r.id AND ch.record_version=r.version AND ch.state='active'))`;
+/** Discovery selects one head; exact citation lookup deliberately does not use this filter. The text lives in checkpoint-sql.ts (a module
+ * with no imports): this file imports database.ts, whose imports reach policy.ts and oneindex.ts, and oneindex.ts reads the constant while
+ * its module is evaluated, so a start that enters here first (memory/worker.ts through eligibility.ts) met it uninitialised. */
+export { CURRENT_CHECKPOINT_SQL } from "./checkpoint-sql.ts";
 /** Owner history shows one archived family entry so its exact head can be restored.
  * Retrieval still requires the active selection predicate above. */
 export const DISPLAY_CHECKPOINT_SQL = `NOT EXISTS(SELECT 1 FROM memory_checkpoint_members cm WHERE cm.record_id=r.id AND NOT EXISTS(SELECT 1 FROM memory_checkpoint_heads ch WHERE ch.family_id=cm.family_id AND ((ch.record_id=r.id AND ch.record_version=r.version) OR (ch.state='archived' AND ch.sequence=cm.sequence AND r.version=(SELECT max(cr.version) FROM memory_records cr WHERE cr.id=r.id)))))`;

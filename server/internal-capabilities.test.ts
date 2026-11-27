@@ -1,5 +1,5 @@
 import "../scripts/test-truth-intended-assertion.test-helper.mjs";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
@@ -335,12 +335,10 @@ describe("the device kind (1.0.9 phone tools, S13)", () => {
   });
 });
 
-describe("the highlevel kind (1.0.11 native HighLevel, GAP-HIGHLEVEL-109 section 17)", () => {
-  it("maps /api/internal/highlevel/ to highlevel, and every existing kind, device included, maps as before", () => {
-    expect(requiredInternalKind("/api/internal/highlevel/mcp")).toBe("highlevel");
-    expect(requiredInternalKind("/api/internal/highlevel/")).toBe("highlevel");
-    expect(requiredInternalKind("/api/internal/highlevels")).toBe("agents");
-    expect(requiredInternalKind("/api/internal/highlevel")).toBe("agents");
+describe("no highlevel kind (1.0.20: Murage's own HighLevel is removed)", () => {
+  it("/api/internal/highlevel/ has no capability kind of its own, and every other kind maps as before", () => {
+    expect(requiredInternalKind("/api/internal/highlevel/mcp")).toBe("agents");
+    expect(requiredInternalKind("/api/internal/highlevel/")).toBe("agents");
     expect(requiredInternalKind("/api/internal/device/call")).toBe("device");
     expect(requiredInternalKind("/api/internal/memory/search")).toBe("memory");
     expect(requiredInternalKind("/api/internal/connectors/mcp")).toBe("connectors");
@@ -350,27 +348,12 @@ describe("the highlevel kind (1.0.11 native HighLevel, GAP-HIGHLEVEL-109 section
     expect(requiredInternalKind("/api/internal/agents")).toBe("agents");
   });
 
-  it("mints a highlevel claim, and no other kind matches the highlevel path", () => {
-    const registry = new InternalCapabilities();
-    registry.begin("bot", "thread", "generation");
-    const highlevel = mint(registry, "thread", "generation", "highlevel");
-    expect(highlevel.claim.kind).toBe("highlevel");
-    expect(highlevel.claim.kind === requiredInternalKind("/api/internal/highlevel/mcp")).toBe(true);
-    for (const kind of ["agents", "connectors", "computer", "memory", "mcp", "device"] as const) {
-      const other = mint(registry, "thread", "generation", kind);
-      expect(other.claim.kind === requiredInternalKind("/api/internal/highlevel/mcp"), kind).toBe(false);
-      expect(other.claim.kind).toBe(kind);
-    }
-  });
-
-  it("the inline map in server/index.ts agrees, keeps device, and Stop ends HighLevel calls with the generation", () => {
+  it("server/index.ts registers no HighLevel route, mount, runtime or turn hook", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-    expect(source).toContain('path.startsWith("/api/internal/device/") ? "device" : path.startsWith("/api/internal/highlevel/") ? "highlevel" :');
-    const body = (name: string) => { const at = source.indexOf(`function ${name}(`); return source.slice(at, source.indexOf("\n}\n", at)); };
-    expect(body("revokeInternalGeneration")).toContain("highlevelCalls.turnEnded(generation)");
-    expect(body("revokeInternalThread")).toContain("highlevelCalls.turnEndedForThread(threadId)");
-    expect(body("revokeInternalBot")).toContain("highlevelCalls.turnEndedForBot(botId)");
-    expect(body("revokeAllInternalTurns")).toContain("highlevelCalls.turnEndedAll()");
+    for (const gone of ['"/api/internal/highlevel/', '"/api/highlevel', "createHighLevelRuntime", "highlevelIntegration(", "integrations.highlevel", "highlevelCalls", "./highlevel/"]) {
+      expect(source, gone).not.toContain(gone);
+    }
+    expect(source).toContain('path.startsWith("/api/internal/device/") ? "device" : ["/api/internal/computer-control"');
   });
 });
 
@@ -403,6 +386,20 @@ describe("consuming turn cleanup", () => {
         this.retainMemoryView(claim,'fixture-view',()=>{log({type:'retained',threadId,generation:id});return ()=>{log({type:'released',threadId,generation:id});queueMicrotask(()=>log({type:'retired',threadId,generation:id,active:this.isActive(claim),resolvable:this.resolve('Bearer '+token)!==null}));};});
         return id;
       };
+      // A test that writes hold-recall-once makes the next owner send's recall view unready for the whole bounded readiness wait,
+      // so the product takes its real held path (RecallHeld, one rebuild with a new generation) before dispatch, as it does under load.
+      const {RecallReadiness} = await import(${href('server/memory/recall-readiness.ts')});
+      const {RecallPreparationPending} = await import(${href('server/memory/recall-recovery.ts')});
+      const {RecallHeld} = await import(${href('server/memory/recall-readiness.ts')});
+      const access = RecallReadiness.prototype.access;
+      // Every held result the real access() returns is logged, forced or not, so the test can demand exactly one generation per send
+      // plus one per held rebuild (never "one or two").
+      RecallReadiness.prototype.access = async function(read, signal, wait, options) {
+        const hold = path.join(root,'hold-recall-once'), forced = !options?.rebuild && fs.existsSync(hold);
+        if (forced) fs.rmSync(hold);
+        try { return await access.call(this, forced ? () => { throw new RecallPreparationPending(); } : read, signal, wait, options); }
+        catch (error) { if (error instanceof RecallHeld) log({type:'held',forced}); throw error; }
+      };
       const driver = makeLateTerminalDriver({fencedDefaults:true}), create = driver.create.bind(driver);
       driver.create = async input => {
         const instance = await create(input), send = instance.adapter.sendTurn.bind(instance.adapter);
@@ -430,28 +427,43 @@ describe("consuming turn cleanup", () => {
     headers = { 'content-type':'application/json', 'x-murage-surface':'desktop', 'x-murage-surface-secret':secret };
   });
   afterAll(async () => { await server?.close(); });
-  it.each(['return','throw','abort'])('actual turn %s releases its memory lease', async ending => {
+  // Every generation a send begins releases its lease exactly once. Under load the owner's recall view may miss the bounded readiness
+  // wait (RecallReadiness.access), and the send is rebuilt once with a new generation before dispatch (REGRESSOR-1022 was this, on
+  // dev/1022 with or without cua-upgrade). The superseded generation must already be released before the rebuilt one dispatches.
+  const leaseCase = async (ending: string, held: boolean) => {
     const bot = (await api('POST','/api/bots',{name:'Lease fixture',modelSelection:{instanceId:'late',model:'late-1'}})).bot;
     await api('PATCH',`/api/bots/${bot.id}`,{computer:'off',browser:false,composio:false});
+    if (held) writeFileSync(join(server.info.dataDir,'hold-recall-once'), bot.threadId);
+    // Cases run one at a time in this server, so a held row logged after this point belongs to this send.
+    const from = rows().length;
     await api('POST',`/api/bots/${bot.id}/messages`,{text:`LEASE_${ending.toUpperCase()}`,threadId:bot.threadId});
     const events = () => rows().filter(row=>row.threadId===bot.threadId);
-    await expect.poll(()=>events().some(row=>row.type==='dispatch')).toBe(true);
-    expect(events().find(row=>row.type==='dispatch').ending).toBe(ending);
+    const of = (type: string, generation: string) => events().filter(row=>row.type===type&&row.generation===generation);
+    const settle = { timeout: 20_000 };
+    await expect.poll(()=>events().some(row=>row.type==='dispatch'), settle).toBe(true);
+    expect(events().filter(row=>row.type==='dispatch')).toEqual([{type:'dispatch',threadId:bot.threadId,ending}]);
     const retained = events().filter(row=>row.type==='retained');
-    expect(retained).toHaveLength(1);
+    const heldRows = rows().slice(from).filter(row=>row.type==='held');
+    if (held) expect(heldRows).toEqual([{type:'held',forced:true}]);
+    else expect(heldRows.every(row=>row.forced===false), JSON.stringify(heldRows)).toBe(true);
+    expect(retained).toHaveLength(1 + heldRows.length);
+    const generations = retained.map(row=>row.generation), live = generations.at(-1)!;
+    expect(new Set(generations).size).toBe(generations.length);
+    const superseded = generations.slice(0,-1);
+    expect(superseded.map(generation=>of('released',generation).length)).toEqual(superseded.map(()=>1));
     if(ending==='abort') {
-      expect(events().filter(row=>row.type==='released')).toEqual([]);
+      expect(of('released',live)).toEqual([]);
       await api('POST',`/api/bots/${bot.id}/interrupt`,{all:true});
     }
-    await expect.poll(async()=> (await api('GET','/api/bots?messages=0')).bots.find((row:any)=>row.id===bot.id)?.busy).not.toBe(true);
-    expect(events().filter(row=>row.type==='released')).toHaveLength(1);
-    await expect.poll(()=>events().filter(row=>row.type==='released')).toEqual([
-      {type:'released',threadId:bot.threadId,generation:retained[0].generation},
-    ]);
+    await expect.poll(async()=> (await api('GET','/api/bots?messages=0')).bots.find((row:any)=>row.id===bot.id)?.busy, settle).not.toBe(true);
+    expect(events().filter(row=>row.type==='released')).toHaveLength(generations.length);
+    await expect.poll(()=>events().filter(row=>row.type==='released'), settle).toEqual(generations.map(generation=>({type:'released',threadId:bot.threadId,generation})));
     if(ending!=='return')expect(events().filter(row=>row.type==='terminal')).toEqual([]);
     else expect(events().filter(row=>row.type==='terminal')).toHaveLength(1);
-    await expect.poll(async()=> (await api('GET','/api/bots?messages=0')).bots.find((row:any)=>row.id===bot.id)?.busy).not.toBe(true);
-    expect(events().filter(row=>row.type==='released')).toHaveLength(1);
-    expect(events().filter(row=>row.type==='retired')).toEqual([{type:'retired',threadId:bot.threadId,generation:retained[0].generation,active:false,resolvable:false}]);
-  });
+    await expect.poll(async()=> (await api('GET','/api/bots?messages=0')).bots.find((row:any)=>row.id===bot.id)?.busy, settle).not.toBe(true);
+    expect(events().filter(row=>row.type==='released')).toHaveLength(generations.length);
+    expect(events().filter(row=>row.type==='retired')).toEqual(generations.map(generation=>({type:'retired',threadId:bot.threadId,generation,active:false,resolvable:false})));
+  };
+  it.each(['return','throw','abort'])('actual turn %s releases its memory lease', ending => leaseCase(ending, false));
+  it.each(['return','throw','abort'])('actual turn %s after a held recall rebuild releases both generations\' leases', ending => leaseCase(ending, true));
 });

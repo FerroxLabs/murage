@@ -71,6 +71,7 @@ export const FLUX_ADMISSION: Readonly<Record<string, FluxAdmissionEntry>> = {
   "flux-composio-dev-token.ts": { kind: "none", why: "token intents delegate to the shared lifecycle authority; composio-lifecycle.ts admits each transport attempt" },
   "image-generation.ts": { kind: "admits", why: "image calls: entitled by the turn token inside an admitted turn, a start otherwise" },
   "memory/extract.ts": { kind: "admits", why: "memory extraction, never inside a turn" },
+  "memory/upstream-reader.ts": { kind: "none", why: "accountedFetch only routes the caller's URL through fluxRouteFor and meters the bytes; its server caller (composio-lifecycle.ts prepareTransport) admits before each Flux request" },
   "voice/dictation-cleanup.ts": { kind: "admits", why: "dictation cleanup" },
   "voice/flux-stream.ts": { kind: "admits", why: "voice stream socket" },
   "voice/flux-voice.ts": { kind: "admits", why: "voice transcription" },

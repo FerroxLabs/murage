@@ -1,3 +1,4 @@
+import { evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // A copied tree and the fake relay keep mutation proof away from live data.
 import {cpSync,mkdtempSync,readdirSync,symlinkSync,mkdirSync,readFileSync,writeFileSync,existsSync} from 'node:fs';
@@ -7,7 +8,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {safeWipeSync} from '../server/testing/safe-wipe.mjs';
 if(process.env.CI!=='1')throw Error('Requires isolated container');
-const source=process.cwd(),out=resolve('evidence/nolim-sql-r3/mutant');mkdirSync(out,{recursive:true});
+const source=process.cwd(),out=resolve(evidencePath('evidence/nolim-sql-r3/mutant'));mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'nolim-sql-r3-mutant-'));
 for(const entry of readdirSync(source))if(!/^(?:node_modules|\.git|evidence|dist|build|\.cache)/.test(entry))cpSync(join(source,entry),join(root,entry),{recursive:true});
 symlinkSync(join(source,'node_modules'),join(root,'node_modules'),'dir');

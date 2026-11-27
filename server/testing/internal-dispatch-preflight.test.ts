@@ -58,6 +58,7 @@ it("H-SCOPE-1 production internal dispatcher preflights its complete real depend
     expect(unresolved).toEqual([]);
     expect(result.free.get("issueDecisionAuthority")?.step).toBe("declaration");
     expect(result.free.get("internalTurnOwners")?.step).toBe("state");
+    expect(result.free.get("archivingBots")?.step).toBe("state");
     expect(result.free.get("ownToolGate")?.step).toBe("import");
     expect(result.bound.ownToolGate).toBe(ownToolGate);
     expect(capabilities.resolve(req.headers.authorization)).not.toBeNull();

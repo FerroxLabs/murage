@@ -3,7 +3,7 @@
 Base 48b9a76db (fix/1.0.2-writetime: RC f0559322c + S0 contract + revbound r3, see wt-s0/MERGE-REVBOUND.md).
 Merged in order, one merge commit each: upgui e8ee52160, rigfix 6d2a00c50, evhand 2a79e4ba3. Local only, nothing pushed.
 Rules carried from INT-RC.md: the lincold2 allowance API is the shape everywhere (`allowance` first parameter); both sides' behaviour kept.
-After each merge: both typechecks (`tsc -p tsconfig.json`, `tsc -p tsconfig.server.json`) on build-host via hz-test.sh. Full suite not run here.
+After each merge: both typechecks (`tsc -p tsconfig.json`, `tsc -p tsconfig.server.json`) on hetzner-dsm via hz-test.sh. Full suite not run here.
 
 ## 1. upgui e8ee52160 (2 commits past f4017aa48: c83ebe735, e8ee52160)
 

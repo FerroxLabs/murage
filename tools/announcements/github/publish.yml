@@ -10,7 +10,7 @@
 #   merge to main lint again, then wait for the owner's approval on the
 #                 "announcements-production" environment, then sign and upload
 #                 announcements.json, announcements.json.sig and images/ to
-#                 the R2 bucket behind https://updates.ferroxlabs.com/murage/
+#                 the R2 bucket behind https://murage.ai/murage/
 #
 # The lint and sign scripts, and the rules they apply, come from the Murage
 # repo itself (tools/announcements/ and shared/announcements.ts) at MURAGE_REF,
@@ -23,7 +23,7 @@
 #     secret   R2_ACCESS_KEY_ID            R2 API token, write to the bucket only
 #     secret   R2_SECRET_ACCESS_KEY
 #     secret   R2_ACCOUNT_ID
-#     variable R2_BUCKET                   the bucket behind updates.ferroxlabs.com
+#     variable R2_BUCKET                   the bucket behind murage.ai
 #     variable ANNOUNCEMENTS_PUBLIC_KEY    base64 public key compiled into the app
 name: Announcements
 
@@ -129,8 +129,8 @@ jobs:
         run: |
           set -euo pipefail
           sleep 5
-          curl -fsS https://updates.ferroxlabs.com/murage/announcements.json -o live.json
-          curl -fsS https://updates.ferroxlabs.com/murage/announcements.json.sig -o live.json.sig
+          curl -fsS https://murage.ai/murage/announcements.json -o live.json
+          curl -fsS https://murage.ai/murage/announcements.json.sig -o live.json.sig
           # The CDN may serve the previous copy for up to five minutes.
           if cmp -s live.json out/announcements.json; then echo "Live feed matches what was signed."
           else echo "::warning::The live feed does not match yet (CDN cache). Check again in five minutes."; fi

@@ -2,6 +2,9 @@
 // Names and booleans only: the home tells us whether a bot's engine is signed in, never a token. Claude has one sign-in
 // per home and an optional one of the bot's own; Codex, Grok, Kimi and OpenCode are per bot, and nothing is copied.
 import type { EngineLoginEngine } from "@/lib/engine-login-terminal";
+import { FUIGO_READY_COPY } from "../../shared/fuigo-pending";
+
+export { FUIGO_READY_COPY };
 
 export interface BotSignInState { engine: string; label: string; signedIn: boolean; uses: "home" | "own" | null; /** The engines the bot already has a sign-in for (absent when the home did not say). */ signedInEngines?: string[]; /** A bot on Fuigo only: engines whose offer the owner dismissed for good (kept on the home). */ dismissed?: string[] }
 /** `instanceId` is the engine instance the bot's own setting names (not a chat's own picker). */
@@ -90,15 +93,6 @@ export function ownSignInNeeded(bots: readonly HomeBot[], botId: string, inUseIn
   if (!state || state.engine === FUIGO || state.signedIn || !canSignInHere(state.engine)) return null;
   return { engine: state.engine, label: state.label };
 }
-
-/** CLOUD-NOKEY-FALLBACK: the approved words while a Cloud home's Flux credit is still on its way. Other engines are one line that
- * points at Settings, Engines; nothing here offers another engine's sign-in. */
-export const FUIGO_READY_COPY = {
-  title: "Getting Fuigo ready",
-  line: "Your bots run on Fuigo with your Flux credit. This takes a minute or two. You can keep looking around.",
-  slow: "Fuigo is taking longer than usual. We're on it. Need help? Email support@murage.ai.",
-  others: "Prefer your own Claude, ChatGPT or Grok sign-in? Add it in Settings.",
-} as const;
 
 /** After this long on "Getting Fuigo ready" the line becomes the slow one. */
 export const FUIGO_SLOW_AFTER_MS = 10 * 60_000;

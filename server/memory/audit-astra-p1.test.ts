@@ -19,7 +19,7 @@ import { drainRevokeMarker } from "./memory-revocation.ts";
 import { buildPrompt, promptPart, recordTurnObject, sendFence } from "./prompt-parts.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { linkMemoryDisclosureOutput } from "./disclosures.ts";
-import { downgradeMemorySchema, upgradeDevelopmentV10Carry, validateMemorySchema } from "./schema.ts";
+import { downgradeMemorySchema, MEMORY_SCHEMA_VERSION, upgradeDevelopmentV10Carry, validateMemorySchema } from "./schema.ts";
 import { buildLegacyHistory, markUpgraded } from "./testing/legacy-history-fixture.ts";
 import { LineageAllowance as LegacyAllowance } from "./testing/legacy-lineage/lineage-allowance.ts";
 import { forgetKeptLineageForTest, replayExclusions, setReplayNodeBudgetForTest } from "./testing/legacy-lineage/replay-lineage.ts";
@@ -113,7 +113,7 @@ describe("Astra audit P1", () => {
       const shownBefore = workingContextBlock(LineageAllowance.tool(1_000_000_000), true, input(), db);
       expect(shownBefore.text).toContain("Research three segments");
       // the card was reached through its writer's carried context: a deny_memory mark, its explicit sources valid
-      db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('card',?,0,1)").run(String(made.card.id));
+      db.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES('card',?,0,1)").run(String(made.card.id));
       expect(memoryLookup(db, [{ kind: "card", id: String(made.card.id) }], CONTENT).get(`card:${made.card.id}:0`)).toEqual({ state: "withheld", reason: "deny-memory" });
       const block = workingContextBlock(LineageAllowance.tool(1_000_000_000), true, input(), db);
       expect(block.text).not.toContain("Research three segments");
@@ -202,7 +202,7 @@ describe("Astra audit P1", () => {
   it("9. a v10 file the earlier lane wrote (the carry key without the child thread, NULL for a record child) is rebuilt with every row and validates", () => {
     const db = database();
     // a 1.0.2-era file: v10 stays explicit (the repair runs only on a v10 file)
-    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 13, to: 10 });
+    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 10 });
     const rows = [[1, 5, 5, 1, "7", 2], [1, 5, 5, 3, "note:n1:0", null], [2, 9, 3, 0, "9", 4]] as const;
     db.exec("DROP TABLE memory_lineage_carry");
     db.exec("CREATE TABLE memory_lineage_carry (\n parent_thread_no INTEGER NOT NULL, to_lsn INTEGER NOT NULL, from_lsn INTEGER NOT NULL, child_kind INTEGER NOT NULL CHECK(child_kind BETWEEN 0 AND 3),\n child_ref TEXT NOT NULL, child_thread_no INTEGER,\n PRIMARY KEY(parent_thread_no,to_lsn,from_lsn,child_kind,child_ref)) WITHOUT ROWID");

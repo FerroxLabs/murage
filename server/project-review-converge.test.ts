@@ -363,7 +363,8 @@ describe("lane cards review 2", () => {
     expect(queued).toMatch(/fromKind: hop === 0 \? "owner" : "bot"/);
     const calls = source.match(/queueRoomMemberTurn\(group, threadId, bot, [^;]*;/g) ?? [];
     expect(calls).toHaveLength(2);
-    for (const call of calls) expect(call).toMatch(/, hop\);$/);
+    // phonefix-r3 (arbiter3 G2): the call also passes the queued request's phone-ancestry stamp; the sender still comes from the hop
+    for (const call of calls) expect(call).toMatch(/, hop(, queuedRoomAncestry\(hop, inheritedPhoneAncestry, turnAutomation\))?\);$/);
   });
 
   it("the lead's next turn gets the id and the action of each card its text plan could not make (N3)", async () => {

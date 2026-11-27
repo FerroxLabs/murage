@@ -236,7 +236,7 @@ test("the preload exposes the bridge and asks for the secret only on the named o
   const owned = runPreload({ argv: ["electron", ...rendererOriginArguments(`${ORIGIN}/ignored/path`)], origin: ORIGIN });
   assert.equal(owned.exposed.key, "muragebox");
   assert.equal(owned.exposed.value.desktopSurfaceSecret, "fixture-secret");
-  assert.deepEqual(owned.calls.sendSync, ["desktop:surface-secret"]);
+  assert.deepEqual(owned.calls.sendSync, ["desktop:surface-secret", "desktop:server-launch"]);
   assert.deepEqual(await owned.exposed.value.companion.refreshTailscale(), ["companion:refresh-tailscale"]);
 
   const refusedCases = {
@@ -454,6 +454,10 @@ test("every IPC channel main.mjs registers refuses a foreign sender before its l
   assert.deepEqual(report.ons, {
     "screen:preview-intent": { threw: false, hasReturnValue: true, returnValue: false },
     "desktop:surface-secret": { threw: false, hasReturnValue: true, returnValue: "" },
+    // the launch id the renderer checks every answer against (server-follow.mjs): a refused sender gets "", as for the secret
+    "desktop:server-launch": { threw: false, hasReturnValue: true, returnValue: "" },
+    // the chat on screen, for a window that follows a restarted engine: fire-and-forget
+    "desktop:open-chat": { threw: false, hasReturnValue: false, returnValue: null },
     "desktop:unread-count": { threw: false, hasReturnValue: false, returnValue: null },
     // call audio for a fed recognizer session (0.1.59): fire-and-forget
     "speech:pcm": { threw: false, hasReturnValue: false, returnValue: null },
@@ -508,7 +512,7 @@ test("main.mjs routes its registrars and the main window through the B6 policy",
 
   const start = source.indexOf("function createWindow(");
   const createWindow = source.slice(start, source.indexOf("\n}\n", start));
-  assert.match(createWindow, /preload: path\.join\(__dirname, "preload\.cjs"\),\s*\/\/[^\n]*\n\s*additionalArguments: \[\.\.\.rendererOriginArguments\(trustedRendererOrigin\(\)\), \.\.\.\(cloudHome \? \["--murage-cloud=1"\] : \[\]\)\],/);
+  assert.match(createWindow, /preload: path\.join\(__dirname, "preload\.cjs"\),\s*\/\/[^\n]*\n\s*additionalArguments: \[\.\.\.rendererOriginArguments\(trustedRendererOrigin\(\)\), \.\.\.\(cloudHome \? \["--murage-cloud=1"\] : \[\]\), \.\.\.\(process\.mas \|\| process\.windowsStore \? \["--murage-store=1"\] : \[\]\)\],/);
   assert.match(createWindow, /win\.webContents\.on\("will-navigate", navigationGuard\.willNavigate\);/);
   assert.match(createWindow, /win\.webContents\.on\("will-redirect", navigationGuard\.willRedirect\);/);
   assert.match(createWindow, /createMainNavigationGuard\(\{\s*origin: trustedRendererOrigin,/);

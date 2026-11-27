@@ -595,7 +595,7 @@ for(const [label,prefix,valid] of [
  try{expect(codeFrom(f.run)).toBe(valid?undefined:"skill-link-foreign");}finally{Object.defineProperty(process,"platform",platform);vi.restoreAllMocks();syncBuiltinESMExports();}
 });}
 // A mocked darwin platform with the win32 path module is not a darwin run.
-(process.platform==="win32"?it.skip:it)("T10 darwin case-changed old home prefix relinks",()=>{const f=relinkFixture();f.put(`/Users/alex/threads/${f.thread}/.murage-procedures/${"a".repeat(64)}/skills/checked-method`);moveSeam();const platform=Object.getOwnPropertyDescriptor(process,"platform")!;Object.defineProperty(process,"platform",{value:"darwin"});try{expect(f.run().linkNotice).toBeUndefined();}finally{Object.defineProperty(process,"platform",platform);}});
+(process.platform==="win32"?it.skip:it)("T10 darwin case-changed old home prefix relinks",()=>{const f=relinkFixture();f.put(`/Users/exampleuser/threads/${f.thread}/.murage-procedures/${"a".repeat(64)}/skills/checked-method`);moveSeam();const platform=Object.getOwnPropertyDescriptor(process,"platform")!;Object.defineProperty(process,"platform",{value:"darwin"});try{expect(f.run().linkNotice).toBeUndefined();}finally{Object.defineProperty(process,"platform",platform);}});
 for(const mode of ["absent","unsupported"] as const){it(`T12e ${mode} mismatch immediately before in-desk removal is staging`,()=>{
  const f=relinkFixture(),old=f.target.replace(f.pin.bundleId,"b".repeat(64));f.put(old);
  if(mode==="absent"){if(linkRemoval.linkMoves)vi.spyOn(linkRemoval.linkMoves,"available").mockReturnValue(false);}else moveSeam("unsupported");

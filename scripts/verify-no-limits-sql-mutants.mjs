@@ -1,3 +1,4 @@
+import { evidencePath } from './evidence-path.mjs';
 // Isolated test-container mutation proof. Never operates on a live app.
 import {cpSync,mkdtempSync,readdirSync,symlinkSync,mkdirSync,readFileSync,writeFileSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -6,7 +7,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {safeWipeSync} from '../server/testing/safe-wipe.mjs';
 if(process.env.CI!=='1')throw Error('Requires isolated container');
-const source=process.cwd(),out=resolve('evidence/nolim-sql/mutants');mkdirSync(out,{recursive:true});
+const source=process.cwd(),out=resolve(evidencePath('evidence/nolim-sql/mutants'));mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'nolim-sql-mutants-'));
 for(const entry of readdirSync(source))if(!/^(?:node_modules|\.git|evidence|dist|build|\.cache)/.test(entry))cpSync(join(source,entry),join(root,entry),{recursive:true});
 symlinkSync(join(source,'node_modules'),join(root,'node_modules'),'dir');

@@ -260,7 +260,57 @@ describe("Windows computer wording", () => {
     const { localComputerDisabledReason, WINDOWS_COMPUTER_TEXT } = await import("./local-computer");
     expect(WINDOWS_COMPUTER_TEXT).toBe("On Windows, bots work on a cloud computer or a local VM. Pick one in Computer settings.");
     expect(WINDOWS_COMPUTER_TEXT).not.toMatch(/—|safe|yet|cannot/i);
-    const caps = { host: { platform: "win32", label: "Windows" }, localComputer: { available: false, enabled: false } } as never;
+    // DESIGN 1022-cua-windows D7: the blanket text is now only for a platform reason (no Windows driver for this
+    // build); a Windows PC with the driver shows the card's own reason (W-K1 below).
+    const caps = { host: { platform: "win32", label: "Windows" }, localComputer: { available: false, enabled: false, reasonCode: "unsupported-platform" } } as never;
     expect(localComputerDisabledReason({ capabilities: caps, providerSupportsLocal: true })).toBe(WINDOWS_COMPUTER_TEXT);
+  });
+});
+
+// DESIGN 1022-cua-windows R9b / W-C3: the renderer never shows Auto as this computer on win32, and its
+// autoMountsThisComputer is the server's shouldMountLocalComputer on every (computer, platform).
+describe("W-C3 win32 renderer routing", () => {
+  it("Auto is never shown as this computer on win32", async () => {
+    const { autoSelectsLocalComputer } = await import("./local-computer");
+    expect(autoSelectsLocalComputer({ platform: "win32", computer: undefined, capabilitiesReady: true, localSelectable: true })).toBe(false);
+  });
+  it("an explicit This computer mounts this computer on win32 (warning and sweep cover Windows)", async () => {
+    const { autoMountsThisComputer } = await import("./local-computer");
+    expect(autoMountsThisComputer({ platform: "win32", computer: "local" })).toBe(true);
+  });
+  it("renderer autoMountsThisComputer == server shouldMountLocalComputer for every computer x platform", async () => {
+    const { autoMountsThisComputer } = await import("./local-computer");
+    const { shouldMountLocalComputer } = await import("../../server/local-routing");
+    for (const computer of [undefined, "local", "cloud", "off"] as const) {
+      for (const platform of ["darwin", "linux", "win32"] as const) {
+        expect(autoMountsThisComputer({ platform, computer }), `${computer}/${platform}`)
+          .toBe(shouldMountLocalComputer({ requested: computer, hostPlatform: platform, providerSupportsLocal: true }));
+      }
+    }
+  });
+});
+
+// DESIGN 1022-cua-windows R18 / W-K1: the Windows card names every reason in plain words.
+describe("W-K1 win32 card reasons", () => {
+  const win = (reasonCode: string) => ({ host: { platform: "win32", label: "Windows" }, localComputer: { available: false, enabled: true, reasonCode } }) as never;
+  const expected: Record<string, RegExp> = {
+    "windows-elevated": /running as administrator, so Local control is off/,
+    "windows-integrity-unknown": /couldn't confirm it is running without administrator rights/,
+    "windows-arm64-unsupported": /isn't available on Windows on Arm yet/,
+    "driver-integrity": /failed its integrity check/,
+    "start-failed": /didn't start/,
+    "driver-exited": /driver stopped/,
+    "driver-stuck": /didn't stop when asked/,
+  };
+  for (const [code, copy] of Object.entries(expected)) {
+    it(`${code} maps to its sentence`, async () => {
+      const { localComputerDisabledReason } = await import("./local-computer");
+      expect(localComputerDisabledReason({ capabilities: win(code), providerSupportsLocal: true })).toMatch(copy);
+    });
+  }
+  it("an unknown code maps to a non-empty generic sentence", async () => {
+    const { localComputerDisabledReason, WINDOWS_LOCAL_CONTROL_GENERIC } = await import("./local-computer");
+    expect(WINDOWS_LOCAL_CONTROL_GENERIC.trim()).not.toBe("");
+    expect(localComputerDisabledReason({ capabilities: win("something-new"), providerSupportsLocal: true })).toBe(WINDOWS_LOCAL_CONTROL_GENERIC);
   });
 });

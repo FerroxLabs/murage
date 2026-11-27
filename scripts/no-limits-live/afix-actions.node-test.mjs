@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {installOriginFixtures} from './origin-fixtures.mjs';
 import {runR2} from './r2-scenarios.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const start=(input={command:'fixture'},itemId='action')=>({type:'item.started',itemType:'tool',itemId,toolIdentity:{name:'Bash'},input});
 const done=(itemId='action',ok=true)=>({type:'item.completed',itemType:'tool',itemId,ok});
 function nativeObservation(data,events,threadId){
@@ -36,7 +37,7 @@ for(const origin of ['phone','channel-dm'])test(`${origin}: skipped owner comman
    assert.equal(result.proof,mode==='good',mode);
    assert.deepEqual(declarations,origin==='channel-dm'?[{threadId:'run-thread',text:'Run exactly this shell command once: fixture. If denied, stop.'}]:[]);
   }
- }finally{rmSync(cwd,{recursive:true,force:true});}
+ }finally{safeWipeSync(cwd);}
 });
 // MAIN RULING: stored-rule lane 48218a79955 requires an independently read
 // installed-rule witness as well as the existing exact action/effect proof.
@@ -61,5 +62,5 @@ test('owner room command cannot pass on an unrelated completed shell operation',
    const result=await runR2({c,f:{data},bot:{id:'bot'},spec:{id:'owner-room-turn'},cwd,prompt:(_cwd,text)=>text,threads:new Set()});
    assert.equal(result.proof,mode==='good',mode);
   }
- }finally{rmSync(cwd,{recursive:true,force:true});}
+ }finally{safeWipeSync(cwd);}
 });

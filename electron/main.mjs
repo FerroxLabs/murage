@@ -3,6 +3,8 @@ import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";
 // 1.0.9 Sentinel: right after the guard module (which only defines the guard), so a Windows Sentinel task launch runs
 // its one scan and exits before any other module of the app evaluates.
 import "./sentinel-trampoline-entry.mjs";
+// q1023-seanclean: the hidden one-time memory clean-up (--memory-reset-hidden-rules) runs and exits here, before the app.
+import "./memory-reset-entry.mjs";
 import { protectPasswordProcess } from "../shared/password-process-protection.mjs";
 import { loadPasswordNativeAddon } from "./password-native-addon.mjs";
 import { withHideInherit } from "../shared/win-hide-child-process.mjs";
@@ -11,6 +13,8 @@ import { createDeferredStartup } from "./deferred-startup.mjs";
 import { settleDesktopStartup, fallbackDesktopStartup, terminalDesktopStartup, startupFailureCode } from "./startup-settle.mjs";
 import {backupStartupDispatch, explicitBackupReturn} from "./backup-startup.mjs";
 import { createSentinelHost } from "./sentinel-host.mjs";
+import { sentinelNames } from "./sentinel-schedule.mjs";
+import { createUpdateLaunchPause } from "./update-launch-pause.mjs";
 import { FluxSigninError, assertFluxDesktopSigninEnabled, cancelFluxDesktopSignin, readEmailOwnerToken, runFluxDesktopSignin } from "./flux-desktop-signin.mjs";
 import { writeCallTrace } from "./call-trace.mjs";
 import { createProviderBankReconciliation, fenceProviderDocumentUpdate, mutateProviderCredentials } from "./provider-connection-control.mjs";
@@ -18,7 +22,8 @@ import { closedVolumeProblem } from "./backup-closed-volume.mjs";
 import { portAvailable } from "./port-availability.mjs";
 import { launchSecretVia, sendLaunchSecretParent } from "./launch-secret.mjs";
 import { mutateFluxCredentials } from "./flux-connection-control.mjs";
-import { CRASH_WINDOW_MS, createServerSupervisor } from "./server-supervisor.mjs";
+import { CRASH_WINDOW_MS, createServerSupervisor, exitCodeNote } from "./server-supervisor.mjs";
+import { launchIdOf, openChatThread, restartedWindowTarget } from "./server-follow.mjs";
 import { compileCacheEnvironment } from "./compile-cache.mjs";
 import { createDesktopTrace } from "./desktop-trace.mjs";
 import { app, BaseWindow, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell as electronShell, systemPreferences, utilityProcess, webContents } from "electron";
@@ -103,7 +108,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
+import { startCua, stopCua, registerCuaIpc, setCuaStateListener, setCuaHarnessPort, onCuaHarnessMessage, onCuaHarnessExit } from "./cua.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
 import { assemblyAICredential, mintAssemblyAIStreamingToken } from "./assemblyai.mjs";
 import { feedSpeech, finishSpeech, startSpeech, stopSpeech, speechActive, speechToken } from "./speech.mjs";
@@ -118,8 +123,9 @@ import { harnessResourceEnvironment, packagedGepaManifestEnvironment } from "./h
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createLocalEngineLogin, registerLocalEngineLoginIpc } from "./engine-login-local.mjs";
 import { launchRecipeTerminal } from "./engine-login-terminal.mjs";
-import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc, reportUpdateNotice } from "./updater.mjs";
+import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc, reportUpdateNotice, useUpdateLaunchPause } from "./updater.mjs";
 import { hasCustomUpdaterProfile, prepareUpdaterRestart } from "./updater-restart.mjs";
+import { quitAnnouncement } from "./quit-notice.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
 import { createMacInstallerFallback, nativeContractSupported, observeRequestedInstall, decideRequestedInstall, landedArgument, LANDED_ARGUMENT_PREFIX, newer, OFFER_MAX_AGE_MS } from "./mac-install-guard.mjs";
 import { runStartGate, refusal } from "./update-start-gate.mjs";
@@ -134,7 +140,6 @@ import {
   readSafeLogTail,
 } from "./diagnostics.mjs";
 import { desktopFluxEnvironment, migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
-import { createHighLevelCredentialBridge, assertHighLevelSafeStorage } from "./highlevel-credentials.mjs";
 import { writeFileDurable } from "./durable-write.mjs";
 import { EMAIL_OWNER_MESSAGE, EMAIL_OWNER_SCOPE, ackFromDisk, isEmailSecretsSave, withEmailOwner, withEmailSecrets } from "./email-secrets.mjs";
 import { phoneKeyMessage, phoneSecretsEnv, withPhoneKey } from "./phone-secrets.mjs";
@@ -142,13 +147,18 @@ import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnost
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
 import { clearMemoryUpgradeStatus, copiedBytes, describeBytes, isOneTimeIndexNote, MEMORY_INDEX_STOPPED, memoryUpgradeBlockedSentence, readMemoryUpgradeStatus, upgradeTimeoutCode, watchMemoryUpgrade } from "./memory-upgrade-status.mjs";
+import { watchBootProgress } from "./boot-progress-watch.mjs";
+import { bootStepLine } from "./boot-step-words.mjs";
 import { createUpgradeScreen } from "./upgrade-screen.mjs";
+import { openNewerDataWindow } from "./newer-data-window.mjs";
+import { newerDataVersion, readDataVersion, showsNewerDataScreen } from "../shared/data-version-marker.mjs";
 import { restoreWindowOpenOnDisk } from "./restore-window.mjs";
-import { acquireDataDirLease, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
+import { acquireDataDirLease, dataDirLeasePaths, foreignDataDirLeaseSetAsideAvailable, inspectDataDirLease, setAsideForeignDataDirLease } from "./data-dir-lease.mjs";
 import { migrateLegacyDataDirectory } from "./data-dir-migration.mjs";
 import { assertRestoreReviewed } from "./restore-review.mjs";
 import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition } from "./restored-connections.mjs";
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
+import { startupRecoveryReason } from "./installation-recovery-controller.mjs";
 import { backupProgressKind, openBackupProgressWindow } from "./backup-progress-window.mjs";
 import { createBackupReturn, createReturnAuthority, joinExplicitQuit, revokeReturn, runOfflineBackup } from "./backup-offline-return.mjs";
 import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
@@ -309,8 +319,11 @@ const cloudLive = createCloudLiveGate({ resolve: () => resolveCloudControlPlane(
   hardOff: () => process.env.MURAGE_DESKTOP_CLOUD === "0" });
 // NOTIFY-EVERYWHERE-1019 S4a: set at app ready (initializeAttentionActions); the callbacks below tolerate null.
 let attentionActions=null,attentionWiring=null,attentionMain=null,attentionSurfaces=null,bannerNative=null,trayIcon=null;
+// DESIGN 1022-cua-windows D10 a: the lock tracker, and its wiring to the current server process (win32 only).
+let hostDesktopLock=null,hostDesktopWire=null;
+const { cuaCleanupStage, cuaStopStageMs, routeHarnessMessage, wireHostDesktop } = require("./cua-windows-runtime.cjs");
 const cloudHome = installCloudHome({ liveGate: cloudLive, packaged: app.isPackaged, protocol: electronProtocol, session, BrowserWindow, shell: osShell, net, env: process.env,
-  userDataDir: () => app.getPath("userData"), distDir: path.join(__dirname, "..", "dist"), warn: (m) => console.warn(`[cloud-home] ${m}`),
+  userDataDir: () => app.getPath("userData"), downloadsDir: () => app.getPath("downloads"), distDir: path.join(__dirname, "..", "dist"), warn: (m) => console.warn(`[cloud-home] ${m}`),
   createClient: () => createCloudHomeClient({ cp: cloudCp ? { [cloudCp.environment]: cloudCp } : {}, appVersion: app.getVersion(), cpEnvironment: CLOUD_CP_ENVIRONMENT,
     openExternal: (url) => osShell.openExternal(url),
     store: createCloudHomeStore({ safeStorage, directory: cloudHomesDirectory() }),
@@ -457,6 +470,7 @@ function initializeAttentionActions(){
   const logind=process.platform==="linux"?createLogindWatcher({spawn: spawnInherited}):null;
   const lock=createLockState({powerMonitor,readLocked:createLockReader({platform:process.platform,getSystemIdleState:seconds=>powerMonitor.getSystemIdleState(seconds),execFile: execFileInherited,env:process.env,healthy:()=>logind?.healthy()??true})});
   attentionActions=createAttentionActions({lock,log:line=>slog(line)});
+  hostDesktopLock=lock;
   attentionWiring=wireAttentionInvalidation({actions:attentionActions,lock,powerMonitor,logind});
   // NOTIFY-EVERYWHERE-1019 S3: the router. Windows send routing ids only; main answers with the decision and, for the notification rungs,
   // tells the offering window to show it (S4a/b/c replace that with native actionable banners). Presence (full screen, sharing, Focus,
@@ -487,7 +501,10 @@ function initializeAttentionActions(){
   attentionMain=createAttentionMain({
     connectorReceipts:createConnectorNoticeReceipts(path.join(ownedDesktopDataDir(),"connector-notice-receipts.json")),
     isAppFocused:()=>BrowserWindow.getFocusedWindow() !== null,
-    prefs:()=>notifySurfaces?.get()??null,
+    prefs:()=>notifySurfaces?.get()??null,prefsTrusted:()=>notifySurfaces?.trusted===true,
+    shuttingDown:()=>desktopShutdownStarted,
+    homes:()=>["local",...(cloudHome?.windows().keys()??[])],
+    homeExpected:home=>home==="local"?!desktopShutdownStarted:cloudHome?.windows().get(home)?.isDestroyed()===false,
     presence:presenceGuard,watchPresence:()=>presenceGuard.watch(),
     sendToSession:(home,session,message)=>{
       const win=home==="local"?mainWindow:cloudHome?.windows().get(home);
@@ -532,31 +549,45 @@ function initializeAttentionActions(){
       if(win.isMinimized())win.restore();win.show();win.focus();
       win.webContents.send("approval-notification:open",{botId:target.botId,threadId:target.threadId,messageId:target.messageId,...(target.reconnectIncidentId?{reconnectIncidentId:target.reconnectIncidentId}:{})});
     },
+    openRecovered:target=>{
+      const candidate=target.home==="local"?mainWindow:cloudHome?.windows().get(target.home);
+      if(candidate&&!candidate.isDestroyed()&&(target.home==="local"||cloudHome?.client?.homeOrigin(target.home))){
+        bannerOpen(target,target.home);return;
+      }
+      if(mainWindow&&!mainWindow.isDestroyed()){
+        if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();
+      }
+    },
     transportFor:attentionTransportFor,
     invalidateTokens:()=>{},
-    onPreviewsChanged:()=>{attentionWiring?.previewsChanged();attentionSurfaces?.invalidateAll();},
+    onPreviewsChanged:()=>{attentionWiring?.previewsChanged();attentionSurfaces?.invalidateAll();void attentionSurfaces?.sync();},
     readPreviews:async home=>{
       let config;
       if(home==="local")config=await harnessJson("/api/config");
       else{const client=cloudHome?.client;if(!client)return null;const response=await client.fetch(home,"/api/config");if(response.status!==200)return null;config=JSON.parse(await response.text());}
-      return config?.notifications?.previewContent!==false;
+      const previews=config?.notifications?.previewContent;
+      return typeof previews==="boolean"?previews:null;
     },
     onCounts:()=>{attentionSurfaces?.changed();},pillAvailable:()=>false,pinnedBotId:()=>notifySurfaces?.get()?.pinnedBotId??null,
     log:line=>slog(line)});
   // R6: every presence event bumps the guard's revision and asks for a complete read; only the guard's committed change releases held items.
   wirePresence({lock,presenceGuard,attentionMain,powerMonitor});
+  app.on("browser-window-blur",attentionMain.focusChanged);
+  app.on("browser-window-focus",attentionMain.focusChanged);
   // The attention windows' OWN gate (never the owned-main gate), registered on Electron's ipcMain directly, on purpose: S6 tray panel and
   // S9 bubble/dock windows. One loadUrlFor serves the gate and every window; the panel is built the first time the tray asks for it.
   attentionSurfaces=createAttentionSurfaces({
-    electron:{BrowserWindow,screen},ipcMain:electronIpcMain,platform:process.platform,
+    electron:{BrowserWindow,screen,powerMonitor},ipcMain:electronIpcMain,platform:process.platform,
     tray:{getBounds:()=>trayIcon.getBounds()},actions:attentionActions,
     prefs:()=>notifySurfaces?.get()??null,
     capabilities:()=>notifyCapabilities({platform:process.platform,env:process.env,trayHost:null}),
     presence:()=>presenceGuard.quiet(),presenceWatch:()=>presenceGuard.watch(),
+    presenceRefresh:()=>presenceGuard.refresh(),getSafeAreaTop:id=>presenceGuard.safeAreaTop(id),
     transportFor:attentionTransportFor,
     readLocal:route=>harnessJson(route),
     readPreviews:async()=>{try{return (await harnessJson("/api/config"))?.notifications?.previewContent!==false;}catch{return false;}},
     openApp:async()=>{backgroundLifecycle?.open();},
+    openNeedsYou:()=>backgroundLifecycle?.openNeedsYou(),
     openTarget,
     sendToBot:sendDirectToBot,
     pauseAutomations:async()=>{try{await backgroundLifecycle?.pauseAutomations();return {ok:true};}catch{return {ok:false};}},
@@ -567,7 +598,7 @@ function initializeAttentionActions(){
 }
 /** The exact file URL main loads into each kind of attention window: the gate's urlFor and every window's loadURL (one function). */
 function attentionWindowUrl(kind){
-  const page=kind==="bubble"?"src/float/bubble.html":kind==="dock"?"src/float/dock.html":kind==="popover"||kind==="flyout"||kind==="popup"?"src/tray-panel/index.html":null;
+  const page=kind==="pill"?"src/pill/index.html":kind==="bubble"?"src/float/bubble.html":kind==="dock"?"src/float/dock.html":kind==="popover"||kind==="flyout"||kind==="popup"?"src/tray-panel/index.html":null;
   if(!page)return null;
   const root=app.isPackaged?path.join(process.resourcesPath,"ui"):path.join(__dirname,"..","dist");
   return pathToFileURL(path.join(root,...page.split("/"))).href;
@@ -661,7 +692,7 @@ async function initializeSentinelHost({closed=false}={}){
   try{
     sentinelHost=createSentinelHost({
       dataDir:ownedDesktopDataDir(),resourcesPath:process.resourcesPath,closed,
-      executable:fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe")),
+      executable:process.platform==="darwin"?app.getPath("exe"):fs.realpathSync.native(process.env.APPIMAGE??app.getPath("exe")),
       home:app.getPath("home"),userData:app.getPath("userData"),env:process.env,
       configHome:path.isAbsolute(process.env.XDG_CONFIG_HOME??"")?process.env.XDG_CONFIG_HOME:undefined,
       captureActive:()=>{try{return SENTINEL_CAPTURE_PHASES.has(backupScheduleHost?.internalStatus().phase);}catch{return true;}},
@@ -794,6 +825,18 @@ function finishClosedBackup(result){
   })();return closedBackupFinish;
 }
 let desktopUpdater=null;
+// The OS jobs that start this executable on a timer are taken down for the
+// install and put back after it (electron/update-launch-pause.mjs). The
+// updater takes the same instance, so a later quitAndInstall pauses them.
+let updateLaunchPause=null;
+function desktopUpdateLaunchPause(){
+  if(!updateLaunchPause){
+    updateLaunchPause=createUpdateLaunchPause({home:app.getPath("home"),markerPath:path.join(app.getPath("userData"),"update-launch-pause.json"),
+      windowsTasks:()=>{const id=sentinelHost?.installationId;return id?[sentinelNames(id).task]:[];},log:line=>slog(line)});
+    useUpdateLaunchPause(updateLaunchPause);
+  }
+  return updateLaunchPause;
+}
 function ensureDesktopUpdater(scheduleChecks=true){
   const fallback=process.platform==="darwin"?createMacInstallerFallback({execPath:process.execPath,getuid:()=>process.getuid(),offerFile:path.join(app.getPath("userData"),"installer-offer.json"),
     recover:async()=>{if(returnAuthority.userQuitRequested)return {status:"stopped"};if(!cuaCleanedUp){cleanupFailed(refusal("BACKUP_UPGRADE_CLEANUP_FAILED"));return;}return returnToWorkspaceAfterBackup();},log:line=>slog(line)}):null;
@@ -1213,7 +1256,7 @@ function dispatchBadgeTask(task) {
   // A launch action can arrive before the server and tray are ready. Resolve the preference at dispatch time.
   void desktopStartup.then(() => {
     if (desktopRecoveryMode || desktopShutdownStarted || !backgroundLifecycle) return;
-    return routeMurageTask({ task, badgeMenuOn: notifySurfaces?.get()?.badgeMenu,
+    return routeMurageTask({ task, badgeMenuOn: notifySurfaces?.get()?.surfaces?.badge,
       open: () => backgroundLifecycle.open(), openNeedsYou: () => backgroundLifecycle.openNeedsYou(),
       newChiefTask: () => backgroundLifecycle.newChiefTask(), pauseAutomations: () => backgroundLifecycle.pauseAutomations(),
     });
@@ -1553,6 +1596,8 @@ function superviseServerChild(proc, lifecycle) {
           if (serverReady) {
             slog("server supervisor: engine back up");
             publishServerLifecycle({ state: "running", since: Date.now(), attempt: decision.attempt });
+            // The window goes where the replacement is, with this launch's proof (server-follow.mjs).
+            followRestartedServer();
             // Only once it has answered health checks does it stop counting
             // against the loop guard; a child that dies during boot is the
             // loop this guards.
@@ -1570,6 +1615,29 @@ function superviseServerChild(proc, lifecycle) {
       })();
     }, decision.delayMs);
   });
+}
+/** The chat the main window last reported open, so a moved window reopens it. */
+let openChat = null;
+const FOLLOW_RETRIES = 10;
+const FOLLOW_RETRY_MS = 1000;
+
+/** After a replacement engine answers, the main window reloads at the engine's
+ *  origin, or is replaced by a window created for it when the port moved. It is
+ *  never left on a dead origin: until the swap can happen it shows the
+ *  reconnecting page and tries again. */
+function followRestartedServer(triesLeft = FOLLOW_RETRIES) {
+  const win = mainWindow;
+  if (!app.isPackaged || desktopShutdownStarted || !win || win.isDestroyed()) return;
+  const target = restartedWindowTarget({ windowOrigin: win.murageRendererOrigin, serverOrigin: `http://127.0.0.1:${SERVER_PORT}`, openThread: openChat });
+  if (target.mode === "reload") {
+    slog("server supervisor: main window reloads for the new engine launch");
+    void win.loadURL(target.url).catch(() => {});
+    return;
+  }
+  slog(`server supervisor: main window moves to port ${SERVER_PORT}`);
+  if (replaceMainWindow("server-moved", target.url)) return;
+  if (!win.isDestroyed()) void win.loadURL(splashPage({ dark: nativeTheme.shouldUseDarkColors, line: RECONNECTING_LINE })).catch(() => {});
+  if (triesLeft > 1) setTimeout(() => followRestartedServer(triesLeft - 1), FOLLOW_RETRY_MS);
 }
 let desktopRecoveryMode = false;
 let recoveryWindow = null;
@@ -1636,6 +1704,8 @@ function trackOwnedServerChild(proc, options) {
 // type a header. Held in memory in this process only — never written to
 // userData, never logged, never put in a child environment.
 let desktopSurfaceSecret = "";
+/** The launch id the current engine puts in every answer (server-follow.mjs LAUNCH_HEADER); the renderer refuses any other responder. */
+let serverLaunchId = "";
 
 function receiveDesktopSurfaceSecret(message) {
   if (message?.type !== "murage:desktop-secret") return false;
@@ -1711,8 +1781,6 @@ const modelProviderCommitToken = randomBytes(32).toString("hex");
 // The link-server routes have their own token: holding the model-provider one
 // must not be enough to push or clear link secrets (MCP-LINK M2).
 const mcpCommitToken = randomBytes(32).toString("hex");
-// HighLevel has a separate main-only credential; it travels only over the utility parent port.
-const highlevelCommitCredential = randomBytes(32).toString("hex");
 let credentialStoreUnavailable = false;
 
 async function loadSecureCredentials() {
@@ -1906,7 +1974,7 @@ import { companionShouldStayAwake } from "./companion-keep-awake.mjs";
 import { lanPairingView } from "./companion-lan-pairing.mjs";
 import { LINUX_KEYRING_REQUIRED, secretSaveRefusedReason as saveRefusedReasonFor, secretWriteRefusal } from "./secret-storage-policy.mjs";
 import { DESK_POST_TIMEOUT_MS, startDeskPresence } from "./desk-presence.mjs";
-import { openLogStream, rotateLogAtLaunch } from "./log-rotate.mjs";
+import { createServerLog, rotateLogAtLaunch } from "./log-rotate.mjs";
 
 let companionPowerBlocker = null;
 
@@ -1925,7 +1993,7 @@ function slog(line) {
   try {
     if (!logStream) {
       fs.mkdirSync(LOG_DIR, { recursive: true });
-      logStream = openLogStream(path.join(LOG_DIR, "server.log"), (lost) => { if (logStream === lost) logStream = null; });
+      logStream = createServerLog(path.join(LOG_DIR, "server.log"));
     }
     logStream.write(`[${new Date().toISOString()}] ${line}\n`);
   } catch {
@@ -2542,6 +2610,16 @@ function closeMemoryUpgradeWindow(ready = false) {
   upgradeScreen = null; lastUpgradeView = "";
   // showDesktopRecovery or the main window reveal owns the splash close.
 }
+let lastBootStepLine = "";
+/** One look at the start-up note (server/boot-progress.ts) while the child boots: after the first 5 s the start screen names the inner step in
+ * plain words (boot-step-words.mjs); no note clears it. A line that changes nothing is not sent again. It never touches the wait. */
+function showBootStep(status, { sinceMs } = {}) {
+  if (desktopShutdownStarted) return;
+  try {
+    const line = bootStepLine(status, { language: systemLanguage(), sinceMs }) ?? "";
+    if (line !== lastBootStepLine && startupSplash?.step(line)) lastBootStepLine = line;
+  } catch { /* a screen glitch never blocks startup */ }
+}
 
 function syncBrowserConnection(proc) {
   try {
@@ -2737,20 +2815,15 @@ async function startServerOn(port) {
     try {
       if (receiveComposioChildMessage(proc, message)) return;
       if (message?.type === "murage:sentinel-io-ready") { sentinelIoServer = proc; sentinelHost?.replayIo(); return; }
+      // Windows computer use (DESIGN 1022-cua-windows D10 a, D16, D20): the harness is listening, or reports a stuck
+      // or failed driver generation. The runtime decides; -ready also re-sends the desktop state.
+      if (routeHarnessMessage(message, { isCurrent: proc === serverProc, wire: hostDesktopWire, deliver: (routed) => onCuaHarnessMessage(routed, proc) })) return;
       if (message?.type === "murage:sentinel-io-ack") { if (sentinelIoServer === proc) sentinelHost?.acceptIo(message.event); return; }
       if (message?.type === "startup-stage") {
         const stage = String(message.stage);
         // the server is listening: the upgrade window says the app is opening (it stays the one window)
         if (upgradeScreen && startupSplash?.upgrading && (stage === "listen" || stage === "ready")) { const view = upgradeScreen.finishing({ ready: stage === "ready" }); if (view) { lastUpgradeView = JSON.stringify(view); startupSplash.set(view); } }
         startupSplash?.stage(stage);
-        return;
-      }
-      if (message?.type === "murage:highlevel-bootstrap-request") {
-        if (typeof message.requestId !== "string" || !/^[A-Za-z0-9_-]{1,160}$/u.test(message.requestId)) return;
-        void highlevelCredentials.bootstrap().then(
-          (bootstrap) => proc.postMessage({ type: "murage:highlevel-bootstrap", requestId: message.requestId, bootstrap }),
-          () => proc.postMessage({ type: "murage:highlevel-bootstrap", requestId: message.requestId, error: "storage" }),
-        ).catch(() => {});
         return;
       }
       if (receiveDesktopSurfaceSecret(message)) return;
@@ -2844,7 +2917,7 @@ async function startServerOn(port) {
     // restart invalidates them before any replacement child receives the
     // browser descriptor.
     browserHost?.clearCapabilities();
-    slog(`exited code=${code}`);
+    slog(`exited code=${code}${exitCodeNote(code)}`);
   });
   // wait for the port to answer (fresh machine: first boot writes data dirs).
   // Identity check is by the launch nonce: a dev harness server has the same API shape,
@@ -2862,6 +2935,9 @@ async function startServerOn(port) {
   const upgradeWatch = desktopDataDir
     ? watchMemoryUpgrade({ dataDir: desktopDataDir, pid: () => proc.pid, onReading: showMemoryUpgradeProgress })
     : null;
+  // every step before listen writes its own note (server/boot-progress.ts): while it is this child's and moving, the 5-minute limit waits;
+  // after 5 s the start screen names the step it is in (showBootStep)
+  const bootWatch = desktopDataDir ? watchBootProgress({ dataDir: desktopDataDir, pid: () => proc.pid, onReading: (status, at) => showBootStep(status, at) }) : null;
   try {
     identity = await Promise.race([pollServerIdentity({
     extendWhile: () => upgradeWatch?.active() ?? false,
@@ -2869,18 +2945,19 @@ async function startServerOn(port) {
     isSuspended: () => bootSystemSuspended,
     progressFresh: () => upgradeWatch?.fresh() ?? false,
     liveWithoutLimit: () => (upgradeWatch?.fresh() ?? false) && isOneTimeIndexNote(upgradeWatch?.status()),
+    bootProgressFresh: () => bootWatch?.fresh() ?? false,
     port,
     // The launch nonce, not the pid: the pid is public, so a foreign listener could echo it.
     nonce: () => bootNonce,
     bootTimeoutMs: SERVER_BOOT_SLOW_LIMIT_MS,
     isExited: () => exited || lifecycle.failed || desktopShutdownStarted,
-    }), lifecycle.exit.then(() => ({ outcome: "exited" }))]).finally(() => clearTimeout(slowNote));
+    }), lifecycle.exit.then(() => ({ outcome: "exited" }))]).finally(() => { clearTimeout(slowNote); bootWatch?.stop(); });
     // The note must be read before the watcher stops: a child that ended on a
     // blocked upgrade has already written why.
     const finalNote = desktopDataDir ? readMemoryUpgradeStatus(desktopDataDir, { pid: proc.pid }) : null;
     upgradeWatch?.stop();
     closeMemoryUpgradeWindow(identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted);
-    if (identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted) return { proc, lifecycle };
+    if (identity.outcome === "ready" && !lifecycle.exited && !desktopShutdownStarted) return { proc, lifecycle, launch: launchIdOf(bootNonce) };
     // The 30-minute cap ran out with the upgrade still running: another port or
     // another try would start the same upgrade from the beginning again.
     const upgradeSeen = finalNote?.state === "upgrading";
@@ -2936,7 +3013,14 @@ async function startServerPackaged() {
       const started = await startServerOn(port);
       if (started.proc) {
         serverProc = started.proc;
+        if (process.platform === "win32") {
+          setCuaHarnessPort(started.proc);
+          hostDesktopWire?.dispose();
+          hostDesktopWire = hostDesktopLock ? wireHostDesktop({ lock: hostDesktopLock, port: started.proc }) : null;
+          started.proc.once?.("exit", () => onCuaHarnessExit(started.proc));
+        }
         SERVER_PORT = port;
+        serverLaunchId = started.launch ?? "";
         superviseServerChild(started.proc, started.lifecycle);
         attentionWiring?.serverChanged(); // a new server run: tokens minted against the old one die
         attentionMain?.serverChanged();
@@ -3550,6 +3634,19 @@ ipcMain.on("desktop:surface-secret", (event) => {
   event.returnValue = desktopSurfaceSecret;
 }, { refusedReturnValue: "" });
 
+// Synchronous for the same reason: the first answer the page reads is already
+// checked against this launch (src/lib/live-events.ts responderIsOurs).
+ipcMain.on("desktop:server-launch", (event) => {
+  event.returnValue = serverLaunchId;
+}, { refusedReturnValue: "" });
+
+// The chat on screen, so a window that follows a moved engine reopens it (followRestartedServer).
+ipcMain.on("desktop:open-chat", (event, threadId) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return;
+  const thread = openChatThread(threadId);
+  if (thread) openChat = thread;
+});
+
 ipcMain.on("desktop:unread-count", (event, value) => {
   const cloudId = cloudHome?.senderHomeId(event); // B3 WP4: a Cloud window reports its own count; the badge lives on the main window
   if (cloudId) {
@@ -3648,11 +3745,26 @@ ipcMain.handle("update:prepare-previous-version", (_event, ...args) => {
 });
 
 let recoveryAttempt = null;
+let newerDataWindow = null;
+/** The start stopped on data a newer Murage saved (memory-upgrade-status.mjs note): one plain screen naming the version to install (the
+ * data folder's data-version.json, when newer than this build) with the download page and Quit. Closing it ends Murage: no second start. */
+function showNewerDataScreen() {
+  if (newerDataWindow && !newerDataWindow.isDestroyed()) { newerDataWindow.focus(); return newerDataWindow; }
+  const version = newerDataVersion(desktopDataDir ? readDataVersion(desktopDataDir) : null, app.getVersion());
+  slog(`start stopped: data saved by a newer Murage (${memoryUpgradeBlocked?.code}; newest recorded ${version ?? "unknown"}); showing the install screen`);
+  newerDataWindow = openNewerDataWindow({ BrowserWindow, openExternal: url => osShell.openExternal(url), language: systemLanguage(), version, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, onQuit: requestOwnerQuit }).window;
+  deferredStartup.presented();
+  closeStartupSplash();
+  return newerDataWindow;
+}
 function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
   if(descriptor.updatePause)updateRecoveryDescriptor={...descriptor,reasonCode};
   startupDecisionPending=false;
   desktopRecoveryMode = true;
   serverReady = false;
+  // Data a newer Murage saved is not damaged: its one screen says what to install, never the restore page. A memory object this build
+  // does not know, with no newer release recorded for the folder, is not newer data: it gets the recovery window as before.
+  if (reasonCode === "MEMORY_UPGRADE_BLOCKED" && showsNewerDataScreen(memoryUpgradeBlocked?.code, desktopDataDir ? readDataVersion(desktopDataDir) : null, app.getVersion())) return showNewerDataScreen();
   if (recoveryWindow && !recoveryWindow.isDestroyed()) {
     if(!descriptor.updatePause){recoveryWindow.focus();return recoveryWindow;}
     recoveryWindow.destroy();recoveryWindow=null;
@@ -3674,6 +3786,8 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
       + "You are in Backup mode. Your bots, schedules and messaging apps are paused while you are here. Restore a backup or make one, or choose Return to workspace."
     : reasonCode === "LEASE_FOREIGN_HOST"
     ? "Murage's data folder says it was last used on a computer with a different name. That does not mean anything is damaged, and reinstalling Murage won't change it."
+    : reasonCode === "LEASE_BUSY"
+    ? words["lease-busy"]
     : reasonCode === "RESTORE_REVIEW_REQUIRED"
     ? "Your restored copy is paused until you review it. Your previous data is kept as it was."
     : reasonCode === "MEMORY_UPGRADE_BLOCKED"
@@ -3691,6 +3805,13 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
     context: { reason, returnRevoked:descriptor.returnRevoked===true, updateMessages:words, updatePause:descriptor.updatePause===true, ownership, backupMode: reasonCode === "BACKUP_REQUESTED", oneTimeStep: reasonCode === "MEMORY_UPGRADE_BLOCKED" && memoryUpgradeBlocked?.code === MEMORY_INDEX_STOPPED, dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
     isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
     canRestoreSeparate: canRestoreSeparateInstallation,
+    canSetAsideForeign: canSetAsideForeignLease,
+    setAsideForeign: async () => {
+      if (!canSetAsideForeignLease()) throw Object.assign(new Error("LEASE_TAKEOVER_REFUSED"), { code: "LEASE_TAKEOVER_REFUSED" });
+      const moved = setAsideForeignDataDirLease(desktopDataDir);
+      slog(`data folder lock set aside by the owner (${moved} files renamed, none deleted)`);
+      await explicitBackupReturn(backupScheduleHost,returnToWorkspaceAfterBackup);
+    },
     canCaptureSeparate: canCaptureSeparateInstallation,
     runCaptureSeparate: runSnapshotDesktopRecovery,
     planSeparate: () => planSeparateInstallation(app.getPath("userData"), desktopRequestedDataDir, desktopDataDir),
@@ -3731,6 +3852,13 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
     });
   }
   return recoveryWindow;
+}
+
+/** "This is my computer, continue": only in the recovery window this start
+ * opened for a foreign claim, before any owner, on a local volume. */
+function canSetAsideForeignLease() {
+  return Boolean(desktopRecoveryMode && !desktopShutdownStarted && !desktopDataOwner && desktopDataDir &&
+    foreignDataDirLeaseSetAsideAvailable(desktopDataDir));
 }
 
 function canRestoreSeparateInstallation() {
@@ -3913,7 +4041,7 @@ async function harnessJson(route,body){
 }
 // The tray's Inbox change watcher (electron/inbox-watch.mjs), bound to this
 // process's server port and desktop surface proof.
-const watchTrayInbox=onChange=>watchInboxChanges(change=>{attentionMain?.reconcile();if(change?.scale===undefined)void attentionMain?.previewsCheck("local");void attentionSurfaces?.sync();onChange(change);},{
+const watchTrayInbox=onChange=>watchInboxChanges(change=>{attentionMain?.reconcile();if(change?.connected===true){void attentionMain?.previewsCheck("local");attentionMain?.trayConnected();}void attentionSurfaces?.sync();onChange(change);},{
   onFrame:frame=>{attentionMain?.watcherFrame(frame);attentionSurfaces?.botFrame(frame);},
   ready:()=>serverReady&&Boolean(desktopSurfaceSecret)&&!desktopShutdownStarted,
   url:()=>`http://127.0.0.1:${SERVER_PORT}/api/events?screens=off`,
@@ -3931,6 +4059,7 @@ function initializeBackgroundLifecycle(){
     if(!response.ok)throw new Error("Automatic-work settings could not be confirmed.");
     const value=await response.json();if(typeof value.paused!=="boolean")throw new Error("Automatic-work status is unavailable.");return value;
   };
+  let lastNeedsYou=0;
   backgroundLifecycle=createBackgroundLifecycle({platform:process.platform,login,window:()=>mainWindow,isQuitting:()=>desktopShutdownStarted,serviceReady:()=>serverReady,
     preferencesWritable:()=>Boolean(preferenceFile),
     loadPreferences:()=>{try{if(!preferenceFile)return {};const stat=fs.lstatSync(preferenceFile);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>8192)return {};return JSON.parse(fs.readFileSync(preferenceFile,"utf8"));}catch{return {};}},
@@ -3955,7 +4084,11 @@ function initializeBackgroundLifecycle(){
     openInbox:()=>sendWhenLoaded("startup-background:open-inbox"),
     explainClose:async win=>{const options={type:"info",title:"Murage stays available",message:"Closing this window keeps Murage running.",detail:"Use the Murage menu bar or tray icon to reopen it, open Inbox or quit. Automatic work only runs while Murage is open and this computer is awake. Change this in Settings → General → Startup & background.",buttons:["Keep running","Quit Murage"],defaultId:0,cancelId:0};const result=win?await dialog.showMessageBox(win,options):await dialog.showMessageBox(options);return result.response===1?"quit":"keep";},
     automationStatus:()=>automation(),setAutomationsPaused:paused=>automation(paused),quit:requestOwnerQuit,
-    onChange:state=>{applyUnreadBadge();if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);},
+    onChange:state=>{applyUnreadBadge();
+      const needsYou=backgroundLifecycle.summary()?.needsYou??0;
+      if(process.platform==="darwin"&&lastNeedsYou!==needsYou){lastNeedsYou=needsYou;void attentionSurfaces?.sync();}
+      if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);
+    },
     onError:error=>{slog(`startup/background: ${error.message}`);},
   });
   return {lifecycle:backgroundLifecycle,login};
@@ -4000,7 +4133,7 @@ ipcMain.handle("notify-surfaces:reset",()=>{
 // The Mac permission prompt, asked only from the first-run chooser's Continue click (design 3.1); nothing to ask on other systems.
 ipcMain.handle("notify-surfaces:ensure-permission",async()=>{notifySurfacesForEvent();if(process.platform!=="darwin")return{authorized:true};try{const result=await notificationAuthorization.ensure();return{authorized:result?.authorized===true};}catch{return{authorized:false};}});
 ipcMain.handle("notify-surfaces:capabilities",async()=>{
-  const caps=notifyCapabilities({platform:process.platform,env:process.env,trayHost:process.platform==="linux"?await linuxTrayHostAvailable(execFileInherited).catch(()=>null):null});
+  const caps=notifyCapabilities({platform:process.platform,env:process.env,trayHost:process.platform==="linux"?await linuxTrayHostAvailable(execFileInherited).catch(()=>null):null,tray:trayIcon,screen});
   const owner=await initializeGlobalShortcut();
   if(owner.status().disabledReason)caps.surfaces.shortcut={available:false,reason:"portal-needed"};
   return caps;
@@ -4016,7 +4149,7 @@ function ownedMainContents() {
   return mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
 }
 
-function createWindow({quiet=false}={}) {
+function createWindow({quiet=false,url=null}={}) {
   if (app.isPackaged && desktopRecoveryMode) return showDesktopRecovery();
   const primary = screen.getPrimaryDisplay();
   const displays = [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)];
@@ -4025,6 +4158,7 @@ function createWindow({quiet=false}={}) {
   // the OS is doing right now, which is also what the renderer's "auto" default
   // will resolve to. Either way the very first frame is the right colour.
   persistedSkin = readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light");
+  const rendererOrigin = trustedRendererOrigin();
   const win = new BrowserWindow({
     ...restored.bounds,
     minWidth: 900,
@@ -4047,9 +4181,11 @@ function createWindow({quiet=false}={}) {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
       // The preload exposes the bridge only on this origin (B6).
-      additionalArguments: [...rendererOriginArguments(trustedRendererOrigin()), ...(cloudHome ? ["--murage-cloud=1"] : [])],
+      additionalArguments: [...rendererOriginArguments(trustedRendererOrigin()), ...(cloudHome ? ["--murage-cloud=1"] : []), ...(process.mas || process.windowsStore ? ["--murage-store=1"] : [])],
     },
   });
+  // The origin this window was created for: its preload's bridge belongs to that origin only (B6, followRestartedServer).
+  win.murageRendererOrigin = rendererOrigin;
   mainWindow = win;
   win.on("focus", () => cloudLive.probeOnFocus());
   win.webContents.on("did-finish-load", () => startupIpc.deliver());
@@ -4134,7 +4270,12 @@ function createWindow({quiet=false}={}) {
       const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/health`, { signal: AbortSignal.timeout(2000) });
       return res.ok;
     },
-    reload: (target) => { if (!win.isDestroyed()) void win.loadURL(target).catch(() => {}); },
+    reload: (target) => {
+      if (win.isDestroyed()) return;
+      // A window created for another port has no bridge on this one: it is replaced, never reloaded there.
+      if (app.isPackaged && win === mainWindow && win.murageRendererOrigin !== trustedRendererOrigin()) { followRestartedServer(); return; }
+      void win.loadURL(target).catch(() => {});
+    },
     log: slog,
   }));
   win.webContents.on("did-finish-load", () => { deliverPackageInstall(win); cloudLinks.drain(); appReadiness.flush(win.webContents); });
@@ -4172,6 +4313,7 @@ function createWindow({quiet=false}={}) {
       // A window whose GPU process died with it stays black on macOS even after
       // a reload (measured: page running, nothing painted); a fresh window paints.
       if (win === mainWindow && Date.now() - gpuLostAt < GPU_LOSS_REPLACE_WINDOW_MS && lastWindowReplaceAt < gpuLostAt && replaceMainWindow("gpu-lost")) return;
+      if (app.isPackaged && win === mainWindow && win.murageRendererOrigin !== trustedRendererOrigin()) { followRestartedServer(); return; }
       void win.loadURL(app.isPackaged ? `http://127.0.0.1:${SERVER_PORT}` : DEV_URL).catch(() => {});
     },
     showRecovery: () => { showDesktopRecovery("STARTUP_FAILED"); },
@@ -4341,7 +4483,9 @@ function createWindow({quiet=false}={}) {
   }
 
   if (app.isPackaged) {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : buildErrorPage({ allPortsOccupied: serverStartConflictOnly }));
+    // A window that follows a moved engine opens at the chat it had (followRestartedServer), on this window's own origin only.
+    const start = url && new URL(url).origin === rendererOrigin ? url : `http://127.0.0.1:${SERVER_PORT}`;
+    win.loadURL(serverReady ? start : buildErrorPage({ allPortsOccupied: serverStartConflictOnly }));
   } else {
     win.loadURL(DEV_URL);
   }
@@ -4885,7 +5029,6 @@ const CREDENTIAL_PATCH = {
   tavilySearchApiKey: (value) => ({ webSearch: { tavilyApiKey: value } }),
   exaSearchApiKey: (value) => ({ webSearch: { exaApiKey: value } }),
   firecrawlSearchApiKey: (value) => ({ webSearch: { firecrawlApiKey: value } }),
-  highlevelPrivateToken: (value) => ({ highlevel: { privateToken: value } }),
   telegramBotToken: (value) => ({ telegram: { botToken: value } }),
   slackAppToken: (value) => ({ slack: { appToken: value } }),
   slackBotToken: (value) => ({ slack: { botToken: value } }),
@@ -5113,41 +5256,6 @@ const mcpServers = createMcpServers({
   createServer: () => createLoopbackServer(),
   log: slog,
 });
-// Source owns the two server handlers. Their private payloads never return to
-// the renderer; only IDs enter this bridge and a value-free result leaves it.
-const highlevelCredentials = createHighLevelCredentialBridge({
-  commitCredential: highlevelCommitCredential,
-  readDocument: () => {
-    if (!secureCredentialState || credentialStoreUnavailable) throw Error("HighLevel secure storage unavailable");
-    return secureCredentialState.read();
-  },
-  assertSafeStorage: () => assertHighLevelSafeStorage({ safeStorage, storeUnavailable: credentialStoreUnavailable }),
-  updateDocument: async (derive) => {
-    await updateSecureCredentialDocument(derive);
-    // The bank must survive a crash before metadata can become active.
-    const file = fs.openSync(CREDENTIALS_FILE, "r+");
-    try { fs.fsyncSync(file); } finally { fs.closeSync(file); }
-    if (process.platform !== "win32") {
-      const directory = fs.openSync(path.dirname(CREDENTIALS_FILE), "r");
-      try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
-    }
-  },
-  request: async (action, body, credential) => {
-    if (!(await ensureDesktopSurfaceSecret()) || !serverProc) throw Error("HighLevel desktop unavailable");
-    const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/highlevel/credential-commit/${action}`, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000),
-      headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret, authorization: `Bearer ${credential}` },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) throw Error("HighLevel credential commit refused");
-    return response.json();
-  },
-});
-ipcMain.handle("highlevel:commit", async (_event, input) => {
-  if (!app.isPackaged || !serverProc) return { ok: false, error: "unavailable" };
-  return highlevelCredentials.commit(input);
-});
-
 async function mcpServersGate() {
   if (!(await ensureDesktopSurfaceSecret())) throw new Error("Desktop authorization is not ready. Try again shortly.");
   if (!app.isPackaged || !serverProc) return { ok: false, error: "desktop-only", message: "This needs the Murage desktop app." };
@@ -5164,6 +5272,7 @@ async function mcpServersGate() {
 ipcMain.handle("mcp-servers:mode", () => (app.isPackaged ? "desktop" : "local-config"));
 ipcMain.handle("mcp-servers:save-secrets", async (_event, name, input) => (await mcpServersGate()) ?? mcpServers.saveSecrets(name, input));
 ipcMain.handle("mcp-servers:sign-in", async (_event, name) => (await mcpServersGate()) ?? mcpServers.signIn(name));
+ipcMain.handle("mcp-servers:use-own-app", async (_event, name, input) => (await mcpServersGate()) ?? mcpServers.useOwnApp(name, input));
 ipcMain.handle("mcp-servers:cancel-sign-in", async (_event, name) => {
   if (!(await ensureDesktopSurfaceSecret())) throw new Error("Desktop authorization is not ready. Try again shortly.");
   return mcpServers.cancelSignIn(name);
@@ -5591,6 +5700,9 @@ const desktopStartup = app.whenReady().then(async () => {
     void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
     return;
   }
+  // An install this app (any version since 1.0.20) started paused these jobs;
+  // whatever runs next puts them back, before the closed-app job is rebuilt.
+  if (app.isPackaged) desktopUpdateLaunchPause().resume();
   // Show something now: browser host, backup check and server boot (up to the
   // 60s health cap) all run before the real window can load. Not for login
   // launches, which start quietly, nor for backup-mode relaunches.
@@ -5822,7 +5934,7 @@ void androidDevice.reclaimOrphan().catch(() => {});
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
   cuaReady =
-    process.platform === "darwin" || process.platform === "linux"
+    process.platform === "darwin" || process.platform === "linux" || process.platform === "win32"
       ? startCua().catch((e) => {
           console.error("[cua] start failed:", e);
           return { mode: "unavailable", reason: String(e) };
@@ -5879,7 +5991,7 @@ void androidDevice.reclaimOrphan().catch(() => {});
   // home has not confirmed forgetting yet is removed there now. Never throws; the next door open tries again.
   if(cloudHome?.client?.settleUnfinished)void cloudHome.client.settleUnfinished().catch(()=>console.log("[cloud] door: settle-failed"));
   powerMonitor.on("suspend",()=>backgroundLifecycle?.setSuspended(true));
-  powerMonitor.on("resume",()=>backgroundLifecycle?.setSuspended(false));
+  powerMonitor.on("resume",()=>{backgroundLifecycle?.setSuspended(false);void attentionSurfaces?.sync();});
   // 1.0.10 C3: the server counts the suspension as sleep, so an open card's deadline and the stall watchdog do not read it as silence.
   // The server also measures a frozen process itself; this covers a suspension it kept running through (Windows modern standby).
   for(const state of ["suspend","resume"])powerMonitor.on(state,()=>{try{serverProc?.postMessage({type:"murage:power",state});}catch{/* the server is restarting; its own tick covers a freeze */}});
@@ -5962,8 +6074,7 @@ const startupSettleDeps = {
   packaged: () => app.isPackaged,
   shutdownStarted: () => desktopShutdownStarted,
   closeSplash: closeStartupSplash,
-  showRecovery: error => showDesktopRecovery(error?.code === "RESTORE_REVIEW_REQUIRED" ? "RESTORE_REVIEW_REQUIRED"
-    : error?.code === "LEASE_FOREIGN_HOST" ? "LEASE_FOREIGN_HOST" : "STARTUP_FAILED"),
+  showRecovery: error => showDesktopRecovery(startupRecoveryReason(error?.code)),
   showError: () => dialog.showErrorBox("Murage could not open this installation", "Murage could not finish desktop startup. Installation data was preserved. Check the local startup diagnostics, then reopen Murage."),
   cleanup: cleanupDesktopForExit,
   retain: retry => {
@@ -6052,7 +6163,8 @@ function cleanupDesktopForExit(reason="user-stop",token) {
   if(token?.cancelled)throw Error("BACKUP_ADMISSION_STOPPED");
   serverStopReason.logOnce();
   stopDeskPresence();stopDeskPresence=()=>{};
-  // 1.0.9 Sentinel: flush the desktop producer. Quitting never unregisters Sentinel or stops its scanner.
+  // 1.0.9 Sentinel: flush the desktop producer. Quitting never unregisters Sentinel or stops a scheduled scanner; on
+  // Windows it ends only the fallback supervisor this app started (sentinel-host.mjs shutdown).
   void sentinelHost?.shutdown().catch(()=>{});
   stopAutomaticRemoteBackups();
   backupScheduleHost?.stopPolling();
@@ -6060,7 +6172,7 @@ function cleanupDesktopForExit(reason="user-stop",token) {
   const localEngineLoginEnded = localEngineLogin.shutdown().catch(() => {});
   modelSignIn.dispose();
   mcpServers.dispose();
-  notificationAuthorization.invalidate();showApprovalNotification.dispose();bannerNative?.dispose();attentionSurfaces?.dispose();
+  notificationAuthorization.invalidate();showApprovalNotification.dispose();bannerNative?.dispose();attentionMain?.stopRecovery();attentionSurfaces?.dispose();
   desktopBackupTool.invalidate();
   desktopResticTool?.invalidate();
   remoteBackupAttestation.abort();
@@ -6118,8 +6230,13 @@ function cleanupDesktopForExit(reason="user-stop",token) {
     desktopCleanupStage = "browser host";
     await awaitOwnedWork(browserHost?.stop() ?? Promise.resolve(), "The owned browser host has not stopped");
     desktopCleanupStage = "computer-use startup/cleanup";
-    await awaitOwnedWork(cuaReady, "Computer-use startup has not settled", CUA_STOP_TIMEOUT_MS);
-    await awaitOwnedWork(stopCua(), "Computer-use cleanup has not completed", CUA_STOP_TIMEOUT_MS);
+    if (process.platform === "win32") {
+      // D14: ONE barrier on win32. The runtime's stop handles a pending start itself, so no cuaReady await first.
+      await awaitOwnedWork(cuaCleanupStage({ stop: stopCua, ms: cuaStopStageMs("win32") }), "Computer-use cleanup has not completed");
+    } else {
+      await awaitOwnedWork(cuaReady, "Computer-use startup has not settled", CUA_STOP_TIMEOUT_MS);
+      await awaitOwnedWork(stopCua(), "Computer-use cleanup has not completed", CUA_STOP_TIMEOUT_MS);
+    }
     desktopCleanupStage = "android helper";
     // Both Android stop and a sign-in already finishing can remain pending.
     // A backup return must report that uncertainty, retaining the lease, just
@@ -6154,7 +6271,7 @@ app.on("child-process-gone", (_event, details) => {
 
 /** Swap the main window for a fresh one at the same place, shown only once it
  * has painted. The old window stays up until then. False when nothing was done. */
-function replaceMainWindow(reason) {
+function replaceMainWindow(reason, url = null) {
   const old = mainWindow;
   if (pendingSwap || replacingMainWindow || desktopShutdownStarted || quitRequested || !old || old.isDestroyed()) return false;
   replacingMainWindow = true;
@@ -6164,7 +6281,7 @@ function replaceMainWindow(reason) {
   const revealWasPending = pendingRevealWindows.has(old);
   pendingRevealWindows.delete(old);
   let fresh = null;
-  try { fresh = createWindow({ quiet: true }); } catch (error) { slog(`main window: replacement failed ${error?.message ?? error}`); }
+  try { fresh = createWindow({ quiet: true, url }); } catch (error) { slog(`main window: replacement failed ${error?.message ?? error}`); }
   replacingMainWindow = false;
   if (!fresh || fresh === old || fresh.isDestroyed?.()) {
     if (mainWindow !== old && !old.isDestroyed()) mainWindow = old;
@@ -6219,6 +6336,16 @@ function replaceMainWindow(reason) {
 }
 
 app.on("before-quit", () => { browserPopouts.closeAll(); cloudHome?.browserPopouts.closeAll(); });
+// meetgreet 1.0.19 (quit-notice.mjs): one line per quit naming its cause and profile; a separate-profile copy that is quit by
+// someone else (another app's quit to the shared bundle id, the system, automation) says so on screen before it closes.
+let quitAnnounced = false;
+function announceQuit(cause) {
+  if (quitAnnounced) return;
+  quitAnnounced = true;
+  const { log, notice } = quitAnnouncement({ cause, customProfile: hasCustomUpdaterProfile(process.env) });
+  slog(log);
+  if (notice) { try { if (Notification.isSupported()) new Notification({ title: notice.title, body: notice.body, silent: true }).show(); } catch { /* the log line stands */ } }
+}
 app.on("before-quit", (e) => {
   const backupInternalQuit=internalBackupQuit||returnAuthority.internalQuit;
   if(!backupInternalQuit)backupScheduleHost?.noteStop?.();
@@ -6228,6 +6355,7 @@ app.on("before-quit", (e) => {
     if (shutdownCause === "unclassified") slog("desktop quit unclassified");
   }
   noteShutdownCause(shutdownCause);
+  announceQuit(shutdownCause);
   app.murageShutdownCause=shutdownCause;
   quitRequested = true;
   backgroundLifecycle?.beginQuit();

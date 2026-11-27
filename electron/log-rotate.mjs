@@ -36,3 +36,44 @@ export function openLogStream(logPath, onLost, fileSystem = fs) {
   stream.on("error", () => onLost(stream));
   return stream;
 }
+
+/** The running app's log writer. It counts the bytes it appends and, once the
+ * file passes maxBytes, moves it to the old copy and opens a fresh file, so a
+ * run of weeks keeps the same bound as a launch. Lines already handed to the
+ * old stream still land in the old copy. If the move is refused (Windows, file
+ * held open) the run keeps appending to the same file and tries again after
+ * another retryBytes, so nothing is lost. */
+export function createServerLog(logPath, { maxBytes = SERVER_LOG_MAX_BYTES, retryBytes = 1024 * 1024, fileSystem = fs } = {}) {
+  let stream = null;
+  let bytes = 0;
+  let nextCheck = maxBytes;
+  const open = () => {
+    try { bytes = fileSystem.lstatSync(logPath).size; } catch { bytes = 0; }
+    nextCheck = Math.max(maxBytes, bytes + 1);
+    // The descriptor is taken now, not when the stream gets round to it, so a
+    // move right after this never leaves queued lines heading for a new file.
+    const fd = fileSystem.openSync(logPath, "a", 0o600);
+    const opened = fileSystem.createWriteStream(logPath, { fd, flags: "a" });
+    opened.on("error", () => { if (stream === opened) stream = null; });
+    stream = opened;
+  };
+  return {
+    write(text) {
+      if (!stream) open();
+      stream.write(text);
+      bytes += Buffer.byteLength(text);
+      if (bytes <= nextCheck) return;
+      const held = stream;
+      try {
+        fileSystem.renameSync(logPath, oldLogPath(logPath));
+      } catch {
+        nextCheck = bytes + retryBytes;
+        return;
+      }
+      held.end();
+      stream = null;
+      bytes = 0;
+      nextCheck = maxBytes;
+    },
+  };
+}

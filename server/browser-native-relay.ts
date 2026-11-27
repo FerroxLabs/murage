@@ -22,6 +22,7 @@ import type { AgentBrowserSpec } from "./browser-engine.ts";
 import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
 import { closeSocketQuietly } from "./browser-socket-teardown.ts";
 import { BrowserEngineError } from "./browser-engine-error.ts";
+import { BROWSER_TAB_CLOSED, BROWSER_TAB_REPLACED } from "./browser-lock.ts";
 import { isControlTokenMismatch, streamAuthHeaders } from "./browser-control-token.ts";
 import { originOf, prepareBrowserRestore, restoreScript, type OriginStorage, type RestoreSession } from "./browser-restore-store.ts";
 
@@ -30,8 +31,21 @@ export type BrowserFrame = { seq: number; data: string; width: number; height: n
 export interface NativeBrowser {
   readonly daemonIdentity?: import('./browser-daemon-identity.ts').DaemonIdentity;
   seedDaemonIdentity?(identity: import('./browser-daemon-identity.ts').DaemonIdentity): void;
-  protected(armed?: boolean): Promise<boolean>;
-  request(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  /** `skip`: tabs left to the owner (protected); never looked at. */
+  protected(armed?: boolean, skip?: ReadonlySet<string>): Promise<boolean>;
+  /** The bot's pages (id, address) as the browser lists them, for the server only. Absent: tabs cannot be told apart. */
+  pages?(): Promise<{ id: string; url: string }[]>;
+  /** `internal`: a call Murage makes for itself (the reader's page reads inside one of the bot's steps, the new tab for a
+   * protected page), not the bot's own step. `stepGen`: the tab the enclosing step began on (beginStep); once the bot's tab
+   * has been replaced since, the call is not sent and throws. */
+  request(method: string, params?: Record<string, unknown>, options?: { internal?: boolean; stepGen?: number }): Promise<unknown>;
+  /** A bot step that makes its page calls itself (the mediated reader) begins here. `notice`: the plain-words reply the step
+   * ends with instead of running (the bot's tab was replaced and it had not been told, or no tab can be opened). Else `gen`,
+   * the tab the step runs on, to hand to its internal calls and to endStep. */
+  beginStep?(name: string): Promise<{ notice: unknown } | { gen: number }>;
+  /** The same step ended (it returned or threw). The plain-words reply that takes the place of its result when the bot's tab
+   * was replaced or lost under it, else nothing. */
+  endStep?(gen: number): Promise<unknown>;
   command(args: string[]): Promise<unknown>;
   connect(onFrame: (frame: BrowserFrame) => void, onUrl: (url: string) => void, onDisconnect: () => void): Promise<string>;
   input(event: Record<string, unknown>): void;
@@ -46,11 +60,38 @@ export function browserInputEvents(event: Record<string, unknown>): Record<strin
     : [event];
 }
 export { BROWSER_ENGINE_COPY, BrowserEngineError, browserEngineDown } from "./browser-engine-error.ts";
+export { BROWSER_TAB_CLOSED, BROWSER_TAB_REPLACED };
+/** "Use my Chrome" pins the bot to its own tab (AGENT_BROWSER_PIN_TAB). Once that tab is closed, the engine refuses every
+ * page command with code "tab_gone" until a new tab is bound, and remembers the closed tab across its restarts.
+ * Returns the closed tab's id ("" when the engine did not name it), or undefined for any other answer. */
+export function tabGoneTarget(response: unknown): string | undefined {
+  const value = response as { code?: unknown; error?: unknown; data?: { targetId?: unknown } | null } | null;
+  if (!value || typeof value !== "object") return undefined;
+  if (value.code !== "tab_gone" && !(typeof value.error === "string" && value.error.startsWith("tab_gone:"))) return undefined;
+  return typeof value.data?.targetId === "string" ? value.data.targetId : "";
+}
+/** The same answer as the engine's tool server hands it to the bot. */
+function tabGoneReply(reply: unknown): string | undefined {
+  const value = reply as { isError?: unknown; structuredContent?: { response?: unknown }; content?: Array<{ text?: unknown }> } | null;
+  if (!value || typeof value !== "object" || value.isError !== true) return undefined;
+  const text = Array.isArray(value.content) ? value.content.find(item => typeof item?.text === "string")?.text : undefined;
+  // The words alone count only when the engine sent no structured answer.
+  return value.structuredContent?.response == null ? tabGoneTarget({ error: text }) : tabGoneTarget(value.structuredContent.response);
+}
+/** Steps that give the bot a page of its own choosing: after one of them there is nothing left to tell about the new tab. */
+const TAB_NOTICE_MOOT = new Set(["agent_browser_open", "agent_browser_tab_new", "agent_browser_close"]);
+/** The engine answers these with or without a bound tab, so their success says nothing about the bot's tab. */
+const TABLESS_TOOLS = new Set(["agent_browser_tab_new", "agent_browser_tab_list", "agent_browser_close"]);
+const tablessCommand = (args: string[]) => args[0] === "tab" || args[0] === "stream" || args[0] === "close" || (args[0] === "get" && args[1] === "cdp-url");
+/** New tabs Murage opens by itself for one closed tab before it stops and says so. */
+const TAB_REPLACE_STRIKES = 2;
+/** While the engine keeps refusing, the bot's steps make Murage try one more new tab at most this often. */
+export const BROWSER_TAB_RETRY_MS = 30_000;
 /** A command to an engine that is already running. */
 export const BROWSER_COMMAND_BOUND_MS = 20_000;
 /** A command that has to launch the engine first: its first use, or the first
  * command after the engine's 60 s idle exit (browser-engine.ts), which starts
- * Chrome again and restores the session. Measured on build-host (2026-10-21,
+ * Chrome again and restores the session. Measured on hetzner-dsm (2026-10-21,
  * agent-browser 0.36.0, Chromium 1243, restore on): 0.38 to 0.61 s, and 0.83
  * to 0.99 s pinned to one core. A packaged Mac app can take far longer on the
  * first launch after an idle exit, when the OS checks the bundled Chrome
@@ -68,6 +109,8 @@ export type NativeBrowserOptions = {
   /** Arguments placed before the engine's own, for an engine run through an
    * interpreter (a test runs a script with process.execPath on every OS). */
   cliPrefix?: string[];
+  /** Test seam for BROWSER_TAB_RETRY_MS. */
+  tabRetryMs?: number;
   /** Test seam: how the Cloud restore requests reach the launcher (default spawnCloudBrowser). */
   cloudLaunch?: CloudBrowserLaunch;
 };
@@ -232,12 +275,24 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
   };
   /** A command answered, so a daemon is running: the next one with no daemon prepares again. */
   const engineAnswered = () => { prepared = false; };
+  /** An engine process that ended (crashed, killed, idle exit, failed initialize) refuses every later request.
+   * Forget it so the next request starts a fresh one; a close in progress keeps it (close owns that teardown). */
+  const forgetEndedEngine = () => {
+    if (!client || closing || !client.ended?.()) return false;
+    const dead = client; client = undefined; initialized = undefined;
+    void dead.close().catch(() => {});
+    return true;
+  };
   const startEngine = async () => {
     await ensureBrowserSandboxAccess(spec); active();
+    if (forgetEndedEngine()) console.warn("[browser] engine process had ended; starting a fresh one");
     if (!initialized) {
       closeAcknowledged = false;
-      client = startHeadlessEngine(spec, null);
-      initialized = client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-browser", version: "1" } }).then(() => {});
+      const started = client = startHeadlessEngine(spec, null);
+      const attempt: Promise<void> = started.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-browser", version: "1" } }).then(() => {});
+      initialized = attempt;
+      // A failed initialize is never cached for the life of the app: the next request starts again.
+      attempt.catch(() => { if (initialized === attempt && client === started && !closing) { client = undefined; initialized = undefined; void started.close().catch(() => {}); } });
     }
     await initialized;
   };
@@ -261,16 +316,124 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
       // One attempt per run: an origin whose "/" lands elsewhere is not tried again.
       if (origin && restore?.pending(origin)) restore.abandoned(origin);
     }
-    return run(args).catch(async (error) => {
+    return onLiveTab(args).catch(async (error) => {
       // BRTOKEN19: the engine refused our control token (a stale daemon). The identity-checked stop `close()` performs, then the same command once more.
       if ((error as { staleControlToken?: boolean }).staleControlToken && !staleRecovered) {
         staleRecovered = true;
         await browser.close(); retired = false; closing = false;
-        return run(args).catch((again) => { if (cloudRestore) cloudSuspect = true; throw again; });
+        return onLiveTab(args).catch((again) => { if (cloudRestore) cloudSuspect = true; throw again; });
       }
       if (cloudRestore) cloudSuspect = true;
       throw error;
     });
+  };
+  // TABGONE-1021: the bot's pinned tab was closed (the owner closed it in their Chrome). Before this, the live view's attach,
+  // Reopen blank page and every step of the bot failed until the session files were removed. One lifecycle for that tab, which
+  // every way into the engine goes through (the owner's commands, the bot's steps, the reader's page calls, the new tab for a
+  // protected page):
+  //   gen         replacement tabs bound so far. told: the gen the bot knows about. The notice is owed while told < gen.
+  //   replacing   Murage's own `tab new` in flight. Nothing is sent to the engine meanwhile: the engine may already be on the
+  //               new tab while its answer is still on the way, and a bot step sent then would act on a tab it was not told about.
+  //   last        the closed tab the replacement at `gen` was for. A refusal for it is old news only when its command was sent
+  //               before that replacement; sent after, it proves the replacement did not take.
+  //   strikes     tabs Murage opened since the engine last ran a page command. At two it stops and says so.
+  //   refusingAt  set: no working tab. The bot's steps get BROWSER_TAB_CLOSED and one more try per tabRetryMs (twice as long
+  //               after each try that fails). Such a try is told as a replacement only once the new tab has answered.
+  //   attemptId   counts up each time Murage opens a tab or finds none working. A command notes it when it is sent, and its
+  //               success says the tab is live only if nothing changed since: an answer that was on its way while the tab
+  //               closed (a slow `get url` of the view's attach) is not news about the tabs opened after it.
+  let gen = 0, told = 0, strikes = 0, attemptId = 0;
+  let replacing: Promise<boolean> | undefined;
+  let last: { target: string; gen: number } | undefined;
+  let refusingAt: number | undefined;
+  let retryAt = 0, retryWait = 0;
+  let goneTarget = "";
+  // A close ends the lifecycle: a replacement still in flight then changes nothing.
+  let tabEpoch = 0;
+  const tabRetryMs = options.tabRetryMs ?? BROWSER_TAB_RETRY_MS;
+  // gen only ever counts up, so a step that began before a close can never mistake a later tab for its own.
+  const resetTab = () => { tabEpoch++; told = gen; strikes = 0; last = undefined; refusingAt = undefined; retryAt = 0; retryWait = 0; goneTarget = ""; };
+  /** The engine ran a command that needs the bot's tab: the tab is live. */
+  const tabAnswered = (sentAt: number): boolean => { if (sentAt !== attemptId) return false; strikes = 0; refusingAt = undefined; retryWait = 0; return true; };
+  /** No working tab. `wait`: the bot's steps leave it alone for tabRetryMs; false when the owner's command met it, so the
+   * bot's next step tries (a wait already running is left as it is). `longer`: a try after the wait failed, so the next wait doubles. */
+  const refusing = (wait: boolean, longer = false) => {
+    const already = refusingAt !== undefined;
+    attemptId++; refusingAt = Date.now();
+    if (wait) { retryWait = longer && retryWait ? Math.min(retryWait * 2, tabRetryMs * 16) : retryWait || tabRetryMs; retryAt = refusingAt + retryWait; }
+    else if (!already) retryAt = 0;
+  };
+  /** Murage's own `tab new`, one at a time. True once the new tab is bound. `checked`: a try after the wait, which counts
+   * only once the engine has answered a page call on the new tab (an engine that takes `tab new` and still refuses is not a new tab). */
+  const replaceTab = (target: string, wait: boolean, checked = false): Promise<boolean> => {
+    strikes++; attemptId++;
+    const epoch = tabEpoch;
+    const attempt: Promise<boolean> = replacing = run(["tab", "new"]).then(async () => {
+      if (checked && tabGoneReply(await call("agent_browser_get_url", {})) !== undefined) throw new Error("the new tab did not take");
+    }).then(() => {
+      if (epoch !== tabEpoch) return false;
+      gen++; last = { target, gen }; refusingAt = undefined;
+      console.warn("[browser] the bot's tab was closed; opened a new one");
+      return true;
+    }, () => { if (epoch === tabEpoch) refusing(wait, checked); return false; }).finally(() => { if (replacing === attempt) replacing = undefined; });
+    return attempt;
+  };
+  /** The engine refused a command sent at `startGen` because the bot's tab `target` is closed. True when a tab is bound for
+   * it now (the caller runs again or tells the bot); false when none could be. `open` false: this refusal opens no tab. */
+  const tabGone = async (target: string, startGen: number, path: "owner" | "bot" | "internal", open = true): Promise<boolean> => {
+    // No await between this wait and the decision below: two commands refused together open one tab, not one each.
+    while (replacing) await replacing;
+    if (closing) return false;
+    goneTarget = target;
+    // Sent before a replacement it missed: that tab is already bound, nothing to open.
+    if (target !== "" ? last?.target === target && startGen < last.gen : startGen < gen) return refusingAt === undefined;
+    if (!open) { refusing(false); return false; }
+    if (path !== "owner") {
+      // The owner's own command (the view, Reopen blank page) always gets its try; Murage's own tries for the bot are bounded.
+      if (refusingAt !== undefined && Date.now() < retryAt) return false;
+      if (refusingAt === undefined && strikes >= TAB_REPLACE_STRIKES) { refusing(true); return false; }
+    }
+    return replaceTab(target, path !== "owner");
+  };
+  /** The bot's step, before anything is sent (the caller has waited out a replacement, with no await since). The plain-words
+   * reply that ends the step unsent, or nothing: send it. May await only while ENGINE-REFUSING, for the one more try. */
+  const stepEntry = (name: string): undefined | unknown | Promise<unknown> => {
+    if (refusingAt !== undefined) {
+      // The bot asks for a tab itself: that is the recovery, sent as it is. So is anything else the engine answers without a tab.
+      if (TABLESS_TOOLS.has(name)) return undefined;
+      if (Date.now() < retryAt) return toldBot(BROWSER_TAB_CLOSED);
+      // One more try. The step itself is not sent to find out: the engine refuses until a new tab is bound.
+      return replaceTab(goneTarget, true, true).then((bound) => {
+        if (!bound) return toldBot(BROWSER_TAB_CLOSED);
+        told = gen;
+        return TAB_NOTICE_MOOT.has(name) ? undefined : toldBot(BROWSER_TAB_REPLACED);
+      });
+    }
+    if (told < gen) {
+      // Told once. This step was meant for the page that is gone, so it does not run on the blank tab. Opening a page needs no telling.
+      told = gen;
+      if (!TAB_NOTICE_MOOT.has(name)) return toldBot(BROWSER_TAB_REPLACED);
+    }
+    return undefined;
+  };
+  /** One engine command; refused for a closed tab, it runs once more on a new one. A second refusal stands. */
+  const onLiveTab = async (args: string[]): Promise<unknown> => {
+    const once = async (open: boolean): Promise<{ value: unknown } | { error: unknown }> => {
+      while (replacing) await replacing;
+      const startGen = gen, sentAt = attemptId;
+      try { const value = await run(args); if (!tablessCommand(args)) tabAnswered(sentAt); return { value }; }
+      catch (error) {
+        const gone = (error as { tabGone?: string }).tabGone;
+        // Refused again on the new tab: it did not take. That is said plainly to the bot, and the next command opens another.
+        if (gone === undefined || closing || !(await tabGone(gone, startGen, "owner", open)) || !open) throw error;
+        return { error };
+      }
+    };
+    const first = await once(true);
+    if ("value" in first) return first.value;
+    const second = await once(false);
+    if ("value" in second) return second.value;
+    throw second.error;
   };
   const run = (args: string[]): Promise<unknown> => new Promise((resolve, reject) => {
     active(); closeAcknowledged = false;
@@ -301,7 +464,9 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
         // A timed-out command is stopped mid-way; the log says which bound it hit and whether it was starting the engine.
         const how = kind === "failed" ? `exit ${code}` : kind === "timeout" ? `stopped after ${bound} ms, its bound ${starting ? "for starting the engine" : attached ? "for the owner's Allow" : "for a running engine"}` : kind;
         logBrowserEngineFailure(args, how, kind === "overflow" ? "" : engineReason(output, stderr));
-        return reject(Object.assign(new BrowserEngineError(kind), { staleControlToken }));
+        let tabGone: string | undefined;
+        if (kind === "failed") { try { tabGone = tabGoneTarget(JSON.parse(output.trim().split("\n").pop() ?? "")); } catch { /* not the engine's JSON: any other failure */ } }
+        return reject(Object.assign(new BrowserEngineError(kind), { staleControlToken, ...(tabGone !== undefined ? { tabGone } : {}) }));
       }
       if (starting && Date.now() - started > 5_000) console.error(`[browser] engine took ${Date.now() - started} ms to start`);
       else if (starting && restore) console.log(`[browser] engine started in ${Date.now() - started} ms (restore store: ${restore.origins} origins, each restored on first visit)`);
@@ -309,12 +474,13 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
       try { value = JSON.parse(output); }
       catch { logBrowserEngineFailure(args, "invalid result", ""); return reject(new Error("Browser returned an invalid command result")); }
       // The engine exited 0 but refused the command: keep its reason too.
-      if (value?.success === false) { logBrowserEngineFailure(args, "refused", engineReason(output, stderr)); return reject(Object.assign(new BrowserEngineError("refused"), { staleControlToken })); }
+      if (value?.success === false) { const tabGone = tabGoneTarget(value); logBrowserEngineFailure(args, "refused", engineReason(output, stderr)); return reject(Object.assign(new BrowserEngineError("refused"), { staleControlToken, ...(tabGone !== undefined ? { tabGone } : {}) })); }
       if (!cloud) { try { daemonPid = Number(readFileSync(pidFile, "utf8")); } catch {} await recordDaemonStart(); }
       engineAnswered();
       resolve(value?.data ?? value);
     });
   });
+  const toldBot = (text: string) => ({ isError: true, content: [{ type: "text", text }] });
   const call = async (name: string, args: Record<string, unknown>) => { await startEngine(); return client!.request("tools/call", { name, arguments: args }); };
   const replyText = (reply: unknown) => JSON.stringify(reply) ?? "";
   /** Puts one origin's storage back on the page now showing it. True once it went back. */
@@ -392,24 +558,89 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
   const guard = new BrowserDocumentGuard(command, { ...(attached ? { connectTimeoutMs: USER_CHROME_ALLOW_WAIT_MS } : {}), ...(spec.guardCdpUrl ? { endpoint: spec.guardCdpUrl } : {}), ...(spec.guardScope ? { scope: spec.guardScope } : {}), connection: cloudRelayConnection("cdp", spec.env) });
   const browser: NativeBrowser = {
     command,
-    protected: (armed = true) => guard.protected(armed),
-    async request(method, params) {
+    protected: (armed = true, skip) => guard.protected(armed, skip),
+    pages: () => guard.pages(),
+    async request(method, params, options) {
       if (method === "tools/call" && params?.name === "agent_browser_read") throw Error("Network read must use the mediated reader.");
       await warm();
       await syncCloudRestore();
       beforeEngineStart();
       await startEngine(); active();
       let reply: unknown;
-      // A dialog the page opens during the bot's call is answered by the guard's connection (see answerDialogs).
-      if (method === "tools/call") guard.answerDialogs(true);
-      try { reply = method === "tools/call" && restore?.waiting() ? await restoringCall(params ?? {}) : await client!.request(method, params); }
-      catch (error) { if (cloudRestore) cloudSuspect = true; throw error; }
-      finally { if (method === "tools/call") guard.answerDialogs(false); }
+      const step = method === "tools/call";
+      const name = String(params?.name), bot = step && !options?.internal;
+      const send = async (): Promise<unknown> => {
+        // A dialog the page opens during the bot's call is answered by the guard's connection (see answerDialogs).
+        if (step) guard.answerDialogs(true);
+        try { return step && restore?.waiting() ? await restoringCall(params ?? {}) : await client!.request(method, params); }
+        catch (error) {
+          if (cloudRestore) cloudSuspect = true;
+          // Listing tools reads and changes nothing, so an engine that died under it is replaced once and asked again.
+          if (method !== "tools/list" || !forgetEndedEngine()) throw error;
+          console.warn("[browser] engine process ended during tools/list; asking a fresh one");
+          await startEngine(); active();
+          return client!.request(method, params);
+        }
+        finally { if (step) guard.answerDialogs(false); }
+      };
+      // TABGONE-1021 (see the lifecycle above). Nothing is sent while a replacement is in flight, and from here to the send
+      // there is no await unless a reply ends the step first.
+      for (;;) {
+        while (replacing) await replacing;
+        // A close or a restart of the engine during that wait: start again, and wait again.
+        active(); if (!client) { await startEngine(); continue; }
+        if (!bot) break;
+        const early = stepEntry(name);
+        if (!(early instanceof Promise)) { if (early !== undefined) return early; break; }
+        const ended = await early;
+        if (ended !== undefined) return ended;
+      }
+      // A call Murage makes for itself inside a step that began on a tab since replaced is not sent: the step is over (endStep tells the bot).
+      if (step && !bot && options?.stepGen !== undefined && options.stepGen !== gen) throw new Error("Browser tab was replaced during this step.");
+      let startGen = gen, sentAt = attemptId;
+      reply = await send();
+      // The engine refused the step because the bot's tab was closed. A new tab is bound now and the bot is told so, in place of
+      // the engine's advice to run a command line it does not have. Not replayed: its page is gone. Opening an address is the
+      // one step that is: it goes on in the new tab. A call of Murage's own keeps the engine's answer, and its step tells the bot.
+      let gone = step ? tabGoneReply(reply) : undefined;
+      if (gone !== undefined && closing) { if (bot) reply = toldBot(BROWSER_TAB_CLOSED); }
+      else if (gone !== undefined) {
+        let bound = await tabGone(gone, startGen, bot ? "bot" : "internal");
+        if (bot && bound && name === "agent_browser_open") {
+          while (replacing) await replacing;
+          told = gen; startGen = gen; sentAt = attemptId;
+          reply = await send();
+          gone = tabGoneReply(reply);
+          if (gone === undefined) tabAnswered(sentAt);
+          else bound = await tabGone(gone, startGen, "bot");
+        }
+        if (bot && gone !== undefined) { if (bound) told = gen; reply = toldBot(bound ? BROWSER_TAB_REPLACED : BROWSER_TAB_CLOSED); }
+      } else if (step && !TABLESS_TOOLS.has(name)) tabAnswered(sentAt);
+      // A new tab opened on request is a working tab. The bot's own is the tab it chose, so nothing is left to tell. Answered
+      // after Murage opened another: that later tab is not the one the bot chose, so the notice stays owed.
+      else if (step && name === "agent_browser_tab_new" && (reply as { isError?: unknown } | null)?.isError !== true) { if (tabAnswered(sentAt) && bot) told = gen; }
       // MCP-only sessions also start daemons. Capture their identity while
       // the answering process is alive, before client.close can retire it.
       if(!cloud){const pid=sessionPid();if(pid!==null){daemonPid=pid;await recordDaemonStart();}}
       active();engineAnswered();
       return reply;
+    },
+    async beginStep(name) {
+      for (;;) {
+        while (replacing) await replacing;
+        const early = stepEntry(name);
+        if (!(early instanceof Promise)) return early !== undefined ? { notice: early } : { gen };
+        const ended = await early;
+        if (ended !== undefined) return { notice: ended };
+      }
+    },
+    async endStep(stepGen) {
+      while (replacing) await replacing;
+      // No working tab was left under the step, or its tab was replaced: whatever it read is not the page the bot meant.
+      if (refusingAt !== undefined) return toldBot(BROWSER_TAB_CLOSED);
+      if (gen === stepGen) return undefined;
+      told = gen;
+      return toldBot(BROWSER_TAB_REPLACED);
     },
     ownerReached(address) { const origin = originOf(address); if (origin) restore?.passed(origin); },
     async connect(onFrame, onUrl, onDisconnect) {
@@ -468,7 +699,7 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
       retired = true;
       if (closeAcknowledged) return;
       // Even an unused relay asks the maintenance CLI for an ownership receipt.
-      closing = true; attachedReady = false;
+      closing = true; attachedReady = false; resetTab();
       guard.close();
       socket?.close(); socket = undefined;
       await Promise.all([...commands].map(child => new Promise<void>(resolve => {

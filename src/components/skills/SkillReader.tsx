@@ -17,7 +17,8 @@ import { MessageExternalLink } from "../ThreadLinkMenu";
 import { Switch } from "../SettingsPrimitives";
 import { BUILT_IN_COPY_NOTE, SkillEditor } from "./SkillEditor";
 import { VerdictBadge } from "./VerdictBadge";
-import { collectionSlug, deleteCollectionSkill, duplicateSkill, findingLines, readSkill, refusalOf, setSkillForBot, skillBody, type SkillDetail } from "@/lib/skills-api";
+import { t } from "@/lib/i18n";
+import { collectionSlug, deleteCollectionSkill, duplicateSkill, findingLines, readSkill, refusalOf, setSkillForBot, setSkillForEveryBot, skillBody, type SkillDetail } from "@/lib/skills-api";
 
 /** Long skills render this much until "Show all". */
 export const READER_PREVIEW_CHARS = 60_000;
@@ -27,6 +28,9 @@ export { skillBody };
 
 export type ReaderMode = { kind: "settings" } | { kind: "bot"; botId: string };
 export type Pending = { kind: "enable"; botId: string } | { kind: "delete"; bots: string[] } | null;
+
+/** onSwitch's bot id for the "Every bot" switch (no bot id is empty). */
+export const EVERY_BOT = "";
 
 export interface SkillReaderViewProps {
   skill: SkillDetail;
@@ -171,6 +175,20 @@ export function SkillReaderView(props: SkillReaderViewProps) {
 
       {mode.kind === "settings" && (
         <div className="mt-4">
+          {skill.kind !== "builtin" && (!blocked || skill.everyBot) && (
+            <div className="mb-3 flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] text-ink">{t("skills.everyBot")}</div>
+                <div className="text-[11px] text-ink-secondary">{t("skills.everyBotHint")}</div>
+              </div>
+              <Switch
+                checked={skill.everyBot === true}
+                aria-label={t(skill.everyBot ? "skills.everyBotStop" : "skills.everyBotGive", { name: skill.name })}
+                disabled={busy}
+                onClick={() => props.onSwitch(EVERY_BOT, !skill.everyBot)}
+              />
+            </div>
+          )}
           <div className="text-[12px] font-medium text-ink">Use with</div>
           {skill.bots.length === 0 ? (
             <p className="mt-1 text-[12px] text-ink-secondary">{skill.kind === "builtin" ? "Only your Chief of Staff uses this, and you don't have one yet." : "You have no bots yet."}</p>
@@ -333,12 +351,12 @@ export function SkillReader({ skillRef, mode, onBack, onChanged }: { skillRef: s
       onEdit={() => (skill.kind === "collection" ? setEditing({}) : void copy("edit"))}
       onSwitch={(botId, on) => {
         if (on && skill.verdict === "review") return setPending({ kind: "enable", botId });
-        void run(() => setSkillForBot(skill.ref, botId, on));
+        void run(() => (botId === EVERY_BOT ? setSkillForEveryBot(skill.ref, on) : setSkillForBot(skill.ref, botId, on)));
       }}
       onConfirm={() => {
         const current = pending;
         setPending(null);
-        if (current?.kind === "enable") void run(() => setSkillForBot(skill.ref, current.botId, true, skill.scan.contentHash));
+        if (current?.kind === "enable") void run(() => (current.botId === EVERY_BOT ? setSkillForEveryBot(skill.ref, true, skill.scan.contentHash) : setSkillForBot(skill.ref, current.botId, true, skill.scan.contentHash)));
         if (current?.kind === "delete") void run(() => deleteCollectionSkill(collectionSlug(skill.ref), true), true);
       }}
       onCancel={() => setPending(null)}

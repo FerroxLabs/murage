@@ -29,6 +29,7 @@ interface TitledThread { threadId: string; title?: string }
 /** The slice of `Store` the roster needs. Structural, like `VisibilityStore`,
  *  so the tests can state the world without a data directory. */
 export interface InboxRosterStore extends VisibilityStore {
+  isMailboxSealed(threadId: string): boolean;
   bot(id: string): { hidden?: boolean; staged?: unknown } | null;
   readonly bots: ReadonlyArray<{ id: string; name: string; threadId: string; tasks?: readonly TitledThread[] }>;
   readonly groups: ReadonlyArray<{ name: string; threadId: string; tasks?: readonly TitledThread[] }>;
@@ -54,13 +55,12 @@ export function companionInboxRoute(method: string, path: string): boolean {
   return (method === "GET" && path === "/api/inbox") || (method === "POST" && path === "/api/inbox/state");
 }
 
-/** Every thread on the machine with its Inbox label. Moved here unchanged
- *  from the two routes in `index.ts` that each spelled it out. */
+/** Generic Inbox labels, filtered by the current seal before using stored titles. */
 export function inboxThreads(store: InboxRosterStore): InboxThread[] {
   const label = (name: string, tasks: readonly TitledThread[] | undefined, threadId: string) =>
     [name, tasks?.find(task => task.threadId === threadId)?.title].filter(Boolean).join(" · ");
   const threadIds = (record: { threadId: string; tasks?: readonly TitledThread[] }) =>
-    [...new Set([record.threadId, ...(record.tasks ?? []).map(task => task.threadId)])];
+    [...new Set([record.threadId, ...(record.tasks ?? []).map(task => task.threadId)])].filter(threadId => !store.isMailboxSealed(threadId));
   return [
     ...store.bots.flatMap(bot => threadIds(bot).map(threadId => ({ threadId, label: label(bot.name, bot.tasks, threadId), botId: bot.id }))),
     ...store.groups.flatMap(group => threadIds(group).map(threadId => ({ threadId, label: label(group.name, group.tasks, threadId) }))),

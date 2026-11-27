@@ -16,3 +16,12 @@ it("does not promise hidden background operation without a reopen surface",()=>{
 it("reports suspension and OS login approval instead of claiming readiness",()=>{
   const html=render({...state,suspended:true,login:{supported:true,openAtLogin:false,requiresApproval:true}});expect(html).toContain("This computer is asleep");expect(html).toContain("Approve Murage in your system");
 });
+it("1.0.21 polish: the sign-in line never contradicts the switch",()=>{
+  const on=render({...state,login:{supported:true,openAtLogin:true}});
+  expect(on).toContain('aria-checked="true"');
+  expect(on).not.toContain("Off until you choose it");
+  expect(on).toContain("On. Murage opens when you sign in to this computer.");
+  const off=render();
+  expect(off).not.toContain("On. Murage opens when you sign in");
+  expect(off).toContain("Off until you choose it.");
+});

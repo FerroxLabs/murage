@@ -1,0 +1,415 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "muragemain-copyrev",
+    "account": "claude opus 5.5, MurageMain copy review"
+  },
+  "author": "row45-u8-locales",
+  "date": "2026-11-22",
+  "base": "6f38c6b6baaadd652af154ce7c7bd341de339944",
+  "scope": "Existing row 45 U8 wording that blocks locale source acceptance",
+  "strings": {
+    "en:skills.everyBot": {
+      "text": "Every bot",
+      "en": "Every bot",
+      "verdict": "pass"
+    },
+    "en:skills.everyBotHint": {
+      "text": "Give this skill to every bot you have now and every bot you add later.",
+      "en": "Give this skill to every bot you have now and every bot you add later.",
+      "verdict": "pass"
+    },
+    "en:skills.everyBotGive": {
+      "text": "Give {name} to every bot",
+      "en": "Give {name} to every bot",
+      "verdict": "pass"
+    },
+    "en:skills.everyBotStop": {
+      "text": "Stop giving {name} to every bot",
+      "en": "Stop giving {name} to every bot",
+      "verdict": "pass"
+    },
+    "en:mcp.ownApp.open": {
+      "text": "Use my own app",
+      "en": "Use my own app",
+      "verdict": "pass"
+    },
+    "en:mcp.ownApp.clientId": {
+      "text": "Client ID",
+      "en": "Client ID",
+      "verdict": "pass"
+    },
+    "en:mcp.ownApp.optionalValue": {
+      "text": "Client secret (optional)",
+      "en": "Client secret (optional)",
+      "verdict": "pass"
+    },
+    "en:mcp.ownApp.save": {
+      "text": "Save app",
+      "en": "Save app",
+      "verdict": "pass"
+    },
+    "en:mcp.ownApp.redirect": {
+      "text": "Add this redirect address in your app settings for {host}, then sign in.",
+      "en": "Add this redirect address in your app settings for {host}, then sign in.",
+      "verdict": "pass"
+    },
+    "en:mcp.ownApp.saveFailed": {
+      "text": "Murage could not save your app. Try again.",
+      "en": "Murage could not save your app. Try again.",
+      "verdict": "pass"
+    },
+    "de:skills.everyBot": {
+      "text": "Alle Bots",
+      "en": "Every bot",
+      "verdict": "pass"
+    },
+    "de:skills.everyBotHint": {
+      "text": "Gib diese Fähigkeit allen vorhandenen Bots und allen Bots, die du später hinzufügst.",
+      "en": "Give this skill to every bot you have now and every bot you add later.",
+      "verdict": "pass"
+    },
+    "de:skills.everyBotGive": {
+      "text": "{name} allen Bots geben",
+      "en": "Give {name} to every bot",
+      "verdict": "pass"
+    },
+    "de:skills.everyBotStop": {
+      "text": "{name} nicht mehr allen Bots geben",
+      "en": "Stop giving {name} to every bot",
+      "verdict": "pass"
+    },
+    "de:mcp.ownApp.open": {
+      "text": "Meine eigene App verwenden",
+      "en": "Use my own app",
+      "verdict": "pass"
+    },
+    "de:mcp.ownApp.clientId": {
+      "text": "Client-ID",
+      "en": "Client ID",
+      "verdict": "pass"
+    },
+    "de:mcp.ownApp.optionalValue": {
+      "text": "Client-Geheimnis (optional)",
+      "en": "Client secret (optional)",
+      "verdict": "pass"
+    },
+    "de:mcp.ownApp.save": {
+      "text": "App speichern",
+      "en": "Save app",
+      "verdict": "pass"
+    },
+    "de:mcp.ownApp.redirect": {
+      "text": "Füge diese Weiterleitungsadresse in den App-Einstellungen für {host} hinzu und melde dich dann an.",
+      "en": "Add this redirect address in your app settings for {host}, then sign in.",
+      "verdict": "pass"
+    },
+    "de:mcp.ownApp.saveFailed": {
+      "text": "Murage konnte deine App nicht speichern. Versuche es erneut.",
+      "en": "Murage could not save your app. Try again.",
+      "verdict": "pass"
+    },
+    "es:skills.everyBot": {
+      "text": "Todos los bots",
+      "en": "Every bot",
+      "verdict": "pass"
+    },
+    "es:skills.everyBotHint": {
+      "text": "Añade esta habilidad a todos tus bots actuales y a los que añadas más adelante.",
+      "en": "Give this skill to every bot you have now and every bot you add later.",
+      "verdict": "pass"
+    },
+    "es:skills.everyBotGive": {
+      "text": "Añadir {name} a todos los bots",
+      "en": "Give {name} to every bot",
+      "verdict": "pass"
+    },
+    "es:skills.everyBotStop": {
+      "text": "Dejar de añadir {name} a todos los bots",
+      "en": "Stop giving {name} to every bot",
+      "verdict": "pass"
+    },
+    "es:mcp.ownApp.open": {
+      "text": "Usar mi propia aplicación",
+      "en": "Use my own app",
+      "verdict": "pass"
+    },
+    "es:mcp.ownApp.clientId": {
+      "text": "ID de cliente",
+      "en": "Client ID",
+      "verdict": "pass"
+    },
+    "es:mcp.ownApp.optionalValue": {
+      "text": "Secreto de cliente (opcional)",
+      "en": "Client secret (optional)",
+      "verdict": "pass"
+    },
+    "es:mcp.ownApp.save": {
+      "text": "Guardar aplicación",
+      "en": "Save app",
+      "verdict": "pass"
+    },
+    "es:mcp.ownApp.redirect": {
+      "text": "Añade esta dirección de redirección en la configuración de tu aplicación para {host} y luego inicia sesión.",
+      "en": "Add this redirect address in your app settings for {host}, then sign in.",
+      "verdict": "pass"
+    },
+    "es:mcp.ownApp.saveFailed": {
+      "text": "Murage no pudo guardar tu aplicación. Inténtalo de nuevo.",
+      "en": "Murage could not save your app. Try again.",
+      "verdict": "pass"
+    },
+    "fr:skills.everyBot": {
+      "text": "Tous les bots",
+      "en": "Every bot",
+      "verdict": "pass"
+    },
+    "fr:skills.everyBotHint": {
+      "text": "Donne cette compétence à tous tes bots actuels et à ceux que tu ajouteras plus tard.",
+      "en": "Give this skill to every bot you have now and every bot you add later.",
+      "verdict": "pass"
+    },
+    "fr:skills.everyBotGive": {
+      "text": "Donner {name} à tous les bots",
+      "en": "Give {name} to every bot",
+      "verdict": "pass"
+    },
+    "fr:skills.everyBotStop": {
+      "text": "Ne plus donner {name} à tous les bots",
+      "en": "Stop giving {name} to every bot",
+      "verdict": "pass"
+    },
+    "fr:mcp.ownApp.open": {
+      "text": "Utiliser ma propre application",
+      "en": "Use my own app",
+      "verdict": "pass"
+    },
+    "fr:mcp.ownApp.clientId": {
+      "text": "Identifiant client",
+      "en": "Client ID",
+      "verdict": "pass"
+    },
+    "fr:mcp.ownApp.optionalValue": {
+      "text": "Secret client (facultatif)",
+      "en": "Client secret (optional)",
+      "verdict": "pass"
+    },
+    "fr:mcp.ownApp.save": {
+      "text": "Enregistrer l’application",
+      "en": "Save app",
+      "verdict": "pass"
+    },
+    "fr:mcp.ownApp.redirect": {
+      "text": "Ajoute cette adresse de redirection dans les paramètres de ton application pour {host}, puis connecte-toi.",
+      "en": "Add this redirect address in your app settings for {host}, then sign in.",
+      "verdict": "pass"
+    },
+    "fr:mcp.ownApp.saveFailed": {
+      "text": "Murage n’a pas pu enregistrer ton application. Réessaie.",
+      "en": "Murage could not save your app. Try again.",
+      "verdict": "pass"
+    },
+    "hi:skills.everyBot": {
+      "text": "हर बॉट",
+      "en": "Every bot",
+      "verdict": "pass"
+    },
+    "hi:skills.everyBotHint": {
+      "text": "यह स्किल अपने सभी मौजूदा बॉट और बाद में जोड़े जाने वाले हर बॉट को दें।",
+      "en": "Give this skill to every bot you have now and every bot you add later.",
+      "verdict": "pass"
+    },
+    "hi:skills.everyBotGive": {
+      "text": "हर बॉट को {name} दें",
+      "en": "Give {name} to every bot",
+      "verdict": "pass"
+    },
+    "hi:skills.everyBotStop": {
+      "text": "हर बॉट को {name} देना बंद करें",
+      "en": "Stop giving {name} to every bot",
+      "verdict": "pass"
+    },
+    "hi:mcp.ownApp.open": {
+      "text": "मेरा अपना ऐप इस्तेमाल करें",
+      "en": "Use my own app",
+      "verdict": "pass"
+    },
+    "hi:mcp.ownApp.clientId": {
+      "text": "क्लाइंट आईडी",
+      "en": "Client ID",
+      "verdict": "pass"
+    },
+    "hi:mcp.ownApp.optionalValue": {
+      "text": "क्लाइंट सीक्रेट (वैकल्पिक)",
+      "en": "Client secret (optional)",
+      "verdict": "pass"
+    },
+    "hi:mcp.ownApp.save": {
+      "text": "ऐप सहेजें",
+      "en": "Save app",
+      "verdict": "pass"
+    },
+    "hi:mcp.ownApp.redirect": {
+      "text": "{host} के ऐप की सेटिंग में यह रीडायरेक्ट पता जोड़ें, फिर साइन इन करें।",
+      "en": "Add this redirect address in your app settings for {host}, then sign in.",
+      "verdict": "pass"
+    },
+    "hi:mcp.ownApp.saveFailed": {
+      "text": "Murage आपका ऐप सहेज नहीं सका। फिर कोशिश करें।",
+      "en": "Murage could not save your app. Try again.",
+      "verdict": "pass"
+    },
+    "ja:skills.everyBot": {
+      "text": "すべてのボット",
+      "en": "Every bot",
+      "verdict": "pass"
+    },
+    "ja:skills.everyBotHint": {
+      "text": "現在のすべてのボットと今後追加するボットにこのスキルを追加します。",
+      "en": "Give this skill to every bot you have now and every bot you add later.",
+      "verdict": "pass"
+    },
+    "ja:skills.everyBotGive": {
+      "text": "すべてのボットに {name} を追加",
+      "en": "Give {name} to every bot",
+      "verdict": "pass"
+    },
+    "ja:skills.everyBotStop": {
+      "text": "すべてのボットへの {name} の追加を停止",
+      "en": "Stop giving {name} to every bot",
+      "verdict": "pass"
+    },
+    "ja:mcp.ownApp.open": {
+      "text": "自分のアプリを使用する",
+      "en": "Use my own app",
+      "verdict": "pass"
+    },
+    "ja:mcp.ownApp.clientId": {
+      "text": "クライアント ID",
+      "en": "Client ID",
+      "verdict": "pass"
+    },
+    "ja:mcp.ownApp.optionalValue": {
+      "text": "クライアントシークレット（任意）",
+      "en": "Client secret (optional)",
+      "verdict": "pass"
+    },
+    "ja:mcp.ownApp.save": {
+      "text": "アプリを保存",
+      "en": "Save app",
+      "verdict": "pass"
+    },
+    "ja:mcp.ownApp.redirect": {
+      "text": "{host} のアプリ設定にこのリダイレクト先を追加し、サインインしてください。",
+      "en": "Add this redirect address in your app settings for {host}, then sign in.",
+      "verdict": "pass"
+    },
+    "ja:mcp.ownApp.saveFailed": {
+      "text": "Murage はアプリを保存できませんでした。もう一度お試しください。",
+      "en": "Murage could not save your app. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:skills.everyBot": {
+      "text": "Todos os bots",
+      "en": "Every bot",
+      "verdict": "pass"
+    },
+    "pt-br:skills.everyBotHint": {
+      "text": "Dê esta habilidade a todos os seus bots atuais e aos que você adicionar depois.",
+      "en": "Give this skill to every bot you have now and every bot you add later.",
+      "verdict": "pass"
+    },
+    "pt-br:skills.everyBotGive": {
+      "text": "Dar {name} a todos os bots",
+      "en": "Give {name} to every bot",
+      "verdict": "pass"
+    },
+    "pt-br:skills.everyBotStop": {
+      "text": "Parar de dar {name} a todos os bots",
+      "en": "Stop giving {name} to every bot",
+      "verdict": "pass"
+    },
+    "pt-br:mcp.ownApp.open": {
+      "text": "Usar meu próprio aplicativo",
+      "en": "Use my own app",
+      "verdict": "pass"
+    },
+    "pt-br:mcp.ownApp.clientId": {
+      "text": "ID do cliente",
+      "en": "Client ID",
+      "verdict": "pass"
+    },
+    "pt-br:mcp.ownApp.optionalValue": {
+      "text": "Segredo do cliente (opcional)",
+      "en": "Client secret (optional)",
+      "verdict": "pass"
+    },
+    "pt-br:mcp.ownApp.save": {
+      "text": "Salvar aplicativo",
+      "en": "Save app",
+      "verdict": "pass"
+    },
+    "pt-br:mcp.ownApp.redirect": {
+      "text": "Adicione este endereço de redirecionamento nas configurações do aplicativo para {host} e entre.",
+      "en": "Add this redirect address in your app settings for {host}, then sign in.",
+      "verdict": "pass"
+    },
+    "pt-br:mcp.ownApp.saveFailed": {
+      "text": "O Murage não conseguiu salvar seu aplicativo. Tente novamente.",
+      "en": "Murage could not save your app. Try again.",
+      "verdict": "pass"
+    },
+    "zh:skills.everyBot": {
+      "text": "所有机器人",
+      "en": "Every bot",
+      "verdict": "pass"
+    },
+    "zh:skills.everyBotHint": {
+      "text": "将此技能添加到现有的所有机器人以及今后添加的每个机器人。",
+      "en": "Give this skill to every bot you have now and every bot you add later.",
+      "verdict": "pass"
+    },
+    "zh:skills.everyBotGive": {
+      "text": "将 {name} 添加到所有机器人",
+      "en": "Give {name} to every bot",
+      "verdict": "pass"
+    },
+    "zh:skills.everyBotStop": {
+      "text": "停止将 {name} 添加到所有机器人",
+      "en": "Stop giving {name} to every bot",
+      "verdict": "pass"
+    },
+    "zh:mcp.ownApp.open": {
+      "text": "使用我自己的应用",
+      "en": "Use my own app",
+      "verdict": "pass"
+    },
+    "zh:mcp.ownApp.clientId": {
+      "text": "客户端 ID",
+      "en": "Client ID",
+      "verdict": "pass"
+    },
+    "zh:mcp.ownApp.optionalValue": {
+      "text": "客户端密钥（可选）",
+      "en": "Client secret (optional)",
+      "verdict": "pass"
+    },
+    "zh:mcp.ownApp.save": {
+      "text": "保存应用",
+      "en": "Save app",
+      "verdict": "pass"
+    },
+    "zh:mcp.ownApp.redirect": {
+      "text": "在 {host} 的应用设置中添加此重定向地址，然后登录。",
+      "en": "Add this redirect address in your app settings for {host}, then sign in.",
+      "verdict": "pass"
+    },
+    "zh:mcp.ownApp.saveFailed": {
+      "text": "Murage 无法保存你的应用。请重试。",
+      "en": "Murage could not save your app. Try again.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

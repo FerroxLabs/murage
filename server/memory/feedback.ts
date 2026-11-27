@@ -19,6 +19,7 @@
 //
 // The hook (detectFeedback) is async and must run AFTER the message
 // transaction commits; see INTEGRATOR-PATCHES/b2.md for the wiring.
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { memoryGate } from "./memory-gate.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -227,7 +228,7 @@ export function parseClassification(raw: unknown): FeedbackClassification | null
   if (typeof raw === "string") {
     const trimmed = raw.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
     const slice = trimmed.slice(Math.max(0, trimmed.indexOf("{")), trimmed.lastIndexOf("}") + 1);
-    try { value = JSON.parse(slice); } catch { return null; }
+    try { value = registerBusyloopPayloadSite("read", JSON.parse(slice)); } catch { return null; }
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const o = value as Record<string, unknown>;
@@ -719,7 +720,7 @@ export function suppressedPhrases(db: DatabaseSync, botId: string): Set<string> 
   const seen = new Map<string, Set<string>>();
   for (const r of rows) {
     let phrase: unknown;
-    try { phrase = (JSON.parse(r.evidence) as { phrase?: unknown }).phrase; } catch { continue; }
+    try { phrase = (registerBusyloopPayloadSite("read", JSON.parse(r.evidence)) as { phrase?: unknown }).phrase; } catch { continue; }
     if (typeof phrase !== "string" || !phrase) continue;
     (seen.get(phrase) ?? seen.set(phrase, new Set()).get(phrase)!).add(r.id);
   }
@@ -821,7 +822,7 @@ export function feedbackGate(db: DatabaseSync, threadId: string, message: Messag
   if (message.automation?.kind === "channel") {
     const principal = threadHumanPrincipal(threadId, db);
     const binding = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='human-binding'").get(principal.bindingId);
-    const value = binding ? JSON.parse(String(binding.intent)) : null;
+    const value = binding ? registerBusyloopPayloadSite("read", JSON.parse(String(binding.intent))) : null;
     if (principal.bindingId === "local" || !value?.active || value.personId !== principal.personId || value.revision !== principal.revision) return { ok: false, reason: "not-owner" };
   }
   return { ok: true };

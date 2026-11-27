@@ -44,6 +44,7 @@
   "phoneCalls.error.badSettings": "Some of these settings cannot be used. Check them and save again.",
   "phoneCalls.error.notSetUp": "Save your Vapi private key first.",
   "phoneCalls.error.generic": "Something went wrong. Try again.",
+  "phoneCalls.error.store": "Murage couldn't open its call history. Restart Murage. If it keeps happening, check how much space is left on the disk.",
   "phoneCalls.older.one": "1 scheduled call uses older settings",
   "phoneCalls.older.many": "{count} scheduled calls use older settings",
   "phoneCalls.cancel": "Cancel",

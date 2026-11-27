@@ -27,16 +27,16 @@ import { consumingHttpWriter, declareNoStoredResponse, denyConsumingHttp, emitCo
 import { gatewayTurnBinding } from "./model-gateway-release.ts";
 import { checkedOpenTurns } from "./memory/lineage-write.ts";
 import { readConsumingUpstream, UpstreamAccounting } from "./memory/upstream-reader.ts";
+import { UPSTREAM_OVERSIZE_CODE } from "./memory/release-budget.ts";
 import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
 import { providerDispatcher } from "./provider-dispatcher.ts";
 import { CHATGPT_IDENTITY_HEADERS, SIGNIN_PRESETS, signInProviderForConnection } from "../electron/model-signin-presets.mjs";
 import type { ProviderCatalog, SignInPreset } from "../shared/provider-connections.ts";
-import { type ModelSignIns, needsSignInLine, planLimitLine } from "./model-signin.ts";
+import { type ModelSignIns, needsSignInLine, PLAN_MODEL_UNAVAILABLE, planLimitLine } from "./model-signin.ts";
 import { UpstreamStreamError, chatToResponses, collectResponse, createChatStreamTranslator, createResponsesPassthrough, createSseParser, normalizeResponsesBody, responseToChatCompletion } from "./model-gateway-translate.ts";
 
 export const MODEL_GATEWAY_PREFIX = "/api/model-gateway/";
 const ROUTE = /^\/api\/model-gateway\/([A-Za-z0-9_-]{1,100})\/v1\/(responses|chat\/completions|models)$/;
-const MAX_BODY = 64 * 1024 * 1024;
 const MAX_ERROR_BODY = 64 * 1024;
 const DEFAULT_PAUSE_MS = 15 * 60 * 1000;
 const PINNED_HOSTS: Record<SignInPreset, string> = { chatgpt: "chatgpt.com", supergrok: "api.x.ai" };
@@ -61,7 +61,7 @@ export function gatewayBaseUrl(port: number, connectionId: string): string {
   return `http://127.0.0.1:${port}${MODEL_GATEWAY_PREFIX}${connectionId}/v1`;
 }
 
-function isLoopback(address: string | undefined): boolean {
+export function isLoopback(address: string | undefined): boolean {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
@@ -83,10 +83,8 @@ function sendPlanLimit(res: ServerResponse, provider: SignInPreset, until: numbe
 
 async function readJson(req: IncomingMessage): Promise<Json | null> {
   const chunks: Buffer[] = [];
-  let size = 0;
+  // MAIN-RULING cause22-no-transport-caps: an engine request body of any size is read (it carries the whole conversation).
   for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > MAX_BODY) return null;
     chunks.push(chunk as Buffer);
   }
   try { const parsed = registerBusyloopPayloadSite("read", JSON.parse(Buffer.concat(chunks).toString("utf8"))); return record(parsed) ? parsed : null; }
@@ -179,7 +177,14 @@ export async function handleModelGateway(req: IncomingMessage, res: ServerRespon
     // sources. The bound turn's retained sources are checked at every write.
     declareNoStoredResponse(writer, 200);
     return await handleGatewayRequest(req, writer, path, deps, binding, controller);
-  } catch {
+  } catch (error) {
+    // cause22 r2: the 64 MiB ceiling cut one provider event or body of an owner turn (upstream-reader.ts). That fails this one request
+    // as an ordinary upstream error; it is not a fence failure, so the turn is neither refused nor sealed.
+    if ((error as { code?: unknown } | null)?.code === UPSTREAM_OVERSIZE_CODE) {
+      controller.abort();
+      if (res.headersSent) res.destroy(); else sendError(res, 502, "The model's reply was too large to pass on (over 64 MiB).", "upstream_error");
+      return true;
+    }
     // Seal before cancelling or writing terminal control; never translate a fence failure
     // into a vendor error, partial JSON success or a successful SSE terminator.
     try { refuseConsumingTurn(binding); } catch { /* terminal control below */ }
@@ -223,8 +228,18 @@ async function handleGatewayRequest(req: IncomingMessage, res: ServerResponse, p
     else ({ request: upstreamBody, wantStream } = normalizeResponsesBody(body));
   } else { upstreamBody = body; wantStream = body.stream === true; }
 
+  const revision = provider === "chatgpt" ? deps.signIns.chatGptPlanRevision() : undefined;
+  const requestedModel = typeof upstreamBody.model === "string" ? upstreamBody.model : undefined;
+  const unavailableModel = () => sendError(res, 400, PLAN_MODEL_UNAVAILABLE, "plan_model_unavailable");
+  if (revision && requestedModel && deps.signIns.isPlanModelRefused(revision, requestedModel)) {
+    unavailableModel();
+    return true;
+  }
+
   if (!binding) throw new Error("MEMORY_CONTEXT_REVOKED");
   const controller = upstreamController!;
+  // MAIN-RULING cause22-no-transport-caps: the translator has no event or collection bound of its own on any turn.
+  const eventMax = Number.POSITIVE_INFINITY;
   const accounting = (mode: "sse" | "collection", collect = false) => new UpstreamAccounting(
     checkedOpenTurns(binding.turn).map(open => open.budget!), mode, verdict => refuseConsumingTurn(binding, verdict), collect);
   const pipe = (response: Response, write: (chunk: Uint8Array) => void | Promise<void>, collect = false) =>
@@ -297,6 +312,12 @@ async function handleGatewayRequest(req: IncomingMessage, res: ServerResponse, p
       return true;
     }
     const vendor = record(parsed) && record(parsed.error) && typeof parsed.error.message === "string" ? parsed.error.message : record(parsed) && typeof parsed.detail === "string" ? parsed.detail : "";
+    if (upstream.status === 400 && revision && requestedModel
+        && /model is not supported when using Codex with a ChatGPT account/i.test(vendor)) {
+      deps.signIns.recordPlanModelRefusal(revision, requestedModel);
+      unavailableModel();
+      return true;
+    }
     sendError(res, upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502,
       redact(`The ${provider === "chatgpt" ? "ChatGPT" : "xAI"} service answered ${upstream.status}${vendor ? `: ${vendor.slice(0, 2000)}` : "."}`, secrets), "upstream_error");
     return true;
@@ -344,7 +365,7 @@ async function handleGatewayRequest(req: IncomingMessage, res: ServerResponse, p
         if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
         failed = redact(error instanceof Error ? error.message : "The model service ended the answer with an error.", secrets);
       }
-    });
+    }, eventMax);
     const decoder = new TextDecoder();
     await pipe(upstream, chunk => parser.push(decoder.decode(chunk, { stream: true })));
     parser.end();
@@ -357,12 +378,12 @@ async function handleGatewayRequest(req: IncomingMessage, res: ServerResponse, p
   }
   // Not streamed by the caller: collect the stream into one answer.
   const events: Json[] = [];
-  const parser = createSseParser(event => { events.push(event); });
+  const parser = createSseParser(event => { events.push(event); }, eventMax);
   const decoder = new TextDecoder();
   await pipe(upstream, chunk => parser.push(decoder.decode(chunk, { stream: true })), true);
   parser.end();
   try {
-    const response = collectResponse(events);
+    const response = collectResponse(events, Number.POSITIVE_INFINITY);
     sendJson(res, 200, chat ? responseToChatCompletion(response, chat.model, chatId, created) : response);
   } catch (error) {
     if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
@@ -374,9 +395,11 @@ async function handleGatewayRequest(req: IncomingMessage, res: ServerResponse, p
 async function readLimited(response: Response, accounting: UpstreamAccounting): Promise<string> {
   const chunks: Uint8Array[] = [];
   let size = 0;
+  // MAIN-RULING cause22-no-transport-caps: on every turn the first 64 KiB of an error body are kept (it is only read for the provider's
+  // message) and the rest is read and dropped: the request fails with the provider's status, the turn runs on.
   await readConsumingUpstream(response, accounting, chunk => {
     size += chunk.byteLength;
-    if (size > MAX_ERROR_BODY) accounting.refuse({ state: "checking", reason: "retained-budget" });
+    if (size - chunk.byteLength >= MAX_ERROR_BODY) return; // the provider's message is read from the first 64 KiB (and the chunk crossing it); the rest is dropped, never a refusal
     chunks.push(chunk);
   });
   return Buffer.concat(chunks).toString("utf8");

@@ -36,6 +36,6 @@ it('the start contains a recovery refusal before listen and reports it in health
   expect(block).toContain('phoneJobs.approvalQueue();');
   expect(block).toContain('routineRequests.approvalQueue();');
   expect(block).toMatch(/try \{\s*\/\/[^\n]*\n\s*botAccessApprovalQueue\(store\);[\s\S]*roomShareApprovalQueue\(database\(\)\);[\s\S]*producerQueue\(kind\)[\s\S]*await recover\(\);\s*\}\s*catch \(error\) \{\s*bootCaught\("decisions\.recover", error\);[^\n]*\n\s*decisionRecoveryFailed = decisionRecoveryFailure\(error\)/);
-  expect(block).toContain('finally { decisionRecoveryOpen = false; decisionRecoveryContexts.clear(); }');
+  expect(block).toMatch(/finally \{ decisionRecoveryOpen = false;/); // the clears are witnessed on a real start in boot-recovery-api.test.ts
   expect(source).toMatch(/unresolvedFrameDrops,\s*\/\/[^\n]*\n\s*decisionRecoveryFailed,/);
 });

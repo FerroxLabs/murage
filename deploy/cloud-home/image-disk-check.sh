@@ -5,9 +5,9 @@
 #   one disk, sda; one ext4 root (label empty or cloudimg-rootfs); at most one vfat ESP holding only the removable-media loader
 #   of this machine's architecture (EFI/BOOT/BOOTX64.EFI on x86_64, EFI/BOOT/BOOTAA64.EFI on aarch64);
 #   at most one BIOS boot partition with no filesystem; nothing else (a separate BOOT partition is refused).
-# The layout seen on staging image 447987145 (build host cx33, fsn1): sda1 ext4 root (no label, UUID in fstab and grub), sda14
+# The layout seen on staging image 447987145 (Hetzner cx33, fsn1): sda1 ext4 root (no label, UUID in fstab and grub), sda14
 # BIOS boot, sda15 vfat ESP holding only EFI/BOOT/BOOTX64.EFI; no BOOT partition; grub.cfg only at sda1:/boot/grub/grub.cfg.
-# The arm64 staging image 447986942 (build host cax21, fsn1) has the same partitions: sda14 is 1 MiB of zeros there (UEFI only) and the
+# The arm64 staging image 447986942 (Hetzner cax21, fsn1) has the same partitions: sda14 is 1 MiB of zeros there (UEFI only) and the
 # ESP holds only EFI/BOOT/BOOTAA64.EFI. The architecture is the rescue server's own (uname -m): an image boots only on its own.
 # Usage: image-disk-check.sh mount-image ENV (ENV is staging or prod).
 # The whole boot closure is an ALLOWLIST of sha256 values for the image of ENV and architecture (closure_staging_x86_64 and

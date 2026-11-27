@@ -44,6 +44,7 @@
   "phoneCalls.error.badSettings": "इनमें से कुछ सेटिंग इस्तेमाल नहीं की जा सकतीं। उन्हें जाँचें और फिर से सहेजें।",
   "phoneCalls.error.notSetUp": "पहले अपनी Vapi निजी कुंजी सहेजें।",
   "phoneCalls.error.generic": "कुछ गड़बड़ हो गई। फिर से कोशिश करें।",
+  "phoneCalls.error.store": "Murage कॉल इतिहास नहीं खोल सका। Murage फिर से शुरू करें। अगर समस्या बनी रहे, तो डिस्क पर खाली जगह देखें।",
   "phoneCalls.older.one": "1 तय कॉल पुरानी सेटिंग का उपयोग करती है",
   "phoneCalls.older.many": "{count} तय कॉल पुरानी सेटिंग का उपयोग करती हैं",
   "phoneCalls.cancel": "रद्द करें",

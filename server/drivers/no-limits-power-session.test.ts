@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -8,7 +8,7 @@ import { hostPowerRefused, resetShutdownDropForTests, spawnCli } from '../procs.
 import { fixtureBotFolder } from '../testing/bot-folder-fixture.ts';
 import type { ProviderDriver } from "../contracts.ts";
 import { ensureDirs } from '../config.ts';
-import { hostPowerDeps, hostPowerProbeDeps, HOST_POWER_TEST_UNWRAPPED } from '../host-power.ts';
+import { hostPowerDeps, hostPowerProbeDeps, HOST_POWER_TEST_UNWRAPPED, NO_LIMITS_SEATBELT_POWER_PROFILE, resetSeatbeltSelectionsForTests } from '../host-power.ts';
 import { removeTempDir } from '../testing/cleanup.ts';
 import { recordEvents } from '../testing/events.ts';
 import { useOutsideStoreFixture } from '../testing/outside-store-fixture.ts';
@@ -30,7 +30,7 @@ const asPlatform = <T>(platform: NodeJS.Platform, run: () => T): T => {
   try { return run(); } finally { Object.defineProperty(process, 'platform', platformDescriptor); }
 };
 const original = { ...hostPowerDeps }, probes = { ...hostPowerProbeDeps };
-afterEach(() => { addonState.addon = undefined; resetShutdownDropForTests(); Object.assign(hostPowerDeps, original); Object.assign(hostPowerProbeDeps, probes); (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = true; vi.restoreAllMocks(); });
+afterEach(() => { addonState.addon = undefined; resetShutdownDropForTests(); Object.assign(hostPowerDeps, original); Object.assign(hostPowerProbeDeps, probes); resetSeatbeltSelectionsForTests(); (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = true; vi.restoreAllMocks(); });
 // The three macOS Seatbelt retry tests below are skipped on Windows because that wrapper does not exist there (procs.ts plans
 // sandbox-exec or bwrap only off win32); the Windows rule for the same No limits turns is the twin at the end of this file.
 for (const [name, driver, fake, env] of [
@@ -58,12 +58,57 @@ for (const [name, driver, fake, env] of [
         expect(done, JSON.stringify(recorder.events.filter(e => e.type === "runtime.error"))).toMatchObject({ ok: true });
         if (name === 'Pi') expect(await instance.adapter.awaitTurnTeardown?.('power-owner', sent.turnId)).toMatchObject({ closeConfirmed: true });
       }
-      expect(probe).toHaveBeenCalledTimes(1);
+      // The fallback is cached across turns: each exact rule set is probed once, never again (a lower level, e.g. Muse's catalog host, probes its own).
+      const probed = probe.mock.calls.map(call => String((call[1] as string[])[1]));
+      expect(probed.length).toBeGreaterThan(0);
+      if (!probePasses) expect(new Set(probed).size).toBe(probed.length);
       const diagnostics = warn.mock.calls.filter(([line]) => String(line).includes('No limits session'));
       expect(diagnostics).toHaveLength(1);
       expect(String(diagnostics[0]![0])).toContain(probePasses ? 'sandbox_apply: Operation not permitted' : 'fixture profile refused');
       const notices = recorder.events.filter(e => e.type === 'item.started' && e.toolKind === 'notice' && e.title?.includes('shutdown and restart protection'));
       expect(notices).toHaveLength(1);
+    } finally { recorder.stop(); await instance.dispose(); await removeTempDir(root); }
+  }, 60000);
+}
+// ASTRA n4:6069: the fixture above refuses EVERY wrapped launch, so it also passes when a driver skips the narrower rule sets and
+// runs unwrapped at once. Here the sandbox-exec stand-in refuses only the first K exact profiles of the ladder (strongest first),
+// logs every launch it is asked for, and runs the engine under the next one. The launch log must be the ladder in order: each
+// narrower profile tried before the next, nothing skipped, and the unwrapped run only after the last profile was refused.
+for (const [name, driver, fake, env] of [
+  ['ACP', GeminiAgentDriver, 'fake-acp-cli.ts', { GEMINI_API_KEY: 'fixture-only' }],
+  ['Antigravity', AntigravityDriver, 'fake-agy-cli.ts', { FAKE_AGY_RUN_HOOKS: '1' }],
+  ['Pi', PiDriver, 'fake-pi-cli.ts', {}],
+  ['Muse', MuseCodeDriver, 'fake-muse-cli.ts', { META_API_KEY: 'fixture-only' }],
+] as const) {
+  for (const refusedCount of [1, 3]) it.skipIf(process.platform === 'win32')(`N6 E3 ${name} retries the exact profile ladder in order when only the first ${refusedCount} profile(s) are refused at launch`, async () => {
+    ensureDirs(); const root = mkdtempSync(join(tmpdir(), 'nolim-power-ladder-'));
+    // The ladder, written out here and not taken from host-power.ts: all No limits rules, then one rule fewer (strongest first), then one.
+    const [header, ...rules] = NO_LIMITS_SEATBELT_POWER_PROFILE.split(/(?=\(deny )/);
+    expect(rules.map(rule => rule.split(/\s/)[1])).toEqual(['mach-lookup', 'iokit-open']);
+    const ladder = [header + rules.join(''), header + rules[1], header + rules[0]];
+    expect(ladder.length).toBe(3);
+    for (let i = 0; i < refusedCount; i++) writeFileSync(join(root, `refuse.${i}`), ladder[i]!);
+    const log = join(root, 'launches'), wrapper = join(root, 'sandbox');
+    writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n--END--\\n' "$2" >> '${log}'\nprintf '%s' "$2" > '${root}/current'\nfor f in '${root}'/refuse.*; do\n  if [ -e "$f" ] && cmp -s '${root}/current' "$f"; then echo "sandbox-exec: sandbox_apply: Operation not permitted (fixture launch)" >&2; exit 71; fi\ndone\nshift 2\nexec "$@"\n`); chmodSync(wrapper, 0o755);
+    const cli = join(process.cwd(), 'server/testing', fake); chmodSync(cli, 0o755);
+    Object.assign(hostPowerDeps, { platform: () => 'darwin', sandboxExec: wrapper });
+    vi.spyOn(hostPowerProbeDeps, 'runSync').mockReturnValue({ code: 0, stderr: '' });
+    (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = false;
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fixtureDriver = driver as ProviderDriver;
+    const instance = await fixtureDriver.create({ instanceId: `ladder-${name}`, displayName: name, enabled: true, config: fixtureDriver.decodeConfig({ cli }), environment: { HOME: root, USERPROFILE: root, ...env } });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: 'ladder-owner', text: 'fixture only', cwd: root, stopLine: true, noLimits: true });
+      const done = await recorder.until(e => e.type === 'turn.completed' && e.turnId === sent.turnId, 20000);
+      expect(done, JSON.stringify(recorder.events.filter(e => e.type === 'runtime.error'))).toMatchObject({ ok: true });
+      const launched = existsSync(log) ? readFileSync(log, 'utf8').split('--END--\n').filter(Boolean).map(profile => profile.replace(/\n$/, '')) : [];
+      // Every profile up to the first one sandbox-exec takes (or, when it takes none, the whole ladder), in ladder order, once each.
+      expect(launched.filter(profile => ladder.includes(profile))).toEqual(ladder.slice(0, Math.min(refusedCount + 1, ladder.length)));
+      if (refusedCount >= ladder.length) {
+        const notices = recorder.events.filter(e => e.type === 'item.started' && e.toolKind === 'notice' && e.title?.includes('shutdown and restart protection'));
+        expect(notices).toHaveLength(1);
+      }
     } finally { recorder.stop(); await instance.dispose(); await removeTempDir(root); }
   }, 60000);
 }

@@ -1,10 +1,11 @@
 import {verifyCandidate} from '../no-limits-live/candidate-proof.mjs';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { admitCorpus, replayRuling, wipeControls } from './ruling.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 function options(args) {
   const o={};const keys={'--corpus':'corpus','--sha256':'hash','--platform':'platform','--candidate':'candidate','--candidate-proof':'candidateProof','--out':'out'};
   for(let i=0;i<args.length;i++) {
@@ -62,7 +63,7 @@ export async function main(args=process.argv.slice(2)) {
     const report=JSON.parse(readFileSync(o.out));
     console.log(`GNL-REPLAY rows=${report.rows??257} pass=${report.pass??0} nonwipe_cards=${report.nonwipe_cards??0} refusals=${report.refusals??0} skipped=${(report.skipped??257)+(report.controls?.skipped??0)} controls=${report.controls?.pass??0}/3`);
     return code===0&&report.verdict==='PASS'?0:1;
-  } finally {rmSync(root,{recursive:true,force:true});}
+  } finally {safeWipeSync(root);}
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   try{process.exitCode=await main();}catch{console.error('Replay FAIL: invalid options or evidence path');process.exitCode=1;}

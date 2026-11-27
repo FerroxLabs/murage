@@ -118,3 +118,15 @@ describe("Presence", () => {
     expect(lines.some((line) => line.startsWith("presence lapsed"))).toBe(false);
   });
 });
+
+// Warm presence W-PR7 (designs/WARM-W1-1022-presence.md P-SIG 3a): the desktop's lock or sleep edge rides the presence report.
+describe("W-PR7 parsePresenceBody state", () => {
+  it("accepts clientId,seq,state,visible only with state locked|asleep and visible false", () => {
+    expect(parsePresenceBody({ clientId: "abcdefgh", seq: 2, visible: false, state: "locked" })).toEqual({ clientId: "abcdefgh", seq: 2, visible: false, state: "locked" }); // W-PR7p:locked
+    expect(parsePresenceBody({ clientId: "abcdefgh", seq: 2, visible: false, state: "asleep" })).toEqual({ clientId: "abcdefgh", seq: 2, visible: false, state: "asleep" });
+    expect(parsePresenceBody({ clientId: "abcdefgh", seq: 2, visible: true, state: "locked" })).toBeNull(); // W-PR7p:visible-true
+    expect(parsePresenceBody({ clientId: "abcdefgh", seq: 2, visible: false, state: "idle" })).toBeNull();
+    expect(parsePresenceBody({ clientId: "abcdefgh", visible: false, state: "locked" })).toBeNull();
+    expect(parsePresenceBody({ clientId: "abcdefgh", seq: 2, visible: false })).toEqual({ clientId: "abcdefgh", seq: 2, visible: false });
+  });
+});

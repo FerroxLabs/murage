@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import { randomUUID } from "node:crypto";
 import { ClaudeStdinGate } from "./cli-stdin.ts";
 import { parseMcpStatus } from "./mcp-readiness.ts";
@@ -29,7 +30,7 @@ export async function awaitClaudeS2Barrier(
     if (gate.failure || Date.now() >= deadline) return null;
     const id = `murage-s2-${randomUUID()}`;
     gate.own(id, body.subtype);
-    return request(id, body, Math.max(1, deadline - Date.now()));
+    return NotModelRequest("Invokes the local retirement callback for an existing MCP request.", request(id, body, Math.max(1, deadline - Date.now())));
   };
   const run = async (): Promise<boolean> => {
     const answers = await Promise.all(names.map(serverName => ask({ subtype: "mcp_reconnect", serverName })));

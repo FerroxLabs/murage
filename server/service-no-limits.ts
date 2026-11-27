@@ -52,11 +52,8 @@ export function serviceThreadNoLimitsPolicy(threadId: string, botId?: string): b
   return botId ? producerNoLimitsPolicyFor(threadId, botId) : undefined;
 }
 
-/** A turn-only trust grant. It never changes the owner's saved folder records. */
-export function serviceFolderTrust(generation: string, threadId: string, botId: string, gate: SendTurnInput['folderTrust']): SendTurnInput['folderTrust'] {
-  if (!gate || !serviceNoLimits(generation, threadId, botId)) return gate;
-  // Saved folder trust denials are permission rules. Waive them for this turn;
-  // the stored records remain intact for lower levels.
-  return { ...gate, rejects: [], decision: 'trust', fromRecord: undefined, managedDesk: undefined,
-    storedNoPick: undefined, trustKeys: [...new Set([...(gate.trustKeys ?? []), gate.key])] };
+/** Configuration eligibility belongs to the ACP consumer. Command authority
+ * never rewrites the saved seed snapshot or waives a saved folder decline. */
+export function serviceFolderTrust(_generation: string, _threadId: string, _botId: string, gate: SendTurnInput['folderTrust']): SendTurnInput['folderTrust'] {
+  return gate;
 }

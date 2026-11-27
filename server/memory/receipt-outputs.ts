@@ -68,7 +68,10 @@ export function drainReceiptFlips(db: DatabaseSync, commit: (bundleId: string) =
   return done;
 }
 
-/** Wakes the marker after a flip (memory-revocation.ts sets it: a module with no import of the runner, so no import cycle). */
-let wake: () => void = () => {};
+/** Wakes the marker after a flip (memory-revocation.ts sets it while its module is evaluated). A `var` with no initializer, as revoke-marker.ts
+ * drainFlips: a process that enters this module first evaluates memory-revocation.ts inside its import cycle, so the set lands before this
+ * line runs, when a `let` is still in its temporal dead zone (ReferenceError at load) and an initializer would later drop the value. */
+// eslint-disable-next-line no-var
+var wake: (() => void) | undefined;
 export function setFlipWake(next: () => void): void { wake = next; }
-export function wakeFlipMarker(): void { wake(); }
+export function wakeFlipMarker(): void { wake?.(); }

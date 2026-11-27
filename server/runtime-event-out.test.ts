@@ -769,3 +769,58 @@ it('refusal presentation projects private fields before an unscoped desktop rece
   expect(JSON.stringify(frames)).not.toContain(secret);
   for(const field of ['source','lease','execEnv','raw','toolCall','input','result']) expect(Object.hasOwn((frames[0] as any).event,field),field).toBe(false);
 });
+
+describe("UP-PROMPT-CACHE-1020: usage coverage leaves the server as the fixed accounting shape only", () => {
+  const env = { eventId: "e-usage", provider: "pi", threadId: "t-usage", createdAt: "2026-11-17T00:00:00.000Z", turnId: "turn-usage" };
+  it("a settled turn keeps its coverage, and nothing beside the three fixed fields rides along", () => {
+    const done = windowRuntimeEvent({ ...env, type: "turn.completed", ok: true,
+      usage: { input: 100, output: 3, cachedInput: 80, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false, note: "private" } as never } } as never) as { usage?: unknown };
+    expect(done.usage).toEqual({ input: 100, output: 3, cachedInput: 80, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } });
+  });
+  it("a malformed coverage block reads as unknown, never complete", () => {
+    const done = windowRuntimeEvent({ ...env, type: "turn.completed", ok: true,
+      usage: { input: 100, output: 3, usageAccounting: { version: 2, inputComplete: true, cacheComplete: true } as never } } as never) as { usage?: unknown };
+    expect(done.usage).toEqual({ input: 100, output: 3, usageAccounting: { version: 1, inputComplete: false, cacheComplete: false } });
+  });
+  it("a turn with no coverage block leaves without one, as before", () => {
+    const done = windowRuntimeEvent({ ...env, type: "turn.completed", ok: true, usage: { input: 1, output: 2 } } as never) as { usage?: unknown };
+    expect(done.usage).toEqual({ input: 1, output: 2 });
+  });
+  it("the live usage figure's coverage is logged with it", () => {
+    const logged = loggedRuntimeEvent({ ...env, type: "thread.token-usage.updated", input: 1, output: 2, cachedInput: 1, usageAccounting: { version: 1, inputComplete: true, cacheComplete: true } }) as Record<string, unknown>;
+    expect(logged.usageAccounting).toEqual({ version: 1, inputComplete: true, cacheComplete: true });
+  });
+});
+
+it("PC-F2: incremental and logged coverage reject every extra field, including numeric fields", () => {
+  const env = { eventId: "coverage", provider: "fixture", threadId: "thread", createdAt: "2026-11-17T00:00:00.000Z" };
+  const usageAccounting = { version: 1 as const, inputComplete: true, cacheComplete: true, privateText: "PRIVATE_COVERAGE_SENTINEL", arbitraryNumber: 99 };
+  const event = { ...env, type: "thread.token-usage.updated" as const, input: 100, output: 2, cachedInput: 80, usageAccounting };
+  for (const out of [windowRuntimeEvent(event as never), loggedRuntimeEvent(event)]) {
+    expect((out as typeof event).usageAccounting).toEqual({ version: 1, inputComplete: true, cacheComplete: true });
+    expect(JSON.stringify(out)).not.toContain("PRIVATE_COVERAGE_SENTINEL");
+    expect(JSON.stringify(out)).not.toContain("arbitraryNumber");
+  }
+  const done = loggedRuntimeEvent({ ...env, type: "turn.completed", ok: true, usage: { input: 100, output: 2, cachedInput: 80, usageAccounting } });
+  expect(done.usage).toEqual({ input: 100, output: 2, cachedInput: 80, usageAccounting: { version: 1, inputComplete: true, cacheComplete: true } });
+});
+
+it.each([101, -1, 1.5, Number.NaN, "80", null])("PC-F2 incremental cache validation: rejected read %s cannot survive the original event spread", cachedInput => {
+  const event = { eventId: "usage-validation", provider: "fixture", threadId: "thread", createdAt: "2026-11-17T00:00:00.000Z", type: "thread.token-usage.updated", input: 100, output: 2, cachedInput, usageAccounting: { version: 1, inputComplete: true, cacheComplete: true } };
+  for (const out of [windowRuntimeEvent(event as never), loggedRuntimeEvent(event)]) {
+    expect(out).not.toHaveProperty("cachedInput");
+    expect(out).toMatchObject({ input: 100, output: 2, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } });
+  }
+});
+
+it("PC-F2 usage envelope: live counts retain public frame identity and reject raw or arbitrary fields", () => {
+  const expected = { type: "thread.token-usage.updated", eventId: "usage-envelope", provider: "fixture", providerInstanceId: "fixture-instance", threadId: "fixture-thread", turnId: "fixture-turn", itemId: "fixture-item", requestId: "fixture-request", createdAt: "2026-11-17T00:00:00.000Z", generation: "fixture-generation", speechDisposition: "none", input: 100, output: 2, cachedInput: 80, usageAccounting: { version: 1, inputComplete: true, cacheComplete: true } };
+  const sentinel = "PRIVATE_USAGE_ENVELOPE_SENTINEL";
+  const event = { ...expected, raw: { source: "fixture", payload: { text: sentinel } }, execEnv: { token: sentinel }, callKey: sentinel, callKeyAmbiguous: true, privateText: sentinel, arbitraryNumber: 99 };
+  const live = windowRuntimeEvent(event as never);
+  expect(live).toEqual(expected);
+  for (const out of [live, loggedRuntimeEvent(event)]) {
+    expect(JSON.stringify(out)).not.toContain(sentinel);
+    for (const field of ["raw", "execEnv", "callKey", "callKeyAmbiguous", "privateText", "arbitraryNumber"]) expect(out).not.toHaveProperty(field);
+  }
+});

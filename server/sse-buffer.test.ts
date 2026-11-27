@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { oversizedScreenNotice, SSE_MAX_PENDING_BYTES, SseReplay, SseWriter } from "./sse-buffer.ts";
+import { initializeMailboxCustody } from "./mailbox/custody.ts";
+import { encodeSseFrames, oversizedScreenNotice, SSE_MAX_PENDING_BYTES, SseReplay, SseWriter } from "./sse-buffer.ts";
 
 class Sink extends EventEmitter {
   writableLength = 0;
@@ -17,6 +19,33 @@ class Sink extends EventEmitter {
 }
 
 describe("SSE writer", () => {
+  it.each(["committed", "unchanged", "unreadable"])("fences a blocked generic writer queue with the seal ledger %s", ledger => {
+    using db = new DatabaseSync(":memory:");
+    initializeMailboxCustody(db);
+    const sink = new Sink();
+    sink.accepting = false;
+    const reasons: string[] = [];
+    const options = { maxFrames: 4, mailboxDatabase: () => db };
+    const writer = new SseWriter(sink, reason => reasons.push(reason), options);
+    const { primary } = encodeSseFrames("fixture", 2, false, {
+      kind: "message", threadId: "fixture-thread",
+      message: { id: "fixture-row", at: 1, role: "bot", kind: "text", text: "fixture queued body" },
+    });
+    expect(writer.send("heartbeat")).toBe(true);
+    expect(writer.send(primary)).toBe(true);
+    expect(writer.queuedFrames).toBe(1);
+    expect(sink.writes).toEqual(["heartbeat"]);
+
+    if (ledger === "committed") db.prepare("INSERT INTO mailbox_sealed_threads(thread_id,generation,state) VALUES('fixture-thread',1,'pending')").run();
+    if (ledger === "unreadable") db.exec("DROP TABLE mailbox_sealed_threads");
+    sink.drain();
+
+    expect(sink.writes).toEqual(ledger === "unchanged" ? ["heartbeat", primary] : ["heartbeat"]);
+    expect(reasons).toEqual(ledger === "unchanged" ? [] : ["backpressure"]);
+    expect(writer.queuedFrames).toBe(0);
+    writer.close();
+  });
+
   it.each([1, 5, 10])("keeps the default 4 MiB budget independent across %i delayed consumers", count => {
     const clients = Array.from({ length: count }, () => {
       const sink = new Sink(); sink.accepting = false;

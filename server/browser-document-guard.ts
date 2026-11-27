@@ -201,7 +201,18 @@ export class BrowserDocumentGuard {
     if(!frames)this.frameUnsure.delete(pageSession);
     return frames||this.frameUnsure.has(pageSession);
   }
-  async protected(armed=true):Promise<boolean>{
+  /** The bot's pages as Chrome lists them (id and address), for the server only: never sent to the bot. The tabs a bot is
+   * kept off (a protected page left to the owner) are recorded from this, and dropped once Chrome no longer lists them. */
+  async pages():Promise<{id:string;url:string}[]>{
+    await this.open();
+    const targets=await this.send("Target.getTargets");
+    let pages=(targets.targetInfos as any[]).filter(t=>t.type==="page");
+    if(this.scope){const {targets:mine}=this.scope();pages=pages.filter(t=>mine.has(t.targetId));}
+    return pages.map(t=>({id:String(t.targetId),url:String(t.url??"")}));
+  }
+  /** `skip`: tabs left to the owner (protected). They are never attached to, looked at or read here; the bot's other tabs are
+   * checked as before, and with none left the check fails closed. */
+  async protected(armed=true,skip:ReadonlySet<string>=new Set()):Promise<boolean>{
     await this.open();
     const targets=await this.send("Target.getTargets");
     let pages=(targets.targetInfos as any[]).filter(t=>t.type==="page");
@@ -216,6 +227,7 @@ export class BrowserDocumentGuard {
       // No bot tab yet, and none closed: no page has been opened or read, so nothing is protected.
       if(!pages.length)return false;
     }
+    if(skip.size){pages=pages.filter(t=>!skip.has(t.targetId));if(!pages.length)throw new Error("Browser document inventory unavailable");}
     if(!pages.length||pages.length>20)throw new Error("Browser document inventory unavailable");
     let protectedDocument=false;
     for(const page of pages){

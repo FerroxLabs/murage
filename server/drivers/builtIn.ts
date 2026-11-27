@@ -19,6 +19,10 @@ import { CustomAcpDriver } from "./acp/custom.ts";
 import { HermesAgentDriver } from "./acp/hermes.ts";
 import { OpenclawAgentDriver } from "./acp/openclaw.ts";
 import { ClineAgentDriver } from "./acp/cline.ts";
+import { CommandCodeAgentDriver } from "./acp/command-code.ts";
+import { KiroAgentDriver } from "./acp/kiro.ts";
+import { OmpAgentDriver } from "./acp/omp.ts";
+import { DevinAgentDriver } from "./acp/devin.ts";
 import { MuseCodeDriver } from "./muse-code.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
 import { PiDriver } from "./pi.ts";
@@ -41,6 +45,10 @@ export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   OpenclawAgentDriver,
   ClineAgentDriver,
   MuseCodeDriver,
+  CommandCodeAgentDriver,
+  KiroAgentDriver,
+  OmpAgentDriver,
+  DevinAgentDriver,
   CustomAcpDriver,
   PiDriver,
   OpenAICompatDriver,

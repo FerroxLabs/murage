@@ -96,7 +96,10 @@ it('durable roster_revision is not a cross-process certificate', async () => {
   expect(admit(store)).toEqual(old); expect(walks(probe.sql)).toEqual([]); probe.stop();
 });
 
-for (const fault of ['corrupt digest', 'wrong count', 'person flag', 'thread eligibility', 'room flag', 'non-lineage membership', 'lineage membership', 'redirected context', 'moved epoch', 'uncertified roster', 'missing epoch'] as const) {
+// reclaim-1020-n3: 'moved epoch' alone is no longer a refusal. A view whose only difference is the epoch, bound by this context alone, passes the
+// full membership proof under the current epoch and is re-stamped (recall-restamp-1020.test.ts W1-W5); an epoch move together with any membership
+// difference still refuses ('moved epoch with membership' below, and W4/W5 there).
+for (const fault of ['corrupt digest', 'wrong count', 'person flag', 'thread eligibility', 'room flag', 'non-lineage membership', 'lineage membership', 'redirected context', 'moved epoch with membership', 'uncertified roster', 'missing epoch'] as const) {
   it(`hydration refuses independently: ${fault}`, async () => {
     const store = await fixture(), row = persisted(store), db = database(), key = views.recallContextKey(binding(store));
     if (fault === 'redirected context') {
@@ -110,7 +113,7 @@ for (const fault of ['corrupt digest', 'wrong count', 'person flag', 'thread eli
     if (fault === 'non-lineage membership') corruptScopes(store, 'DELETE FROM memory_recall_view_scopes WHERE view_id=? AND generation=? AND lineage_only=0');
     if (fault === 'lineage membership') corruptScopes(store, "INSERT INTO memory_recall_view_scopes VALUES(?,?,'foreign-fixture-scope',1,1)");
     if (fault === 'thread eligibility') db.prepare('UPDATE memory_recall_thread_readers SET eligible=1-eligible WHERE view_id=? AND generation=?').run(row.view_id, row.generation);
-    if (fault === 'moved epoch') db.exec('UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1');
+    if (fault === 'moved epoch with membership') { corruptScopes(store, 'DELETE FROM memory_recall_view_scopes WHERE view_id=? AND generation=? AND lineage_only=0'); db.exec('UPDATE memory_recall_epoch SET epoch=epoch+1 WHERE id=1'); }
     if (fault === 'missing epoch') db.exec('DELETE FROM memory_recall_epoch');
     if (fault === 'uncertified roster') vi.spyOn(store, 'recallRosterCertificate').mockReturnValue(undefined);
     else if (fault !== 'missing epoch') expect(proof(store)).toBeDefined();
@@ -153,14 +156,24 @@ it('projection upkeep defers while hydration holds its exact publication snapsho
   const before = mark(), steps = views.hydrateRecallViewSteps(binding(store), store);
   for (let n = 0; n < yields; n++) expect(steps.next().done).toBe(false);
   expect(db.prepare('SELECT context_key FROM memory_recall_contexts ORDER BY context_key LIMIT 1').get()!.context_key).toBe(views.recallContextKey(binding(store)));
+  // The journal row above armed the applier's wall-clock wake; it is dropped here so that everything below runs on the fake clock.
+  views.stopRecallViewMaintenance();
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
     views.startRecallViewMaintenance();
     await vi.advanceTimersByTimeAsync(50);
+    await new Promise(resolve => setImmediate(resolve));
     expect(mark()).toBe(before);
     expect(steps.next()).toEqual({ done: true, value: true });
     expect(admit(store)).toEqual(old);
-    await vi.advanceTimersByTimeAsync(100);
+    // memv2 lane A (MEMORY-V2-DESIGN 4.2 A3, A6): the applier, not a 50 ms walk, reads the row once the hydration has let go: it looks
+    // again 250 ms after it found the view held, and the persisted watermark is a lower bound written lazily. The assertion is the same
+    // one: the row is applied and the view's watermark passes it; it is read after the flush that a clean stop makes.
+    // (the applier's "look again" is a deadline of lane W's registry, which holds wall-clock times: it is waited for on the real clock)
+    vi.useRealTimers();
+    for (let n = 0; n < 60 && !views.recallViewCurrent(db, old); n++) await new Promise(resolve => setTimeout(resolve, 50));
+    expect(views.recallViewCurrent(db, old)).toBe(true);
+    views.flushRecallWatermarks(db);
     expect(Number(mark())).toBeGreaterThan(Number(before));
   } finally { steps.return(false); views.stopRecallViewMaintenance(); vi.useRealTimers(); }
 });

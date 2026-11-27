@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """Aggregate retained test/cell evidence, never alter an assertion or verdict."""
-import collections, glob, hashlib, json, os, re
+import argparse, collections, glob, hashlib, json, os, re, sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parent.parent
-OUT=ROOT/'evidence/gnl-prod-r3'
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from evidence_path import archived_evidence_path, external_evidence_path
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--root',required=True,help='external R3 capture holding all-cells/shard-*/ (verify-gnl-r3-cells.mjs output), supplemental-cells/, p4-final/ and decision-*-pair/')
+parser.add_argument('--plan',help='cell plan; defaults to the archived evidence/gnl-prod-r3/all-cells-latest.json')
+args=parser.parse_args()
+# Fresh captures live outside every checkout; historical inputs come only from the retained archive.
+OUT=external_evidence_path(args.root)
 def read(path):return json.loads(Path(path).read_text())
-def save(name,obj):(OUT/name).write_text(json.dumps(obj,indent=2)+'\n')
+def save(name,obj):
+    # Exclusive create: an aggregate never replaces an existing (or linked) receipt.
+    with open(external_evidence_path(OUT/name),'x') as handle:handle.write(json.dumps(obj,indent=2)+'\n')
 def load_pair(name):
     paths=sorted((OUT/name).glob('shard-*/results.json'))
     if len(paths)!=2:return None
@@ -32,8 +40,8 @@ if baseline and final:
         rows.append({'id':key,'classification':status,'baseline':before and before['status'],'final':after and after['status'],'baselineFailures':before and before['failures'],'finalFailures':after and after['failures']})
     bh=baseline['manifests'][0]['testHashes'];fh=final['manifests'][0]['testHashes']
     hashes={file:{'baseline':bh.get(file),'final':fh.get(file)} for file in set(bh)|set(fh) if bh.get(file)!=fh.get(file)}
-    old=read(ROOT/'evidence/gnl-prod/decision-baseline-comparison.json')
-    raw=(ROOT/'evidence/gnl-prod/decision-candidate.log').read_text()
+    old=read(archived_evidence_path('evidence/gnl-prod/decision-baseline-comparison.json'))
+    raw=archived_evidence_path('evidence/gnl-prod/decision-candidate.log').read_text()
     labels=set(re.findall(r'^ FAIL  (server/[^\n]+)',raw,re.M));old_ids=[];unmatched=[];hook_labels=[]
     for label in sorted(labels):
         if ' > ' not in label:continue
@@ -47,7 +55,7 @@ if baseline and final:
             old_ids.append({'historicalLabel':label,**row})
     save('decision-by-id.json',{'baseline':{'tests':len(b),'counts':dict(collections.Counter(r['status'] for r in b.values()))},'final':{'tests':len(f),'counts':dict(collections.Counter(r['status'] for r in f.values()))},'classification':dict(collections.Counter(r['classification'] for r in rows)),'testHashDifferences':hashes,'rows':rows,'baselineSuites':baseline['suites'],'finalSuites':final['suites']})
     save('historical-471-by-id.json',{'historicalFailedAssertions':471,'historicalFailedSnapshots':424,'mappedTestIds':len(old_ids),'unmatchedHistoricalLabels':unmatched,'rows':old_ids,'hookFailures':hook_labels,'suiteErrors':[label for label in sorted(labels) if ' > ' not in label]})
-plan=read(OUT/'all-cells-latest.json');expected={(r['engine'],r['id']) for rs in plan.values() for r in rs};actual={};duplicates=[];source=[]
+plan=read(Path(args.plan) if args.plan else archived_evidence_path('evidence/gnl-prod-r3/all-cells-latest.json'));expected={(r['engine'],r['id']) for rs in plan.values() for r in rs};actual={};duplicates=[];source=[]
 paths=list(OUT.glob('all-cells/shard-*/*/verdict.json'))+list(OUT.glob('supplemental-cells/shard-*/*/verdict.json'))+list(OUT.glob('p4-final/verdict.json'))
 for p in paths:
     for row in read(p).get('rows',[]):
@@ -59,7 +67,7 @@ source_diffs=[]
 if len(source)==2:
     for file in set(source[0]['files'])|set(source[1]['files']):
         if source[0]['files'].get(file)!=source[1]['files'].get(file):source_diffs.append(file)
-original=read(ROOT/'evidence/gnl-prod/affected-cells.json');families={}
+original=read(archived_evidence_path('evidence/gnl-prod/affected-cells.json'));families={}
 for family,rs in original.items():
     keys={(r['engine'],r['id']) for r in rs};found=[actual[k] for k in keys if k in actual]
     families[family]={'expected':len(keys),'pass':sum(r['verdict']=='PASS' for r in found),'fail':sum(r['verdict']!='PASS' for r in found),'missing':[{'engine':e,'id':i} for e,i in sorted(keys-set(actual))]}

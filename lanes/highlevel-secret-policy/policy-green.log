@@ -1,0 +1,10 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/highlevel/scope-policy.test.ts (84 tests) 189ms
+
+ Test Files  1 passed (1)
+      Tests  84 passed (84)
+   Start at  14:05:31
+   Duration  10.95s (transform 8.13s, setup 9.34s, import 1.15s, tests 189ms, environment 0ms)
+

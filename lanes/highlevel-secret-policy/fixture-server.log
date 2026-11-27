@@ -1,0 +1,15 @@
+[sqlite] slow op=exec: COMMIT ms=468 source=exec:COMMIT
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS pending_delegations (id TEXT PRIMARY KEY NOT NU ms=326 source=exec:CREATE TABLE IF NOT EXISTS pending_deleg
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=3
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=118 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] slow op=exec: ALTER TABLE push_decisions ADD COLUMN outcome TEXT ms=120 source=exec:ALTER TABLE push_decisions ADD COLUMN ou
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS app_trigger_bindings ( trigger_id TEXT PRIMARY  ms=100 source=exec:CREATE TABLE IF NOT EXISTS app_trigger_b
+[sqlite] storage file=2 wal=2 freelist=0
+[own-write] legacy wildcard keys at boot: 0
+[folder-trust] recorded 0 folders bots were already working in as trusted (chosen before 0.1.52; Forget in the picker asks again)
+murage webhook receiver on http://127.0.0.1:21985
+murage server on http://127.0.0.1:21984
+[startup] writes before first health=0
+[memory] keep-all repair: owner-chat session marks removed=0 threads=0 open-jobs=0 cursors-cleared=0 slices=0 drainLeft=false cursorsKeptChecking=0 cursorsKeptLive=0 cursorsSkippedChanged=0
+[memory] index build start name=memory_records_canon

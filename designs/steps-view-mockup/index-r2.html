@@ -1,0 +1,253 @@
+<!doctype html>
+<!-- Static mockup for STEPS-DESIGN.md (1.0.22). Real app size: a 1280x800 Murage window, dark theme tokens from src/styles.css.
+     r2. States shown: (A) collapsed, (B) expanded with narration rows, (C) one step opened (Request/Response), (D) an error step, (E) a running step with timer, (F) a step waiting for the owner with its card outside the group, (G) a step the owner did not allow, (H) phone width.
+     Clicks work (header and rows toggle); nothing here is product code. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Murage 1.0.22 · Steps view mockup</title>
+<style>
+  :root{
+    --app:#0a0a0a;--panel:#171717;--raised:#2a2a2a;--raised-hover:#353535;--hairline:#4d4d4d;
+    --ink:#f5f5f5;--ink2:#a8a8a8;--ink3:#7a7a7a;--success:#34d399;--danger:#f87171;--danger-soft:#3d1c1c;--accent:#8ab4ff;
+    --bubble-max:52rem;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#000;font-family:var(--sans);color:var(--ink);padding:24px}
+  .legend{max-width:1280px;margin:0 auto 12px;color:var(--ink2);font-size:13px}
+  .legend b{color:var(--ink)}
+  .win{width:1280px;height:800px;margin:0 auto;display:flex;background:var(--app);border:1px solid #222;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px #0008}
+  .side{width:248px;background:var(--panel);border-right:1px solid #262626;padding:44px 10px 10px;font-size:13px;color:var(--ink2);flex-shrink:0}
+  .side .bot{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px}
+  .side .bot.on{background:var(--raised);color:var(--ink)}
+  .av{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;color:#111;flex-shrink:0}
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .top{height:48px;border-bottom:1px solid #222;display:flex;align-items:center;padding:0 20px;gap:10px;font-size:14px}
+  .top .pill{font-size:11px;color:var(--ink2);border:1px solid var(--hairline);border-radius:999px;padding:2px 8px;margin-left:6px}
+  .chat{flex:1;overflow-y:auto;padding:22px 28px 10px;display:flex;flex-direction:column;gap:14px}
+  .row{display:flex}
+  .row.me{justify-content:flex-end}
+  .bubble{max-width:min(var(--bubble-max),84%);border-radius:18px;padding:9px 14px;font-size:14px;line-height:1.5}
+  .me .bubble{background:var(--raised)}
+  .botline{font-size:14px;line-height:1.55;max-width:min(var(--bubble-max),84%)}
+  .tag{position:relative}
+  .tag::before{content:attr(data-tag);position:absolute;left:-26px;top:7px;width:18px;height:18px;border-radius:50%;background:#facc15;color:#111;font:700 11px/18px var(--sans);text-align:center}
+
+  /* ---- StepsGroup ---- */
+  .group{max-width:min(var(--bubble-max),84%);width:100%}
+  .ghead{display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(77,77,77,.4);background:var(--panel);border-radius:16px;padding:6px 12px;font-size:13px;color:var(--ink2);cursor:pointer;user-select:none}
+  .ghead:hover{background:var(--raised);color:var(--ink)}
+  .ghead .chev{transition:transform .15s;opacity:.8}
+  .group.open>.ghead .chev{transform:rotate(90deg)}
+  .ghead .phase{color:var(--ink)}
+  .ghead .sep{opacity:.5}
+  .ghead .bad{color:var(--danger)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}
+  .check{color:var(--success)}
+  .steps{display:none;margin:6px 0 0 6px;border-left:1px solid #2c2c2c;padding-left:10px}
+  .group.open>.steps{display:block}
+  .step{border-radius:8px}
+  .srow{display:flex;align-items:center;gap:9px;padding:5px 8px;font-size:13.5px;cursor:pointer;border-radius:8px}
+  .srow:hover{background:#151515}
+  .glyph{width:16px;display:grid;place-items:center;flex-shrink:0}
+  .verb{color:var(--ink2);white-space:nowrap}
+  .obj{color:var(--ink);font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hint{font-family:var(--mono);font-size:11.5px;color:var(--ink3);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .grow{flex:1}
+  .dur{font-size:12px;color:var(--ink3);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .failed{color:var(--danger);font-size:12.5px;font-weight:600}
+  .schev{color:var(--ink3);transition:transform .15s}
+  .step.open .schev{transform:rotate(90deg)}
+  .note{padding:4px 8px 4px 33px;font-size:13px;color:var(--ink2);font-style:italic}
+  .wdots{display:inline-flex;gap:2px}.wdots i{width:3.5px;height:3.5px;border-radius:50%;background:var(--accent);animation:pulse 1s infinite}.wdots i:nth-child(2){animation-delay:.15s}.wdots i:nth-child(3){animation-delay:.3s}
+  .running .verb{color:var(--ink)}
+  .running .dur{color:var(--accent)}
+  .detail{display:none;margin:2px 0 8px 33px;border:1px solid #2c2c2c;border-radius:10px;overflow:hidden;background:#0f0f0f}
+  .step.open .detail{display:block}
+  .dhead{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;font-size:11.5px;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em;background:#141414;border-bottom:1px solid #222}
+  .dhead button{background:none;border:1px solid #333;color:var(--ink2);border-radius:6px;font-size:11px;padding:1px 7px;text-transform:none;letter-spacing:0;cursor:pointer}
+  pre{margin:0;padding:9px 12px;font:12px/1.55 var(--mono);color:#d4d4d4;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
+  .omit{padding:4px 12px 8px;font-size:11.5px;color:var(--ink3)}
+  .omit a{color:var(--accent);text-decoration:none}
+  .dfoot{padding:6px 12px;font-size:11.5px;color:var(--ink3);border-top:1px solid #222}
+  .k{color:#c792ea}.s{color:#c3e88d}.n{color:#f78c6c}.c{color:#6b7280}.f{color:#82aaff}.p{color:#89ddff}.red{color:var(--danger)}
+  .redact{background:#2a2a2a;color:var(--ink2);border-radius:3px;padding:0 3px}
+  .nolimits{margin:6px 8px 2px 33px;font-size:12px;color:var(--ink3)}
+  .nolimits a{color:var(--ink2)}
+  .err-detail pre{color:#fca5a5}
+  .waitw{color:#fbbf24;font-size:12.5px;font-weight:600;white-space:nowrap}
+  .denied{color:var(--ink2);font-size:12.5px;font-weight:600;white-space:nowrap}
+  .adot{width:8px;height:8px;border-radius:50%;background:#fbbf24}
+  .amber{color:#fbbf24}.grey{color:var(--ink3)}
+  .latest{margin:4px 0 0 14px;font-size:12.5px;color:var(--ink2);font-style:italic}
+  .group.open>.latest{display:none}
+  .card{max-width:min(var(--bubble-max),84%);border:1px solid #5b4a1a;background:#1c1806;border-radius:14px;padding:12px 14px;font-size:13.5px}
+  .card .q{color:var(--ink);margin-bottom:4px}.card .cmd{font:12px/1.5 var(--mono);color:var(--ink2);margin-bottom:10px}
+  .card .btns{display:flex;gap:8px}.card .b1{background:var(--ink);color:#111;border-radius:8px;padding:5px 14px;font-size:13px;font-weight:600}.card .b2{border:1px solid var(--hairline);color:var(--ink);border-radius:8px;padding:5px 14px;font-size:13px}
+  .phonewrap{max-width:1280px;margin:18px auto 0;display:flex;gap:20px;align-items:flex-start;color:var(--ink2);font-size:13px}
+  .phone{width:390px;background:var(--app);border:1px solid #222;border-radius:28px;padding:18px 12px;display:flex;flex-direction:column;gap:12px;position:relative}
+  .phone .group,.phone .card,.phone .botline,.phone .bubble{max-width:100%}
+  .phone .srow{flex-wrap:wrap;row-gap:0}.phone .obj{white-space:normal;overflow:visible;flex-basis:calc(100% - 60px);order:5;margin-left:25px}
+  .phone .detail{margin-left:0}
+  .composer{margin:8px 28px 18px;border:1px solid #333;border-radius:16px;background:var(--panel);padding:12px 14px;color:var(--ink3);font-size:14px;display:flex;justify-content:space-between}
+  .stop{background:var(--raised);color:var(--ink);border-radius:8px;padding:2px 10px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="legend"><b>Steps view mockup r2 (STEPS-DESIGN.md)</b>, a 1280×800 window. Yellow markers: <b>A</b> collapsed (done turn) · <b>B</b> expanded with narration rows · <b>C</b> one step opened (Request/Response) · <b>D</b> error step (red Failed, chain carries on) · <b>E</b> live turn with a running step and timer · <b>F</b> waiting for your OK (the card sits outside the group) · <b>G</b> a step you did not allow (grey, not red) · <b>H</b> phone width (below the window). Click any header or row. Open <b>index.html#live</b> to land on the live turns.</div>
+<div class="win">
+  <aside class="side">
+    <div class="bot on"><div class="av" style="background:#fbbf24">S</div>Sable</div>
+    <div class="bot"><div class="av" style="background:#60a5fa">K</div>Kessler</div>
+    <div class="bot"><div class="av" style="background:#f472b6">R</div>Research room</div>
+  </aside>
+  <section class="main">
+    <div class="top"><div class="av" style="background:#fbbf24">S</div>Sable <span class="pill">Claude · No limits</span></div>
+    <div class="chat" id="chat">
+
+      <!-- Turn 1: done, collapsed (A) -->
+      <div class="row me"><div class="bubble">What's in my .sable folder, and is anything stale?</div></div>
+      <div class="row tag" data-tag="A">
+        <div class="group" data-group>
+          <div class="ghead" role="button" aria-expanded="false" tabindex="0">
+            <span class="check">✓</span><span class="phase">Worked for 48s</span><span class="sep">·</span><span>6 steps</span><span class="chev">›</span>
+          </div>
+          <div class="steps">
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Listed</span><span class="obj">.sable</span><span class="grow"></span><span class="dur">0.4s</span><span class="schev">›</span></div></div>
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Read</span><span class="obj">index.json</span><span class="grow"></span><span class="dur">0.1s</span><span class="schev">›</span></div></div>
+            <div class="nolimits">No limits: all 6 steps ran without asking you. <a href="#">Access settings</a></div>
+          </div>
+        </div>
+      </div>
+      <div class="row"><div class="botline">There are 14 files in <code>.sable</code>. Three notes haven't changed since August: <b>kessler-notes.md</b>, <b>q3-plan.md</b> and <b>vendors.csv</b>.</div></div>
+
+      <!-- Turn 2: done, expanded (B), one step opened (C), error (D) -->
+      <div class="row me"><div class="bubble">Find everything about Poindexter in Kessler's notes and my Gmail, then summarize.</div></div>
+      <div class="row tag" data-tag="B">
+        <div class="group open" data-group>
+          <div class="ghead" role="button" aria-expanded="true" tabindex="0">
+            <span class="check">✓</span><span class="phase">Worked for 5m 35s</span><span class="sep">·</span><span>27 steps</span><span class="sep">·</span><span class="bad">1 failed</span><span class="sep">·</span><span>1 not allowed</span><span class="chev">›</span>
+          </div>
+          <div class="steps">
+            <div class="note">Starting with Kessler's notes, then the mail.</div>
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Read</span><span class="obj">kessler-notes.md</span><span class="grow"></span><span class="dur">0.2s</span><span class="schev">›</span></div></div>
+
+            <div class="step open tag" data-tag="C">
+              <div class="srow"><span class="glyph check">✓</span><span class="verb">Searched files for</span><span class="obj">"Poindexter"</span><span class="grow"></span><span class="dur">1.1s</span><span class="schev">›</span></div>
+              <div class="detail">
+                <div class="dhead">Request <button>Copy</button></div>
+<pre><span class="f">rg</span> <span class="p">-n -i</span> <span class="s">"poindexter"</span> ~/.sable <span class="p">--glob</span> <span class="s">'!*.lock'</span> <span class="k">|</span> <span class="f">head</span> <span class="p">-120</span></pre>
+                <div class="dhead">Response <button>Copy</button></div>
+<pre><span class="c">kessler-notes.md</span>:<span class="n">12</span>:Met Poindexter re: the vendor audit, wants numbers by Fri
+<span class="c">kessler-notes.md</span>:<span class="n">48</span>:Poindexter thinks the Q3 plan double counts hosting
+<span class="c">q3-plan.md</span>:<span class="n">7</span>:Owner: Poindexter (finance)
+<span class="c">vendors.csv</span>:<span class="n">22</span>:acme-hosting,Poindexter,API_KEY=<span class="redact">••••••</span>,monthly
+<span class="c">.env.local</span>:<span class="n">3</span>:POINDEXTER_TOKEN=<span class="redact">••••••</span></pre>
+                <div class="omit">… 31 more lines not shown (2.4 KB). <a href="#">Show all</a></div>
+                <div class="dfoot">Ran without asking (No limits) · exit 0 · 1.1s</div>
+              </div>
+            </div>
+
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Loaded skill docs</span><span class="obj">gmail-triage</span><span class="grow"></span><span class="dur">0.1s</span><span class="schev">›</span></div></div>
+            <div class="note">Now the mail: threads mentioning Poindexter since September.</div>
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Used Gmail:</span><span class="obj">Search threads</span><span class="grow"></span><span class="dur">3.8s</span><span class="schev">›</span></div></div>
+
+            <div class="step open tag" data-tag="D">
+              <div class="srow"><span class="glyph red">✕</span><span class="verb">Used Gmail:</span><span class="obj">Fetch attachment</span><span class="grow"></span><span class="dur">12.0s</span><span class="failed">Failed</span><span class="schev">›</span></div>
+              <div class="detail err-detail">
+                <div class="dhead">Request <button>Copy</button></div>
+<pre>{
+  <span class="p">"app"</span>: <span class="s">"gmail"</span>,
+  <span class="p">"action"</span>: <span class="s">"GMAIL_GET_ATTACHMENT"</span>,
+  <span class="p">"message_id"</span>: <span class="s">"18c2f…a91"</span>,
+  <span class="p">"attachment"</span>: <span class="s">"audit-v3.xlsx"</span>,
+  <span class="p">"access_token"</span>: <span class="redact">••••••</span>
+}</pre>
+                <div class="dhead">Response</div>
+<pre>Error 413: attachment is 38 MB; the connected app returns at most 25 MB.</pre>
+                <div class="dfoot">Ran without asking (No limits) · the bot carried on</div>
+              </div>
+            </div>
+
+            <div class="note">The attachment is too big; I'll use the thread text instead.</div>
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Used Gmail:</span><span class="obj">Fetch emails</span><span class="grow"></span><span class="dur">2.2s</span><span class="schev">›</span></div></div>
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Asked</span><span class="obj">Kessler</span><span class="grow"></span><span class="dur">1m 02s</span><span class="schev">›</span></div></div>
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Wrote</span><span class="obj">poindexter-summary.md</span><span class="grow"></span><span class="dur">0.1s</span><span class="schev">›</span></div></div>
+            <div class="step tag" data-tag="G"><div class="srow"><span class="glyph grey">⊘</span><span class="verb">Use Gmail:</span><span class="obj">Send email</span><span class="grow"></span><span class="denied">Not allowed</span><span class="schev">›</span></div>
+              <div class="detail"><div class="dhead">Request <button>Copy</button></div>
+<pre>{
+  <span class="p">"app"</span>: <span class="s">"gmail"</span>,
+  <span class="p">"action"</span>: <span class="s">"GMAIL_SEND_EMAIL"</span>,
+  <span class="p">"to"</span>: <span class="s">"poindexter@example.com"</span>
+}</pre><div class="dfoot">You didn't allow this · the bot carried on</div></div></div>
+            <div class="note" style="font-style:normal;color:var(--ink3)">+ 16 more steps, scroll inside the list</div>
+            <div class="nolimits">No limits: 24 of 27 steps ran without asking you. <a href="#">Access settings</a></div>
+          </div>
+        </div>
+      </div>
+      <div class="row"><div class="botline">Poindexter (finance) has two open threads: the <b>vendor audit</b> (numbers due Friday) and a claim that the <b>Q3 plan double counts hosting</b>. Kessler says the double count is still open. The audit spreadsheet was too large to fetch, so I used the email text. Summary saved to <b>poindexter-summary.md</b>.</div></div>
+
+      <!-- Turn 3: live (E) -->
+      <div class="row me"><div class="bubble">Draft a reply to Poindexter with the corrected hosting number.</div></div>
+      <div class="row tag" data-tag="E">
+        <div class="group open" data-group>
+          <div class="ghead" role="button" aria-expanded="true" tabindex="0">
+            <span class="dot"></span><span class="phase">Working in Gmail</span><span class="sep">·</span><span id="gt">1:12</span><span class="chev">›</span>
+          </div>
+          <div class="steps">
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Read</span><span class="obj">q3-plan.md lines 40–90</span><span class="grow"></span><span class="dur">0.1s</span><span class="schev">›</span></div></div>
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Ran</span><span class="obj">calc_hosting.py</span><span class="grow"></span><span class="dur">2.4s</span><span class="schev">›</span></div></div>
+            <div class="note">Recomputed the hosting number. Drafting the reply.</div>
+            <div class="step running"><div class="srow"><span class="glyph"><span class="wdots"><i></i><i></i><i></i></span></span><span class="verb">Using Gmail:</span><span class="obj">Create draft</span><span class="grow"></span><span class="dur" id="st">0:42</span><span class="schev">›</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Turn 4: waiting for the owner (F). Under No limits only a wipe card asks. The card is OUTSIDE the group. -->
+      <div class="row me"><div class="bubble">Then clear out the old exports.</div></div>
+      <div class="row tag" data-tag="F">
+        <div class="group" data-group>
+          <div class="ghead" role="button" aria-expanded="false" tabindex="0">
+            <span class="adot"></span><span class="phase amber">Waiting for your OK</span><span class="sep">·</span><span id="wt">0:19</span><span class="chev">›</span>
+          </div>
+          <div class="latest">Clearing the old export folder first.</div>
+          <div class="steps">
+            <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Listed</span><span class="obj">exports</span><span class="grow"></span><span class="dur">0.1s</span><span class="schev">›</span></div></div>
+            <div class="note">Clearing the old export folder first.</div>
+            <div class="step"><div class="srow"><span class="glyph amber">‖</span><span class="verb">Run a command</span><span class="hint">rm -rf ~/exports/old</span><span class="grow"></span><span class="waitw">Waiting for your OK</span><span class="schev">›</span></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="row"><div class="card"><div class="q">Sable wants to delete a folder for good</div><div class="cmd">rm -rf ~/exports/old</div><div class="btns"><span class="b1">Delete it</span><span class="b2">Don't allow</span></div></div></div>
+    </div>
+    <div class="composer"><span>Message Sable…</span><span class="stop">■ Stop</span></div>
+  </section>
+</div>
+<div class="phonewrap">
+  <div class="phone tag" data-tag="H" style="margin-left:26px">
+    <div class="row me"><div class="bubble">Find everything about Poindexter.</div></div>
+    <div class="group open" data-group>
+      <div class="ghead" role="button" aria-expanded="true" tabindex="0"><span class="dot"></span><span class="phase">Searching</span><span class="sep">·</span><span>1:12</span><span class="chev">›</span></div>
+      <div class="steps">
+        <div class="step"><div class="srow"><span class="glyph check">✓</span><span class="verb">Read</span><span class="grow"></span><span class="dur">0.2s</span><span class="schev">›</span><span class="obj">kessler-notes.md</span></div></div>
+        <div class="step open"><div class="srow"><span class="glyph red">✕</span><span class="verb">Used Gmail:</span><span class="grow"></span><span class="failed">Failed</span><span class="schev">›</span><span class="obj">Fetch attachment</span></div>
+          <div class="detail err-detail"><div class="dhead">Response</div><pre>Error 413: attachment is 38 MB; the connected app returns at most 25 MB.</pre></div></div>
+        <div class="step running"><div class="srow"><span class="glyph"><span class="wdots"><i></i><i></i><i></i></span></span><span class="verb">Searching files for</span><span class="grow"></span><span class="dur">0:42</span><span class="schev">›</span><span class="obj">"Poindexter hosting double count"</span></div></div>
+      </div>
+    </div>
+  </div>
+  <div style="max-width:520px;padding-top:8px"><b style="color:var(--ink)">H · phone width (390 px).</b> Same header and words. The object wraps onto its own line instead of being cut, the status word stays on the first line, and an opened detail uses the full width.</div>
+</div>
+<script>
+  // mockup interactions only: open/close groups and rows, tick the live timers
+  document.querySelectorAll('[data-group]>.ghead').forEach(h=>h.addEventListener('click',()=>{const g=h.parentElement;g.classList.toggle('open');h.setAttribute('aria-expanded',g.classList.contains('open'))}));
+  document.querySelectorAll('.step>.srow').forEach(r=>r.addEventListener('click',()=>r.parentElement.classList.toggle('open')));
+  let g=72,s=42,w=19;const f=n=>Math.floor(n/60)+':'+String(n%60).padStart(2,'0');
+  if(location.hash==='#live'){const c=document.getElementById('chat');c.scrollTop=c.scrollHeight}
+  setInterval(()=>{g++;s++;document.getElementById('gt').textContent=f(g);document.getElementById('st').textContent=f(s);w++;document.getElementById('wt').textContent=f(w)},1000);
+</script>
+</body>
+</html>

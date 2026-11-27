@@ -60,7 +60,7 @@ describe("the packaged-addon check covers every export the code calls", () => {
   const covered = new Set([...COMMON, ...WINDOWS_ADDON_FUNCTIONS, ...requiredAddonFunctions("darwin")]);
   it("reads the interface and finds the calls (so the comparison below is not vacuous)", () => {
     expect(members.length).toBeGreaterThan(25);
-    for (const name of ["removeTree", "writers", "fullSync", "bootId", "authenticode", "driveInfo", "processStart", "openFile", "speechVoices"]) expect(called, name).toContain(name);
+    for (const name of ["removeTree", "writers", "fullSync", "bootId", "authenticode", "driveInfo", "processStart", "terminateIfStart", "processPresence", "openFile", "speechVoices"]) expect(called, name).toContain(name);
   });
   it("every addon call server/ and electron/ make is on the check's list (or answered for on every platform)", () => {
     expect(called.filter(name => !covered.has(name)), "called but not asserted in scripts/engine-exclusion-resource.mjs").toEqual([]);

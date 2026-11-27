@@ -60,7 +60,7 @@ Object.assign(ADDED_TABLE_LIFECYCLE, {
 // A legacy inspector cannot read these tables. Only empty scaffolding may leave;
 // retained receipts, exclusions, cleanup and retirement keys must stay intact.
 const SEND_ATTEMPT_TABLES_AFTER_101 = ['send_attempt_bindings','send_actions','send_replay_exclusions','send_replay_epochs','turn_cleanup_owed','send_retirement_keys','retired_send_ids','send_attempts'] as const;
-const SEND_ATTEMPT_INDEXES_AFTER_101 = ['send_attempts_message','send_attempt_bindings_provider','send_attempt_bindings_active','send_actions_replacement_attempt','send_actions_replacement_send','send_replay_exclusions_attempt','send_retirement_keys_active'] as const;
+const SEND_ATTEMPT_INDEXES_AFTER_101 = ['send_attempts_message','send_attempt_bindings_provider','send_attempt_bindings_active','send_actions_replacement_attempt','send_actions_replacement_send','send_replay_exclusions_attempt','send_retirement_keys_active','turn_cleanup_owner_stop'] as const;
 // Send-custody schema owner: tri-s1-rd. Lifecycle registration repair: tri3-g2-e.
 Object.assign(ADDED_TABLE_LIFECYCLE, Object.fromEntries(SEND_ATTEMPT_TABLES_AFTER_101.map(table => [table,
   { kind: 'marker', reason: 'durable send custody, exclusion and retirement metadata; retained with the send, and nonempty custody refuses full downgrade' },

@@ -1,5 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { launchVerificationServer, runControlMurage, type VerificationServer } from "../scripts/control-murage.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
@@ -9,8 +11,8 @@ let owner: Record<string, string>, token: string, bot: { id: string; threadId: s
 let hits = 0;
 const text = "Sales page café 中文 😀 ".repeat(7000) + "Guarantee. Fine print. Checkout. THE_END";
 const evidence: Record<string, unknown> = {};
-async function api(path: string, body: unknown, auth = owner) {
-  const response = await fetch(fixture.info.url + path, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify(body) });
+async function api(path: string, body: unknown, auth = owner, method = "POST") {
+  const response = await fetch(fixture.info.url + path, { method, headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify(body) });
   return { status: response.status, body: await response.json() as any };
 }
 beforeAll(async () => {
@@ -37,10 +39,11 @@ afterAll(async () => {
     await runControlMurage(["interrupt", "--bot", bot.id, "--url", fixture.info.url]);
     evidence.wait = await runControlMurage(["wait", "--bot", bot.id, "--timeout", "30", "--url", fixture.info.url]);
   }
-  mkdirSync(".webread-evidence", { recursive: true });
-  writeFileSync(".webread-evidence/api-fixture.json", JSON.stringify(evidence, null, 2));
+  const evidenceDir = join(tmpdir(), "murage-webread-evidence");
+  mkdirSync(evidenceDir, { recursive: true });
+  writeFileSync(join(evidenceDir, "api-fixture.json"), JSON.stringify(evidence, null, 2));
   await fixture?.close();
-  if (fixture) writeFileSync(".webread-evidence/api-server.log", readFileSync(fixture.info.logPath));
+  if (fixture) writeFileSync(join(evidenceDir, "api-server.log"), readFileSync(fixture.info.logPath));
   await new Promise<void>(done => site?.close(() => done()));
 }, 60_000);
 it("the authenticated reader reconstructs the saved page, validates offsets and never refetches", async () => {
@@ -65,4 +68,33 @@ it("the authenticated reader reconstructs the saved page, validates offsets and 
   expect((await read({ handle: first.body.handle }, "other-bot")).status).toBe(403);
   expect((await read({ handle: first.body.handle, offset: text.length })).body).toMatchObject({ text: "", next_offset: null, eof: true });
   evidence.reads = receipts; evidence.reconstructed = { equal: rebuilt === text, total_length: rebuilt.length, hits, tail: rebuilt.slice(-80) };
+}, 60_000);
+
+it("applies the live web page reading permission to URLs and saved handles", async () => {
+  const read = (input: unknown) => api("/api/internal/web-read", { fromBotId: bot.id, fromThreadId: bot.threadId, input }, { authorization: `Bearer ${token}` });
+  const configure = (patch: Record<string, unknown>) => api("/api/config", { webSearch: patch }, owner, "PUT");
+  const before = await read({ url });
+  expect(before.status).toBe(200);
+  const handle = before.body.handle;
+  const beforeOff = hits;
+  try {
+    expect((await configure({ provider: "off" })).status).toBe(200);
+    for (const input of [{ url }, { handle }]) expect(await read(input)).toMatchObject({ status: 409, body: { error: "Web page reading is off in Settings." } });
+    expect(hits).toBe(beforeOff);
+    expect((await configure({ readEnabled: true })).body.webSearch).toMatchObject({ provider: "off", readEnabled: false });
+    expect((await read({ url })).status).toBe(409);
+    expect((await configure({ provider: "engine" })).body.webSearch.readEnabled).toBe(true);
+    expect((await configure({ readEnabled: false })).body.webSearch.readEnabled).toBe(false);
+    expect((await read({ url })).status).toBe(409);
+    expect((await read({ handle })).status).toBe(409);
+    expect(hits).toBe(beforeOff);
+    expect((await configure({ provider: "off" })).status).toBe(200);
+    expect((await configure({ provider: "engine" })).body.webSearch.readEnabled).toBe(false);
+    expect((await configure({ readEnabled: true })).body.webSearch.readEnabled).toBe(true);
+    expect((await read({ handle })).status).toBe(200);
+    expect((await read({ url })).status).toBe(200);
+    expect(hits).toBe(beforeOff + 1);
+  } finally {
+    await configure({ provider: "engine" });
+  }
 }, 60_000);

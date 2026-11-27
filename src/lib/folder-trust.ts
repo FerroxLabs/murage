@@ -12,6 +12,7 @@ export { folderTrustNotice };
 export function folderTrustLabel(name: string | undefined | null): string | undefined {
   const notice = folderTrustNotice(name);
   if (!notice) return undefined;
+  if (notice.kind === "process") return t("folderTrust.processLabel");
   if (notice.kind === "passed") return t("folderTrust.passedLabel", { key: notice.key! });
   if (notice.kind === "storedNo") return t("folderTrust.storedNoLabel");
   if (notice.kind === "chosen") return t("folderTrust.chosenLabel", { sources: notice.sources });

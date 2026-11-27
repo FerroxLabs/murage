@@ -59,6 +59,61 @@ describe("revert admission and failure handling", () => {
     expect((await call("POST", `/api/skills/${copy}/revert`, {}, async () => null)).status).toBe(200);
   });
 
+  it("forgetting a marked copy on revert leaves a later copy unmarked", async () => {
+    const copy = await copyAndUse(bots, "sample-copy");
+    expect(await call("PUT", `/api/skills/${copy}/every-bot`, { on: true })).toMatchObject({ status: 200, body: { everyBot: true } });
+    expect((await call("POST", `/api/skills/${copy}/revert`)).status).toBe(200);
+    expect((await call("POST", `/api/skills/${original}/duplicate`, { name: "sample-copy" })).status).toBe(201);
+    expect((await call("GET", `/api/skills/${copy}`)).body).toMatchObject({ everyBot: false });
+  });
+
+  it("refuses a revert while Every bot ownership is unreadable without touching any bot's installed revision", async () => {
+    const { existsSync, readdirSync, rmSync, statSync } = await import("node:fs");
+    const { dirname } = await import("node:path");
+    const { everyBotFile } = await import("./skill-every-bot.ts");
+    const { DATA_DIR } = await import("./config.ts");
+    const { workspaceDir } = await import("./workspace.ts");
+    const copy = await copyAndUse(bots, "sample-copy");
+    const name = copy.slice("collection:".length);
+    // An update saved the collection but stopped before reaching the bots:
+    // each bot keeps an older, valid, enabled revision of the copy.
+    const snapshot = collection.getCollectionSkill(name)!;
+    const edited = snapshot.contents.map((file) => file.path === "SKILL.md" ? { ...file, content: file.content.replace("Draft a clear response.", "Draft a newer response.") } : file);
+    expect(collection.updateCollectionSkill({ ...snapshot, contents: edited })).not.toHaveProperty("error");
+    const tree = (root: string, out: Record<string, string> = {}, base = root): Record<string, string> => {
+      for (const entry of readdirSync(root).sort()) {
+        const path = join(root, entry);
+        if (statSync(path).isDirectory()) tree(path, out, base);
+        else out[path.slice(base.length)] = readFileSync(path).toString("base64");
+      }
+      return out;
+    };
+    const state = (botId: string) => ({
+      listing: skills.listSkills(botId),
+      manifest: readFileSync(join(DATA_DIR, "skill-state", botId, "skills.json"), "utf8"),
+      skills: tree(join(workspaceDir(botId), "skills")),
+    });
+    const before = Object.fromEntries(bots.map((bot) => [bot.id, state(bot.id)]));
+    for (const bot of bots) expect(before[bot.id]!.listing).toMatchObject([{ name, source: copy, enabled: true }]);
+    for (const bot of bots) expect(readFileSync(join(workspaceDir(bot.id), "skills", name, "SKILL.md"), "utf8")).not.toContain("Draft a newer response.");
+    const file = everyBotFile();
+    const gate = vi.fn(async () => null);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, "{}");
+    try {
+      expect(await call("POST", `/api/skills/${copy}/revert`, {}, gate)).toMatchObject({ status: 409, body: { code: "every-bot-state-unavailable" } });
+      expect(readFileSync(file, "utf8")).toBe("{}");
+    } finally {
+      rmSync(file, { force: true });
+    }
+    for (const bot of bots) {
+      expect(state(bot.id)).toEqual(before[bot.id]);
+      expect(existsSync(join(workspaceDir(bot.id), "skills", "guide-one"))).toBe(false);
+    }
+    expect(collection.getCollectionSkill(name)?.contents.find((f) => f.path === "SKILL.md")?.content).toContain("Draft a newer response.");
+    expect(gate).not.toHaveBeenCalled();
+  });
+
   it("keeps all copies on their bots when a later original install fails", async () => {
     const copy = await copyAndUse();
     const install = skills.installSkillFromLibrary;

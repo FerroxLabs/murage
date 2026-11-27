@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { currentUserSid, parseDacl, windowsAclRestrict, windowsDirectoryInheritCheck } from '../../server/sentinel/win-acl.ts';
 import { LEDGER_DB, LedgerStore } from '../../server/channels/delivery-ledger-store.ts';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 const native = process.platform === 'win32';
 const skip = native ? false : `needs native Windows ACLs (icacls); this is ${process.platform}`;
@@ -19,7 +20,7 @@ const dacl = (path) => {
   try { icacls(path, '/save', out, '/q'); return parseDacl(readFileSync(out).toString('utf16le').replace(/^\uFEFF/, '')); }
   finally { rmSync(out, { force: true }); }
 };
-test.after(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
+test.after(() => { for (const r of roots) safeWipeSync(r); });
 
 test('an owner-only inheritable folder passes, and the store, -wal and -shm it makes are owner-only', { skip }, async () => {
   const dir = folder(), sid = currentUserSid();

@@ -241,20 +241,20 @@ it("a deny without its write-time receipt still admits cleanup", async () => {
   const { db } = fixture(0);
   transaction(db, () => captureThreadDeletion(db, THREAD));
   await drain(db);
-  db.prepare("DELETE FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation'").run(THREAD, FIRST_LSN);
+  db.prepare("DELETE FROM memory_deny_point WHERE thread_id=? AND lsn=? AND reason='delete-conversation'").run(THREAD, FIRST_LSN);
   const epoch = learningDeletionEpoch(db);
   const foregroundEpoch = scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1");
   transaction(db, () => captureThreadDeletion(db, THREAD));
   expect(learningDeletionEpoch(db)).toBe(epoch + 1);
   expect(scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1")).toBe(foregroundEpoch);
-  expect(db.prepare("SELECT 1 FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation'").get(THREAD, FIRST_LSN)).toBeTruthy();
+  expect(db.prepare("SELECT 1 FROM memory_deny_point WHERE thread_id=? AND lsn=? AND reason='delete-conversation'").get(THREAD, FIRST_LSN)).toBeTruthy();
   await drain(db);
 }, 50_000);
 
 // MEMDEL-SIMPLIFY-109 (memdel r1 High #1): a cleanup this build cannot run as written (a phase it does not know, a row an older build
 // parked, a format it cannot read) is never left unfinished. Across a restart, with the conversation's journal entry long gone and the
 // deletion replayed by the boot reconcile, the runner alone erases its words, and the replay commits no second deletion.
-const RECEIPT = "SELECT reason FROM memory_deny_line WHERE thread_id=? AND lsn=? ORDER BY revoke_id";
+const RECEIPT = "SELECT reason FROM memory_deny_point WHERE thread_id=? AND lsn=? ORDER BY revoke_id";
 const ownJob = (db: DatabaseSync) => db.prepare(`SELECT id,state,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='memory-revocation'
   AND json_extract(intent,'$.thread')=?`).get(THREAD);
 const jobRows = (db: DatabaseSync) => scalar(db, "SELECT count(*) FROM memory_scope_bindings WHERE subject_type='system' AND subject_id='memory-revocation'");

@@ -44,8 +44,9 @@ it("bounds resident vectors by the authorized set despite unrelated retained vec
     expect(first.vectorRows).toBe(1);expect(first.hits.map(row=>row.id)).toEqual(["record-0"]);
     const second=index.search("semantic",[{id:"record-12000",version:1}],[1,0],"model");
     expect(second.vectorRows).toBe(1);expect(second.hits.map(row=>row.id)).toEqual(["record-12000"]);
-    // A genuinely over-limit authorized set still fails closed at the same cap.
-    expect(()=>index.search("semantic",Array.from({length:12001},(_,i)=>({id:`record-${i}`,version:1})),[1,0],"model")).toThrow("MEMORY_SEMANTIC_CAPACITY");
+    // q1022 recallperf item 4 (changed expectation): a set over 12,000 vectors is scored whole, never refused (it used to throw
+    // MEMORY_SEMANTIC_CAPACITY, and the helper then searched by words only).
+    expect(index.search("semantic",Array.from({length:12001},(_,i)=>({id:`record-${i}`,version:1})),[1,0],"model").vectorRows).toBe(12001);
   }finally{db.close();index.close();removeTempDirSync(root);}
 });
 

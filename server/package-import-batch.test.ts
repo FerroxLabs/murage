@@ -110,3 +110,24 @@ describe("package batch preparation seams", () => {
     expect(f.routineEvents).not.toHaveBeenCalled();
   });
 });
+
+it("package publication applies marks only after publish and preserves disabled imported skills", async () => {
+  const { importCollectionSkill } = await import("./skill-collection.ts");
+  const { writeEveryBotMarks } = await import("./skill-every-bot.ts");
+  const { applyEveryBotMarks } = await import("./skills-api.ts");
+  const { installSkill, listSkills } = await import("./skills.ts");
+  const f = fixture();
+  const files = (name: string) => [{ path: "SKILL.md", content: `---\nname: ${name}\ndescription: Friendly notes.\n---\nWrite a greeting.\n` }];
+  for (const name of ["marked-new", "marked-imported"]) expect(importCollectionSkill(files(name), { kind: "file", label: "Fixture" })).not.toHaveProperty("error");
+  writeEveryBotMarks({ "collection:marked-new": { appliedTo: [] }, "collection:marked-imported": { appliedTo: [] } });
+  expect(installSkill(f.added.id, "collection:marked-imported", files("marked-imported"))).not.toHaveProperty("error");
+  const hook = vi.fn((bot: BotRecord, imported?: boolean) => applyEveryBotMarks({ id: bot.id, name: bot.name, canUseSkills: true }, { preserveExisting: imported }));
+  f.store.onBotCreated(hook);
+  const batch = f.store.preparePackageAddition([f.added], [f.group]);
+  expect(hook).not.toHaveBeenCalled();
+  for (const [name, bytes] of batch.files) writeFileSync(join(DATA_DIR, name), bytes);
+  batch.publish();
+  expect(hook).toHaveBeenCalledWith(f.added, true);
+  expect(listSkills(f.added.id).find(skill => skill.name === "marked-new")?.enabled).toBe(true);
+  expect(listSkills(f.added.id).find(skill => skill.name === "marked-imported")?.enabled).toBe(false);
+});

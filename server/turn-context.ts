@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { MESSAGE_ONLY_NOTE, NO_HUMAN_NOTE } from "./memory/fence-recovery.ts";
 import type { BotRow } from "./bot-read.ts";
+import { splitTranscriptAttachments } from "../src/lib/composer-attachments.ts";
 import { assertSendReplayProof, type SendReplayProof } from "./memory/replay-lineage.ts";
 
 /** Which engine wrote an assistant line: the provider instance id and the
@@ -96,7 +97,7 @@ export function engineIsFresh(input: {
   instanceId: string;
   lastInstanceId: string | undefined;
   resumeCursors: Record<string, unknown>;
-  transcript: TranscriptEntry[];
+  transcript: ReadonlyArray<{ role: TranscriptEntry["role"]; engine?: Pick<TranscriptEngine, "instanceId"> }>;
 }): boolean {
   const { instanceId, lastInstanceId, resumeCursors, transcript } = input;
   if (!transcript.some((m) => m.role === "user")) return false;
@@ -140,7 +141,7 @@ export function isLegacyMessageOnlySession(db: DatabaseSync, threadId: string, i
   const noteRow = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(threadId, id);
   if (!noteRow) return false;
   const note = JSON.parse(String(noteRow.json));
-  if (note.role !== "bot" || note.kind !== "activity" || note.murageLine !== true || note.memoryNote !== "without-memory"
+  if (note.role !== "bot" || note.kind !== "activity" || note.murageLine !== true || note.memoryNote !== "without-memory" || note.memoryReplay === true
     || !note.turnId || (note.tool?.name !== MESSAGE_ONLY_NOTE && note.tool?.name !== NO_HUMAN_NOTE)) return false;
   // A note for another provider turn on the same input cannot identify this
   // cursor. Bind it to the first lineage row of the session's starting turn.
@@ -192,7 +193,15 @@ export function runHeaders(transcript: readonly TranscriptEntry[], currentInstan
 export function transcriptForDriver(transcript: readonly TranscriptEntry[], currentInstanceId?: string, replayProof?: SendReplayProof): Array<{ id?: string; role: "user" | "assistant"; text: string; header?: string }> {
   transcript = checkedTranscript(transcript, replayProof);
   const headers = runHeaders(transcript, currentInstanceId);
-  return transcript.map((m, i) => ({ ...(m.id ? { id: m.id } : {}), role: m.role, text: m.text, ...(headers[i] ? { header: headers[i] } : {}) }));
+  return transcript.map((m, i) => ({ ...(m.id ? { id: m.id } : {}), role: m.role, text: replayImageText(m.text), ...(headers[i] ? { header: headers[i] } : {}) }));
+}
+
+/** Annotate only bounded, authorized history, including the rendered replay budget. */
+function replayImageText(text: string): string {
+  return splitTranscriptAttachments(text).images.length
+    ? `[These images were attached to an earlier message. They do not show the current screen.]
+${text}`
+    : text;
 }
 
 function checkedTranscript(transcript: readonly TranscriptEntry[], proof?: SendReplayProof): TranscriptEntry[] {
@@ -266,7 +275,7 @@ export function buildTurnContext(input: TurnContextInput): {
       ...(notice ? [notice] : []),
       "",
       ...transcript.flatMap((m, i) => {
-        const line = `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`;
+        const line = `${m.role === "user" ? "User" : "Assistant"}: ${replayImageText(m.text)}`;
         return headers[i] ? [headers[i]!, line] : [line];
       }),
       "",

@@ -42,7 +42,7 @@ describe("lint", () => {
     expect(result.errors).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.feed.items.map((item: { id: string }) => item.id)).toEqual(["search-mid-call", "flux-slow-2026-10-02"]);
-    expect(result.feed.items[0].image).toBe("https://updates.ferroxlabs.com/murage/images/search-mid-call.webp");
+    expect(result.feed.items[0].image).toBe("https://murage.ai/murage/images/search-mid-call.webp");
     expect(result.summary).toContain("### Search while you talk");
   });
 

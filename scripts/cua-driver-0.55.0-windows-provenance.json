@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "version": "0.55.0",
+  "contractVersion": "0.9.0",
+  "release": "cua-driver-rs-v0.55.0",
+  "sourceCommit": "8f484f30586eef722bede7a5ce315de1148cca96",
+  "checksumsSha256": "5286f927241d1b2179063baa461e9355105aebc65a7254b9b72ad882ccb08336",
+  "sigstoreIdentity": "https://github.com/trycua/cua/.github/workflows/cd-rust-cua-driver.yml@refs/tags/cua-driver-rs-v0.55.0",
+  "sigstoreIssuer": "https://token.actions.githubusercontent.com",
+  "authenticodeSubject": "Cua AI, Inc.",
+  "zips": {
+    "x64": { "name": "cua-driver-rs-0.55.0-windows-x86_64-binary.zip", "sha256": "357b93254183c0e24a501eb9ad3a6e0f3738a67bfed55c0c292959b540d9b4a7", "size": 32550400 },
+    "arm64": { "name": "cua-driver-rs-0.55.0-windows-arm64-binary.zip", "sha256": "ab1515f8893fb8b1acda5a4ffe1d2e97d19a938460d0f5ac7b6e9ed88f37f020" }
+  },
+  "staged": {
+    "x64": {
+      "cua-driver.exe": { "sha256": "4a14438f4ee8ef768da6f4cdcae2403b2e58e78952f3d323cc7ba9615539ed2b", "size": 33300808 },
+      "cua-cursor-theme.exe": { "sha256": "b8565863057f5471c939f65ef0afb9154829c8da0e09c42fcddba8dfbabd7604" }
+    }
+  },
+  "networkImports": { "cua-cursor-theme.exe": "unverified-until-W-R1" }
+}

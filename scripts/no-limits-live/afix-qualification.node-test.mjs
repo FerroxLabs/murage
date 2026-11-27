@@ -1,3 +1,4 @@
+import { evidencePath } from '../evidence-path.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,readFileSync,mkdirSync} from 'node:fs';
@@ -6,7 +7,7 @@ import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
 test('release CLI control passes before the actual non-wipe-card candidate mutant is killed',{timeout:200000},()=>{
- const base=resolve('scripts/no-limits-live/evidence/afix-review');mkdirSync(base,{recursive:true});const out=mkdtempSync(join(base,'cli-contract-'));try{
+ const base=resolve(evidencePath('scripts/no-limits-live/evidence/afix-review'));mkdirSync(base,{recursive:true});const out=mkdtempSync(join(base,'cli-contract-'));try{
   const r=spawnSync(process.execPath,[fileURLToPath(new URL('./qualify-product-mutant.mjs',import.meta.url)),out],{encoding:'utf8',timeout:190000,env:process.env});
   assert.equal(r.status,0,r.stdout+r.stderr);
   const report=JSON.parse(readFileSync(join(out,'verdict.json')));assert.equal(report.killed,true);assert.equal(report.control,true);assert.equal(report.detected,true);

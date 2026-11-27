@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { imageDeliveryOutcome, IMAGE_DELIVERY_PROMPT, sendsInlineImages, unboundImagePolicy } from "./turn-image-dispatch.ts";
+import { imageDeliveryOutcome, IMAGE_DELIVERY_PROMPT, memoryFreeTurnImages, sendsInlineImages, unboundImagePolicy } from "./turn-image-dispatch.ts";
 import { ClaudeDriver } from "./drivers/claude.ts";
 import { CodexDriver } from "./drivers/codex.ts";
 import { PiDriver } from "./drivers/pi.ts";
@@ -106,5 +106,33 @@ describe("imageDeliveryOutcome", () => {
     }
     expect(IMAGE_DELIVERY_PROMPT.mixed).toMatch(/cannot see reached you only as that path/);
     expect(IMAGE_DELIVERY_PROMPT.path).not.toMatch(/already in front of you/);
+  });
+});
+
+// IMGREAD-1020: a turn sent without remembered context still carries the
+// pictures attached to the message it sends, and only those (Astra f212385).
+describe("memoryFreeTurnImages", () => {
+  const a = { mimeType: "image/png", data: "A" }, b = { mimeType: "image/png", data: "B" };
+  const tag = (path: string) => `<attached-image path="${path}" />`;
+  const collected = (...pairs: [typeof a, string][]) => ({ images: pairs.map(([image]) => image), imagePaths: pairs.map(([, path]) => path) });
+  it("keeps the pictures of the owner's raw message the engine is given", () => {
+    expect(memoryFreeTurnImages(collected([a, "/d/attachments/a.png"]), `Look\n\n${tag("/d/attachments/a.png")}`, true)).toEqual([a]);
+  });
+  it("a drained queue sends the last line's own picture and never an earlier line's", () => {
+    // collected from both queued lines; the memory-free turn sends only the last one
+    const both = collected([a, "/d/attachments/a.png"], [b, "/d/attachments/b.png"]);
+    expect(memoryFreeTurnImages(both, `And this\n\n${tag("/d/attachments/b.png")}`, true)).toEqual([b]);
+    expect(memoryFreeTurnImages(both, "And this, no picture", true)).toBeUndefined();
+  });
+  it("a line nobody proved was the owner's carries no picture", () => {
+    expect(memoryFreeTurnImages(collected([a, "/d/attachments/a.png"]), `Look\n\n${tag("/d/attachments/a.png")}`, false)).toBeUndefined();
+  });
+  it("sends none when the turn carries a server frame instead of the person's message", () => {
+    expect(memoryFreeTurnImages(collected([a, "/d/attachments/a.png"]), undefined, true)).toBeUndefined();
+  });
+  it("has nothing to send when nothing was collected", () => {
+    const text = `Look\n\n${tag("/d/attachments/a.png")}`;
+    expect(memoryFreeTurnImages(undefined, text, true)).toBeUndefined();
+    expect(memoryFreeTurnImages(collected(), text, true)).toBeUndefined();
   });
 });

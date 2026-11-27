@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import type { AppConfig } from "../config.ts";
-import { registerArtifact } from "../artifacts.ts";
+import { readArtifact, registerArtifact } from "../artifacts.ts";
 import type { Store } from "../store.ts";
 import type { Audio } from "../tts/elevenlabs.ts";
 import { murageLine } from "../murage-line.ts";
@@ -145,13 +145,19 @@ export async function createVoiceNote(
     } catch {}
     throw error;
   }
+  const storageRoot = join(deps.dataDir, "artifact-files");
+  const access = { owner: true, scopes: [{ botId: input.botId, botName: bot.name, threadId: input.threadId, runId: input.runId, workspaceRoot: directory, managedOutput: true }] };
   const artifact = registerArtifact(
     deps.db,
-    join(deps.dataDir, "artifact-files"),
+    storageRoot,
     { botId: input.botId, threadId: input.threadId, relativePath: name, name: input.title?.trim().slice(0, 120) || `Voice note from ${bot.name}` },
-    { owner: true, scopes: [{ botId: input.botId, botName: bot.name, threadId: input.threadId, runId: input.runId, workspaceRoot: directory, managedOutput: true }] },
+    access,
     { producer: "voice-note", allowManagedOutput: true },
   );
+  // Confirm the verified saved copy, not only registration metadata, before
+  // attaching it or telling the caller it was recorded. This is bounded to
+  // this note's bytes and uses the same integrity check as audio playback.
+  readArtifact(deps.db, storageRoot, artifact.id, access);
   // The words are the bot's own: with a producing turn the row is that turn's engine output (revoking the turn's inputs withholds it like
   // its text reply); with none (a manual replay) it stays a Murage line.
   const row = { role: "bot" as const, kind: "text" as const, text, artifactIds: [artifact.id] };

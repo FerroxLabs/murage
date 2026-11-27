@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Container-only assertions, source-restored mutants, and isolated live fixture.
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync, mkdirSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { resolve, join, relative } from 'node:path';
+import { safeWipeSync } from '../server/testing/safe-wipe.mjs';
 const root = resolve('.'), out = resolve(process.argv[2]), mode = process.argv[3] ?? 'checks';
 const scratch = mkdtempSync(join(tmpdir(), 'release-r6-checks-')); mkdirSync(out, { recursive: true });
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -56,6 +57,6 @@ try {
   }
 } finally {
   writeFileSync(join(out, mode + '-results.json'), JSON.stringify(results, null, 2) + '\n');
-  rmSync(scratch, { recursive: true, force: true });
+  safeWipeSync(scratch);
 }
 console.log(JSON.stringify(results));

@@ -172,7 +172,8 @@ it("words only is reported incomplete while records are waiting for the index, c
   const { access } = accessFor();
   expect((await searchMemory("launch", access, failingBridge(), {allowance: LineageAllowance.tool(1_000_000_000)})).coverageComplete).toBe(false);
   await indexPendingRecords();
-  expect((await searchMemory("launch", access, failingBridge(), {allowance: LineageAllowance.tool(1_000_000_000)})).coverageComplete).toBe(true);
+  // q1022 recallperf item 4 (changed expectation): words only is never complete; the meaning search did not run.
+  expect((await searchMemory("launch", access, failingBridge(), {allowance: LineageAllowance.tool(1_000_000_000)})).coverageComplete).toBe(false);
 });
 
 it("a turn that was stopped still stops the search, and access that went away still refuses it", async () => {

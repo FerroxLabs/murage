@@ -17,6 +17,7 @@
 // skills"). It walks the same cwd → git-root chain the upstream loaders walk.
 // Fuigo's scan stays authoritative for the gate itself: if it gates something
 // this scan did not name, its request still reaches the driver and the card.
+import { buildFolderTrustSnapshot, type FolderTrustIndex } from "./folder-trust-index.ts";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
@@ -323,6 +324,7 @@ export interface FolderTrustScan {
 export interface FolderTrustScanOptions {
   /** Settings must report grants effective for the running trust protocol. */
   trustGeneration?: 1 | 2;
+  upstreamState?: { trusted: boolean; declined: boolean };
   /** The Fuigo home whose `trusted_folders.toml` the engine will read for
    * this turn (`fuigoHomeFromEnv`); null/undefined = do not consult one —
    * a provider-routed turn runs under a per-turn temporary FUIGO_HOME that
@@ -354,9 +356,9 @@ export function scanFolderTrustSources(folder: string, options: FolderTrustScanO
   for (const dir of dirs) for (const name of SKILL_DIRS) if (isDir(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_FILES) if (isFile(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_DIRS) if (isDir(join(dir, name))) hit(name);
-  const upstream = options.fuigoHome ? upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome, options.trustGeneration), folder, options) : null;
+  const upstream = options.upstreamState ? (options.upstreamState.trusted ? true : options.upstreamState.declined ? false : null) : options.fuigoHome ? upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome, options.trustGeneration), folder, options) : null;
   // Legacy grants on generation 2 are ineffective, but they are not a stored no.
-  const declined = upstream === false && (options.trustGeneration !== 2 || (options.fuigoHome && upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome), folder, options) === false));
+  const declined = options.upstreamState ? options.upstreamState.declined : upstream === false && (options.trustGeneration !== 2 || (options.fuigoHome && upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome), folder, options) === false));
   return { key, folder: start, sources, ...(upstream === true ? { upstreamTrusted: true as const } : declined ? { upstreamDeclined: true as const } : {}) };
 }
 
@@ -804,16 +806,35 @@ export class FolderTrustStore {
   private folders = new Map<string, FolderTrustRecord>();
   private readonly file: string;
   private seededFrom: string | undefined;
+  private authorityReadable = true;
+  get readable(): boolean { return this.authorityReadable; }
+  private indexed: FolderTrustIndex | undefined;
+  private rows: Array<{ key: string } & FolderTrustRecord> | undefined;
+  private recordViews = new Map<string, FolderTrustRecordRow[]>();
+
+  index(): FolderTrustIndex { return this.indexed ??= buildFolderTrustSnapshot(this.folders, this.authorityReadable); }
+  snapshot(): FolderTrustIndex { return this.index(); }
+
+  private publish(next: Map<string, FolderTrustRecord>): void {
+    this.recordViews.clear();
+    this.folders = new Map([...next].map(([key, record]) => [key, Object.freeze({ ...record })]));
+    this.indexed = buildFolderTrustSnapshot(next, this.authorityReadable);
+    this.rows = [...next].map(([key, record]) => ({ key, ...record })).sort((a, b) => b.decidedAt - a.decidedAt || a.key.localeCompare(b.key));
+  }
 
   constructor(file: string) {
     this.file = file;
     const parsed = readPersistedJson(file);
-    if (parsed === undefined) return;
+    if (parsed === undefined) { this.publish(this.folders); return; }
     const raw = parsed as Partial<PersistedFolderTrust> | null;
     if (raw && typeof raw === "object" && typeof raw.seededFrom === "string") this.seededFrom = raw.seededFrom;
     const folders = raw && typeof raw === "object" && raw.folders && typeof raw.folders === "object" ? raw.folders : null;
-    if (!folders) return;
-    for (const [key, record] of Object.entries(folders)) if (isRecord(record)) this.folders.set(key, record);
+    if (!folders || Array.isArray(folders)) { this.authorityReadable = false; this.publish(this.folders); return; }
+    for (const [key, record] of Object.entries(folders)) {
+      if (isRecord(record)) this.folders.set(key, record);
+      else this.authorityReadable = false;
+    }
+    this.publish(this.folders);
   }
 
   /** S5 site 12: boot-only inventory matching. Never infer ownership from a path. */
@@ -858,7 +879,7 @@ export class FolderTrustStore {
     const parent = ownedPath(dirname(this.file), { create: false });
     const data: PersistedFolderTrust = { version: 1, folders: Object.fromEntries(next), ...(this.seededFrom ? { seededFrom: this.seededFrom } : {}) };
     writeFileAtomic(join(parent.canonical, basename(this.file)), JSON.stringify(data, null, 2), { mode: 0o600 });
-    this.folders = next;
+    this.publish(next);
     console.warn(`data-dir-rebase kind=folder-trust count=${count} collisions=${collisions}`);
   }
 
@@ -873,15 +894,16 @@ export class FolderTrustStore {
   seedOnce(folders: Iterable<string>, release: string): number {
     if (this.seededFrom) return -1;
     let count = 0;
+    const next = new Map(this.folders);
     const now = Date.now();
     for (const folder of folders) {
       const key = folderTrustKey(folder);
       if (isUnrecordableTrustRoot(key) || this.folders.has(key)) continue;
-      this.folders.set(key, { decision: "trust", decidedAt: now, source: "upgrade", folder: canonicalFolder(folder) });
+      next.set(key, { decision: "trust", decidedAt: now, source: "upgrade", folder: canonicalFolder(folder) });
       count++;
     }
     this.seededFrom = release;
-    this.persist();
+    try { this.commit(next); } catch (error) { this.seededFrom = undefined; throw error; }
     return count;
   }
 
@@ -929,31 +951,28 @@ export class FolderTrustStore {
     // a consent-2 trust. A plain picker record may refresh. FOLDER-PICK-KEEPS-CONSENT.
     const held = source === "picker" ? this.folders.get(key) : undefined;
     if (held && (held.decision === "reject" || held.consent === 2)) return key;
-    const previous = this.folders.get(key);
-    this.folders.set(key, { decision, decidedAt: Date.now(), source, folder: canonicalFolder(folder), ...(options.consent === 2 ? { consent: 2 as const } : {}) });
-    try {
-      this.persist();
-    } catch (error) {
-      if (previous) this.folders.set(key, previous);
-      else this.folders.delete(key);
-      throw error;
-    }
+    const next = new Map(this.folders);
+    next.set(key, { decision, decidedAt: Date.now(), source, folder: canonicalFolder(folder), ...(options.consent === 2 ? { consent: 2 as const } : {}) });
+    this.commit(next);
     return key;
   }
 
   /** Forget every record a lookup for the folder would find. */
   forget(folder: string, options: FolderTrustKeyOptions = {}): boolean {
+    const next = new Map(this.folders);
     let removed = false;
-    for (const key of this.keysFor(folder, options)) removed = this.folders.delete(key) || removed;
-    if (removed) this.persist();
+    for (const key of this.keysFor(folder, options)) removed = next.delete(key) || removed;
+    if (removed) this.commit(next);
     return removed;
   }
 
   /** Forget one stored record by its exact key, whatever folder is asking.
    * Never writes a trust and never touches another key. */
   forgetKey(key: string): boolean {
-    if (!this.folders.delete(key)) return false;
-    this.persist();
+    if (!this.folders.has(key)) return false;
+    const next = new Map(this.folders);
+    next.delete(key);
+    this.commit(next);
     return true;
   }
 
@@ -977,11 +996,42 @@ export class FolderTrustStore {
 
   /** Every record, for the settings surface: key → record. */
   list(): Array<{ key: string } & FolderTrustRecord> {
-    return [...this.folders].map(([key, record]) => ({ key, ...record })).sort((a, b) => b.decidedAt - a.decidedAt);
+    return (this.rows ?? []).map(row => ({ ...row }));
   }
 
-  private persist(): void {
-    const data: PersistedFolderTrust = { version: 1, folders: Object.fromEntries(this.folders), ...(this.seededFrom ? { seededFrom: this.seededFrom } : {}) };
+  /** Explicit Settings browse only. Cursors bind the immutable decision
+   * revision and selected subject; no partial page is the complete store. */
+  page(folder: string, search = '', cursor?: string): { records: FolderTrustRecordRow[]; next: string | null; total: number; revision: string } {
+    const revision = this.snapshot().revision;
+    let offset = 0;
+    if (cursor) {
+      let value: unknown;
+      try { value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); } catch { throw new Error('Invalid saved-answer cursor'); }
+      if (!Array.isArray(value) || value.length !== 4 || value[0] !== revision || value[2] !== folder || value[3] !== search
+        || !Number.isSafeInteger(value[1]) || value[1] < 0) throw new Error('Saved answers changed; refresh the list');
+      offset = value[1];
+    }
+    const query = search.toLocaleLowerCase();
+    const viewKey = JSON.stringify([folder, query]);
+    let rows = this.recordViews.get(viewKey);
+    if (!rows) {
+      rows = folderTrustRecordRows(this.rows ?? [], folder).filter(row => !query || row.key.toLocaleLowerCase().includes(query) || row.folder.toLocaleLowerCase().includes(query)).sort((a, b) => Number(b.onPath) - Number(a.onPath));
+      if (this.recordViews.size >= 8) this.recordViews.delete(this.recordViews.keys().next().value!);
+      this.recordViews.set(viewKey, rows);
+    }
+    const records = rows.slice(offset, offset + 50);
+    return { records, revision, total: rows.length, next: offset + records.length < rows.length
+      ? Buffer.from(JSON.stringify([revision, offset + records.length, folder, search])).toString('base64url') : null };
+  }
+
+  private commit(next: Map<string, FolderTrustRecord>): void {
+    this.persist(next);
+    this.publish(next);
+  }
+
+  private persist(folders = this.folders): void {
+    if (!this.authorityReadable) throw new Error("Saved folder answers need recovery; the original file was preserved");
+    const data: PersistedFolderTrust = { version: 1, folders: Object.fromEntries(folders), ...(this.seededFrom ? { seededFrom: this.seededFrom } : {}) };
     writeFileAtomic(this.file, JSON.stringify(data, null, 2), { mode: 0o600 });
   }
 }

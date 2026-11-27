@@ -1,11 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,appendFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,appendFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {runScenario} from './run.mjs';
 import {fieldStarts} from './field-plan.mjs';
 import {scenarioCommand} from './platform.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 test('cron reads use the owned fixture path on Linux, macOS and Windows',()=>{
  for(const platform of ['linux','darwin','win32']){
   const home=platform==='win32'?'C:\\owned\\home':'/owned/home',cwd=platform==='win32'?'C:\\owned\\work':'/owned/work';
@@ -32,7 +33,7 @@ async function field(outside,missingCompletion=false,wrongInput=false){
   const row=await runScenario({root,data:root,home,work,client:c,gitEnv:{...process.env,GIT_CONFIG_GLOBAL:empty,GIT_CONFIG_SYSTEM:empty},observeRow:async()=>({verdict:'PASS'})},
    {id:'fixture'},{id:'field',actor:'owner',level:'unlimited',expected:'RUN',tool:'Bash',input:{command:'pwd'},outside},{url:'http://fixture.invalid'});
   return {calls,row};
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 }
 test('earlier-turn outside data is read in a completed separate turn',async()=>{
  const {calls,row}=await field('earlier-turn');assert.equal(calls.length,2);assert.match(calls[0],/browser/);assert.doesNotMatch(calls[0],/Use exactly the Bash/);

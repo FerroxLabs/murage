@@ -180,7 +180,7 @@ describe("a prompt pi does not run", () => {
     it.each([
       [`Rejected by the provider with key ${key}`],
       ["Rejected token=/tmp/sk-abcdefghijklmnop/qrstuvwxyzabcdef"],
-      ["Could not read /Users/alex/secret-plans/auth.json"],
+      ["Could not read /Users/exampleuser/secret-plans/auth.json"],
       ["Extension failed, blocking execution: Error: boom"],
       ['{"error":{"message":"bad","code":400}}'],
       ["word ".repeat(200)],

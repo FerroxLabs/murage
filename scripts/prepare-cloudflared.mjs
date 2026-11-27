@@ -44,7 +44,7 @@ export const CLOUDFLARED_ASSETS = Object.freeze({
     binarySha256: "053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0",
     archive: false,
   }),
-  // Cloud homes on the build host CAX (arm64). Release asset digest equals both the
+  // Cloud homes on Hetzner CAX (arm64). Release asset digest equals both the
   // GitHub asset `digest` and the sha256 in the 2026.10.3 release notes.
   "linux-arm64": Object.freeze({
     name: "cloudflared-linux-arm64",

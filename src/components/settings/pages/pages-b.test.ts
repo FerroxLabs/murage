@@ -59,11 +59,11 @@ describe("About and help (page 13)", () => {
 
 describe("Connected apps (page 8)", () => {
   const cards = connectionsCards({ desktop: true, cloud: false });
-  it("lists every registered card once; Simple has the apps and tools cards, Advanced adds bot email, HighLevel and phone calls", () => {
+  it("lists every registered card once; Simple has the apps and tools cards, Advanced adds bot email and Claude Code import", () => {
     expect(pageCardProblems("connections", [...cards, ...channelsCards({ desktop: true })], SETTINGS_CARDS)).toEqual([]);
     expect(ids(visibleCards(cards, "simple").shown)).toEqual(["connections.apps", "connections.mcp"]);
-    expect(visibleCards(cards, "simple").hidden).toBe(4);
-    expect(ids(visibleCards(cards, "advanced").shown)).toEqual(["connections.apps", "connections.bot-email", "connections.mcp", "connections.claude-code", "connections.highlevel", "connections.phone-calls"]);
+    expect(visibleCards(cards, "simple").hidden).toBe(2);
+    expect(ids(visibleCards(cards, "advanced").shown)).toEqual(["connections.apps", "connections.bot-email", "connections.mcp", "connections.claude-code"]);
   });
   it("on a phone keeps every card and its computer-action stub, including app and email readouts", () => {
     for (const card of connectionsCards({ desktop: false, cloud: false })) expect(html(card.render() as never), card.id).toContain("data-settings-stub");
@@ -121,11 +121,11 @@ describe("Connected apps (page 8)", () => {
     expect(out).toContain('id="telegram-settings-title"');
     expect(out).not.toContain('id="slack-app-setup-heading"');
   });
-  it.each([{ desktop: false, cloud: false }, { desktop: true, cloud: true }, { desktop: undefined, cloud: false }])("retains readouts and stubs tools/HighLevel on $desktop/$cloud", (surface) => {
+  it.each([{ desktop: false, cloud: false }, { desktop: true, cloud: true }, { desktop: undefined, cloud: false }])("retains readouts and stubs tools on $desktop/$cloud", (surface) => {
     const remote = connectionsCards(surface);
     expect(html(remote.find((card) => card.id === "connections.apps")!.render() as never)).toContain('data-plugins-embedded="true"');
     expect(html(remote.find((card) => card.id === "connections.bot-email")!.render() as never)).toContain('data-testid="bot-email-readout"');
-    for (const id of ["connections.mcp", "connections.highlevel"]) expect(html(remote.find((card) => card.id === id)!.render() as never)).toContain('data-settings-stub="other-surface"');
+    expect(html(remote.find((card) => card.id === "connections.mcp")!.render() as never)).toContain('data-settings-stub="other-surface"');
   });
   it("shows email state, usage, addresses and stale information without account mutation controls or prices", () => {
     const status: EmailStatusState = { kind: "on", view: {

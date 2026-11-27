@@ -55,7 +55,7 @@ import { diffWarmKey, stableJson, warmKey, type WarmKey } from "./warm-key.ts";
 
 import { DATA_DIR, stripCapturedProviderEnv, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
-import { CODEX_APPROVAL_PIN_ARGS, codexIsolationArgs, codexTurnPolicy, scopedCodexHome } from "./codex-isolation.ts";
+import { CODEX_APPROVAL_PIN_ARGS, CODEX_WINDOWS_SANDBOX_ARGS, codexIsolationArgs, codexTurnPolicy, scopedCodexHome, windowsSandboxSetupFailure, windowsSandboxSetupLine } from "./codex-isolation.ts";
 import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withScopeRetry } from "./scoped-cli-home.ts";
 import {
   CODEX_EXEC_YIELD_MIN, CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexNativeEditCall, codexShellFormArgs,
@@ -76,7 +76,7 @@ import { codexConfigMcpServerNames, externalMcpRecords, mountedMcpServerNames } 
 import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
 import { wakeAwareTimeout } from "../sleep-clock.ts";
 import { humanWaitOpen } from "../harness/human-wait.ts";
-import { createPrewarmGate, createTurnMemory, PrewarmRefused, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
+import { createPrewarmGate, createTurnMemory, PrewarmRefused, spawnInputsOf, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
 import { awaitCliRootClose, awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { enginePathFromEnv, noteEnginePath } from "../outside-scan.ts";
 import type { PrewarmFence } from "../contracts.ts";
@@ -93,7 +93,7 @@ import type {
   SendTurnInput,
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
-import { CodexCatalogUpdateRequired, decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
+import { CodexCatalogUpdateRequired, decodeCodexSelection, OFFICIAL_CODEX_PROVIDER, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 import { codexLocalProviderArgs } from "./local-inject.ts";
 import { withCliMemoryLearning } from "./cli-memory-learning.ts";
 import { fencedSubmit } from "./engine-input.ts";
@@ -107,7 +107,8 @@ import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
 import { extractMcpImages } from "../mcp-tool-images.ts";
-import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { createBoundedLineSplitter } from "./bounded-lines.ts";
+import { LINE_FITTED_NOTICE } from "../owner-turn-caps.ts";
 import { registerIntake } from "../harness/intake.ts";
 import {
   codexNoAnswers,
@@ -197,7 +198,8 @@ interface Conn {
   baseline: Set<number> | null | undefined;
   /** Where the connection's stdout frames go now: the running turn, or the idle handler between turns. One splitter lives as long as the process, so a partial frame or a frame after completion is never lost to a switch. */
   onLine: (line: string) => void;
-  onOverflow: (overflow: any) => void;
+  /** 1.0.21 group B: where a FITTED frame (a line past the string limit, its long strings cut) goes now; unset: `onLine`. */
+  onFit?: (line: string) => void;
   /** Bytes of a frame the splitter has begun but not finished. Non-zero means a frame started under one owner would finish under the next. */
   buffered: () => number;
   /** Plan usage (server/plan-usage.ts): takes this process's account frames before any handler or log sees them. */
@@ -469,7 +471,7 @@ const turnStartTimeoutMs = (): number => Number(process.env.MURAGE_CODEX_RPC_TIM
 export function readCodexLoginMode(text: string): "subscription" | "metered" | "unknown" | "signed-out" {
   if (/^not logged in\b/im.test(text)) return "signed-out";
   if (/^logged in using chatgpt/im.test(text)) return "subscription";
-  if (/^logged in using (an )?api[ -]?key/im.test(text)) return "metered";
+  if (/^(?:logged in using (?:an )?api[ -]?key|api key configured\b)/im.test(text)) return "metered";
   return "unknown";
 }
 
@@ -477,7 +479,7 @@ export function readCodexLoginMode(text: string): "subscription" | "metered" | "
  *  the exit. Undefined when it did not say: a timeout or a crash is not signed out, so a login that is already there cannot pass for a new one. */
 export function readCodexLogin(failed: boolean, text: string): boolean | undefined {
   if (/^not logged in\b/im.test(text)) return false;
-  return !failed && /^logged in\b/im.test(text) ? true : undefined;
+  return !failed && /^(?:logged in|api key configured)\b/im.test(text) ? true : undefined;
 }
 
 /** Only turn-bearing RPCs use the turn's input fence; native answers have their
@@ -485,6 +487,16 @@ export function readCodexLogin(failed: boolean, text: string): boolean | undefin
 export function serializeCodexInput(message: unknown, beforeWrite?: () => void): string {
   const method = (message as { method?: string }).method;
   return engineJsonLine(message, method === "turn/start" || method === "review/start" || method === "thread/compact/start" ? beforeWrite : undefined);
+}
+
+const CODEX_MISSING_LOGIN = /\b(?:missing bearer(?: or basic)? authentication|authentication required|not logged in)\b/i;
+function probeCodexLogin(cli: string, env: NodeJS.ProcessEnv) {
+  return new Promise<{ authenticated: boolean | undefined; mode: ReturnType<typeof readCodexLoginMode> }>((resolve) => {
+    execCli(cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) => {
+      const text = `${stdout}\n${stderr ?? ""}`;
+      resolve({ authenticated: readCodexLogin(Boolean(err), text), mode: readCodexLoginMode(text) });
+    });
+  });
 }
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {
@@ -542,6 +554,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       stripRoutingEnv(env);
       return env;
     };
+    // The number changes on each credential failure, so a stale positive probe cannot clear a newer one.
+    let loginFailure = 0;
+    let confirmedLogin = 0;
     const catalogEnv = childEnv();
     let models = STATIC_CODEX_MODELS;
     let catalogQualified: string | undefined;
@@ -605,7 +620,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       if (r.closing) return Promise.resolve(true);
       r.closing = true;
       reuseStats.closed(why);
-      r.spare?.lost(why === "idle" || why === "activity window" ? "no-send" : why);
+      r.spare?.lost(why === "idle" || why === "activity window" || why === "prewarm unused" ? "no-send" : why);
       if (r.idleTimer) clearTimeout(r.idleTimer);
       r.detachIdle();
       warmPool.release(r);
@@ -667,6 +682,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
      * that asks for a decision, and drop the process if it dies or errs. */
     const attachIdle = (threadId: string, r: Retained) => {
       // The connection's one splitter now feeds this handler.
+      r.conn.onFit = undefined;
       r.conn.onLine = (line) => {
         let msg: any;
         try { msg = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { return; }
@@ -675,7 +691,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // an automatic error answer could resume a retired context.
         void closeRetained(threadId, "permission ask while idle", r);
       };
-      r.conn.onOverflow = () => void closeRetained(threadId, "frame too large while idle", r);
       const onStderr = () => {};
       const onError = () => void closeRetained(threadId, "process error", r);
       const onClose = () => void closeRetained(threadId, "process exited", r);
@@ -726,7 +741,31 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
      * followed), for a takeover to end through its owned process tree. */
     const prewarmChildren = new Map<string, () => ReturnType<typeof spawnCli> | undefined>();
     const emitCapturedSource = emit;
+    /** P-FENCE 2 (presence): the send found this thread's prewarm still starting past its bound, counted from the prewarm's own
+     * start: it is hung. Detach it NOW: its slot leaves `active`, its gate entry ends (abandoned, so its late spawn, park or end
+     * writes nothing back) and its process tree is killed at once. The send then dispatches cold
+     * on a fresh process; it never waits on, takes over or fails because of the prewarm. */
+    const detachPrewarm = (threadId: string, reason: "hung" | "away" = "hung") => {
+      const slot = active.get(threadId);
+      if (slot && prewarmTurnIds.has(slot.turnId)) active.delete(threadId);
+      const child = prewarmChildren.get(threadId)?.();
+      prewarmChildren.delete(threadId);
+      prewarming.abandon(threadId);
+      console.info(`codex prewarm detach thread=${threadId} reason=${reason}`);
+      // its tree is signalled now; the prewarm's own unwind (its start fails when the process goes) confirms the stop as any failed launch does
+      if (child && child.exitCode === null && child.signalCode === null) killCliTree(child);
+    };
+    // P-FENCE 2 (W-PR6 a): the owner went away (lock, sleep, idle): every prewarm of this instance still starting is detached the
+    // same way, so none parks or keeps a process after the away edge
+    const offOwnerAway = warmPool.onOwnerAway(() => {
+      const threads = prewarming.threads();
+      for (const threadId of threads) detachPrewarm(threadId, "away");
+      return threads.length;
+    });
     const sendTurnBody = async (turn: SendTurnInput, entry: GateEntry, turnId: string) => {
+      // the gate token of this prewarm, read before the first await: an abandoned one (P-FENCE 2) writes nothing back
+      const prewarmToken = turn.prewarm ? prewarming.token(turn.threadId) : undefined;
+      const commandCursor = turn.engineCommand && !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
       const mounted = mountedTurn(turn);
       if (mounted) assertRelayAvailable(turn);
       if (turn.prewarm && mounted) throw new Error("MOUNTED_PREWARM_REFUSED");
@@ -746,24 +785,23 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // Reuse catalog qualification before resolving the default or dispatching a replaced executable.
       await gate.step(entry, refreshModels(true));
       turn = { ...turn, cwd: botFolderOrThrow(turn) };
+      const ownLogin = process.env.MURAGE_CLOUD_ROLE !== "home" && !turn.providerRoute
+        && decodeCodexSelection(nativeTurnModel({ driverKind: DRIVER_KIND, models }, turn.model)).modelProvider === OFFICIAL_CODEX_PROVIDER;
+      if (ownLogin && !turn.prewarm && loginFailure !== confirmedLogin) {
+        const failure = loginFailure;
+        const { authenticated } = await gate.step(entry, probeCodexLogin(config.cli, childEnv()));
+        if (failure === loginFailure && authenticated === false && failure !== confirmedLogin) {
+          entry.finish({ ok: false, stopReason: "auth_required", error: { message: "Sign in to Codex to continue.", setup: true } });
+          return { turnId };
+        }
+        if (failure === loginFailure && authenticated === true) confirmedLogin = failure;
+      }
       if (!turn.prewarm) {
         if (turn.background) backgroundThreads.add(turn.threadId); else backgroundThreads.delete(turn.threadId);
-        if (!turn.background) { warmPool.noteUserActivity(); warmPool.sent(turn.threadId); lastTurns.remember(turn.threadId, spawnInputsOf(turn)); }
-        // An intent warm is still starting this thread's engine: take it over, never fail as busy.
-        if (prewarming.has(turn.threadId) && !(await gate.step(entry, prewarming.wait(turn.threadId)))) {
-          // cancel it, wait for its slot, end the process it owns if it will not go: all
-          // within one hard bound, after which this send fails clearly (never "already running")
-          const freed = await gate.step(entry, prewarming.takeOver(turn.threadId, {
-            stop: () => active.get(turn.threadId)?.stop("asked"),
-            child: () => prewarmChildren.get(turn.threadId)?.(),
-            slotBusy: () => active.has(turn.threadId),
-          }));
-          if (!freed) {
-            console.warn(`codex prewarm takeover thread=${turn.threadId} failed=true reason=prewarm did not stop within bound`);
-            if (pre.hit) return cancelledBeforeSlot();
-            throw new Error(TAKEOVER_FAILED_MESSAGE);
-          }
-        }
+        if (!turn.background) { warmPool.noteTurn(turn.warmIdentity, turn.threadId); warmPool.sent(turn.threadId); lastTurns.remember(turn.threadId, spawnInputsOf(turn)); }
+        // An intent warm is still starting this thread's engine: claim it when it is ready (P-FENCE 3: the wait is bounded only
+        // against a hang, counted from the prewarm's own start). Past that it is hung: detach it and run cold now (P-FENCE 2).
+        if (prewarming.has(turn.threadId) && !(await gate.step(entry, prewarming.claim(turn.threadId)))) detachPrewarm(turn.threadId);
       }
       // A process of this thread that would not stop is still owned: nothing new may start
       // beside it until it is confirmed gone.
@@ -774,7 +812,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       }
       } catch (error) {
         // an intent warm has no turn to end: a mark during its model refresh just ends the warm, silently (its events are never heard)
-        if (turn.prewarm && error instanceof GateStopped) { prewarming.end(turn.threadId); gate.leave(entry); return { turnId }; }
+        if (turn.prewarm && error instanceof GateStopped) { prewarming.end(turn.threadId, prewarmToken); gate.leave(entry); return { turnId }; }
         throw error;
       } finally { preSlotStops.delete(pre); }
       // One driver instance serves many threads. Interrupt state belongs to
@@ -787,13 +825,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // settles now rather than after the full wait (U06).
       const stopSignal = new AbortController();
       const { threadId } = turn;
+      // a prewarm detached during its model refresh (P-FENCE 2) never takes the slot back from the send
+      if (turn.prewarm && prewarming.abandoned(prewarmToken)) { gate.leave(entry); return { turnId }; }
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       if (turn.sessionReset || typeof turn.resumeCursor !== "string") settledTotals.delete(threadId);
       let baseline = settledTotals.get(threadId);
       if (turn.prewarm) prewarmTurnIds.add(turnId);
       /** The warm is over: waiting sends may go. The turn id stays silenced until the final
        * event of the warm has been dropped (`forgetPrewarm`). */
-      const endPrewarm = () => { if (turn.prewarm) { prewarmChildren.delete(threadId); prewarming.end(threadId); gate.leave(entry); } };
+      const endPrewarm = () => { if (turn.prewarm) { if (!prewarming.abandoned(prewarmToken)) prewarmChildren.delete(threadId); prewarming.end(threadId, prewarmToken); gate.leave(entry); } };
       const forgetPrewarm = () => { if (turn.prewarm) prewarmTurnIds.delete(turnId); };
       // The dispatch slot is held from here until the turn settles, so nothing
       // that waits before the launch (a settle probe) leaves the thread looking
@@ -866,7 +906,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
        * stop as the engine closing, CLOSE-STOP-1014); the gate decides which at emission. Used at the top of every launch (relaunches
        * included), before the scope and catalog error branches, and before the spawn. */
       const endStoppedLaunch = () => {
-        void closeRetained(threadId, "stop");
+        // a detached prewarm (P-FENCE 2) owns no retained engine: the thread's engine now belongs to the send that detached it
+        if (!(turn.prewarm && prewarming.abandoned(prewarmToken))) void closeRetained(threadId, "stop");
         // by turn id, not by slot: after a retry the entry is a later attempt's handle of this same logical turn
         if (active.get(threadId)?.turnId === turnId) active.delete(threadId);
         entry.finish({ ok: stopAsked, stopReason: stopAsked ? "cancelled" : "exit_before_result" });
@@ -921,6 +962,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // and is refused at spawn (index.ts:2508); it must not half-apply a
         // provider table here that thread/start would never select.
         const launchModel = nativeTurnModel({ driverKind: DRIVER_KIND, models }, turn.model);
+        const ownLogin = process.env.MURAGE_CLOUD_ROLE !== "home" && !turn.providerRoute
+          && decodeCodexSelection(launchModel).modelProvider === OFFICIAL_CODEX_PROVIDER;
+        const noteMissingLogin = (message: string) => {
+          if (ownLogin && !turn.prewarm && CODEX_MISSING_LOGIN.test(message)) loginFailure++;
+        };
         const flux = !turn.providerRoute && fluxIdIsRoutable(launchModel, DRIVER_KIND)
           ? applyFluxSurface(DRIVER_KIND, env, launchModel, fluxKey())
           : null;
@@ -975,6 +1021,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // floor, exactly as the spec says to. Only set for a Flux turn.
           ...(flux?.applied ? ["-c", `model_context_window=${FLUX_CONTEXT_FLOOR}`] : []),
           ...CODEX_TOOL_SURFACE_ARGS,
+          // the unelevated Windows sandbox: no setup helper, no UAC wait (codex-isolation.ts CODEX_WINDOWS_SANDBOX_ARGS)
+          ...(cloudHome ? [] : CODEX_WINDOWS_SANDBOX_ARGS),
           // Codex exposes search and page-open as one native tool. With the
           // Murage mount, use web_search for snippets and web_read for pages.
           ...(turn.integrations?.agents ? ["-c", 'web_search="disabled"'] : []),
@@ -1035,11 +1083,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.phoneJobs) {
           mount("phoneJobs", turn.integrations.phoneJobs, true, "own:phoneJobs");
         }
-        // native HighLevel (HL-S2): pre-approved (OWN_UNASKED); the host grant and Murage's own review card are the gate.
-        if (turn.integrations?.highlevel) {
-          // All family tools reach the host; only it may authorize an operation or send reviewed values.
-          mount("highlevel", turn.integrations.highlevel, true, "own:highlevel");
-        }
         // A custom server named like one in the owner's own config.toml would
         // be MERGED with it by the `-c` override, not replace it: a stdio
         // command over a remote `url` entry is "invalid configuration" and
@@ -1051,7 +1094,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // The servers that actually get mounted, chosen BEFORE any name is
         // allocated: a skipped server must not reserve its name, and a moved
         // server must not land on a sibling's.
-        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs") || (Boolean(turn.integrations?.highlevel) && name === "highlevel"))
+        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs"))
           .map((mount): [string, { command: string; args: string[]; env: Record<string, string> }] => [mount.name, { command: mount.command, args: mount.args, env: mount.env }])
           // Rule 11: a name holding `__` cannot be told apart from its tools,
           // so it is not mounted and no record is written for it.
@@ -1277,8 +1320,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             await gate.step(entry, live.settleCheck);
             live = retained.get(threadId);
           }
-          // Headroom for one more engine: evicts an idle one if needed, never refuses.
-          if (!live) await gate.step(entry, warmPool.beforeSpawn());
+          // Headroom for one more engine: evicts an idle one if needed, never refuses; a prewarm evicts only an unclaimed prewarm, never an owner engine.
+          if (!live) await gate.step(entry, warmPool.beforeSpawn({ speculative: turn.prewarm === true }));
           // A prewarm never starts an engine while Murage removes a deleted conversation from the engine's files (holdIdle).
           if (turn.prewarm && idleHeld > 0 && !live) {
             if (active.get(threadId) === slot) active.delete(threadId);
@@ -1422,6 +1465,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // Final boundary (B4 hole 6): MCP mounting copied server env into `env`; refuse a Flux key now, not before.
             assertFinalEngineEnv(DRIVER_KIND, env, spawnArgs);
             if (turn.prewarm) {
+              // detached before its spawn (P-FENCE 2): a send already owns this thread, so nothing is started for the prewarm
+              if (prewarming.abandoned(prewarmToken)) throw new Error("prewarm detached before its spawn");
               try {
                 turn.launchFence?.(!turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null);
               } catch (error) {
@@ -1451,10 +1496,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (relay) unownedRelayChild = child;
         if (!reuse && hookGate) { const owned = hookGate; child.once("exit", () => owned.close()); }
         // One id counter, one baseline and one frame splitter per process,
-        // across the turns on it. Byte-bounded framing (A4): UTF-8 is decoded
-        // per complete line, so a multibyte character split across reads
-        // stays intact, and one frame never holds more than
-        // ENGINE_FRAME_MAX_BYTES of the shared process.
+        // across the turns on it. Line framing (A4): UTF-8 is decoded per
+        // complete line, so a multibyte character split across reads stays
+        // intact. No frame size limit (MAIN-RULING cause22-no-transport-caps).
         const conn: Conn = reuse?.conn ?? (() => {
           // Plan usage: a native reporter only on the account's own ChatGPT sign-in, off a Cloud home (its native
           // context is qualified by the Cloud owner first), on a Codex that reports every bucket. Otherwise the
@@ -1469,8 +1513,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           });
           child.once("exit", () => account.close());
           child.once("error", () => account.close());
-          const made: Conn = { used: false, nextId: 1, baseline: undefined, onLine: () => {}, onOverflow: () => {}, buffered: () => 0, account };
-          const lines = createBoundedLineSplitter({ onLine: (line) => { if (!account.intercept(line)) made.onLine(line); }, onOverflow: (overflow) => made.onOverflow(overflow) });
+          const made: Conn = { used: false, nextId: 1, baseline: undefined, onLine: () => {}, buffered: () => 0, account };
+          const lines = createBoundedLineSplitter({
+            onLine: (line) => { if (!account.intercept(line)) made.onLine(line); },
+            onFit: (line) => { if (!account.intercept(line)) (made.onFit ?? made.onLine)(line); },
+          });
           made.buffered = () => lines.bufferedBytes;
           child.stdout.on("data", (chunk: Buffer) => lines.push(chunk));
           registerIntake(threadId, child.stdout, child);
@@ -1478,7 +1525,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         })();
         if (!turn.prewarm) conn.used = true;
         const ownsProcess = !reuse;
-        if (turn.prewarm && ownsProcess) prewarmChildren.set(threadId, () => child);
+        if (turn.prewarm && ownsProcess) {
+          // a prewarm detached while it spawned (P-FENCE 2): its process is ended at once and never becomes the thread's prewarm child
+          if (prewarming.abandoned(prewarmToken)) killCliTree(child);
+          else prewarmChildren.set(threadId, () => child);
+        }
         const unsubscribe: Array<() => void> = [];
         const on = <E extends { on(event: any, fn: any): unknown; off(event: any, fn: any): unknown }>(emitter: E, event: string, fn: (...args: any[]) => void) => {
           emitter.on(event, fn);
@@ -1495,6 +1546,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         settled: false,
         lastText: "",
         sawStreamDelta: false,
+        /** a Windows sandbox setup failure was named on this turn (once per turn) */
+        sandboxSetupNamed: false,
         // codex reports token usage as a running THREAD total; the harness
         // wants this turn's figure, so the last report is banked on settle
         total: undefined as { input: number; output: number; cachedInput: number } | undefined,
@@ -1545,7 +1598,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // thread/compact/start answers `{}`: its turn is named only by the
       // notifications that follow, so the first one on this thread names it.
       let adoptFirstTurn = false;
-      let earlyNotificationBytes = 0;
       const earlyNotifications: any[] = [];
       // A tool item Codex announced before its turn/start answer: if the turn then fails to start, that action may already
       // have run (adapted from OpenMausBot 7045f15a1). Kept apart from the buffer, which an invalid answer clears first.
@@ -1647,7 +1699,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // Kept as they are: a refusal or tripwire incident raised before the Stop (refuseUnproven raises none after it), and a
       // process that would not stop. An end that settled before the Stop is untouched (state.settled), so finished work stays finished.
       // CXP: a claimed refusal (turnOwner.fenced, P1) is kept too: a Stop or dispose after the claim never renames the refused end.
-      const stopWins = (stopReason: string | null) => stopRequested && !incidentRaised && !refusal.refused && !turnOwner.fenced && stopReason !== "shutdown_timeout";
+      const commandRefusal = (reason: string | null) => reason === "command_needs_session" || reason === "resume_model_changed";
+      const stopWins = (stopReason: string | null) => stopRequested && !incidentRaised && !refusal.refused && !turnOwner.fenced && stopReason !== "shutdown_timeout" && !commandRefusal(stopReason);
       // CLOSE-STOP-1014: a stop-caused end is the owner's Stop only when someone asked (stopAsked); a stop only dispose made is the
       // engine closing, ended as ACP ends it: one engine-closed error, then ok:false "exit_before_result".
       const stopEnd = (): [boolean, string] => stopAsked ? [true, "cancelled"] : [false, "exit_before_result"];
@@ -1680,7 +1733,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (helpers.grace) clearTimeout(helpers.grace);
         for (const subtask of helpers.tracker.endAll(false)) emit({ ...base(threadId, turnId), type: "turn.subtask", subtask, subtasks: helpers.tracker.snapshot() });
         earlyNotifications.length = 0;
-        earlyNotificationBytes = 0;
         hookGate?.disarm(hookGeneration);
         narrowDenials.endTurn(turnId);
         const approvalsOpen = asks.size;
@@ -1702,10 +1754,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           console.warn(`[codex] unsupported-call check failed: ${error instanceof Error ? error.message : String(error)}`);
         }
         const complete = () => {
-          if (active.get(threadId)?.stop !== stop) return;
+          if (active.get(threadId)?.stop !== stop) {
+            // a detached prewarm (P-FENCE 2) lost its slot to the send: it still leaves the gate and its silenced turn id
+            if (turn.prewarm && prewarming.abandoned(prewarmToken)) { endPrewarm(); forgetPrewarm(); }
+            return;
+          }
           active.delete(threadId);
           endPrewarm();
           if (state.total) settledTotals.set(threadId, state.total);
+          if (ok && !stopRequested) relay?.reportUnavailable(() => base(threadId, turnId), emit);
           // a refusal, a gate incident and a shutdown that did not confirm are the turn's own end under any Stop (Verdict.final)
           entry.finish({
             ok,
@@ -1713,7 +1770,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ...(helperRow ? { helperRow } : {}),
             stopReason: stopReason ?? "",
             // CXP: a claimed refusal is final too: a dispose that only stops the already refused turn does not rename its end to the engine closing
-            ...(incidentRaised || refusal.refused || stopReason === "shutdown_timeout" || stopReason === "memory-refused" ? { final: true as const } : {}),
+            ...(incidentRaised || refusal.refused || stopReason === "shutdown_timeout" || stopReason === "memory-refused" || commandRefusal(stopReason) ? { final: true as const } : {}),
             extra: { ...(stopReason === null ? { stopReason: null } : {}), ...(state.usage ? { usage: state.usage } : {}) },
           });
           forgetPrewarm();
@@ -1745,6 +1802,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           : null;
         // The file is emptied before the process is kept; if it cannot be, the
         // process goes through the normal close path instead.
+        // a detached prewarm (P-FENCE 2) never parks: a send already runs this thread on its own process
+        if (recycle === null && turn.prewarm && prewarming.abandoned(prewarmToken)) recycle = "prewarm detached";
         if (recycle === null) {
           try { cred?.clear(); } catch { recycle = "credential clear failed"; }
         }
@@ -1764,6 +1823,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
        * before the next dispatch may adopt it. */
       const retain = (complete: () => void) => {
         for (const off of unsubscribe.splice(0)) off();
+        // a detached prewarm (P-FENCE 2) never parks, on any path into retain: a send already owns this thread; its tree is signalled
+        if (turn.prewarm && prewarming.abandoned(prewarmToken)) { killCliTree(child); cred?.dispose(); complete(); return; }
         const kept: Retained = {
           child, warm, cred, conn, codexThreadId: codexThreadId!, closing: false, bot: turn.warmIdentity?.botId ?? null,
           detachIdle: () => {},
@@ -1830,23 +1891,23 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           switchingPosture = true;
           waitingPostureBoundary = false;
           try {
-            await gate.step(entry, request("turn/interrupt", { threadId: codexThreadId, turnId: codexTurnId }, 3_000));
+            await gate.step(entry, NotModelRequest("Codex turn interrupt is a control RPC for the current turn.", request("turn/interrupt", { threadId: codexThreadId, turnId: codexTurnId }, 3_000)));
             for (const finish of [...asks.values()]) finish("deny", "Continued at the new level", "system", undefined, undefined, "retire");
             const next = policy();
             turn.beforeSubmit?.();
             codexTurnId = null; awaitingTurnStart = true;
-            await gate.step(entry, gate.launch(entry, () => request("turn/start", { threadId: codexThreadId, ...next,
+            await gate.step(entry, gate.launch(entry, () => registerBusyloopRequestSite(fluxRouteFor(requestUrl), request("turn/start", { threadId: codexThreadId, ...next,
               input: [{ type: "text", text: POSTURE_CONTINUATION }] }, turnStartTimeoutMs(), started => {
               if (!started?.turn?.id) throw new Error("Codex did not acknowledge the changed permission level.");
               codexTurnId = started.turn.id; awaitingTurnStart = false;
               appliedPolicy = next; switchingPosture = false;
               recordPostureAck('codex', instanceId, threadId, turnId, turn.permissionNow?.() ?? turn, 'turn/start');
-              const buffered = earlyNotifications.splice(0); earlyNotificationBytes = 0;
+              const buffered = earlyNotifications.splice(0);
               for (const notification of buffered) {
                 if (abandoned || state.settled) break;
                 handleNotification(notification);
               }
-            })));
+            }))));
           } finally { switchingPosture = false; }
         })); } catch (error) {
           // Stop or a terminal buffered before the start acknowledgement
@@ -1977,7 +2038,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           hookTable.record({ toolUseId, turnId: hookTurnId, decision: "deny", final: true, ...(name ? { name } : {}) });
           return { decision: "deny", reason: "a delivery from an earlier turn" };
         }
-        const route = routeDelivery(delivery, { mounts: mcpMountRecords, project: botFolderOrThrow(turn), noLimits: (turn.permissionNow?.() ?? turn).noLimits });
+        const route = routeDelivery(delivery, { mounts: mcpMountRecords, phoneTurn: turn.releaseBinding?.identity, project: botFolderOrThrow(turn), noLimits: (turn.permissionNow?.() ?? turn).noLimits });
         const issue = (decision: "allow" | "deny", final: boolean, more: { command?: string; cwd?: string; destinations?: string[] } = {}) =>
           hookTable.record({ toolUseId, ...(hookTurnId ? { turnId: hookTurnId } : {}), decision, final, ...(name ? { name } : {}), ...more });
         if (route.route === "deny") { issue("deny", true); return { decision: "deny", reason: route.reason }; }
@@ -2089,16 +2150,16 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if(accept&&(turn.permissionNow?.()??turn).noLimits===true){
             const requestId=hookReleases.get(approvalItem);
             const replay=tool==='edit'?{tool:'edit',input:{fileChanges:params.fileChanges??fileChangeItems.get(approvalItem),cwd:typeof params.cwd==='string'?params.cwd:botFolderOrThrow(turn)}}:tool==='shell'?{tool:'shell',input:{command:params.command,cwd:typeof params.cwd==='string'?params.cwd:botFolderOrThrow(turn)}}: {tool:mcpCallName,input:params?._meta?.tool_params};
-            if(!requestId)return send({jsonrpc:"2.0",id:msg.id,result:isMcpElicitation?{action:"decline"}:{decision:legacy?"denied":"decline"}});
+            if(!requestId)return NotModelRequest("Codex replies to an outstanding hook permission RPC with a fixed decline.", send({jsonrpc:"2.0",id:msg.id,result:isMcpElicitation?{action:"decline"}:{decision:legacy?"denied":"decline"}}));
             if(!releaseAllowed(requestId,undefined,replay)){
-              if(!nativeReleaseHeld({threadId,turnId,requestId,providerInstanceId:instanceId}))return send({jsonrpc:'2.0',id:msg.id,result:isMcpElicitation?{action:'decline'}:{decision:legacy?'denied':'decline'}});
+              if(!nativeReleaseHeld({threadId,turnId,requestId,providerInstanceId:instanceId}))return NotModelRequest("Codex replies to an outstanding hook permission RPC with a fixed decline.", send({jsonrpc:'2.0',id:msg.id,result:isMcpElicitation?{action:'decline'}:{decision:legacy?'denied':'decline'}}));
               // The successful hook is already closed. Keep this actual native
               // RPC waiting on the refreshed card, using a fresh receipt epoch.
               if(!answerTransport.reopen(threadId,requestId))return false;
               const slot:NativeAskSlot={closed:false};
               asks.set(requestId,(behavior,_message,source='user',_answers,extra,mode=source==='user'?'answer':'retire')=>{
                 const frame={jsonrpc:'2.0',id:msg.id,result:isMcpElicitation?{action:behavior==='allow'?'accept':'decline',...(behavior==='allow'?{content:{}}:{})}:{decision:behavior==='allow'?(legacy?'approved':'accept'):legacy?'denied':'decline'}};
-                return deliverNative(slot,mode,JSON.stringify(frame),()=>send(frame),()=>child.stdin.writable&&!child.stdin.destroyed,accepted=>{
+                return deliverNative(slot,mode,JSON.stringify(frame),()=>NotModelRequest("Codex resolves a refreshed hook permission verdict on its outstanding RPC.", send(frame)),()=>child.stdin.writable&&!child.stdin.destroyed,accepted=>{
                   asks.delete(requestId);askClosed();answerTransport.confirm(threadId,requestId,Promise.resolve(accepted));
                   emit({...base(threadId,turnId),type:'request.resolved',requestId,behavior:accepted?behavior:'deny',source:accepted?source:'unavailable'});
                 },()=>behavior!=='allow'||releaseAllowed(requestId,extra?.updatedInput,replay),undefined,e=>{const R=claimFenced(e,'codex.ask.reopened',msg);return R?closeFenced(R,cancelNativeRequest):undefined;});
@@ -2196,7 +2257,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 : { action: source === 'user' ? 'decline' : 'cancel' }
             : isMcpElicitation ? { action: behavior === 'allow' ? 'accept' : 'decline', ...(behavior === 'allow' ? { content: {} } : {}) }
               : { decision: behavior === 'allow' ? (legacy ? 'approved' : 'accept') : legacy ? 'denied' : 'decline' } };
-          return deliverNative(slot, mode, JSON.stringify(frame), () => send(frame),
+          return deliverNative(slot, mode, JSON.stringify(frame), () => registerBusyloopRequestSite(fluxRouteFor(requestUrl), send(frame)),
             () => !child.stdin.destroyed && child.stdin.writable, accepted => {
               asks.delete(requestId); askClosed(); timer?.clear();
               answerTransport.confirm(threadId, requestId, Promise.resolve(accepted));
@@ -2372,16 +2433,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           if (!codexTurnId) {
             if (!awaitingTurnStart) return;
-            // Ordering is not promised by the protocol. Retain only bounded,
-            // identified candidates until the ACK establishes the parent.
-            const bytes = Buffer.byteLength(JSON.stringify(msg));
-            if (earlyNotifications.length >= 256 || earlyNotificationBytes + bytes > 32 * 1024 * 1024) {
-              emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} sent more updates before the turn started than Murage can hold, so the turn was stopped.` });
-              void settle(false, "early_notification_overflow");
-              return;
-            }
+            // Ordering is not promised by the protocol. Retain the identified
+            // candidates until the ACK establishes the parent. MAIN-RULING
+            // cause22-no-transport-caps (1.0.21): no count or size cap on them.
             earlyNotifications.push(msg);
-            earlyNotificationBytes += bytes;
             if (CODEX_ACTING_ITEM_TYPES.has(p.item?.type)) earlyToolActivity = true;
             return;
           }
@@ -2501,6 +2556,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 });
               }
             } else if (["commandExecution", "fileChange", "mcpToolCall", "webSearch"].includes(item.type)) {
+              const sandboxSetup = item.type === "commandExecution" && item.status === "failed" ? windowsSandboxSetupFailure(item.aggregatedOutput) : null;
+              if (sandboxSetup && !state.sandboxSetupNamed) {
+                state.sandboxSetupNamed = true;
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: windowsSandboxSetupLine(sandboxSetup) });
+              }
               emit({
                 ...base(threadId, turnId),
                 type: "item.completed",
@@ -2576,6 +2636,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             if (stopRequested) { void settle(true, "cancelled"); break; }
             const providerError = t.status === "failed" ? cliFluxBudget(registerBusyloopPayloadSite("classify", t.error), budgetRoute) : undefined;
             const terminalMessage = typeof t.error?.message === "string" ? t.error.message.slice(0, 400) : providerError?.fluxDecision ? gatewayBusyLine("Flux", providerError.fluxDecision.reason === "other" ? "busy" : providerError.fluxDecision.reason) : providerError ? "This Flux key has reached its budget." : undefined;
+            if (t.status === "failed" && terminalMessage) noteMissingLogin(terminalMessage);
             if (t.status === "failed" && terminalMessage && (terminalMessage !== lastProviderError || (providerError && !reportedBudget))) {
               emit({ ...base(threadId, turnId), type: "runtime.error", message: terminalMessage, providerError, ...(providerError?.fluxDecision ? {fluxDecision:providerError.fluxDecision,httpStatus:providerError.httpStatus,gatewayResetsAt:providerError.fluxResetsAt} : {}) });
             }
@@ -2593,6 +2654,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               // a provider error while a stopped process dies is part of the Stop, not an error card (STOP1)
               if (message && !stopRequested) {
                 lastProviderError = String(message).slice(0, 400);
+                noteMissingLogin(lastProviderError);
                 reportedBudget ||= Boolean(providerError);
                 emit({ ...base(threadId, turnId), type: "runtime.error", message: lastProviderError, providerError, ...(providerError?.fluxDecision ? {fluxDecision:providerError.fluxDecision,httpStatus:providerError.httpStatus,gatewayResetsAt:providerError.fluxResetsAt} : {}) });
                 if (isFluxTerminal(providerError?.fluxDecision)) void settle(false, "flux_refusal");
@@ -2602,14 +2664,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
       };
 
-      conn.onOverflow = (overflow) => {
-        if (abandoned) return;
-        appendNative(threadId, { dir: "in", source: "codex.app-server", msg: { frameOverflow: overflow } });
-        if (state.settled) return;
-        // CXP: a turn already fenced shows no engine error card; P1 ends it memory-refused
-        if (!turnOwner.fenced) emit({ ...base(threadId, turnId), type: "runtime.error", message: frameOverflowMessage("Codex", overflow) });
-        void settle(false, FRAME_TOO_LARGE);
-      };
       const handleStdoutLine = (line: string) => {
         // a completion earlier in the same read ends the turn: later lines
         // from that read are not this turn's output
@@ -2664,7 +2718,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         return () => cancelled ??= new Promise<boolean>(resolve => {
           if (!(typeof msg.id === "string" && Buffer.byteLength(msg.id) <= 128 || typeof msg.id === "number" && Number.isSafeInteger(msg.id))) return resolve(false);
           const wire = JSON.stringify({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) }) + "\n";
-          try { child.stdin.write(wire, error => resolve(!error)); } catch { resolve(false); /* no resend after possible acceptance */ }
+          try { NotModelRequest("Codex sends the fixed negative retirement reply for an outstanding native request.", child.stdin.write(wire, error => resolve(!error))); } catch { resolve(false); /* no resend after possible acceptance */ }
         });
       };
       // A fenced refusal (r4 J0-5): CLAIM + REGISTER in one sync call, then, only on a driver close win, ONE R.close(composite) whose first
@@ -2712,6 +2766,31 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
 
       conn.onLine = line => emissionSource.run(source, () => handleStdoutLine(line));
+      // 1.0.21 group B (cause22-eng-design3-fable B, AMEND X6): a frame past the string limit, fitted. R1 a server request (an
+      // approval, an elicitation) is never run or shown on cut text: it gets codex's own typed negative answer by its id. R2 any
+      // other frame (thread/start reply, items, turn/completed) goes to the same handler; the live turn is marked and told once
+      // BEFORE it, so a fitted turn/completed still carries the mark. A mark, never a stop.
+      let lineFitNoticed = false;
+      conn.onFit = line => emissionSource.run(source, () => {
+        let msg: any;
+        try { msg = JSON.parse(line); } catch { msg = null; }
+        if (msg && typeof msg === "object" && !Array.isArray(msg) && typeof msg.method === "string" && msg.id !== undefined && msg.id !== null) {
+          const frame = { jsonrpc: "2.0", id: msg.id, ...idleRefusal(msg.method) };
+          try { NotModelRequest("Codex permission reply; no turn/start", send(frame)); }
+          catch (error) { void onDispatchError(error, "codex.dispatch.fit", msg, nativeRequestCanceller(msg)); }
+          return;
+        }
+        if (!state.settled) {
+          markTurnOutside(threadId, "outside tool", undefined, undefined, "codex-line-fitted");
+          if (!lineFitNoticed) {
+            lineFitNoticed = true;
+            const itemId = `line-fit-${turnId}`;
+            emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId, title: LINE_FITTED_NOTICE, toolKind: "notice" });
+            emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
+          }
+        }
+        handleStdoutLine(line);
+      });
       // Stderr received after the last parsed protocol message. Older stderr
       // can name a long-past event (a websocket 426 logged at turn start,
       // echoed when something else later kills the process), so only this
@@ -2930,7 +3009,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // a mark is not a failed resume: it must not start a replacement thread
             if (resumeError instanceof GateStopped) throw resumeError;
             /* The replacement session has no settled total baseline. */
-            settledTotals.delete(threadId);
+            if (commandCursor === null) settledTotals.delete(threadId);
             baseline = undefined;
             replayHistory = true;
           }
@@ -2946,7 +3025,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               // A command is never replayed (replay is skipped for every engine command), so it must not open a new thread: it ends
               // before anything is written and the conversation keeps its thread.
               if (turn.engineCommand) {
-                emit({ ...base(threadId, turnId), type: "runtime.error", message: `The model for this conversation changed. Send a message first, then run /${turn.engineCommand.name} again.` });
                 void settle(false, "resume_model_changed");
                 return;
               }
@@ -2958,6 +3036,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
         }
         if (!codexThreadId) {
+          if (commandCursor !== null) { void settle(false, "command_needs_session"); return; }
           // A blank resume accepts the model owned by that conversation. Only a
           // new thread needs the catalog default (including a saved CLI choice).
           if (!selection.model && !providerBinding) Object.assign(selection, decodeCodexSelection(launchModel));
@@ -3007,6 +3086,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           endPrewarm(); forgetPrewarm();
           return;
         }
+        if (commandCursor !== null && codexThreadId !== commandCursor) { void settle(false, "command_needs_session"); return; }
         emit({ ...base(threadId, turnId), type: "session.started", sessionId: codexThreadId, model: startedModel ?? turn.model ?? null });
         // Codex has no command list of its own to report. Its skills are the
         // live part of the "/" menu (skills/list, codex-cli 0.156); the
@@ -3165,12 +3245,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           awaitingTurnStart = false;
           if (typeof result?.turn?.id !== "string" || !result.turn.id) {
             earlyNotifications.length = 0;
-            earlyNotificationBytes = 0;
             throw new Error(`${ENGINE} did not start the turn.`);
           }
           codexTurnId = result.turn.id;
           const buffered = earlyNotifications.splice(0);
-          earlyNotificationBytes = 0;
           for (const notification of buffered) {
             if (abandoned || state.settled) break;
             handleNotification(notification);
@@ -3244,6 +3322,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // CXG: a turn already fenced (its refusal's close went to the lease, so it is not settled yet) ends memory-refused here: its engine
         // failure is neither retried nor shown as an error card.
         if (turnOwner.fenced) { if (!state.settled) settleFenced(); return; }
+        if (!state.settled) noteMissingLogin(message);
         const pastStartupCap = slowHandshakeRelaunched && attempt > 0 && Date.now() >= startupCapAt;
         if (!state.settled && ownsProcess && !mounted && !turn.prewarm && (!needsAuth || decision) && !submitted && (decision ? !isFluxTerminal(decision) && decision.action !== "PASS" : verdict.transient) && attempt < (decision?.action === "RETRY_ONCE" ? 1 : RETRY_MAX_ATTEMPTS - 1) && state.sawStreamDelta === false && !pastStartupCap) {
           const delayMs = decision ? (typeof decision.wait === "number" ? decision.wait * 1000 : Math.min(20_000, 5_000 * 2 ** attempt)) : computeBackoff(attempt);
@@ -3301,8 +3380,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
    * still runs the warm-key check, so changed settings or MCP config recycle it. */
   const prewarm = async (threadId: string, opts?: { fence?: PrewarmFence }): Promise<boolean> => {
     const mem = lastTurns.get(threadId);
-    if (mem && mountedTurn(mem)) return false; // S1: no mounted intent-prewarm or spare
-    if (driverClosing || idleHeld > 0 || !mem?.warmIdentity || active.has(threadId) || retained.has(threadId) || !prewarming.begin(threadId)) return false;
+    if (mem && mountedTurn(mem)) { console.info("prewarm skipped reason=mounted"); return false; } // S1: no mounted intent-prewarm or spare (logged content-free, presence W-PR3 g)
+    if (driverClosing || idleHeld > 0 || !mem?.warmIdentity || active.has(threadId) || retained.has(threadId)) return false;
+    const token = prewarming.begin(threadId);
+    if (!token) return false;
     const spare = reuseStats.spare();
     startingSpares.set(threadId, spare);
     const finish = () => {
@@ -3312,14 +3393,17 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     try {
       await sendTurn({ ...mem, prewarm: true, background: false, sessionReset: false, ...(opts?.fence ? { launchFence: opts.fence } : {}) });
     } catch {
-      prewarming.end(threadId);
+      prewarming.end(threadId, token);
       finish();
       return false;
     }
-    const ended = await prewarming.wait(threadId);
+    // detached by a send (P-FENCE 2): the thread's engine, if any, is the send's, never this prewarm's
+    if (prewarming.abandoned(token)) { finish(); return false; }
+    const ended = prewarming.current(threadId, token) ? await prewarming.wait(threadId) : true;
     // a start that outlasted the wait is still running: its spare is counted when it ends
-    if (ended) finish(); else void prewarming.settled(threadId).then(finish);
-    return retained.has(threadId);
+    // (and it stays in flight for the pool's pressure checks until then: an owner engine never pays for it)
+    if (ended) finish(); else { warmPool.startStillRunning(threadId); void prewarming.settled(threadId).then(() => { finish(); warmPool.startEnded(threadId); }); }
+    return !prewarming.abandoned(token) && retained.has(threadId);
   };
 
   // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
@@ -3331,12 +3415,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     const probe = snapshotVersionOf(probed.error, probed.stdout);
     if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
     const { version } = probe;
-    const { authenticated, mode } = await new Promise<{ authenticated: boolean | undefined; mode: ReturnType<typeof readCodexLoginMode> }>((resolve) => {
-      execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) => {
-        const text = `${stdout}\n${stderr ?? ""}`;
-        resolve({ authenticated: readCodexLogin(Boolean(err), text), mode: readCodexLoginMode(text) });
-      });
-    });
+    const { authenticated, mode } = await probeCodexLogin(config.cli, env);
     // childEnv drops OPENAI_API_KEY; desktop billing follows the verified CLI login mode. On a home
     // the launcher knows whether an API key (C store) or a ChatGPT sign-in pays for the turns.
     // On a home the probe above runs outside any bot's sign-in store, so it reads "not signed in" even when
@@ -3438,6 +3517,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       },
     },
     dispose: async () => {
+      offOwnerAway();
       // STOP-NONACP-DISPOSE: the mark first, synchronously: every turn in the gate, and any that enters later, ends as the engine closing
       driverClosing = true;
       gate.close();

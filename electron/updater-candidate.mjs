@@ -81,7 +81,7 @@ async function verifyFile(path, expected, cache) {
   } finally { await handle.close(); }
 }
 
-// Pinned electron-updater 6.8.9 publishes these helper fields only after its
+// Pinned electron-updater 6.8.11 publishes these helper fields only after its
 // ordinary checksum/signature download path finishes. Never seed vendor state.
 export async function captureUpdateCandidate(updater, { platform = process.platform, arch = process.arch, downloadedFiles } = {}) {
   const helper = updater.downloadedUpdateHelper;

@@ -2,11 +2,12 @@
 // Owner: integration runner (historical archives and isolated execution).
 // Historical snapshots must be unpacked outside the worktree. Supply their
 // locations with SC_RED_REFS_JSON={"78257357":"/tmp/red/78257357",...}.
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { safeWipeSync } from '../../../server/testing/safe-wipe.mjs';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const argument = process.argv.indexOf('--out');
 if (argument < 0 || !process.argv[argument + 1]) throw Error('An external evidence directory is required');
@@ -99,7 +100,7 @@ for (const [id, revision, file] of cases) {
       row.assertions = kills.map(test=>test.fullName);
     }
   } catch (error) { row.reason = String(error); }
-  finally { rmSync(scratch,{recursive:true,force:true}); }
+  finally { safeWipeSync(scratch, { within: out }); }
   rows.push(row);
   writeFileSync(join(out,'RED-PROOFS.json'),JSON.stringify({pass:rows.every(row=>row.verdict==='ASSERTION_RED'),rows},null,2));
   process.stdout.write(`${id} ${revision} ${row.verdict}\n`);

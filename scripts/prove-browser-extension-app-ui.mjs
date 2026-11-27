@@ -11,6 +11,7 @@ import react from "@vitejs/plugin-react";
 import tailwind from "@tailwindcss/vite";
 import { chromium } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const offlineOnly = process.argv.includes("--offline-only");
 const output = resolve(root, "artifacts/browser-extension/app-ui-" + new Date().toISOString().replace(/[:.]/g,"-"));
 const fixture = join(output,"fixture"); await mkdir(fixture,{recursive:true});
 const stub = join(fixture,"store.ts");
@@ -42,7 +43,7 @@ try{
  browser=await chromium.launchPersistentContext(join(output,'profile'),{headless:true,args:['--remote-debugging-port=0'],viewport:{width:390,height:844}});
  const page=await browser.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
  const require=createRequire(import.meta.url),axe=await readFile(require.resolve('axe-core/axe.min.js'),'utf8');
- if(!process.argv.includes("--offline-only")){
+ if(!offlineOnly){
  for(const width of [390,820,1440]){
   await page.setViewportSize({width,height:900});await page.goto(url);await page.getByText('Connected through Murage for Chrome',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
@@ -60,14 +61,41 @@ try{
  receipt.checks.push({name:'keyboard-profile-selection',pass:true});
  await page.getByRole('button',{name:'Stop',exact:true}).focus();await page.keyboard.press('Enter');await page.getByText('Stopped by you',{exact:true}).waitFor();assert(await page.getByRole('button',{name:'Stop',exact:true}).isDisabled());receipt.checks.push({name:'keyboard-stop',pass:true});
  }
- await page.goto(url+'?mode=offline');await page.getByText('Set up Murage for Chrome',{exact:true}).waitFor();await page.getByRole('combobox',{name:'Browser to connect'}).focus();await page.keyboard.press('b');await page.getByRole('button',{name:'Set up my browser',exact:true}).focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>window.fixtureCalls.some(call=>call.body?.action==='connect'&&call.body.browser==='brave'));await page.screenshot({path:join(output,'offline-390.png'),fullPage:true});receipt.checks.push({name:'offline-connect-explicit-brave',pass:true});
- if(process.argv.includes('--offline-only'))for(const width of [390,820,1440]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);const file=join(output,'offline-'+width+'.png');await page.screenshot({path:file,fullPage:true});receipt.screenshots.push(file);await page.addScriptTag({content:axe});const audit=await page.evaluate(()=>window.axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']}}));assert.equal(audit.violations.filter(v=>['serious','critical'].includes(v.impact)).length,0);await writeFile(join(output,'axe-offline-'+width+'.json'),JSON.stringify(audit,null,2));receipt.checks.push({name:'offline-layout-axe-'+width,pass:true});}
- await page.goto(url+'?mode=error');await page.getByRole('alert').waitFor();assert.equal(await page.getByText('Connected through Murage for Chrome',{exact:true}).count(),0);await page.screenshot({path:join(output,'error-390.png'),fullPage:true});receipt.checks.push({name:'error-truthful-status',pass:true});
+ await page.goto(url+'?mode=offline');
+ await page.getByText('Set up Murage for Chrome',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'I have added it'}).press('Enter');
+ await page.getByRole('button',{name:'Using Edge or Brave? Choose it here'}).press('Enter');
+ await page.getByRole('combobox',{name:'Browser to connect'}).press('b');
+ await page.getByRole('button',{name:'Connect my browser'}).press('Enter');
+ await page.waitForFunction(()=>window.fixtureCalls.some(call=>call.body?.action==='connect'&&call.body.browser==='brave'));
+ await page.screenshot({path:join(output,'offline-390.png'),fullPage:true});
+ receipt.checks.push({name:'offline-connect-explicit-brave',pass:true});
+ if(offlineOnly)for(const width of [390,820,1440]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);const file=join(output,'offline-'+width+'.png');await page.screenshot({path:file,fullPage:true});receipt.screenshots.push(file);await page.addScriptTag({content:axe});const audit=await page.evaluate(()=>window.axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']}}));assert.equal(audit.violations.filter(v=>['serious','critical'].includes(v.impact)).length,0);await writeFile(join(output,'axe-offline-'+width+'.json'),JSON.stringify(audit,null,2));receipt.checks.push({name:'offline-layout-axe-'+width,pass:true});}
+ await page.goto(url+'?mode=error');
+ const connectionPanel = page.getByRole('region',{name:"Mira's browser connection"});
+ await connectionPanel.locator(':scope > [role="alert"]').filter({hasText:'Fixture connection unavailable.'}).waitFor();
+ await page.getByRole('region',{name:'Approved sites'}).getByRole('alert').filter({hasText:'Fixture connection unavailable.'}).waitFor();
+ assert.equal(await page.getByText('Connected through Murage for Chrome',{exact:true}).count(),0);
+ await page.screenshot({path:join(output,'error-390.png'),fullPage:true});
+ receipt.checks.push({name:'error-truthful-status',pass:true});
  assert.deepEqual(errors,[]);receipt.checks.push({name:'console-clean',pass:true});
- const lighthousePath=process.env.MURAGE_LIGHTHOUSE_PATH;
- assert.ok(lighthousePath, 'Set MURAGE_LIGHTHOUSE_PATH to the isolated Lighthouse installation');
- if(!process.argv.includes('--offline-only'))try {await stat(lighthousePath);const {default:lighthouse}=await import(pathToFileURL(lighthousePath).href);const port=Number((await readFile(join(output,'profile/DevToolsActivePort'),'utf8')).split('\n')[0]);const result=await lighthouse(url,{port,output:'json',logLevel:'error',onlyCategories:['performance','accessibility']});await writeFile(join(output,'lighthouse.json'),result.report);receipt.lighthouse={performance:result.lhr.categories.performance.score*100,accessibility:result.lhr.categories.accessibility.score*100};assert(receipt.lighthouse.performance>=90);assert(receipt.lighthouse.accessibility>=95);}
- catch(error){if(error.code==='ENOENT')receipt.lighthouse={pending:'Lighthouse unavailable'};else throw error;}
+ if (!offlineOnly) {
+  const lighthousePath = process.env.MURAGE_LIGHTHOUSE_PATH;
+  assert.ok(lighthousePath, 'Set MURAGE_LIGHTHOUSE_PATH to the isolated Lighthouse installation');
+  try {
+   await stat(lighthousePath);
+   const { default: lighthouse } = await import(pathToFileURL(lighthousePath).href);
+   const port = Number((await readFile(join(output, 'profile/DevToolsActivePort'), 'utf8')).split('\n')[0]);
+   const result = await lighthouse(url, {port, output:'json', logLevel:'error', onlyCategories:['performance','accessibility']});
+   await writeFile(join(output, 'lighthouse.json'), result.report);
+   receipt.lighthouse = {performance:result.lhr.categories.performance.score*100, accessibility:result.lhr.categories.accessibility.score*100};
+   assert(receipt.lighthouse.performance >= 90);
+   assert(receipt.lighthouse.accessibility >= 95);
+  } catch (error) {
+   if (error.code !== 'ENOENT') throw error;
+   receipt.lighthouse = {pending:'Lighthouse unavailable'};
+  }
+ }
  receipt.pass=true;
 }catch(error){receipt.pass=false;receipt.error=error.stack;process.exitCode=1;}
 finally{await browser?.close();await new Promise(resolve=>server.close(resolve));await writeFile(join(output,'review.json'),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));}

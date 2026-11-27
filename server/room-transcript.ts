@@ -16,7 +16,7 @@
 import { filterMemoryReplay, roomReplayWithheld } from "./memory/disclosures.ts";
 import type { MemoryAccess } from "./memory/policy.ts";
 import { database } from "./database.ts";
-import { messageMadeWithMemory, messageSourceForgotten, replayExclusions, threadHoldsMemoryLines, type LineageAllowance } from "./memory/replay-lineage.ts";
+import { messageMadeWithMemory, forgottenMessageSources, replayExclusions, threadHoldsMemoryLines, type LineageAllowance } from "./memory/replay-lineage.ts";
 import { GROUP_CONTEXT_MESSAGES, withholdRoomReplies } from "./room-context.ts";
 import type { Message } from "./store.ts";
 import type { LineageReader, LineageRef, PromptPart } from "./memory/lineage-types.ts";
@@ -59,7 +59,7 @@ export function roomTranscriptForTurn(allowance: LineageAllowance, threadId: str
 
 /** The withheld lines whose own source the owner forgot (the owner's own lines too: 1.0.2 revoke-bounded r3). */
 function forgottenReplies(threadId: string, messages: readonly Message[], withheld: ReadonlySet<string>): Set<string> {
-  return new Set(messages.filter(m => withheld.has(m.id) && messageSourceForgotten(threadId, m.id)).map(m => m.id));
+  return forgottenMessageSources(threadId, messages.filter(m => withheld.has(m.id)).map(m => m.id));
 }
 
 /** The transcript a member reads when memory is not active (capture only,
@@ -95,7 +95,7 @@ export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadI
   const checking = new Set<string>();
   const withheld = replayExclusions(allowance, threadId, candidates, null, { failClosed: true, checking });
   // (a forgotten owner line is already excluded by replayExclusions: 1.0.2 revoke-bounded r3)
-  for (const m of candidates) if (m.role !== "user" && !withheld.has(m.id) && messageSourceForgotten(threadId, m.id)) { withheld.add(m.id); checking.delete(m.id); }
+  for (const id of forgottenMessageSources(threadId, candidates.filter(m => m.role !== "user" && !withheld.has(m.id)).map(m => m.id))) { withheld.add(id); checking.delete(id); }
   // Words nobody proved are the owner's, in the owner's room, with no memory
   // access to check a reply against: no reply made with memory is shown.
   for (const id of unprovenDrop) { withheld.add(id); checking.delete(id); }

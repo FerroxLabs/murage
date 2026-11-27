@@ -6,10 +6,13 @@ import { createMemoryEmailSecrets } from "../testing/email-store-fixture.ts";
 // sibling wait (F8), approved_unsent Retry, expiry (F11), F4, F9, F10, F12, F25; the digest binding (4.3), the email_outcome status key
 // (4.6) and the notification dedupe (section 6).
 import { lookupApproval } from '../decision/index.ts';
+import { database } from "../database.ts";
+import { assertCardAuthorized } from "../decision/records.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 import { serviceQueueFixture } from '../testing/service-queue-fixture.ts';
-import { readMessage } from '../message-db.ts';
+import { branchChain, migrateMailboxMessageBatch, openRequestCardsStatus, readMessage, readThreadAround } from '../message-db.ts';
 import { sanitizeBotDisplayMessage } from '../transcript-page.ts';
-import { Store } from '../store.ts';
+import { Store, type Message } from '../store.ts';
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { FluxEmailClient } from "./flux-email-client.ts";
@@ -38,6 +41,7 @@ let notices: Array<{ kind: string; body: string }>;
 let threads: Set<string>;
 
 beforeEach(() => {
+  database().prepare("DELETE FROM mailbox_sealed_threads WHERE thread_id='t1'").run();
   clock = 1_800_000_000_000;
   fake = new FakeFlux();
   store = new EmailStore(new DatabaseSync(":memory:"));
@@ -48,6 +52,7 @@ beforeEach(() => {
   shown = new Map(); outcomes = []; activity = []; notices = []; threads = new Set(["t1"]);
   let n = 0, m = 0;
   const host: EmailCardHost = {
+    mailboxSealed: threadId => transcript.isMailboxSealed(threadId),
     botName: () => "Juniper",
     threadExists: threadId => threads.has(threadId),
     card: (threadId, requestId) => {
@@ -133,6 +138,89 @@ describe("the card (4.1, 9.3)", () => {
     expect(answer.body.card).toMatchObject({ answered: "allow", options: [], emailSend: { phase: "settled", state: "sent" } });
     expect(outcomes).toEqual([{ threadId: "t1", ref: expect.stringMatching(/^E-[A-Z0-9]{6}$/), outcome: "sent" }]);
     expect(activity).toEqual(["Sent: you pressed Send"]);
+  });
+
+  it("S8b a stale revision cannot dispatch a still-actionable signed email", async () => {
+    await submit();
+    const current = row("send-1");
+    expect(send.pendingApprovals()).toEqual([expect.objectContaining({ ref: "send-1" })]);
+    fake.on("POST", /\/messages$/, sentOk());
+    const result = await cards.resolve("email-send-1", "send", { revision: current.revision - 1, device: "desktop" });
+    expect(result.body).toMatchObject({ outcome: "changed" });
+    expect(row("send-1")).toMatchObject({ state: current.state, revision: current.revision, payloadHash: current.payloadHash });
+    expect(fake.calls("POST", /\/messages$/)).toHaveLength(0);
+  });
+
+  it("keeps a sealed send waiting for proof of the owner's computer", async () => {
+    database().prepare("INSERT INTO mailbox_sealed_threads(thread_id,generation,state) VALUES ('t1',1,'complete')").run();
+    await submit();
+    const current = row("send-1");
+    expect(send.pendingApprovals()).toEqual([expect.objectContaining({ ref: "send-1" })]);
+    fake.on("POST", /\/messages$/, sentOk());
+    const remote = await cards.resolve("email-send-1", "send", { revision: current.revision, device: "desktop" });
+    expect(remote).toMatchObject({ status: 403, body: { code: "mailbox_desktop_only" } });
+    expect(row("send-1").state).toBe(current.state);
+    expect(fake.calls("POST", /\/messages$/)).toHaveLength(0);
+    const local = await cards.resolve("email-send-1", "send", { revision: current.revision, device: "desktop", ownerComputer: true });
+    expect(local.status).toBe(200);
+    expect(fake.calls("POST", /\/messages$/)).toHaveLength(1);
+  });
+
+  it("S8f the real decision guard rejects a changed recipient on a canonical sealed card", async () => {
+    database().prepare("INSERT INTO mailbox_sealed_threads(thread_id,generation,state) VALUES ('t1',1,'complete')").run();
+    await submit();
+    const approval = send.pendingApprovals().find(item => item.ref === "send-1");
+    expect(approval).toBeDefined();
+    const stored = database().prepare(
+      "SELECT json FROM messages WHERE thread_id='t1' AND json_extract(json,'$.card.approvalId')=?",
+    ).get(approval!.approvalId);
+    const canonical = rowToMessage({ json: String(stored?.json) });
+    expect(canonical.card?.emailSend?.draft.to).toEqual(["new@x.test"]);
+    expect(readMessage("t1", canonical.id)).toMatchObject({ sealed: true, text: "Email conversation" });
+    expect(readMessage("t1", canonical.id)?.card).toBeUndefined();
+    expect(() => assertCardAuthorized(database(), "t1", canonical)).not.toThrow();
+    const changed = structuredClone(canonical);
+    changed.card!.emailSend!.draft.to = ["other@mail.example.test"];
+    expect(() => assertCardAuthorized(database(), "t1", changed)).toThrow("card-without-approval");
+  });
+
+  it.each(["pending", "complete"])("projects signed cards in generic indexed reads while seal is %s", async state => {
+    await submit({ subject: "fixture signed subject" });
+    const canonical = transcript.cardForRequest("t1", "send-1")!;
+    expect(canonical.card?.emailSend?.draft.subject).toBe("fixture signed subject");
+    const before = canonical.card;
+    const cold = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
+    const readCard = (rows: Message[] | undefined) => rows?.find(row => row.id === canonical.id);
+    const readers = [
+      () => openRequestCardsStatus("t1", 20).cards.map(card => card.message),
+      () => cold.openCardsOutsideStatus("t1", [{ id: "fixture-page" }]).cards,
+      () => branchChain("t1", canonical.id, 4)?.messages,
+      () => readThreadAround("t1", canonical.id, 4)?.messages,
+      () => cold.branchPage("t1", 4, canonical.id)?.messages,
+      () => cold.messageWindow("t1", canonical.id, 4)?.messages,
+      () => cold.openRequestCardRowsStatus("t1").rows,
+      () => [...cold.openCardsForRequests("t1", ["send-1"]).found.values()],
+    ];
+    for (const read of readers) expect(readCard(read())?.card).toEqual(before);
+    const complete = () => {
+      expect(migrateMailboxMessageBatch("t1").done).toBe(true);
+      database().prepare("UPDATE mailbox_sealed_threads SET state='complete' WHERE thread_id='t1'").run();
+    };
+    transcript.beginMailboxSeal("t1");
+    if (state === "complete") complete();
+    try {
+      for (const read of readers) {
+        const visible = readCard(read());
+        expect.soft(visible).toMatchObject({ id: canonical.id, sealed: true, text: "Email conversation" });
+        expect.soft(visible?.card).toBeUndefined();
+      }
+      expect(readCard(cold.messagesFor("t1"))?.sealed).toBe(true);
+      const decisionCard = cold.cardForRequest("t1", "send-1");
+      expect(decisionCard?.card).toEqual(before);
+      expect(() => assertCardAuthorized(database(), "t1", decisionCard!)).not.toThrow();
+    } finally {
+      if (state === "pending") complete();
+    }
   });
 
   it("F5: a second click (desktop then phone) returns the final state and sends nothing more", async () => {

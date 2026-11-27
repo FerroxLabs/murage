@@ -54,7 +54,7 @@ describe.skipIf(!ON)("recall on a real data copy", () => {
     const n = (sql: string) => Number((db.prepare(sql).get() as any)?.n ?? 0);
     out({ k: "shape", records: n("SELECT count(*) n FROM memory_records"), active: n("SELECT count(*) n FROM memory_records WHERE state='active'"),
       evidence: n("SELECT count(*) n FROM memory_evidence"), sources: n("SELECT count(*) n FROM memory_sources"), scopes: n("SELECT count(*) n FROM memory_scopes"),
-      tombstones: n("SELECT count(*) n FROM memory_tombstones"), denyMemory: n("SELECT count(*) n FROM memory_deny_memory"), messages: n("SELECT count(*) n FROM messages") });
+      tombstones: n("SELECT count(*) n FROM memory_tombstones"), denyMemory: n("SELECT count(*) n FROM memory_deny_object"), messages: n("SELECT count(*) n FROM messages") });
     roster = { bots: list(JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8")), "bots"), groups: list(JSON.parse(readFileSync(join(DATA_DIR, "groups.json"), "utf8")), "groups") };
     const registry = new InternalCapabilities();
     const built: Array<{ access: MemoryAccess; records: number }> = [];

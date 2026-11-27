@@ -2,7 +2,7 @@ import {createRequestIndex} from './request-index.mjs';
 import {declaredRequests} from './declared-requests.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,writeFileSync,appendFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,appendFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nativeOperationEvidence,operationCompleted,availabilityEvidence} from './native-operation-evidence.mjs';
@@ -10,6 +10,7 @@ import {hashInput} from './oracle-class.mjs';
 import {createNdjsonReader} from './ndjson-reader.mjs';
 import {releasePlan} from './fakes/release-plan.mjs';
 import {installBindings} from './bindings.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const input={command:'echo fixture'};
 const start={eventId:'start',type:'item.started',itemType:'tool',provider:'fuigoAgent',providerInstanceId:'fuigo',threadId:'t',turnId:'g',itemId:'shell',toolKind:'execute',title:'echo fixture',input};
 const end={...start,type:'item.completed',ok:true};
@@ -50,7 +51,7 @@ test('H2 missing-input native binding sends the empty form and rejects a populat
   assert.deepEqual(releasePlan(sent).steps,[{kind:'tool',tool:'Bash',input:{}}]);
   assert.equal((await run([start,end])).proof,false);
   assert.equal(availabilityEvidence({tool:'shell',shape:'missing-input'},[empty]),false);
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });
 test('H3 routine wake release instructions retain the peer reply marker',()=>{
  assert.equal(releasePlan('S3_DELEGATE peer').steps[0].input.message,'S3_PEER_REPLY');
@@ -67,7 +68,7 @@ test('M1 append reader parses each row once and keeps partial UTF-8 lines until 
   appendFileSync(file,'{"threadId":"new",');assert.equal(read(['new']).length,0);
   appendFileSync(file,'"value":2}\n');assert.equal(read(['new']).length,1);assert.equal(parsed,2);
   writeFileSync(file,'');assert.deepEqual(read(['old']),[]);
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });
 
 test('H2 native empty approval input is declared only for the missing-command form',()=>{
@@ -89,14 +90,14 @@ test('M1 final surface reads reject incomplete log rows',()=>{
  const root=mkdtempSync(join(tmpdir(),'gnl-r2-partial-'));try{
   const file=join(root,'log.ndjson');writeFileSync(file,'{"threadId":"t"');
   assert.throws(createNdjsonReader(file,{requireComplete:true}),/Incomplete fixture log row/);
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });
 
 test('M1 malformed log rows remain failures on repeated reads',()=>{
  const root=mkdtempSync(join(tmpdir(),'gnl-r2-malformed-'));try{
   const file=join(root,'log.ndjson');writeFileSync(file,'not json\n');
   const read=createNdjsonReader(file);assert.throws(read);assert.throws(read);
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });
 
 test('M1 same-length rewrites invalidate cached rows beyond the suffix checkpoint',()=>{
@@ -106,5 +107,5 @@ test('M1 same-length rewrites invalidate cached rows beyond the suffix checkpoin
   assert.equal(read(['t'])[0].value,'original');
   writeFileSync(file,JSON.stringify({...row,value:'modified'})+'\n');
   assert.equal(read(['t'])[0].value,'modified');
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });

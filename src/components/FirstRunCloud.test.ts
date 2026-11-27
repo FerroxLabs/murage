@@ -16,7 +16,7 @@ vi.mock("@/state/store", () => ({
   useStore: () => ({ state: {}, dispatch: () => {} }),
 }));
 vi.mock("@/lib/use-surface", () => ({ useDesktopSurface: () => true }));
-vi.mock("@/lib/analytics", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
+vi.mock("@/lib/first-run-gate", () => ({ identifyEmail: () => {}, setEmailGateDone: () => {} }));
 
 const { FirstRunCard, cloudPassWanted, cloudPassState, passCloudStep } = await import("./FirstRunCard");
 const { readSetupView, forgetSetupView } = await import("./FirstRunChrome");

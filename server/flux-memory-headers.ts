@@ -1,4 +1,4 @@
-import { fluxRouteFor } from "../shared/flux-route.ts";
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -542,7 +542,7 @@ export function fluxFetch(
   const headers = new Headers(init.headers);
   for (const name of [...headers.keys()]) if (name.toLowerCase().startsWith("x-flux-memory") || isFluxUsageHeader(name)) headers.delete(name);
   for (const [name, value] of Object.entries(fluxCallHeaders(site, usage ? { usage } : {}))) headers.set(name, value);
-  return fetchImpl(input, { ...init, headers });
+  return fetchImpl(fluxRouteFor(input).requestUrl, { ...init, headers });
 }
 
 /** Header record merged for a WebSocket handshake or a hand-built request. */
@@ -570,7 +570,7 @@ export function fuigoConfigOverlay(headers: Record<string, string>, existing?: s
   let base: Record<string, unknown> = {};
   if (existing?.trim()) {
     try {
-      const parsed = JSON.parse(existing) as unknown;
+      const parsed = registerBusyloopPayloadSite("read", JSON.parse(existing)) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>;
     } catch { /* an unreadable inline overlay is replaced */ }
   }
@@ -598,7 +598,7 @@ export function opencodeConfigOverlay(provider: string, headers: Record<string, 
   let base: Record<string, unknown> = {};
   if (existing?.trim()) {
     try {
-      const parsed = JSON.parse(existing) as unknown;
+      const parsed = registerBusyloopPayloadSite("read", JSON.parse(existing)) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>;
     } catch { /* replaced */ }
   }

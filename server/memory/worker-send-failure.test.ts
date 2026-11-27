@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // INTEL-SMOKE-WORKER-EXIT, the controlled half of worker-disconnect-race.test.ts: a failed send is an "error" event on process.
-// A closed channel is expected at a quit and the disconnect handler still closes the index; anything else reaches the log.
+// A closed channel is expected at a quit and the disconnect handler exits without waiting for a seal; anything else reaches the log.
 import { afterEach, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ closed: 0 }));
+const state = vi.hoisted(() => ({ seals: 0 }));
 vi.mock("./embeddings.ts", () => ({ MemoryEmbeddings: class { identity = "fixture"; embed(texts: string[]) { return Promise.resolve(texts.map(() => [1])); } } }));
 vi.mock("./index.ts", () => ({ MemoryIndex: class {
   static async create() { return new this(); }
@@ -15,14 +15,14 @@ vi.mock("./index.ts", () => ({ MemoryIndex: class {
   prepareModel() {}
   purgeRolledCheckpoints() { return { removed: 0, examined: 0, merged: false, done: true }; }
   maintenanceOwed() { return false; }
-  async prepareExit() { state.closed++; }
+  async prepareExit() { state.seals++; return "sealed" as const; }
 } }));
 vi.mock("./eligibility.ts", () => ({ MemoryEligibility: class { pipRecordIds() { return []; } warm() {} close() {} } }));
 
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); vi.restoreAllMocks(); });
 
 async function helper() {
-  vi.resetModules(); state.closed = 0;
+  vi.resetModules(); state.seals = 0;
   const realProcess = process, listeners = new Map<string, (value?: unknown) => void>(), exits: number[] = [];
   const workerProcess = Object.create(realProcess) as NodeJS.Process;
   Object.defineProperties(workerProcess, {
@@ -38,15 +38,15 @@ async function helper() {
 }
 const sendFailure = (code: string) => Object.assign(new Error(`write ${code}`), { code });
 
-it("a report that meets a closed channel is quiet, and disconnect still closes the index and exits 0", async () => {
+it("a report that meets a closed channel is quiet, and disconnect exits 0 without starting an exit seal", async () => {
   const log = vi.spyOn(console, "error").mockImplementation(() => {});
   const { listeners, exits } = await helper();
   for (const code of ["EPIPE", "ECONNRESET", "ERR_IPC_CHANNEL_CLOSED"]) listeners.get("error")!(sendFailure(code));
   expect(log).not.toHaveBeenCalled();
-  expect(state.closed).toBe(0);
+  expect(state.seals).toBe(0);
   listeners.get("disconnect")!();
   await vi.waitFor(() => expect(exits).toEqual([0]));
-  expect(state.closed).toBe(1);
+  expect(state.seals).toBe(0);
 });
 
 it("any other failed send reaches the log", async () => {

@@ -5,7 +5,7 @@
 // the desktop alone, the child gets the recipe's environment, and nothing the child prints reaches the window.
 import { removeTempDir } from "./testing/cleanup.ts";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,11 +19,21 @@ let fixture: VerificationServer;
 let headers: Record<string, string> = {};
 const scratch = mkdtempSync(join(tmpdir(), "signin-api-"));
 const seenEnv = join(scratch, "env.txt");
+const configuredKey = join(scratch, "api-key-configured");
 const cliFile = join(scratch, "fake-codex.cjs");
 const cli = `"${process.execPath}" "${cliFile}"`;
 writeFileSync(cliFile, `
 const fs = require('node:fs');
-if (process.argv.slice(2).join(' ') !== 'login') process.exit(0);
+const command = process.argv.slice(2).join(' ');
+if (command === '--version') {
+  process.stdout.write('codex-cli 0.166.0\\n');
+  process.exit(0);
+}
+if (command === 'login status' && fs.existsSync(${JSON.stringify(configuredKey)})) {
+  process.stderr.write('API key configured - fixture\\n');
+  process.exit(0);
+}
+if (command !== 'login') process.exit(0);
 fs.writeFileSync(${JSON.stringify(seenEnv)}, Object.entries(process.env).map(([key, value]) => key + '=' + value).join('\\n'));
 console.log('1. Open this link\\nhttps://auth.openai.com/codex/device\\n2. Enter this one-time code\\n${CODE}');
 setInterval(() => {}, 1000);
@@ -82,6 +92,15 @@ describe("desktop engine sign-in, real server", () => {
     const reply = await api("POST", "/api/engine-signin-probe", { instanceId: "signin" });
     expect(reply.status).toBe(200);
     expect([true, false, null]).toContain(reply.body.authenticated);
+  });
+
+  it("reports a configured API key from the real Codex probe without starting a login", async () => {
+    writeFileSync(configuredKey, "");
+    try {
+      expect(await api("POST", "/api/engine-signin-probe", { instanceId: "signin" }))
+        .toEqual({ status: 200, body: { authenticated: true, apiKeyConfigured: true } });
+      expect(existsSync(seenEnv)).toBe(false);
+    } finally { unlinkSync(configuredKey); }
   });
 
   it("runs the child on the recipe's environment alone, and nothing it prints reaches the window", async () => {

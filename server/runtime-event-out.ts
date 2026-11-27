@@ -11,6 +11,7 @@
 // An ask goes out as an ALLOWLIST: every field of `request.opened` is named
 // below as out (true) or kept in the server (false), so a field added to the
 // contract later does not compile until someone decides which it is.
+import { requestUsage, coverage, type CacheUsage } from "../shared/prompt-cache-usage.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import { envInfoOf, isExecEnv } from "../shared/mount-identity.ts";
 
@@ -42,6 +43,7 @@ const REQUEST_OPENED_OUT: Record<keyof RequestOpened, boolean> = {
   summary: true,
   choices: true,
   approvalScope: true,
+  ambient: true,
   questionTool: true,
   questions: true,
   folderTrust: true,
@@ -254,7 +256,22 @@ function loggedToolIdentity(identity: unknown): Record<string, string> | undefin
 
 /** The runtime frame a stream gets (live, and the replay buffer that resumes
  * it): a tool's input and result stay out, and an ask goes out allowlisted. */
+function usageOut(given: CacheUsage): CacheUsage {
+  const out = requestUsage(given.input, given.output, given.cachedInput);
+  if (given.usageAccounting === undefined) delete out.usageAccounting;
+  else out.usageAccounting = coverage(given);
+  return out;
+}
+
 export function windowRuntimeEvent(event: RuntimeEvent): RuntimeEvent {
+  if (event.type === "thread.token-usage.updated") {
+    const out: Record<string, unknown> = { ...usageOut(event) };
+    const frame = event as unknown as Record<string, unknown>;
+    for (const key of [...EVENT_ENVELOPE, "generation", "speechDisposition"] as const) {
+      if (Object.hasOwn(frame, key)) out[key] = frame[key];
+    }
+    return out as unknown as RuntimeEvent;
+  }
   // A host refusal is terminal control, not an execution record. Keep the same
   // public completion fields even if a caller accidentally carries private state.
   if (event.type === "turn.completed") {
@@ -263,7 +280,7 @@ export function windowRuntimeEvent(event: RuntimeEvent): RuntimeEvent {
     for (const key of ["generation", "speechDisposition", "type", "eventId", "provider", "providerInstanceId", "threadId", "createdAt", "turnId", "ok", "stopReason", "cost", "charge", "chargePartial", "denials", "toolsUnavailable", "mcpReadiness", "deniedBy"] as const) {
       if (Object.hasOwn(publicEvent, key)) out[key] = publicEvent[key];
     }
-    if (event.usage) out.usage = { input: event.usage.input, output: event.usage.output, ...(event.usage.cachedInput === undefined ? {} : { cachedInput: event.usage.cachedInput }) };
+    if (event.usage) out.usage = usageOut(event.usage);
     return out as unknown as RuntimeEvent;
   }
   if (event.type === "item.started") return { ...withoutCallKey(event), input: undefined };
@@ -521,7 +538,7 @@ const LOGGED_EVENT_FIELDS: Readonly<Record<string, readonly string[]>> = {
   "request.opened": OUT_FIELDS.filter((name) => !(EVENT_ENVELOPE as readonly string[]).includes(name)),
   // decidedBy is never logged (contracts.ts: the Inspector serves it from the decision log)
   "request.resolved": ["behavior", "source", "approvalScope", "folderTrustLate"],
-  "thread.token-usage.updated": ["input", "output", "cachedInput"],
+  "thread.token-usage.updated": [], // Normalized labels own every usage field; never fall back to a rejected raw count.
   "turn.served-model": ["routed", "requested"],
   "runtime.error": ["message", "setup", "authRequired", "claudeUpdate", "errorKind", "engineCode", "limitResetsAt", "localFailure", "localFailureEngine", "providerError", "diagnostic"],
 };
@@ -546,6 +563,8 @@ function loggedEventLabels(e: Record<string, unknown>, type: string): Record<str
     // conversation deletion reads these back (conversation-deletion.ts collectLogSessions via threadSessionLines) to remove the
     // engine's own session: an engine's session handle (an id, or Pi's session file path) and the instance id stay whole
     case "session.started": return { sessionId: e.sessionId === null ? null : sessionHandle(e.sessionId), providerInstanceId: sessionHandle(e.providerInstanceId) };
+    case "thread.token-usage.updated": return { ...usageOut(e as unknown as CacheUsage) };
+    case "turn.completed": return isPlainObject(e.usage) ? { usage: usageOut(e.usage as unknown as CacheUsage) } : {};
     case "turn.retrying": return { reason: "retry" };
     case "session.exited": return { reason: e.reason !== undefined ? "exited" : undefined };
     case "content.delta": return { delta: "" };

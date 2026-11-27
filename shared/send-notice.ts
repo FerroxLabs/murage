@@ -8,7 +8,7 @@
 // own language on every device, and a pack that has not caught up falls back to
 // the English below.
 
-export const SEND_NOTICE_CODES = ["notRecorded", "lateRefused", "notConfirmed", "refused", "toolTurnRefused", "stepTurnRefused"] as const;
+export const SEND_NOTICE_CODES = ["notRecorded", "lateRefused", "notConfirmed", "refused", "toolTurnRefused", "stepTurnRefused", "compactNeedsSession", "commandNeedsSession", "commandModelChanged"] as const;
 export type SendNoticeCode = (typeof SEND_NOTICE_CODES)[number];
 export type NativeTurnNoticeCode = Extract<SendNoticeCode, "toolTurnRefused" | "stepTurnRefused">;
 
@@ -19,6 +19,9 @@ export const SEND_NOTICE_PREFIX = "send-notice:";
 export const SEND_NOTICE_ENGLISH: Record<SendNoticeCode, string> = {
   toolTurnRefused: "I couldn't use that tool on this turn, so I stopped here. Your next message will work as usual.",
   stepTurnRefused: "I couldn't use that step on this turn, so I stopped here. Your next message will work as usual.",
+  compactNeedsSession: "Nothing to compact yet: this chat's engine session is being rebuilt from the conversation. Send a message first, then try /compact again.",
+  commandNeedsSession: "That command runs on the engine's current session, which is being rebuilt. Send a message first, then try it again.",
+  commandModelChanged: "The model for this conversation changed. Send a message first, then run the command again.",
   notRecorded: "Murage couldn't record that message, so nothing was sent. Your words are still in the box. Try again in a moment.",
   lateRefused: "The bot could not take that message in time and a newer one had already gone ahead, so it was not run. Send it again if you still want it.",
   notConfirmed: "This message may not have reached the bot before Murage closed. It was not sent again. Send it again if you still want it.",

@@ -21,7 +21,7 @@ export function FolderTrustRow({ kind, sources, forgetKey, botId, threadId, phon
   const withheld = kind === "withheld";
   // S5a: a decline Murage passed to Fuigo for this folder. Its sentence names the way back itself.
   // A stored no in Fuigo's own store needs no way back here: it is his own answer, kept in his Fuigo.
-  const passed = kind === "passed" ? t("folderTrust.passedLabel", { key: forgetKey ?? "" }) : kind === "storedNo" ? t("folderTrust.storedNoLabel") : null;
+  const passed = kind === "process" ? t("folderTrust.processLabel") : kind === "passed" ? t("folderTrust.passedLabel", { key: forgetKey ?? "" }) : kind === "storedNo" ? t("folderTrust.storedNoLabel") : null;
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const canTrust = withheld && !phone && Boolean(botId && threadId);
   const trust = async () => {
@@ -39,14 +39,15 @@ export function FolderTrustRow({ kind, sources, forgetKey, botId, threadId, phon
         role="status"
         data-testid="folder-trust-row"
         data-folder-trust={kind}
-        title={passed ?? (withheld ? t("folderTrust.withheldDescription") : kind === "chosen" ? t("folderTrust.chosenDescription") : t("folderTrust.lateDescription"))}
+        title={kind === "process" ? t("folderTrust.processDescription") : passed ?? (withheld ? t("folderTrust.withheldDescription") : kind === "chosen" ? t("folderTrust.chosenDescription") : t("folderTrust.lateDescription"))}
         className={`${CHIP} text-ink-secondary`}
       >
         <span className="shrink-0" aria-hidden="true">
-          {withheld || passed ? <ShieldOff size={12} className="opacity-70" /> : <ShieldCheck size={12} className="opacity-70" />}
+          {withheld || (passed && kind !== "process") ? <ShieldOff size={12} className="opacity-70" /> : <ShieldCheck size={12} className="opacity-70" />}
         </span>
         <span className={CHIP_NAME}>
           {passed ?? (withheld ? t("folderTrust.withheldLabel", { sources }) : kind === "chosen" ? t("folderTrust.chosenLabel", { sources }) : t("folderTrust.lateLabel", { sources }))}
+          {kind === "process" && <> {t("folderTrust.processDescription")}</>}
           {forgetKey && !passed ? ` ${t("folderTrust.forgetToAsk", { key: forgetKey })}` : ""}
         </span>
         {canTrust && state !== "done" && (

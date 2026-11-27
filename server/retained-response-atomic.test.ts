@@ -35,7 +35,7 @@ it.each(["before-entry", "at-enqueue", "after-enqueue"] as const)("R1 retained r
   f.f.db.exec("PRAGMA journal_mode=WAL");
   const path = String(f.f.db.prepare("PRAGMA database_list").get()!.file);
   const competitor = new DatabaseSync(path); competitor.exec("PRAGMA busy_timeout=0");
-  const revoke = () => competitor.exec("BEGIN IMMEDIATE; INSERT INTO memory_revoke_audience(revoke_id) VALUES(77); INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('T',1,77,1,'fixture'); COMMIT");
+  const revoke = () => competitor.exec("BEGIN IMMEDIATE; INSERT INTO memory_revoke_audience(revoke_id) VALUES(77); INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('T',1,77,1,'fixture'); COMMIT");
   let frames = 0;
   const stream = new Writable({ write(bytes, _encoding, done) {
     expect(f.f.db.isTransaction, "actual stream enqueue remains under the installation writer lock").toBe(true);

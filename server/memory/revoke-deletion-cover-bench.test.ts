@@ -33,7 +33,7 @@ describe.skipIf(!DB)("conversation deletion drain bench", () => {
     marker.setScopeFlowEdgesRecorded(true); // as index.ts sets it at start
     out({ k: "store", coverOn, knob: Boolean(M.DELETION_COVER), activeBefore: n("SELECT count(*) n FROM memory_revoke_jobs WHERE state IN ('active','seeding')"),
       sources: n("SELECT count(*) n FROM memory_sources"), records: n("SELECT count(*) n FROM memory_records"), carries: n("SELECT count(*) n FROM memory_lineage_carry"),
-      lines: n("SELECT count(*) n FROM memory_line_lineage"), denyMemory: n("SELECT count(*) n FROM memory_deny_memory"), denyLine: n("SELECT count(*) n FROM memory_deny_line") });
+      lines: n("SELECT count(*) n FROM memory_line_lineage"), denyMemory: n("SELECT count(*) n FROM memory_deny_object"), denyLine: n("SELECT count(*) n FROM memory_deny_point") });
     // the threads: every 5th of the top 5N by outgoing carries (thread ids never printed)
     const ranked = db.prepare(`SELECT t.thread_id AS id FROM memory_lineage_carry c JOIN memory_thread_no t ON t.no=c.parent_thread_no
       WHERE t.thread_id NOT LIKE char(1)||'%' GROUP BY c.parent_thread_no ORDER BY count(*) DESC LIMIT ?`).all(5 * JOBS) as Array<{ id: string }>;
@@ -77,14 +77,14 @@ describe.skipIf(!DB)("conversation deletion drain bench", () => {
       if (performance.now() - lastOut > 60_000) {
         lastOut = performance.now();
         out({ k: "progress", virtMin: Math.round(virt() / 60000), realS: Math.round((performance.now() - r0) / 1000), cpuS: Math.round(cpu / 1000), slices, changes: n("SELECT total_changes() n") - c0,
-          active: active(), ours: left, windows: windows(), frontier: n("SELECT count(*) n FROM memory_revoke_frontier"), denyMemory: n("SELECT count(*) n FROM memory_deny_memory"),
+          active: active(), ours: left, windows: windows(), frontier: n("SELECT count(*) n FROM memory_revoke_frontier"), denyMemory: n("SELECT count(*) n FROM memory_deny_object"),
           probe: { ...(M.COVER_PROBE ?? {}) } });
       }
     }
     const changes = n("SELECT total_changes() n") - c0;
     out({ k: "done", coverOn, finished: !marker.markerWorkPending(db), oursLeft: ours(), windowsLeft: windows(), virtMin: +(virt() / 60000).toFixed(1), realS: Math.round((performance.now() - r0) / 1000), cpuS: Math.round(cpu / 1000),
       slices, changes, measuredMB: +(revokeWriteMeter.measuredBytes / 1048576).toFixed(1), chargedMB: +(revokeWriteMeter.charged / 1048576).toFixed(1), bytesPerChange: revokeWriteMeter.measuredChanges ? Math.round(revokeWriteMeter.measuredBytes / revokeWriteMeter.measuredChanges) : null,
-      costPerChange: Math.round(revokeCostPerChange(db)), denyMemory: n("SELECT count(*) n FROM memory_deny_memory"), denyLine: n("SELECT count(*) n FROM memory_deny_line"), denyRange: n("SELECT count(*) n FROM memory_deny_range"),
+      costPerChange: Math.round(revokeCostPerChange(db)), denyMemory: n("SELECT count(*) n FROM memory_deny_object"), denyLine: n("SELECT count(*) n FROM memory_deny_point"), denyRange: n("SELECT count(*) n FROM memory_deny_range"),
       denySession: n("SELECT count(*) n FROM memory_deny_session"), frontier: n("SELECT count(*) n FROM memory_revoke_frontier"), probe: { ...(M.COVER_PROBE ?? {}) }, doneAt });
     setRevokeBudgetClock();
     db.close();

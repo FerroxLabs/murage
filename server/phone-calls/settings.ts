@@ -3,30 +3,12 @@
 //
 // Owner settings, revisions, language and opening for bot phone calls (BOT-CALLS-1020 sections 2, 3c, 3d).
 
+import { SHIPPED_AI_LINE, SHIPPED_NOTICE } from "./shipped-lines.ts";
+
+export { SHIPPED_AI_LINE, SHIPPED_NOTICE } from "./shipped-lines.ts";
+
 export const APP_LANGUAGES = ["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"] as const;
 export type AppLanguage = (typeof APP_LANGUAGES)[number];
-
-/** Shipped default lines, one per app language. `{owner}` is the owner's name. */
-export const SHIPPED_AI_LINE: Record<AppLanguage, string> = {
-  en: "Hi, this is an AI assistant calling for {owner}.",
-  de: "Hallo, hier spricht ein KI-Assistent im Auftrag von {owner}.",
-  es: "Hola, soy un asistente de IA que llama en nombre de {owner}.",
-  fr: "Bonjour, je suis un assistant IA qui appelle pour {owner}.",
-  hi: "नमस्ते, मैं {owner} की ओर से कॉल कर रहा एक AI सहायक हूँ।",
-  ja: "こんにちは、{owner}の代わりにお電話しているAIアシスタントです。",
-  "pt-br": "Olá, sou um assistente de IA ligando em nome de {owner}.",
-  zh: "您好，我是代表{owner}致电的AI助手。",
-};
-export const SHIPPED_NOTICE: Record<AppLanguage, string> = {
-  en: "This call may be recorded.",
-  de: "Dieses Gespräch kann aufgezeichnet werden.",
-  es: "Esta llamada puede ser grabada.",
-  fr: "Cet appel peut être enregistré.",
-  hi: "यह कॉल रिकॉर्ड की जा सकती है।",
-  ja: "この通話は録音される場合があります。",
-  "pt-br": "Esta ligação pode ser gravada.",
-  zh: "本次通话可能会被录音。",
-};
 
 export interface LineSetting { on: boolean; /** Owner edits, stored against one language each (3d). */ edits: Record<string, string> }
 export interface PhoneCallSettings {
@@ -86,7 +68,7 @@ export function callTemplate(settings: PhoneCallSettings): string {
 
 // ---- Revisions (3c): numbered in save order, newest-save-wins, active only once the vendor confirms. ----
 
-export interface Revision { number: number; settings: PhoneCallSettings; assistantId?: string; state: "pending" | "active" | "superseded" }
+export interface Revision { number: number; settings: PhoneCallSettings; assistantId?: string; template?: number; state: "pending" | "active" | "superseded" }
 
 /** What survives a restart: the counter, every revision still known, and the active one (item 4, store.ts saves it). */
 export interface RevisionState { next: number; active: number | null; revisions: Revision[] }

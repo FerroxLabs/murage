@@ -201,11 +201,18 @@ export const OWNER_DECISION_ROUTES = [
  * cloud-desktop join has already been refused without a usable credential;
  * an owner-voice request without one is still forwarded, and the harness then
  * takes only a decline and records the words as unproven. */
+/** Warm presence (designs/WARM-W1-1022-presence.md P-SIG 1a): the composer's warm and typing beats from a phone or a browser
+ * count as the owner's input in Murage only with the launch proof. Low impact: they only warm and hold, no content, no decision. */
+const WARM_INTENT_ROUTES = [
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/warm$/ },
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/typing$/ },
+] as const;
+
 export function launchProofHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
   if (isCloudDesktopJoin(method, path)) return { "x-murage-companion-token": token! };
   const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
   if (usable && (isStreamTicket(method, path) || isCallSourceRoute(method, path))) return { "x-murage-companion-token": token };
-  if (usable && [...OWNER_VOICE_ROUTES, ...OWNER_DECISION_ROUTES].some((route) => route.method === method && route.path.test(path))) return { "x-murage-companion-token": token };
+  if (usable && [...OWNER_VOICE_ROUTES, ...OWNER_DECISION_ROUTES, ...WARM_INTENT_ROUTES].some((route) => route.method === method && route.path.test(path))) return { "x-murage-companion-token": token };
   return {};
 }
 
@@ -236,6 +243,11 @@ export function doorForwardHeaders(token: string | undefined): Record<string, st
   return typeof token === "string" && /^[a-f0-9]{64}$/.test(token) ? { [DOOR_FORWARD_HEADER]: token } : {};
 }
 
+const DEVICE_PRIVATE_READS = [
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/mcp-servers$/ },
+  { method: "GET", path: /^\/api\/threads\/[\w-]+\/skill-switch-review\/[\w-]+$/ },
+] as const;
+
 /** The owner's reads that carry a shared bot's team rows (SPEC-X 12.3):
  * the fleet and the event stream (its snapshot, live frames and replay). The
  * harness fills `sharedRows` only for a caller that proved it is the owner,
@@ -248,6 +260,7 @@ export const DEVICE_OWNER_READS = [
   // All chats and its message search answer only the owner (the device door's own allowlist above still bounds the search)
   { method: "GET", path: /^\/api\/chats$/ },
   { method: "GET", path: /^\/api\/search$/ },
+  ...DEVICE_PRIVATE_READS,
 ] as const;
 
 /** Approve all from the paired phone app (APPROVE-ALL-1016 7.1). The harness takes it only from the desktop app or a
@@ -469,6 +482,7 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "GET", path: /^\/api\/connectors\/catalog$/ },
   { method: "GET", path: /^\/api\/connectors\/connected$/ },
   { method: "GET", path: /^\/api\/connectors$/ },
+  ...DEVICE_PRIVATE_READS,
   // Authorising an account is also absent, for the same reason the DELETE is:
   // binding a Google or Slack account to this machine is a decision that
   // belongs at the keyboard, not on a credential that lives in a pocket.

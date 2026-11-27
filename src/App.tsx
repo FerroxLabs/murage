@@ -11,16 +11,18 @@ import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
 import { CallOverlaySlot } from "@/components/CallControls";
 import { BotCallRing } from "@/components/BotCallRing";
-import { initAnalytics } from "@/lib/analytics";
+import { startupPrivacy } from "@/lib/legacy-analytics-cleanup";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { preloadConnectedApps } from "@/lib/connected-apps-preload";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { StarPrompt } from "@/components/StarPrompt";
 import { UpdateStaleNotice } from "@/components/UpdateStaleNotice";
+import { HighLevelMovedNotice } from "@/components/HighLevelMovedNotice";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { LazyMemoryIntegrityStrip } from "@/components/MemoryIntegrityStripLazy";
 import { CloudUnreachableBanner } from "@/components/cloud/CloudUnreachableBanner";
-import { WorkspaceSwitch } from "@/components/cloud/WorkspaceSwitch";
+import { AppUnderCloud, WorkspaceSwitch } from "@/components/cloud/WorkspaceSwitch";
 import { isCloudHome, isCloudOrigin, notificationBridge } from "@/lib/cloud-workspace";
 import { RemoteConnectionBanner } from "@/components/RemoteConnectionBanner";
 import { FluxKeyProblemBanner } from "@/components/FluxKeyProblemBanner";
@@ -36,7 +38,7 @@ import { FirstRunWelcome } from "@/components/FirstRunWelcome";
 import { StartupPictureWriter } from "@/components/StartupPictureWriter";
 import { pictureHeld } from "@/lib/startup-picture-schedule";
 import { useRefreshSetupOnBotChange, useSetupView } from "@/components/FirstRunChrome";
-import { firstRunOwnsMainView } from "@/lib/first-run";
+import { firstRunActive, firstRunOwnsMainView } from "@/lib/first-run";
 import { settleSendKeyForUpgrade } from "@/lib/send-key";
 import { BotListDrawerProvider, PhoneBotListBar, useBotListDrawer } from "@/components/OpenBotListButton";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
@@ -191,6 +193,9 @@ function Shell() {
   }, [language, configLoaded]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [localVmWorkspaceBotId, setLocalVmWorkspaceBotId] = useState<string | null>(null);
+  // "Cloud home" chosen on the workspace strip: its view stands where the main area is (WorkspaceSwitch.tsx).
+  const [cloudHomeView, setCloudHomeView] = useState(false);
+  const [cloudSlot, setCloudSlot] = useState<HTMLDivElement | null>(null);
   // the Browser tab, expanded into the main column (the small preview in
   // the panel hands off to this and back)
   const [browserWorkspaceBotId, setBrowserWorkspaceBotId] = useState<string | null>(null);
@@ -474,19 +479,24 @@ function Shell() {
       {desktop === true && <LazyMemoryIntegrityStrip />}
       <CloudUnreachableBanner />
       <OwnerExpiredBanner />
-      <WorkspaceSwitch />
+      {/* Only for an owner with Cloud in hand. Its Cloud home view goes in cloudSlot, over the main area; the app stays mounted under it. */}
+      <WorkspaceSwitch macInset={capabilities.windowChrome === "mac-inset"} onViewChange={setCloudHomeView} cloudSlot={cloudSlot} />
       {/* The remote counterpart: a phone or browser whose computer went quiet. */}
       {desktop === false && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
       {/* An owner's browser on a Cloud home counts as the desktop surface, so it needs its own ask. The Cloud window has CloudUnreachableBanner. */}
       {desktop === true && cloudBrowser && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
       {/* The saved Flux key is not one, or Flux refused it: say so, with the fix. */}
       {desktop === true && <FluxKeyProblemBanner />}
+      {/* A connected app to sign in again: a band with the rest, so it never covers the rail or the composer. It can be put away (ReconnectAppsBanner.tsx). */}
+      <ReconnectAppsBanner enabled />
       {/* Only after the door itself said 401 (lib/session-check.ts). */}
       {state.signedOut && <SignedOutCard />}
       {/* UX 1.0.13 band slot: no internet on this device. Bots on the computer keep working; it says what waits. */}
       <OfflineBand connectivity={connectivity} desktop={desktop} />
       {/* The update pop-up is mounted in App, beside the terms gate. */}
       <UpdateStaleNotice />
+      {/* Once, for an owner who had Murage's own HighLevel screen: it now connects through Connected apps. Desktop app only, after the first run. */}
+      <HighLevelMovedNotice ready={desktop === true && !isCloudHome() && Boolean(setupView) && !firstRunActive(setupView) && !setupOwnsView} />
       {/* The first run's phases, as a band ABOVE whatever is in the main view
           rather than on top of it or beside it. It owns its own visibility
           (src/lib/first-run.ts): the server's `view.firstRun` offers it, and
@@ -501,7 +511,10 @@ function Shell() {
       {/* The cached start-up picture (FIRSTRUN-1019 slice B): the next start's tip and the Chief's own face, drawn off screen. Nothing on screen; held while the welcome is up. */}
       {desktop === true && <StartupPictureWriter chiefBotId={setupView?.chiefBotId ?? null} suspended={pictureHeld(setupView ?? null)} />}
       <div className="relative flex min-h-0 flex-1">
+      {/* The Cloud home view's layer: over the rail and the main view (z-20), under the drawer, calls, dialogs, toasts and help (z-30 and up). */}
+      <div ref={setCloudSlot} data-cloud-home-slot="" className={cloudHomeView ? "absolute inset-0 z-20 flex bg-app" : "hidden"} />
       <BotListDrawerProvider value={drawerControl}>
+      <AppUnderCloud covered={cloudHomeView}>
       {/* The "Open bot list" button is not drawn here. Each main view's header
           draws it as the first item of its own row (OpenBotListButton.tsx), so
           it is centred with the name and the ••• instead of floating over
@@ -582,6 +595,7 @@ function Shell() {
           </div>
         </main>
       )}
+      </AppUnderCloud>
       {state.settingsOpen && settingsBot && (
         <LazyOverlay name="bot-settings" kind="window" covers="always" opener={settingsSession.current} holdFocus={false} onRetry={BotSettings.retry} onDismiss={() => dispatch({ type: "toggleSettings", open: false })}>
             {LoadedBotSettings ? <LoadedBotSettings key={settingsBot.id} bot={settingsBot} /> : <BotSettingsDialog key={settingsBot.id} bot={settingsBot} />}
@@ -607,7 +621,6 @@ function Shell() {
             <SettingsModal />
         </LazyOverlay>
       )}
-      <div className="fixed bottom-4 left-4 z-40 max-w-sm"><ReconnectAppsBanner enabled /></div>
       {state.reconnectIncidentId && <ConnectorReconnectDialog key={state.reconnectIncidentId} incidentId={state.reconnectIncidentId} />}
       <NewBotSignInStep />
       {state.pluginsOpen && <LazyOverlay name="plugins" kind="window" covers="always" onRetry={PluginsPanelLazy.retry} onDismiss={() => dispatch({ type: "togglePlugins", open: false })}><PluginsPanel /></LazyOverlay>}
@@ -672,8 +685,10 @@ export default function App() {
   // Its answer is the server's `view.firstRun`, which no phone's empty
   // localStorage can get wrong, and it is still withheld on `undefined`.
   const desktop = useDesktopSurface();
+  // Murage sends no usage analytics; an upgraded install drops what the old
+  // client stored (src/lib/legacy-analytics-cleanup.ts).
   useEffect(() => {
-    initAnalytics();
+    startupPrivacy();
   }, []);
   // One listener for the whole app: publishes --vvh/--kb/data-keyboard on
   // <html> so #root tracks the visual viewport instead of the layout viewport.
@@ -692,6 +707,8 @@ export default function App() {
         {/* The update pop-up (above the sidebar footer once it mounts; a top-layer popover inside an open modal window). Beside the gate, not behind it: an update that downloads
             while the terms screen is up still shows, and it sends nothing. It renders nothing without the updater bridge. */}
         <UpdateBanner />
+        {/* A quiet ask for a GitHub star: local counts only, owner's own computer only (lib/star-prompt.ts). */}
+        <StarPrompt />
         {/* A CONFIRMED remote surface only. The desktop app is already an app;
             `undefined` renders nothing, the same neutral answer the welcome
             gate above takes. */}

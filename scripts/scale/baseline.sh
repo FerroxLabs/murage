@@ -2,7 +2,7 @@
 # Copyright 2026 Ferrox Labs
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# ONE command: BASELINE.md for a tree, measured on build-host (extreme shape, overloaded machine).
+# ONE command: BASELINE.md for a tree, measured on hetzner-dsm (extreme shape, overloaded machine).
 #   scripts/scale/baseline.sh <label> <commit> [pr|extreme] [extra docker -e flags...]
 # Launches the rig (hz-scale.sh), waits with ONE blocking ssh until the log ends with REALEXIT=,
 # copies the results back and writes BASELINE-<label>.md (every SCALE-PLAN section 2 budget with
@@ -10,7 +10,7 @@
 # Exit code: 0 all budgets pass, 1 any FAIL, 2+ rig error. Generation is cached per commit, so a
 # repeat run of the same commit skips the 1.5 to 2 hour generation step.
 set -u
-RIG_HOST=${RIG_HOST:-build-host}   # any ssh host with the rig layout (see README, "Other hosts")
+RIG_HOST=${RIG_HOST:-hetzner-dsm}   # any ssh host with the rig layout (see README, "Other hosts")
 label=${1:?label}; commit=${2:?commit}; shape=${3:-extreme}; (( $# >= 3 )) && shift 3 || shift 2
 here=${0:A:h}; top=$(git -C "$here" rev-parse --show-toplevel)
 OUT=${OUT:-$PWD/scale-out}; mkdir -p "$OUT"

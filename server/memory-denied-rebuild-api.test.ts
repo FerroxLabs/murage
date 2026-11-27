@@ -69,7 +69,7 @@ posixOnly("a policy move that denies a memory, then a refused held turn", () => 
       expect(before[0]!.record_versions).toContain("pin-allowed");
 
       // The roster moves and the owner's denial of one memory lands inside the window.
-      writer.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('record','pin-denied',0,1)").run();
+      writer.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES('record','pin-denied',0,1)").run();
       writer.exec("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'");
       expect((await api("PATCH", `/api/bots/${bot.id}`, { section: "Moved with a denial" })).status).toBe(200);
       expect(policyRevision()).toBeGreaterThan(revisionAtDispatch);

@@ -85,6 +85,8 @@ posixOnly("engine commands", () => {
     // ordinary words from the same callers are still taken
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "a plain note, not a command" }, {})).status).toBe(202);
     await expect.poll(idle, { timeout: 20000 }).toBe(true);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "Continue the owner's conversation" })).status).toBe(202);
+    await expect.poll(idle, { timeout: 20000 }).toBe(true);
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "/review" })).status).toBe(202);
     await expect.poll(() => promptOf(readJson(fixture.fixtureDumpPath)), { timeout: 20000 }).toBe("/review");
     await expect.poll(idle, { timeout: 20000 }).toBe(true);

@@ -48,7 +48,7 @@ describe("D3: the action card heading", () => {
   });
   it("the card carries the heading it was given", async () => {
     const messages: { card?: { title?: string } }[] = [];
-    const store = { bots: [], groups: [], messagesFor: () => messages, messageById: () => undefined, openRequestCardRows: () => [], appendMessage: (_t: string, m: { card?: { title?: string } }) => { messages.push(m); return { id: "m1", ...m }; }, patchMessage: () => true };
+    const store = { bots: [], groups: [], messagesFor: () => messages, messageById: () => undefined, openDecisionCardRows: () => [], appendMessage: (_t: string, m: { card?: { title?: string } }) => { messages.push(m); return { id: "m1", ...m }; }, patchMessage: () => true };
     const serviceFixture = serviceQueueFixture(store);
     const approvals = new BrowserExtensionApprovals({ store, broadcast() {}, authorityFor: serviceFixture.authorityFor } as never);
     serviceFixture.queue(approvals.approvalQueue());

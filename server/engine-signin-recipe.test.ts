@@ -155,3 +155,46 @@ describe("the recipe", () => {
     expect(buildEngineSigninRecipe({ ...input, driverKind: "codex", cli: undefined })).toMatchObject({ kind: "none", argv: [] });
   });
 });
+
+
+describe("Kiro terminal sign-in account roots", () => {
+  it.each([
+    ["linux", { HOME: "/fixture/home" }, "/fixture/home/.local/share/kiro-cli", {}],
+    ["linux", { HOME: "/fixture/home", XDG_DATA_HOME: "/fixture/data" }, "/fixture/data/kiro-cli", { XDG_DATA_HOME: "/fixture/data" }],
+    ["darwin", { HOME: "/fixture/home" }, "/fixture/home/Library/Application Support/kiro-cli", {}],
+    ["win32", { USERPROFILE: "C:\\fixture", LOCALAPPDATA: "C:\\fixture-data" }, "C:\\fixture-data\\kiro-cli", { LOCALAPPDATA: "C:\\fixture-data" }],
+    ["win32", { USERPROFILE: "C:\\fixture" }, "C:\\fixture\\AppData\\Local\\kiro-cli", {}],
+  ] as const)("uses the driver's %s data path with %j and passes overrides to the terminal", (platform, source, root, accountEnv) => {
+    const executable = platform === "win32" ? "C:\\bin\\kiro.exe" : "/fixture/bin/kiro-cli";
+    const recipe = buildEngineSigninRecipe({
+      driverKind: "kiroAgent", label: "Kiro", cli: executable, source, searchPath: "/fixture/bin", platform,
+      resolve: (command, args) => ({ command, args }), candidates: () => [], realpath: file => file,
+    });
+    expect(recipe.kind).toBe("terminal");
+    expect(recipe.accountRoot).toBe(root);
+    expect(recipe.accountEnv).toEqual(accountEnv);
+    expect(recipe.argv).toEqual([executable, "login"]);
+  });
+  it("prefers the instance's overridden Linux data root", () => {
+    const recipe = buildEngineSigninRecipe({
+      driverKind: "kiroAgent", label: "Kiro", cli: "/fixture/kiro-cli", source: { HOME: "/fixture/home", XDG_DATA_HOME: "/fixture/host-data" },
+      instanceEnvironment: { XDG_DATA_HOME: "/fixture/account-data" }, searchPath: "/fixture", platform: "linux",
+      resolve: (command, args) => ({ command, args }), candidates: () => [], realpath: file => file,
+    });
+    expect(recipe.accountRoot).toBe("/fixture/account-data/kiro-cli");
+    expect(recipe.accountEnv).toEqual({ XDG_DATA_HOME: "/fixture/account-data" });
+  });
+});
+
+
+it("uses the instance's Windows Kiro root for both the recipe and terminal", () => {
+  const recipe = buildEngineSigninRecipe({
+    driverKind: "kiroAgent", label: "Kiro", cli: "C:\\bin\\kiro.exe",
+    source: { USERPROFILE: "C:\\fixture", LOCALAPPDATA: "C:\\host-data" },
+    instanceEnvironment: { LOCALAPPDATA: "C:\\account-data" }, searchPath: "C:\\bin", platform: "win32",
+    resolve: (command, args) => ({ command, args }), candidates: () => [], realpath: file => file,
+  });
+  expect(recipe.accountRoot).toBe("C:\\account-data\\kiro-cli");
+  expect(recipe.env.LOCALAPPDATA).toBe("C:\\account-data");
+  expect(recipe.accountEnv).toEqual({ LOCALAPPDATA: "C:\\account-data" });
+});

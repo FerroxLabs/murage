@@ -13,21 +13,25 @@
 // miss is answered only while that counter has not moved since.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { eligibilityPassActive } from "./eligibility-pass.ts";
+import { DATA_VERSION_SQL } from "./data-version.ts";
 
-interface Held { byOwner: Map<string, string>; lookup: StatementSync; confirm: StatementSync; misses: Map<string, string>; stamp: StatementSync | null; nextTry: number }
+/** The counter's two readings: this connection's scope writes (the temp counter) and any other connection's commits (the PRAGMA statement,
+ *  never the shadowable table-valued form: data-version.ts). */
+interface Stamp { epoch: StatementSync; version: StatementSync }
+interface Held { byOwner: Map<string, string>; lookup: StatementSync; confirm: StatementSync; misses: Map<string, string>; stamp: Stamp | null; nextTry: number }
 const held = new WeakMap<object, Held>();
 const STAMP_RETRY_LOOKUPS = 4096;
 
 /** The counter and its triggers. Made outside a transaction only (a rollback would take them with it);
  *  null while they cannot be made, and then no miss is remembered. */
-function stampStatement(db: DatabaseSync): StatementSync | null {
+function stampStatement(db: DatabaseSync): Stamp | null {
   if (db.isTransaction) return null;
   try {
     db.exec(`CREATE TEMP TABLE IF NOT EXISTS memory_scope_epoch(n INTEGER NOT NULL);
       INSERT INTO memory_scope_epoch(n) SELECT 0 WHERE NOT EXISTS(SELECT 1 FROM memory_scope_epoch);
       CREATE TEMP TRIGGER IF NOT EXISTS memory_scope_epoch_i AFTER INSERT ON main.memory_scopes BEGIN UPDATE memory_scope_epoch SET n=n+1; END;
       CREATE TEMP TRIGGER IF NOT EXISTS memory_scope_epoch_u AFTER UPDATE ON main.memory_scopes BEGIN UPDATE memory_scope_epoch SET n=n+1; END;`);
-    return db.prepare("SELECT (SELECT n FROM temp.memory_scope_epoch) AS n, (SELECT data_version FROM pragma_data_version) AS v");
+    return { epoch: db.prepare("SELECT n FROM temp.memory_scope_epoch"), version: db.prepare(DATA_VERSION_SQL) };
   } catch { return null; }
 }
 
@@ -51,7 +55,10 @@ export function scopeLookups(): number { return lookups; }
 /** The counter now: undefined when it cannot be read (no miss is then remembered or answered). */
 function scopesStamp(h: Held): string | undefined {
   if (!h.stamp) return undefined;
-  try { const row = h.stamp.get() as { n: number; v: number } | undefined; return row ? `${row.n}:${row.v}` : undefined; } catch { return undefined; }
+  try {
+    const n = h.stamp.epoch.get()?.n, v = Number(h.stamp.version.get()?.data_version);
+    return typeof n === "number" && Number.isFinite(v) ? `${n}:${v}` : undefined;
+  } catch { return undefined; }
 }
 
 /** `{ id }` for the scope of this kind and owner, or undefined when none exists. */

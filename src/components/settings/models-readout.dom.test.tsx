@@ -10,13 +10,13 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fixture = vi.hoisted(() => ({ api: vi.fn() }));
+const fixture = vi.hoisted(() => ({ api: vi.fn(), dispatch: vi.fn(), tts: undefined as import("@/state/store").ConfigStatus["tts"] }));
 vi.mock("@/state/store", async (original) => ({
   ...await original<typeof import("@/state/store")>(),
   api: (...args: unknown[]) => fixture.api(...args),
   useStore: () => ({
-    state: { bots: [], config: null, instances: [{ instanceId: "fixture-claude", displayName: "Claude Code", driverKind: "claude", enabled: true, snapshot: { state: "ready" } }] },
-    dispatch: vi.fn(),
+    state: { bots: [], config: fixture.tts ? { tts: fixture.tts } : null, instances: [{ instanceId: "fixture-claude", displayName: "Claude Code", driverKind: "claude", enabled: true, snapshot: { state: "ready" } }] },
+    dispatch: fixture.dispatch,
   }),
 }));
 vi.mock("@/components/today/use-engine-health", () => ({ useEngineHealthAnswer: () => null }));
@@ -27,11 +27,17 @@ vi.mock("./rows/BotRows", () => ({ NewBotEffortRow: () => <div data-stand-in="ef
 
 import ModelsPage, { modelsLive } from "./pages/ModelsPage";
 import CallsPage from "./pages/CallsPage";
+import ConnectionsPage from "./pages/ConnectionsPage";
+import { VoiceSettings } from "../VoiceSettings";
+import { ImageSettingsView } from "../ImageSettings";
+import type { Bot } from "@/state/store";
 
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   fixture.api.mockReset();
+  fixture.dispatch.mockClear();
+  fixture.tts = undefined;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -79,4 +85,47 @@ describe("H3: Calls on a paired phone", () => {
     // The bots' own calling setup (voice account, numbers) stays on the computer.
     expect(container.querySelector('[data-testid="settings-stub-phone-calls-heading"]')).not.toBeNull();
   });
+});
+
+it("mounts the phone calls card only in Calls and links there from Connected apps", async () => {
+  fixture.api.mockResolvedValue({ items: [], next: null });
+  await render(<>
+    <CallsPage page="calls" mode="advanced" desktop={false} cloud={false} anchor={null} />
+    <ConnectionsPage page="connections" mode="advanced" desktop={false} cloud={false} anchor={null} />
+  </>);
+  expect(container.querySelectorAll("#phone-calls-heading")).toHaveLength(1);
+  const link = [...container.querySelectorAll("button")].find(button => button.textContent === "Phone calls");
+  expect(link).toBeDefined();
+  await act(async () => { link!.click(); });
+  expect(fixture.dispatch).toHaveBeenCalledWith({ type: "toggleAppSettings", open: true, section: "calls", anchor: "phone-calls-heading" });
+});
+
+it("waits for the server's voice provider and honors an explicit bot choice", async () => {
+  const bot = { id: "voice-fixture", name: "Voice fixture" } as Bot;
+  const voice = (current: Bot = bot) => <VoiceSettings bot={current} onPatch={vi.fn()} />;
+  const selected = () => container.querySelector('[role="radio"][aria-checked="true"]')?.textContent;
+  fixture.api.mockResolvedValue({ voices: [] });
+  fixture.tts = { configured: true, ready: true, voice: "", routes: { speech: "flux", host: null, lookup: null, transcribe: null } };
+  await render(voice());
+  expect(selected()).toBeUndefined();
+  expect(fixture.api).not.toHaveBeenCalled();
+  fixture.tts = { ...fixture.tts, provider: "flux" };
+  await render(voice());
+  expect(selected()).toBe("Flux");
+  expect(fixture.api).toHaveBeenCalledWith("/api/tts/voices?provider=flux");
+  await render(voice({ ...bot, voiceProvider: "elevenlabs" }));
+  expect(selected()).toBe("ElevenLabs");
+});
+
+it("shows the image request switch only once the server has reported its state", async () => {
+  const onChange = vi.fn();
+  const view = (snapshot: React.ComponentProps<typeof ImageSettingsView>["snapshot"]) =>
+    <ImageSettingsView snapshot={snapshot} busy={snapshot ? null : "load"} error="" notice="" onChange={onChange} onRefresh={vi.fn()} />;
+  const toggle = () => container.querySelector<HTMLButtonElement>('[aria-labelledby="image-settings-allow"]');
+  await render(view(null));
+  expect(toggle()).toBeNull();
+  await render(view({ enabled: true, connections: [], selected: null, catalog: null }));
+  expect(toggle()?.getAttribute("aria-checked")).toBe("true");
+  await act(async () => { toggle()!.click(); });
+  expect(onChange).toHaveBeenCalledWith({ enabled: false });
 });

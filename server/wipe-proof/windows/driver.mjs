@@ -7,6 +7,7 @@ import { assertTempRoot, assertTarget, snapshot, equal } from '../safety.mjs';
 import { startApp } from '../app.mjs';
 import { treeMatches } from './assertions.mjs';
 import { execute } from '../process.mjs';
+import { safeWipe } from '../../testing/safe-wipe.mjs';
 const argv = process.argv.slice(2);
 if (process.platform !== 'win32') { console.error('FAIL windows-required'); process.exit(2); }
 let source = product.powershell;
@@ -92,7 +93,7 @@ try {
     ]),
   ];
   async function reset(test) {
-    await fs.mkdir(tree, { recursive: true }); await assertTarget(sandbox, tree); await fs.rm(tree, { recursive: true, force: true });
+    await fs.mkdir(tree, { recursive: true }); await assertTarget(sandbox, tree); await safeWipe(tree);
     await fs.mkdir(protectedRoot, { recursive: true }); await fs.mkdir(benign);
     for (let i = 0; i < 10; i++) await fs.mkdir(path.join(protectedRoot, 'child' + i));
     await fs.writeFile(path.join(protectedRoot, 'child0', 'keep'), 'protected');
@@ -149,7 +150,7 @@ $proxy.Stop()
 } catch { report('fixture-setup-or-run', false); }
 finally {
   if (app) await app.close();
-  if (sandbox) { await assertTempRoot(sandbox); await fs.rm(sandbox, { recursive: true, force: true }); }
+  if (sandbox) { await assertTempRoot(sandbox); await safeWipe(sandbox); }
 }
 const summary = { kind: 'wipe-proof-windows', mode: 'production-guard-with-inert-disk-cmdlets',
   passed: results.filter(x => x.ok).length, failed: results.filter(x => !x.ok).length, unavailable,

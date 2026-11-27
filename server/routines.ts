@@ -24,6 +24,7 @@ import { labelWorkCollection } from "./work-collections.ts";
 import { isTracked, plainCopy, track, trackedRoot, untracked, type TrackedWrite } from "./tracked-state.ts";
 import { PersistedStateRecoveryError, readPersistedJson } from "./persisted-state.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { ERROR_REASON_WITHHELD } from "./owner-display.ts";
 import { fenceEmailDerived } from "./email/external-marks.ts";
 import { CLOUD_ROUTINE_NOT_YET, PROJECT_CLOSED_COPY, type RoutineRunCardData } from "../shared/routine-run.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
@@ -157,6 +158,28 @@ export interface RoutineInstructionPromotion {
   prompt: string;
   evaluationReceiptId: string;
   evidence: Array<{ kind: "source" | "record"; id: string; revision: number; scopeId: string }>;
+}
+
+/** Said when a person saves a routine switched on with a one-time moment that passed more than ONCE_JUST_PASSED_MS ago. */
+export const ONCE_IN_PAST_MESSAGE = "That one-time moment has already passed. Choose a time in the future.";
+/** Said (with code once_just_passed) when the moment passed only a moment ago: the app offers to run it now instead. */
+export const ONCE_JUST_PASSED_MESSAGE = "That time just passed. Run it now instead?";
+/** A one-time moment this recent is offered as "run now" rather than refused cold. */
+export const ONCE_JUST_PASSED_MS = 10 * 60_000;
+
+export type RoutineOnceInPast = { code: "once_in_past" | "once_just_passed"; error: string } | { runNowAt: number };
+
+/** A routine created through the app with a one-time moment already gone would fire on the next tick and switch itself off:
+ *  it would come up Paused. The create route answers it here. Passed within ONCE_JUST_PASSED_MS: accepted as a run-now (the
+ *  moment becomes now) when the body says runNow, else refused with code once_just_passed so the app can offer it. Older: refused
+ *  with code once_in_past. (The manager keeps its late-run and missed receipts for a computer that was off, which is a different
+ *  case.) Null when the body is fine. */
+export function routineOnceInPastRefusal(body: { enabled?: unknown; runNow?: unknown; schedule?: { type?: unknown; at?: unknown } | null }, now: number): RoutineOnceInPast | null {
+  if (body.enabled === false || body.schedule?.type !== "once") return null;
+  const at = Number(body.schedule.at);
+  if (!Number.isFinite(at) || at > now) return null;
+  if (now - at > ONCE_JUST_PASSED_MS) return { code: "once_in_past", error: ONCE_IN_PAST_MESSAGE };
+  return body.runNow === true ? { runNowAt: now } : { code: "once_just_passed", error: ONCE_JUST_PASSED_MESSAGE };
 }
 
 export interface Routine {
@@ -635,6 +658,8 @@ export interface RoutineManagerOptions {
   /** A bot routine run is about to start in its conversation; `reused` says
    * an earlier run (or the owner) already worked there. */
   onRunDispatch?: (run: RoutineRun, reused: boolean) => void;
+  /** A run just became live (indexed as running): the server's loop watch wakes from it (observe.ts wakeLoopWatch). Never throws back. */
+  onRunLive?: () => void;
   /** Telegram messages continue the bot's current conversation. */
   channelMessagesOff?: (botId: string, principal?: HumanPrincipal) => { line: string; threadId?: string } | undefined;
   channelThread?: (botId: string, principal?: HumanPrincipal) => { threadId: string } | null;
@@ -1566,6 +1591,7 @@ export class RoutineManager {
     const bucket = (map: Map<string, Set<RoutineRun>>, key: string | undefined) => add ? this.bucketAdd(map, key, run) : this.bucketDelete(map, key, run);
     const trie = (map: Map<string, RoutineHistoryIndex<RoutineRun>>, bucketKey: string | undefined, key: string | undefined) => add ? this.trieAdd(map, bucketKey, key, run) : this.trieDelete(map, bucketKey, key);
     set(into.liveRuns, item.live); set(into.openRuns, item.open); set(into.queuedRuns, item.queued);
+    if (add && item.live) { try { this.options.onRunLive?.(); } catch { /* observation only */ } }
     bucket(into.liveByThread, item.live ? item.threadId : undefined);
     bucket(into.channelTurns, item.channelTurnKey);
     if (item.live && item.threadId !== undefined) {
@@ -4122,7 +4148,8 @@ export class RoutineManager {
   /** The event handling shared by every run kind (the rest of handleRuntimeEvent). */
   private applyRunEvent(run: RoutineRun, event: RuntimeEvent): RoutineRun | null {
     const presentation = this.runtimePresentation.get(event) ?? event;
-    const display = (field: string) => (presentation as unknown as Record<string, unknown>)[field] as string ?? "«redacted»";
+    // redact-1020: a field the presentation leaves out (owner-display.ts routinePresentation: a masked reply) is absent, never the bare marker
+    const display = (field: string) => (presentation as unknown as Record<string, unknown>)[field] as string ?? "";
     // A room goal contains several provider turns. Its orchestrator owns the
     // terminal decision and reports it through finishGoalRun; one member's
     // completion and private coordinator envelope are only intermediate
@@ -4172,9 +4199,10 @@ export class RoutineManager {
         run.attention = undefined;
       }
     } else if (event.type === "item.completed" && event.itemType === "assistant_text") {
-      run.output = redactSecretsInText(display("text")).trim().slice(0, 2_000);
+      const text = redactSecretsInText(display("text")).trim().slice(0, 2_000);
+      if (text) run.output = text;
     } else if (event.type === "runtime.error") {
-      run.error = redactSecretsInText(display("message")).slice(0, 500);
+      run.error = redactSecretsInText(display("message") || ERROR_REASON_WITHHELD).slice(0, 500);
     } else if (event.type === "turn.retrying") {
       // the driver will relaunch this same run; a transient blip is not a
       // receipt-worthy failure, so keep the run running and stay quiet

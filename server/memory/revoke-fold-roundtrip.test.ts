@@ -5,6 +5,7 @@
 // memory_revoke_fold is dropped: 1.0.2 refuses it), 1.0.2 runs on the file, then 1.0.3 opens it again. The fold bulks' job rows and their
 // cohort ids are v10 rows and stay; 1.0.3 rebuilds the map from them at open, and moves to the bulk whatever 1.0.2 wrote under a folded id
 // (1.0.2 does not know the map, so it enqueues and holds under the member's own id, which no slice serves once the member is folded).
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { commitRevoke } from "./revoke-commit.ts";
@@ -55,7 +56,7 @@ function prepareToReinstall(db: Db): Db {
   const path = pathOf(db);
   db.close();
   const own = new DatabaseSync(path);
-  try { expect(downgradeMemorySchema(own, 10)).toEqual({ status: "downgraded", from: 13, to: 10 }); } finally { own.close(); }
+  try { expect(downgradeMemorySchema(own, 10)).toEqual({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 10 }); } finally { own.close(); }
   return new DatabaseSync(path);
 }
 /** What 1.0.2 writes when a line is carried from member M's denied parent (1.0.2 revoke-commit.ts inheritMarks, no map): a job row for M when
@@ -87,7 +88,7 @@ const stuck = (db: Db) => ["memory_deny_pending", "memory_deny_pending_scope", "
   .reduce((sum, t) => sum + n(db, `SELECT count(*) AS n FROM ${t} x WHERE NOT EXISTS (SELECT 1 FROM memory_revoke_jobs j WHERE j.revoke_id=x.revoke_id AND j.state<>'folded')`), 0);
 /** Mark rows of a cohort member whose id resolves neither to a live job nor through the map. */
 function unresolved(db: Db, members: readonly number[]): number {
-  return ["memory_deny_line", "memory_deny_range", "memory_deny_session", "memory_deny_memory", "memory_deny_pending", "memory_deny_pending_scope", "memory_revoke_frontier"]
+  return ["memory_deny_point", "memory_deny_range", "memory_deny_session", "memory_deny_object", "memory_deny_pending", "memory_deny_pending_scope", "memory_revoke_frontier"]
     .reduce((sum, t) => sum + n(db, `SELECT count(*) AS n FROM ${t} x WHERE x.revoke_id IN (SELECT value FROM json_each(?))
       AND x.revoke_id NOT IN (SELECT old_id FROM memory_revoke_fold) AND NOT EXISTS (SELECT 1 FROM memory_revoke_jobs j WHERE j.revoke_id=x.revoke_id AND j.state<>'folded')`, JSON.stringify(members)), 0);
 }
@@ -137,7 +138,7 @@ describe("revoke fold round trip (1.0.3 -> 1.0.2 -> 1.0.3)", () => {
       for (const [, id] of LINES) expect(after[id]).not.toBe("checking");
       for (const [id, state] of Object.entries(before)) if (state === "withheld") expect(after[id]).toBe("withheld");
       expect(n(db, "SELECT count(*) AS n FROM memory_deny_pending") + n(db, "SELECT count(*) AS n FROM memory_deny_pending_scope")).toBe(0);
-      expect(n(db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='late' AND lsn=4000 AND revoke_id=?", B)).toBe(1);
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='late' AND lsn=4000 AND revoke_id=?", B)).toBe(1);
     } finally { try { db.close(); } catch { /* closed */ } fx.close(); }
   });
 

@@ -106,6 +106,15 @@ test("native source uses deny-write/delete guards, NTFS and reparse/link admissi
   assert.match(code, /constexpr DWORD ancestorShare = FILE_SHARE_READ \| FILE_SHARE_WRITE/);
   assert.match(code, /tool = openGuard\(executable, false\)/);
   assert.doesNotMatch(code, /FILE_SHARE_DELETE|ShellExecute|runas|chmod\(/);
+  // W-A6 contract, call by call: only pinDirectories passes ancestorShare (read+write, never delete, so a held
+  // folder can't be renamed, deleted or swapped), and the stage, age.exe and the ciphertext keep the read-only default.
+  const calls = [...code.matchAll(/openGuard\(((?:[^()]|\([^()]*\))*)\)/g)].map((m) => m[1]);
+  assert.equal(calls[0], "const std::wstring& p, bool directory, DWORD share = FILE_SHARE_READ");
+  assert.deepEqual(calls.slice(1), [
+    "p.substr(0, 3), true, ancestorShare", "p.substr(0, end), true, ancestorShare", "p, true", "executable, false", "ciphertext, false"]);
+  assert.equal(code.match(/CreateFileW\(/g).length, 1);
+  assert.match(code, /constexpr DWORD ancestorShare = FILE_SHARE_READ \| FILE_SHARE_WRITE;/);
+  assert.equal(code.split("ancestorShare").length - 1, 3);
   assert.match(native, /GetDriveTypeW[\s\S]*DRIVE_FIXED/); assert.match(native, /std::wstring\(fsName\) == L"NTFS"/);
   assert.match(native, /nNumberOfLinks == 1/); assert.match(native, /FileIdInfo/);
 });

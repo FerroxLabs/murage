@@ -175,7 +175,8 @@ function bumpAuthorityDependencies(db: DatabaseSync, ids: readonly string[]): vo
 /** The learning send counter (learning-send.ts) for the same withdrawals: the roster is a quiet binding there too, so its removals move the
  * counter here, first and whether or not the authority triggers are installed. A no-op where the counter is missing (its check fails closed). */
 export function bumpLearningFence(db: DatabaseSync): void {
-  try { db.exec("UPDATE temp.memory_learning_fence SET epoch=epoch+1 WHERE id=1"); } catch { /* no counter on this connection */ }
+  // a withdrawal: it moves the `withdrawal` counter too, so a gate fenced on its own held rows (learning-send.ts) still refuses on it
+  try { db.exec("UPDATE temp.memory_learning_fence SET epoch=epoch+1, withdrawal=withdrawal+1 WHERE id=1"); } catch { /* no counter on this connection */ }
 }
 
 /** A stamp that is equal at two moments only if nothing revocation-relevant was written in between by this
@@ -184,8 +185,10 @@ export function authorityStamp(): string | undefined {
   const db = database();
   if (db.isTransaction) return undefined;
   if (!install(db)) return databaseStamp();
-  const row = db.prepare("SELECT (SELECT n FROM temp.authority_epoch) AS epoch, (SELECT count(*) FROM temp.authority_pending) AS pending, (SELECT data_version FROM pragma_data_version) AS version").get();
-  return `a${connectionId(db)}${ancestryUnrepaired(db) ? "u" : ""}.${row?.epoch}.${row?.pending}:${row?.version}`;
+  const row = db.prepare("SELECT (SELECT n FROM temp.authority_epoch) AS epoch, (SELECT count(*) FROM temp.authority_pending) AS pending").get();
+  // the PRAGMA statement on this connection, never the shadowable pragma_data_version table form (MAIN 11-21 DATA_VERSION READS)
+  const version = Number(db.prepare("PRAGMA data_version").get()?.data_version);
+  return `a${connectionId(db)}${ancestryUnrepaired(db) ? "u" : ""}.${row?.epoch}.${row?.pending}:${version}`;
 }
 
 /** The stamp, the same stamp without the soft writes (equal at two moments only if nothing but soft writes happened in between, here or by
@@ -194,9 +197,11 @@ export function authorityStamp(): string | undefined {
 export function authorityParts(): { stamp: string; hard: string; seq: number } | undefined {
   const db = database();
   if (db.isTransaction || !install(db)) return undefined;
-  const row = db.prepare("SELECT (SELECT n FROM temp.authority_epoch) AS epoch, (SELECT hard FROM temp.authority_epoch) AS hard, (SELECT count(*) FROM temp.authority_pending) AS pending, (SELECT data_version FROM pragma_data_version) AS version, COALESCE((SELECT max(seq) FROM temp.authority_soft),(SELECT seq FROM temp.sqlite_sequence WHERE name='authority_soft'),0) AS seq").get();
+  const row = db.prepare("SELECT (SELECT n FROM temp.authority_epoch) AS epoch, (SELECT hard FROM temp.authority_epoch) AS hard, (SELECT count(*) FROM temp.authority_pending) AS pending, COALESCE((SELECT max(seq) FROM temp.authority_soft),(SELECT seq FROM temp.sqlite_sequence WHERE name='authority_soft'),0) AS seq").get();
+  // the PRAGMA statement on this connection, never the shadowable pragma_data_version table form (MAIN 11-21 DATA_VERSION READS)
+  const version = Number(db.prepare("PRAGMA data_version").get()?.data_version);
   const who = `${connectionId(db)}${ancestryUnrepaired(db) ? "u" : ""}`;
-  return { stamp: `a${who}.${row?.epoch}.${row?.pending}:${row?.version}`, hard: `h${who}.${row?.hard}.${row?.pending}:${row?.version}`, seq: Number(row?.seq ?? 0) };
+  return { stamp: `a${who}.${row?.epoch}.${row?.pending}:${version}`, hard: `h${who}.${row?.hard}.${row?.pending}:${version}`, seq: Number(row?.seq ?? 0) };
 }
 
 /** The ids of sources whose soft changes were logged after `since`, or null when the log no longer reaches back that far (the caller then
@@ -221,6 +226,8 @@ export function authorityMoved(since: string | undefined): boolean {
 export function pinStamp(): string | undefined {
   const db = database();
   if (db.isTransaction || !install(db)) return undefined;
-  const row = db.prepare("SELECT (SELECT pins FROM temp.authority_epoch) AS pins, (SELECT data_version FROM pragma_data_version) AS version").get();
-  return `p${connectionId(db)}.${row?.pins}:${row?.version}`;
+  const row = db.prepare("SELECT (SELECT pins FROM temp.authority_epoch) AS pins").get();
+  // the PRAGMA statement on this connection, never the shadowable pragma_data_version table form (MAIN 11-21 DATA_VERSION READS)
+  const version = Number(db.prepare("PRAGMA data_version").get()?.data_version);
+  return `p${connectionId(db)}.${row?.pins}:${version}`;
 }

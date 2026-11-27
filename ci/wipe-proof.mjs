@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { finished } from 'node:stream/promises';
 import { assertTempRoot } from '../server/wipe-proof/safety.mjs';
+import { safeWipe } from '../server/testing/safe-wipe.mjs';
 
 const candidate = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const [mode, destination, engine] = process.argv.slice(2);
@@ -83,7 +84,7 @@ try {
   if (!log.writableEnded) { log.end(`FAIL ci-proof ${String(error)}\n`); await finished(log); }
   else await fs.appendFile(logFile, `FAIL ci-proof ${String(error)}\n`);
 } finally {
-  if (scratch) { await assertTempRoot(scratch); await fs.rm(scratch, { recursive: true, force: true }); }
+  if (scratch) { await assertTempRoot(scratch); await safeWipe(scratch); }
   await fs.writeFile(path.join(evidence, label + '.json'), JSON.stringify(summary, null, 2) + '\n');
 }
 console.log(`${summary.failed ? 'FAIL' : 'PASS'} ${label}; artifacts: ${evidence}`);

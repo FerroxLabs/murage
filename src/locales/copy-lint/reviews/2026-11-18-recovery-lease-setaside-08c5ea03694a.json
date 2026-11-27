@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "recovery-lease-n1",
+  "date": "2026-11-18",
+  "base": "f8f3a5a9c1e1a30590c242a8f3401d9ff8df80ac",
+  "scope": "Recovery window: This is my computer, continue (foreign data-folder lock set aside), its note and refusal, and the another-copy-open start sentence, 8 languages",
+  "strings": {
+    "en:updateRecovery.set-aside-foreign": {
+      "text": "This is my computer, continue",
+      "en": "This is my computer, continue",
+      "verdict": "pass",
+      "note": "Accurate, calm button label in the pack register."
+    },
+    "en:updateRecovery.set-aside-foreign-note": {
+      "text": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+      "en": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+      "verdict": "pass",
+      "note": "Meaning matches, quotes the button label exactly, says nothing is deleted and data is unchanged."
+    },
+    "en:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "text": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+      "en": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+      "verdict": "pass",
+      "note": "Accurate, says lock files untouched and what to do, not scary."
+    },
+    "en:updateRecovery.lease-busy": {
+      "text": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.",
+      "en": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.",
+      "verdict": "pass",
+      "note": "Matches English, button name is translated consistently with existing pack wording."
+    },
+    "de:updateRecovery.set-aside-foreign": {
+      "text": "Das ist mein Computer, weiter",
+      "en": "This is my computer, continue",
+      "verdict": "pass",
+      "note": "Accurate, calm button label in the pack register."
+    },
+    "de:updateRecovery.set-aside-foreign-note": {
+      "text": "Wenn Murage nur auf diesem Computer verwendet wird und dieser Ordner nicht mit einem anderen Computer geteilt oder von dort synchronisiert wird, wähle Das ist mein Computer, weiter. Murage benennt die alten Sperrdateien neben dem Ordner um (es löscht sie nicht) und öffnet sich erneut. Deine Daten bleiben unverändert.",
+      "en": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+      "verdict": "pass",
+      "note": "Meaning matches, quotes the button label exactly, says nothing is deleted and data is unchanged."
+    },
+    "de:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "text": "Murage konnte nicht bestätigen, dass nichts anderes diesen Datenordner verwendet, und hat die Sperrdateien deshalb unverändert gelassen. Beende Murage auf jedem anderen Computer, der diesen Ordner verwendet, starte diesen Computer neu und versuche es dann erneut.",
+      "en": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+      "verdict": "pass",
+      "note": "Accurate, says lock files untouched and what to do, not scary."
+    },
+    "de:updateRecovery.lease-busy": {
+      "text": "Möglicherweise ist noch eine andere Kopie von Murage geöffnet. Schließe alle anderen Murage-Fenster und wähle dann Start erneut versuchen.",
+      "en": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.",
+      "verdict": "pass",
+      "note": "Matches English, button name is translated consistently with existing pack wording."
+    },
+    "es:updateRecovery.set-aside-foreign": {
+      "text": "Este es mi ordenador, continuar",
+      "en": "This is my computer, continue",
+      "verdict": "pass",
+      "note": "Accurate, calm button label in the pack register."
+    },
+    "es:updateRecovery.set-aside-foreign-note": {
+      "text": "Si Murage solo se usa en este ordenador y esta carpeta no se comparte ni se sincroniza con otro ordenador, elige Este es mi ordenador, continuar. Murage cambia el nombre de los archivos de bloqueo antiguos junto a la carpeta (no los elimina) y vuelve a abrirse. Tus datos no cambian.",
+      "en": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+      "verdict": "pass",
+      "note": "Meaning matches, quotes the button label exactly, says nothing is deleted and data is unchanged."
+    },
+    "es:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "text": "Murage no pudo confirmar que nada más esté usando esta carpeta de datos, así que dejó los archivos de bloqueo como estaban. Cierra Murage en cualquier otro ordenador que use esta carpeta, reinicia este ordenador y vuelve a intentarlo.",
+      "en": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+      "verdict": "pass",
+      "note": "Accurate, says lock files untouched and what to do, not scary."
+    },
+    "es:updateRecovery.lease-busy": {
+      "text": "Puede que otra copia de Murage siga abierta. Cierra todas las demás ventanas de Murage y elige Reintentar inicio.",
+      "en": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.",
+      "verdict": "pass",
+      "note": "Matches English, button name is translated consistently with existing pack wording."
+    },
+    "fr:updateRecovery.set-aside-foreign": {
+      "text": "C’est mon ordinateur, continuer",
+      "en": "This is my computer, continue",
+      "verdict": "pass",
+      "note": "Accurate, calm button label in the pack register."
+    },
+    "fr:updateRecovery.set-aside-foreign-note": {
+      "text": "Si Murage n’est utilisé que sur cet ordinateur et que ce dossier n’est ni partagé avec un autre ordinateur ni synchronisé depuis un autre, choisis C’est mon ordinateur, continuer. Murage renomme les anciens fichiers de verrou à côté du dossier (il ne les supprime pas) et se rouvre. Tes données ne changent pas.",
+      "en": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+      "verdict": "pass",
+      "note": "Meaning matches, quotes the button label exactly, says nothing is deleted and data is unchanged."
+    },
+    "fr:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "text": "Murage n’a pas pu confirmer que rien d’autre n’utilise ce dossier de données, il a donc laissé les fichiers de verrou tels quels. Quitte Murage sur tout autre ordinateur qui utilise ce dossier, redémarre cet ordinateur, puis réessaie.",
+      "en": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+      "verdict": "pass",
+      "note": "Accurate, says lock files untouched and what to do, not scary."
+    },
+    "fr:updateRecovery.lease-busy": {
+      "text": "Une autre copie de Murage est peut-être encore ouverte. Ferme toutes les autres fenêtres de Murage, puis choisis Réessayer le démarrage.",
+      "en": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.",
+      "verdict": "pass",
+      "note": "Matches English, button name is translated consistently with existing pack wording."
+    },
+    "hi:updateRecovery.set-aside-foreign": {
+      "text": "यह मेरा कंप्यूटर है, जारी रखें",
+      "en": "This is my computer, continue",
+      "verdict": "pass",
+      "note": "Accurate, calm button label in the pack register."
+    },
+    "hi:updateRecovery.set-aside-foreign-note": {
+      "text": "अगर Murage सिर्फ़ इसी कंप्यूटर पर इस्तेमाल होता है, और यह फ़ोल्डर किसी दूसरे कंप्यूटर के साथ शेयर या उससे सिंक नहीं होता, तो यह मेरा कंप्यूटर है, जारी रखें चुनें। Murage फ़ोल्डर के पास की पुरानी लॉक फ़ाइलों का नाम बदल देता है (उन्हें मिटाता नहीं) और फिर से खुलता है। आपका डेटा नहीं बदलता।",
+      "en": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+      "verdict": "pass",
+      "note": "Meaning matches, quotes the button label exactly, says nothing is deleted and data is unchanged."
+    },
+    "hi:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "text": "Murage पक्का नहीं कर सका कि इस डेटा फ़ोल्डर को कोई और इस्तेमाल नहीं कर रहा, इसलिए उसने लॉक फ़ाइलें वैसी ही छोड़ दीं। इस फ़ोल्डर को इस्तेमाल करने वाले किसी भी दूसरे कंप्यूटर पर Murage बंद करें, इस कंप्यूटर को रीस्टार्ट करें, फिर दोबारा कोशिश करें।",
+      "en": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+      "verdict": "pass",
+      "note": "Accurate, says lock files untouched and what to do, not scary."
+    },
+    "hi:updateRecovery.lease-busy": {
+      "text": "Murage की कोई दूसरी कॉपी शायद अब भी खुली है। Murage की बाकी सभी विंडो बंद करें, फिर स्टार्टअप फिर से आज़माएँ चुनें।",
+      "en": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.",
+      "verdict": "pass",
+      "note": "Matches English, button name is translated consistently with existing pack wording."
+    },
+    "ja:updateRecovery.set-aside-foreign": {
+      "text": "これは自分のコンピュータです。続行",
+      "en": "This is my computer, continue",
+      "verdict": "pass",
+      "note": "Accurate, calm button label in the pack register."
+    },
+    "ja:updateRecovery.set-aside-foreign-note": {
+      "text": "Murage をこのコンピュータだけで使っていて、このフォルダを他のコンピュータと共有・同期していない場合は、「これは自分のコンピュータです。続行」を選んでください。Murage はフォルダの横にある古いロックファイルの名前を変更し（削除はしません）、もう一度開きます。データは変更されません。",
+      "en": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+      "verdict": "pass",
+      "note": "Meaning matches, quotes the button label exactly, says nothing is deleted and data is unchanged."
+    },
+    "ja:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "text": "このデータフォルダを他に使っているものがないことを Murage が確認できなかったため、ロックファイルはそのままにしました。このフォルダを使っている他のコンピュータで Murage を終了し、このコンピュータを再起動してから、もう一度お試しください。",
+      "en": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+      "verdict": "pass",
+      "note": "Accurate, says lock files untouched and what to do, not scary."
+    },
+    "ja:updateRecovery.lease-busy": {
+      "text": "Murage の別のコピーがまだ開いている可能性があります。他の Murage のウィンドウをすべて閉じてから、「起動を再試行」を選んでください。",
+      "en": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.",
+      "verdict": "pass",
+      "note": "Matches English, button name is translated consistently with existing pack wording."
+    },
+    "pt-br:updateRecovery.set-aside-foreign": {
+      "text": "Este é o meu computador, continuar",
+      "en": "This is my computer, continue",
+      "verdict": "pass",
+      "note": "Accurate, calm button label in the pack register."
+    },
+    "pt-br:updateRecovery.set-aside-foreign-note": {
+      "text": "Se o Murage é usado só neste computador e esta pasta não é compartilhada com outro computador nem sincronizada a partir dele, escolha Este é o meu computador, continuar. O Murage renomeia os arquivos de bloqueio antigos ao lado da pasta (não os apaga) e abre de novo. Seus dados não mudam.",
+      "en": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+      "verdict": "pass",
+      "note": "Meaning matches, quotes the button label exactly, says nothing is deleted and data is unchanged."
+    },
+    "pt-br:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "text": "O Murage não conseguiu confirmar que nada mais está usando esta pasta de dados, então deixou os arquivos de bloqueio como estavam. Feche o Murage em qualquer outro computador que use esta pasta, reinicie este computador e tente de novo.",
+      "en": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+      "verdict": "pass",
+      "note": "Accurate, says lock files untouched and what to do, not scary."
+    },
+    "pt-br:updateRecovery.lease-busy": {
+      "text": "Outra cópia do Murage pode ainda estar aberta. Feche todas as outras janelas do Murage e escolha Tentar iniciar novamente.",
+      "en": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.",
+      "verdict": "pass",
+      "note": "Matches English, button name is translated consistently with existing pack wording."
+    },
+    "zh:updateRecovery.set-aside-foreign": {
+      "text": "这是我的电脑，继续",
+      "en": "This is my computer, continue",
+      "verdict": "pass",
+      "note": "Accurate, calm button label in the pack register."
+    },
+    "zh:updateRecovery.set-aside-foreign-note": {
+      "text": "如果 Murage 只在这台电脑上使用，而且这个文件夹没有与其他电脑共享或从其他电脑同步，请选择“这是我的电脑，继续”。Murage 会给文件夹旁边的旧锁文件改名（不会删除它们），然后重新打开。你的数据不会改变。",
+      "en": "If Murage is used only on this computer, and this folder isn't shared with or synced from another computer, choose This is my computer, continue. Murage renames the old lock files beside the folder (it doesn't delete them) and opens again. Your data isn't changed.",
+      "verdict": "pass",
+      "note": "Meaning matches, quotes the button label exactly, says nothing is deleted and data is unchanged."
+    },
+    "zh:updateRecovery.LEASE_TAKEOVER_REFUSED": {
+      "text": "Murage 无法确认没有其他程序或电脑在使用这个数据文件夹，所以锁文件保持原样。请在使用这个文件夹的其他电脑上退出 Murage，重启这台电脑，然后再试一次。",
+      "en": "Murage couldn't confirm that nothing else is using this data folder, so it left the lock files as they are. Quit Murage on any other computer that uses this folder, restart this computer, then try again.",
+      "verdict": "pass",
+      "note": "Accurate, says lock files untouched and what to do, not scary."
+    },
+    "zh:updateRecovery.lease-busy": {
+      "text": "可能还有另一个 Murage 副本处于打开状态。请关闭其他所有 Murage 窗口，然后选择“重试启动”。",
+      "en": "Another copy of Murage may still be open. Quit every other Murage window, then choose Retry startup.",
+      "verdict": "pass",
+      "note": "Matches English, button name is translated consistently with existing pack wording."
+    }
+  },
+  "files": {}
+}

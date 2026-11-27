@@ -12,7 +12,7 @@ it('an exact correlated direct write confirms the native replay session, while d
   expect(callback).toBeDefined();
   let first=true;
   const written=vi.fn(),replay=vi.fn(),receipt=vi.fn();
-  const context=vm.createContext({submissionBoundary:{attemptWritten:()=>{const result=first;first=false;return result;},noteEngineWrite:written},directAttemptWrite:receipt,dispatchClaimId:'generation',replayConfirmation:{engineWritten:replay}});
+  const context=vm.createContext({submissionBoundary:{attemptWritten:()=>{const result=first;first=false;return result;},noteEngineWrite:written},directAttemptWrite:receipt,dispatchClaimId:'generation',codexEffortAtWrite:undefined,replayConfirmation:{engineWritten:replay}});
   vm.runInContext(ts.transpileModule(`globalThis.write=${callback!.getText(ast)};`,{compilerOptions:{target:ts.ScriptTarget.ES2023}}).outputText,context);
   context.write('write');context.write('write');
   expect(written).toHaveBeenCalledOnce();expect(receipt).toHaveBeenCalledOnce();expect(replay).toHaveBeenCalledOnce();

@@ -519,6 +519,10 @@ body {
 /* A visually hidden native control (`sr-only` checkbox or radio under a
    styled label) takes focus where nobody can see it; the label wears the
    ring instead. */
+/* The workspace strip's two segments touch: a ring drawn outside the first would run into the second as a stray line. */
+[data-workspace-strip] button:focus-visible {
+  outline-offset: -2px;
+}
 label:has(> input.sr-only:focus-visible) {
   outline: var(--focus-ring-width) solid var(--color-focus);
   outline-offset: var(--focus-ring-offset);
@@ -1271,11 +1275,11 @@ button:disabled.bg-danger {
   overflow-wrap: anywhere;
 }
 
-/* E35 (src/lib/reply-width.ts): a reply with a table runs as wide as the
-   message column; its prose keeps the reading width. A list or quote that
-   holds the table runs wide with it. */
-.chat-wide .chat-md > :not(.chat-table):not(:has(.chat-table)) {
-  max-width: var(--chat-bubble-max);
+/* Table replies fit the table and give prose the same width. */
+.chat-wide .chat-md {
+  width: fit-content;
+  min-width: min(100%, var(--chat-bubble-max));
+  max-width: 100%;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────

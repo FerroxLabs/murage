@@ -1,4 +1,5 @@
 {
+  "ux.l2b.health.backgroundChecksRetired": "Background health checks have been retired.",
   "ux.l2b.health.issue.backupNotProtected.title": "No recent verified backup",
   "ux.l2b.health.issue.backupNotProtected.happened": "Backups are on, but Murage has no recent backup it could check.",
   "ux.l2b.health.issue.backupNotProtected.matters": "If this computer fails now, your recent work may not come back.",
