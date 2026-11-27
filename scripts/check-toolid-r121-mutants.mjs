@@ -1,3 +1,4 @@
+import { evidencePath } from './evidence-path.mjs';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Run inside the job's networkless test container. Mutate only private copies.
@@ -10,7 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const evidence = join(root, 'evidence/cfix-toolid-s4a');
+const evidence = evidencePath('evidence/cfix-toolid-s4a');
 const scratch = mkdtempSync(join(tmpdir(), 'cfix-toolid-r121-'));
 const mutations = [
   ['JM14', 'server/no-limits-code.ts',

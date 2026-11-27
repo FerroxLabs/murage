@@ -1,10 +1,11 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {ProductClient} from './run.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 test('decision accounting consumes each byte once and indexes by thread',()=>{
  const dir=mkdtempSync(join(tmpdir(),'gnl-decisions-'));try{
   const file=join(dir,'nolim-decisions.ndjson'),c=new ProductClient('http://fixture',{},dir);
@@ -14,7 +15,7 @@ test('decision accounting consumes each byte once and indexes by thread',()=>{
   assert.equal(c.decisions(['a']).length,1);
   assert.equal(c.decisions(['b']).length,1);
   assert.equal(c.decisionReader?.bytesRead,Buffer.byteLength(readFileSync(file)));
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{safeWipeSync(dir);}
 });
 test('candidate receipts bind checkout contents and reject another SHA',async()=>{
  const {verifyCandidate,writeCandidateProof}=await import('./candidate-proof.mjs');
@@ -28,7 +29,7 @@ test('candidate receipts bind checkout contents and reject another SHA',async()=
   assert.equal(verifyCandidate(dir,sha,proof).candidateSha,sha);
   writeFileSync(join(dir,'policy'),'two');
   assert.throws(()=>verifyCandidate(dir,sha),/Candidate/);assert.throws(()=>verifyCandidate(dir,sha,proof),/Candidate/);
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{safeWipeSync(dir);}
 });
 test('product mutant qualification includes a passing release CLI control and failing mutated CLI',()=>{
  const source=readFileSync(new URL('./qualify-product-mutant.mjs',import.meta.url),'utf8');
@@ -42,5 +43,5 @@ test('new English diagnostic and fixture prompt inventory is supplied',()=>{
 test('decision accounting refuses a missing observer instead of inventing empty evidence',()=>{
  const dir=mkdtempSync(join(tmpdir(),'gnl-missing-decisions-'));try{
   const client=new ProductClient('http://fixture',{},dir);assert.throws(()=>client.decisions(['thread']),/observer evidence missing/);
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{safeWipeSync(dir);}
 });

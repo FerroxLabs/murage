@@ -69,6 +69,56 @@ the derived behaviour.
 
 Adapted from upstream source:
 
+  OpenMausBot PR #5880 (Devin ACP)
+    merge aebf06d04
+    Adapted from upstream source for CLI integration, model discovery and
+    permission request decoding. Murage selects Devin's Ask mode and uses
+    the current one-time approval path.
+    Murage: server/drivers/acp/devin.ts and the desktop engine registry
+
+  OpenMausBot PR #6062 (merge 8a11af818) and PR #6340 (merge 847c48157)
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Devin recognizes the XDG data and config sign-ins and shows a large ACP
+    catalog without pinning each advertised model during discovery.
+    Murage: server/drivers/acp/devin.ts and ACP discovery.
+
+
+  OpenMausBot PR #4624 (Command Code as an optional ACP engine)
+    merge 6eb8f70d05be
+    Adapted from upstream source (discovery, sign-in and filter logic carried over, then changed for Murage):
+    `command-code acp`, the account's model catalog read over ACP, the
+    ~/.commandcode/auth.json and COMMAND_CODE_API_KEY sign-in check, and the
+    -32000 login refusal. Upstream's bypass mode at Full access, its analytics
+    and brand-mark changes and its account-refused notice were not taken;
+    Murage runs every level in Command Code's asking mode.
+    Murage: server/drivers/acp/command-code.ts, server/drivers/acp/command-code.test.ts
+    and the engine registry lines for commandCodeAgent
+
+  OpenMausBot PR #5399 (OMP as an optional ACP engine)
+    merge c8acfed80aa6
+    Adapted from upstream source (discovery, sign-in and filter logic carried over, then changed for Murage):
+    `omp acp`, the `agent` auth method, model discovery in a temporary session
+    folder. Upstream's 4096-model discovery limit (Murage lists at most 128
+    options of any ACP select; a larger catalog is cut and the picker says "Showing 128 of N models"), its HTTP MCP option (a core.ts change), its
+    analytics, docs and version-pin changes were not taken. OMP has no permission mode over ACP, so every Murage level
+    answers its session/request_permission and nothing sets a mode.
+    Murage: server/drivers/acp/omp.ts, server/drivers/acp/omp.test.ts and the engine
+    registry lines for ompAgent
+
+  OpenMausBot PR #4888 (Kiro as an optional ACP engine)
+    merge 4794acf3718d
+    Adapted from upstream source (discovery, sign-in and filter logic carried over, then changed for Murage):
+    `kiro-cli acp --agent-engine=v3 --auth-method=cli`, the sign-in check on
+    Kiro's local store and KIRO_API_KEY, the `clientCapabilities._meta.kiro`
+    hooks setting, and hiding Kiro's cloud-settings tool and steering echo.
+    Upstream's Autopilot "on" at Full access, its account-refused notice,
+    session-scoped approval, and its analytics, docs and brand-mark changes
+    were not taken; Murage keeps Autopilot off at every level.
+    Murage: server/drivers/acp/kiro.ts, server/drivers/acp/kiro.test.ts,
+    server/drivers/acp/core.ts (clientCapabilitiesMeta and updateFilter hooks),
+    server/drivers/acp/custom-model-catalog.ts, and the engine registry lines
+    for kiroAgent
+
   OpenMausBot PR #987
     merge 391f0b2b4c8778360191820b6604fe0d4cad217f
     Bare xAI, Groq and Hugging Face API-key patterns for log redaction.
@@ -110,6 +160,122 @@ Adapted from upstream source:
 
 Behaviour taken from upstream, implemented independently in Murage code:
 
+  OpenMausBot PR #4540
+    merge 15ee2b097776
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Consume native allowance reports before diagnostics or turn-state handling.
+    Murage: server/drivers/claude.ts, server/drivers/claude-limit-intake.test.ts
+
+  OpenMausBot PR #6150
+    merge b28ce347f
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Let a chat finish past 64 model rounds while retaining the per-turn tool
+    allowance, request fences, interruption, and nudge limits.
+    Murage: server/drivers/openai-chat.ts, server/drivers/openai-chat-tools.ts,
+    server/drivers/openai-chat-tools.test.ts
+
+  OpenMausBot PR #6410
+    merge 990a858ca
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Preserve validated cached input and distinguish reported from partial totals
+    across OpenAI-compatible chat rounds and streamed retries.
+    Murage: server/drivers/openai-chat.ts, server/runtime-event-out.ts,
+    shared/prompt-cache-usage.ts
+
+  OpenMausBot PR #4420
+    merge 04a3d0a55e3e
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Omit unusable native host tools from default isolated Claude bot turns.
+    Explicit tool lists, other audiences and No limits keep their policy.
+    Upstream code and token-savings estimates were not taken.
+    Murage: server/drivers/claude.ts, server/drivers/claude-unusable-tools.ts,
+    server/drivers/claude-cost.test.ts
+
+  OpenMausBot PR #5559
+    merge 5fe9b0a64537
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Log why a saved Claude session could not start, with bounded, masked
+    diagnostics. Upstream code and session retry behavior were not taken.
+    Murage: server/drivers/claude.ts, server/drivers/claude-cost.test.ts,
+    server/testing/fake-claude-cli.ts
+
+  OpenMausBot PRs #4425 and #4427
+    merges fe626fd57b41 and 63d17bc5bfe7
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Keep authorized bot configuration together before turn-specific instructions.
+    Murage: server/bot-shapes.ts, server/prompt-cache-plan.ts,
+    server/bot-shapes-prefix.test.ts
+  OpenMausBot PR #5796 (merge 1f44e309d)
+    Classify temporary provider startup errors while treating certificate
+    verification failures as terminal.
+    Murage: server/drivers/retry.ts
+
+  OpenMausBot PR #6320 (merge 764e8d947)
+    Replay rejected or empty tool arguments as an empty object and let the
+    model read a bounded redacted description of the rejected input.
+    Murage: server/drivers/openai-chat-tools.ts and openai-chat.ts
+
+
+  OpenMausBot PR #5063
+    merge 59c938cd04bf9c4fdbae4dd35e55ba2f1fea21ee
+    Missing saved ACP sessions recover with replay and a redacted explanation.
+    Behaviour taken from upstream, implemented independently in Murage code.
+    The upstream RPC classifier was not taken; Murage's refusal checks stay.
+    Murage: server/drivers/acp/core.ts, server/drivers/acp/work-ahead-rest.test.ts
+
+  OpenMausBot PR #5361
+    merge d83c52dd3c0bf6ee9ad91e0fe9ca94561f91f5db
+    Hermes accepts an advertised /steer command during its running turn.
+    Behaviour taken from upstream, implemented independently in Murage code.
+    The upstream runtime and log refactor were not taken; Murage's wire
+    release, Stop fences and uncertain-delivery handling stay.
+    Murage: server/drivers/acp/{core,hermes,steer,work-ahead-rest.test}.ts
+
+  OpenMausBot PR #5710
+    merge 9750a1b0c5b77e7550547ed46bb8865e894dbe42
+    Custom ACP engines can steer when their live session advertises /steer.
+    Behaviour taken from upstream, implemented independently in Murage code.
+    The opt-in configuration flag and unrelated display-name change were
+    not taken; the advertised command works without a setup switch.
+    Murage: server/drivers/acp/{core,custom,steer,work-ahead-rest.test}.ts
+
+  OpenMausBot Kimi schema budget (C10)
+    commit c0776c450ece1301295bedc74929cdd0b3b6bfce
+    An oversized MCP server is withheld on Kimi while other servers remain.
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Upstream schema shortening, provider-routing changes and the wider merge
+    were not taken. Murage conservatively withholds the affected tool list.
+    Murage: server/mcp-tool-schema.ts, server/drivers/acp/{core,kimi,kimi-schema-rest.test}.ts
+
+  OpenMausBot PR #4536
+    merge 583fc85d438a
+    Keep Gemini tool-call metadata for replay and count repeated metadata once.
+    Murage: server/drivers/openai-chat-protocol.ts, server/drivers/openai-chat.ts
+
+  OpenMausBot PR #4952
+    merge 035ed2d2e490
+    Treat an empty streamed continuation ID as omitted.
+    Murage: server/drivers/openai-chat-protocol.ts
+
+  OpenMausBot PR #5273
+    merge 00ea79c15697
+    Classify unexpected temporary HTTP status reports for retry.
+    Murage: server/drivers/retry.ts
+
+  OpenMausBot PR #5076
+    merge 9e6d0269c3f7
+    Retry an unfinished empty stream once, before any text or tool delta.
+    Murage: server/drivers/openai-chat.ts
+
+  OpenMausBot PR #5664
+    merge 3aed6c3c7161
+    Give reserved Copilot MCP server names unique Murage aliases.
+    Murage: server/drivers/acp/copilot-mcp-config.ts
+
+  These five behaviors were implemented from the lane brief without copying
+  upstream source or tests. Upstream's server prefix was not taken. Merge
+  identifiers above are the prefixes recorded in the offline brief.
+
   OpenMausBot PR #988
     commit 1e6737b0db71f65ec22644756be9ac2b7bf3e20f
     The schedule-preservation part only: a metadata-only routine edit keeps
@@ -134,6 +300,169 @@ Unreleased upstream adaptations in the current development branch
 
 The following changes selectively adapt OpenMausBot work under Apache-2.0.
 They do not imply import of a complete upstream release.
+
+  Behaviour taken from upstream, implemented independently in Murage code:
+  OpenMausBot PR #3469
+    merge ffa5265a74a0b7dd4b923328a4399bced856c9e1
+    Optional short delegation title, carried in Murage's saved hand-off
+    headline and tool result. Upstream storage and catalog goldens not taken.
+    Murage: server/drivers/agents-proxy.ts
+  OpenMausBot commit d6306866f
+    Delegate catalog wording and UTF-8 byte budgets checked on listed tools.
+    Upstream catalog files and golden snapshots not taken.
+    Murage: server/drivers/agents-proxy.ts and agents-proxy-polish.test.ts
+  OpenMausBot PR #1511
+    merge 18d6542634cdfc43aa7aec70aa573b181a313d73
+    Settled direct hand-offs announce their delivered reply in the asking
+    chat; the parent's resumed reply retains Murage's existing done notice.
+    Upstream notification transport and wording not taken.
+    Murage: server/notify.ts, server/index.ts
+  OpenMausBot commit 7eaaac9c7
+    Repeated slot losses share the first goal-step wait deadline.
+    Upstream one-on-one goal runner not taken.
+    Murage: server/index.ts
+  OpenMausBot commit dd070353c
+    Failed hand-off activity chips use the failed color on both surfaces.
+    Upstream HandoffReply component not taken.
+    Murage: src/components/ChatView.tsx
+
+  OpenMausBot PR #4700
+    merge 0f5ca7aea93649a1e4410d0aea676bf66c016fe3
+    Keep recorded voice notes above failed or stopped turn endings; isolated
+    fixture coverage verifies playable audio and no output-triggered turns.
+    Murage already saves notes directly. Upstream parked-file storage,
+    automatic every-reply speech, locale files and voice routing not taken.
+    Murage: server/voice/voice-notes-kept.e2e.test.ts
+
+  OpenMausBot PR #4712
+    merge 8fe81b20d91b40f112e5ad34ccc189e41241d634
+    Acknowledge a voice note only after verifying its saved audio and chat
+    attachment; the tool requires the saved filename and artifact identity.
+    Upstream host layout and speech configuration not taken; Flux stays first.
+    Murage: server/index.ts, server/drivers/agents-proxy.ts,
+    server/drivers/agents-proxy-voice.test.ts, server/voice/voice-notes.ts,
+    server/voice/voice-notes.test.ts
+
+  OpenMausBot PR #4481
+    merge 9244ed1dd59281f3ad8a5d55e6030b59a744e5da
+    Verify that a note recorded before failure remains attached and playable,
+    with the failure ending last. Existing direct-save behaviour is retained.
+    Upstream attachment queue and stopped-note deletion rule not taken.
+    Murage: server/voice/voice-notes-kept.e2e.test.ts
+
+  OpenMausBot PR #4926
+    merge db061488e8facb464d0ff52a11da4f8151452fb2
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Wake/sleep keys and UTF-8 text through targeted ADBKeyBoard broadcasts.
+    Upstream app lookup, claim protocol, docs and skill edits were not taken.
+    Murage: server/drivers/phone-proxy.ts, shared/phone-steps.ts,
+      server/drivers/phone-input.test.ts
+
+  OpenMausBot PR #5530
+    merge 8f8ff543a8df3a22592e9e066c1161ac887cddd2
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Clear a focused input field before sending replacement text.
+    Upstream docs and permissive handling of missing input state were not taken.
+    Murage: server/drivers/phone-proxy.ts, server/drivers/phone-input.test.ts
+
+  OpenMausBot PR #5614
+    merge 417c9e95b99aa4be2a864d238016e8e2b706198b
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Validate all Android batch steps before running any, then stop on failure or cancellation.
+    Upstream scope tables, claim protocol, coercions and skill edits were not taken.
+    Murage: server/drivers/phone-proxy.ts, shared/phone-steps.ts,
+      server/drivers/phone-input.test.ts
+Behaviour taken from upstream, implemented independently in Murage code:
+
+  OpenMausBot PR #4585
+    merge ee3e8956a8f0 (identifier supplied in the offline lane brief)
+    Prevent input-method candidate Enter from submitting a form. Applied to
+    room and Inbox forms; upstream widget source was not copied.
+    Murage: src/components/GroupView.tsx, src/components/Inbox.tsx
+
+  OpenMausBot PR #4841
+    merge 209341b9b198 (identifier supplied in the offline lane brief)
+    Guard text-field saves during input-method candidate confirmation.
+    Adapted to the image credential and connection fields; this codebase's
+    BotProfileAvatarCard has no bot-name field. No upstream source was copied.
+    Murage: src/components/BotProfileAvatarCard.tsx, src/components/ApiKeys.tsx
+
+  OpenMausBot PR #3788
+    merge f1c9e1609e14 (identifier supplied in the offline lane brief)
+    Guard team creation and renaming during input-method confirmation.
+    Applied to team dialogs and the room rename dialog; the sidebar's
+    new-channel dialog is outside this adaptation. No upstream source copied.
+    Murage: src/components/NewTeamDialog.tsx,
+    src/components/TeamSettingsDialog.tsx, src/components/GroupView.tsx
+
+  OpenMausBot commit 19ad825df
+    Extend input-method Enter guards to chat selection, instructions,
+    routine sentences, library imports, owner codes, intake answers and
+    editor suggestions using Murage's existing composition helper.
+    Upstream source, Settings and first-run changes were not copied.
+    Murage: src/components/SidebarNewChatPanel.tsx,
+    src/components/ChannelDetailsPanel.tsx, src/components/GroupView.tsx,
+    src/components/routines/NewRoutineSheet.tsx,
+    src/components/TeamLibraryPanel.tsx, src/components/cloud/OwnerCodeDialog.tsx,
+    src/components/BotIntakeCard.tsx, src/components/OptionCard.tsx,
+    src/components/editor/slashMenu.tsx, src/components/ImeGuard.dom.test.ts
+
+  OpenMausBot PR #978
+    merge 80ef60f5d900 (upstream merge identifier recorded in the lane brief)
+    Behaviour taken from upstream, implemented independently in Murage code.
+    A per-message toggle between formatted text and its Markdown source.
+    Both views use Murage's already-masked text. No upstream source was taken.
+    Murage: src/components/RawMarkdownToggle.tsx, src/components/ChatView.tsx
+
+  OpenMausBot PR #1027
+    merge 3c4c1ca8731e (upstream merge identifier recorded in the lane brief)
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Repair missing table separators and separator pipes for chat display,
+    preserving escaped cell pipes and code. No upstream source was taken.
+    Murage: src/lib/markdown-tables.ts, src/components/ChatMarkdown.tsx
+
+  OpenMausBot PR #5610
+    merge c4e963d9f51c (merge prefix recorded in the offline lane brief)
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Earlier image references in a conversation replay carry an explicit
+    history note before the engine receives them. The live message stays
+    unchanged. Upstream image extraction and transport code were not taken.
+    Murage: server/turn-context.ts, server/turn-images-replay.test.ts,
+    src/lib/up-media-small-api.test.ts
+
+  OpenMausBot PR #5784
+    merge b81aa1a2c426709d337f7a69e0aed6a2be5b2e4f
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Plain previews unwrap asterisk emphasis beside letters and keep literal
+    markers in inline code, escaped emphasis, and underscore identifiers.
+    Murage: src/lib/plain-text.ts, src/lib/plain-text.test.ts
+
+  OpenMausBot PR #6025
+    merge 8c2998b6b4eb1a2eaa2bd19222ef15dbf1310132
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Markdown table cells support attribute-free line breaks for display and selection.
+    Murage: src/lib/markdown-soft-breaks.ts
+
+  OpenMausBot PR #6119
+    merge 8b9526c0bd4901604eb1998998f83125787df4aa
+    Behaviour taken from upstream, implemented independently in Murage code.
+    The prose and tables in one reply share a reading edge.
+    Murage: src/lib/reply-width.ts, src/styles.css
+
+  OpenMausBot PR #6263
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Keep the bot's color picker available when the avatar shows a photo.
+    Murage: src/components/BotProfileAvatarCard.tsx
+
+  OpenMausBot PR #3224
+    merge 86d57558277d (commit prefix supplied in the offline lane brief)
+    Deleting the open chat selects its next visible neighbor in the sorted,
+    filtered list, or the previous visible chat at the end. The server checks
+    that the choice still belongs to the same bot. Upstream code was not taken.
+    Murage: src/components/TaskPicker.tsx, src/state/store.tsx,
+    server/index.ts, server/store.ts
+
+Adapted from upstream source:
 
   OpenMausBot Muse Code driver (server/drivers/muse-code.ts and its tests)
     commit eea36bdb1cd76f5fda659e68f564f106d177cbc1 (driver history head
@@ -628,6 +957,11 @@ reviewed at the exact upstream commits named. None is a wholesale import.
     Murage: server/question-normalize.ts, server/drivers/codex.ts,
     server/testing/fake-codex-app-server.ts
 
+  OpenMausBot PR #6120
+    Behaviour taken from upstream, implemented independently in Murage code.
+    Keep department labels free of row totals.
+    Murage: src/components/Sidebar.tsx, src/components/SidebarSectionHeader.tsx
+
   OpenMausBot PR #3328 (Claude tool_progress heartbeat)
     merge e1be06a9f4b72f7dbff0f40a2dea2bc5808237f8
     A running tool's heartbeat counts as turn activity.
@@ -776,3 +1110,8 @@ PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+  OpenMausBot chat performance carry
+    downstream donor 65540f266ca0bf81b26240489b1b9a58f7b78467
+    Cap the inspector's retained events and follow live replacements.
+    Murage: src/lib/inspector.ts, src/components/InspectorPanel.tsx

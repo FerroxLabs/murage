@@ -126,9 +126,45 @@ describe("gate table", () => {
     for (const object of ["photo", "the photo", "it", "  ", "those screenshots"]) expect(gateReason({ text: "The user liked the photo", object }, NOW)).toBe("placeholder");
   });
 
+  // 1.0.21 polish (Sean's live 1.0.20 walk): Memory kept "The source states that '2 x 5,000' is being computed". A line
+  // about the source itself (what a text says, a sum being worked out) says nothing about the owner. It drops at
+  // capture as thin, whatever digits or names it holds; nothing already saved is touched (no deletion without review).
+  it.each([
+    "The source states that '2 x 5,000' is being computed",
+    "The source states that ‘2 x 5,000’ is being computed.",
+    "The text says that the total is 10,000",
+    "The document mentions Quarterly Review",
+    "This message discusses the budget",
+    "The conversation is about Project Atlas",
+    "'2 x 5,000' is being computed",
+    "A calculation of 12 * 4 is being performed",
+  ])("a line about the source, not the owner, drops as thin: %s", text => {
+    expect(gateReason({ text, claimType: "owner-statement" }, NOW)).toBe("thin");
+  });
+  it.each([
+    "You prefer the source code in TypeScript",
+    "The source of your income is consulting",
+    "Your budget for 2027 is 5,000 dollars",
+    "You said the text from Dana was rude",
+    "You are computing the 2027 taxes with Sam",
+    "That email asked you to pay by Friday",
+    "The message says your rent is due Fridays",
+    "The document states the tenant has a right to renew",
+    "The message mentions Mia has epilepsy",
+    "The report says the total is 10,000 dollars per month",
+    "A calculation of your tax is being performed",
+  ])("an owner fact that mentions a source or a sum is kept: %s", text => {
+    expect(gateReason({ text, claimType: "owner-statement" }, NOW)).toBeNull();
+  });
+  it("a correction about the source is never dropped", () => {
+    expect(gateReason({ text: "The source states that '2 x 5,000' is being computed", update: true }, NOW)).toBeNull();
+  });
+
   it("a long line is never read by the text rules, however it begins", () => {
     expect(gateReason({ text: `The user liked the photo ${"and more ".repeat(300)}` }, NOW)).toBeNull();
     expect(gateReason({ text: "You are at the airport and then you are at the airport and then home" }, NOW)).toBeNull();
+    expect(gateReason({ text: `The message says ${"x".repeat(240)}` }, NOW)).toBeNull();
+    expect(gateReason({ text: 'The source states that "2 x 5,000 x 4 x 6" is being computed' }, NOW)).toBeNull();
   });
 
   const flagStates = [{}, { transient: false }, { transient: true }];
@@ -232,6 +268,19 @@ describe("the gate in the extraction path", () => {
     expect(ground).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(ground.mock.calls)).not.toContain("airport");
     expect(rows(source)).toEqual(["You prefer green tea in the morning"]);
+  });
+
+  it("1.0.21: consolidation drops a calculation and saves adjacent owner facts, even with source phrasing", async () => {
+    const source = "Work out 2 x 5,000 for me. I prefer invoices on Fridays. My daughter Mia is allergic to peanuts.";
+    const extractor = (async () => JSON.stringify([
+      { text: "The source states that '2 x 5,000' is being computed", quote: "Work out 2 x 5,000 for me", claimType: "owner-statement" },
+      { text: "You prefer invoices on Fridays", quote: "I prefer invoices on Fridays", claimType: "owner-statement" },
+      { text: "The message says your daughter Mia is allergic to peanuts", quote: "My daughter Mia is allergic to peanuts", claimType: "owner-statement" },
+    ])) as TextOnlyExtractor;
+    const ground = vi.fn(async () => '{"supported":true}'); extractor.ground = ground;
+    expect((await consolidateMemorySource(captured(source), extractor, signal())).status).toBe("complete");
+    expect(rows(source)).toEqual(["The message says your daughter Mia is allergic to peanuts", "You prefer invoices on Fridays"]);
+    expect(ground).toHaveBeenCalledTimes(2);
   });
 
   it("a slice where everything drops commits like an empty reply: no retry, no failed attempt", async () => {

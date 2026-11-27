@@ -1,2 +1,0 @@
-verification=0
-mutants=0

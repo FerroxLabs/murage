@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { artifactStorageBytes } from "./artifacts.ts";
 import { attachmentStorageUsage, attachmentsFreeBytes } from "./attachments.ts";
 import { DISK_FLOOR_BYTES, freeDiskBytes } from "./disk-space.ts";
+import { upgradeCopiesUsage } from "./memory/upgrade-copies.ts";
 
 export interface StorageReport {
   /** Free bytes on the disk that holds Murage's data, or null when the disk
@@ -16,6 +17,8 @@ export interface StorageReport {
   floorBytes: number;
   attachments: { bytes: number; inProgressBytes: number };
   files: { bytes: number };
+  /** Copies of messages.db the memory upgrades took first; removed on their own 7 days after (memory/upgrade-copies.ts). */
+  upgradeCopies: { bytes: number; count: number };
 }
 
 export function storageReport(dataDir: string): StorageReport {
@@ -29,5 +32,6 @@ export function storageReport(dataDir: string): StorageReport {
     floorBytes: DISK_FLOOR_BYTES,
     attachments,
     files: { bytes: artifactStorageBytes(join(dataDir, "artifact-files")) },
+    upgradeCopies: upgradeCopiesUsage(dataDir),
   };
 }

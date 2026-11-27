@@ -1,3 +1,4 @@
+import { evidencePath, assertExternalEvidencePath } from '../scripts/evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Exercise real dispatch and service routes with server-owned queue/rebuild/card
 // options. The fixture never replaces either authority classifier or a service gate.
@@ -9,7 +10,7 @@ import { withTurnSecrets } from './testing/fixture-dump.ts';
 import { raiseLevel } from './testing/raise-level.ts';
 let fixture: VerificationServer, desktop: Record<string, string>;
 const evidence: unknown[] = [];
-const out = process.env.GNL_SERVICE_ORIGIN_EVIDENCE ?? 'evidence/gnl-prod-r4/workflow';
+const out = assertExternalEvidencePath(process.env.GNL_SERVICE_ORIGIN_EVIDENCE ?? evidencePath('evidence/gnl-prod-r4/workflow'));
 const instrumentation = `
 process.env.FAKE_CLAUDE_MODE='hang';process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
 const fs=await import('node:fs'),path=await import('node:path'),{registerHooks}=await import('node:module');
@@ -75,8 +76,8 @@ for(const path of ['queue','card','memory','owner','queue-proven','memory-proven
    expect.soft(observation.level).toBe(proven?'unlimited':'ask');
    expect.soft(observation.origin).toBe(proven?'owner':'other-human');
    expect.soft(observation.service).toBe(proven);
-   expect.soft(observation.folderDecision).toBe(proven?'trust':'reject');
-   expect.soft(observation.folderRejects).toBe(proven?0:1);
+   expect.soft(observation.folderDecision).toBe('reject');
+   expect.soft(observation.folderRejects).toBe(1);
    expect.soft(observation.phoneOffered).toBe(true);
    expect.soft(observation.phoneOrigin).toBe(proven?'no-limits':null);
    await expect.poll(()=>{try{const line=readFileSync(fixture.fixtureDumpLogPath,'utf8').trim().split('\n').find(line=>line.includes(prompt));if(!line)return false;const dump=withTurnSecrets(JSON.parse(line));const token=dump.mcpConfig?.mcpServers?.agents?.env?.MURAGE_COMMS_TOKEN;if(!token)return false;auth={authorization:'Bearer '+token};return true;}catch{return false;}},{timeout:30000}).toBe(true);

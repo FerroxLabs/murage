@@ -14,7 +14,7 @@ export type DraftView =
   | "connected" | "added";
 
 /** The key link was clicked: the card moves to the key box and the failure is over. */
-export const CHOSE_KEY = { useKey: true, message: undefined, signInFailed: false } as const;
+export const CHOSE_KEY = { useKey: true, message: undefined, signInFailed: false, ownApp: false } as const;
 
 /** What a sign-in that did not finish leaves on the card. A cancel says nothing. */
 export function afterSignIn(signed: { message: string; cancelled: boolean }): Pick<DraftCardState, "message" | "signInFailed"> {
@@ -33,6 +33,7 @@ export interface DraftCardState {
   useKey: boolean;
   /** A sign-in ran and did not finish, so the card offers a key. A failed save does not set this. */
   signInFailed?: boolean;
+  ownApp?: boolean;
   header: HeaderChoice;
   customHeader: string;
   keyValue: string;

@@ -13,6 +13,7 @@
 // in the main process, after authorization.
 import { RecallPreparationPending } from './recall-recovery.ts';
 import { RecallWorkBudget } from './recall-view-index.ts';
+import { adoptScopeSet } from './oneindex.ts';
 import type { MemoryEligibility } from "./eligibility.ts";
 import type { IndexHit, MemoryIndex } from "./index.ts";
 import { byScore, compareRefs } from "./ref-order.ts";
@@ -25,9 +26,12 @@ export const scanLimits = { chunks: 8, budgetMs: 700 };
 export function answerQuery(index: MemoryIndex, eligibility: MemoryEligibility, input: MemorySearchInput, vector: number[] | null, identity: string, degraded?: string, now: () => number = Date.now): { result: MemorySearchResult; eligibilityMs: number; timings: Record<string, number> } {
   const started = performance.now(), wallStart = now();
   if(input.view&&!input.reader)throw new RecallPreparationPending();
+  if(input.view&&input.scopeSet)adoptScopeSet(input.view,input.scopeSet);
   const budget=new RecallWorkBudget(8192);
-  let eligible = eligibility.read(input,budget);
-  const words=input.view?eligibility.lexical(input.query,input.view,budget.reserveCandidates(Math.max(0,budget.remaining-1024))):undefined;
+  // The first chunk charges every raw row it steps (oneindex.ts eligibleScopePage), so it reads under a reserve: the words below keep the
+  // allowance they had (1,024 raw rows) however many rows of other readers lie between this reader's own.
+  let eligible = eligibility.read(input,input.view?budget.reserveCandidates(2048):budget);
+  const words=input.view?eligibility.lexical(input.query,input.view,budget.reserveCandidates(Math.max(0,budget.remaining-1024)),input.historical===true):undefined;
   const eligibilityMs = performance.now() - started;
   let degradedReason = degraded;
   const usable = input.semantic ? vector : null;

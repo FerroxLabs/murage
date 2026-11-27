@@ -1,3 +1,4 @@
+import { evidencePath } from '../evidence-path.mjs';
 import {runNodeFixture} from './native-launcher.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';
@@ -18,7 +19,7 @@ for(const m of cases) {
   const r=m.ps?runLinuxFixture(pwsh,['-NoProfile','-File','scripts/windows/p11c-check.ps1'],{encoding:'utf8',timeout:60000}):runNodeFixture(['--test','scripts/windows/p11c.node-test.mjs'],{encoding:'utf8',timeout:60000});
   assert.equal(r.signal,null);assert.notEqual(r.status,0,`SURVIVED ${m.name}`);
   assert.match(r.stdout+r.stderr,/ASSERTION:|AssertionError|ERR_ASSERTION/,'assertion failure required');
-  writeFileSync(new URL(`evidence/cfix4-mutant-${m.name}.log`,import.meta.url),r.stdout+r.stderr);
+  writeFileSync(evidencePath(`scripts/windows/evidence/cfix4-mutant-${m.name}.log`),r.stdout+r.stderr);
   console.log(`RED ${m.name} (assertion failure, exit ${r.status})`);
  }finally{if(original===null)unlinkSync(file);else writeFileSync(file,original);}
 }

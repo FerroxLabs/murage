@@ -1,9 +1,24 @@
 import { removeTempDirSync } from "../../testing/cleanup.ts";
-import { existsSync, mkdtempSync, writeFileSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect, it, vi } from 'vitest';
 import { CopilotMcpConfig, reclaimCopilotMcpConfigs } from './copilot-mcp-config.ts';
+
+it('renames reserved Copilot server names without taking any other server name', async () => {
+  const files = await CopilotMcpConfig.create();
+  const names = ['browser', 'computer', 'murage_browser', 'murage_browser_2', 'murage_computer', 'notes'];
+  const servers = names.map(name => ({ name, command: 'node', args: [name], env: [{ name: 'FIXTURE_VALUE', value: name }] }));
+  try {
+    const path = files.prepare('fixture', servers);
+    const { mcpServers } = JSON.parse(readFileSync(path, 'utf8'));
+    expect(Object.keys(mcpServers)).toEqual(['murage_browser_3', 'murage_computer_2', 'murage_browser', 'murage_browser_2', 'murage_computer', 'notes']);
+    Object.values(mcpServers).forEach((value, index) => expect(value).toEqual({
+      type: 'local', command: 'node', args: [names[index]], env: { FIXTURE_VALUE: names[index] }, tools: ['*'],
+    }));
+    expect(servers.map(server => server.name)).toEqual(names);
+  } finally { await files.dispose(); }
+});
 
 it('gives each child its own file and removes only the released generation', async () => {
   const files = await CopilotMcpConfig.create();

@@ -1,11 +1,11 @@
 #!/bin/bash
 # Verify a Murage customer home image and sign the verdict. One command, run on the operator's Mac:
 #   sign-image.sh [--dry-run] <image-id> <staging|prod>
-# It never prints or logs a secret: the build host token is read from a file by name into a private header file, and
+# It never prints or logs a secret: the Hetzner token is read from a file by name into a private header file, and
 # the AWS credentials are read from ~/.config/murage/verifier.env INSIDE A SUBSHELL that execs the aws child, so they
 # never reach this shell, the logs or the console helper. (MURAGE_VERIFIER_AWS_PROFILE=<name> uses an AWS profile instead.)
 #
-# Steps: read the image from the build host API; create a throwaway server from it; boot that server into build host rescue;
+# Steps: read the image from the Hetzner API; create a throwaway server from it; boot that server into Hetzner rescue;
 # put a fresh SSH host key and a fresh client key on it THROUGH THE AUTHENTICATED WEB CONSOLE (so the first ssh
 # connection is pinned to a key that never crossed an untrusted path); run image-release-check.sh over that ssh; build
 # the signed statement with the Worker's own module (image-sig.mjs); sign it with AWS KMS; print the imageKinds entry.
@@ -235,11 +235,11 @@ wait_action() { # wait_action ID
         st=$(jget action.status)
         case $st in
             success) return 0 ;;
-            error) die "build host action $id failed" ;;
+            error) die "Hetzner action $id failed" ;;
         esac
         n=$((n + 1)); nap 3
     done
-    die "build host action $id did not finish"
+    die "Hetzner action $id did not finish"
 }
 
 # ---- 1. the image, first read ----------------------------------------------------------------------------------

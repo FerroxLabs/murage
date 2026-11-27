@@ -279,7 +279,8 @@ describe("the 17 settings.stub.* keys are frozen", () => {
     "settings.stub.botEmailTitle": "Bot email",
     "settings.stub.yourChief": "your Chief",
     "settings.stub.letsBots.browser": "use a browser tab you can watch and take over",
-    "settings.stub.letsBots.skillRecorder": "learn a skill from a recording or /learn",
+    // polish-1021 (d1): the off line names no slash command; Settings speaks in words.
+    "settings.stub.letsBots.skillRecorder": "learn a skill from a recording or from chat",
   };
   it("en.json holds exactly these 17, word for word", () => {
     const en = pack("en");

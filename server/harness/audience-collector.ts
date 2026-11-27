@@ -1,4 +1,6 @@
-import { QUESTION_LIMITS, type QuestionSpec, type QuestionAnswer } from '../../shared/questions.ts';
+import { CARD_CHOICES_MAX, QUESTION_LIMITS, foldedMarker, type QuestionSpec, type QuestionAnswer } from '../../shared/questions.ts';
+import { createMaskedValueRecorder, UNAVAILABLE_VIEW, type MaskedValueRecorder, type MaskedValueView } from './masked-values.ts';
+export { foldedMarker };
 // PROVISIONAL INTERFACE: the design freezes resolveDisplayAction(card, action)
 // but not the card argument. It is an authoritative stored-message view, never
 // the client display copy; live is checked by the caller for permissions only.
@@ -65,12 +67,12 @@ export function resolveDisplaySubmission(card: DisplayActionCard, submission: un
   | Extract<DisplayActionResolution, { ok: false }> {
   if (!record(submission)) return invalidAction();
   const action = { ...submission }, transport: Record<string, unknown> = {};
-  for (const key of ['allowForTask', 'freshAuth', 'seen', 'reviewedSha256', 'reviewDigest']) {
+  for (const key of ['allowForTask', 'freshAuth', 'seen', 'reviewedSha256', 'reviewedVerdictHash', 'reviewDigest']) {
     if (!Object.hasOwn(action, key)) continue;
     const value = action[key];
     if (key === 'allowForTask' && (value !== true || card.requestType !== 'permission' || action.action !== 'allow')) return invalidAction();
     if ((key === 'freshAuth' || key === 'seen') && !record(value)) return invalidAction();
-    if ((key === 'reviewedSha256' || key === 'reviewDigest') && typeof value !== 'string') return invalidAction();
+    if ((key === 'reviewedSha256' || key === 'reviewedVerdictHash' || key === 'reviewDigest') && typeof value !== 'string') return invalidAction();
     transport[key] = value; delete action[key];
   }
   const resolved = resolveDisplayAction(card, action);
@@ -124,7 +126,10 @@ try {
   createPolicy = module.createTurnTextPolicy;
 } catch { /* no input text is included in the missing-policy diagnostic */ }
 
-type AdmissionRecord = { host: TrustedSendContext; generation: number; active: boolean; masked: boolean; items: Map<string, string>; regions: Set<string>; snapshots: Map<string, { text: string; regionId: string; revision: number; speech: 'append' | 'none' }>; streamed: Set<string>; anonymousAssistant: number };
+// cause22-E (b) (MAIN-RULING 2026-11-22T17:47:36Z, designs/REDACT-AUDIENCE-1021.md C1-C4, C6, C10, C11): no item, stream, live-turn,
+// shown-text or event-size count decides what a turn shows; only the turn text policy's scan does.
+
+type AdmissionRecord = { host: TrustedSendContext; generation: number; active: boolean; masked: boolean; secret: boolean; withheld: boolean; items: Map<string, string>; regions: Set<string>; snapshotScalars: number; snapshots: Map<string, { text: string; regionId: string; revision: number; speech: 'append' | 'none' }>; streamed: Set<string>; anonymousAssistant: number; values: MaskedValueRecorder | undefined; retiredValues?: MaskedValueView };
 type AttachmentRecord = { instanceId: string; active: boolean; admissions: Set<TurnAdmission> };
 const variants: Record<ExecutionEvent['type'], ManifestVariant | ((event: ExecutionEvent) => ManifestVariant)> = {
   'turn.diagnostic': 'M01', 'session.started': 'M02', 'turn.subtask': 'M03', 'session.exited': 'M04', 'turn.started': 'M05', 'turn.retrying': 'M06', 'turn.completed': 'M07',
@@ -153,19 +158,28 @@ function toolResultDirDisplay(entry: string): string {
   return entry.slice(0, at) + SESSION_TOKEN + entry.slice(at + session.length);
 }
 
+// cause22-E (b) C5 (MAIN-RULING 2026-11-22T17:58:19Z Q3): the display copy is the event itself. shortenForDisplay (4 KiB per
+// string, 24 leaves, 32 KiB per event, 64 KiB per host field) cut tool input, tool results and long host fields by size on the
+// shown path; it is deleted. Every field is scanned whole by the turn policy and shown; an unscannable field is withheld alone.
+const PREVIEW_DEPTH = 40;
+export const PREVIEW_TOO_DEEP = '[nested too deep to show]';
 /** Explicit manifest extractor. Fixed schema reads never evaluate an accessor
  * or walk an unknown subtree. Tool previews are the only arbitrary maps, and
  * output their keys as scanned values in fixed {key,value} slots. */
-function extract(event: ExecutionEvent, envelope: HostEnvelope, stream: string): { batch: ManifestBatch; shape: Record<string, unknown> } {
-  let nodes = 0, units = 0;
+function extract(event: ExecutionEvent, envelope: HostEnvelope, stream: string): { batch: ManifestBatch; shape: Record<string, unknown>; folds: (() => void)[] } {
   const carriers: TextCarrier[] = [];
-  const charge = (n: number) => { units += n; if (units > 262_144 || ++nodes > 20_000) throw new Error('budget'); };
+  // cause22-E (b) C6: no text-size or node count; the walk ends by the depth guard (preview) and the fixed schema reads.
+  const charge = (_n: number) => {};
   const value = (object: unknown, key: string) => { charge(key.length + 4); return own(object, key); };
   const type = value(event, 'type');
   const variantFn = typeof type === 'string' ? variants[type as ExecutionEvent['type']] : undefined;
   const variant = typeof variantFn === 'function' ? variantFn(event) : variantFn ?? 'M29';
   if (variant === 'M29') throw new Error('unknown_variant');
   const shape: Record<string, unknown> = { type };
+  // Counted markers of folded lists. Each is written as a last line of a shown text field AFTER the policy filled that field: a
+  // marker is never a list entry, so it has no handle, cannot be picked and cannot stand in for a real choice or option.
+  const folds: (() => void)[] = [];
+  const foldInto = (target: Record<string, unknown>, key: string, count: number) => folds.push(() => { const shown = typeof target[key] === 'string' ? target[key] as string : ''; target[key] = shown ? `${shown}\n${foldedMarker(count)}` : foldedMarker(count); });
   const text = (object: unknown, key: string, target: Record<string, unknown>, path = key, mode: TextCarrier['mode'] = 'whole', display?: (raw: string) => string) => {
     const raw = value(object, key); if (raw === undefined) return;
     if (typeof raw !== 'string') throw new Error('text_shape');
@@ -176,36 +190,51 @@ function extract(event: ExecutionEvent, envelope: HostEnvelope, stream: string):
   const num = (object: unknown, key: string, target: Record<string, unknown>) => { const n = value(object, key); if (typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER) target[key] = n; };
   const bool = (object: unknown, key: string, target: Record<string, unknown>) => { const b = value(object, key); if (typeof b === 'boolean') target[key] = b; };
   const enumeration = (object: unknown, key: string, target: Record<string, unknown>, allowed: readonly string[]) => { const s = value(object, key); if (typeof s === 'string' && allowed.includes(s)) target[key] = s; };
-  const array = (object: unknown, key: string, max: number, visit: (entry: unknown, i: number) => unknown): unknown[] | undefined => {
+  const array = (object: unknown, key: string, max: number | undefined, visit: (entry: unknown, i: number, folded: boolean) => unknown, more?: (count: number, shown: unknown[]) => void): unknown[] | undefined => {
     const raw = value(object, key); if (raw === undefined) return undefined;
     if (!Array.isArray(raw) || types.isProxy(raw)) throw new Error('array_shape');
     const length = own(raw, 'length') as number; charge(length);
-    if (length > max) throw new Error('array_budget');
-    return Array.from({ length }, (_, i) => visit(value(raw, String(i)), i));
+    // cause22-E (b) C8 (MAIN-RULING 17:47:36Z b): a display list has no count cut (`max` undefined).
+    // MAIN-RULING 2026-11-22T21:44:35Z redact-parse-error (b): a count never throws and never masks the turn. A card contract
+    // (question card, choices) shows its first `max` entries; every entry past it is still visited, so its text is scanned and
+    // can still latch, but it is not shown: the rest folds into ONE counted marker (`more`, a last line of a shown text field).
+    // A folded entry is scanned under a path of its own (`folded`), which has no place in the shape.
+    const all = Array.from({ length }, (_, i) => visit(value(raw, String(i)), i, max !== undefined && i >= max));
+    if (max === undefined || length <= max) return all;
+    const shown = all.slice(0, max);
+    more?.(length - max, shown);
+    return shown;
   };
-  const strings = (key: string, max = 256, display?: (raw: string) => string) => {
-    const entries = array(event, key, max, (entry, i) => { const target = { value: entry }; text(target, 'value', target, `${key}.${i}`, 'whole', display); return target.value; });
+  const strings = (key: string, max?: number, display?: (raw: string) => string) => {
+    const entries = array(event, key, max, (entry, i, folded) => { const target = { value: entry }; text(target, 'value', target, `${folded ? `${key}:folded` : key}.${i}`, 'whole', display); return target.value; }, count => foldInto(shape, 'summary', count));
     if (entries) shape[key] = entries;
   };
   const questions = () => {
-    const rows = array(event, 'questions', QUESTION_LIMITS.questions, (q, i) => {
+    const rows = array(event, 'questions', QUESTION_LIMITS.questions, (q, i, foldedQuestion) => {
       const out: Record<string, unknown> = { handle: `q.${i}`, options: [] };
-      for (const key of ['question', 'header']) text(q, key, out, `questions.${i}.${key}`);
+      const root = foldedQuestion ? 'questions:folded' : 'questions';
+      for (const key of ['question', 'header']) text(q, key, out, `${root}.${i}.${key}`);
       for (const key of ['multiSelect', 'allowOther', 'secret']) bool(q, key, out);
-      out.options = array(q, 'options', QUESTION_LIMITS.options, (o, j) => {
+      out.options = array(q, 'options', QUESTION_LIMITS.options, (o, j, foldedOption) => {
         const option: Record<string, unknown> = { handle: `o.${i}.${j}` };
-        for (const key of ['label', 'description']) text(o, key, option, `questions.${i}.options.${j}.${key}`);
+        for (const key of ['label', 'description']) text(o, key, option, `${root}.${i}.${foldedOption ? 'options:folded' : 'options'}.${j}.${key}`);
         return option;
-      }) ?? [];
+      }, count => foldInto(out, 'question', count)) ?? [];
       return out;
-    });
+    }, (count, shown) => foldInto(shown.at(-1) as Record<string, unknown>, 'question', count));
     if (rows) shape.questions = rows;
   };
   const preview = (key: string) => {
     const input = value(event, key); if (input === undefined) return;
     const rows: { key: string; value: string }[] = [];
     const visit = (raw: unknown, label: string, depth: number) => {
-      charge(label.length); if (depth > 40) throw new Error('depth');
+      charge(label.length);
+      // C7: a preview nested past PREVIEW_DEPTH withholds that one subtree under a fixed host line; it no longer throws (a
+      // throw here masked the whole turn). The guard only keeps this recursive walk off the call stack limit.
+      if (depth > PREVIEW_DEPTH && raw !== null && typeof raw === 'object') {
+        const i = rows.length, row = { key: label, value: PREVIEW_TOO_DEEP };
+        text(row, 'key', row, `preview.${i}.key`); text(row, 'value', row, `preview.${i}.value`); rows.push(row); return;
+      }
       if (typeof raw === 'string' || raw === null || typeof raw === 'boolean' || typeof raw === 'number') {
         if (typeof raw === 'string') charge(raw.length);
         const i = rows.length, row = { key: label, value: typeof raw === 'string' ? raw : String(raw) };
@@ -214,7 +243,7 @@ function extract(event: ExecutionEvent, envelope: HostEnvelope, stream: string):
       if (!raw || typeof raw !== 'object' || types.isProxy(raw)) throw new Error('preview_shape');
       if (Object.getPrototypeOf(raw) !== Object.prototype && Object.getPrototypeOf(raw) !== Array.prototype && Object.getPrototypeOf(raw) !== null) throw new Error('prototype');
       for (const k in raw) {
-        if (k.length > 1024) throw new Error('key_budget');
+        // C9: a key of any length is shown; it is scanned as a value like every other preview key.
         charge(k.length + 4);
         const d = Object.getOwnPropertyDescriptor(raw, k);
         if (!d?.enumerable) continue;
@@ -230,7 +259,7 @@ function extract(event: ExecutionEvent, envelope: HostEnvelope, stream: string):
     case 'turn.subtask': {
       const one = value(event, 'subtask');
       const source = one === undefined ? event : { subtasks: [one] };
-      shape.subtasks = array(source, 'subtasks', 64, (sub, i) => {
+      shape.subtasks = array(source, 'subtasks', undefined, (sub, i) => {
         const out: Record<string, unknown> = { id: `${envelope.eventId}-${i}` };
         text(sub, 'label', out, `subtasks.${i}.label`); enumeration(sub, 'status', out, ['started', 'running', 'done', 'failed']);
         for (const key of ['startedAt', 'endedAt', 'toolCount']) num(sub, key, out); return out;
@@ -260,11 +289,15 @@ function extract(event: ExecutionEvent, envelope: HostEnvelope, stream: string):
     }
     case 'content.delta': shape.streamKind = value(event, 'streamKind'); text(event, 'delta', shape, 'delta', 'delta'); break;
     case 'content.reset': shape.streamKind = value(event, 'streamKind'); break;
-    case 'plan.updated': shape.entries = array(event, 'entries', 256, (entry, i) => { const out = {}; text(entry, 'content', out, `entries.${i}.content`); enumeration(entry, 'status', out, ['pending', 'in_progress', 'completed']); return out; }) ?? []; break;
+    case 'plan.updated': shape.entries = array(event, 'entries', undefined, (entry, i) => { const out = {}; text(entry, 'content', out, `entries.${i}.content`); enumeration(entry, 'status', out, ['pending', 'in_progress', 'completed']); return out; }) ?? []; break;
     // Command handles depend on the authoritative bot cache. Intake never invents
-    // a command handle from a provider name; the cache API constructs the menu.
+    // a command handle from a provider name; the cache API constructs the menu
+    // and scans the whole report itself (displayEngineCommands). The report is
+    // shape-checked here but carries no text into the turn policy: it displays
+    // nothing in this turn, and a fresh session reports every command inside
+    // the owner's first turn, whose per-field streams exhausted the turn budget.
     case 'engine.commands': {
-      array(event, 'commands', 300, (command, i) => { for (const key of ['name', 'description', 'hint']) text(command, key, {}, `commands.${i}.${key}`); });
+      array(event, 'commands', undefined, command => { for (const key of ['name', 'description', 'hint']) { const raw = value(command, key); if (raw !== undefined && typeof raw !== 'string') throw new Error('text_shape'); } });
       shape.commands = []; break;
     }
     case 'steer.confirmed': break;
@@ -273,10 +306,10 @@ function extract(event: ExecutionEvent, envelope: HostEnvelope, stream: string):
       shape.requestType = value(event, 'requestType');
       for (const key of ['tool', 'summary', 'reason', 'toolInput', 'toolInputMissing', 'localHold']) text(event, key, shape);
       // M23/M24: toolResultDirs display copies are T. The raw provider session id stays X (M02), so the copy carries a host token; execution keeps the original paths.
-      strings('choices', 10); strings('filePaths'); strings('toolResultDirs', 256, toolResultDirDisplay); questions();
+      strings('choices', CARD_CHOICES_MAX); strings('filePaths'); strings('toolResultDirs', undefined, toolResultDirDisplay); questions();
       // Even omitted display extensions participate in the same latch.
-      const folder = value(event, 'folderTrust'); if (folder) { text(folder, 'folder', {}, 'folderTrust.folder'); array(folder, 'sources', 256, (v, i) => text({ value: v }, 'value', {}, `folderTrust.sources.${i}`)); }
-      const env = value(event, 'envInfo'); if (env) for (const key of ['names', 'absent', 'shell', 'managedEnv']) array(env, key, 256, (v, i) => text({ value: v }, 'value', {}, `envInfo.${key}.${i}`));
+      const folder = value(event, 'folderTrust'); if (folder) { text(folder, 'folder', {}, 'folderTrust.folder'); array(folder, 'sources', undefined, (v, i) => text({ value: v }, 'value', {}, `folderTrust.sources.${i}`)); }
+      const env = value(event, 'envInfo'); if (env) for (const key of ['names', 'absent', 'shell', 'managedEnv']) array(env, key, undefined, (v, i) => text({ value: v }, 'value', {}, `envInfo.${key}.${i}`));
       break;
     }
     case 'request.resolved': text(event, 'decidedBy', shape); enumeration(event, 'behavior', shape, ['allow', 'deny', 'answer']); enumeration(event, 'source', shape, ['user', 'auto', 'timeout', 'system', 'unavailable', 'peer']); break;
@@ -286,7 +319,7 @@ function extract(event: ExecutionEvent, envelope: HostEnvelope, stream: string):
       for (const key of ['message', 'details', 'errorKind', 'engineCode', 'gatewayCode', 'localFailureEngine']) text(event, key, shape);
       for (const nested of ['providerError', 'engine', 'connection']) { const v = value(event, nested); if (v) for (const key of ['providerSaid', 'providerTeam', 'preset']) text(v, key, {}, `${nested}.${key}`); } break;
   }
-  return { batch: { envelope, variant, carriers, controls: {}, ...(type === 'turn.completed' ? { terminal: 'complete' as const } : type === 'session.exited' ? { terminal: 'exit' as const } : {}) }, shape };
+  return { batch: { envelope, variant, carriers, controls: {}, ...(type === 'turn.completed' ? { terminal: 'complete' as const } : type === 'session.exited' ? { terminal: 'exit' as const } : {}) }, shape, folds };
 }
 
 function fill(shape: Record<string, unknown>, path: string, text: string) {
@@ -302,6 +335,14 @@ function freeze<T>(value: T): T {
   return value;
 }
 
+/** Test seam (deep1022-causeB-design W8 a): the scanner the masked-value recorders of later admissions read with. */
+let valueScanner: Parameters<typeof createMaskedValueRecorder>[0] extends infer O ? O extends { scan?: infer S } ? S : never : never;
+export function setMaskedValueScannerForTest(scan: typeof valueScanner): () => void {
+  if (process.env.NODE_ENV !== 'test') throw new Error('test instrumentation only');
+  const before = valueScanner; valueScanner = scan;
+  return () => { valueScanner = before; };
+}
+
 export class RuntimeAudienceCollector implements AudienceCollector {
   private readonly incarnation = randomUUID();
   private readonly attachments = new WeakMap<AttachmentCapability, AttachmentRecord>();
@@ -315,13 +356,34 @@ export class RuntimeAudienceCollector implements AudienceCollector {
     const attachment = Object.freeze({}) as AttachmentCapability;
     this.attachments.set(attachment, { instanceId, active: true, admissions: new Set() }); return attachment;
   }
-  admitNewTurn(host: TrustedSendContext): TurnAdmission {
+  /** 1.0.22 cause B: what a secret-latched admission masked, read by the bus BEFORE it cancels that admission for a re-dispatch of
+   * the same owner message (the engine session may still hold the earlier attempt's output). The earlier attempt may already have
+   * ended (a refusal is its terminal, bus.refuseTurn): its last view is kept for this one read (ASTRA N3: that case never starts
+   * empty and unlatched). Undefined when the admission was never secret-latched or is unknown. Only a re-dispatch reads this: any
+   * other new turn starts with an empty list (a latch does not outlive its turn). */
+  carriedValues(cap: TurnAdmission | undefined): MaskedValueView | undefined {
+    const state = cap ? this.admissions.get(cap) : undefined;
+    if (!state?.secret) return undefined;
+    try { return (state.active ? state.values?.view() : state.retiredValues) ?? UNAVAILABLE_VIEW; } catch { return UNAVAILABLE_VIEW; }
+  }
+  /** The masked-value list of the admission as of now (the bus snapshots it per execution event, right after that event's intake).
+   * Undefined = nothing can be said (no admission, retired, no recorder): the host keeps the 1.0.21 outcome. */
+  maskedValues(source: SourceContext | undefined): MaskedValueView | undefined {
+    const state = source?.admission ? this.admissions.get(source.admission) : undefined;
+    if (!state) return undefined;
+    try { return state.values?.view(); } catch { return undefined; }
+  }
+  admitNewTurn(host: TrustedSendContext, carried?: MaskedValueView): TurnAdmission {
     const attachment = this.attachments.get(host.attachment);
     if (!attachment?.active || attachment.instanceId !== host.instanceId) throw new Error('invalid_attachment');
     const cap = Object.freeze({}) as TurnAdmission;
-    const active = this.liveAdmissions < 256;
-    this.admissions.set(cap, { host: Object.freeze({ ...host }), generation: ++this.generation, active, masked: false, items: new Map(), regions: new Set(), snapshots: new Map(), streamed: new Set(), anonymousAssistant: 0 });
-    if (active) { this.liveAdmissions++; attachment.admissions.add(cap); this.policy.admit(cap); }
+    const active = true;
+    let values: MaskedValueRecorder | undefined;
+    try { values = createMaskedValueRecorder({ scan: valueScanner }); if (carried) values.carryFrom(carried); } catch { values = undefined; }
+    // a re-dispatch after a latch starts latched with the earlier attempt's values: its policy is never admitted, so every reply of
+    // the new attempt is judged against that list (owner-display.ts ownerLatchedReplyText) and every other audience keeps the mask
+    this.admissions.set(cap, { host: Object.freeze({ ...host }), generation: ++this.generation, active, masked: Boolean(carried), secret: Boolean(carried), withheld: false, items: new Map(), regions: new Set(), snapshotScalars: 0, snapshots: new Map(), streamed: new Set(), anonymousAssistant: 0, values });
+    if (active) { this.liveAdmissions++; attachment.admissions.add(cap); if (!carried) this.policy.admit(cap); }
     return cap;
   }
   source(cap: TurnAdmission): SourceContext {
@@ -331,16 +393,38 @@ export class RuntimeAudienceCollector implements AudienceCollector {
   private retire(cap: TurnAdmission) {
     const state = this.admissions.get(cap); if (!state) return;
     if (state.active) this.liveAdmissions--;
-    state.active = false; state.items.clear(); state.regions.clear(); state.snapshots.clear(); state.streamed.clear(); this.attachments.get(state.host.attachment)?.admissions.delete(cap); this.policy.retire(cap);
+    state.active = false; state.items.clear(); state.regions.clear(); state.snapshotScalars = 0; state.snapshots.clear(); state.streamed.clear();
+    // derived forms only (no raw text), and only of a secret-latched turn: read once more by a re-dispatch (carriedValues)
+    if (state.values) { try { state.retiredValues = state.secret ? state.values.view() : undefined; } catch { state.retiredValues = undefined; } }
+    state.values = undefined; this.attachments.get(state.host.attachment)?.admissions.delete(cap); this.policy.retire(cap);
   }
   masked(source: SourceContext | undefined): boolean { return source?.admission ? this.admissions.get(source.admission)?.masked ?? true : true; }
+  /** Whether the policy's own scan latched this turn (a hit, or a scan it could not finish). False for a
+   * fence or budget mask (no admission, a stale attachment, a cap): those say nothing about the words. */
+  maskedBySecret(source: SourceContext | undefined): boolean { return source?.admission ? this.admissions.get(source.admission)?.secret === true : false; }
+  /** Some text of this turn was withheld UNSCANNED (a BLIND chain or an unredactable field, design 5.4). The turn is not masked
+   * and the rest of it shows, but its RAW text is not proven clean: a reader of raw event text must treat it like a mask. */
+  withheld(source: SourceContext | undefined): boolean { return source?.admission ? this.admissions.get(source.admission)?.withheld === true : false; }
+  /** True when no text of this completed reply has reached its stream yet (it was not streamed), so all of it is scanned
+   * when it completes. The bus feeds such a reply in line-safe chunks so a long scan does not hold the event loop. */
+  unstreamedReply(event: ExecutionEvent, source: SourceContext | undefined): boolean {
+    const admitted = source?.admission ? this.admissions.get(source.admission) : undefined;
+    if (!admitted?.active || admitted.masked) return false;
+    try {
+      const rawItem = own(event, 'itemId'), named = typeof rawItem === 'string' && rawItem.length > 0 && rawItem.length <= 1024;
+      const item = named ? admitted.items.get(rawItem as string) : undefined;
+      if (named && !item) return true;
+      const stream = `${item ?? `anonymous-${admitted.anonymousAssistant}`}:assistant`;
+      return !admitted.streamed.has(stream) && !admitted.snapshots.has(stream);
+    } catch { return false; }
+  }
   cancel(cap: TurnAdmission): readonly AudienceEmission[] { this.policy.finish(cap, 'cancel'); this.retire(cap); return []; }
   detach(attachment: AttachmentCapability): readonly AudienceEmission[] {
     const state = this.attachments.get(attachment); if (!state) return [];
     state.active = false; for (const cap of state.admissions) this.cancel(cap); state.admissions.clear(); return [];
   }
   intake(event: ExecutionEvent, source: SourceContext | undefined): IntakeResult {
-    const charge = chargeExecutionEvent(event);
+    chargeExecutionEvent(event);
     const admission = source?.admission;
     const admitted = admission ? this.admissions.get(admission) : undefined;
     const attachment = source ? this.attachments.get(source.attachment) : undefined;
@@ -366,7 +450,9 @@ export class RuntimeAudienceCollector implements AudienceCollector {
     try {
       const type = own(event, 'type');
       terminal = type === 'turn.completed' ? 'complete' : type === 'session.exited' ? 'exit' : undefined;
-      if (charge.oversize || !valid) {
+      if (!valid) {
+        // FABLE design review M4: an intake the recorder never reads leaves its list unproven
+        try { admitted?.values?.incomplete('recorder-error'); } catch { /* the list is dropped with the admission */ }
         if (admitted) admitted.masked = true;
         if (admission) this.policy.retire(admission);
         const audience = [omitted(), ...pendingControl()];
@@ -378,7 +464,6 @@ export class RuntimeAudienceCollector implements AudienceCollector {
       if (typeof rawItem === 'string' && rawItem.length > 0 && rawItem.length <= 1024) {
         item = admitted!.items.get(rawItem) ?? '';
         if (!item) {
-          if (admitted!.items.size >= 64) { admitted!.masked = true; this.policy.retire(admission!); return { execution: event, audience: [omitted(), ...pendingControl()] }; }
           item = `${admitted!.generation}-${admitted!.items.size}`; admitted!.items.set(rawItem, item);
         }
       }
@@ -388,28 +473,51 @@ export class RuntimeAudienceCollector implements AudienceCollector {
       // shared assistant context across items and retains its turn limits.
       const anonymous = kind === 'assistant_text' ? `anonymous-${admitted!.anonymousAssistant}` : 'anonymous';
       const stream = `${item || anonymous}:${kind === 'reasoning_text' || kind === 'reasoning' ? 'reasoning' : kind === 'assistant_text' ? 'assistant' : 'other'}`;
+      const { batch, shape, folds } = extract(event, envelope, stream);
+      // 1.0.22 cause B: the recorder reads every carrier of the admission, also after the latch retired the policy (a value a tool
+      // prints AFTER the latch, a reply that repeats one): the harvest runs before the early return below. Any failure of the
+      // recorder makes the list unproven (every later reply keeps the 1.0.21 outcome); it never changes what the policy decides.
+      const record = (work: (values: MaskedValueRecorder) => void) => {
+        const values = admitted!.values;
+        try { if (values) work(values); } catch { try { values?.incomplete('recorder-error'); } catch { admitted!.values = undefined; } }
+      };
       if (!item && type === 'item.completed' && kind === 'assistant_text') {
         // The retired policy needs no new anonymous region. Other event types
         // still project their control shape, including opaque question choices.
-        if (admitted!.masked || admitted!.anonymousAssistant >= 64) {
+        if (admitted!.masked) {
+          record(values => values.absorb(batch, String(type), stream));
           admitted!.masked = true; this.policy.retire(admission!);
           return { execution: event, audience: [omitted(), ...pendingControl()] };
         }
         admitted!.anonymousAssistant++;
       }
-      const { batch, shape } = extract(event, envelope, stream);
       if (type === 'content.delta') {
-        if (!admitted!.streamed.has(stream) && admitted!.streamed.size >= 64) throw new Error('stream budget');
         admitted!.streamed.add(stream);
       }
       const decisions: PolicyDecision[] = [];
-      if (type === 'content.reset') admitted!.snapshots.delete(stream);
+      if (type === 'content.reset') {
+        admitted!.snapshotScalars -= admitted!.snapshots.get(stream)?.text.length ?? 0;
+        admitted!.snapshots.delete(stream);
+      }
       if (type === 'content.reset') decisions.push(this.policy.reset(admission, stream));
       decisions.push(this.policy.consume(admission, batch));
       // F2 consumes a terminal batch atomically, including its buffered tail.
       // Calling finish again here would turn an already retired CLEAN result into MASKED.
-      if (decisions.some(d => d.exhausted)) { admitted!.masked = true; return { execution: event, audience: [omitted(), ...pendingControl(), ...(terminal ? [emit({ ...skeleton, type } as AudienceEvent)] : [])] }; }
+      if (decisions.some(d => d.exhausted)) { record(values => values.incomplete('recorder-error')); admitted!.masked = true; return { execution: event, audience: [omitted(), ...pendingControl(), ...(terminal ? [emit({ ...skeleton, type } as AudienceEvent)] : [])] }; }
+      // Only a live turn's own Latch or unfinished scan (masked, not exhausted) is a finding about
+      // its words; a decision on a turn an earlier fence already retired is that fence again.
+      const latching = !admitted!.masked && decisions.some(decision => decision.masked && !decision.exhausted);
+      if (latching) admitted!.secret = true;
       admitted!.masked ||= decisions.some(decision => decision.masked || decision.exhausted);
+      if (decisions.some(decision => decision.withheld)) admitted!.withheld = true;
+      // the policy's payload goes straight into the recorder inside this intake and is not kept past it
+      const payload = latching ? decisions.find(decision => decision.masked && !decision.exhausted)?.latch : undefined;
+      record(values => {
+        if (latching) values.latch(payload?.found ?? [], payload?.kind, batch, String(type), stream);
+        else values.absorb(batch, String(type), stream);
+        // text withheld UNSCANNED (a BLIND chain, an unredactable field): nothing later can be proven against the list
+        if (admitted!.withheld) values.incomplete('blind');
+      });
       const operations = decisions.flatMap(d => d.operations);
       const audience: AudienceEmission[] = [];
       // Buffered carriers can flush on another event or terminal. They remain
@@ -418,7 +526,8 @@ export class RuntimeAudienceCollector implements AudienceCollector {
         if (op.path !== 'delta' && op.path !== 'text') { fill(shape, op.path, op.text); continue; }
         const previous = admitted!.snapshots.get(op.stream)?.text ?? '';
         const cumulative = op.op === 'replace' || op.op === 'omit' ? op.text : previous + op.text;
-        if (cumulative.length > 262_144 || (!admitted!.snapshots.has(op.stream) && admitted!.snapshots.size >= 64)) { admitted!.masked = true; this.policy.retire(admission!); return { execution: event, audience: [omitted(), ...pendingControl()] }; }
+        const snapshotScalars = admitted!.snapshotScalars - previous.length + cumulative.length;
+        admitted!.snapshotScalars = snapshotScalars;
         admitted!.snapshots.set(op.stream, { text: cumulative, regionId: op.regionId, revision: op.revision, speech: op.speech });
         const same = batch.carriers.some(c => c.path === op.path && c.stream === op.stream);
         if (same && type !== 'content.delta') {
@@ -429,7 +538,6 @@ export class RuntimeAudienceCollector implements AudienceCollector {
         }
         if (op.op === 'omit') {
           if (admitted!.regions.has(op.regionId)) continue;
-          if (admitted!.regions.size >= 64) { audience.push(omitted()); continue; }
           admitted!.regions.add(op.regionId);
         }
         // A deferred release belongs to its original item, even on another item's completion.
@@ -448,9 +556,11 @@ export class RuntimeAudienceCollector implements AudienceCollector {
       if (decisions.some(d => d.masked) && Array.isArray(shape.questions)) {
         for (const q of shape.questions as { options: { label: string }[] }[]) q.options.forEach((option, i) => { option.label = `Option ${i + 1}`; });
       }
+      for (const fold of folds) fold();
       if (type !== 'content.delta') audience.push(emit({ ...skeleton, ...(item ? { itemId: item } : {}), ...shape } as AudienceEvent));
       return { execution: event, audience };
     } catch {
+      try { admitted?.values?.incomplete('recorder-error'); } catch { /* the list is dropped with the admission */ }
       if (admitted) admitted.masked = true;
       if (admission) this.policy.retire(admission);
       return { execution: event, audience: [omitted(), ...pendingControl(), ...(terminal ? [emit({ ...skeleton, type: terminal === 'complete' ? 'turn.completed' : 'session.exited' } as AudienceEvent)] : [])] };

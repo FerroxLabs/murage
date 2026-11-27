@@ -8,7 +8,6 @@ import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 const NewProject = retryableLazy(() => import("./NewProjectDialog"));
 import { useProject } from "@/lib/use-project";
 import { projectSurfaceEnabled } from "@/lib/project-client";
-import { track } from "@/lib/analytics";
 import { prepareArchiveFlight } from "@/lib/archive-flight";
 import { errorPreview } from "@/lib/error-preview";
 import { escapePassesModals, takeDrawerEscape } from "@/lib/escape-layer";
@@ -210,7 +209,9 @@ import { hiddenPatchFrom } from "@/lib/record-numbers";
 import { hasRoutineAttention } from "@/lib/routine-attention";
 import { copyOrReport } from "@/lib/copy-text";
 import { preloadGroupView } from "@/lib/group-view-preload";
+import { useClearOfComposer, useNoticeTurn } from "@/lib/notice-lane";
 import { raiseTransientError } from "@/state/chat-error";
+import { reconnectNotice, useReconnectLine } from "./ReconnectAppsBanner";
 
 /** Help opens once the drawer's close has handed focus back (two frames), so help remembers a control that is still there. */
 function openHelpAfterDrawer() {
@@ -322,8 +323,15 @@ export function TeamFeedbackToast({
   // system already knows is there, rather than re-reading a field it would
   // then have to be told again is not null.
   const { undo, restoreBot, restoreGroup } = feedback;
+  // One floating notice at a time (lib/notice-lane.ts): this waits while the Undo toast is up, never stacks under it.
+  const turn = useNoticeTurn("team-feedback", true);
+  const frame = useRef<HTMLDivElement>(null);
+  const clear = useClearOfComposer(frame, turn);
+  if (!turn) return null;
   return (
     <div
+      ref={frame}
+      style={clear}
       role="status"
       className={cn(
         "fixed bottom-4 left-4 z-[60] max-w-[300px] rounded-xl border px-3.5 py-2.5 text-[13px] shadow-xl",
@@ -356,7 +364,8 @@ export function TeamFeedbackToast({
             Undo
           </button>
         )}
-        {onDismiss && feedbackStays(feedback) && (
+        {/* Every corner notice can be closed (1.0.20); one that stays (an archive note) waits for it. */}
+        {onDismiss && (
           <button
             type="button"
             onClick={onDismiss}
@@ -958,7 +967,6 @@ export function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => voi
       section: project ? projectSection(section, teams) : section.trim() || undefined,
       ...(project ? { bulletin: goal.trim(), channelProject: { goal: goal.trim() } } : {}),
     });
-    track("room_created", { members: picked.size, context: Boolean(project ? projectSection(section, teams) : section.trim()), project });
     onClose();
   };
   // Portalled: the phone drawer is translated, so a fixed overlay inside it
@@ -2209,6 +2217,8 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   // Row menus and inline rename do not call this callback.
   const onNavigate = () => { if (open) onClose(); };
   const narrow = useNarrowViewport();
+  // An app to sign in again: the Needs you door keeps a dot until it is, whether or not the line is put away.
+  const reconnectLine = useReconnectLine();
   const asideRef = useRef<HTMLElement>(null);
   const wasOpen = useRef(open);
   // Before paint, so focus moves before the now inert drawer drops it.
@@ -3132,6 +3142,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           needs={needs}
           iconsOnly={density === "icons"}
           routinesAttention={hasRoutineAttention(state.routineRuns, state.routines, state.bots, state.groups)}
+          reconnect={reconnectNotice(reconnectLine.apps)}
           onOpen={(door) => { openDoor(door); onNavigate(); }}
         />
       </div>
@@ -3227,7 +3238,6 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                   <SidebarSectionHeader
                     name={sectionLabel(id)}
                     collapsed={collapsed}
-                    count={(collapsed || fold.hidden.length > 0) && sectionBotItems.length ? sectionChiefItems.length + sectionBotItems.length : undefined}
                     attention={attention}
                     onToggle={layoutInteractive ? () => toggleSection(id) : undefined}
                     reorderable={layoutInteractive && sectionIds.length > 1}
@@ -3334,7 +3344,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
 
       {/* Footer. Below md the drawer runs to the bottom of the screen, so the
           last row owes the home indicator its inset. */}
-      <div data-update-popup-anchor="" ref={updatePopupAnchorRef} className={cn("pb-3 pt-2 max-md:pb-[calc(0.75rem+var(--inset-bottom))]", density === "icons" ? "px-2" : "px-3")}>
+      <div data-update-popup-anchor="" ref={updatePopupAnchorRef} className={cn("relative pb-3 pt-2 max-md:pb-[calc(0.75rem+var(--inset-bottom))]", density === "icons" ? "px-2" : "px-3")}>
         {/* Announcements: an info notice is a banner here; an important or
             security one opens as a card, after What's new has closed. */}
         <AnnouncementsHost desktop={desktop} request={api} showBanner={density !== "icons"} suspended={whatsNew.open} onNavigate={onNavigate} />
@@ -3398,7 +3408,6 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
         />
       )}
       {exportTeamOpen && <LazyOverlay opener={importReturnRef.current} name="team-export" kind="dialog" covers="while-loading" onRetry={TeamExportDialog.retry} onDismiss={() => setExportTeamOpen(false)}>{loadedLayer => (<TeamExportDialog.Component layerLifecycle={loadedLayer} initialBotIds={state.groups.find(group => group.id === state.selectedId)?.memberIds ?? (state.bots.some(bot => bot.id === state.selectedId) ? [state.selectedId!] : [])} onClose={loadedLayer.dismiss} onExported={exported => {
-        track("team_exported", { members: exported.members, scope: "selected" });
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} />)}</LazyOverlay>}
       {/* Portalled: Settings > About & updates opens these while a phone's
@@ -3507,7 +3516,6 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
             const kind = chooser;
             setChooser(null);
             if (kind === "bot") {
-              track("bot_created");
               dispatch({ type: "newBot" });
             } else setNewTeamOpen(true);
           }}

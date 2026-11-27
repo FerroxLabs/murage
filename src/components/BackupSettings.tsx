@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { setSettingsMode, type SettingsMode } from "@/lib/settings-mode";
 import { AdvancedSection, HowThisWorks, SetInAdvancedButton, Switch } from "./SettingsPrimitives";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote } from "./BackupRemoteSettings";
-import { enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
+import { backupSwitchPress, enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
 import { api, useStore } from "@/state/store";
 import { HeldAfterRestore } from "./HeldAfterRestore";
 import { RestoreJobCard } from "./RestoreJobCard";
@@ -224,10 +224,19 @@ export function useBackupSchedule() {
     await modeBridge.keepRecoveryKeyHere!();
     if(mounted.current&&expected===version.current)setCloudKey(null);
   }):undefined;
-  const enable=()=>void run("schedule",async expected=>{
-    if(!choices||!status)return;const next=await bridge!.configure(status.revision,{...choices,allowIdleRestart:true,...(choices.closedApp===true?{allowClosedApp:true}:{})});dirty.current=false;apply(next,expected);setConsent(false);await refreshClosed(expected);
+  const turnOn=async(expected:number,schedule:NonNullable<typeof choices>)=>{
+    if(!status)return;const next=await bridge!.configure(status.revision,{...schedule,allowIdleRestart:true,...(schedule.closedApp===true?{allowClosedApp:true}:{})});dirty.current=false;apply(next,expected);setConsent(false);await refreshClosed(expected);
     if(mounted.current)setNotice(next.enabled?next.schedule.closedApp===true?"Daily backups are on, including while Murage is closed and you are signed in.":"Daily backups are on. Backups while Murage is closed are off.":"Settings saved; daily backups are still off.");
-  });
+  };
+  const enable=()=>void run("schedule",async expected=>{if(choices)await turnOn(expected,choices);});
+  /** The Backups on/off switch on the summary card. A press always does
+   * something: turns backups on or off, or says in words why it can't. */
+  const toggleBackups=()=>{
+    if(!status)return;const press=backupSwitchPress(draft,status);
+    if(press.action==="disable"){disable();return;}
+    if(press.action==="enable"){const schedule=press.schedule;void run("summary",async expected=>{await turnOn(expected,schedule);});return;}
+    setArea("summary");setNotice(null);setError(press.message);
+  };
   const disable=()=>void run("schedule",async expected=>{
     if(!status)return;const next=await bridge!.configure(status.revision,{...status.schedule,enabled:false});dirty.current=false;apply(next,expected);setConsent(false);
     if(mounted.current)setNotice("Daily backups are off for future backups. An existing transfer is not cancelled.");
@@ -235,7 +244,9 @@ export function useBackupSchedule() {
   const canRunNow=Boolean(bridge?.runNow&&status?.supported&&status.refs&&!locked&&!scheduleNeedsReview(status.phase));
   const runNow=()=>void run("summary",async expected=>{
     setConfirmRun(false);if(!status||!bridge?.runNow)return;
-    const next=await bridge.runNow(status.revision);apply(next,expected);
+    // Said while the start is under way, so Continue is never followed by nothing.
+    if(mounted.current)setNotice("Getting ready. Murage will close and reopen this window to take the backup.");
+    let next:BackupScheduleStatus;try{next=await bridge.runNow(status.revision);}catch(cause){if(mounted.current)setNotice(null);throw cause;}apply(next,expected);
     if(mounted.current&&expected===version.current)setNotice("Backup requested. Murage will close and reopen this window to take it.");
   // Waiting on a person: the status (refreshed by run) names who, with the
   // ways out, just above; saying it here again would be the same line twice.
@@ -248,7 +259,7 @@ export function useBackupSchedule() {
   });
   const refreshNow=(where:ScheduleArea="advanced")=>void run(where,async expected=>{await refresh(expected);});
   return {bridge,closedBridge,modeBridge,status,draft,consent,setConsent,busy,stale,error,notice,area,closed,closedStale,closedAction,closedSetupFailed,createdKey,keyCopy,cloudKey,moveCloudKey,keepCloudKey,confirmRun,setConfirmRun,
-    unavailable,locked,editingLocked,closedRegistered,closedAllowed,choices,lastClosed,edit,closedOperation,setClosedApp,selectReferences,setUp,saveKeyCopy,enable,disable,canRunNow,runNow,canClearReview,clearReview,refreshNow};
+    unavailable,locked,editingLocked,closedRegistered,closedAllowed,choices,lastClosed,edit,closedOperation,setClosedApp,selectReferences,setUp,saveKeyCopy,enable,disable,toggleBackups,canRunNow,runNow,canClearReview,clearReview,refreshNow};
 }
 export type ScheduleController=ReturnType<typeof useBackupSchedule>;
 
@@ -526,15 +537,16 @@ export function BackupHeadline({summary,s,pageMode}:{summary:BackupSummary;s:Sch
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0 space-y-1">
         <h3 id="backups-title" className="text-[16px] font-semibold text-ink">{head.title}</h3>
-        {head.lines.map((line,index)=><p key={line} role={index===0?"status":undefined} className="break-words text-[13px] text-ink-secondary">{index===0&&head.verified&&<span aria-hidden="true" className="mr-1 text-success">●</span>}{line}</p>)}
+        {head.lines.map((line,index)=><p key={line} role={index===0?"status":undefined} className={`break-words text-[13px] ${index===0&&head.tone==="warning"?"text-warning":"text-ink-secondary"}`}>{index===0&&head.tone!=="neutral"&&<span aria-hidden="true" className={`mr-1 ${head.tone==="warning"?"text-warning":"text-success"}`}>●</span>}{line}</p>)}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {s.bridge?.runNow&&(s.confirmRun
           ?<><button type="button" className={primaryButton} disabled={!s.canRunNow} onClick={s.runNow}>Continue</button><button type="button" className={scheduleButton} onClick={()=>s.setConfirmRun(false)}>Cancel</button></>
           :<button type="button" className={scheduleButton} disabled={!s.canRunNow} onClick={()=>s.setConfirmRun(true)}>Back up now</button>)}
-        {s.status?.supported&&s.status.refs&&<Switch data-setting-control="backups-heading" aria-label="Backups on" checked={Boolean(s.status.enabled)} disabled={s.locked} onClick={s.status.enabled?s.disable:s.choices?s.enable:undefined} className={switchFocus}/>}
+        {s.status?.supported&&s.status.refs&&<Switch data-setting-control="backups-heading" aria-label="Backups on" checked={Boolean(s.status.enabled)} disabled={s.locked} onClick={s.toggleBackups} className={switchFocus}/>}
       </div>
     </div>
+    {s.status?.supported&&s.status.refs&&!s.status.enabled&&<p data-backup-consent className="text-[12px] text-ink-secondary">Murage briefly restarts when idle to take the daily backup.</p>}
     {s.confirmRun&&<p className="text-[13px] text-ink">Murage will close and reopen this window to take the backup.</p>}
     {s.status?.supported&&s.status.enabled&&!piped&&<p className="text-[12px] text-ink-secondary">To be sure a restore works, try one from Restore.</p>}
     {pending&&<p role="status" className="text-[13px] text-ink-secondary">Taking a backup. This page updates when it has been checked.</p>}

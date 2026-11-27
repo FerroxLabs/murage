@@ -162,7 +162,7 @@ describe("the page contract", () => {
     const on = (page: string) => SETTINGS_CARDS.filter((entry) => entry.section === page).map((entry) => entry.id);
     expect(on("computer")).toEqual(["companion.browser", "companion.script-access", "companion.vps", "companion.computer"]);
     expect(on("companion")).toEqual(["companion.pairing"]);
-    expect(on("calls")).toEqual(["calls.calls"]);
+    expect(on("calls")).toEqual(["calls.calls", "connections.phone-calls"]);
     expect(on("general")[0]).toBe("general.mode");
     expect(SETTINGS_CARDS.find((entry) => entry.id === "general.mode")).toMatchObject({ anchor: "advanced-mode-heading", surface: "any" });
     for (const page of SECTION_PAGES) expect(on(page.id).length, page.id).toBeGreaterThan(0);

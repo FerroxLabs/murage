@@ -10,7 +10,7 @@ import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 
 useOutsideStoreFixture();
 
-it.each([false, true])("local skill staging preserves actual outside provenance: marked=%s", marked => {
+it.each([false, true])("local skill staging preserves actual outside provenance: marked=%s", async marked => {
   const ledger = new Ledger(); ledger.open("G", "T", "claude", "own");
   const off = observeOutsideMarks((thread, source, lifecycle) => ledger.mark(thread, source, lifecycle));
   try {
@@ -28,7 +28,8 @@ it.each([false, true])("local skill staging preserves actual outside provenance:
     expect(apply).not.toHaveBeenCalled();
     const verdict = settle_verdict(ledger.rows.get("G")!, { ok: true, readsComplete: true, stopReason: "end_turn" }, turnOutsideRead("T"), "own");
     expect(verdict).toBe(marked ? "outside" : "clean");
-    setup.settle("G", verdict);
+    // settle() drains asynchronously since the skill-settlement-work port (row 45); await it.
+    await setup.settle("G", verdict);
     expect(apply).toHaveBeenCalledTimes(marked ? 0 : 1);
     expect(push).toHaveBeenCalledTimes(marked ? 1 : 0);
   } finally { off(); }

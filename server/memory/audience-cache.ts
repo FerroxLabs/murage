@@ -1,6 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { dataVersion } from "./data-version.ts";
 import type { MemoryRoster } from "./policy.ts";
 import { eligibilityPassActive } from "./eligibility-pass.ts";
 
@@ -29,7 +30,7 @@ function epochStatement(db: DatabaseSync): StatementSync | undefined {
       }
       db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS memory_audience_bindings_${suffix} AFTER ${event} ON main.memory_scope_bindings WHEN ${when} BEGIN UPDATE memory_audience_epoch SET n=n+1; END;`);
     }
-    return db.prepare(`SELECT n, (SELECT data_version FROM pragma_data_version) AS data_version,
+    return db.prepare(`SELECT n,
       (SELECT policy_revision FROM memory_meta WHERE id=1) AS policy_revision,
       (SELECT deletion_epoch FROM memory_meta WHERE id=1) AS deletion_epoch,
       (SELECT epoch FROM memory_recall_epoch WHERE id=1) AS recall_epoch FROM temp.memory_audience_epoch`);
@@ -44,8 +45,9 @@ export function audienceStamp(db: DatabaseSync, roster: MemoryRoster): string | 
   if (!epoch) { epoch = epochStatement(db); if (epoch) epochs.set(db, epoch); }
   if (!epoch) return undefined;
   try {
-    const row = epoch.get();
-    return row ? `${roster.memoryRosterRevision}:${row.policy_revision}:${row.deletion_epoch}:${row.n}:${row.data_version}:${row.recall_epoch}` : undefined;
+    // other connections' commits: the PRAGMA statement on this connection, never the shadowable table-valued form (data-version.ts)
+    const row = epoch.get(), version = dataVersion(db);
+    return row && version !== undefined ? `${roster.memoryRosterRevision}:${row.policy_revision}:${row.deletion_epoch}:${row.n}:${version}:${row.recall_epoch}` : undefined;
   } catch { epochs.delete(db); return undefined; }
 }
 

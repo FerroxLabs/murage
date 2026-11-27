@@ -1,4 +1,3 @@
-import { requestLearningNotice } from "./learning-consent";
 import { validChatsGen, type ChatsGen } from "./chats-gen";
 import { onNativeEvent } from "./native-shell";
 
@@ -10,6 +9,8 @@ import { onNativeEvent } from "./native-shell";
  * this supervisor uses it as liveness, owns reconnects itself, and carries an
  * explicit replay cursor whenever it replaces the native EventSource.
  */
+export const liveEventsOpened = new EventTarget();
+
 export const LIVE_EVENTS_PATH = "/api/events";
 export const LIVE_EVENTS_STALE_MS = 40_000;
 export const LIVE_EVENTS_RETRY_MIN_MS = 500;
@@ -115,6 +116,26 @@ const bridgeSecret = (): string => {
 };
 
 let desktopSecret = bridgeSecret();
+
+/** The header every answer of this launch's engine carries (server/index.ts, electron/server-follow.mjs). */
+export const LAUNCH_HEADER = "x-murage-launch";
+
+/** The launch id main gave this page, or "" (a phone, a browser, dev, a Cloud window: nothing to check against). */
+export function expectedServerLaunch(): string {
+  const bridge = (globalThis as { muragebox?: { serverLaunch?: unknown } }).muragebox;
+  return typeof bridge?.serverLaunch === "string" ? bridge.serverLaunch : "";
+}
+
+/** Whether this answer came from OUR engine. On 2026-11-18 the engine restarted
+ * on another port while an unrelated program held the old one, and every chat
+ * showed that program's answers as a red "no such route". A desktop page with a
+ * launch id believes only answers carrying it; another responder (another
+ * program, or an engine launch this page holds no proof for) is "reconnecting". */
+export function responderIsOurs(res: { headers?: { get?: (name: string) => string | null } }): boolean {
+  const expected = expectedServerLaunch();
+  if (!expected) return true;
+  return res.headers?.get?.(LAUNCH_HEADER) === expected;
+}
 let pendingSecret: Promise<string> | null = null;
 let secretRetryable = false;
 /** The harness said 403/404: this renderer is not the desktop, and asking
@@ -553,6 +574,7 @@ export function openLiveEvents(
     current.onopen = () => {
       if (stopped || source !== current) return;
       lastHeardAt = platform.now();
+      liveEventsOpened.dispatchEvent(new Event("open"));
       handlers.onOpen?.();
     };
     current.onerror = () => connectionLost(current);
@@ -710,7 +732,3 @@ export function openLiveEvents(
   return Object.assign(stop, { wake });
 }
 
-/** Contentless transport events and reconnect snapshots share the pending notice. */
-export function receiveLearningNoticeFrame(frame: { kind: string; learningFluxSent?: unknown }): void {
-  if (frame.kind === "learning.flux-sent" || (frame.kind === "config" && frame.learningFluxSent === true)) requestLearningNotice(frame.kind === "learning.flux-sent");
-}

@@ -166,6 +166,32 @@ it("still prefers a name the provider actually supplied over the Flux table",()=
  expect(model!.label).toBe("Flux Automatic");
 });
 
+it("publishes the new named pins only for the Flux account that lists them", async () => {
+ const f = fixture("flux");
+ const rows = [
+  { id: "flux-auto", label: "Flux Auto" },
+  { id: "flux-pinned-gemini-4-neon", label: "Gemini 4 Neon" },
+  { id: "flux-pinned-gpt-6-2-sol", label: "GPT-6.2 Sol" },
+  { id: "flux-pinned-gpt-6-2-astra", label: "GPT-6.2 Astra" },
+ ];
+ f.fetcher.mockResolvedValueOnce(Response.json({ data: rows.map(({ id }) => ({ id, capability: "chat" })) }));
+ expect((await f.service.refresh(f.id)).models.map(({ id, label }) => ({ id, label }))).toEqual(rows);
+
+ const cachePath = join(f.cacheDir, f.id + ".json");
+ const oldLabels = readFileSync(cachePath, "utf8")
+  .replace('"Gemini 4 Neon"', '"Flux Pinned Gemini 4 Neon"')
+  .replace('"GPT-6.2 Sol"', '"Flux Pinned GPT 6.2 Sol"')
+  .replace('"GPT-6.2 Astra"', '"Flux Pinned GPT 6.2 Astra"');
+ writeFileSync(cachePath, oldLabels);
+ expect(f.make().getCatalog(f.id).models.map(({ id, label, chatEligible }) => ({ id, label, chatEligible })))
+  .toEqual(rows.map(row => ({ ...row, chatEligible: true })));
+ expect(readFileSync(cachePath, "utf8")).toBe(oldLabels);
+
+ const limited = fixture("flux");
+ limited.fetcher.mockResolvedValueOnce(Response.json({ data: [{ id: "flux-auto" }, { id: "flux-fast" }] }));
+ expect((await limited.service.refresh(limited.id)).models.map(({ id }) => id)).toEqual(["flux-auto", "flux-fast"]);
+});
+
 it("keeps flux-voice out of the chat picker even when Flux states no capability",async()=>{
  // The whole defect: `flux-image` was excluded by MEDIA's `image`, `flux-voice`
  // by nothing, so the only thing keeping a voice model out of the chat list was

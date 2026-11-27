@@ -26,7 +26,7 @@ const members = (db: DatabaseSync) => Number(db.prepare("SELECT count(*) AS n FR
 const tablesLeft = (db: DatabaseSync) => ROOT_SET_RECLAIM_TABLES.filter(name => db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name)).length;
 
 describe("the root-set reclaim begins when U1s is over", () => {
-  it("is certified from phase u1m on and not before, and the storage status says what it waits for", () => {
+  it("is certified from phase u1m on and not before, and the storage status says what it waits for", async () => {
     const db = database();
     buildLegacyHistory(db, { seed: 51, threads: 4, lines: 40 });
     markUpgraded(db);
@@ -40,7 +40,14 @@ describe("the root-set reclaim begins when U1s is over", () => {
       expect(reclaimCertified(db), cert.phase).toBe(past);
       const status = lineageStorageStatus(db);
       if (!past) expect(status).toMatchObject({ state: "waiting", reason: "checking" });
-      else expect(status.state).toBe("reclaim-available");
+      else {
+        // the owner's press runs reclaimRootSetsWhenIdle, which refuses until the startup step retires the read-time judge: not offered before that
+        expect(await reclaimRootSetsWhenIdle(db, open, { freeDiskBytes: () => null }), cert.phase).toBe("waiting");
+        expect(status, cert.phase).toMatchObject({ state: "waiting", reason: "checking" });
+        setReadTimeJudgeRetired(true);
+        expect(lineageStorageStatus(db).state, cert.phase).toBe("reclaim-available");
+        setReadTimeJudgeRetired(false);
+      }
       if (!lineageBackfillSlice(db, { budgetMs: 1, now: clock }).more) break;
     }
     expect(seen.has("u1s") || seen.has("u1")).toBe(true);

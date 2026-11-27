@@ -7,7 +7,7 @@ and Tailscale Serve is changed only on `:8444`.
 
 ```bash
 cd apps/mobile
-e2e/host/build-web-dist.sh          # once per web change: vite build on build-host, dist copied to e2e/host/web-dist
+e2e/host/build-web-dist.sh          # once per web change: vite build on hetzner-dsm, dist copied to e2e/host/web-dist
 e2e/host/run-host.sh                # server + door; writes host.env (chmod 600, per-run companion token)
 e2e/host/serve.sh up                # snapshot Serve, refuse if :8444 is taken, add :8444 -> 127.0.0.1:28813
 e2e/host/mint.sh                    # one pairing: {"address","code","url"}; single use, this host only

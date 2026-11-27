@@ -125,24 +125,29 @@ it("validates parent additions made by preparation before committing them", () =
   expect(f.budget.counts.attempts).toBe(0);
 });
 
-it("checks the serialized body against the remaining byte budget before accepting it", () => {
-  const f = fixture();
-  f.budget.charge({ bytes: RELEASE_LIMITS.bytes - 2 });
+// "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, a serialized body past the remaining
+// 64 MiB byte budget was refused with nothing accepted; now the same body is accepted and its bytes are counted.
+it("accepts and counts a serialized body past the former byte budget", () => {
+  const f = fixture(), former = 64 * 1024 * 1024;
+  f.budget.charge({ bytes: former - 2 });
   expect(() => sendDelegated(f.http.writer, "POST", { status: 200, provenance: { refs: [] }, prepareBody: () => {
     f.f.db.exec("INSERT INTO prepared_http VALUES('prepared')");
     return { image: "fixture-image" };
-  } })).toThrow("MEMORY_CONTEXT_REVOKED");
-  expect(rows(f)).toEqual([]); expect(f.budget.counts.attempts).toBe(0);
-  expect(f.budget.counts.bytes).toBe(RELEASE_LIMITS.bytes - 2);
-  expect(f.http.output.some(row => row.status === 200)).toBe(false);
+  } })).not.toThrow();
+  expect(rows(f)).toEqual([{ value: "prepared" }]); expect(f.budget.counts.attempts).toBe(1);
+  expect(f.budget.counts.bytes).toBeGreaterThan(former);
+  expect(f.http.output.some(row => row.status === 200)).toBe(true);
+  expect(f.refusals).toBe(0);
 });
 
-it("does not invoke preparation after the turn's attempt budget is exhausted", () => {
+// "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, the budget was exhausted with the 4096
+// attempt limit; that limit is gone, so the budget is sealed by a work crossing with no accepted release, and preparation must still not run.
+it("does not invoke preparation after the turn's budget is sealed", () => {
   const f = fixture(), prepare = vi.fn(() => ({ image: "fixture-image" }));
-  f.budget.charge({ attempts: RELEASE_LIMITS.attempts });
+  expect(() => f.budget.charge({ work: RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
   expect(() => sendDelegated(f.http.writer, "POST", { status: 200, provenance: { refs: [] }, prepareBody: prepare })).toThrow("MEMORY_CONTEXT_REVOKED");
   expect(prepare).not.toHaveBeenCalled();
-  expect(f.budget.counts.attempts).toBe(RELEASE_LIMITS.attempts);
+  expect(f.budget.counts.attempts).toBe(0);
   expect(f.http.output.some(row => row.status === 200)).toBe(false);
 });
 

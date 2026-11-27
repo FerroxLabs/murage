@@ -12,7 +12,7 @@ import { SkillPageControls } from "./SkillPageControls";
 import { useSkillsBrowser } from "./useSkillsBrowser";
 import { topicLabel, TopicSelect } from "./TopicSelect";
 import { VerdictBadge } from "./VerdictBadge";
-import { verdictLabel, CLEAN_LINE, type SkillSummary } from "@/lib/skills-api";
+import { verdictHint, verdictLabel, CLEAN_LINE, type SkillSummary } from "@/lib/skills-api";
 
 type View = { kind: "list" } | { kind: "read"; ref: string } | { kind: "import" };
 
@@ -31,6 +31,8 @@ function SkillRow({ skill, onOpen, browsing }: { skill: SkillSummary; onOpen(ref
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium text-ink">{skill.name}</div>
           <div className="truncate text-[11.5px] text-ink-secondary">{skill.description}</div>
+          {/* "Needs a look" alone leaves the owner guessing: say what was found and what to do next. */}
+          {verdictHint(skill) && <div className={"text-[11.5px] " + (skill.verdict === "blocked" ? "text-danger" : "text-warning")}>{verdictHint(skill)}</div>}
         </div>
         {/* Which bots use a skill is said on a phone too (it is also part of
             the row's accessible name), and so is a verdict that needs a look or

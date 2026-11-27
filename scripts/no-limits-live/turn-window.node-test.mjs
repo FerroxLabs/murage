@@ -1,11 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {CardLedger} from './counts.mjs';
 import {readApprovalRecords} from './readers.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 test('same-thread history growth does not increase current message correlation work',()=>{
  for(const history of [10,10000]){
@@ -32,7 +33,7 @@ test('approval reader returns only current message/request identities as history
   assert.deepEqual(readApprovalRecords(dir,'t',{messageIds:['swapped'],approvalIds:['new']}),[]);
   assert.deepEqual(readApprovalRecords(dir,'t',{messageIds:[],approvalIds:[]}),[]);
   assert.throws(()=>readApprovalRecords(dir,'t'),/window/i);
- }finally{db.close();rmSync(dir,{recursive:true,force:true});}
+ }finally{db.close();safeWipeSync(dir);}
 });
 
 test('ProductClient reads the current turn without walking older same-thread pages',async()=>{

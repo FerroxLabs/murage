@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { scenarios, fieldRows, engineSpecs, assertReleaseReady } from './scenarios.mjs';
 import { judgeScenario, CardLedger } from './counts.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 const ok = { complete: true, ended: true, actionProven: true, cards: [], events: [], messages: [] };
 const run = { id: 'ordinary', actor: 'owner', level: 'unlimited', expected: 'RUN' };
@@ -159,7 +160,7 @@ test('unknown-delete commands use a fixture-only dynamic target and home control
   }
 });
 test('live runner retains independently observed feature-off evidence and structured refusal events', async () => {
- const {mkdtempSync,mkdirSync,writeFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const {mkdtempSync,mkdirSync,writeFileSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const {runScenario}=await import('./run.mjs');const {CardLedger}=await import('./counts.mjs');
  // MAIN RULING: 5e25507dee5 moved saved host consent to RUN; actual off-switch
  // observations use the dedicated capability binding introduced by 7d5d80b151.
@@ -177,7 +178,7 @@ test('live runner retains independently observed feature-off evidence and struct
   obs.events=[{type:'request.resolved',behavior:'deny',requestId:'blocked'}];
   const second=await runScenario(f,{id:'second',model:'fixture'},spec,{});
   assert.equal(second.verdict,'FAIL');assert.ok(second.refusals.some(r=>r.requestId==='blocked'));
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });
 test('Ask card classification requires the exact canonical approval, request, thread and message join',()=>{
  const spec={id:'legacy',actor:'non-owner',level:'ask',expected:'CARD',why:'base',requiresAsk:true};

@@ -32,24 +32,31 @@ it('equivalent roster publications preserve an issued reader across collection a
   expect(() => assertMemoryAccess(first,scope)).toThrow();
   expect(() => assertMemoryAccess(second,scope)).toThrow();
 });
-it('RED-3 cold contexts explicitly refuse without computing or iterating scopes and recover through maintenance', async () => {
-  const views = await import('./recall-view.ts'), roster = rosterFixture(); reconcileMemoryRoster(roster);
+// ONEINDEX (designs/ONEINDEX-DESIGN.md, MAIN-GO 15:10:36Z): RED-3 asserted that a cold context refuses (MEMORY_RECALL_UNAVAILABLE) until maintenance built its view. The design removes the
+// built view: the first turn after a fresh start computes the reader's scope set at issuance (O(roster), 0 writes) and answers at once
+// (BGDIAG: MEMORY_RECALL_UNAVAILABLE hits=0 on turn 1). The rewrite keeps "no view is computed" and adds the exact set and 0 writes.
+it('RED-3 (ONEINDEX) a cold context answers on its first turn from the computed scope set, writes nothing and builds no view', async () => {
+  const views = await import('./recall-view.ts'), policy = await import('./policy.ts'), { scopeSetOf } = await import('./oneindex.ts');
+  const roster = rosterFixture(); reconcileMemoryRoster(roster);
   views.evictRecallViewsForTest(database());
-  const tasks=roster.bots[0].tasks!;roster.bots[0].tasks=new Proxy(tasks,{get(target,key,receiver){if(typeof key==='string'&&/^[0-9]+$/.test(key))throw new Error('cold turn enumerated tasks');return Reflect.get(target,key,receiver);}});
-  const before = views.recallViewCounters();
-  expect(() => issue(roster)).toThrow('MEMORY_RECALL_UNAVAILABLE');
+  // Durable writes: every main table, compared whole. total_changes() would also count the connection-local scope-id cache table
+  // (scope-id.ts temp.memory_scope_epoch, created on first use), which is not a write to the store.
+  const store = () => (database().prepare("SELECT name FROM main.sqlite_master WHERE type='table' ORDER BY name").all() as Array<{name:string}>)
+    .map(t => [t.name, JSON.stringify(database().prepare(`SELECT * FROM main."${t.name}"`).all())]);
+  const before = views.recallViewCounters(), stored = store();
+  const access = issue(roster);
+  expect(store()).toEqual(stored);
+  expect([...scopeSetOf(access.view)!.set.scopes].sort()).toEqual([...new Set(policy.legacyRecallScopes('reader','direct',roster,false))].sort());
   expect(views.recallViewCounters().oracleComputes).toBe(before.oracleComputes);
-  roster.bots[0].tasks=tasks;
-  await views.prepareRecallContext('reader','direct',roster);
-  expect(issue(roster).view).toBeDefined();
 });
 it('A1 exact membership equals the complete legacy oracle for direct, room and unproven readers', async () => {
   const views = await import('./recall-view.ts'), policy = await import('./policy.ts'), roster = rosterFixture(); reconcileMemoryRoster(roster);
   for (const thread of ['direct','room-thread']) for (const notOwner of [false,true]) {
     await views.prepareRecallContext('reader',thread,roster,notOwner);
     const access = issue(roster,thread,notOwner);
-    const rows = database().prepare('SELECT scope_id FROM memory_recall_view_scopes WHERE view_id=? AND generation=? ORDER BY scope_id').all(access.view.viewId,access.view.generation);
-    expect(rows.map(row=>row.scope_id)).toEqual([...new Set(policy.legacyRecallScopes('reader',thread,roster,notOwner))].sort());
+    // ONEINDEX (designs/ONEINDEX-DESIGN.md, MAIN-GO 15:10:36Z): the membership is the computed scope set behind the handle (full and lineage reach), not built view rows.
+    const set = (await import('./oneindex.ts')).scopeSetOf(access.view)!.set;
+    expect([...set.scopes,...set.lineage].sort()).toEqual([...new Set(policy.legacyRecallScopes('reader',thread,roster,notOwner))].sort());
     expect(views.recallViewHasScope(database(),access.view,ensureScope('conversation','private'))).toBe(false);
   }
 });
@@ -79,8 +86,9 @@ it('A1-A4 generated rosters preserve room, alias, exclusion, DM, grant and malfo
     for(const thread of ['direct','room-thread'])for(const notOwner of [false,true]) {
       await views.prepareRecallContext('reader',thread,roster,notOwner);
       const access=issue(roster,thread,notOwner);
-      const rows=db.prepare('SELECT scope_id FROM memory_recall_view_scopes WHERE view_id=? AND generation=? AND lineage_only=0 ORDER BY scope_id').all(access.view.viewId,access.view.generation);
-      expect(rows.map(row=>String(row.scope_id))).toEqual([...new Set(policy.legacyRecallScopes('reader',thread,roster,notOwner))].sort());
+      // ONEINDEX (designs/ONEINDEX-DESIGN.md, MAIN-GO 15:10:36Z): full-reach membership is the computed scope set behind the handle, not built view rows.
+      const set=(await import('./oneindex.ts')).scopeSetOf(access.view)!.set;
+      expect([...set.scopes].sort()).toEqual([...new Set(policy.legacyRecallScopes('reader',thread,roster,notOwner))].sort());
     }
   }
 });

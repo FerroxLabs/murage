@@ -1,7 +1,7 @@
 # BLD4 display-fidelity replay
 
 Started at `52b44b60f90d7b9c5426b54ea5decaf958991b34`; worktree HEAD and
-`/work/mb-105-git.git`'s `dev/1019-bld-nolimreplay` both matched. Project memory
+`/root/mb-105-git.git`'s `dev/1019-bld-nolimreplay` both matched. Project memory
 prelude was unavailable (no tool/command or `.ijfw/memory` directory).
 
 `MAC-SELECT-V2.md` and `mac-select-v2.sql` replace the exact-key recovery path
@@ -52,7 +52,7 @@ card/decision reconciliation. No live app is used. API totals establish only
 these fabricated routes, not a census replay or release qualification.
 
 Evidence directory:
-`/work/fuigo-builds/orph/_ev/nolim-replay/1019/bld4-nolimreplay/`.
+`/root/fuigo-builds/orph/_ev/nolim-replay/1019/bld4-nolimreplay/`.
 All tests use the required `it-remote.sh` `--network none` containers, at most
 two at once. Final counts, pin hashes, parity result, and cleanup receipt are
 recorded there. No Mac operation, private corpus, real data, or billable action

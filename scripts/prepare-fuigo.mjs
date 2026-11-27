@@ -89,6 +89,13 @@ export const FUIGO_ASSETS = Object.freeze({
   }),
 });
 
+// Shared exact target table for packaging and final trust qualification.
+export const FUIGO_TARGET_OSES = Object.freeze({
+  'linux-x64': 'linux', 'linux-arm64': 'linux', 'win32-x64': 'windows',
+  'win32-arm64': 'windows', 'darwin-x64': 'macos', 'darwin-arm64': 'macos',
+});
+export const fuigoTargetFromPackage = name => Object.keys(FUIGO_ASSETS).find(target => FUIGO_ASSETS[target].package === name);
+
 // Pinned above, but NOT stageable yet: the shared executableTarget() parser
 // cannot classify PE ARM64 (0xaa64). Refuse before downloading an archive that
 // would pass its digest but fail header verification. Linux aarch64 is supported.

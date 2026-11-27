@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 import { fixtureRuns, toFiles, WANT } from "./fuigo-bump-fixture.mjs";
+import { trustReleaseFixture } from "./fuigo-trust-evidence-v3.fixture.mjs";
 import { FUIGO_ASSETS } from "./prepare-fuigo.mjs";
 import { checkRealTurns, commitFiles, hunksOf, callExpressions, machineHeader, mergeCheck, movePin, parseArgs, parseHashNote, parseReviewed, protocolChanges, readRealTurns, REAL_TURN_OSES, REAL_TURN_STEPS, WINDOWS_STEPS } from "./fuigo-bump.mjs";
 
@@ -258,7 +259,8 @@ describe("real-turn evidence, schema 2", () => {
   it("a receipt that owes real turns cannot merge", () => {
     expect(() => mergeCheck({ fuigoVersion: "1.0.37", real_turns: "owed" })).toThrow(/owed/);
     expect(() => mergeCheck({ fuigoVersion: "1.0.37", real_turns: [{ os: "linux" }, { os: "linux" }, { os: "linux" }] })).toThrow(/owed/);
-    expect(() => mergeCheck({ ...WANT, fuigoVersion: WANT.version, real_turns: checkRealTurns(toFiles(fixtureRuns()), WANT) }, toFiles(fixtureRuns()))).not.toThrow();
+    const { files, receipt, expected } = trustReleaseFixture();
+    expect(() => mergeCheck(receipt, files, expected)).not.toThrow();
   });
 });
 
@@ -297,18 +299,13 @@ describe("commitFiles", () => {
 });
 
 describe("merge-check requires the underlying real-turn evidence", () => {
-  const receipt = runs => ({ fuigoVersion: WANT.version, murageSha: WANT.murageSha, peeledTag: WANT.peeledTag,
-    packageVersion: WANT.packageVersion, assets: WANT.assets, policySha256: WANT.policySha256,
-    real_turns: checkRealTurns(toFiles(runs), WANT) });
   it("rejects three OS names without checked captures", () => {
     expect(() => mergeCheck({ fuigoVersion: "1.0.38", real_turns: [{ os: "linux" }, { os: "windows" }, { os: "macos" }] })).toThrow(/evidence|captures/);
   });
   it("rechecks the captures instead of trusting a previously passing receipt", () => {
-    const runs = fixtureRuns();
-    const proof = receipt(runs);
-    expect(() => mergeCheck(proof, toFiles(runs))).not.toThrow();
-    const files = toFiles(runs);
+    const { files, receipt: proof, expected } = trustReleaseFixture();
+    expect(() => mergeCheck(proof, files, expected)).not.toThrow();
     files[0].row.murageSha = "0".repeat(40);
-    expect(() => mergeCheck(proof, files)).toThrow(/Murage|murage|sha/);
+    expect(() => mergeCheck(proof, files, expected)).toThrow(/clause:release-identity/);
   });
 });

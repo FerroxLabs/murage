@@ -503,7 +503,9 @@ it("makes a second bot on the SAME browser profile wait for it rather than cross
   }
 }, 90_000);
 
-const LOCAL_MOUNTS = shouldMountLocalComputer({ requested: "local", hostPlatform: process.platform, providerSupportsLocal: true });
+// DESIGN 1022-cua-windows D7 makes "This computer" mount on win32 too, but the fake host fixture
+// (server/testing/fake-host-descriptor.ts) never publishes a win32 descriptor, so these cells stay off on Windows.
+const LOCAL_MOUNTS = shouldMountLocalComputer({ requested: "local", hostPlatform: process.platform, providerSupportsLocal: true }) && process.platform !== "win32";
 it.each([
   { label: "screen", patch: { computer: "local", browser: false }, waits: "computer", runs: LOCAL_MOUNTS },
   { label: "browser", patch: { computer: "off" }, waits: "browser", runs: true },

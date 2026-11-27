@@ -43,7 +43,7 @@ No folder becomes trusted. `sh.exe`, Git tools, helpers and DLLs do not acquire 
 
 ### 1.2 What was inspected
 
-All repository citations below are relative to **`/work/fuigo-builds/orph/_base`**, HEAD **`c12aaad9341e8f87126a193f35b5c2768f0aa66f`**, checked by read-only Git metadata. Repository code was read as bounded `grep -n` ranges. No repository code, build, test, engine, installer or Windows executable was run. A downloaded upstream Git archive was treated as data: authenticated-source package metadata, archive extraction, PE import-table inspection and SHA-256 calculation only. The Git self-extractor and its contents were never executed. This is artifact evidence, not behavioral qualification.
+All repository citations below are relative to **`/root/fuigo-builds/orph/_base`**, HEAD **`c12aaad9341e8f87126a193f35b5c2768f0aa66f`**, checked by read-only Git metadata. Repository code was read as bounded `grep -n` ranges. No repository code, build, test, engine, installer or Windows executable was run. A downloaded upstream Git archive was treated as data: authenticated-source package metadata, archive extraction, PE import-table inspection and SHA-256 calculation only. The Git self-extractor and its contents were never executed. This is artifact evidence, not behavioral qualification.
 
 | Base evidence | Consequence |
 |---|---|

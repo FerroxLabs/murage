@@ -23,7 +23,8 @@ export function LinuxLocalControl() {
   const [pending, setPending] = useState<"enable" | "disable" | "retry" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  if (capabilities.host.platform !== "linux") return null;
+  const windows = capabilities.host.platform === "win32";
+  if (capabilities.host.platform !== "linux" && !windows) return null;
   const busy = pending !== null || local.status === "checking" || local.status === "starting";
   const ready = local.available;
   const waylandSafetyBlocked = local.reasonCode === "linux-wayland-seat-safety-blocked";
@@ -34,11 +35,26 @@ export function LinuxLocalControl() {
     if (!window.muragebox?.localControl) return;
     setPending(action);
     setError(null);
+    if (action === "disable") {
+      // DESIGN 1022-cua-windows D17(c): Disable is called FIRST and always; the stop sweep is sent after it and
+      // neither waits for the other. A sweep that fails or never answers is one warning line and changes nothing
+      // about Disable.
+      let disabling: Promise<unknown>;
+      try { disabling = Promise.resolve(window.muragebox.localControl.disable()); } catch (reason) { disabling = Promise.reject(reason); }
+      void api("/api/local-computer/interrupt", { method: "POST" }).then(
+        (answer) => { const warning = emergencyStopWarning(answer); if (warning) setError((current) => current ? `${warning} ${current}` : warning); },
+        (reason) => { const message = reason instanceof Error ? reason.message : String(reason); setError((current) => current ? `${current} ${message}` : message); },
+      );
+      try { await disabling; }
+      catch (reason) { const message = reason instanceof Error ? reason.message : String(reason); setError((current) => current ? `${current} ${message}` : message); }
+      finally { setPending(null); }
+      return;
+    }
     // The stop answers 200 even when a task did not confirm it stopped, so
     // the driver is still disabled; the person is told in one line.
     let stopWarning: string | null = null;
     try {
-      if (action === "disable" || action === "retry") {
+      if (action === "retry") {
         stopWarning = emergencyStopWarning(await api("/api/local-computer/interrupt", { method: "POST" }));
         if (stopWarning) setError(stopWarning);
       }
@@ -60,7 +76,7 @@ export function LinuxLocalControl() {
             Local control
           </div>
           <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
-            Beta · Ubuntu 24.04 GNOME/{wayland ? "Wayland" : "Xorg"} · Cua Driver 0.19.3
+            {windows ? "Beta · Windows 10/11 x64 · Cua Driver 0.55.0" : <>Beta · Ubuntu 24.04 GNOME/{wayland ? "Wayland" : "Xorg"} · Cua Driver 0.55.0</>}
           </div>
         </div>
         <span

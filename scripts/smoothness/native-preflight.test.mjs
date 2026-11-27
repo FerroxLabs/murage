@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
+import { copyLoaderModules } from './loader-fixture.test-helper.mjs';
 import { removeTempDir } from '../../server/testing/cleanup.ts';
 // Copy the complete current native compilation input, including the meter unit and SQLite headers.
 function copyNativeSources(work) {
@@ -21,7 +22,7 @@ beforeAll(async () => {
   sourceFixture=mkdtempSync(join(tmpdir(),'smooth-native-source-'));
   mkdirSync(join(sourceFixture,'native/engine-exclusion'),{recursive:true});mkdirSync(join(sourceFixture,'server'));
   copyNativeSources(sourceFixture);
-  writeFileSync(join(sourceFixture,'server/engine-exclusion.ts'),readFileSync(resolve('server/engine-exclusion.ts')));
+  copyLoaderModules(sourceFixture,'server/engine-exclusion.ts');
   const {prepareSourceNative}=await api();
   await prepareSourceNative({work:sourceFixture,env,from:process.platform==='linux'?undefined:resolve('dist-native/engine-exclusion')});
 },120000);
@@ -80,7 +81,7 @@ for(const mode of ['supplied',...(process.platform==='linux'?['build']:[])])it(`
   const work=mkdtempSync(join(tmpdir(),'smooth-native-'));owned.push(work);
   mkdirSync(join(work,'native/engine-exclusion'),{recursive:true});mkdirSync(join(work,'server'));
   copyNativeSources(work);
-  writeFileSync(join(work,'server/engine-exclusion.ts'),readFileSync(resolve('server/engine-exclusion.ts')));
+  copyLoaderModules(work,'server/engine-exclusion.ts');
   const proof=await prepareSourceNative({work,env,from:mode==='supplied'?join(sourceFixture,'dist-native/engine-exclusion'):undefined});
   expect(proof).toMatchObject({loaded:true,noReplace:true,target:`${process.platform}-${process.arch}`});
   const receipt=JSON.parse(readFileSync(join(work,'dist-native/engine-exclusion',`${process.platform}-${process.arch}`,'build.json'),'utf8'));

@@ -30,30 +30,29 @@ const expectedVersion = String(sdkPackage.version);
 // NATIVE_ASSETS cover the two dylib/.node files the npm optional packages
 // deliver, which used to be copied into the app unverified.
 //
-// Provenance for 0.28.2: the darwin-universal archive digest matches the
+// Provenance for 0.55.0: the darwin-universal archive digest matches the
 // release's own checksums.txt, its `cua-driver` member is a Mach-O universal
-// x86_64+arm64 executable signed "Developer ID Application: Cua AI, Inc.
-// (YCK386LBJ7)" with the hardened runtime, and both @trycua/cua-driver-darwin-*
-// archives were downloaded without install scripts, verified against their
-// published SHA-512 integrity and SHA-1 shasum, then SHA-256 hashed.
-// See cua-driver-0.28.2-provenance.json for the exact release and registry
-// receipts, including the 56-tool schema comparison against 0.20.0.
+// x86_64+arm64 executable, and both @trycua/cua-driver-darwin-* archives were
+// downloaded without install scripts, verified against their published
+// SHA-512 integrity and SHA-1 shasum, then SHA-256 hashed. The Developer ID
+// signature was NOT checked on the Linux build host: run the codesign checks
+// listed in cua-driver-0.55.0-provenance.json on a Mac before shipping.
 const release = {
-  version: "0.28.2",
-  file: "cua-driver-rs-0.28.2-darwin-universal-binary.tar.gz",
-  sha256: "386db225a3080714a0f9f935525e61efaf46709587ef8b94dd2df81aeb2f6daa",
+  version: "0.55.0",
+  file: "cua-driver-rs-0.55.0-darwin-universal-binary.tar.gz",
+  sha256: "e6246d3da20abe019e2660e8b5f77e0c12cf9b386597a76393116994a36db6ce",
 };
-// Both darwin packages publish the same universal dylib/.node bytes at 0.28.2,
+// Both darwin packages publish the same universal dylib/.node bytes at 0.55.0,
 // but they are pinned per arch so a future single-arch upstream split fails
 // here instead of silently shipping the wrong slice.
 const NATIVE_ASSETS = Object.freeze({
   arm64: Object.freeze({
-    "libcua_driver_sdk.dylib": "3ba128cf27783605f498b6e372aeb92a14787563e0ed39543f27d232eeabdbbb",
-    "cua_driver_node_runtime.node": "4e16135a878fdf6ba5192904288b368eaf193c707473551d118db36a99f534d1",
+    "libcua_driver_sdk.dylib": "60a87525e3a28aac96fc3dc875ccfeeda1952b2d7c1ad16fda177fae3af3cefa",
+    "cua_driver_node_runtime.node": "b5eec24cfbd0fa35d6ed2e6a815f83c46ad289caef84f7406c355943d0349218",
   }),
   x64: Object.freeze({
-    "libcua_driver_sdk.dylib": "3ba128cf27783605f498b6e372aeb92a14787563e0ed39543f27d232eeabdbbb",
-    "cua_driver_node_runtime.node": "4e16135a878fdf6ba5192904288b368eaf193c707473551d118db36a99f534d1",
+    "libcua_driver_sdk.dylib": "60a87525e3a28aac96fc3dc875ccfeeda1952b2d7c1ad16fda177fae3af3cefa",
+    "cua_driver_node_runtime.node": "b5eec24cfbd0fa35d6ed2e6a815f83c46ad289caef84f7406c355943d0349218",
   }),
 });
 if (expectedVersion !== release.version) {

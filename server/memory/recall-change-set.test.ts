@@ -12,7 +12,8 @@ import { InternalCapabilities } from '../internal-capabilities.ts';
 import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from './policy.ts';
 import { maintainRecallViewSlice, prepareRecallContext, RECALL_BUILD_SLICE, stopRecallViewMaintenance } from './recall-view.ts';
 import { advanceRevocationJob, type RevocationJob } from './memory-revocation.ts';
-import { coverReceiptChanges, recallChangeRangeMembers, RECALL_CHANGE_SET } from './recall-view-schema.ts';
+import { coverReceiptChanges, recallChangeRangePage, RECALL_CHANGE_SET } from './recall-view-schema.ts';
+import { pendingViewPage } from './recall-view-index.ts';
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { stopRecallViewMaintenance(); closeDatabase(); });
@@ -35,7 +36,9 @@ async function fixture(records: number) {
   const token = registry.mint({ botId: 'reader', threadId: 'direct', generation: 'generation', depth: 0, kind: 'memory', skillAuthoring: false });
   const access = memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
   for (let n = 0; n < 1000 && !maintainRecallViewSlice(access.view); n++);
-  const pending = () => (db.prepare('SELECT record_id FROM memory_recall_view_pending WHERE view_id=? AND generation=? ORDER BY record_id').all(access.view.viewId, access.view.generation) as Array<{ record_id: string }>).map(row => row.record_id);
+  // recallrest-1020 (port onto 1.0.19): the per-view pending table is retired; the pending page is what a reader is served (recall-view-index.ts).
+  // It reads the receipts themselves, so a flip shows at once, not at the view's next re-check.
+  const pending = () => [...new Set(pendingViewPage(db, access.view, '', 4096).map(row => row.id))];
   const watermark = () => Number(db.prepare('SELECT watermark FROM memory_recall_views WHERE view_id=? AND generation=?').get(access.view.viewId, access.view.generation)!.watermark);
   return { access, ids, pending, watermark };
 }
@@ -127,7 +130,9 @@ it('a page re-checks at most RECALL_BUILD_SLICE records, and the watermark moves
   expect(RECALL_BUILD_SLICE).toBe(RECALL_CHANGE_SET);
   expect(maintainRecallViewSlice(f.access.view)).toBe(false);
   expect(f.watermark()).toBe(sequences[0]);
-  expect(f.pending()).toHaveLength(600 - 256);
+  // recallrest-1020 (port onto 1.0.19): the retired per-view table held the 344 records not yet re-checked here. The pending page reads the
+  // receipts, and all 600 are flipped already; how far the view has re-checked is the watermark above.
+  expect(f.pending()).toEqual([]);
   expect(maintainRecallViewSlice(f.access.view)).toBe(false);
   expect(f.watermark()).toBe(sequences[1]);
   expect(maintainRecallViewSlice(f.access.view)).toBe(true);
@@ -135,7 +140,11 @@ it('a page re-checks at most RECALL_BUILD_SLICE records, and the watermark moves
   expect(f.pending()).toEqual([]);
 });
 
-it('a range row the consumer cannot read, or one now holding more than RECALL_CHANGE_SET receipts, is refused, never skipped', async () => {
+// memv2 lane A (MEMORY-V2-DESIGN 4.2 A3b, AF-H5; Sean's 1.0.21 memory ruling adopted by MAIN 2026-11-21T15:34Z): a range that holds more than
+// RECALL_CHANGE_SET receipts when it is read used to be refused, which left every view unavailable for good (the row never shrinks). It is
+// now paged with a cursor inside the row; the mark passes the row only when the whole range is read. The three tests below that asserted
+// the refusal assert the paging instead; a row that cannot be parsed is still refused, and nothing is ever skipped.
+it('a range row the consumer cannot read is refused; one now holding more than RECALL_CHANGE_SET receipts is paged; neither is ever skipped', async () => {
   const f = await fixture(300);
   const before = f.watermark();
   database().prepare("INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('receipts','not json',1)").run();
@@ -143,8 +152,13 @@ it('a range row the consumer cannot read, or one now holding more than RECALL_CH
   expect(f.watermark()).toBe(before);
   database().exec("DELETE FROM memory_recall_changes WHERE kind='receipts'");
   database().prepare("INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('receipts',?,1)").run(JSON.stringify([f.ids[0], 1, f.ids[299], 1, ceiling()]));
-  expect(() => maintainRecallViewSlice(f.access.view)).toThrow('MEMORY_RECALL_UNAVAILABLE');
-  expect(f.watermark()).toBe(before);
+  // 300 receipts: the first page reads RECALL_CHANGE_SET of them and the mark stays before the row; the next page finishes it.
+  const seen = rechecks(() => { expect(maintainRecallViewSlice(f.access.view)).toBe(false); });
+  expect(Object.keys(seen).length).toBeLessThanOrEqual(RECALL_CHANGE_SET);
+  expect(f.watermark(), 'the mark does not pass a range that is half read').toBe(before);
+  const rest = rechecks(() => { for (let n = 0; n < 10 && !maintainRecallViewSlice(f.access.view); n++); });
+  expect(f.watermark()).toBeGreaterThan(before);
+  expect(new Set([...Object.keys(seen), ...Object.keys(rest)]).size, 'every member of the range was re-checked').toBe(300);
   expect(() => coverReceiptChanges(database(), Array.from({ length: RECALL_CHANGE_SET + 1 }, (_, i) => [`x${i}`, 1] as const), () => {})).toThrow('MEMORY_RECALL_CHANGE_SET_TOO_LARGE');
 });
 
@@ -157,7 +171,7 @@ it('a chunk whose range holds more than RECALL_CHANGE_SET receipts is not coales
   expect(f.pending()).toHaveLength(298);
 });
 
-it('a delayed consumer never walks a range that history has outgrown: raw entries examined are capped, and the row is refused', async () => {
+it('a delayed consumer reads a range that history has outgrown in bounded pieces: raw entries examined per read are capped, and the row is paged', async () => {
   const f = await fixture(2);
   const db = database(), scope = ensureScope('bot', 'reader');
   produce([f.ids[0]!, f.ids[1]!]);
@@ -166,18 +180,21 @@ it('a delayed consumer never walks a range that history has outgrown: raw entrie
   // newer receipts inside the logged key range, past its rowid ceiling: fewer than the cap are tolerated (the view's own change rows pick them up)
   for (let n = 0; n < 10; n++) { const id = `${f.ids[0]}-late${n}`; record.run(id, scope); receipt.run(id); }
   expect(() => { for (let n = 0; n < 10 && !maintainRecallViewSlice(f.access.view); n++); }).not.toThrow();
-  // history keeps growing inside the range while the consumer is behind: the scan is bounded, so the row is refused, not walked
+  // history keeps growing inside the range while the consumer is behind: each read is bounded, and the row is read in pieces (A3b)
   produce([f.ids[0]!, f.ids[1]!]);
   const before = f.watermark();
   for (let n = 10; n < RECALL_CHANGE_SET + 5; n++) { const id = `${f.ids[0]}-late${n}`; record.run(id, scope); receipt.run(id); }
-  expect(() => maintainRecallViewSlice(f.access.view)).toThrow('MEMORY_RECALL_UNAVAILABLE');
+  expect(maintainRecallViewSlice(f.access.view), 'the first piece does not finish the row').toBe(false);
   expect(f.watermark()).toBe(before);
+  expect(() => { for (let n = 0; n < 20 && !maintainRecallViewSlice(f.access.view); n++); }).not.toThrow();
+  expect(f.watermark()).toBeGreaterThan(before);
+  expect(f.pending()).not.toContain(f.ids[1]);
 });
 
 it('a range row names each record version once, even when it holds receipts of several index generations', async () => {
   const f = await fixture(2);
   database().prepare("INSERT INTO memory_projection_receipts VALUES(?,1,1,'pending','pending',NULL)").run(f.ids[0]);
-  expect(recallChangeRangeMembers(database(), JSON.stringify([f.ids[0], 1, f.ids[1], 1, ceiling()]))).toEqual([[f.ids[0], 1], [f.ids[1], 1]]);
+  expect(recallChangeRangePage(database(), JSON.stringify([f.ids[0], 1, f.ids[1], 1, ceiling()]))).toEqual({ members: [[f.ids[0], 1], [f.ids[1], 1]] });
 });
 
 it('the range read itself is bounded: it returns at most RECALL_CHANGE_SET+1 receipts however many the range now holds', async () => {
@@ -191,8 +208,12 @@ it('the range read itself is bounded: it returns at most RECALL_CHANGE_SET+1 rec
       return (...args: unknown[]) => { const rows = value.apply(target, args); most = Math.max(most, rows.length); return rows; };
     } });
   };
-  try { expect(() => recallChangeRangeMembers(db, JSON.stringify([f.ids[0], 1, f.ids.at(-1), 1, ceiling()]))).toThrow('MEMORY_RECALL_UNAVAILABLE'); }
+  let page: ReturnType<typeof recallChangeRangePage> | undefined;
+  try { page = recallChangeRangePage(db, JSON.stringify([f.ids[0], 1, f.ids.at(-1), 1, ceiling()])); }
   finally { (db as any).prepare = previous; }
+  // A3b: the piece is bounded and says where the range goes on, instead of refusing the row.
+  expect(page!.members.length).toBeLessThanOrEqual(RECALL_CHANGE_SET);
+  expect(page!.next).toEqual([f.ids[RECALL_CHANGE_SET - 1], 1]);
   expect(most).toBeGreaterThan(0);
   expect(most).toBeLessThanOrEqual(RECALL_CHANGE_SET + 1);
 });

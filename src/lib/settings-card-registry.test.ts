@@ -154,7 +154,8 @@ describe("search lists cards and rows", () => {
         for (const id of ids) expect(SETTINGS_CARDS.find((card) => card.id === id)!.surface, `${query} ${id}`).toBe("any");
       }
     }
-    expect(searchSettingsCards("analytics", false).map((hit) => hit.card.id)).toEqual(["general.analytics"]);
+    // The usage analytics card is gone on every surface (1.0.20 re-cut, no-telemetry-1020.test.ts).
+    expect(searchSettingsCards("analytics", false).map((hit) => hit.card.id)).toEqual([]);
   });
 
   it("marks what lives under Advanced, so the row can say so and the opener can open it", () => {

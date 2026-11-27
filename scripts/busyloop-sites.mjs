@@ -4,7 +4,7 @@
 import ts from 'typescript';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, dirname, resolve } from 'node:path';
+import { join, relative, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const base = fileURLToPath(new URL('../', import.meta.url));
 // MAIN RULING INT-CONFLICT-DEFAULT 628bc2fabe / 3e21303a24: reviewed local browser catalog delivery and bounded native config probes retain non-model source pins.
@@ -49,6 +49,24 @@ function nextStatement(n) {
   return undefined;
  }
 }
+function classifiesLearningSend(n) {
+ const first=statement(n),block=first.parent,callback=block.parent;
+ if(!ts.isBlock(block)||!ts.isArrowFunction(callback)||callback.body!==block||!named(callback.parent,'gate.send'))return false;
+ const [fetch,notify,returned]=block.statements;
+ // The gate initiates the fetch under the write lock and hands back that same response promise.
+ if(block.statements.length!==3||first!==fetch||!ts.isVariableStatement(fetch)
+  ||!(fetch.declarationList.flags&ts.NodeFlags.Const)||fetch.declarationList.declarations.length!==1
+  ||fetch.declarationList.declarations[0].initializer!==n||fetch.declarationList.declarations[0].name.getText()!=='response'
+  ||notify.getText()!=='if(isFluxUrl(url))notifyLearningFluxSend();'||returned.getText()!=='return response;')return false;
+ const send=callback.parent;
+ const awaited=send.parent;
+ if(!ts.isAwaitExpression(awaited)||!ts.isVariableDeclaration(awaited.parent)||!ts.isIdentifier(awaited.parent.name))return false;
+ const next=nextStatement(send);
+ if(!next||!ts.isVariableStatement(next)||next.declarationList.declarations.length!==1)return false;
+ const classification=next.declarationList.declarations[0].initializer;
+ return !!classification&&ts.isAwaitExpression(classification)&&named(classification.expression,'inspectFluxResponse')
+  && classification.expression.arguments[0]?.getText()===awaited.parent.name.text;
+}
 function marker(n,kind) {return named(n,'registerBusyloopPayloadSite')&&n.arguments[0]?.text===kind;}
 function routedUrl(n) {return !!n && ts.isPropertyAccessExpression(n)&&n.name.text==='requestUrl'&&named(n.expression,'fluxRouteFor');}
 const paths=[...sourceFiles(join(base,'server')),...sourceFiles(join(base,'shared'))];
@@ -86,7 +104,7 @@ function scan(file,source) {
    if(!route)errors.push('UNROUTED '+key);
    // Conversation HTTP paths classify before any status/recovery branch.
    if(file.startsWith('server/drivers/')||file==='server/memory/extract.ts') {
-    const guarded=contains(nextStatement(n),'inspectFluxResponse');
+    const guarded=file==='server/memory/extract.ts'?classifiesLearningSend(n):contains(nextStatement(n),'inspectFluxResponse');
     add(n,'Flux-capable HTTP',guarded,n.expression.getText());
     if(!guarded)errors.push('UNCLASSIFIED '+key);
    }
@@ -130,7 +148,7 @@ function scan(file,source) {
 export function inventory(overrides=new Map()) {
  const sites=[],errors=[];
  for(const path of new Set([...paths,...[...overrides.keys()].filter(file=>/^(server|shared)\//.test(file)).map(file=>join(base,file))])) {
-  const file=relative(base,path),source=overrides.get(file)??readFileSync(path,'utf8');
+  const file=relative(base,path).split(sep).join('/'),source=overrides.get(file)??readFileSync(path,'utf8');
   let item=cache.get(file);
   if(!item||item.source!==source) {item={source,...scan(file,source)};if(!overrides.has(file))cache.set(file,item);}
   sites.push(...item.sites);errors.push(...item.errors);

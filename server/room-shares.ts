@@ -130,7 +130,8 @@ export function pickExcerpts(db: DatabaseSync, sources: readonly string[], query
     let seen = 0, bytes = 0;
     scanTextLinesNewest(threadId, message => {
       if (++seen > SHARE_PAGES * SHARE_PAGE_ROWS) return true;
-      if (message.kind !== "text" || typeof message.text !== "string" || !message.text.trim() || message.copyOf || message.sharedFrom) return false;
+      // q1023-ownermask: an owner-masked reply (the held-back line before option B) is the owner's alone: never quoted into a room
+      if (message.kind !== "text" || typeof message.text !== "string" || !message.text.trim() || message.copyOf || message.sharedFrom || message.ownerMasked) return false;
       const lower = message.text.toLowerCase();
       if (!words.every(word => lower.includes(word))) return false;
       if (!shownForOwner(db, threadId, message)) return false;
@@ -306,7 +307,7 @@ function releaseShare(db: DatabaseSync, roster: Roster, deps: ShareDeps, input: 
     const eligible = new Set(bot ? shareSources(db, roster, bot, room, "both") : []);
     const kept = share.excerpts.filter(e => keep.has(e.messageId) && eligible.has(e.threadId)).filter(e => {
       const line = deps.message(e.threadId, e.messageId);
-      return !!line && typeof line.text === "string" && sha(line.text) === e.textHash && shownForOwner(db, e.threadId, line);
+      return !!line && typeof line.text === "string" && !line.ownerMasked && sha(line.text) === e.textHash && shownForOwner(db, e.threadId, line);
     });
     if (!kept.length) return unavailable();
     const text = kept.map(e => e.text.split("\n").map(row => `> ${row}`).join("\n")).join("\n\n");

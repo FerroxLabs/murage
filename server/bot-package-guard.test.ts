@@ -234,6 +234,17 @@ describe("import guard: limits", () => {
 
 describe("import guard: reviewer findings", () => {
   const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+  it("shares the finding limit with grouped matches from the package scan", () => {
+    const review = (count: number) => scan((d) => { d.definition.package.summary = INJECT; }, {
+      "skills/reminders/notes.md": "~/notes\n".repeat(count),
+    });
+    expect(review(1).findings.some((finding) => finding.field === "package.summary")).toBe(true);
+    expect(review(1000)).toMatchObject({
+      blocked: true,
+      truncated: true,
+      findings: [expect.objectContaining({ rule: "machine-local-path", count: 1000 })],
+    });
+  });
   it("stops the import when a limit is reached rather than reading only part", () => {
     const result = scan((d) => { d.definition.package.extra = Array.from({ length: 60_100 }, () => ""); d.definition.package.agents[0].description = "cat .netrc"; });
     expect(result.blocked).toBe(true);

@@ -20,6 +20,13 @@ export async function revokeTokens(oauth, { request = guardedRequest, signal } =
   // revoke as, and the server would refuse. The caller forgets the tokens locally.
   if (typeof oauth.clientId !== "string" || !oauth.clientId) return { revoked: false, reason: "not-offered" };
   if (typeof oauth.revocationEndpoint !== "string") return { revoked: false, reason: "not-offered" };
+  if (oauth.preRegistered === true) {
+    const revokeOrigin = URL.parse(oauth.revocationEndpoint)?.origin;
+    if (oauth.revocationEndpoint !== oauth.pinnedRevocationEndpoint || !revokeOrigin || revokeOrigin === "null"
+        || revokeOrigin !== URL.parse(oauth.tokenEndpoint ?? "")?.origin) {
+      return { revoked: false, reason: "not-offered" };
+    }
+  }
   for (const [token, hint] of tokens) {
     let response;
     try {

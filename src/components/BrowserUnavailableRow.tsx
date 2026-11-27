@@ -41,7 +41,7 @@ export function BrowserUnavailableRow({ reason, botName, botId }: { reason: stri
       >
         <span className="mt-[3px] shrink-0" aria-hidden="true"><GlobeLock size={12} className="opacity-70" /></span>
         <div className="min-w-0 [overflow-wrap:anywhere]">
-          <span>{failure?.code==='browser_release_failed'?t('browser.releaseFailed',{name:botName||t('browserUnavailable.thisBot')}):failure?t(failure.messageKey):t(SUMMARY_KEY[kind], { bot: botName || t("browserUnavailable.thisBot") })}</span>
+          <span>{failure?.code==='browser_release_failed'?t('browser.releaseFailed',{name:botName||t('browserUnavailable.thisBot')}):failure?t(failure.messageKey):t(SUMMARY_KEY[kind], { bot: botName || t("browserUnavailable.thisBot") })}</span>{failure&&" "}
           {failure&&(failure.code==='browser_extension_setup_required'&&botId?<BrowserFinishSetup botId={botId}/>:failure.code==='browser_release_failed'&&botId?<BrowserReleaseRetry botId={botId}/>:<BrowserRecoveryAction botId={botId??''} code={failure.code}/>)}
           {failure?.offer&&botId&&<BrowserFailureChoice botId={botId}/>}
           {!NO_DETAILS.has(kind) && (

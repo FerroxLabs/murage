@@ -35,8 +35,7 @@ jobs:
         os: [macos-latest, ubuntu-24.04, windows-latest]
         shard: [1, 2, 3]
     runs-on: ${{ matrix.os }}
-    # The slowest single test measured 13.7 min (Windows, 1.0.2); the tagged set is about 70 Windows
-    # minutes in all, so three shards of about 25-30 minutes each, with a cap well above.
+    # Tagged tests and whole-file scale tests have separate time budgets.
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,22 +61,47 @@ jobs:
           { echo "TEMP=$win"; echo "TMP=$win"; } >> "$GITHUB_ENV"
       - name: Run the nightly tests
         shell: bash
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/3 --tags-filter=nightly
+        run: pnpm exec vitest run --config vitest.nightly.config.ts --shard=${{ matrix.shard }}/3 --tags-filter=nightly
         env:
           # handoff-dispatch.structure.test.ts builds the whole server's TypeScript program six times in one worker. On the 7 GB
           # macOS runner that outgrew Node's default heap and killed the worker ("Worker exited unexpectedly", 1.0.3 nightly
           # 39372113002); ci.yml's typecheck needs the same setting for the same project (tsc exit 134). Forks inherit it.
           NODE_OPTIONS: --max-old-space-size=6144
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+
+  nightly-scale:
+    name: nightly-scale (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/vitest-runtime
+      - name: Keep the Windows test folders on the runner's work disk
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          dir="$RUNNER_TEMP/murage-test-tmp"; mkdir -p "$dir"; win=$(cygpath -w "$dir")
+          { echo "TEMP=$win"; echo "TMP=$win"; } >> "$GITHUB_ENV"
       - name: Run the whole-file scale tests
-        # Files the tier review moved to nightly whole (ci/extended-tests.txt, note "nightly"); ci.yml runs none of
-        # them. Shard 1 of each OS carries them.
-        if: ${{ !cancelled() && matrix.shard == 1 }}
+        # These files are assigned to nightly as whole files in ci/extended-tests.txt.
         shell: bash
         run: |
           node scripts/ci-test-tiers.mjs list --tier nightly > "$RUNNER_TEMP/nightly-files.txt"
           args=(); while IFS= read -r arg; do args+=("${arg%$'\r'}"); done < "$RUNNER_TEMP/nightly-files.txt"
-          if [ "${#args[@]}" -gt 0 ]; then node node_modules/vitest/vitest.mjs run "${args[@]}"; fi
+          test "${#args[@]}" -gt 0
+          node node_modules/vitest/vitest.mjs run "${args[@]}"
         env:
           MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
 
@@ -118,17 +142,25 @@ jobs:
   nightly:
     # One result for the release gate and for branch rules: success only if every job passed.
     if: ${{ always() }}
-    needs: [slow, cloud-portal]
+    needs: [slow, nightly-scale, cloud-portal, real-engine-package, real-engine]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - env:
+      - shell: bash
+        env:
           SLOW: ${{ needs.slow.result }}
+          SCALE: ${{ needs.nightly-scale.result }}
           CLOUD_PORTAL: ${{ needs.cloud-portal.result }}
+          REAL_ENGINE_PACKAGE: ${{ needs.real-engine-package.result }}
+          REAL_ENGINE: ${{ needs.real-engine.result }}
         run: |
           echo "nightly tests: $SLOW"
+          echo "real-engine package: $REAL_ENGINE_PACKAGE; real-engine matrix: $REAL_ENGINE"
           test "$SLOW" = success
+          test "$SCALE" = success
           test "$CLOUD_PORTAL" = success
+          test "$REAL_ENGINE_PACKAGE" = success
+          test "$REAL_ENGINE" = success
 
   real-engine-package:
     name: package for real engines (RC SHA)

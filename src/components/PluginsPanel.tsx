@@ -47,7 +47,7 @@ import { LayerSurface } from "./LayerSurface";
 import type { ConfirmedConnectLabel } from "@/lib/connect-app";
 import { ConnectLabelForm } from "./ConnectLabelForm";
 import { settingsTabKeys } from "./settings/pages/settings-tab-keys";
-import { ConnectedAccountLine, ON_CARD } from "./ConnectedAppsSurfaces";
+import { accountDisplayName, ConnectedAccountLine, ON_CARD } from "./ConnectedAppsSurfaces";
 
 type ToolkitCard = AppCard;
 
@@ -124,8 +124,9 @@ export function catalogAnswerFrom(response: Record<string, unknown> | null | und
 export function disconnectAccountConfirmation(
   service: string,
   account: { id: string; alias?: string },
+  index = 0,
 ) {
-  const identity = account.alias ? `“${account.alias}” (${account.id})` : `“${account.id}”`;
+  const identity = `“${accountDisplayName(account, service, index)}”`;
   return `Disconnect ${identity} from ${service}? Only this ${service} account will be revoked. Your other ${service} accounts will stay connected.`;
 }
 
@@ -1232,7 +1233,7 @@ export function PluginsPanel({ embedded = false, readOnly = false }: { embedded?
                     <ServiceIcon card={card} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[14px] font-medium text-ink">{card.label}</div>
-                      <div className={cn("mt-0.5 text-[12.5px] text-ink-secondary", !(pending && !pendingUrls[card.slug]) && "truncate")}>
+                      <div className={cn("mt-0.5 text-[12.5px] text-ink-secondary", !(pending && !pendingUrls[card.slug]) && "truncate")} title={pending || (failed && !accounts.length) ? undefined : card.blurbFull ?? card.blurb}>
                         {pending
                           ? pendingUrls[card.slug]
                             ? "Finish setup in your browser"
@@ -1293,7 +1294,7 @@ export function PluginsPanel({ embedded = false, readOnly = false }: { embedded?
                   )}
                   {accounts.length > 0 && (
                     <div className="ml-14 mt-3 space-y-2">
-                      {accounts.map((account) => {
+                      {accounts.map((account, accountIndex) => {
                         const active = /^active$/i.test(account.status);
                         const needsReconnect = account.needsReconnect === true || !active;
                         const unverified = "checkState" in account && account.checkState === "unverified";
@@ -1302,9 +1303,9 @@ export function PluginsPanel({ embedded = false, readOnly = false }: { embedded?
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-ink">
                                 {active && !needsReconnect && !unverified && <Check size={13} className="shrink-0 text-success" />}
-                                <span className="truncate">{account.alias || account.id}</span>
+                                <span className="truncate">{accountDisplayName(account, card.label, accountIndex)}</span>
                               </div>
-                              <ConnectedAccountLine id={account.alias ? account.id : ""} status={needsReconnect ? "needs reconnecting" : unverified ? t("connectorHealth.unverified", { app: card.label }) : account.status.toLowerCase()} />
+                              <ConnectedAccountLine id="" status={needsReconnect ? "needs reconnecting" : unverified ? t("connectorHealth.unverified", { app: card.label }) : account.status.toLowerCase()} />
                             </div>
                             {needsReconnect && (
                               <button
@@ -1320,7 +1321,7 @@ export function PluginsPanel({ embedded = false, readOnly = false }: { embedded?
                                   labelFormEvent({ type: "reconnect", slug: card.slug, accountId: account.id, alias: account.alias });
                                 }}
                                 className="rounded-md bg-accent/15 px-2 py-1 text-[11px] font-medium text-ink transition-colors hover:bg-accent/25 disabled:opacity-40"
-                                aria-label={`Reconnect ${account.alias || account.id} for ${card.label}`}
+                                aria-label={`Reconnect ${accountDisplayName(account, card.label, accountIndex)} for ${card.label}`}
                               >
                                 Reconnect
                               </button>
@@ -1329,11 +1330,11 @@ export function PluginsPanel({ embedded = false, readOnly = false }: { embedded?
                               type="button"
                               disabled={desktop !== true || busy}
                               onClick={() => {
-                                if (!window.confirm(disconnectAccountConfirmation(card.label, account))) return;
+                                if (!window.confirm(disconnectAccountConfirmation(card.label, account, accountIndex))) return;
                                 disconnectAccount(card.slug, account.id);
                               }}
                               className="rounded-md px-2 py-1 text-[11px] text-ink-secondary transition-colors hover:bg-danger/10 hover:text-danger disabled:opacity-40"
-                              aria-label={`Disconnect ${account.alias || account.id} from ${card.label}`}
+                              aria-label={`Disconnect ${accountDisplayName(account, card.label, accountIndex)} from ${card.label}`}
                             >
                               Disconnect
                             </button>

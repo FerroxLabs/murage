@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "held1022-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 held rows 21 (Fuigo Trust) and 29 (Sentinel Health)"
+  },
+  "author": "sentcopy-fix-1021-wf1121",
+  "date": "2026-11-21",
+  "base": "6405f9d84e",
+  "scope": "1.0.22 row 29 sentcopy: Health line when background checks are retired, round 2 with the copy seat's terminology fixes",
+  "strings": {
+    "de:ux.l2b.health.backgroundChecksRetired": {
+      "text": "Die Zustandsprüfungen im Hintergrund wurden eingestellt.",
+      "en": "Background health checks have been retired.",
+      "verdict": "pass",
+      "note": "Matches the round-1 fix verbatim (same in de.json); Zustandsprüfung matches the title and lineAct."
+    },
+    "fr:ux.l2b.health.backgroundChecksRetired": {
+      "text": "Les vérifications de santé en arrière-plan ont été supprimées.",
+      "en": "Background health checks have been retired.",
+      "verdict": "pass",
+      "note": "Matches the round-1 fix verbatim (same in fr.json); vérification de santé matches lineAct; supprimées is clearly intentional."
+    },
+    "hi:ux.l2b.health.backgroundChecksRetired": {
+      "text": "बैकग्राउंड सेहत जाँचें बंद कर दी गई हैं।",
+      "en": "Background health checks have been retired.",
+      "verdict": "pass",
+      "note": "Matches the round-1 fix verbatim (same in hi.json); सेहत जाँच matches lineAct."
+    },
+    "ja:ux.l2b.health.backgroundChecksRetired": {
+      "text": "バックグラウンドでのヘルスチェックは廃止されました。",
+      "en": "Background health checks have been retired.",
+      "verdict": "pass",
+      "note": "Matches the round-1 fix verbatim (same in ja.json); ヘルスチェック matches lineAct; polite register matches the neighbours."
+    },
+    "pt-br:ux.l2b.health.backgroundChecksRetired": {
+      "text": "As verificações de saúde em segundo plano foram descontinuadas.",
+      "en": "Background health checks have been retired.",
+      "verdict": "pass",
+      "note": "Matches the round-1 fix verbatim (same in pt-br.json); verificação de saúde matches lineAct."
+    }
+  },
+  "files": {}
+}

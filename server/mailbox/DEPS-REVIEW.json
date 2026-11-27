@@ -1,0 +1,543 @@
+{
+  "@pinojs/redact@0.4.0": {
+    "version": "0.4.0",
+    "integrity": "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina",
+      "jsumners",
+      "watson"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "@selderee/plugin-htmlparser2@0.12.0": {
+    "version": "0.12.0",
+    "integrity": "sha512-oELmoyA6ML9jDRMV3kgcMQFKxUfBU0yFVn6yTctVaLT5ygXnxH52I3TZEgV9EhXJC68/uFvE5Daj1/25c0Xa/A==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "killy.mxi"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "@zone-eu/mailsplit@5.4.31": {
+    "version": "5.4.31",
+    "integrity": "sha512-P031SeyobwXE/aZf1f/hN9RZm/t8ZSibCUYA7Us6Fory4b1p5HxNEA08YcfTynkPnvJ3nFjMFguwSp30TXc4Tw==",
+    "licence": "(MIT OR EUPL-1.1+)",
+    "installScript": false,
+    "maintainers": [
+      "zone-main",
+      "andris"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "atomic-sleep@1.0.0": {
+    "version": "1.0.0",
+    "integrity": "sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "davidmarkclements"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "deepmerge-ts@8.0.2": {
+    "version": "8.0.2",
+    "integrity": "sha512-uqbvqLUMrc6p0MO+WBRtTxY55hmyh94WRwI5a++PZe54X+bfVh59FSN7uWCBCW1CCVjzjnrwzfI8zidE2obMMw==",
+    "licence": "BSD-3-Clause",
+    "installScript": false,
+    "maintainers": [
+      "rebeccastevens"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "dom-serializer@2.0.0": {
+    "version": "2.0.0",
+    "integrity": "sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "mattmueller",
+      "davidchambers",
+      "feedic"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "domelementtype@2.3.0": {
+    "version": "2.3.0",
+    "integrity": "sha512-OLETBj6w0OsagBwdXnPdN0cnMfF9opN69co+7ZrbfPGrdpPVNBUj02spi6B1N7wChLQiPn4CSH/zJvXw56gmHw==",
+    "licence": "BSD-2-Clause",
+    "installScript": false,
+    "maintainers": [
+      "feedic"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "domhandler@5.0.3": {
+    "version": "5.0.3",
+    "integrity": "sha512-cgwlv/1iFQiFnU96XXgROh8xTeetsnJiDsTc7TYCLFd9+/WNkIqPTxiM/8pSd8VIrhXGTf1Ny1q1hquVqDJB5w==",
+    "licence": "BSD-2-Clause",
+    "installScript": false,
+    "maintainers": [
+      "feedic"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "domutils@3.2.2": {
+    "version": "3.2.2",
+    "integrity": "sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==",
+    "licence": "BSD-2-Clause",
+    "installScript": false,
+    "maintainers": [
+      "feedic"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "encoding-japanese@2.5.0": {
+    "version": "2.5.0",
+    "integrity": "sha512-5TKhaMWTUF777NQ16OrAkJFuEd1uOnEBw8ODeXFTc/Y9csZZQ6/jiIS5r4aFuzfowu9gLGrE51zqI2H0dLwlmg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "polygonplanet"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "entities@4.5.0": {
+    "version": "4.5.0",
+    "integrity": "sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw==",
+    "licence": "BSD-2-Clause",
+    "installScript": false,
+    "maintainers": [
+      "feedic"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "entities@7.0.1": {
+    "version": "7.0.1",
+    "integrity": "sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA==",
+    "licence": "BSD-2-Clause",
+    "installScript": false,
+    "maintainers": [
+      "feedic"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "he@1.2.0": {
+    "version": "1.2.0",
+    "integrity": "sha512-F/1DnUGPopORZi0ni+CvrCgHQ5FyEAHRLSApuYWMmrbSwoN2Mn/7k+Gl38gJnR7yyDZk6WLXwiGod1JOWNDKGw==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "mathias"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "html-to-text@10.0.1": {
+    "version": "10.0.1",
+    "integrity": "sha512-GiVhRI1BatGARSCmlXWNCjDT0cWrwBWoeduLoV0WSKAgaV/wa+hUWy5LiQLUs4UwiUrE52ZCMfBGiKD87TDPrg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "mlegenhausen",
+      "killy.mxi"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "htmlparser2@10.1.0": {
+    "version": "10.1.0",
+    "integrity": "sha512-VTZkM9GWRAtEpveh7MSF6SjjrpNVNNVJfFup7xTY3UpFtm67foy9HDVXneLtFVt4pMz5kZtgNcvCniNFb1hlEQ==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "feedic"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "iconv-lite@0.7.3": {
+    "version": "0.7.3",
+    "integrity": "sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "wesleytodd",
+      "bsebas",
+      "ashtuchkin"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "imapflow@2.12.1": {
+    "version": "2.12.1",
+    "integrity": "sha512-mM0FAU13CU1DMZG9ylow3GgyU+rs0UvWcoZuLpYXWNq3tie0MGNqE/aJqOnNb25kJgeNVtU/spfJ0I0qCYxbpQ==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "andris"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "ip-address@10.7.6": {
+    "version": "10.7.6",
+    "integrity": "sha512-00LYkM6byILa9eQIx6qoaXCM40xTLd56AZ4vyaPW3YTyb49VZYPo5xsiAq4tuQ54GH4R7gVdYScJ1B7B77PuTg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "beaugunderson"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "leac@0.7.0": {
+    "version": "0.7.0",
+    "integrity": "sha512-qMrZeyEekgdRQ9o6a4NAB2EQZrv827GJdn1vnapwSJ90hWRB4TzUSunvacPkxQ2TnNqHNI1/zSt0hlo0crG8Jw==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "killy.mxi"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "libbase64@1.4.1": {
+    "version": "1.4.1",
+    "integrity": "sha512-Nyh3H90B3gRtrcxIe56Ayy7635J0jmh6AbxbQgQae8wrSPQMH5wFqJChiMTB13yKG512L3YspbA5DzumhFTITA==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "andris"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "libmime@5.6.5": {
+    "version": "5.6.5",
+    "integrity": "sha512-2mbKYlwUP2mWys7kUE0MBHNdOndOe++8TIdmGXtt/hMYWSgbjHkSIXyC4jCpVSc/sAox3GSxWn1dSmyiQimLNA==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "andris"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "libqp@3.0.2": {
+    "version": "3.0.2",
+    "integrity": "sha512-24oL5vCMpFd6lGLbD3vPrmcAEGFScDPX9eARY8TXsRVBSde93xP2iG7+8pg5M56Yiu9Uy14hCVN1E+yj5LMtyQ==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "andris"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "linkify-it@6.1.0": {
+    "version": "6.1.0",
+    "integrity": "sha512-wJ/TwpSDTLepCrQoYWYIExIKg5Zchex2Nn5yk2mFnB+6PtdkHtyLx742md9csRjjOnGkKIS/RrbY7l8D6gT9Vw==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "vitaly"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "mailparser@3.14.5": {
+    "version": "3.14.5",
+    "integrity": "sha512-GVX8bONBtUW7FaakHZX2yUIxzWFAseKltj7GaoFnbwWEf8/+0a5WrjCH+WPJEyaNPFTf5tosEuKPwGkd5LpO6A==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "andris"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "nodemailer@10.6.0": {
+    "version": "10.6.0",
+    "integrity": "sha512-jWanL7D9GD3jvUDYKmoC5rWTiG8MnBgnN2yV68bgMKip1zUJhiSTyz7Eg+18y8sk5OvdVDzws5nZK5arSI4f5Q==",
+    "licence": "MIT-0",
+    "installScript": false,
+    "maintainers": [
+      "andris"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "on-exit-leak-free@2.1.2": {
+    "version": "2.1.2",
+    "integrity": "sha512-0eJJY6hXLGf1udHwfNftBqH+g73EU4B504nZeKpz1sYRKafAghwxEJunB2O7rDZkL4PGfsMVnTXZ2EjibbqcsA==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "parseley@0.13.1": {
+    "version": "0.13.1",
+    "integrity": "sha512-uNBJZzmb60l6p6VWLTmevizNAGnE0xoSf1n0B4q3ntegDNzcS68NRCcBDZTcyXHxt2XhBChsCuqj4M+nChvE/A==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "killy.mxi"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "peberminta@0.10.0": {
+    "version": "0.10.0",
+    "integrity": "sha512-80B2AsU+I4Qdb0ZAPSfe9UwvGzwkM37IKIFEvdS3D/3Ndgv2bsuJ0bfG1+iEYO+l7Gfd4EUJmuRyq7efLgRMzQ==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "killy.mxi"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "pino-abstract-transport@3.0.0": {
+    "version": "3.0.0",
+    "integrity": "sha512-wlfUczU+n7Hy/Ha5j9a/gZNy7We5+cXp8YL+X+PG8S0KXxw7n/JXA3c46Y0zQznIJ83URJiwy7Lh56WLokNuxg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina",
+      "jsumners",
+      "watson"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "pino-std-serializers@7.1.0": {
+    "version": "7.1.0",
+    "integrity": "sha512-BndPH67/JxGExRgiX1dX0w1FvZck5Wa4aal9198SrRhZjH3GxKQUKIBnYJTdj2HDN3UQAS06HlfcSbQj2OHmaw==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina",
+      "jsumners",
+      "watson"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "pino@10.3.1": {
+    "version": "10.3.1",
+    "integrity": "sha512-r34yH/GlQpKZbU1BvFFqOjhISRo1MNx1tWYsYvmj6KIRHSPMT2+yHOEb1SG6NMvRoHRF0a07kCOox/9yakl1vg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina",
+      "jsumners",
+      "watson",
+      "davidmarkclements"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "process-warning@5.1.0": {
+    "version": "5.1.0",
+    "integrity": "sha512-jQSaVHsPgtyw60e1rQ/A+/ArPEj/S8pS/vFnyGa/gYFXrKk/6RuDkoqVDQ5NI5MmS01698ltlAk0NoDBNLujRw==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "zekth",
+      "eomm",
+      "gurgunday",
+      "ivan-tymoshenko",
+      "simoneb",
+      "climba03003",
+      "jsumners",
+      "fdawgs",
+      "metcoder95",
+      "matteo.collina"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "punycode.js@2.3.1": {
+    "version": "2.3.1",
+    "integrity": "sha512-uxFIHU0YlHYhDQtV4R9J6a52SLx28BCjT+4ieh7IGbgwVJWO+km431c4yRlREUAsAmt/uMjQUyQHNEPf0M39CA==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "mathias",
+      "google-wombot"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "quick-format-unescaped@4.0.4": {
+    "version": "4.0.4",
+    "integrity": "sha512-tYC1Q1hgyRuHgloV/YXs2w15unPVh8qfu/qCTfhTYamaw7fyhumKa2yGpdSo87vY32rIclj+4fWYQXUMs9EHvg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "davidmarkclements"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "real-require@0.2.0": {
+    "version": "0.2.0",
+    "integrity": "sha512-57frrGM/OCTLqLOAh0mhVA9VBMHd+9U7Zb2THMGdBUoZVOtGbJzjxsYGDJ3A9AYYCP4hn6y1TVbaOfzWtm5GFg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina",
+      "shogun_panda"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "real-require@1.0.0": {
+    "version": "1.0.0",
+    "integrity": "sha512-P4nbQYQfePJxRSmY+v/KINxVucm4NF3p3s7pJveMTtom52FR4YGltUQLB8idDXwDDWW+eYrWDFbuzUnjoWHF7g==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina",
+      "jsumners",
+      "watson",
+      "shogun_panda"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "safe-stable-stringify@2.5.0": {
+    "version": "2.5.0",
+    "integrity": "sha512-b3rppTKm9T+PsVCBEOUR46GWI7fdOs00VKZ1+9c1EWDaDMvjQc6tUwuFyIprgGgTcWoVHSKrU8H31ZHA2e0RHA==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "bridgear"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "safer-buffer@2.1.2": {
+    "version": "2.1.2",
+    "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "chalker"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "selderee@0.12.0": {
+    "version": "0.12.0",
+    "integrity": "sha512-b1YMh3+DHZp59DLna3qVwQ5iOla/nrI6mLBNW02XxU77M3046Df6VLkoaJyFz20VsGIG5kkp+FK0kg4K4HnUFw==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "killy.mxi"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "smart-buffer@4.2.0": {
+    "version": "4.2.0",
+    "integrity": "sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "joshglazebrook"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "socks@2.8.10": {
+    "version": "2.8.10",
+    "integrity": "sha512-e0VyvkVTwVYViNovRkZ9aodhxVlyoMn7eJhVUPxZ+eK9P/7CBkxvvsBOHqFPEH416726W8tLXXXjKwqgTErrCQ==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "joshglazebrook"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "sonic-boom@4.2.1": {
+    "version": "4.2.1",
+    "integrity": "sha512-w6AxtubXa2wTXAUsZMMWERrsIRAdrK0Sc+FUytWvYAhBJLyuI4llrMIC1DtlNSdI99EI86KZum2MMq3EAZlF9Q==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina",
+      "jsumners",
+      "watson"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "split2@4.2.0": {
+    "version": "4.2.0",
+    "integrity": "sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==",
+    "licence": "ISC",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "thread-stream@4.2.1": {
+    "version": "4.2.1",
+    "integrity": "sha512-Stg6edJXC/6/xqGwSXwFokrUhChJ18amEjpKH89WrQQ0oVFDF+pUUcTpiwWhFUrE89Vf16FBOlwhaw+lescxMQ==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "matteo.collina",
+      "jsumners"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "tlds@1.261.0": {
+    "version": "1.261.0",
+    "integrity": "sha512-QXqwfEl9ddlGBaRFXIvNKK6OhipSiLXuRuLJX5DErz0o0Q0rYxulWLdFryTkV5PkdZct5iMInwYEGe/eR++1AA==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "tootallnate",
+      "stephenmathieson",
+      "richienb",
+      "tlds-bot"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  },
+  "uc.micro@3.0.0": {
+    "version": "3.0.0",
+    "integrity": "sha512-U3PppEkleoTnIfi8BozMx3yju3qc/L6SwqWo2Sw+54PX+PX0q9I+r1Um5HCmqD7n9VDX5/v3vQH/AjA6deDdtw==",
+    "licence": "MIT",
+    "installScript": false,
+    "maintainers": [
+      "vitaly"
+    ],
+    "reviewer": "ci",
+    "date": "2026-11-20"
+  }
+}

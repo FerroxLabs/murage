@@ -31,10 +31,11 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { inProjectCheck, realPathInOrder } from "../../shared/in-project.ts";
-import { isOwnUnasked } from "../../shared/own-servers.ts";
+import { isOwnUnasked, OWN_WEB_SEARCH_TOOL, ownWebSearchRunsUnasked } from "../../shared/own-servers.ts";
 import { ABSENT_PINS } from "../../shared/arg-vocabulary.ts";
 import { GATE_MESSAGE_BYTES, HOOK_LIVENESS_MS } from "../../shared/scan-limits.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
+import type { PhoneAskTurn } from "../phone-calls/contracts.ts";
 import { phoneAskLine } from "./phone-tool-schemas.ts";
 
 export { HOOK_LIVENESS_MS };
@@ -67,6 +68,24 @@ export const CODEX_UNTRUSTED_RETIRED_MIN = [0, 149, 0] as const;
 /** Rule 68e: the only local tool Murage lets through without a judgment. Admission rule: its input schema carries no leaf Rule 56
  *  classifies path-shaped, command-shaped, URL-shaped or addressing (T100d enumerates the local tools against it). */
 export const CODEX_LOCAL_ORDINARY: readonly string[] = ["update_plan"];
+
+/** CODEX-WEB-1020: the names a GPT model calls its native web tool by (`web.run` arrives as `web__run`). Codex has no such tool on a
+ *  turn that mounts Murage's agents server (codex.ts turns native search off there), so the call cannot run. Exact names only. */
+export const CODEX_NATIVE_WEB_NAMES: readonly string[] = ["web__run", "web.run", "web_run", "web_search", "web__search", "web__search_query", "web__open", "web__find"];
+
+/** CODEX-WEB-1020, seen on a real turn (Codex 0.167.2, gate box, 2026-11-19): with native search off, a GPT model searches through
+ *  the ChatGPT apps server instead, `codex_apps` / `search_service.web_run`, which the hook receives as
+ *  `mcp__codex_apps__search_service__web_run`. It is no mount of this turn, so it raised a card nobody could remember an answer
+ *  for. It also opens URLs from the provider's side, so it is not allowed: it gets the same words as a native web name. */
+export const CODEX_APPS_SERVER = "codex_apps";
+export const CODEX_APPS_WEB_TOOLS: readonly string[] = ["search_service__web_run", "search_service.web_run", "search_service_web_run"];
+
+/** What the model is told when it calls a native web name on a turn whose search is Murage's own: the tool that works, by the
+ *  name Codex gives it. A deny, never an allow: the native call is not judged and not run. */
+export function codexWebRedirect(agentsEngineName: string): string {
+  const server = codexToolServerName(agentsEngineName);
+  return `That web tool is not on this turn. Search with mcp__${server}__${OWN_WEB_SEARCH_TOOL} and open a page with mcp__${server}__web_read.`;
+}
 
 /** Rule 74: the shell-form features pinned off, read from `codex features list` on 0.129.0, 0.149.0 and 0.163.0. A snapshot sources the
  *  owner's startup files into every shell, a zsh fork starts its own shell, and the login-shell package path adds login-shell paths:
@@ -451,7 +470,9 @@ export function writeHookFiles(scopedHome: string, socketPath: string, token: st
 
 /** Rule 68a: the config.toml copy without the owner's `hooks` table (the `[hooks]` definitions, `[hooks.state]`, the owner's trust
  *  records, and any top-level `hooks.*` key or inline `hooks = {...}`), so no owner hook is defined, trusted or runnable in a bot's
- *  scope. Murage's own trust write lands in the copy afterwards. Everything else is kept byte for byte. */
+ *  scope. Murage's own trust write lands in the copy afterwards. The owner's top-level `notify` program goes too (1.0.22 q1022-winterry):
+ *  Codex runs it after every turn, and a Windows Codex app that set it to itself brought its own window up over Murage on a bot's turn.
+ *  Everything else is kept byte for byte. */
 export function stripOwnerHooks(toml: string): string {
   const lines = toml.split("\n");
   const out: string[] = [];
@@ -474,7 +495,7 @@ export function stripOwnerHooks(toml: string): string {
       continue;
     }
     if (dropping) continue;
-    if (!inTable && /^hooks(\s*\.|\s*=)/.test(line)) {
+    if (!inTable && /^(hooks(\s*\.|\s*=)|(notify|"notify"|'notify')\s*=)/.test(line)) {
       depth = Math.max(0, bracketBalance(line.slice(line.indexOf("=") + 1)));
       continue;
     }
@@ -1009,6 +1030,7 @@ export type HookRoute =
   | { route: "ask"; tool: string; summary: string; toolCall: { name: string; input?: unknown }; toolInputMissing?: string; cwd?: string; destinations?: string[]; command?: string; filePaths?: string[]; localHold?: string };
 
 export interface RouteContext {
+  phoneTurn?: PhoneAskTurn;
   /** No limits bypasses no producer: the broker reads the full input. */
   noLimits?: true;
   /** F4: the mounts this app-server loads; undefined = unstated, so no MCP call is proven. */
@@ -1076,12 +1098,19 @@ export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRo
     // name as mounted or as Codex writes it. Two records that fit the same written name prove nothing.
     const matches = (ctx.mounts ?? []).filter((r) => r.engineName === server || codexToolServerName(r.engineName) === server);
     // BOT-CALLS-1020 3f: the phone call card line (number, goal, details, limits, when, language, revision)
-    const ask = (asName = name): HookRoute => ({ route: "ask", tool: tool || name, summary: phoneAskLine(name, input) ?? (tool || name), toolCall: { name: asName, ...(delivery.tool_input === undefined ? {} : { input: delivery.tool_input }) },
+    const ask = (asName = name): HookRoute => ({ route: "ask", tool: tool || name, summary: phoneAskLine(name, input, ctx.phoneTurn) ?? (tool || name), toolCall: { name: asName, ...(delivery.tool_input === undefined ? {} : { input: delivery.tool_input }) },
       ...(delivery.tool_input === undefined ? { toolInputMissing: "tool_input" } : {}) });
+    // CODEX-WEB-1020: the ChatGPT apps web tool, on a turn where no mount has that server's name and Murage's own agents mount
+    // is proven once, is denied with the working tool's name (never allowed, never a card)
+    if (matches.length === 0 && server === CODEX_APPS_SERVER && CODEX_APPS_WEB_TOOLS.includes(tool)) {
+      const agents = (ctx.mounts ?? []).filter((r) => r.provenance === "own" && r.mountId === "own:agents");
+      if (agents.length === 1) return { route: "deny", reason: codexWebRedirect(agents[0]!.engineName) };
+    }
     if (!server || !tool || matches.length !== 1) return ask();
     const mount = matches[0]!;
     // asked under the mount's own name, so the verdict proves the call on this turn's record (Rule 11)
-    if (mount.provenance === "own") return isOwnUnasked(mount.mountId, tool) ? { route: "allow", final: true, why: "own-unasked" } : ask(`mcp__${mount.engineName}__${tool}`);
+    // CODEX-WEB-1020: Murage's own web search on the free default provider is the one always-ask row let through here, read live
+    if (mount.provenance === "own") return isOwnUnasked(mount.mountId, tool) || ownWebSearchRunsUnasked(mount.mountId, tool) ? { route: "allow", final: true, why: "own-unasked" } : ask(`mcp__${mount.engineName}__${tool}`);
     // a custom or external mount: allowed here, judged by the approval path Codex still raises for it
     return { route: "allow", final: false, why: mount.provenance };
   }
@@ -1099,6 +1128,12 @@ export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRo
   // Native search tools: judged by the verdict until the walk of build step 4 reads their roots.
   if (name === "list_dir" || name === "grep_files") {
     return { route: "ask", tool: name, summary: name, cwd, toolCall: { name, ...(input ? { input } : {}) }, ...(input ? {} : { toolInputMissing: "tool_input" }) };
+  }
+
+  // CODEX-WEB-1020: a native web call on a turn with exactly one proven own agents mount is denied with the working tool's name
+  if (CODEX_NATIVE_WEB_NAMES.includes(name)) {
+    const agents = (ctx.mounts ?? []).filter((r) => r.provenance === "own" && r.mountId === "own:agents");
+    if (agents.length === 1) return { route: "deny", reason: codexWebRedirect(agents[0]!.engineName) };
   }
 
   return { route: "deny", reason: "Murage does not know this tool" };

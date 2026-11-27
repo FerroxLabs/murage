@@ -92,6 +92,13 @@ export class InboxRoutineLifecycle {
   private readonly cardsByRun = new Map<string, Set<string>>();
   private scopeKey: string;
   private knownThreads: Set<string>;
+  /** thread -> anchor time -> first stored message id (q1022). The anchor is
+   * a function of the thread's (id, at, storage order) rows only, so it is
+   * read once and kept until that thread's rows change. Absence is never
+   * kept: an empty thread can be filled without a change event (a legacy
+   * transcript is imported on first read). */
+  private readonly anchors = new Map<string, Map<number, string>>();
+  private anchorCount = 0;
   private readonly db: DatabaseSync;
   private readonly store: LifecycleStore;
   private readonly source: RunSource;
@@ -169,7 +176,34 @@ export class InboxRoutineLifecycle {
     const record = this.records.get(run.id);
     if (record) this.refreshRecord(run.id);
   }
+  private forgetAnchors(threadId?: string): void {
+    if (threadId === undefined) { this.anchors.clear(); this.anchorCount = 0; return; }
+    const kept = this.anchors.get(threadId); if (!kept) return;
+    this.anchorCount -= kept.size; this.anchors.delete(threadId);
+  }
+  /** A run's anchor in its thread: one index walk per (thread, at) until a
+   * message of that thread is added, moved or removed (see onStoreChange).
+   * Inside an open transaction the store's announcement is still pending
+   * while the write is already visible, so nothing is reused or kept there. */
+  private anchor(threadId: string, at: number): { id: string } | undefined {
+    if (!this.store.firstMessageSince) return undefined;
+    if (this.db.isTransaction) return this.store.firstMessageSince(threadId, at);
+    const known = this.anchors.get(threadId)?.get(at);
+    if (known !== undefined) return { id: known };
+    const first = this.store.firstMessageSince(threadId, at);
+    if (!first) return undefined;
+    // Only a row at or after the time is kept. The fallback (no such row yet: the thread's newest row) moves with every append, and
+    // an append the store does not announce (a card it withholds from listeners) would leave it stale; it costs two reads, not sixteen.
+    const rowAt = (first as { at?: unknown }).at;
+    if (!(typeof rowAt === "number" && rowAt >= at)) return first;
+    if (this.anchorCount >= 4096) this.forgetAnchors();
+    let kept = this.anchors.get(threadId);
+    if (!kept) this.anchors.set(threadId, kept = new Map());
+    kept.set(at, first.id); this.anchorCount++;
+    return first;
+  }
   private clear(): void {
+    this.forgetAnchors();
     for (const id of this.records.keys()) this.order.delete(id);
     for (const id of this.cards.keys()) { this.cardOrder.delete(id); this.expiryOrder.delete(id); this.expiredCardOrder.delete(id); }
     this.records.clear(); this.recordsByThread.clear(); this.cards.clear(); this.cardsByRun.clear();
@@ -267,7 +301,7 @@ export class InboxRoutineLifecycle {
     this.serviceExpiry();
     return [...this.order.entries()].map(id => {
       const record = this.records.get(id)!.run;
-      const first = this.latestByRoutine.get(record.routineId) === id && record.threadId && this.store.firstMessageSince?.(record.threadId, record.at - 5_000);
+      const first = this.latestByRoutine.get(record.routineId) === id && record.threadId && this.anchor(record.threadId, record.at - 5_000);
       return { ...record, ...(first && record.threadId ? { link: { threadId: record.threadId, messageId: first.id } } : {}) };
     });
   }
@@ -307,12 +341,21 @@ export class InboxRoutineLifecycle {
     if (!record) return;
     const cutoff = Date.now() - ROUTINE_WINDOW_MS;
     for (const cardId of this.cardsByRun.get(id) ?? []) if (this.cards.get(cardId)!.fact.at >= cutoff) return;
-    const first = this.latestByRoutine.get(record.run.routineId) === id && record.run.threadId && this.store.firstMessageSince?.(record.run.threadId, record.run.at - 5_000);
+    const first = this.latestByRoutine.get(record.run.routineId) === id && record.run.threadId && this.anchor(record.run.threadId, record.run.at - 5_000);
     const run = { ...record.run, ...(first && record.run.threadId ? { link: { threadId: record.run.threadId, messageId: first.id } } : {}) };
     const inputs = routineRollupInputs(this.db, this.access, [run], false);
     if (inputs.entries[0]) this.publish({ ...inputs.entries[0], position: "1" + record.order });
   }
   private onStoreChange(change: StoreChange): void {
+    // Kept anchors follow the store whether or not the rollup is ready.
+    if (change.type === "message" || change.type === "thread" || change.type === "thread.deleted") this.forgetAnchors(change.threadId);
+    else if (change.type === "message.patch") {
+      // A patch rewrites its row in place (same storage position). With the
+      // id and the time unchanged the link index is unchanged, so the anchor
+      // is too: a streamed edit of a run's own thread costs no index walk.
+      const before = change.before, message = change.message;
+      if (!before || before === message || before.id !== message.id || !Object.is(before.at, message.at)) this.forgetAnchors(change.threadId);
+    } else if (change.type !== "bot" && change.type !== "group" && change.type !== "workroot") this.forgetAnchors();
     if (!this.ready) return;
     if (change.type === "message" || change.type === "message.patch") {
       this.refreshThreadLinks(change.threadId);
@@ -326,7 +369,11 @@ export class InboxRoutineLifecycle {
       return;
     }
     if (change.type === "thread") return;
-    const access = inboxAccessFor(this.store, "companion"), key = JSON.stringify(access.threads);
+    this.refreshScope(inboxAccessFor(this.store, "companion"));
+  }
+
+  private refreshScope(access: InboxAccess): void {
+    const key = JSON.stringify(access.threads);
     const known = this.knownThreads;
     this.knownThreads = new Set(inboxThreads(this.store).map(thread => thread.threadId));
     if (key === this.scopeKey) return;
@@ -358,9 +405,13 @@ export class InboxRoutineLifecycle {
 
   badgeAccess(legacy: () => InboxRoutineRun[]): InboxAccess {
     this.start();
-    if (this.ready) this.serviceExpiry();
-    return this.ready ? { ...inboxAccessFor(this.store, "companion"), routineRollup: this.aggregate, routinePreparing: this.expiryPending() }
-      : { ...inboxAccessFor(this.store, "companion"), routineRuns: legacy() };
+    const access = inboxAccessFor(this.store, "companion");
+    if (this.ready) {
+      if (JSON.stringify(access.threads) !== this.scopeKey) this.refreshScope(access);
+      this.serviceExpiry();
+      return { ...access, routineRollup: this.aggregate, routinePreparing: this.expiryPending() };
+    }
+    return { ...access, routineRuns: legacy() };
   }
 }
 

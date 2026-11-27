@@ -20,7 +20,7 @@ No test was removed or assertion weakened. Original conflict markers are retaine
 
 ## Verification
 
-All verification used the required `it-remote.sh` wrapper with `IT_JOB=int19m3`, the job's tip/base worktree as `IT_W`, and `IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`. Containers used `--network none`, fresh fixture homes/data, and fakes only. There were at most two job containers at once. Launch logs record host loads below 60; the launch wrapper waits above 60. No live app/data, billable engine, or Mac was used. The full suite was not run; MAIN queues it on the pushed SHA.
+All verification used the required `it-remote.sh` wrapper with `IT_JOB=int19m3`, the job's tip/base worktree as `IT_W`, and `IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`. Containers used `--network none`, fresh fixture homes/data, and fakes only. There were at most two job containers at once. Launch logs record host loads below 60; the launch wrapper waits above 60. No live app/data, billable engine, or Mac was used. The full suite was not run; MAIN queues it on the pushed SHA.
 
 | Tree / merge | Full typecheck | Evidence |
 | --- | --- | --- |

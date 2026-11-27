@@ -484,7 +484,8 @@ net.Socket.prototype.on = function(event, listener) {
     await waitFor(() => expect(interrupt).toHaveBeenCalledWith(sent.turnId));
     await lease.teardownConfirmed;
     expect(quarantine).not.toHaveBeenCalled();
-    expect(await done(sent.turnId)).toMatchObject({ stopReason: "cancelled" });
+    // df1617dc60 P1 via 1ebbd84f1e: a claimed refusal ends the turn refused; the Stop-hook variant keeps its answered Stop card ending as the Stop
+    expect(await done(sent.turnId)).toMatchObject(effect === "allow" ? { ok: false, stopReason: "memory-refused" } : { stopReason: "cancelled" });
     expect(laterWrite).not.toHaveBeenCalled();
     expect(() => releaseNativeAnswer(f.binding, "codex:hook-socket", "another-frame", laterWrite)).toThrow("MEMORY_CONTEXT_REVOKED");
     expect(laterWrite).not.toHaveBeenCalled();
@@ -528,7 +529,7 @@ net.Socket.prototype.on = function(event, listener) {
     await lease.teardownConfirmed;
     expect(seal).toHaveBeenCalledTimes(1); expect(settle).toHaveBeenCalledTimes(1);
     expect(quarantine).not.toHaveBeenCalled(); expect(f.refusals).toBeGreaterThan(0);
-    expect(await done(sent.turnId)).toMatchObject({ stopReason: "cancelled" });
+    expect(await done(sent.turnId)).toMatchObject({ ok: false, stopReason: "memory-refused" }); // df1617dc60 P1 via 1ebbd84f1e: a claimed refusal ends the turn refused, no owner Stop was confirmed
   }, 40_000);
 
 });

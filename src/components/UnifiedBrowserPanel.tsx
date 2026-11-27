@@ -57,12 +57,12 @@ export function BrowserChoiceRefusal({ botName, refusal, busy, onStop }: { botNa
 /** The live view's words for the owner's Chrome while its first connection waits. */
 export const WAITING_FOR_CHROME = "Waiting for Chrome: click Allow in its remote debugging prompt.";
 type Status = { selectionRevision?: number; sessionKey?: string; closing?: boolean; closeFailed?: boolean; owned?: boolean; canReclaim?: boolean; generation: number; held: boolean; connected: boolean; protectedDocument: boolean; protectedReason?: "owner-input" | "sensitive-page" | null; url: string; notRunning?: boolean; problem?: string; problemCode?: string; waitingForChrome?: boolean; control?: number };
-/** The locked-page note, in the owner's words: why the bot cannot use the
- * page and the one step that gives it back. */
+/** The locked-page note, in the owner's words: why the bot cannot use the page. Sean 1.0.20 ruling: the owner is never asked to
+ * hand the browser back; the page stays as it is and the bot goes on in a new blank tab of its own. */
 export function ProtectedBrowserNotice({ botName, reason, held, pending, onReopen }: { botName: string; reason?: Status["protectedReason"]; held: boolean; pending: boolean; onReopen: () => void }) {
   const why = reason === "sensitive-page"
-    ? `${botName} can't use this page because it has a password, code or card field, an embedded frame, or content Murage can't check. ${botName} can open a different page itself, or you can take control and reopen a blank page to give ${botName} its browser back.`
-    : `${botName} can't use this page because you typed or clicked in it. Take control, then reopen a blank page to give ${botName} its browser back.`;
+    ? `${botName} can't use this page because it has a password, code or card field, an embedded frame, or content Murage can't check. ${botName} goes on in a new blank tab of its own and never reads this page.`
+    : `${botName} can't use this page because you typed or clicked in it. The page stays yours: ${botName} goes on in a new blank tab of its own.`;
   return <div role="status" className="rounded-lg bg-card p-3 text-xs text-ink-secondary">{why}<button disabled={!held || pending} onClick={onReopen} className="mt-2 flex items-center gap-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><RotateCcw size={12} />Reopen blank page</button></div>;
 }
 /** The bot's browser stopped answering and no page lock is showing: the one

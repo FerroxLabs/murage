@@ -1,3 +1,4 @@
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -23,6 +24,10 @@ export interface AcpDiscoveryOptions {
   custom?: boolean;
   /** Switch to each model to read its own variants. False stops after session/new. */
   variants?: boolean;
+  /** Maximum models a provider exposes in discovery. */
+  maxModels?: number;
+  /** Sent as `clientCapabilities._meta` in initialize, as a turn session sends it, so both see the same model list. */
+  clientCapabilitiesMeta?: Record<string, unknown>;
   /** The catalog default when the agent offers it; otherwise the session's current model. */
   default?: string;
   /** The picker label for an advertised model, given session/new's result verbatim. */
@@ -105,7 +110,7 @@ export async function discoverAcpModels(
     if (outputBytes > MAX_OUTPUT_BYTES) fail("ACP model discovery exceeded its output limit.");
     return !failure;
   };
-  const send = (message: unknown) => { if (!failure) child?.stdin.write(`${JSON.stringify(message)}\n`); };
+  const send = (message: unknown) => { if (!failure) NotModelRequest("ACP catalog sidecar sends initialization, rejected permission replies and model catalog control only.", child?.stdin.write(`${JSON.stringify(message)}\n`)); };
   const receive = (line: string) => {
     let parsed: unknown;
     try { parsed = JSON.parse(line) as unknown; } catch { return; }
@@ -113,9 +118,9 @@ export async function discoverAcpModels(
     if (!message) return;
     if (typeof message.method === "string" && message.id !== undefined) {
       // Discovery never grants filesystem, terminal, tool or permission requests.
-      send(message.method === "session/request_permission"
+      NotModelRequest("ACP catalog sidecar sends initialization, rejected permission replies and model catalog control only.", send(message.method === "session/request_permission"
         ? { jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } }
-        : { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Unavailable during model discovery" } });
+        : { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Unavailable during model discovery" } }));
       return;
     }
     if (message.method === "session/update") {
@@ -153,7 +158,7 @@ export async function discoverAcpModels(
         reject(new Error("ACP model discovery request timed out."));
       }, REQUEST_TIMEOUT_MS);
       pending.set(id, { method, resolve, reject, timer });
-      send({ jsonrpc: "2.0", id, method, params });
+      NotModelRequest("ACP catalog sidecar sends initialization, rejected permission replies and model catalog control only.", send({ jsonrpc: "2.0", id, method, params }));
     });
   };
   try {
@@ -174,21 +179,22 @@ export async function discoverAcpModels(
     });
     child.stderr.on("data", (chunk: Buffer) => { count(chunk); });
     globalTimer = setTimeout(() => fail("ACP model discovery timed out."), DISCOVERY_TIMEOUT_MS);
-    await request("initialize", {
+    await NotModelRequest("ACP catalog sidecar sends initialization, rejected permission replies and model catalog control only.", request("initialize", {
       protocolVersion: 1,
       clientInfo: { name: DISCOVERY_CLIENT_NAME, version: "1" },
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-    });
-    const initial = await request("session/new", { cwd, mcpServers: [] });
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, ...(discovery.clientCapabilitiesMeta ? { _meta: discovery.clientCapabilitiesMeta } : {}) },
+    }));
+    const initial = await NotModelRequest("ACP catalog sidecar sends initialization, rejected permission replies and model catalog control only.", request("session/new", { cwd, mcpServers: [] }));
     const rawSessionId = record(initial)?.sessionId;
     if (typeof rawSessionId !== "string" || !rawSessionId) throw new Error("ACP model discovery did not return a session.");
     sessionId = rawSessionId;
-    const modelOption = acpModelOption(initial);
+    const maxModels = discovery.maxModels ?? MAX_MODELS;
+    const modelOption = acpModelOption(initial, "model", maxModels);
     if (!modelOption?.options.length) throw new Error("The ACP agent did not advertise any models. The previous catalog was kept.");
-    if (modelOption.options.length > MAX_MODELS) throw new Error("The ACP model catalog exceeded the discovery limit.");
+    if (modelOption.options.length > maxModels) throw new Error("The ACP model catalog exceeded the discovery limit.");
     // A thinking-only update belongs to the newly bound session's current model.
     // Snapshot it before probing other models, whose updates replace latestUpdate.
-    const updatedModel = acpModelOption(latestUpdate);
+    const updatedModel = acpModelOption(latestUpdate, "model", maxModels);
     const initialConfirmed = latestUpdate && (!updatedModel || updatedModel.currentValue === modelOption.currentValue)
       ? latestUpdate : initial;
     const mark = discovery.custom ? { custom: true } : {};
@@ -200,12 +206,12 @@ export async function discoverAcpModels(
       let confirmed: unknown;
       if (model.id === modelOption.currentValue) {
         confirmed = initialConfirmed;
-      } else if (discovery.variants !== false) {
+      } else if (discovery.variants !== false && modelOption.options.length <= MAX_MODELS) {
         const previousUpdate = updateSequence;
         try {
           const response = modelOption.configId
-            ? await request("session/set_config_option", { sessionId, configId: modelOption.configId, value: model.id })
-            : await request("session/set_model", { sessionId, modelId: model.id });
+            ? await NotModelRequest("ACP catalog sidecar sends initialization, rejected permission replies and model catalog control only.", request("session/set_config_option", { sessionId, configId: modelOption.configId, value: model.id }))
+            : await NotModelRequest("ACP catalog sidecar sends initialization, rejected permission replies and model catalog control only.", request("session/set_model", { sessionId, modelId: model.id }));
           if (acpModelOption(response)?.currentValue === model.id) confirmed = response;
           else if (updateSequence > previousUpdate && acpModelOption(latestUpdate)?.currentValue === model.id) confirmed = latestUpdate;
         } catch {
@@ -218,7 +224,13 @@ export async function discoverAcpModels(
     }
     if (failure) throw failure;
     const preferred = discovery.default && options.some((option) => option.id === discovery.default) ? discovery.default : undefined;
-    catalog = { default: passthrough?.id ?? preferred ?? modelOption.currentValue ?? options[0].id, options };
+    const cut = modelOption.total !== undefined && modelOption.total > modelOption.options.length;
+    if (cut) console.warn(`ACP model discovery: showing ${modelOption.options.length} of ${modelOption.total} advertised models.`);
+    catalog = {
+      default: passthrough?.id ?? preferred ?? modelOption.currentValue ?? options[0].id,
+      options,
+      ...(cut ? { note: `Showing ${modelOption.options.length} of ${modelOption.total} models.` } : {}),
+    };
   } catch (error) {
     thrown = error;
   } finally {

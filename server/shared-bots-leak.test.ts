@@ -18,6 +18,7 @@ import { threadCaptureScope } from "./memory/capture-scope.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { previewMemoryImport, commitMemoryImport } from "./memory/import.ts";
+import { scopeSetOf } from "./memory/oneindex.ts";
 import { searchMemory } from "./memory/search.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
 import { ownWorkspaceRoots } from "./own-workspace-approval.ts";
@@ -94,7 +95,8 @@ it("recall payloads and bundles reject home canaries even when the search bridge
     bridgeReads++;
     expect(input.view).toEqual(access.view);
     expect(input.reader).toMatchObject({ botId: f.iris.id, threadId: f.work.threadId });
-    const scopes = database().prepare('SELECT scope_id FROM memory_recall_view_scopes WHERE view_id=? AND generation=? AND lineage_only=0').all(input.view!.viewId, input.view!.generation).map(row => String(row.scope_id));
+    // ONEINDEX: the reader's scopes are the computed set behind the access handle (no built view rows exist any more).
+    const scopes = [...scopeSetOf(input.view!)!.set.scopes];
     expect(scopes).toEqual(expect.arrayContaining([f.scopes.sales, f.scopes.own, f.scopes.general]));
     for (const scope of [f.scopes.home, f.scopes.other, f.scopes.room]) expect(scopes).not.toContain(scope);
     return { hits: ids.map(id => ({ id, version: 1, score: 1, lexical: true })), vectorRows: 0, coverageComplete: false };

@@ -1,5 +1,5 @@
 {
-  "@source": "968d807cca562a743b79127e48954176f04baabf",
+  "@source": "f5be60d75f8dfdae69794bd6aeba3a92fb69cfc5",
   "label.cloudPairing": "अपने Cloud होम में नया डिवाइस जोड़ना",
   "label.cloudDevicesAccount": "अपने Cloud होम के डिवाइस या खाते को बदलना",
   "label.modelSigninStart": "अपने Cloud होम पर मॉडल का साइन-इन शुरू करना",
@@ -103,11 +103,6 @@
   "label.connectorDisconnect": "ऐप डिसकनेक्ट करना",
   "label.phoneCalls": "बॉट के फ़ोन कॉल प्रबंधित करना",
   "label.dataDirConfirmRoot": "जुड़ा हुआ डेटा फ़ोल्डर अब कहाँ इंगित करता है, इसकी पुष्टि करना",
-  "label.highlevelCheck": "HighLevel लोकेशन की जाँच करना",
-  "label.highlevelConnect": "HighLevel लोकेशन कनेक्ट करना",
-  "label.highlevelAccess": "HighLevel में बॉट क्या पढ़ सकता है, यह बदलना",
-  "label.highlevelDisconnect": "HighLevel लोकेशन डिसकनेक्ट करना",
-  "label.highlevelChange": "HighLevel कनेक्शन बदलना",
   "label.fallback": "अपने Cloud होम पर बदलाव करना",
   "flag.fullAccess": "पूरी पहुँच",
   "flag.noLimits": "कोई सीमा नहीं",

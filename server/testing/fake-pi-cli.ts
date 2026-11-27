@@ -408,7 +408,8 @@ function handle(cmd: any) {
         type: "response",
         command: "get_available_models",
         success: true,
-        data: { models: mode === "no-models" ? [] : modelPairs },
+        // large-catalog: one complete catalog line just over the old 32 MiB frame cap, with the usual models in it
+        data: { ...(mode === "large-catalog" ? { note: fixtureOversizeText() } : {}), models: mode === "no-models" ? [] : modelPairs },
       });
       return;
     case "new_session":

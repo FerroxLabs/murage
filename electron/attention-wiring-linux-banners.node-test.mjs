@@ -13,6 +13,7 @@ import { createBannerApprovals, bannerActionsOn } from "./native-banner-approval
 import { pickNativeBanner } from "./native-banner-pick.mjs";
 import { createNotifySurfaces, NOTIFY_SURFACES_FILE } from "./notify-surfaces.mjs";
 import { normalizeNotifySurfaces, notifySurfaceDefaults } from "../shared/notify-surfaces.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const ticks = async () => { for (let i = 0; i < 8; i++) await tick(); };
@@ -205,7 +206,7 @@ test("owner's choice: a state that is not a clear yes never shows buttons", asyn
 // First-run choice, the Settings page itself and the other surfaces: fix/1019-nfy-chooser (owner o1019-nfy-chooser).
 function profile(t, origin) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "notify-settings-"));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => safeWipeSync(dir));
   if (origin === "upgrade") fs.writeFileSync(path.join(dir, "messages.db"), ""); // a profile that was used before this release
   const settings = createNotifySurfaces({ profileDir: dir, platform: "linux" });
   assert.equal(settings.get().origin, origin);

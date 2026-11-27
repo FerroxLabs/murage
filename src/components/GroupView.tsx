@@ -1,3 +1,4 @@
+import { imeComposing } from "@/lib/composer-enter";
 import { OwnWriteCard } from "./LazyChatCards";
 import { EngineLimitRow } from "./EngineLimitRow";
 import { engineLimitNotice } from "../../shared/web-read-routing";
@@ -103,11 +104,11 @@ import { ProjectHome } from "./ProjectHome";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { CHANNEL_PROJECT_GOAL_MAX } from "../../shared/project";
 import { channelProjectStatusLabel } from "@/lib/channel-surface";
-import { groupActivityRuns, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
+import { groupActivityRuns, interimSteps, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
 import { TranscriptTail } from "./TranscriptTail";
 import { tailOf } from "@/lib/transcript-tail";
 import { VirtualTranscript } from "./VirtualTranscript";
-import { ActivityRun } from "./ActivityRun";
+import { ActivityRun, InterimStepsRow } from "./ActivityRun";
 import { HelpersLine, HelpersSummary } from "./HelpersLine";
 import { pickSubtasks } from "@/lib/subtasks";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -324,6 +325,8 @@ export const Transcript = memo(function Transcript({
   // finished ones the same way a 1:1 chat does.
   const helperRuns = useStreaming().helpers.runs[group.threadId];
   const items = useMemo(() => groupActivityRuns(messages, helperRuns), [messages, helperRuns]);
+  // 1020: with Tool calls off, a step between two texts of one member's turn stays named between them (a room never folds turns)
+  const stepsBetween = useMemo(() => showToolCalls ? new Map<string, Message[]>() : interimSteps(messages, false), [messages, showToolCalls]);
   // What each bot turn answers, read over the whole room so a target above
   // the mounted window still resolves.
   const replyTargets = useMemo(() => new Map(transcript.flatMap((message) => { const target = sameThreadReply(message, transcript); return target ? [[message.id, target] as const] : []; })), [transcript]);
@@ -715,6 +718,7 @@ export const Transcript = memo(function Transcript({
             )}
             {actor === "routine" && <span className="text-[12px] text-ink-secondary">Routine</span>}
             {actor === "person" && <span className="text-[12px] text-ink-secondary">Person</span>}
+            {stepsBetween.has(m.id) && <InterimStepsRow messages={stepsBetween.get(m.id)!} />}
             {row}
           </div>
         );
@@ -859,6 +863,9 @@ function RoomWorkingFolder({ group }: { group: Group }) {
       ) : (
         <form
           className="mt-3 flex items-center gap-2"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && imeComposing(event.nativeEvent)) event.preventDefault();
+          }}
           onSubmit={(e) => {
             e.preventDefault();
             // an emptied field clears the folder — the server wants null
@@ -1046,6 +1053,9 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
       </div>
       <form
         className="space-y-5 px-5 py-5 sm:px-7 sm:py-6"
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && imeComposing(event.nativeEvent)) event.preventDefault();
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           void finish("complete");
@@ -1365,6 +1375,9 @@ export function RenameChannelDialog({ group, onClose }: { group: Group; onClose:
         ref={dialogRef} tabIndex={-1} role="dialog"
         aria-modal="true"
         aria-labelledby="rename-channel-title"
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && imeComposing(event.nativeEvent)) event.preventDefault();
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           save();
@@ -1423,6 +1436,9 @@ export function MakeProjectDialog({ group, onClose, onMade }: { group: Group; on
         ref={dialogRef} tabIndex={-1} role="dialog"
         aria-modal="true"
         aria-labelledby="make-project-title"
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && imeComposing(event.nativeEvent)) event.preventDefault();
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           save();
@@ -1445,7 +1461,7 @@ export function MakeProjectDialog({ group, onClose, onMade }: { group: Group; on
           maxLength={CHANNEL_PROJECT_GOAL_MAX}
           onChange={(event) => setGoal(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) save();
+            if (event.key === "Enter" && !imeComposing(event.nativeEvent) && (event.metaKey || event.ctrlKey)) save();
           }}
           rows={4}
           placeholder="For example: Get the new website open in time for the spring."
@@ -2034,6 +2050,7 @@ export function GroupView({ group }: { group: Group }) {
               onChange={(e) => setInstructionsDraft(e.target.value)}
               onBlur={saveInstructions}
               onKeyDown={(e) => {
+                if (imeComposing(e.nativeEvent)) return;
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveInstructions();
                 if (e.key === "Escape") {
                   setInstructionsDraft(group.bulletin);

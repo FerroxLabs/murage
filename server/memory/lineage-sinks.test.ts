@@ -18,8 +18,8 @@ const SERVER = join(import.meta.dirname, "..");
 
 type Category = "messageInsert" | "engineSend" | "toolHandler" | "maker";
 const PATTERNS: Record<Category, RegExp> = {
-  // every writer of the messages table (DESIGN-WRITETIME 2: writeMessage takes a LineageToken)
-  messageInsert: /INSERT(?:\s+OR\s+\w+)?\s+INTO\s+messages\b/g,
+  // The cached INSERT and each use of it still need review.
+  messageInsert: /INSERT(?:\s+OR\s+\w+)?\s+INTO\s+messages\b|\bmessageWrite\([^,]+,\s*MESSAGE_REPLACE_SQL\b/g,
   // every driver send, steer and text-only submission (not LineageAllowance.steer(), a budget constructor)
   engineSend: /(?<!LineageAllowance)\.(?:sendTurn|steer|textOnlyTurn)(?:!|\?\.)?\(/g,
   // every Murage tool handler registry entry: project tools and the internal tool routes
@@ -33,11 +33,12 @@ const CAST_OWNER: Record<string, string> = { BuiltPrompt: "memory/prompt-parts.t
 type Reviewed = { count: number; covered: string };
 /** The reviewed sinks: file -> category -> count and how it is covered. */
 const REVIEWED: Record<string, Partial<Record<Category, Reviewed>>> = {
-  "memory/fence-recovery.ts": { maker: { count: 6, covered: "lineage (static frame, fresh human input and clock; recoveryFramePart keeps card, result and range refs and refuses withdrawn hold stamps; fence-recovery.test.ts and project-recovery-frame-api.test.ts cover source withdrawal and late state changes)" } },
+  "memory/fence-recovery.ts": { maker: { count: 7, covered: "lineage (static frame, fresh human input, clock and fixed prompt when stored context is unavailable; recoveryFramePart keeps card, result and range refs and refuses withdrawn hold stamps; fence-recovery.test.ts and project-recovery-frame-api.test.ts cover source withdrawal and late state changes)" } },
   "memory/lineage-warm-surface.ts": { messageInsert: { count: 2, covered: "lineage (none: a test-only seam, no production code calls it; its two inserts build fixture rows in the test database, a bot line with its source row and a foreign writer of messages.db, and write no turn text a bot or window reads)" } },
   "outside-own.ts": { toolHandler: { count: 9, covered: "lineage (none: MCP catalog publication is classified as no tool by 37ecc0c9d1; it reads no stored text; ownToolOfRoute only names the own tool an /api/internal path is, pure over external-marks.ts; no stored text is read or returned and nothing is written, the gate answers a marked lane turn only the fixed refusal text; ownSite (NL-WIN-1018 D1) maps a /api/internal/mcp-remote/* route to its fixed base name for the value-free mark-site log, reading no stored text)" } },
-  "message-db.ts": { messageInsert: { count: 2, covered: "lineage (writeMessage takes the LineageToken writeLineage returns; the legacy-file import writes its rows and marks its threads not ready)" } },
+  "message-db.ts": { messageInsert: { count: 3, covered: "lineage (one cached INSERT statement and both callers: writeMessage takes a LineageToken, and the legacy-file import records lineage and marks the thread not ready)" } },
   "drivers/engine-input.ts": { engineSend: { count: 2, covered: "lineage (sendBuiltTurn / steerBuilt: BuiltPrompt in, the send fence before every write)" } },
+  "drivers/claude-s2-platform.qualification.ts": { engineSend: { count: 5, covered: "driver-internal (MAIN qualification cases submit only isolated fixture prompts through fixtureMountTurn; the file is loaded only by the qualification runner)" } },
   "drivers/acp/core.ts": { engineSend: { count: 2, covered: "driver-internal (textOnlyTurn forwards its input to support; steer forwards its text and beforeWrite to the active turn, whose final writer checks turnHalted(), requires beforeWrite or throws MEMORY_CONTEXT_REVOKED, then calls beforeWrite(); server/steer-lineage.test.ts ACP steer final writer witnesses)" } },
   "harness/instance-holds.ts": { engineSend: { count: 1, covered: "driver-internal (a wrapper passing the turn it was given)" } },
   "harness/ask-note-adapter.ts": { engineSend: { count: 1, covered: "driver-internal (a wrapper passing the turn it was given, its prompt untouched, plus the nobody-at-it mark)" } },
@@ -45,13 +46,13 @@ const REVIEWED: Record<string, Partial<Record<Category, Reviewed>>> = {
   "harness/draft-only-adapter.ts": { engineSend: { count: 3, covered: "driver-internal (a wrapper passing the turn it was given: as is, or a draft-only turn with its prompt unchanged and only its folders and integrations cut and the draft-only note added to its system text; a steer passes its text and write fence through)" } },
   "drivers/cli-memory-learning.ts": { engineSend: { count: 1, covered: "driver-internal (learning's hidden one-shot on a CLI or ACP login: the extraction prompt the memory helper built, a thread no window or bot sees, no tools, every ask denied, its events ignored by the server)" } },
   "index.ts": {
-    engineSend: { count: 3, covered: "lineage (the sends inside sendProjectUsageTurn write fencedTurnInput's input: a BuiltPrompt in, the send fence before every write)" },
-    toolHandler: { count: 69, covered: "lineage (4f6495f025 adds create-bot to the existing body pre-read classifier: no stored text; 00447f6978 adds web-read: an authorized, turn-scoped external web document returned as untrusted content, no stored Murage text; Cloud MCP catalog publication checks an active internal capability and thread-bound catalog target, writes descriptors, and returns only {ok}; venue/post (VENUE-POST-1017, reviewed int/1018 2026-11-06): serveVenuePost answers the bot with ids and fixed lines only: the authorizeVenuePost refusals (VENUE_POST_UNAVAILABLE / NOT_AVAILABLE / NOT_PICKED / NEEDS_FULL, the 1 to 4,000 characters line), VENUE_POST_HELD with the venue id, or posted with the venue id and message id; no stored text goes back to the turn. The words the bot posts are its own, written to the venue and to a held venue_posts row with venuePostLineage (venue-post.ts): the 1:1 prefix with the shown request line plus the running turn's parents, so a forget of the owner's request or of what the turn rested on reaches the posted line; the held card's answer (answerVenuePostCard) never reaches an engine; HighLevel 1.0.12 (HL-S2-RO, reviewed rebase/1018-hl-s2-ro 2026-11-06), two matches: the route class lookup that sends /api/internal/highlevel/* to the highlevel class, a class name and not a handler; /api/internal/highlevel/mcp, which answers through highlevel.host.handle (highlevel/host.ts) with HighLevel's own records read from the fixed provider host (HIGHLEVEL_API_ORIGIN, provider-contract.ts) or an applied change's provider result, fenced as outside content of kind highlevel-crm (highlevelCrmResult, highlevel/tools.ts) and marking the turn as after a mail read (email/external-marks.ts, 5.4), fixed refusal lines and error lines that may quote HighLevel's own error message with the token redacted (highlevel/client.ts refusal), that quote fenced as highlevel-crm, HIGHLEVEL_ACTION_STATUS from the change journal (ids, tool, phase, outcome code, changed field names and record ids, the record id fenced as highlevel-crm; the reviewed values are dropped when the change settles) and HIGHLEVEL_LIST_CONNECTIONS (connection ids, the location name HighLevel gave, state, the grant's tools and ceiling); no stored Murage text goes back to the turn; phone tools and bot calls 1.0.9, three matches: the route class lookup that sends /api/internal/device/* to the device class, a class name and not a handler; /api/internal/device/call, which answers with phoneRpc (phones/rpc.ts): what the owner's phone read for this turn at their approval on the phone, or a fixed PHONE_COPY line, and no stored Murage text; /api/internal/needs-owner-now, which records a bot call fact and answers the fixed \"Noted.\" only; /api/internal/room-share/ask (CROSS-CHAT-READ 2.2, int/1018 2026-11-06), which re-checks the claim at every call and answers serveShareAsk's fixed lines only (SHARE_ASKED_LINE, or the refusal error such as SHARE_UNAVAILABLE), no stored text; bot email 1.0.9: two refusal answers before /api/internal/email/<tool>, which hand over the fixed EMAIL_UNAVAILABLE line only; the email tools answer through emailRuntime.call, whose mail text is fenced as outside content (email/fence.ts) and marks the turn email-derived (email/external-marks.ts, 5.4); routes that hand a turn stored or bot-written text answer through toolJson / turnToolText: tool-result, skills, the image library; venue/read-messages (1.0.7 venue awareness part 2, three matches: the route itself and the two refusal answers before it, which hand over the fixed VENUE_READ_UNAVAILABLE line only) answers through serveVenueRead -> venueToolHandlers read-messages in project-memory-tools.ts, whose substantive lines join the turn as a receipt and whose result is readMessagesToolText, turnToolText with point carries for every line whose words it shows (a stand-in shows none, and a page showing no words rests on none: murage); ask and delegate results join the turn in result-egress.ts; the rest hand over no stored text: a bot filing an MCP server switched off (answers its name and pending keys only), capabilities, connectors, browser and computer control, web search, image generation, routines, roster, staging, ask_user (ASK_USER_SHOWN and the card id) and show_widget / update_widget (WIDGET_SHOWN, the widget id and advice drawn from the bot's own widget input; the widget row is written through message-db and is not captured, capture.ts); the NOLIMITS v1 own-tool gate (outside-own.ts, reviewed int/1018 2026-11-09): the pre-read of the body for the four routes that serve several tools (bot-management, device/call, project/card-manage, project/assign) writes no message and returns no stored text: it classifies the call, answers a marked lane turn only the fixed OUTSIDE_WRITE_REFUSAL, and records ownWrite keys as data only after a 2xx)" },
-    maker: { count: 8, covered: "lineage (the direct, room-member and Chief proposal prompts; toolJson; the room's last rebuild carries an empty working context resting on none)" },
+    engineSend: { count: 2, covered: "lineage (sendShellTurn sends fencedTurnInput's input; the only caller of sharedOwnerUsageTurn supplies sendShellTurn after binding the same turn, and the usage wrapper admits through dispatchSpendTurn)" },
+    toolHandler: { count: 74, covered: "lineage (the internal request snapshot and agents/ask-bot auth check classify or refuse before dispatch; the pre-read classifier now includes memory save and correction; search/get return hydrated record/source provenance through json; 4f6495f025 adds create-bot to the existing body pre-read classifier: no stored text; 00447f6978 adds web-read: an authorized, turn-scoped external web document returned as untrusted content, no stored Murage text; Cloud MCP catalog publication checks an active internal capability and thread-bound catalog target, writes descriptors, and returns only {ok}; venue/post (VENUE-POST-1017, reviewed int/1018 2026-11-06): serveVenuePost answers the bot with ids and fixed lines only: the authorizeVenuePost refusals (VENUE_POST_UNAVAILABLE / NOT_AVAILABLE / NOT_PICKED / NEEDS_FULL, the 1 to 4,000 characters line), VENUE_POST_HELD with the venue id, or posted with the venue id and message id; no stored text goes back to the turn. The words the bot posts are its own, written to the venue and to a held venue_posts row with venuePostLineage (venue-post.ts): the 1:1 prefix with the shown request line plus the running turn's parents, so a forget of the owner's request or of what the turn rested on reaches the posted line; the held card's answer (answerVenuePostCard) never reaches an engine; phone tools and bot calls 1.0.9, three matches: the route class lookup that sends /api/internal/device/* to the device class, a class name and not a handler; /api/internal/device/call, which answers with phoneRpc (phones/rpc.ts): what the owner's phone read for this turn at their approval on the phone, or a fixed PHONE_COPY line, and no stored Murage text; /api/internal/needs-owner-now, which records a bot call fact and answers the fixed \"Noted.\" only; /api/internal/room-share/ask (CROSS-CHAT-READ 2.2, int/1018 2026-11-06), which re-checks the claim at every call and answers serveShareAsk's fixed lines only (SHARE_ASKED_LINE, or the refusal error such as SHARE_UNAVAILABLE), no stored text; bot email 1.0.9: two refusal answers before /api/internal/email/<tool>, which hand over the fixed EMAIL_UNAVAILABLE line only; the email tools answer through emailRuntime.call, whose mail text is fenced as outside content (email/fence.ts) and marks the turn email-derived (email/external-marks.ts, 5.4); routes that hand a turn stored or bot-written text answer through toolJson / turnToolText: tool-result, skills, the image library; venue/read-messages (1.0.7 venue awareness part 2, three matches: the route itself and the two refusal answers before it, which hand over the fixed VENUE_READ_UNAVAILABLE line only) answers through serveVenueRead -> venueToolHandlers read-messages in project-memory-tools.ts, whose substantive lines join the turn as a receipt and whose result is readMessagesToolText, turnToolText with point carries for every line whose words it shows (a stand-in shows none, and a page showing no words rests on none: murage); ask and delegate results join the turn in result-egress.ts; the rest hand over no stored text: a bot filing an MCP server switched off (answers its name and pending keys only), capabilities, connectors, browser and computer control, web search, image generation, routines, roster, staging, ask_user (ASK_USER_SHOWN and the card id) and show_widget / update_widget (WIDGET_SHOWN, the widget id and advice drawn from the bot's own widget input; the widget row is written through message-db and is not captured, capture.ts); the NOLIMITS v1 own-tool gate (outside-own.ts, reviewed int/1018 2026-11-09): the pre-read of the body for the four routes that serve several tools (bot-management, device/call, project/card-manage, project/assign) writes no message and returns no stored text: it classifies the call, answers a marked lane turn only the fixed OUTSIDE_WRITE_REFUSAL, and records ownWrite keys as data only after a 2xx)" },
+    maker: { count: 13, covered: "lineage (direct and room prompts register the surviving parts after selective checks; the appended owner command is owner-turn input; skill expansion carries its refs; Chief proposal and toolJson keep their own provenance; empty working context rests on none)" },
   },
   "memory/pip-reflect.ts": { engineSend: { count: 1, covered: "lineage (a text-only reflection over the bot's admitted sources, probe and content through one paid-call wrapper; every claim it writes cites them as memory_evidence, which the marker walks source -> records)" } },
   "memory/pip-reflect-host.ts": { engineSend: { count: 1, covered: "lineage (the text-only route the reflection calls; see pip-reflect.ts)" } },
-  "memory/routes.ts": { toolHandler: { count: 4, covered: "lineage (memory search and recall: each lookup is a receipt that joins the running turn, dispatch.ts noteLookup -> receiptJoinsTurn)" } },
+  "memory/routes.ts": { toolHandler: { count: 5, covered: "lineage (search/get join the running turn via noteLookup -> receiptJoinsTurn; save/correction return write or review status; the extra save check in the access-loss handler only selects a fixed close-lesson error)" } },
   "image-library-audience.ts": { toolHandler: { count: 2, covered: "lineage (an owner-audience check only; the library routes answer through toolJson in index.ts)" } },
   "internal-capabilities.ts": { toolHandler: { count: 6, covered: "lineage (none: capability routing only, no stored text; the Cloud line's /api/internal/box/v1/ prefix maps to the computer kind, the phone tools' /api/internal/device/ prefix (1.0.9) to the device kind, and the /api/internal/highlevel/ prefix (1.0.12) to the highlevel kind)" } },
   "shared-bots-roster.ts": { toolHandler: { count: 2, covered: "lineage (none: roster refusals only, no stored text)" } },
@@ -64,7 +65,7 @@ const REVIEWED: Record<string, Partial<Record<Category, Reviewed>>> = {
   "memory/prompt-parts.ts": { maker: { count: 5, covered: "lineage (the constructors themselves)" } },
   "thread-recall.ts": { maker: { count: 1, covered: "lineage (delegation context parts name exactly the retained source lines after the loan, branch checks and shared recall release)" } },
   "room-transcript.ts": { maker: { count: 1, covered: "lineage (roomTranscriptPart)" } },
-  "skills.ts": { maker: { count: 2, covered: "lineage (skills index part, skill file tool text)" } },
+  "skills.ts": { maker: { count: 4, covered: "lineage (skills index part, skill file tool text, unchanged owner input, and expanded slash-skill text carrying tool.lineageOf)" } },
   "steer-lineage.ts": { maker: { count: 3, covered: "lineage (a steer's BuiltPrompt: the owner's words and the quote it carries; a Fuigo/Grok steer's fresh now line as its own part, resting on none: owner-turn)" } },
   "working-context.ts": { maker: { count: 2, covered: "lineage (workingContextPart)" } },
 };
@@ -85,12 +86,13 @@ function sources(): string[] {
 /** Code lines only: a comment that names a sink is not one. */
 const codeLines = (text: string) => text.split("\n").filter(line => { const t = line.trim(); return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*"); });
 
-function inventory(): { found: Record<string, Partial<Record<Category, number>>>; casts: string[] } {
+function inventory(indexSource?: string): { found: Record<string, Partial<Record<Category, number>>>; casts: string[] } {
   const found: Record<string, Partial<Record<Category, number>>> = {};
   const casts: string[] = [];
   for (const file of sources()) {
     const rel = relative(SERVER, file).split("\\").join("/");
-    for (const line of codeLines(readFileSync(file, "utf8"))) {
+    const text = rel === "index.ts" && indexSource !== undefined ? indexSource : readFileSync(file, "utf8");
+    for (const line of codeLines(text)) {
       for (const [category, pattern] of Object.entries(PATTERNS) as Array<[Category, RegExp]>) {
         const n = line.match(pattern)?.length ?? 0;
         if (n) (found[rel] ??= {})[category] = (found[rel]![category] ?? 0) + n;
@@ -101,22 +103,35 @@ function inventory(): { found: Record<string, Partial<Record<Category, number>>>
   return { found, casts };
 }
 
+function inventoryFindings(found: ReturnType<typeof inventory>["found"]): string[] {
+  const unreviewed: string[] = [];
+  for (const [file, categories] of Object.entries(found)) {
+    for (const [category, count] of Object.entries(categories) as Array<[Category, number]>) {
+      const reviewed = REVIEWED[file]?.[category];
+      if (!reviewed) unreviewed.push(`${file} ${category} x${count}: not reviewed`);
+      else if (reviewed.count !== count) unreviewed.push(`${file} ${category}: ${count} found, ${reviewed.count} reviewed`);
+    }
+  }
+  for (const [file, categories] of Object.entries(REVIEWED)) {
+    for (const category of Object.keys(categories) as Category[]) if (!found[file]?.[category]) unreviewed.push(`${file} ${category}: reviewed but gone (update the list)`);
+  }
+  return unreviewed;
+}
+
 describe("write-time sinks (DESIGN-WRITETIME 2, Enforcement (b))", () => {
   const { found, casts } = inventory();
 
   it("every message insert, engine send, tool handler and lineage constructor in server/ is in the reviewed list, with its reviewed count", () => {
-    const unreviewed: string[] = [];
-    for (const [file, categories] of Object.entries(found)) {
-      for (const [category, count] of Object.entries(categories) as Array<[Category, number]>) {
-        const reviewed = REVIEWED[file]?.[category];
-        if (!reviewed) unreviewed.push(`${file} ${category} x${count}: not reviewed`);
-        else if (reviewed.count !== count) unreviewed.push(`${file} ${category}: ${count} found, ${reviewed.count} reviewed`);
-      }
-    }
-    for (const [file, categories] of Object.entries(REVIEWED)) {
-      for (const category of Object.keys(categories) as Category[]) if (!found[file]?.[category]) unreviewed.push(`${file} ${category}: reviewed but gone (update the list)`);
-    }
-    expect(unreviewed).toEqual([]);
+    expect(inventoryFindings(found)).toEqual([]);
+  });
+
+  it("rejects an extra engine send in the reviewed dispatch file", () => {
+    expect(inventoryFindings(found)).toEqual([]);
+    const index = readFileSync(join(SERVER, "index.ts"), "utf8");
+    const mutant = index.replace("() => instance.adapter.sendTurn(input), spawnFolder",
+      "() => (instance.adapter.sendTurn(input), instance.adapter.sendTurn(input)), spawnFolder");
+    expect(mutant).not.toBe(index);
+    expect(inventoryFindings(inventory(mutant).found)).toEqual(["index.ts engineSend: 3 found, 2 reviewed"]);
   });
 
   it("no cast to BuiltPrompt, PromptPart or ToolText outside prompt-parts.ts, nor to LineageToken outside lineage-write.ts", () => {
@@ -156,6 +171,8 @@ describe("write-time sinks (DESIGN-WRITETIME 2, Enforcement (b))", () => {
     expect(body.indexOf("assertEngineInput(fence, built.prompt);")).toBeGreaterThan(-1);
     expect(body.indexOf("assertEngineInput(fence, built.prompt);")).toBeLessThan(body.indexOf("fencedTurnInput("));
     expect(body).toMatch(/if \(!consumingBinding \|\| !turn\) throw .*MEMORY_CONTEXT_REVOKED/);
+    expect(index.match(/\bsharedOwnerUsageTurn\(/g)).toHaveLength(2);
+    expect(body).toContain("sharedOwnerUsageTurn(instance, turn, owner, fence, consumingBinding, sendShellTurn)");
     expect(index).not.toMatch(/\btext: withNowLine\(/);
     const contracts = readFileSync(join(SERVER, "contracts.ts"), "utf8");
     expect(contracts).toMatch(/export type BuiltSendTurnInput = Omit<SendTurnInput, "text"> & \{ readonly prompt: import\("\.\/memory\/lineage-types\.ts"\)\.BuiltPrompt \};/);
@@ -186,17 +203,22 @@ describe("write-time sinks (DESIGN-WRITETIME 2, Enforcement (b))", () => {
     expect(bringIn).toMatch(/if \(input\.turn\) writeRecordLineage\(db, \{ kind: "record", id: recordId, version: 1, scopeId: room \}, input\.turn\);/);
   });
 
+  // Static shape pin only. The behaviour (held row lineage, posted line lineage rows and thread flow) is witnessed through the real
+  // POST /api/internal/venue/post dispatch in server/internal-response-fence.test.ts "T-VENUE-POST-LINEAGE".
   it("the venue/post handler (VENUE-POST-1017) writes the post with its lineage and hands the bot ids and fixed lines only", () => {
     const index = readFileSync(join(SERVER, "index.ts"), "utf8");
     const start = index.indexOf("function serveVenuePost(");
     expect(start).toBeGreaterThan(-1);
     const serve = index.slice(start, index.indexOf("\n}\n", start));
-    expect(serve).toMatch(/store\.appendMessage\(target, venuePostRow\(bot, record\.threadId, text\), stableId, undefined, undefined,\s+venuePostLineage\(record\.threadId, record\.botId, undefined, \[record\.request\.messageId\]\)\);/);
-    expect(serve).toMatch(/lineage: JSON\.stringify\(lineage\)/);
+    expect(serve).toMatch(/const messageId = held\.row\.stableId;/);
+    expect(serve).toMatch(/store\.appendMessage\(target, venuePostRow\(bot, record\.threadId, text\), messageId, undefined, undefined,\s+venuePostLineage\(record\.threadId, record\.botId, undefined, \[record\.request\.messageId\]\)\);/);
+    expect(serve).toMatch(/const lineage = venuePostLineage\(record\.threadId, record\.botId, undefined, \[record\.request\.messageId\]\);/);
+    expect(serve).toMatch(/holdVenuePost\(database\(\), \{[\s\S]*?lineage: JSON\.stringify\(lineage\) \}\);/);
     // every answer body is a refusal verdict, the held note, or ids
     const bodies = [...serve.matchAll(/body: (\{[^}]*\}|verdict\.body)/g)].map(match => match[1]);
     expect(bodies).toEqual([
       "verdict.body",
+      "{ error: VENUE_POST_UNAVAILABLE }",
       "{ error: VENUE_POST_UNAVAILABLE }",
       "{ held: true, venueId: group.id, note: VENUE_POST_HELD }",
       "{ posted: true, venueId: group.id, messageId: existing.id }",

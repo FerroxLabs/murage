@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it,vi } from "vitest";
@@ -10,7 +11,7 @@ it("installs v4, validates ledger references, and round trips every supported do
  const db=new DatabaseSync(":memory:");
  try {
   migrateMemorySchema(db);
-  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(13);
+  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(MEMORY_SCHEMA_VERSION);
   const settings=JSON.parse(String(db.prepare("SELECT settings FROM memory_learning_config").get()?.settings));
   expect(settings).toMatchObject({version:3,ceiling:{input:100_000_000,output:15_000_000}});
   db.exec("INSERT INTO memory_scopes VALUES('s','conversation','t','[]',0)");

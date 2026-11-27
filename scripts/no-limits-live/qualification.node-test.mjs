@@ -1,11 +1,12 @@
 // Blocking Node runner for the same fake-only mutation qualifiers used by self-test.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 // These are independent CLI children, not Node test-runner IPC workers.
 const cliEnv={...process.env};delete cliEnv.NODE_TEST_CONTEXT;
 for (const script of ['qualify-mutants.mjs', 'qualify-product-mutant.mjs', 'self-test.mjs', 'qualify-native-mutant.mjs', 'qualify-bindings-mutants.mjs', 'qualify-ci-mutants.mjs']) {
@@ -25,7 +26,7 @@ for (const script of ['qualify-mutants.mjs', 'qualify-product-mutant.mjs', 'self
       assert.equal(result.status, 0, result.stdout + result.stderr);
       const report = JSON.parse(readFileSync(join(out, 'verdict.json')));
       assert.equal(report.verdict, 'PASS'); assert.equal(report.releaseGate, false);
-    } finally { if(!preserve)rmSync(out, { recursive: true, force: true }); }
+    } finally { if(!preserve)safeWipeSync(out); }
   });
 }
 test('a red control suite cannot be counted as killing gate mutants', { timeout: 180000 }, () => {
@@ -49,5 +50,5 @@ test('a red control suite cannot be counted as killing gate mutants', { timeout:
     assert.ok(report.baselines.some(b => b.verdict === 'FAIL'));
     assert.ok(report.mutants.every(m => !m.killed));
     assert.equal(control.status, 0, control.stdout + control.stderr);
-  } finally { rmSync(out, { recursive: true, force: true }); }
+  } finally { safeWipeSync(out); }
 });

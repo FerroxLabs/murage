@@ -1,3 +1,5 @@
+import { privateSkillReviewRequest } from "@/lib/skill-switch-review";
+import type { SkillRequestCardData } from "../../shared/skill-request";
 // SEC-006 on the page: a high-risk Allow from the phone app is answered with
 // a challenge. Check it names the card on screen, ask native for Face ID,
 // Touch ID or the passcode, and send the signature back. One signed retry,
@@ -90,7 +92,14 @@ export async function respondWithFreshAuth<T>(
     if (!globalThis.crypto?.subtle) throw new FreshAuthError("update");
     if (!context.card || (await approvalDigest(context.threadId, context.requestId, context.card)) !== challenge.digest) throw new FreshAuthError("changed");
     // A skill request signs only if the preview on screen is the preview its hash names.
-    if (!(await skillPreviewMatchesHash(context.card))) throw new FreshAuthError("changed");
+    if (!(await skillPreviewMatchesHash(context.card))) {
+      // A shared transcript holds only a switch digest. The owner-only view
+      // must have loaded, verified and painted those exact bytes before signing.
+      const handle = (context.card as DigestCard & { requestHandle?: string }).requestHandle ?? context.requestId;
+      const request = context.card.skillRequest as SkillRequestCardData | undefined;
+      const shown = request && /^p\.[\w-]+$/.test(handle) ? privateSkillReviewRequest(request, handle.slice(2)) : undefined;
+      if (!shown || !(await skillPreviewMatchesHash({ skillRequest: shown }))) throw new FreshAuthError("changed");
+    }
     if (!(await nativeAvailable("approveWithDevice"))) throw new FreshAuthError("update");
     let signed: unknown;
     context.onDevicePrompt?.(true);
@@ -118,10 +127,20 @@ const pendingAllows = new Map<string, Promise<{ failed: boolean; error?: unknown
 /** What a call site runs for an Allow: respond with fresh auth, and sort the
  * outcome. A Face ID cancel is not an error (the card stays pending); every
  * other failure is shown and handed to the caller with its code. */
+/** The server's codes for an answer that was not delivered (1021): the card can no longer be answered, or it can be retried. */
+export type DeliveryCode = "delivery_failed_terminal" | "delivery_retry";
+/** A fresh-auth code to speak or show, never a delivery code (a call has no line for those: it says its plain fallback). */
+export const freshAuthCodeOf = (code?: FreshAuthCode | DeliveryCode): FreshAuthCode | undefined =>
+  code === "delivery_failed_terminal" || code === "delivery_retry" ? undefined : code;
+const deliveryCode = (error: unknown): DeliveryCode | undefined => {
+  const code = ((error ?? {}) as { status?: number; body?: { code?: unknown } }).body?.code;
+  return (error as { status?: number })?.status === 503 && (code === "delivery_failed_terminal" || code === "delivery_retry") ? code : undefined;
+};
+
 export async function decideWithFreshAuth(
   post: (extra?: Record<string, unknown>) => Promise<unknown>,
   context: DecideContext,
-  report: { onError?: (message: string, code?: FreshAuthCode) => void; /** The answer was posted (after a signed retry too). */ onSuccess?: () => void; showError: (error: unknown) => void },
+  report: { onError?: (message: string, code?: FreshAuthCode | DeliveryCode) => void; /** The answer was posted (after a signed retry too). */ onSuccess?: () => void; showError: (error: unknown) => void },
 ): Promise<void> {
   const key = context.decision ? `${context.threadId}\n${context.requestId}` : "";
   const sort = (error: unknown, shown: boolean) => {
@@ -130,7 +149,7 @@ export async function decideWithFreshAuth(
       if (error instanceof FreshAuthError && error.code === "computerOnly") markComputerOnly(context.threadId, context.requestId);
       report.showError(error);
     }
-    report.onError?.(error instanceof Error ? error.message : String(error), error instanceof FreshAuthError ? error.code : undefined);
+    report.onError?.(error instanceof Error ? error.message : String(error), error instanceof FreshAuthError ? error.code : deliveryCode(error));
   };
   const joined = key ? pendingAllows.get(key) : undefined;
   if (joined) {

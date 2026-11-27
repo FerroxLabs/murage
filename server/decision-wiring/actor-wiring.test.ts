@@ -5,6 +5,14 @@ import { applyRoutinePermissionMode, applyResolvedRoutineCeilings, botPermission
 import { permissionsForNoLimitsOrigin, noLimitsAppliesTo } from '../no-limits-origin.ts';
 import { permissionsForOrigin } from '../permission-inheritance.ts';
 import { hasNoLimits } from '../auto-approve.ts';
+it('cloud owner settlement remains bound to the resolved device id',()=>{
+  const admitted={id:'fixture-device',account:'fixture-owner',publicKey:'fixture-public-key',revoked:false};let current={...admitted};
+  const {skillOwnerSession}=wiring(['skillOwnerSession'],{process:{env:{MURAGE_CLOUD_ROLE:'home'}},mayApprove:()=>true,
+    cloudIdentity:()=>({account:admitted.account,accessHash:'fixture-access-hash',revoked:false}),
+    homeSessions:{resolveHash:()=>current,watermarkFor:()=>1}});
+  const session=skillOwnerSession({headers:{}},new URL('http://127.0.0.1/'));expect(session.live()).toBe(true);
+  current={...admitted,id:'fixture-replacement'};expect(session.live()).toBe(false);
+});
 describe('R4/R4b/R4c A3 A7a L7: dispatch provenance', () => {
   it('queued owner drain survives released parent (M37)', () => {
     const { decisionInitiator } = wiring(['decisionInitiator']);
@@ -104,7 +112,7 @@ it('owner HTTP service generations remain separate across concurrent authenticat
     issueDecisionClaim:(proof:object)=>{const identity=proofs.get(proof);expect(identity.generation).toBe(context.getStore().generation);return identity;},
     saveContinuation:async(_key:unknown,parent:any)=>expect(context.getStore().generation).toBe(parent.generation),
     deleteContinuation:async()=>{},decisionQueuePorts:new Map(),APPROVAL_NEEDS_OWNER:'Owner required'};
-  const {withOwnerDecisionAuthority}=wiring(['withOwnerDecisionAuthority'],globals);
+  const {withOwnerDecisionAuthority}=wiring(['withOwnerDecisionAuthority','releaseDecisionQueueProof'],globals);
   await Promise.all(['one','two'].map(async id=>{
     const req={headers:{}},url=new URL('http://fixture.test');
     await withOwnerDecisionAuthority(req,url,id,'thread-'+id,async(authority:any)=>{

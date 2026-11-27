@@ -1,3 +1,4 @@
+import { evidencePath, assertExternalEvidencePath } from '../scripts/evidence-path.mjs';
 // Real service authorization from an isolated routine turn on a No limits bot.
 import {afterAll,beforeAll,expect,it} from 'vitest';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
@@ -20,7 +21,7 @@ beforeAll(async()=>{
 },120000);
 afterAll(async()=>{
  if(!fixture)return;
- const out=process.env.GNL_PRODUCT_CEILING_EVIDENCE??'evidence/gnl-prod-r3/service-ceiling';mkdirSync(out,{recursive:true});
+ const out=assertExternalEvidencePath(process.env.GNL_PRODUCT_CEILING_EVIDENCE ?? evidencePath('evidence/gnl-prod-r3/service-ceiling'));mkdirSync(out,{recursive:true});
  writeFileSync(join(out,'workflow.json'),JSON.stringify({fixture:fixture.info,evidence},null,2));
  writeFileSync(join(out,'server.log'),readFileSync(fixture.info.logPath));await fixture.close();
 });

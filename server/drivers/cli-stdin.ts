@@ -1,6 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 export type StdinFrame = { wire: string; done?: (error?: Error | null) => void; release?: (write: () => unknown, validate: () => void) => unknown };
 
 /** S2 input ownership. Cold/S1 sessions start passed. Opening this gate must
@@ -48,7 +49,7 @@ export class ClaudeStdinGate {
     }
     if (this.barrier === "passed" && !this.releasing) return "write";
     let value: any;
-    try { value = JSON.parse(frame.wire); } catch { /* non-JSON is never allowlisted */ }
+    try { value = registerBusyloopPayloadSite("read", JSON.parse(frame.wire)); } catch { /* non-JSON is never allowlisted */ }
     if (value?.type === "user") { this.queue.push(frame); return "held"; }
     const subtype = value?.request?.subtype;
     if (!this.failure && value?.type === "control_request"

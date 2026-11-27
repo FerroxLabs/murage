@@ -14,8 +14,13 @@ export function todayChiefId(bots: readonly ChiefCandidate[], chiefBotId: string
   return chiefBotId ?? bots.find((bot) => !bot.hidden && botRole(bot) === "chief")?.id ?? null;
 }
 
-/** The bot the Tell box writes to; null hides the box (no Chief, a hidden or missing Chief, or first run). */
-export function tellChief<B extends { id: string; hidden?: boolean }>(bots: readonly B[], chiefId: string | null, firstRun: boolean): B | null {
+/** The bot the Tell box writes to; null hides the box (no Chief, a hidden or missing Chief, or first run).
+ *  Setup keeps reporting the Chief it first recorded for as long as that bot exists (GH#47), so once the owner has
+ *  moved the role, the current visible workspace Chief wins over a pick that is hidden or no longer the Chief. With
+ *  no workspace Chief the pick stands while it is visible (setup adopted the oldest bot). */
+export function tellChief<B extends RoleBot & { id: string; hidden?: boolean }>(bots: readonly B[], chiefId: string | null, firstRun: boolean): B | null {
   if (firstRun || !chiefId) return null;
-  return bots.find((bot) => bot.id === chiefId && !bot.hidden) ?? null;
+  const picked = bots.find((bot) => bot.id === chiefId && !bot.hidden);
+  if (picked && botRole(picked) === "chief") return picked;
+  return bots.find((bot) => !bot.hidden && botRole(bot) === "chief") ?? picked ?? null;
 }

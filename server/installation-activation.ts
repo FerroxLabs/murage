@@ -77,6 +77,12 @@ function validatePaused(root: string) {
   for (const name of ["delegations.json", "browser-cleanups.json"]) if (entry(join(root, name))) fail("RESTORE_WORK_NOT_PAUSED");
   const skillRoot = join(root, "skill-state");
   if (entry(skillRoot)) for (const bot of readdirSync(skillRoot)) {
+    if (bot === "every-bot.json") {
+      const marks = json(join(skillRoot, bot));
+      if (!object(marks) || marks.version !== 1 || !empty(marks.marks)) fail("RESTORE_WORK_NOT_PAUSED");
+      continue;
+    }
+    if (!entry(join(skillRoot, bot))?.isDirectory()) fail("INVALID_REVIEW_FILE");
     if (entry(join(skillRoot, bot, "staged.json"))) fail("RESTORE_WORK_NOT_PAUSED");
     const skills = json(join(skillRoot, bot, "skills.json"));
     if (skills !== undefined && (!object(skills) || Object.values(skills).some(value => !object(value) || value.enabled !== false))) fail("RESTORE_WORK_NOT_PAUSED");

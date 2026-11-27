@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
@@ -8,7 +8,7 @@ import { ProviderRegistry } from "../harness/registry.ts";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as procs from "../procs.ts";
-import { hostPowerDeps, hostPowerProbeDeps, HOST_POWER_TEST_UNWRAPPED } from "../host-power.ts";
+import { hostPowerDeps, hostPowerProbeDeps, HOST_POWER_TEST_UNWRAPPED, resetSeatbeltSelectionsForTests } from "../host-power.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { MuseCodeDriver, MUSE_NOT_INSTALLED_NOTE } from "./muse-code.ts";
@@ -29,7 +29,7 @@ const make = async (cli: string) => {
 afterEach(async () => {
   for (const instance of instances.splice(0)) await instance.dispose();
   Object.assign(hostPowerDeps, deps);
-  Object.assign(hostPowerProbeDeps, probes);
+  Object.assign(hostPowerProbeDeps, probes); resetSeatbeltSelectionsForTests();
   (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = true;
   vi.restoreAllMocks();
   syncBuiltinESMExports();
@@ -162,6 +162,9 @@ describe("missing Muse admission (isolated, no inference)", () => {
     const detail = stage === "execvp" ? "execvp() of 'muse' failed: No such file or directory" : "sandbox_apply: Operation not permitted";
     writeFileSync(wrapper, `#!/bin/sh\necho "sandbox-exec: ${detail}" >&2\nexit 71\n`); chmodSync(wrapper, 0o755);
     Object.assign(hostPowerDeps, { platform: () => "darwin", sandboxExec: wrapper });
+    // The probe passes and the real launch is refused every time: Muse walks down every power block rule set (7), and only
+    // then, below No limits, is the turn refused. A profile that fails every probe is a different case (launches unwrapped).
+    hostPowerProbeDeps.runSync = () => ({ code: 0, stderr: "" });
     (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = false;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const nativeSpawn = vi.spyOn(childProcess, "spawn");
@@ -181,10 +184,33 @@ describe("missing Muse admission (isolated, no inference)", () => {
       await vi.waitFor(() => expect(events.some(event => event.type === "turn.completed")).toBe(true));
     }
     expect(spawn).not.toHaveBeenCalled();
-    expect(nativeSpawn).toHaveBeenCalledTimes(1);
+    expect(nativeSpawn).toHaveBeenCalledTimes(stage === "execvp" ? 1 : 7);
     expect(vi.mocked(nativeSpawn).mock.calls[0]?.[0]).toBe(wrapper);
     expect(events.some(event => event.type === "item.completed")).toBe(false);
     if (stage === "execvp") expect(warn).not.toHaveBeenCalled();
-    else expect(warn.mock.calls.filter(([line]) => String(line).includes("power block"))).toHaveLength(1);
+    else expect(warn.mock.calls.filter(([line]) => String(line).includes("sandbox-exec could not apply the power block"))).toHaveLength(1);
   });
+
+  it.each(["catalog", "session"])("H2 W7 Muse below No limits is not refused when only a rule set is refused at launch after a passing probe (%s)", async stage => {
+    const root = scratch(), wrapper = join(root, "sandbox"), cli = join(root, "muse"), launches = join(root, "launches");
+    symlinkSync(fake, cli); chmodSync(fake, 0o755);
+    // A real wrapper stand-in: the probe passes, a launch whose profile holds the appleevent rule is refused, any other is exec'd.
+    const refuseCatalog = stage === "session" ? 'if [ "$4" = serve ] && [ "$5" = --disable-shell ]; then shift 2; exec "$@"; fi\n' : "";
+    writeFileSync(wrapper, `#!/bin/sh\n[ "$3" = /usr/bin/true ] && exit 0\n${refuseCatalog}printf '%s\\n--END--\\n' "$2" >> '${launches}'\ncase "$2" in *'(deny appleevent-send'*) echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2; exit 71;; esac\nshift 2\nexec "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    Object.assign(hostPowerDeps, { platform: () => "darwin", sandboxExec: wrapper });
+    hostPowerProbeDeps.runSync = () => ({ code: 0, stderr: "" });
+    (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = false;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const instance = await make(cli);
+    const events: RuntimeEvent[] = []; instance.adapter.onEvent(event => events.push(event));
+    const sent = await instance.adapter.sendTurn({ threadId: "narrower", text: "FAKE-ONLY", cwd: fixtureBotFolder(), stopLine: true });
+    await vi.waitFor(() => expect(events.some(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toBe(true), { timeout: 20000 });
+    expect(events.find(e => e.type === "turn.completed" && e.turnId === sent.turnId), JSON.stringify(events.filter(e => e.type === "runtime.error" || e.type === "turn.completed"))).toMatchObject({ ok: true });
+    expect(events.some(e => e.type === "runtime.error")).toBe(false);
+    const profiles = readFileSync(launches, "utf8").split("--END--\n").filter(Boolean);
+    const last = profiles[profiles.length - 1] ?? "";
+    expect(last).toContain("(deny mach-lookup"); expect(last).toContain("(deny iokit-open"); expect(last).not.toContain("appleevent-send");
+    expect(profiles.length).toBeGreaterThan(1);
+  }, 40000);
 });

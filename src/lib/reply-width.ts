@@ -3,8 +3,8 @@
 //
 // E35: a bot reply that holds a table runs as wide as the message column
 // (--chat-card-pct), so a wide table shows every column instead of hiding the
-// last ones behind a sideways scroll; its prose keeps the reading width
-// (`.chat-wide` in styles.css). Every other bubble keeps the usual width.
+// last ones behind a sideways scroll. The table and prose share their width
+// (`.chat-wide` in styles.css). Other bubbles keep the usual reading width.
 
 /** A markdown table's divider row, `| --- | :--: |`, read after the line's
  * indentation (a table inside a list item is still a table). */

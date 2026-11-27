@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BOT_PATCH_FIELDS, BROWSER_OWNER_RULES, BROWSER_PLAIN_STARTER_PROFILE_IDS, CONFIG_PATCH_FIELDS, OWNER_CODE_LABELS, TASK_PATCH_FIELDS, browserOwnerRule, browserOwnerTier } from "./browser-owner-policy.ts";
 import { CloudSessions, DOOR_FRESH_MS } from "./cloud-sessions.ts";
 import { createCloudRequestAuth, routeActDigest, stepPurpose, type CloudOwnerAct } from "./cloud-request-auth.ts";
-import { cloudRouteDecision, cloudRouteNeedsBody, ROUTE_POLICY, routePolicy, SENTINEL_OWNER_ROUTE, HIGHLEVEL_REVIEW_ROUTE } from "./route-policy.ts";
+import { cloudRouteDecision, cloudRouteNeedsBody, ROUTE_POLICY, routePolicy, SENTINEL_OWNER_ROUTE } from "./route-policy.ts";
 import { cloudIdentity, isOwnerBrowser, ownerBrowserActs, ownerBrowserScope, setCloudIdentity } from "./cloud-request-identity.ts";
 import { isDesktopApp, ownerSurface, skipsFreshAuth } from "./cloud-owner-surface.ts";
 import { requestFromComputer, requestSurface } from "./sse-visibility.ts";
@@ -345,6 +345,7 @@ describe("the matrix over every ROUTE_POLICY request", () => {
       "POST /api/bots/a/send-actions", "POST /api/groups/a/send-actions",
       "DELETE /api/bots/a/queue/a", "DELETE /api/groups/a/queue/a",
     ]);
+    const privateDeviceReads = new Set(["GET /api/bots/a/mcp-servers", "GET /api/threads/a/skill-switch-review/a"]);
     const deniedReads: string[] = [];
     for (const { method, sample, entry } of all) {
       const read = ["GET", "HEAD", "OPTIONS"].includes(method);
@@ -355,8 +356,9 @@ describe("the matrix over every ROUTE_POLICY request", () => {
       const label = `remembered-owner ${method} ${sample}`;
       expect(none, label).not.toBe("step-up required");
       if (entry.class === "engine-login") { expect(none, label).toBe("deny"); expect(cloudRouteDecision(method, sample, "remembered-owner", {}, false, { engineTicket: true }), label).toBe("allow"); continue; }
-      if (HIGHLEVEL_REVIEW_ROUTE.test(sample)) { expect([none, proven, fresh], label).toEqual(["deny", "deny", "deny"]); continue; }
       if (ownerReceiptRoutes.has(`${method} ${sample}`)) { expect([none, proven, fresh], label).toEqual(["deny", "deny", "deny"]); continue; }
+      // Row 45 port (route-policy.ts privateDeviceRead; route-policy.test.ts:515): these two reads are the desktop and paired phone only.
+      if (privateDeviceReads.has(`${method} ${sample}`)) { expect([none, proven, fresh], label).toEqual(["deny", "deny", "deny"]); continue; }
       if (SENTINEL_OWNER_ROUTE.test(sample)) { expect(none, label).toBe(read ? "allow" : "deny"); continue; }
       if (sample === "/api/desktop-secret" || sample === "/api/storage/attachments/remove") { expect(none, label).toBe("deny"); continue; }
       if (read) {

@@ -17,6 +17,7 @@ import { inheritMarks } from "./revoke-commit.ts";
 import { lineageBackfillSlice, lineageCertProgress, promoteLineageThread } from "./lineage-backfill.ts";
 import { buildPrompt, promptPart, toolText } from "./prompt-parts.ts";
 import { decodeNode, encodeNode, FOOTPRINT_STAR, memoryRefKey, writetimeStubCalls, type FrontierNode, type LineageReader } from "./lineage-types.ts";
+import { DENY_RULE_DROPPED_TABLES } from "./deny-rule-schema.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dirs: string[] = [], dbs: DatabaseSync[] = [];
@@ -30,15 +31,17 @@ const version = (db: DatabaseSync) => Number(db.prepare("SELECT schema_version F
 const tables = (db: DatabaseSync) => new Set((db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all() as Array<{ name: string }>).map(row => row.name));
 const count = (db: DatabaseSync, table: string) => Number(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n);
 function expectV10(db: DatabaseSync, cert: { phase: string; ready: boolean }) {
-  expect(version(db)).toBe(13);
-  expect(MEMORY_SCHEMA_VERSION).toBe(13);
+  expect(version(db)).toBe(14);
+  expect(MEMORY_SCHEMA_VERSION).toBe(14);
   const names = tables(db);
-  for (const table of Object.values(WRITETIME_TABLES)) expect(names.has(table), table).toBe(true);
+  // schema 14 (1.0.23 deny rule): the two mark tables v10 added leave at 13 -> 14 for memory_deny_point / memory_deny_object
+  for (const table of Object.values(WRITETIME_TABLES)) expect(names.has(table), table).toBe(!(DENY_RULE_DROPPED_TABLES as readonly string[]).includes(table));
+  for (const table of ["memory_deny_point", "memory_deny_object"]) expect(names.has(table), table).toBe(true);
   expect(currentLsn(db)).toBe(1);
   expect(db.prepare("SELECT key,value FROM memory_lineage_lsn_meta ORDER BY key").all().map(row => [row.key, row.value]))
     .toEqual([...LINEAGE_META_KEYS_V12].sort().map(key => [key, key === "lineage_upgrade_lsn" || key === "reader_door_epoch" ? 1 : 0])); // v12: the door epoch at the lsn counter
   expect(lineageCertProgress(db)).toMatchObject(cert);
-  for (const table of ["memory_line_lineage", "memory_lineage_carry", "memory_deny_line", "memory_deny_range", "memory_deny_pending", "memory_revoke_jobs"]) expect(count(db, table), table).toBe(0);
+  for (const table of ["memory_line_lineage", "memory_lineage_carry", "memory_deny_point", "memory_deny_range", "memory_deny_pending", "memory_revoke_jobs"]) expect(count(db, table), table).toBe(0);
   expect(() => validateMemorySchema(db)).not.toThrow();
 }
 
@@ -60,7 +63,7 @@ it("v10 opens on an empty database: every table empty, lsn 1, certificate ready"
 it("v10 opens on a v9 RC database: rows kept, lineage tables empty, certificate not ready; v10 -> v9 inverts it while nothing is written", () => {
   const db = file();
   migrateMemorySchema(db, "active");
-  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 13, to: 9 });
+  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 14, to: 9 });
   expect(version(db)).toBe(9);
   for (const table of Object.values(WRITETIME_TABLES)) expect(tables(db).has(table), table).toBe(false);
   validateMemorySchema(db);
@@ -87,19 +90,19 @@ it("v10 opens on a 1.0.1 (v6) database", () => {
 it("a v10 -> v9 downgrade with a lineage row or mark runs S5's marking first, then drops the lineage tables (lineage-backfill.test.ts covers the marks)", () => {
   const db = file();
   migrateMemorySchema(db);
-  db.exec("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('t',1,1,1,'forget')");
-  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 13, to: 9 });
+  db.exec("INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('t',1,1,1,'forget')");
+  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 14, to: 9 });
   expect(version(db)).toBe(9);
-  expect(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE name='memory_deny_line'").get()).toBeUndefined();
+  expect(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE name='memory_deny_point'").get()).toBeUndefined();
 });
 
 it.each([
   ["an index moved to another column", "DROP INDEX memory_deny_range_revoke; CREATE INDEX memory_deny_range_revoke ON memory_deny_range(thread_id)"],
   ["an index removed", "DROP INDEX memory_deny_pending_revoke"],
   ["the unique message index made non-unique", "DROP INDEX memory_line_lineage_msg; CREATE INDEX memory_line_lineage_msg ON memory_line_lineage(thread_no,message_id)"],
-  ["an index made partial", "DROP INDEX memory_deny_line_revoke; CREATE INDEX memory_deny_line_revoke ON memory_deny_line(revoke_id) WHERE revoke_id>0"],
+  ["an index made partial", "DROP INDEX memory_deny_point_revoke; CREATE INDEX memory_deny_point_revoke ON memory_deny_point(revoke_id) WHERE revoke_id>0"],
   ["an extra index on a lineage table", "CREATE INDEX memory_lineage_carry_child ON memory_lineage_carry(child_ref)"],
-  ["a trigger on a lineage table", "CREATE TRIGGER memory_deny_line_gone AFTER INSERT ON memory_deny_line BEGIN DELETE FROM memory_deny_line; END"],
+  ["a trigger on a lineage table", "CREATE TRIGGER memory_deny_line_gone AFTER INSERT ON memory_deny_point BEGIN DELETE FROM memory_deny_point; END"],
 ])("the validator refuses a tampered v10 schema: %s", (_label, tamper) => {
   const db = file();
   migrateMemorySchema(db);
@@ -172,7 +175,7 @@ it("P3-11: v10 -> v9 leaves no optional index (the RC's known-object list does n
   expect(index()).toBeUndefined(); // optional: open builds none of them
   for (const item of OPTIONAL_INDEXES) expect(await buildOptionalIndexOffThread(db, item, { inline: true })).toBe(true);
   expect(index()).toBeTruthy();
-  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 13, to: 9 });
+  expect(downgradeMemorySchema(db, 9)).toMatchObject({ status: "downgraded", from: 14, to: 9 });
   for (const item of OPTIONAL_INDEXES) expect(optionalIndexReady(db, item.name)).toBe(false);
   expect(index()).toBeUndefined();
   expect(() => validateMemorySchema(db)).not.toThrow();

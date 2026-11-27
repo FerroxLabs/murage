@@ -1,3 +1,4 @@
+import { assertExternalEvidencePath, evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Assertion RED / restored GREEN proof in a disposable, network-disabled source copy.
 import {cpSync,existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,symlinkSync,writeFileSync} from 'node:fs';
@@ -7,7 +8,7 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {safeWipeSync} from '../server/testing/safe-wipe.mjs';
 if(process.env.CI!=='1')throw Error('Run through the isolated test container');
-const source=process.cwd(),out=resolve(process.argv[2]??'evidence/nolim-rows/mutants');mkdirSync(out,{recursive:true});
+const source=process.cwd(),out=assertExternalEvidencePath(resolve(process.argv[2]??evidencePath('evidence/nolim-rows/mutants')));mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'nolim-rows-mutants-'));
 for(const entry of readdirSync(source))if(!/^(?:node_modules|\.git|\.nolim|evidence$|dist|build$|\.cache$)/.test(entry))cpSync(join(source,entry),join(root,entry),{recursive:true});
 symlinkSync(join(source,'node_modules'),join(root,'node_modules'),'dir');

@@ -17,9 +17,9 @@ import type { StopHit } from "./stop-line.ts";
 import { exactCommandKey } from "../shared/exact-command.ts";
 import { foldScopes } from "../shared/fold-scopes.ts";
 
-const EXACT = exactCommandKey({ engine: "claude", cwd: "/Users/alex/site", command: "git push" })!;
+const EXACT = exactCommandKey({ engine: "claude", cwd: "/Users/exampleuser/site", command: "git push" })!;
 const PAY: StopHit = { kind: "pay", place: "stripe:brightline", what: "Pay $4,120 to Brightline" };
-const DELETE: StopHit = { kind: "delete", place: "/Users/alex/site/build", what: "Delete outside its folder" };
+const DELETE: StopHit = { kind: "delete", place: "/Users/exampleuser/site/build", what: "Delete outside its folder" };
 const DANA: StopHit = { kind: "message", place: "dana@acme.example", recipients: ["dana@acme.example"], what: "Message someone new: dana@acme.example" };
 const PUBLIC: StopHit = { kind: "message", place: "public:github:ferrox/murage", recipients: ["github:ferrox/murage"], what: "Post on GitHub" };
 

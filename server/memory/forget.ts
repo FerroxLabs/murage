@@ -4,7 +4,7 @@ import { holdForgottenSources } from "../turn-source-holds.ts";
 import { database, transaction } from "../database.ts";
 import { requireMemoryOwner } from "./authority.ts";
 import { applyForgetTombstones } from "./restore.ts";
-import { forgottenMessages, setForgottenMessagesHook, supportingTombstones, wakeMemoryRevocation, type ForgottenMessagesHook, type RevocationJob } from "./memory-revocation.ts";
+import { forgetRecordKeys, forgetSourceKeys, forgottenMessages, keptSpanPairs, setForgottenMessagesHook, supportingTombstones, wakeMemoryRevocation, type ForgottenMessagesHook, type RevocationJob } from "./memory-revocation.ts";
 import { notifyMemoryWork } from "./jobs.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { holdRevoke } from "./revoke-marker.ts";
@@ -14,15 +14,17 @@ import { holdRevoke } from "./revoke-marker.ts";
  * registered by index.ts). */
 export function onMemoryMessagesForgotten(hook: ForgottenMessagesHook | null): void { setForgottenMessagesHook(hook); }
 
-/** What a forget writes in its own commit, at most: the newest this many revisions of a source get their import tombstone, the
- * newest this many evidence rows of a record their supporting and import tombstones; the rest is the job's (imports, supporting). */
+/** 1.0.21 cause10 v2 (FORGET-ATOMIC.md): a forget writes its WHOLE deny key set in its own commit (every revision's import key, every
+ * supporting-source key), whatever the count: no reader ever waits on the job. This many newest evidence rows of a record are also ended
+ * here (applyForgetTombstones); ending the rest, blanking older versions' text and the projection cleanup are the job's, space only. */
 export const FORGET_INLINE_ROWS = 64;
 
 export function forgetMemory(ticket: object, target: {kind:"source"|"record";id:string;revision?:number}) {
   const {result,pending}=forgetInTransaction(ticket,target);
   // What the forget left to do is a durable job committed with it (memory-revocation.ts): the runner takes it from here, in short
   // slices, and a restart resumes it. Readers are already protected by the deny facts committed above.
-  if(pending)wakeMemoryRevocation(database);
+  // the owner's own action: it also resumes a runner parked on a storage failure (human-bounded, never a loop)
+  if(pending)wakeMemoryRevocation(database,undefined,true);
   // The derived cleanup is not owner-gated (no engine call): the worker is told at once, not at its next idle sweep.
   if(result.derivedCleanup=="pending")notifyMemoryWork();
   return result;
@@ -67,15 +69,20 @@ function forgetInTransaction(ticket: object, target: {kind:"source"|"record";id:
     // Write-time privacy (DESIGN-WRITETIME 3): the revoke's marks for what is named, its pending window over everything that can rest on
     // it, and its marker job, in this commit (O(1)); the marker walks the rest in the background (revoke-marker.ts).
     const revokeId=commitRevoke(db,{kind:"memory",ref:{kind:target.kind,id:target.id,...(rev!==null&&rev>0?{version:rev}:{})},cause:"forget"});
-    let ended: Array<{id:string;revision:number|null}>=[];
+    let ended: Array<{id:string;revision:number|null}>=[], told: string[]=[];
     let before: Array<"imports"|"supporting">=[], job: Partial<RevocationJob>={};
     if(target.kind==="source"){
-      // the newest revisions' contents may not be imported again; older ones in the job's imports phase
-      const versions=db.prepare(`SELECT s.scope_id,v.revision,v.content_hash FROM memory_source_versions v JOIN memory_sources s ON s.id=v.source_id WHERE v.source_id=?${rev===null?"":" AND v.revision=?"} ORDER BY v.revision DESC LIMIT ?`).all(...(rev===null?[target.id]:[target.id,rev]),FORGET_INLINE_ROWS+1);
-      for(const version of versions.slice(0,FORGET_INLINE_ROWS))db.prepare("INSERT INTO memory_tombstones VALUES(?,'import',?,NULL,?,?,'forgotten-original',?)").run(randomUUID(),String(version.scope_id),String(version.content_hash),epoch,Date.now());
-      // the older revisions' hashes are the job's; a copy imported before they are tombstoned is found from memory_sources' rowid at this
-      // commit and ended (revbound r3 A6), and the revoke keeps it "checking" until then (the hold)
-      if(versions.length>FORGET_INLINE_ROWS){before=["imports"];job={imports:{id:target.id,below:Number(versions[FORGET_INLINE_ROWS-1]!.revision),mark:Number(db.prepare("SELECT max(rowid) AS m FROM memory_sources").get()?.m??0),scope:String(versions[0]!.scope_id)}};}
+      // no revision's contents may be imported again, from this commit on: every revision's import key, in one statement (cause10 v2).
+      // A copy imported before is refused by the same key (deny-read.ts) and none can be admitted after (1.0.20 tombstoned past 64
+      // revisions in the job and ended imports admitted meanwhile).
+      forgetSourceKeys(db,{id:target.id,rev},epoch,Date.now());
+      // a long source keeps 1.0.20's late-copy step as cleanup (no key left to write: `below` 1): a message line captured meanwhile with a
+      // forgotten revision's bytes is ended, and the revoke holds it "checking" until then, as before (import-window-summary.test.ts)
+      // `keys`: every key is in this commit, so the next open's pass over older builds' queued Forgets leaves this job alone (it wrote
+      // every revision's key a second time and moved the watermark once more; legacy-forget-keys.ts LEGACY_FORGET_JOBS, forget-atomic FA9)
+      if(Number(db.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM memory_source_versions WHERE source_id=?${rev===null?"":" AND revision=?"} LIMIT ?)`).get(...(rev===null?[target.id]:[target.id,rev]),FORGET_INLINE_ROWS+1)!.n)>FORGET_INLINE_ROWS){
+        before=["imports"];job={imports:{id:target.id,below:1,keys:true,mark:Number(db.prepare("SELECT max(rowid) AS m FROM memory_sources").get()?.m??0),scope:String(db.prepare("SELECT scope_id FROM memory_sources WHERE id=?").get(target.id)!.scope_id)}};
+      }
       ended=[{id:target.id,revision:rev}];
     } else {
       // Forget means the words are gone from this commit on (Learn about me R5 C1): the record's newest versions lose their text here,
@@ -84,21 +91,29 @@ function forgetInTransaction(ticket: object, target: {kind:"source"|"record";id:
       // the newest evidence rows of the record (the largest primary keys, a descending range): their sources' supporting and import
       // tombstones now; every smaller key is the job's supporting phase
       const rows=db.prepare(`SELECT record_version AS v,source_id AS s,source_revision AS r,start_byte AS b FROM memory_evidence WHERE record_id=?${rev===null?"":" AND record_version=?"} ORDER BY record_version DESC,source_id DESC,source_revision DESC,start_byte DESC LIMIT ?`).all(...(rev===null?[target.id]:[target.id,rev]),FORGET_INLINE_ROWS+1);
-      ended=supportingTombstones(db,null,rows.slice(0,FORGET_INLINE_ROWS).map(row=>({id:String(row.s),revision:Number(row.r)})),notes);
+      // 1.0.21 cause10 r2: a notebook chunk the chunk-diff import kept has ONE handle, moved to the notebook's newest revision; it rested,
+      // with these words, on every revision since its version was written. Those revisions take the same tombstones (the newest here, the
+      // rest in the supporting phase), or their contents could be imported again under another topic (memory-revocation.ts keptSpanPairs).
+      const span=target.id.includes(":chunk:")?keptSpanPairs(db,{id:target.id,rev},null,FORGET_INLINE_ROWS):{pairs:[],next:null};
+      ended=supportingTombstones(db,null,[...rows.slice(0,FORGET_INLINE_ROWS).map(row=>({id:String(row.s),revision:Number(row.r)})),...span.pairs],notes,true);
+      // cause10 v2 (FORGET-ATOMIC.md): and the rest of the deny keys, every version, evidence row and kept revision, in set statements:
+      // what the supporting phase still walks only ends and reclaims. The held turns and the learning purge are told of every source now.
+      told=forgetRecordKeys(db,{id:target.id,rev},notes,epoch,Date.now());
       const last=rows[FORGET_INLINE_ROWS-1];
-      job={record:{id:target.id,rev,notes,...(rows.length>FORGET_INLINE_ROWS&&last?{after:[Number(last.v),String(last.s),Number(last.r),Number(last.b)]}:{})}};
-      if(rows.length>FORGET_INLINE_ROWS)before=["supporting"];
+      job={record:{id:target.id,rev,notes,keys:true,...(rows.length>FORGET_INLINE_ROWS&&last?{after:[Number(last.v),String(last.s),Number(last.r),Number(last.b)]}:{}),...(span.next?{span:span.next}:{})}};
+      if(rows.length>FORGET_INLINE_ROWS||span.next)before=["supporting"];
     }
     // Only this forget's targets are applied (restore.ts applyForgetTombstones): never the history of earlier forgets.
     const jobId=randomUUID();
     if(revokeId&&job.imports)holdRevoke(db,revokeId,jobId);
     const applied=applyForgetTombstones(db,{sources:ended,records:target.kind==="record"?[{id:target.id,revision:rev}]:[]},{job:{...job,id:jobId,...(revokeId?{revokeId}:{})},before});
     pending=applied.pending;
-    // a turn that carried a message these sources were captured from no longer stands on it (server/turn-source-holds.ts); the sources past
-    // the inline rows are held by the job's supporting phase (memory-revocation.ts supportingTombstones)
-    holdForgottenSources(db,[...(target.kind==="source"?[target.id]:[]),...(notes?[]:ended.map(source=>source.id))]);
+    // a turn that carried a message these sources were captured from no longer stands on it (server/turn-source-holds.ts): cause10 v2, every
+    // source the record rested on (`told`), not only the inline rows'; the job's supporting phase holding them again later is harmless
+    const forgottenSources=[...new Set([...ended.map(source=>source.id),...told])];
+    holdForgottenSources(db,[...(target.kind==="source"?[target.id]:[]),...(notes?[]:forgottenSources)]);
     // The messages the room's notes quoted are not forgotten with them.
-    if(!notes)forgottenMessages(db,ended.map(source=>source.id));
+    if(!notes)forgottenMessages(db,forgottenSources);
     // the worker sets both statuses together, so the indexed lexical probe answers (memory_projection_pending); a job still running is pending too
     const cleanup=pending||Boolean(db.prepare("SELECT 1 FROM memory_projection_receipts WHERE lexical_status='delete-pending' LIMIT 1").get());
     return {status:"excluded" as const,deletionEpoch:epoch,derivedCleanup:cleanup?"pending" as const:"complete" as const,externalHistory:"already-delivered provider text cannot be erased",originals:"retained outside memory; supporting source revisions and automatic reimport excluded"};

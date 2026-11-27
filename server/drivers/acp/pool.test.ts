@@ -993,6 +993,18 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     } finally { noteUser.mockRestore(); }
   });
 
+  // MAIN-RULING warm-active-only through the real send path (OPUS 38cebb4cde High): an owner turn wakes its own bot and maps
+  // its thread on the shared warm pool; a non-owner (channel audience) turn wakes no bot and marks its thread non-owner.
+  it("W-DRV-A: an owner turn wakes its bot on the warm pool and maps its thread; a non-owner turn wakes none", async () => {
+    delete process.env.MURAGE_ACP_POOL;
+    const bot = `acp-drv-${randomUUID()}`;
+    await create();
+    expect((await turn({ threadId: "t-drv-owner", text: "one", warmIdentity: { botId: bot, audience: "owner" } })).done).toMatchObject({ ok: true });
+    expect(warmPool.activityFor("t-drv-owner")).toEqual({ bot, active: true, nonOwner: false }); // W-DRV-A:owner
+    expect((await turn({ threadId: "t-drv-guest", text: "one", warmIdentity: { botId: `${bot}-guest`, audience: "non-owner" } })).done).toMatchObject({ ok: true });
+    expect(warmPool.activityFor("t-drv-guest")).toEqual({ bot: undefined, active: false, nonOwner: true }); // W-DRV-A:non-owner
+  });
+
   it("a candidate is unavailable until its park check succeeded: an immediate follow-up never adopts a process the check found unfit", async () => {
     const childPidFile = join(scratch, "child.pid");
     process.env.FAKE_ACP_CHILD_PID_FILE = childPidFile;

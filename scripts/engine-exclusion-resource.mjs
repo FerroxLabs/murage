@@ -93,7 +93,7 @@ export function validateEngineExclusionResource(resources, platform, arch = proc
 const METER_ADDON_FUNCTIONS = ["ioMeterAdd", "ioMeterBytes", "ioMeterTotal", "ioMeterSnapshot", "ioMeterUnknown",
   "ioGrantBegin", "ioGrantEnd", "ioGrantSnapshot", "ioGrantCharge", "ioFgBegin", "ioFgEnd", "ioAllBg"];
 export const WINDOWS_ADDON_FUNCTIONS = [...METER_ADDON_FUNCTIONS,"openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree",
-  "authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave", "environment", "cwdOf",
+  "authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "terminateIfStart", "processPresence", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave", "environment", "cwdOf",
   "anchorBegin", "anchorOpen", "anchorList", "anchorRead", "anchorStat", "anchorClose", "anchorEnd"];
 
 /** macOS and Linux: the calls the server makes on top of lock / processes / renameNoReplace (engine-exec.ts writers, engine-fs.ts fullSync,

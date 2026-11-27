@@ -29,7 +29,7 @@ import { dispatchHandoffRequest } from "./testing/handoff-turn.ts";
 import { LINEAGE, ownerWorld, type OwnerWorld } from "./testing/handoff-worlds.ts";
 
 // The retry rows fake setTimeout and then open their world, which starts the WAL checkpointer thread under the fake clock. On a loaded
-// box that live thread holds the admission ledger lock past the main thread's deadline ("[io-budget] ERROR AdmissionLockTimeout ...")
+// box the main thread's one lock attempt meets a live holder ("[io-budget] AdmissionLockTimeout ...")
 // and, once retired, arms its 5 s exit bound on the fake clock that the row then fast-forwards ("admission ledger poisoned ..."): both
 // lines go through console.warn into the row's spy, which counts the boot settle's own warnings. These rows exercise the boot settle,
 // not the checkpointer, so each stops it (resolved on the thread's real exit, never on a timer) before it spies or moves the clock.

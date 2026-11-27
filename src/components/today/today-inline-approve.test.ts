@@ -16,7 +16,6 @@ import type { NeedsSummaryRow } from "@/components/shell/shell-contract";
 import type { InboxItem } from "../../../shared/inbox";
 
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const { NeedsBlock } = await import("./NeedsBlock");
 const { needsOwedRows } = await import("../needs/NeedsYouPage");
 

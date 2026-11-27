@@ -15,6 +15,7 @@ const product = resolve(productArg), evidence = resolve(evidenceArg);
 mkdirSync(evidence, { recursive: true });
 const moduleUrl = file => pathToFileURL(join(product, file)).href;
 const { launchVerificationServer, runControlMurage } = await import(moduleUrl("scripts/control-murage.ts"));
+const { MEMORY_SCHEMA_VERSION } = await import(moduleUrl("server/memory/schema.ts"));
 const seedUrl = new URL("./prebuild-fixture.mjs", import.meta.url).href;
 const indexes = await preListenIndexes(product);
 for (const version of [12, 13]) {
@@ -46,7 +47,7 @@ for (const version of [12, 13]) {
     result.databaseBeginToListenMs = marks.listen - marks["database.begin"];
     result.seedEndToListenMs = marks.listen - result.seedFinishedMs;
     assert.equal(result.schemaVersion, version);
-    assert.equal(result.schemaVersionAfter, 13);
+    assert.equal(result.schemaVersionAfter, MEMORY_SCHEMA_VERSION);
     const doctor = await runControlMurage(["doctor", "--url", fixture.info.url], { env: { ...process.env, MURAGE_DATA_DIR: fixture.info.dataDir } });
     writeFileSync(join(evidence, `doctor-v${version}.json`), JSON.stringify(doctor, null, 2));
     const health = await (await fetch(`${fixture.info.url}/api/health`)).json();

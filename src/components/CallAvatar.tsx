@@ -36,7 +36,7 @@ export function CallAvatar({
     {/* the aura's shimmer (thinking, working) is the waiting indicator; it
         follows the avatar's own shape, where a round ring did not */}
     <CallAura phase={auraPhase} size={CALL_AVATAR_SIZE} aura={aura} variant={aura.custom ? "full" : "soft"} signals={signals} />
-    <BotAvatar bot={bot} state={state} size={CALL_AVATAR_SIZE} animated trackPointer presentation={aura.presentation} />
+    <BotAvatar bot={bot} label={bot.name} state={state} size={CALL_AVATAR_SIZE} animated trackPointer presentation={aura.presentation} />
   </div>;
 }
 

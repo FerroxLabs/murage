@@ -1,0 +1,297 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "mb-1020-plus-sheet-builder",
+  "date": "2026-11-18",
+  "base": "f8f3a5a9c1e1a30590c242a8f3401d9ff8df80ac",
+  "scope": "ux.l7.plus.* (Phone composer + sheet): English and 7 packs",
+  "strings": {
+    "en:ux.l7.plus.title": {
+      "text": "Add to your message",
+      "en": "Add to your message",
+      "verdict": "pass"
+    },
+    "en:ux.l7.plus.camera": {
+      "text": "Camera",
+      "en": "Camera",
+      "verdict": "pass"
+    },
+    "en:ux.l7.plus.cameraHint": {
+      "text": "Take a photo",
+      "en": "Take a photo",
+      "verdict": "pass"
+    },
+    "en:ux.l7.plus.photos": {
+      "text": "Photos",
+      "en": "Photos",
+      "verdict": "pass"
+    },
+    "en:ux.l7.plus.photosHint": {
+      "text": "Choose from your photos",
+      "en": "Choose from your photos",
+      "verdict": "pass"
+    },
+    "en:ux.l7.plus.files": {
+      "text": "Files",
+      "en": "Files",
+      "verdict": "pass"
+    },
+    "en:ux.l7.plus.filesHint": {
+      "text": "Choose a file",
+      "en": "Choose a file",
+      "verdict": "pass"
+    },
+    "de:ux.l7.plus.title": {
+      "text": "Zu deiner Nachricht hinzufügen",
+      "en": "Add to your message",
+      "verdict": "pass"
+    },
+    "de:ux.l7.plus.camera": {
+      "text": "Kamera",
+      "en": "Camera",
+      "verdict": "pass"
+    },
+    "de:ux.l7.plus.cameraHint": {
+      "text": "Ein Foto aufnehmen",
+      "en": "Take a photo",
+      "verdict": "pass"
+    },
+    "de:ux.l7.plus.photos": {
+      "text": "Fotos",
+      "en": "Photos",
+      "verdict": "pass"
+    },
+    "de:ux.l7.plus.photosHint": {
+      "text": "Aus deinen Fotos wählen",
+      "en": "Choose from your photos",
+      "verdict": "pass"
+    },
+    "de:ux.l7.plus.files": {
+      "text": "Dateien",
+      "en": "Files",
+      "verdict": "pass"
+    },
+    "de:ux.l7.plus.filesHint": {
+      "text": "Eine Datei auswählen",
+      "en": "Choose a file",
+      "verdict": "pass"
+    },
+    "es:ux.l7.plus.title": {
+      "text": "Añadir a tu mensaje",
+      "en": "Add to your message",
+      "verdict": "pass"
+    },
+    "es:ux.l7.plus.camera": {
+      "text": "Cámara",
+      "en": "Camera",
+      "verdict": "pass"
+    },
+    "es:ux.l7.plus.cameraHint": {
+      "text": "Tomar una foto",
+      "en": "Take a photo",
+      "verdict": "pass"
+    },
+    "es:ux.l7.plus.photos": {
+      "text": "Fotos",
+      "en": "Photos",
+      "verdict": "pass"
+    },
+    "es:ux.l7.plus.photosHint": {
+      "text": "Elegir de tus fotos",
+      "en": "Choose from your photos",
+      "verdict": "pass"
+    },
+    "es:ux.l7.plus.files": {
+      "text": "Archivos",
+      "en": "Files",
+      "verdict": "pass"
+    },
+    "es:ux.l7.plus.filesHint": {
+      "text": "Elegir un archivo",
+      "en": "Choose a file",
+      "verdict": "pass"
+    },
+    "fr:ux.l7.plus.title": {
+      "text": "Ajouter à ton message",
+      "en": "Add to your message",
+      "verdict": "pass"
+    },
+    "fr:ux.l7.plus.camera": {
+      "text": "Caméra",
+      "en": "Camera",
+      "verdict": "pass",
+      "note": "Pass, hesitated: Appareil photo is the iOS/Android system term; Camera is common in apps and short, acceptable."
+    },
+    "fr:ux.l7.plus.cameraHint": {
+      "text": "Prendre une photo",
+      "en": "Take a photo",
+      "verdict": "pass"
+    },
+    "fr:ux.l7.plus.photos": {
+      "text": "Galerie",
+      "en": "Photos",
+      "verdict": "pass",
+      "note": "Pass, hesitated: Galerie is right for a row opening the photo picker (WhatsApp/Android term; iOS says Photothèque). Better than identical Photos; hint says photos so it is clear."
+    },
+    "fr:ux.l7.plus.photosHint": {
+      "text": "Choisir parmi tes photos",
+      "en": "Choose from your photos",
+      "verdict": "pass"
+    },
+    "fr:ux.l7.plus.files": {
+      "text": "Fichiers",
+      "en": "Files",
+      "verdict": "pass"
+    },
+    "fr:ux.l7.plus.filesHint": {
+      "text": "Choisir un fichier",
+      "en": "Choose a file",
+      "verdict": "pass"
+    },
+    "hi:ux.l7.plus.title": {
+      "text": "अपने संदेश में जोड़ें",
+      "en": "Add to your message",
+      "verdict": "pass"
+    },
+    "hi:ux.l7.plus.camera": {
+      "text": "कैमरा",
+      "en": "Camera",
+      "verdict": "pass"
+    },
+    "hi:ux.l7.plus.cameraHint": {
+      "text": "फ़ोटो लें",
+      "en": "Take a photo",
+      "verdict": "pass"
+    },
+    "hi:ux.l7.plus.photos": {
+      "text": "फ़ोटो",
+      "en": "Photos",
+      "verdict": "pass"
+    },
+    "hi:ux.l7.plus.photosHint": {
+      "text": "अपनी फ़ोटो में से चुनें",
+      "en": "Choose from your photos",
+      "verdict": "pass"
+    },
+    "hi:ux.l7.plus.files": {
+      "text": "फ़ाइलें",
+      "en": "Files",
+      "verdict": "pass"
+    },
+    "hi:ux.l7.plus.filesHint": {
+      "text": "एक फ़ाइल चुनें",
+      "en": "Choose a file",
+      "verdict": "pass"
+    },
+    "ja:ux.l7.plus.title": {
+      "text": "メッセージに追加",
+      "en": "Add to your message",
+      "verdict": "pass"
+    },
+    "ja:ux.l7.plus.camera": {
+      "text": "カメラ",
+      "en": "Camera",
+      "verdict": "pass"
+    },
+    "ja:ux.l7.plus.cameraHint": {
+      "text": "写真を撮影",
+      "en": "Take a photo",
+      "verdict": "pass"
+    },
+    "ja:ux.l7.plus.photos": {
+      "text": "写真",
+      "en": "Photos",
+      "verdict": "pass"
+    },
+    "ja:ux.l7.plus.photosHint": {
+      "text": "写真から選択",
+      "en": "Choose from your photos",
+      "verdict": "pass"
+    },
+    "ja:ux.l7.plus.files": {
+      "text": "ファイル",
+      "en": "Files",
+      "verdict": "pass"
+    },
+    "ja:ux.l7.plus.filesHint": {
+      "text": "ファイルを選択",
+      "en": "Choose a file",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l7.plus.title": {
+      "text": "Adicionar à sua mensagem",
+      "en": "Add to your message",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l7.plus.camera": {
+      "text": "Câmera",
+      "en": "Camera",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l7.plus.cameraHint": {
+      "text": "Tirar uma foto",
+      "en": "Take a photo",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l7.plus.photos": {
+      "text": "Fotos",
+      "en": "Photos",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l7.plus.photosHint": {
+      "text": "Escolher entre suas fotos",
+      "en": "Choose from your photos",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l7.plus.files": {
+      "text": "Arquivos",
+      "en": "Files",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l7.plus.filesHint": {
+      "text": "Escolher um arquivo",
+      "en": "Choose a file",
+      "verdict": "pass"
+    },
+    "zh:ux.l7.plus.title": {
+      "text": "添加到你的消息",
+      "en": "Add to your message",
+      "verdict": "pass"
+    },
+    "zh:ux.l7.plus.camera": {
+      "text": "相机",
+      "en": "Camera",
+      "verdict": "pass"
+    },
+    "zh:ux.l7.plus.cameraHint": {
+      "text": "拍一张照片",
+      "en": "Take a photo",
+      "verdict": "pass"
+    },
+    "zh:ux.l7.plus.photos": {
+      "text": "照片",
+      "en": "Photos",
+      "verdict": "pass"
+    },
+    "zh:ux.l7.plus.photosHint": {
+      "text": "从你的照片中选择",
+      "en": "Choose from your photos",
+      "verdict": "pass"
+    },
+    "zh:ux.l7.plus.files": {
+      "text": "文件",
+      "en": "Files",
+      "verdict": "pass"
+    },
+    "zh:ux.l7.plus.filesHint": {
+      "text": "选择一个文件",
+      "en": "Choose a file",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

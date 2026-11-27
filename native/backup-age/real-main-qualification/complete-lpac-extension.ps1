@@ -1,12 +1,16 @@
 # Read-only confirmation of the already-applied grant, then fresh data/manifest.
 # No icacls grant, application launch or job creation is present here.
-param([Parameter(Mandatory=$true)][string]$Extension)
+param([Parameter(Mandatory=$true)][string]$Account,[Parameter(Mandatory=$true)][string]$DesktopSid,[Parameter(Mandatory=$true)][string]$ProfileRoot,[Parameter(Mandatory=$true)][string]$Extension)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
-$prior='C:\Users\seand\AppData\Local\Temp\murage-b20-real-main-20260914-025600'
+. (Join-Path $PSScriptRoot 'qualification-identity.ps1')
+$ProfileRoot=Confirm-QualificationProfile $Account $DesktopSid $ProfileRoot
+$prior=Join-Path $ProfileRoot 'AppData\Local\Temp\murage-b20-real-main-20260914-025600'
 if($Extension -ne (Join-Path $prior 'extension-20260914-035100')){throw 'Unexpected extension path'}
 $deadline='2026-09-14T04:21:55.6960312Z'
 if([DateTime]::UtcNow -ge [DateTime]::Parse($deadline).ToUniversalTime()){throw 'Extension expired'}
+$manifest=Get-Content -LiteralPath (Join-Path $prior 'journey-manifest.json') -Raw|ConvertFrom-Json
+if($manifest.sid -ne $DesktopSid -or $manifest.sessionId -ne 1){throw 'Manifest desktop binding mismatch'}
 $candidate=Join-Path $prior 'candidate-d70fe5a145d0'
 $beforeFile=Join-Path $Extension 'code-acl-before.txt';$afterFile=Join-Path $Extension 'code-acl-after.txt'
 foreach($file in @($beforeFile,$afterFile)){if((Get-Item -LiteralPath $file).Length -lt 100){throw 'ACL snapshot empty'}}
@@ -61,7 +65,6 @@ foreach($row in $classification.acls) {
   $current=[Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $row.path).Sddl)
   if($old.Owner.Value -ne $current.Owner.Value -or $old.Group.Value -ne $current.Group.Value){throw 'Recorded owner/group changed'}
 }
-$manifest=Get-Content -LiteralPath (Join-Path $prior 'journey-manifest.json') -Raw|ConvertFrom-Json
 foreach($pair in @(@($manifest.executable,$manifest.exeSha256),@((Join-Path $candidate 'resources\app.asar'),$manifest.asarSha256),@($manifest.nodeExecutable,$manifest.nodeSha256))) {
   if((Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pair[1]){throw 'Code/Node byte identity changed'}
 }

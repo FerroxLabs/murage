@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // E35: a bot reply with a table runs the message column's width so every
-// column shows; its prose and every other bubble keep the reading width.
+// column shows and the prose reaches the table's edge.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,11 +30,11 @@ describe("reply width with a table", () => {
     expect(WIDE_REPLY_WIDTH).toContain("var(--chat-card-pct)");
   });
 
-  it("1:1 chats and rooms size their bubbles by it, the table is marked, and its prose keeps the reading width", () => {
+  it("1:1 chats and rooms size their bubbles by it, the table is marked, and its prose shares the table's width", () => {
     expect(read("components/ChatView.tsx")).toContain("bubbleWidth(text, user),");
     expect(read("components/GroupView.tsx")).toContain('bubbleWidth(m.text ?? "", user),');
     expect(read("components/ChatMarkdown.tsx")).toContain('<div className="chat-table overflow-x-auto">');
-    expect(read("styles.css")).toMatch(/\.chat-wide \.chat-md > :not\(\.chat-table\):not\(:has\(\.chat-table\)\) \{\n  max-width: var\(--chat-bubble-max\);/);
+    expect(read("styles.css")).toMatch(/\.chat-wide \.chat-md\s*\{\s*width: fit-content;\s*min-width: min\(100%, var\(--chat-bubble-max\)\);\s*max-width: 100%;/);
   });
 
   it("finds a table inside a list item, but not one shown as an example in a code block", () => {

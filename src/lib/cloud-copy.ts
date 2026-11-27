@@ -9,14 +9,12 @@ export const cloudCopy = {
   homeUnreachableDetail: "Settings changes won't save until it's back. Anything you type in chat is kept.",
   switchComputer: "This computer",
   switchCloudHome: "Cloud home",
-  pairTitle: "Connect to your Cloud home",
   pairSignIn: "Sign in to your Murage account on this computer first, then come back here.",
   pairNoHomes: "You don't have a Cloud home yet.",
   pairOpen: "Open",
   pairPaired: "Connected",
   pairHomeNotReady: "Not ready yet",
-  /** Door v2: Connect from the browser. */
-  connectButton: "Connect to your Cloud home",
+  /** Door v2: Connect from the browser (the Connect button and its line are cloudConnect.connect / .notConnected). */
   connectPending: "Finish in your browser. This window carries on by itself.",
   connectCountdown: "Time left",
   connectCancel: "Cancel",

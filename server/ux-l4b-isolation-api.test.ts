@@ -1,3 +1,4 @@
+import { evidencePath } from '../scripts/evidence-path.mjs';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -30,7 +31,7 @@ beforeAll(async()=>{
   expect((await api("PATCH",`/api/bots/${bot.id}`,{computer:"off",browser:false,composio:false})).status).toBe(200);
 },60_000);
 afterAll(async()=>{
-  const evidence = "evidence/r20-l8main-runtime"; mkdirSync(evidence, {recursive:true});
+  const evidence = evidencePath("evidence/r20-l8main-runtime"); mkdirSync(evidence, {recursive:true});
   writeFileSync(join(evidence, "http-observations.json"), JSON.stringify(observations, null, 2));
   if (fixture && existsSync(fixture.info.logPath)) copyFileSync(fixture.info.logPath, join(evidence, "server.log"));
   await fixture?.close();

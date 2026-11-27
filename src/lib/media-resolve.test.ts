@@ -18,7 +18,7 @@ import {
   type MediaApi,
 } from "./media-resolve";
 
-const ROOT = "/Users/alex/.murage/workspaces/research";
+const ROOT = "/Users/exampleuser/.murage/workspaces/research";
 const SCOPE = { botId: "research", threadId: "task-7" };
 const REVISION = "r1.WPkMkm7wYRMFdPk0qK1Lp6dRr7v3WkQ9m0kq0k0k0k0";
 
@@ -86,7 +86,7 @@ describe("which paths could even be this conversation's file", () => {
   });
 
   it("refuses the root itself, its siblings and anything above it", () => {
-    for (const path of [ROOT, `${ROOT}/`, `${ROOT}-backup/take.wav`, "/Users/alex/take.wav", "/take.wav", ""]) {
+    for (const path of [ROOT, `${ROOT}/`, `${ROOT}-backup/take.wav`, "/Users/exampleuser/take.wav", "/take.wav", ""]) {
       expect(workspaceRelativePath(ROOT, path), path).toBeNull();
     }
   });
@@ -101,9 +101,9 @@ describe("which paths could even be this conversation's file", () => {
   });
 
   it("matches Windows paths the way Windows does, and POSIX paths the way POSIX does", () => {
-    expect(workspaceRelativePath("C:\\Users\\Sean\\desk", "c:/users/sean/desk/Take.WAV")).toBe("Take.WAV");
-    expect(workspaceRelativePath("C:\\Users\\Sean\\desk", "C:\\Users\\Sean\\desk\\out\\take.wav")).toBe("out/take.wav");
-    expect(workspaceRelativePath("/home/sean/desk", "/home/Sean/desk/take.wav")).toBeNull();
+    expect(workspaceRelativePath("C:\\Users\\ExampleUser\\desk", "c:/users/exampleuser/desk/Take.WAV")).toBe("Take.WAV");
+    expect(workspaceRelativePath("C:\\Users\\ExampleUser\\desk", "C:\\Users\\ExampleUser\\desk\\out\\take.wav")).toBe("out/take.wav");
+    expect(workspaceRelativePath("/home/exampleuser/desk", "/home/ExampleUser/desk/take.wav")).toBeNull();
   });
 
   it("names the directory a file lives in", () => {
@@ -151,7 +151,7 @@ describe("asking the harness before playing anything", () => {
 
   it("stops at the first question for a path that is not inside the workspace", async () => {
     const { api, calls } = harness({});
-    expect(await resolveLocalMedia({ scope: SCOPE, absolutePath: "/Users/alex/Music/private.mp3" }, api)).toEqual({ state: "unavailable", why: "outside" });
+    expect(await resolveLocalMedia({ scope: SCOPE, absolutePath: "/Users/exampleuser/Music/private.mp3" }, api)).toEqual({ state: "unavailable", why: "outside" });
     expect(calls).toHaveLength(1);
   });
 

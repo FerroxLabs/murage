@@ -27,6 +27,7 @@ import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
 import { LocalMedia } from "./MediaPlayer";
 import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
 import { remarkLoneListNumbers } from "@/lib/markdown-lone-number";
+import { repairMarkdownTables } from "@/lib/markdown-tables";
 import { remarkSoftBreaks } from "@/lib/markdown-soft-breaks";
 import { relativeFileLink } from "@/lib/workspace-links";
 import { githubPillFor } from "@/lib/github-refs";
@@ -412,7 +413,7 @@ function ChatMarkdownComponent({ text: written, streaming = false, scope, questi
   // single $ never does (lib/chat-math.ts). Each span comes back as a
   // <span data-chat-math="n"> that the span renderer below hands to KaTeX.
   const { text, preparing } = useMemo(() => questionFenceDisplay(written, streaming, questionCards), [written, streaming, questionCards]);
-  const { text: source, spans } = useMemo(() => extractMath(text), [text]);
+  const { text: source, spans } = useMemo(() => extractMath(repairMarkdownTables(text)), [text]);
   const rehypePlugins = useMemo(() => [rehypeChatMath(spans)], [spans]);
   const element = (
       <Markdown

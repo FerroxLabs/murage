@@ -5,13 +5,14 @@
 // Kept on the bot record in bots.json, beside the per-task totals it grew from, so a turn
 // pays for one small upsert and nothing scans history. Months before this existed have no
 // bucket; `since` says when the month's own counting began.
+import { addCacheUsage, legacyTurnUsage, type UsageAccounting } from "./prompt-cache-usage.ts";
 
 export interface UsageMonth {
   replies: number;
   input: number;
   output: number;
   /** The part of `input` served from the provider's cache; absent until an engine reports it. */
-  cachedInput?: number;
+  cachedInput?: number; usageAccounting?: UsageAccounting;
   /** When this month's counting began (first write), epoch ms. */
   since: number;
 }
@@ -27,19 +28,14 @@ export const USAGE_MONTHS_KEPT = 13;
 
 const whole = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
 
-type UsageTurn = { input?: number; output?: number; cachedInput?: number };
+type UsageTurn = { input?: number; output?: number; cachedInput?: number; usageAccounting?: UsageAccounting };
 
 /** A bucket with one more settled turn in it. */
 function addTurn(prev: UsageMonth | undefined, turn: UsageTurn, at: number): UsageMonth {
-  const input = whole(turn.input);
-  const cached = typeof turn.cachedInput === "number" || typeof prev?.cachedInput === "number"
-    ? Math.min(whole(prev?.cachedInput), whole(prev?.input)) + Math.min(whole(turn.cachedInput), input)
-    : undefined;
+  const contribution = turn.usageAccounting ? turn : legacyTurnUsage(turn);
   return {
     replies: whole(prev?.replies) + 1,
-    input: whole(prev?.input) + input,
-    output: whole(prev?.output) + whole(turn.output),
-    ...(cached === undefined ? {} : { cachedInput: cached }),
+    ...addCacheUsage(prev, contribution),
     since: typeof prev?.since === "number" ? prev.since : at,
   };
 }

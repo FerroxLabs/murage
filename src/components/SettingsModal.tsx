@@ -14,7 +14,7 @@ import { DISCARD_SETTINGS_CHANGES, settingsDrafts } from "@/lib/settings-drafts"
 import { waitForAnchor } from "@/lib/anchor-wait";
 import { landOnSetting, type LandingElement } from "@/lib/settings-landing";
 import { Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Archive, BookOpen, Bot, Brain, Coins, Globe, LifeBuoy, Monitor, Phone, Puzzle, Search, Smartphone, Trash2, User, Users, Wrench, X } from "lucide-react";
+import { Archive, BookOpen, Brain, Coins, Globe, LifeBuoy, Monitor, Phone, Puzzle, Search, Smartphone, Trash2, User, Users, Wrench, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type Bot as BotRecord, type ConfigStatus } from "@/state/store";
 import type { BotSettingsLeave } from "./BotSettingsPane";
 import { loadBotSettingsPane, loadedBotSettingsPane } from "@/lib/bot-settings-pane-load";
@@ -58,6 +58,7 @@ import { isAdvancedOnlyCard } from "@/lib/settings-simple-cards";
 import { sw } from "@/lib/settings-words";
 import { settingsPageLink } from "@/lib/settings-link";
 import { ADVANCED_MODE_ANCHOR } from "./settings/AdvancedModeCard";
+import { BotAvatar } from "./Avatar";
 import { BrowseBotsPage } from "./settings/BrowseBotsPage";
 import { SettingsBreadcrumb } from "./settings/SettingsBreadcrumb";
 import { SettingsPageMount, hasPageFile } from "./settings/page-registry";
@@ -772,7 +773,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                       bot?.id === each.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
                     )}
                   >
-                    <Bot size={15} className="shrink-0" aria-hidden="true" />
+                    <BotAvatar bot={each} label="" size={15} animated={false} />
                     <span className="min-w-0 truncate">{each.name}</span>
                   </button>
                 ))}

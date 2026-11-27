@@ -1,7 +1,8 @@
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {describe,expect,it} from 'vitest';
-const root=new URL('..',import.meta.url).pathname;
+const root=fileURLToPath(new URL('..',import.meta.url));
 const inputs=readFileSync(join(root,'infra/windows-signing/collector/Inputs.ps1'),'utf8');
 // Microsoft.NETCore.Native.Publish.targets (microsoft.dotnet.ilcompiler 10.0.15, line 63) fails a win-* publish with
 // "Cross-OS native compilation is not supported" when $(OS) != 'Windows_NT'; MSBuild takes $(OS) from the %OS% environment variable,

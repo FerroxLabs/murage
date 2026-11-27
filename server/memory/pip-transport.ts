@@ -7,6 +7,7 @@
 // applyProviderRoute, the env allowlist, the temp root lifecycle, the NDJSON
 // parser for the Messages transport, the per-run gate and the miss map.
 // The process work lives in drivers/headless-text-only.ts and memory/pip-reaper.ts.
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { copyFileSync, writeFileSync } from "../counted-fs.ts";
@@ -541,7 +542,7 @@ export function parseHeadlessMessages(stdout: Buffer | string, observe?: (frame:
     if (!text) continue;
     seq++;
     let line: Record<string, unknown>;
-    try { const v = JSON.parse(text); if (!v || typeof v !== "object" || Array.isArray(v)) { run.malformed++; continue; } line = v as Record<string, unknown>; }
+    try { const v = registerBusyloopPayloadSite("read", JSON.parse(text)); if (!v || typeof v !== "object" || Array.isArray(v)) { run.malformed++; continue; } line = v as Record<string, unknown>; }
     catch { run.malformed++; continue; }
     observe?.(line);
     if (line.type === "system" && line.subtype === "init") {
@@ -691,7 +692,7 @@ export interface GateObservation {
 export function parseJsonAnswer(text: string): unknown {
   const t = text.trim();
   const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```$/i.exec(t);
-  try { return JSON.parse(fenced ? fenced[1] : t); } catch { return undefined; }
+  try { return registerBusyloopPayloadSite("read", JSON.parse(fenced ? fenced[1] : t)); } catch { return undefined; }
 }
 
 /** Claude run that asked for a schema: the one synthetic answer tool is admitted, nothing else. */
@@ -743,7 +744,7 @@ export function gateRun(o: GateObservation): Verdict {
   if (r.stopReason === "cancelled") return { state: "refused", reason: "bad-output", detail: "cancelled", counted: true };
   let structured: unknown = r.structuredOutput;
   if (structured === undefined && so && p.structuredCalls.length === 1) structured = p.structuredCalls[0].input;
-  if (structured === undefined && o.engine === "claude" && r.text !== undefined) { try { structured = JSON.parse(r.text); } catch { structured = undefined; } }
+  if (structured === undefined && o.engine === "claude" && r.text !== undefined) { try { structured = registerBusyloopPayloadSite("read", JSON.parse(r.text)); } catch { structured = undefined; } }
   if (structured === undefined && o.schemaInPrompt === true && o.engine !== "claude" && r.text !== undefined) structured = parseJsonAnswer(r.text);
   if (structured === undefined || structured === null || typeof structured !== "object") return { state: "refused", reason: "bad-output", detail: "no-structured-output", counted: true };
   const bad = validateAgainstSchema(structured, o.outputSchema);
@@ -757,7 +758,7 @@ export function httpVerdict(o: { finishReason: string | null; content: string; o
   if (o.finishReason === "length") return { state: "refused", reason: "bad-output", detail: "truncated", counted: true };
   if (Buffer.byteLength(o.content) > o.maxOutputBytes) return { state: "refused", reason: "bad-output", detail: "over-byte-cap", counted: true };
   let structured: unknown;
-  try { structured = JSON.parse(o.content); } catch { return { state: "refused", reason: "bad-output", detail: "not-json", counted: true }; }
+  try { structured = registerBusyloopPayloadSite("read", JSON.parse(o.content)); } catch { return { state: "refused", reason: "bad-output", detail: "not-json", counted: true }; }
   const bad = validateAgainstSchema(structured, o.outputSchema);
   if (bad || structured === null || typeof structured !== "object") return { state: "refused", reason: "bad-output", detail: `schema:${bad ?? "type"}`, counted: true };
   return { state: "validated", structured };

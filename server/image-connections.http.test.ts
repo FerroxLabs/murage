@@ -122,11 +122,16 @@ it("keeps listing every connection when the chosen catalog cannot be read", asyn
   const settings = await api("GET", "/api/images/settings");
   expect(settings.status).toBe(200);
   expect(settings.body.catalog).toBeNull();
+  expect(settings.body.selected).toBeNull();
+  expect(settings.body.enabled).toBe(true);
+  const off = await api("POST", "/api/images/settings", { enabled: false });
+  expect(off.status).toBe(200);
+  expect(off.body.enabled).toBe(false);
   expect(settings.body.catalogError).toMatch(/image model/);
   expect(settings.body.connections.length).toBeGreaterThan(5);
   expect(imageRequests().every(url => url.startsWith("https://openrouter.ai/api/v1/images/models"))).toBe(true);
   expected = imageRequests().length;
-  expect((await api("PUT", "/api/config", { imageGen: { connectionId: "" } })).status).toBe(200);
+  expect((await api("PUT", "/api/config", { imageGen: { connectionId: "", enabled: true } })).status).toBe(200);
 });
 
 it("selects a Google connection and reads its model list locally", async () => {

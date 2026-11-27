@@ -64,7 +64,7 @@ wg_string() {
 # is the only command substitution in the shim and never runs under bash.
 wg_fmt() {
     wg_fmt_var=$1; shift
-    if [ -n "${BASH_VERSION-}" ]; then
+    if [ "${wg_bash-}" = 1 ]; then
         printf -v "$wg_fmt_var" "$@"
     else
         wg_fmt_out=$(printf "$@")
@@ -138,8 +138,22 @@ wg_tools() {
     done
 }
 
+wg_callback_guard() {
+    # A writer-format file passed wg_compact_roots before the fast matcher ran.
+    # Split roots were each decoded by wg_string: the grammar accepts them too.
+    if [ "$wg_split" = 1 ] || { [ "$wg_fast_roots" = 1 ] && { [ -n "$wg_end" ] || wg_compact_roots; }; }; then
+        wg_guard "$wg_header"'[]'"$wg_between"'['"$wg_client_items"']'"$wg_guard_tail"
+    else
+        wg_guard
+    fi
+}
+
 wg_guard() {
-    wg_json=$wg_guard_text
+    if [ "$#" -gt 0 ]; then wg_json=$1
+    elif [ "$wg_split_guard" = 1 ]; then
+        wg_json=$wg_header'['$wg_root_items']'$wg_between'['$wg_client_items']'$wg_guard_tail
+    else wg_json=$wg_guard_text
+    fi
     wg_ws
     case $wg_json in '{'*) wg_json=${wg_json#?} ;; *) return 1 ;; esac
     while :; do
@@ -235,30 +249,7 @@ wg_call() {
 # are normalized relative to the deepest existing physical directory.
 wg_canon() {
     wg_path=$1; wg_entry=
-    case $wg_path in
-        [a-zA-Z]:*|/[a-zA-Z]/*)
-            # Convert Git Bash drive spellings, including mixed separators.
-            wg_tail=$wg_path; wg_path=
-            while :; do
-                case $wg_tail in
-                    *'\'*) wg_path=$wg_path${wg_tail%%\\*}/; wg_tail=${wg_tail#*\\} ;;
-                    *) wg_path=$wg_path$wg_tail; break ;;
-                esac
-            done
-            case $wg_path in [a-zA-Z]:/*)
-                wg_drive=${wg_path%%:*}; wg_tail=${wg_path#?:}
-                case $wg_drive in
-                    A) wg_drive=a ;; B) wg_drive=b ;; C) wg_drive=c ;; D) wg_drive=d ;;
-                    E) wg_drive=e ;; F) wg_drive=f ;; G) wg_drive=g ;; H) wg_drive=h ;;
-                    I) wg_drive=i ;; J) wg_drive=j ;; K) wg_drive=k ;; L) wg_drive=l ;;
-                    M) wg_drive=m ;; N) wg_drive=n ;; O) wg_drive=o ;; P) wg_drive=p ;;
-                    Q) wg_drive=q ;; R) wg_drive=r ;; S) wg_drive=s ;; T) wg_drive=t ;;
-                    U) wg_drive=u ;; V) wg_drive=v ;; W) wg_drive=w ;; X) wg_drive=x ;;
-                    Y) wg_drive=y ;; Z) wg_drive=z ;;
-                esac
-                wg_path=/$wg_drive$wg_tail ;;
-            esac ;;
-    esac
+    wg_drive_path
     [ -n "$wg_path" ] || return 1
     case $wg_path in /*) ;; *) wg_path=$wg_cwd/$wg_path ;; esac
     while [ "$wg_path" != / ] && [ "${wg_path%/}" != "$wg_path" ]; do wg_path=${wg_path%/}; done
@@ -283,6 +274,85 @@ wg_canon() {
         return 0
     fi
     wg_tail=${wg_path#/}; wg_path=
+    wg_walk || return 1
+    [ -n "$wg_path" ] || wg_path=/
+}
+
+# wg_canon for one guard-file root, with the same result, for the roots of one
+# command. Windows lists hold thousands of roots under a few folders, and each
+# cd -P costs Git Bash about 0.6 ms. The parent folder is resolved once, as
+# wg_canon would resolve it; then a child that is not a link is that folder plus
+# its name. Under bash cd -P builds the path as text from the same parts, so
+# this is what wg_canon prints. Other shells ask the kernel, which may spell a
+# folder differently on a case-insensitive disk: they always call wg_canon.
+# A link, a dot or doubled slash, or a relative root also calls wg_canon.
+wg_canon_root() {
+    wg_path=$1; wg_entry=
+    [ "${wg_bash-}" = 1 ] || { wg_canon "$1"; return; }
+    wg_drive_path
+    case $wg_path in /*) ;; *) wg_canon "$1"; return ;; esac
+    while [ "$wg_path" != / ] && [ "${wg_path%/}" != "$wg_path" ]; do wg_path=${wg_path%/}; done
+    case $wg_path in /|*//*|*/./*|*/../*|*/.|*/..) wg_canon "$1"; return ;; esac
+    if [ -L "$wg_path" ]; then wg_canon "$1"; return; fi
+    wg_parent=${wg_path%/*}; wg_leaf=${wg_path##*/}
+    [ -n "$wg_parent" ] || wg_parent=/
+    if [ "${wg_root_dir_set-}" != 1 ] || [ "$wg_parent" != "$wg_root_dir" ]; then
+        wg_root_dir=$wg_parent; wg_root_dir_set=1
+        if [ -d "$wg_parent" ] && CDPATH= cd -P -- "$wg_parent" 2>/dev/null; then
+            wg_root_phys=1; wg_root_dir_path=${PWD%/}
+            CDPATH= cd -P -- "$wg_cwd" 2>/dev/null || return 1
+        else
+            # wg_canon walks such a root; walk its parent once.
+            wg_root_phys=0; wg_root_leaf=$wg_leaf; wg_root_full=$wg_path
+            wg_tail=${wg_parent#/}; wg_path=
+            wg_walk || return 1
+            wg_root_dir_path=$wg_path; wg_path=$wg_root_full; wg_leaf=$wg_root_leaf
+        fi
+    fi
+    if [ "$wg_root_phys" = 1 ]; then
+        wg_path=$wg_root_dir_path/$wg_leaf; return 0
+    fi
+    # The parent cannot be entered, so wg_canon tries the root itself, then
+    # walks: the parent's walk plus this name.
+    if [ -d "$wg_path" ] && CDPATH= cd -P -- "$wg_path" 2>/dev/null; then
+        wg_path=$PWD
+        CDPATH= cd -P -- "$wg_cwd" 2>/dev/null || return 1
+        return 0
+    fi
+    wg_path=$wg_root_dir_path; wg_tail=$wg_leaf
+    wg_walk
+}
+
+# A writer-format roots list that passed wg_compact_roots and holds no \" is
+# "r1","r2",...: every quote delimits a root. One split in the shell's C code
+# replaces the grammar, which copies the rest of a 1 MiB list for every root.
+# Each root is the string the grammar decodes; an escape takes wg_string.
+wg_split_roots() {
+    case $wg_root_items in *'\"'*) return 1 ;; esac
+    wg_items=${wg_root_items#\"}; wg_items=${wg_items%\"}
+    case $- in *f*) wg_noglob=1 ;; *) wg_noglob=0; set -f ;; esac
+    wg_ifs_set=${IFS+1}; wg_ifs=${IFS-}
+    IFS='"'
+    wg_status=0
+    for wg_item in $wg_items; do
+        case $wg_item in
+            ,) continue ;;
+            *'\'*)
+                if [ "$wg_ifs_set" = 1 ]; then IFS=$wg_ifs; else unset IFS; fi
+                wg_json='"'$wg_item'"'
+                if ! wg_string || [ -n "$wg_json" ]; then wg_status=1; break; fi
+                wg_item=$wg_value; IFS='"' ;;
+        esac
+        wg_roots=$((wg_roots + 1)); eval "wg_root_$wg_roots=\$wg_item"
+    done
+    if [ "$wg_ifs_set" = 1 ]; then IFS=$wg_ifs; else unset IFS; fi
+    [ "$wg_noglob" = 1 ] || set +f
+    return "$wg_status"
+}
+
+# Walk the components left in wg_tail onto wg_path. Each existing directory
+# is replaced by its physical path, so a later .. leaves the real parent.
+wg_walk() {
     while [ -n "$wg_tail" ]; do
         wg_part=${wg_tail%%/*}
         case $wg_tail in */*) wg_tail=${wg_tail#*/} ;; *) wg_tail= ;; esac
@@ -296,7 +366,33 @@ wg_canon() {
                fi ;;
         esac
     done
-    [ -n "$wg_path" ] || wg_path=/
+}
+
+# Convert Git Bash drive spellings in wg_path, including mixed separators.
+wg_drive_path() {
+    case $wg_path in
+        [a-zA-Z]:*|/[a-zA-Z]/*)
+            wg_tail=$wg_path; wg_path=
+            while :; do
+                case $wg_tail in
+                    *'\'*) wg_path=$wg_path${wg_tail%%\\*}/; wg_tail=${wg_tail#*\\} ;;
+                    *) wg_path=$wg_path$wg_tail; break ;;
+                esac
+            done
+            case $wg_path in [a-zA-Z]:/*)
+                wg_drive=${wg_path%%:*}; wg_tail=${wg_path#?:}
+                case $wg_drive in
+                    A) wg_drive=a ;; B) wg_drive=b ;; C) wg_drive=c ;; D) wg_drive=d ;;
+                    E) wg_drive=e ;; F) wg_drive=f ;; G) wg_drive=g ;; H) wg_drive=h ;;
+                    I) wg_drive=i ;; J) wg_drive=j ;; K) wg_drive=k ;; L) wg_drive=l ;;
+                    M) wg_drive=m ;; N) wg_drive=n ;; O) wg_drive=o ;; P) wg_drive=p ;;
+                    Q) wg_drive=q ;; R) wg_drive=r ;; S) wg_drive=s ;; T) wg_drive=t ;;
+                    U) wg_drive=u ;; V) wg_drive=v ;; W) wg_drive=w ;; X) wg_drive=x ;;
+                    Y) wg_drive=y ;; Z) wg_drive=z ;;
+                esac
+                wg_path=/$wg_drive$wg_tail ;;
+            esac ;;
+    esac
 }
 
 # JSON encode in chunks, with a slow byte path only for C0 controls. No argv
@@ -547,7 +643,13 @@ wg_children() {
                 wg_total=$((wg_total + 1))
             done
             if [ "$wg_total" -gt 0 ] && { [ "$wg_selected" -eq "$wg_total" ] || { [ "$wg_selected" -ge 2 ] && [ $((wg_selected * 10)) -ge $((wg_total * 9)) ]; }; }; then
-                wg_match=$wg_root; return 0
+                [ "$wg_fast_roots" = 1 ] && [ -n "$wg_end" ] || { wg_match=$wg_root; return 0; }
+                # Compact candidates are numbered in argv order. A writer-format
+                # file names the first root in file order, as the full parser did.
+                wg_pos=${wg_root_text%%\""$wg_root"\"[],]*}
+                if [ -z "$wg_match" ] || [ "${#wg_pos}" -lt "$wg_match_pos" ]; then
+                    wg_match=$wg_root; wg_match_pos=${#wg_pos}
+                fi
             fi
         fi
         wg_i=$((wg_i + 1))

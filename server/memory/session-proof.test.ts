@@ -40,12 +40,42 @@ it('an unchanged retained proof avoids another durable write but new receipts an
  expect(p.proveRetainedSession(LineageAllowance.tool(),f.key,{access:f.access,disclosed:true})).toMatchObject({kind:'fresh',cause:'denied'});
 });
 
+// thrust-recall M1 (the session-proof.ts merge keeps 03911768b9's guard): a deny generation that cannot be read proves nothing
+// about denies. The retained session resets as still checking. The stored check alone never resumes it, the check row is not
+// re-certified meanwhile, and the same session resumes once the generation is readable again.
+it('an unreadable deny generation resets a retained session as still checking, never on the stored check alone',async()=>{
+ const f=setupProofFixture('direct'),p=await proofModule();await receipts(f,1);
+ const prove=()=>p.proveRetainedSession(LineageAllowance.tool(),f.key,{access:f.access,disclosed:true});
+ expect(prove()).toEqual({kind:'resume'});
+ const db=database(),stored=Number(db.prepare("SELECT value FROM memory_lineage_lsn_meta WHERE key='deny_generation'").get()!.value);
+ // the generation the check was certified at is its footprint envelope's dg (the 1.0.19 table has no column for it)
+ const certified=()=>Number(JSON.parse(String(db.prepare('SELECT footprint FROM memory_session_checks').get()!.footprint)).dg);
+ expect(stored).toBeGreaterThanOrEqual(0);
+ expect(certified()).toBe(stored);
+ db.prepare("DELETE FROM memory_lineage_lsn_meta WHERE key='deny_generation'").run();
+ expect(prove()).toEqual({kind:'fresh',reason:'changed:deny',cause:'checking'});
+ expect(certified()).toBe(stored);
+ db.prepare("INSERT INTO memory_lineage_lsn_meta(key,value) VALUES('deny_generation',?)").run(stored);
+ expect(prove()).toEqual({kind:'resume'});
+});
+
+it('a tombstoned source in an unfolded receipt decides the refusal before its dependent record is hydrated',async()=>{
+ const f=setupProofFixture('direct'),p=await proofModule(),db=database();
+ const [bundle]=await receipts(f,1),scope=policy.ensureScope('bot','reader');
+ new WritetimeFixture(db).source('receipt-source',scope).record('receipt-record',1,scope,['receipt-source']);
+ db.prepare('UPDATE memory_disclosures SET record_versions=?,source_versions=? WHERE bundle_id=?').run(JSON.stringify([{id:'receipt-record',version:1}]),JSON.stringify([{id:'receipt-source',revision:1}]),bundle);
+ expect(db.prepare('SELECT up_to FROM memory_session_checks').get()!.up_to).toBe(0);
+ db.prepare("INSERT INTO memory_tombstones VALUES('receipt-tombstone','source','receipt-source',1,NULL,?,'owner-forget',1)").run(f.access.deletionEpoch);
+ expect(p.proveRetainedSession(LineageAllowance.tool(),f.key,{access:f.access,disclosed:true})).toEqual({kind:'fresh',reason:'changed:source',cause:'denied'});
+ expect(db.prepare('SELECT state FROM memory_disclosures WHERE bundle_id=?').get(bundle)!.state).toBe('revoked');
+});
+
 it.each([0,10_000,100_000])('recovery invalidates a checkpoint with flat writes across %i dependent proofs',count=>{
  const db=new DatabaseSync(':memory:');
  try {
   db.exec('CREATE TABLE memory_sources(id,state,revision,scope_id);CREATE TABLE memory_records(id,state,version,scope_id);CREATE TABLE memory_tombstones(target_type,target_id);CREATE TABLE memory_disclosures(bundle_id,state);CREATE TABLE memory_session_lineage(thread_id,driver_instance,native_session)');
   ensureSessionProofSchema(db);
-  db.exec(`INSERT INTO memory_session_checks VALUES('thread','engine','session','reader',1,0,0,NULL,NULL,NULL,1,0,'[]',${count},0,${Date.now()});
+  db.exec(`INSERT INTO memory_session_checks(thread_id,driver_instance,native_session,reader_key,up_to,log_seq,recall_epoch,view_id,view_generation,view_digest,policy_revision,deletion_epoch,footprint,cites,seeding,checked) VALUES('thread','engine','session','reader',1,0,0,NULL,NULL,NULL,1,0,'[]',${count},0,${Date.now()});
    WITH RECURSIVE n(i) AS (SELECT 1 WHERE ${count}>0 UNION ALL SELECT i+1 FROM n WHERE i<${count})
    INSERT INTO memory_session_check_cites SELECT 'thread','engine','session','record',printf('%06d',i),1,'bundle' FROM n;
    WITH RECURSIVE n(i) AS (SELECT 1 WHERE ${count}>0 UNION ALL SELECT i+1 FROM n WHERE i<${count})

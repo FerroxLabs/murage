@@ -68,7 +68,10 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
   const executingRequestId=options.executingRequestId;
   try { assertMemoryAccess(access); }
   catch(error) {
-    const executing = error instanceof RecallViewLost && path==="/api/internal/memory/save" && executingRequestId ? roomRequest(database(),executingRequestId) : null;
+    // A revoked access is a lost view or (oneindex, policy.ts assertMemoryAccess) a moved authority epoch or principal: a Reopen moves the
+    // epoch, so a close turn whose lesson path it ended reports the lesson refusal either way, never the generic revoke.
+    const revoked = error instanceof RecallViewLost || error instanceof Error && error.message==="MEMORY_CONTEXT_REVOKED";
+    const executing = revoked && path==="/api/internal/memory/save" && executingRequestId ? roomRequest(database(),executingRequestId) : null;
     if(executing && executing.toBotId===access.botId && (executing.targetThreadId??executing.rootThreadId)===access.threadId
       && isCloseTurnRequest(database(),executing) && !isProjectCloseLesson(database(),executing))throw new Error("MEMORY_CLOSE_LESSON_REQUIRED");
     throw error;
@@ -84,7 +87,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
   try {
     if(path==="/api/internal/memory/search"){
       const input=search.parse(body);
-      const found=await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.search(recallHydrationLimitMs("tool")),withheldMessage:readerWithheldMessage(access),caller:"tool"});
+      const found=await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.search(recallHydrationLimitMs("tool")),withheldMessage:readerWithheldMessage(access),caller:"tool",ownerTurn:false});
       // bot email (5.4): a hit resting on a source from a marked row is fenced, kind email-derived, and marks this turn
       const result=bounded({...found,hits:fenceEmailDerivedRecords(database(),found.hits,access.threadId)});
       // NOLIMITS v1 1.0.19 4.2 r3: the reading turn marks memory only when a returned record is not proven clean

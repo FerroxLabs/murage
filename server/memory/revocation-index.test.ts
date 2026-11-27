@@ -12,6 +12,7 @@
 // json_extract they replace unless the statements strip their affinity. The
 // upgrade backfill is sliced and resumable, and revocation reads the JSON until
 // it is ready. The disk-backed 500k upgrade benchmark is revocation-index.bench.mjs.
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { mkdtempSync } from "node:fs";
 import { fork } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -255,7 +256,7 @@ it("a downgrade drops the revocation index, and the next start rebuilds it", () 
   const names = () => db.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_disclosure_refs%' OR name IN ('memory_disclosures_state','memory_revocation_index_build') ORDER BY name").all().map(row => String(row.name));
   expect(names()).toEqual(["memory_disclosure_refs", "memory_disclosure_refs_bundle", "memory_disclosure_refs_delete", "memory_disclosure_refs_insert", "memory_disclosure_refs_ref", "memory_disclosure_refs_update", "memory_disclosures_state", "memory_revocation_index_build"]);
   const before = db.prepare("SELECT count(*) AS n FROM memory_disclosure_refs").get()!.n;
-  expect(downgradeMemorySchema(db, 7)).toEqual({ status: "downgraded", from: 13, to: 7 });
+  expect(downgradeMemorySchema(db, 7)).toEqual({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 7 });
   expect(names()).toEqual([]);
   validateMemorySchema(db);
   expect(db.prepare("SELECT schema_version FROM memory_meta").get()!.schema_version).toBe(7);
@@ -273,7 +274,7 @@ it("a downgrade drops the revocation index, and the next start rebuilds it", () 
   expect(revokeRecordDisclosures(db, "test", { recordIds: [recordId(1)], viaSources: false }) + runRevocationJobsNow(db)).toBeGreaterThan(0);
   expect(db.prepare("SELECT state FROM memory_disclosures WHERE bundle_id='later'").get()!.state).toBe("revoked");
   // and the desktop's "reinstall 1.0.1" step (to 6) passes through it
-  expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 13, to: 6 });
+  expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 6 });
   expect(names()).toEqual([]);
 });
 
@@ -410,7 +411,7 @@ it("mixed-type citations (a number for a text id, floats, leading zeros, null an
   // the stored forms are the JSON's own: a number stays a number
   expect(db.prepare("SELECT typeof(ref_id) AS t FROM memory_disclosure_refs WHERE bundle_id='rec-0-0'").get()!.t).toBe("integer");
   // persists through a downgrade to 6 and the upgrade back: JSON scan while the index is rebuilt, the index after
-  expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: 13, to: 6 });
+  expect(downgradeMemorySchema(db, 6)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 6 });
   migrateMemorySchema(db);
   expect(revocationIndexReady(db)).toBe(false);
   const during = differential(db, recordIds, sourceIds);

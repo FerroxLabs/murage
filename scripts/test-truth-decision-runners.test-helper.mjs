@@ -91,9 +91,9 @@ it.each([
 ])('tafix-r4b runner scenario %s certifies only the mutants its pins allow',(scenario,expected)=>{
  const root=mkdtempSync(join(tmpdir(),'tafix-verdict-')),out=join(tmpdir(),'tafix-verdict-out-'+process.pid+'-'+scenario);
  try{
-  for(const dir of ['server/testing','server/memory','scripts','shared','node_modules/vitest'])mkdirSync(join(root,dir),{recursive:true});
+  for(const dir of ['server/testing','server/memory','scripts','shared','electron','node_modules/vitest'])mkdirSync(join(root,dir),{recursive:true});
   writeFileSync(join(root,'package.json'),'{"type":"module"}');
-  for(const file of ['server/testing/tafix-r4b-mutants.mjs','server/testing/tafix-r4b-pins.json','server/testing/redact-sink-extra.ts','server/testing/redact-sink-witnesses.ts','server/redact-sink-boundaries.test.ts','server/memory/record-write.ts','server/engine-reply-check.ts','server/approval-text.ts','server/redact.ts','shared/win-hide-child-process.mjs','shared/win-hide-child-process.cjs'])cpSync(resolve(file),join(root,file));
+  for(const file of ['server/testing/tafix-r4b-mutants.mjs','server/testing/tafix-r4b-pins.json','server/testing/safe-wipe.mjs','electron/data-dir-lease.mjs','electron/windows-native.mjs','server/testing/redact-sink-extra.ts','server/testing/redact-sink-witnesses.ts','server/redact-sink-boundaries.test.ts','server/memory/record-write.ts','server/engine-reply-check.ts','server/approval-text.ts','server/redact.ts','shared/win-hide-child-process.mjs','shared/win-hide-child-process.cjs'])cpSync(resolve(file),join(root,file));
   cpSync(resolve('scripts/test-truth'),join(root,'scripts/test-truth'),{recursive:true});
   const frame=(file,text)=>{const source=readFileSync(resolve(file),'utf8'),offset=source.indexOf(text);return file+':'+(source.slice(0,offset).split('\n').length)+':'+(offset-source.lastIndexOf('\n',offset));};
   const frames={'server/redact-sink-boundaries.test.ts':frame('server/redact-sink-boundaries.test.ts','expect(bytes).not.toContain(sentinel)'),'server/testing/redact-sink-extra.ts':frame('server/testing/redact-sink-extra.ts','expect(bytes).not.toMatch(')};
@@ -121,7 +121,7 @@ process.exitCode=failed?1:0;
   expect(legacy.testResults).toEqual([{name:join(root,'server/redact-sink-boundaries.test.ts'),assertionResults:[{fullName:'redact-callsite.inventory',status:'failed',failureMessages:[expect.stringContaining('AssertionError: Sink '+(scenario==='other-sink'?'server/memory/record-write.ts':'server/engine-reply-check.ts'))]}]}]);
   const preload=join(root,'fixture-host.mjs');
   writeFileSync(preload,`import {registerHooks} from 'node:module';
-registerHooks({resolve(name,context,next){return name==='node:os'?{url:'fixture:os',shortCircuit:true}:next(name,context);},load(url,context,next){return url==='fixture:os'?{format:'module',shortCircuit:true,source:'export const loadavg=()=>[0,0,0];export const tmpdir=()=>${JSON.stringify(tmpdir())};'}:next(url,context);}});`);
+registerHooks({resolve(name,context,next){return name==='node:os'&&context.parentURL!=='fixture:os'?{url:'fixture:os',shortCircuit:true}:next(name,context);},load(url,context,next){return url==='fixture:os'?{format:'module',shortCircuit:true,source:'export * from "node:os";export const loadavg=()=>[0,0,0];export const tmpdir=()=>${JSON.stringify(tmpdir())};'}:next(url,context);}});`);
   const run=spawnSync(process.execPath,['--import',pathToFileURL(preload).href,'server/testing/tafix-r4b-mutants.mjs','10',out],{cwd:root,env:{...process.env,TEST_TRUTH_MUTANT_REPORT:'',CI:'1',TAFIX_SCENARIO:scenario},encoding:'utf8',timeout:120000,maxBuffer:4*1024**2});
   expect(run.error).toBeUndefined();
   const verdicts=Object.fromEntries([...run.stdout.matchAll(/^(R4B-10-[a-z-]+): (KILLED|NOT CERTIFIED)/gm)].map(match=>[match[1],match[2]==='KILLED']));

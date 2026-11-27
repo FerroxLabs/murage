@@ -26,10 +26,10 @@ export function readOriginMarker(file, fs = nodeFs) {
 /** The server's store file and the existing device file: either one means this profile was used before 1.0.19. */
 export const UPGRADE_MARKERS = Object.freeze(["messages.db", "startup-background.json"]);
 
-/** Read the file. {state} when valid; {state:null, reason} otherwise. reason: missing | unsafe | corrupt | version. */
+/** Read the file. {state} when valid; {state:null, reason} otherwise. reason: missing | unreadable | unsafe | corrupt | version. */
 export function readNotifySurfacesFile(file, platform, fs = nodeFs) {
   let stat;
-  try { stat = fs.lstatSync(file); } catch { return { state: null, reason: "missing" }; }
+  try { stat = fs.lstatSync(file); } catch (error) { return { state: null, reason: error?.code === "ENOENT" ? "missing" : "unreadable" }; }
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_FILE_BYTES) return { state: null, reason: "unsafe" };
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return { state: null, reason: "corrupt" }; }
@@ -59,21 +59,34 @@ function writeAtomic(file, state, fs) {
 
 /**
  * profileDir: the owned profile directory, or null (no owned dir: origin is "new" and held in memory for the launch).
- * Returns {state(), get(), set(key,value), reset(), persisted}.
+ * Returns {get(), set(key,value), reset(), persisted, trusted}.
  */
 export function createNotifySurfaces({ profileDir, platform, fs = nodeFs, onError = () => {} }) {
   const file = profileDir ? path.join(profileDir, NOTIFY_SURFACES_FILE) : null;
+  const trustPath = profileDir ? path.join(profileDir, "notify-trust.json") : null;
   const markerPath = profileDir ? path.join(profileDir, NOTIFY_ORIGIN_FILE) : null;
   const marker = markerPath ? readOriginMarker(markerPath, fs) : { origin: null, reason: "missing" };
   let state, persisted = false;
   const loaded = file ? readNotifySurfacesFile(file, platform, fs) : { state: null, reason: "missing" };
+  let trusted = false, canReplace = true;
+  if (trustPath) {
+    let markerState;
+    try { fs.lstatSync(trustPath); markerState = "present"; }
+    catch (error) { markerState = error?.code === "ENOENT" ? "absent" : "unknown"; }
+    if (loaded.state || loaded.reason === "missing") trusted = markerState === "absent";
+    else if (markerState !== "present") {
+      // Make the unknown banner choice durable before replacing any preference bytes.
+      try { writeAtomic(trustPath, { v: 1, untrusted: true }, fs); }
+      catch (error) { canReplace = false; onError(error); }
+    }
+  }
   if (loaded.state) { state = loaded.state; persisted = true; }
   else {
     // The marker decides: a new install stays new after the server makes its store; an unreadable marker is the conservative upgrade.
     const origin = marker.origin ?? (marker.reason === "unreadable" ? "upgrade" : originFromDisk(profileDir, fs));
     state = notifySurfaceDefaults(origin, platform);
     // A missing or corrupt file is rewritten at once. A symlink, an oversize file or a newer version is left alone.
-    if (file && (loaded.reason === "missing" || loaded.reason === "corrupt")) {
+    if (file && canReplace && (loaded.reason === "missing" || loaded.reason === "corrupt")) {
       try { writeAtomic(file, state, fs); persisted = true; } catch (error) { onError(error); }
     }
   }
@@ -82,13 +95,20 @@ export function createNotifySurfaces({ profileDir, platform, fs = nodeFs, onErro
     try { writeAtomic(markerPath, { v: NOTIFY_SURFACES_VERSION, origin: state.origin }, fs); } catch (error) { onError(error); }
   }
   const snapshot = () => structuredClone(state);
-  const commit = next => {
-    if (file && persisted) writeAtomic(file, next, fs);
-    else if (file && !persisted) { writeAtomic(file, next, fs); persisted = true; }
+  const commit = (next, confirmsNotify) => {
+    if (file && canReplace) {
+      writeAtomic(file, next, fs);
+      persisted = true;
+      if (confirmsNotify && !trusted) {
+        try { fs.rmSync(trustPath, { force: true }); trusted = true; }
+        catch (error) { onError(error); }
+      }
+    }
     state = next;
   };
   return {
     get persisted() { return persisted; },
+    get trusted() { return trusted; },
     get: snapshot,
     set(key, value) {
       const checked = checkNotifySurfaceKey(key, value);
@@ -99,14 +119,14 @@ export function createNotifySurfaces({ profileDir, platform, fs = nodeFs, onErro
         next.surfaces[key.slice(9)] = checked.value;
       } else if (key.startsWith("asks.")) next.asks[key.slice(5)] = checked.value;
       else next[key] = checked.value;
-      commit(next);
+      commit(next, key === "surfaces.notify");
       return snapshot();
     },
     /** Reset to defaults = the new-install defaults for this computer. The origin and the chooser state are kept. */
     reset() {
       const next = notifySurfaceDefaults("new", platform);
       next.origin = state.origin; next.chooser = state.chooser; next.asks = { ...state.asks };
-      commit(next);
+      commit(next, true);
       return snapshot();
     },
   };

@@ -222,7 +222,7 @@ export async function extractCandidates(text: string, extractor: TextOnlyExtract
   if(learningSlot.inFlight)return {...defer("extractor-busy",undefined,"busy"),waitingFor:"inference-slot" as const};
   if(!text.trim()||Buffer.byteLength(text)>65536)return defer("source-exceeds-extraction-budget");
   const fenced={status:"deferred" as const,reason:"extraction-fenced",candidates:[],noReply:true as const};
-  if(!gatePasses(options.fence)){logFencedDrop("extraction");return fenced;}
+  if(!gatePasses(options.fence)){logFencedDrop("extraction",options.fence?.cause);return fenced;}
   const messages=Object.freeze(memoryExtractionMessages(options.shown??text,policy).map(message=>Object.freeze(message)));
   const dispatch=Object.freeze({policyRevision:policy.revision,messages,...(options.fence?{fence:options.fence}:{})});
   const {reserved,output,settle,finish,handle}=reserveExtraction(messages,2000,record);
@@ -240,7 +240,7 @@ export async function extractCandidates(text: string, extractor: TextOnlyExtract
   } catch(error) {
     // dropped before the send: nothing reached the engine, no mark against the slice, the extractor or the pin
     // busy (another connection held the lock past 50 ms) defers the same way: nothing left, released unchanged
-    if(droppedUnsent(error,options.fence)){logFencedDrop("extraction");extractionOutcomes.settled(outcomes,"cancelled");return fenced;}
+    if(droppedUnsent(error,options.fence)){logFencedDrop("extraction",options.fence?.cause);extractionOutcomes.settled(outcomes,"cancelled");return fenced;}
     // The reason code only (never the reply or the source): a slice that keeps failing says why in the log.
     const reason=extractionFailureReason(error);
     extractor.pinReplyUnusable?.(error,signal);
@@ -460,7 +460,7 @@ export async function groundMemoryClaim(input:MemoryGroundingInput,extractor:Tex
   const outcomes=extractionOutcomes.forExtractor(extractor);
   if(signal.aborted||learningSlot.inFlight||outcomes.networkRetryAt>Date.now())return {supported:false,reason:"grounding-busy-or-cancelled"};
   if(Buffer.byteLength(JSON.stringify(input))>65536)return {supported:false,reason:"grounding-input-limit"};
-  if(!gatePasses(fence)){logFencedDrop("grounding");return {supported:false,reason:"grounding-fenced"};}
+  if(!gatePasses(fence)){logFencedDrop("grounding",fence?.cause);return {supported:false,reason:"grounding-fenced"};}
   const {reserved,output,settle,finish,handle}=reserveExtraction(memoryGroundingMessages(input),64,record,"grounding");
   if(reserved!==true)return {supported:false,reason:reserved};
   learningSlot.inFlight=true;
@@ -473,7 +473,7 @@ export async function groundMemoryClaim(input:MemoryGroundingInput,extractor:Tex
     const updates=entailed&&(result.updates??true);
     return {supported:updates,reason:updates?"source-entailment":"unsupported-claim",entailed};
   }catch(error){
-    if(droppedUnsent(error,fence)){logFencedDrop("grounding");return {supported:false,reason:"grounding-fenced"};}
+    if(droppedUnsent(error,fence)){logFencedDrop("grounding",fence?.cause);return {supported:false,reason:"grounding-fenced"};}
     const label=signal.aborted?"cancelled":extractionFailureReason(error);
     extractor.pinReplyUnusable?.(error,signal);
     if(label==="network")extractionOutcomes.networkFailed(outcomes);
@@ -602,7 +602,7 @@ export async function withMemoryInferenceLease<T>(callback:(lease:MemoryInferenc
       if(Buffer.byteLength(JSON.stringify(frozenMessages))>65536)return refuse("invalid-input");
       // no empty default gate: every learning caller builds its own over the words it read (r8 step 2)
       const sendFence=fence;
-      if(!gatePasses(sendFence)){logFencedDrop(purpose);return refuse("memory-changed");}
+      if(!gatePasses(sendFence)){logFencedDrop(purpose,sendFence?.cause);return refuse("memory-changed");}
       const {reserved,output,settle,finish,handle}=reserveExtraction(frozenMessages,maximumOutputTokens,observer?(db,charge)=>observer.charged(db,{...charge,purpose}):undefined,purpose,context);
       if(reserved!==true)return refuse(reserved);
       requestBusy=true;
@@ -610,7 +610,7 @@ export async function withMemoryInferenceLease<T>(callback:(lease:MemoryInferenc
       const requestSignal=AbortSignal.any([signal,leaseAbort.signal,AbortSignal.timeout(purpose==="continuity"?CONTINUITY_REQUEST_TIMEOUT_MS:60000)]);
       let transport:Promise<string>;
       try{transport=Promise.resolve(usageObserver.run({settle,handle},()=>settleFencedAtNothing(()=>extractor(text,output,requestSignal,dispatch),sendFence)));}catch(error){transport=Promise.reject(error);}
-      void transport.catch(error=>{if(isMemorySendFenced(error))logFencedDrop(purpose);});
+      void transport.catch(error=>{if(isMemorySendFenced(error))logFencedDrop(purpose,sendFence?.cause);});
       activeTransport=transport;transportSettled=false;
       const settled=()=>{try{finish();}finally{if(activeTransport===transport){requestBusy=false;transportSettled=true;}}};
       void transport.then(settled,settled);

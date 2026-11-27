@@ -1,5 +1,5 @@
 {
-  "@source": "968d807cca562a743b79127e48954176f04baabf",
+  "@source": "f5be60d75f8dfdae69794bd6aeba3a92fb69cfc5",
   "label.cloudPairing": "Adicionar um novo dispositivo à sua casa na Cloud",
   "label.cloudDevicesAccount": "Alterar os dispositivos ou a conta da sua casa na Cloud",
   "label.modelSigninStart": "Iniciar um login de modelo na sua casa na Cloud",
@@ -103,11 +103,6 @@
   "label.connectorDisconnect": "Desconectar um app",
   "label.phoneCalls": "Gerenciar as chamadas telefônicas dos bots",
   "label.dataDirConfirmRoot": "Confirmar para onde uma pasta de dados vinculada aponta agora",
-  "label.highlevelCheck": "Verificar um local do HighLevel",
-  "label.highlevelConnect": "Conectar um local do HighLevel",
-  "label.highlevelAccess": "Alterar o que um bot pode ler no HighLevel",
-  "label.highlevelDisconnect": "Desconectar o local do HighLevel",
-  "label.highlevelChange": "Alterar a conexão com o HighLevel",
   "label.fallback": "Fazer uma alteração na sua casa na Cloud",
   "flag.fullAccess": "Acesso total",
   "flag.noLimits": "Sem limites",

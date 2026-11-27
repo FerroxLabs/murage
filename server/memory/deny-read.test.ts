@@ -329,7 +329,7 @@ describe("memory objects (memoryLookup)", () => {
 
   it("any error reads checking, per ref", () => {
     const f = make().record("r", 1, "s-room");
-    f.db.exec("DROP TABLE memory_deny_memory");
+    f.db.exec("DROP TABLE memory_deny_object");
     expect(lookup(f, [{ kind: "record", id: "r", version: 1 }])).toEqual({ "record:r:1": C("lookup-error") });
   });
 });
@@ -463,7 +463,7 @@ describe("refs and the send fence", () => {
     expect(fenceVerdict(f.db, built, MEMBER)).toEqual(SHOWN); // generation unmoved: the marker bumps it with its marks
     f.meta("deny_generation", 4);
     expect(fenceVerdict(f.db, built, MEMBER)).toEqual(W("deny-line"));
-    f.db.exec("DELETE FROM memory_deny_line");
+    f.db.exec("DELETE FROM memory_deny_point");
     expect(fenceVerdict(f.db, built, MEMBER)).toEqual(SHOWN);
     // a prompt built outside a turn (generation -1) is always re-checked; an unreadable generation is checking
     const loose = buildPrompt(undefined, [promptPart("quote", [{ kind: "line", threadId: "T", messageId: "q" }])]);

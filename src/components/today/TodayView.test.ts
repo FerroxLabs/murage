@@ -139,11 +139,23 @@ describe("the Tell box", () => {
     expect(todayChiefId(team, null)).toBe("chief");
     expect(todayChiefId(team, "lead")).toBe("lead");
     expect(todayChiefId([{ id: "lead", chiefOfStaff: true }], null)).toBeNull();
-    const view = read("./TodayView.tsx");
-    const firstRunBranch = view.indexOf("{model.firstRun ? (");
-    expect(firstRunBranch).toBeGreaterThan(0);
-    expect(view.indexOf("<TellChiefBox")).toBeGreaterThan(view.indexOf(") : (", firstRunBranch));
-    expect(view).toContain("const tellBot = tellChief(state.bots, chief, model.firstRun);");
+  });
+
+  // GH#47: setup keeps the Chief it first recorded for as long as that bot exists, and the app passes it in as the
+  // setup view's chiefBotId. After the owner moves the role, the box follows the current Chief.
+  it("follows the current Chief when the setup view still names the first one (hidden, or stepped down)", () => {
+    const team = [
+      { id: "first", name: "Ember", chiefOfStaff: false, hidden: true },
+      { id: "now", name: "Atlas", chiefOfStaff: true, chiefScope: "workspace" as const, hidden: false },
+    ];
+    expect(tellChief(team, "first", false)?.id).toBe("now");
+    expect(tellChief(team.map((bot) => ({ ...bot, hidden: false })), "first", false)?.id).toBe("now");
+    expect(tellChief(team, "now", false)?.id).toBe("now");
+    // still hidden during first run, and never a hidden Chief
+    expect(tellChief(team, "first", true)).toBeNull();
+    expect(tellChief(team.map((bot) => ({ ...bot, hidden: true })), "first", false)).toBeNull();
+    // with no workspace Chief, the setup view's own visible pick stands (setup adopted the oldest bot)
+    expect(tellChief([{ id: "oldest", name: "Max", hidden: false }], "oldest", false)?.id).toBe("oldest");
   });
 
   it("is the Chief's own Composer: it sends to the Chief's current chat and clears through the composer", () => {
@@ -288,7 +300,7 @@ describe("what Today reads on open", () => {
 describe("Your day", () => {
   const routine = (id: string, name: string, at: number | null, extra: Record<string, unknown> = {}) => ({ id, botId: "b", name, enabled: true, schedule: { type: "daily" }, nextRunAt: at, ...extra }) as never;
   const day = (routines: never[]) => renderToStaticMarkup(createElement(YourDay, { timeline: dayTimeline(routines, NOW), now: NOW, botNames: { b: "Max" }, chiefName: "Ember", onOpenRoutines: vi.fn() }));
-  it("rows from now to midnight, then the meetings placeholder", () => {
+  it("rows from now to midnight, and no promise of a coming update (1.0.20 Mac walk)", () => {
     const html = day([routine("r1", "Inbox brief", NOW + 3_600_000)]);
     expect(html).toContain("Your day");
     expect(html).toContain("Now");
@@ -296,7 +308,9 @@ describe("Your day", () => {
     expect(html).toContain("Inbox brief");
     expect(html).toContain("Max");
     expect(html).toContain("Midnight");
-    expect(html).toContain("Your own meetings will show here in a coming update.");
+    // A placeholder that promises a future feature is not part of the owner's day.
+    expect(html).not.toContain("coming update");
+    expect(html).not.toContain('data-day="meetings"');
   });
   it("empty: the next run, or no routines at all", () => {
     const tomorrow = new Date(2026, 10, 5, 8, 0).getTime();
@@ -304,7 +318,7 @@ describe("Your day", () => {
     expect(emptyDayLine(dayTimeline([], NOW), NOW, "Ember")).toBe("No routines yet. Tell Ember what you want done every day.");
     const html = day([]);
     expect(html).toContain("No routines yet. Tell Ember what you want done every day.");
-    expect(html).toContain("Your own meetings will show here in a coming update.");
+    expect(html).not.toContain("coming update");
   });
 });
 

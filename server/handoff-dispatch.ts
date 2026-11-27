@@ -96,6 +96,8 @@ export interface HandoffHost {
   /** the routine authority and unattended state a peer's turn inherits from the sender */
   peerOptions(target: BotRecord | undefined, sourceThreadId: string, fromBotId: string, queued?: RoutinePeerSource): Record<string, unknown>;
   isUnattended(threadId: string): boolean;
+  /** N3: true when the bot is archived or being archived; a hand-off whose sender or target is fenced is cancelled, never started (absent: nothing is fenced) */
+  fenced?(botId: string): boolean;
   /** the owner's line for a held hand-off (Send again / Dismiss) */
   noticeHeld(held: HeldDelegation): void;
   /** A queued hand-off whose start failed before the engine was handed the turn: the "could not start" chip in the conversation it was made in (the delegating
@@ -692,6 +694,7 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
         const carried = item.coordination as CoordinationTrace;
         options = { ...options, coordination: carried, commsDepth: carried.path.length - 1 };
       }
+      if (item.automationAncestry === true || item.routineAuthority !== undefined) options = { ...options, automationAncestry: true };
       sharedOps!.mirror(request!, { sourceMessageId: item.sourceMessageId });
     } else {
       release = h.reserveSlot(destination);
@@ -720,6 +723,8 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
         // the prompt rests on the one row that handed it over (rule 7); a legacy item without it keeps the asking conversation's prefix
         ...(item.sourceMessageId ? { handoffOf: { threadId: source, messageId: item.sourceMessageId } } : {}),
         ...(item.notOwnerAudience === true ? { chainNotOwner: true } : {}),
+        // PHONEAUD: a routine-started chain stays one, whatever the source thread runs when this starts
+        ...(item.automationAncestry === true || item.routineAuthority !== undefined ? { automationAncestry: true } : {}),
         eventId: item.eventId,
         coordination: item.coordination as CoordinationTrace | undefined,
         // The delegating bot is the one whose unattended state matters, and a room thread has no owner to look it up from.
@@ -736,6 +741,15 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
     }
   } catch (error) {
     return failure(error);
+  }
+  // N3, checked after the last await (channel, peer approval): an archived sender or target never starts the turn; the hand-off ends cancelled
+  if (h.fenced?.(sender.id) || h.fenced?.(target.id)) {
+    failedOnce = true;
+    revoke(ticket);
+    release();
+    if (watching) h.watch.end(destination);
+    running?.abandon();
+    return apply(id, env, { kind: "cancel", receipt: { status: "cancelled", result: status("receipt_cancelled") }, quiet: true });
   }
   // THE start: nothing else passes a hand-off's run to a turn
   try {

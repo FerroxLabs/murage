@@ -71,7 +71,7 @@ const markSession = (bot: Bot, revoke = ROOT_REVOKE) => {
   });
   return old;
 };
-const marks = () => dbUse(db => Object.fromEntries(["memory_deny_session", "memory_deny_line", "memory_deny_range", "memory_deny_memory", "memory_deny_pending", "memory_deny_pending_scope", "memory_tombstones", "memory_deny"].map(table => [table, db.prepare(`SELECT * FROM ${table}`).all()])));
+const marks = () => dbUse(db => Object.fromEntries(["memory_deny_session", "memory_deny_point", "memory_deny_range", "memory_deny_object", "memory_deny_pending", "memory_deny_pending_scope", "memory_tombstones", "memory_deny"].map(table => [table, db.prepare(`SELECT * FROM ${table}`).all()])));
 const retained = (before: ReturnType<typeof marks>) => {
   const after = marks();
   for (const [table, expected] of Object.entries(before)) expect(after[table], table).toEqual(expect.arrayContaining(expected));
@@ -214,7 +214,7 @@ describe.skipIf(process.platform === "win32")("GH18 legacy non-audience recovery
         const row = replies[n]!, text = secrets[n]!, shape = shapes[n]!;
         db.prepare("UPDATE messages SET text=?,json=? WHERE thread_id=? AND id=?").run(text, JSON.stringify({ ...JSON.parse(row.json), text }), side.threadId, row.id);
         secretLines.push({ ...row, shape, text, threadId: side.threadId });
-        if (shape === "line" || shape === "shared") db.prepare("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,?,?, 'inherit')").run(side.threadId, row.lsn, ROOT_REVOKE, row.lsn);
+        if (shape === "line" || shape === "shared") db.prepare("INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,?,?, 'inherit')").run(side.threadId, row.lsn, ROOT_REVOKE, row.lsn);
         if (shape === "range" || shape === "coalesced") db.prepare("INSERT INTO memory_deny_range(thread_id,from_lsn,until_turn_lsn,revoke_id,reason) VALUES(?,?,?,?, 'legacy')").run(side.threadId, row.lsn - 1, row.turn_lsn + 1, shape === "coalesced" ? -1 : ROOT_REVOKE + 1);
         if (shape === "pending") {
           // The deletion's downstream hold is still active: its legacy frontier
@@ -233,7 +233,7 @@ describe.skipIf(process.platform === "win32")("GH18 legacy non-audience recovery
       directMessageId = direct.id;
       const directText = secrets.at(-1)!;
       db.prepare("UPDATE messages SET text=?,json=? WHERE thread_id=? AND id=?").run(directText, JSON.stringify({ ...JSON.parse(direct.json), text: directText }), bot.threadId, direct.id);
-      db.prepare("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,?,?, 'legacy')").run(bot.threadId, direct.lsn, ROOT_REVOKE, direct.lsn);
+      db.prepare("INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,?,?, 'legacy')").run(bot.threadId, direct.lsn, ROOT_REVOKE, direct.lsn);
       for (const reader of Object.values(READERS)) expect(denyLookup(db, { threadId: bot.threadId, lines: [{ messageId: direct.id, author: "generated" }] }, reader).get(direct.id)).toEqual({ state: "withheld", reason: "deny-line" });
       evidence.directLine = { threadId: bot.threadId, messageId: direct.id, text: directText };
       // A shared descendant with two parent records, but no surviving revoke root.
@@ -246,7 +246,7 @@ describe.skipIf(process.platform === "win32")("GH18 legacy non-audience recovery
         record.run(parent, scope, "Authorized parent");
         db.prepare("INSERT INTO memory_derivations(parent_id,parent_version,child_id,child_version) VALUES(?,1,'gh18-shared',1)").run(parent);
       }
-      db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('record','gh18-shared',0,?)").run(ROOT_REVOKE);
+      db.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES('record','gh18-shared',0,?)").run(ROOT_REVOKE);
       db.exec("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'");
       evidence.readerVerdicts = Object.fromEntries(Object.entries(READERS).map(([name, reader]) => {
         const verdicts = denyLookup(db, { threadId: side.threadId, lines: secretLines.map(row => ({ messageId: row.id, author: "generated" as const })) }, reader);

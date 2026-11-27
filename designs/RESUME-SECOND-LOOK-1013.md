@@ -14,7 +14,7 @@ session had nothing wrong with it. The check ran out of time, on a clean session
 
 The first turn after a restart is the coldest read the process makes, and the allowance is shared with the turn's other lineage work,
 so one slow read decides. No platform branch: any slow machine can do this. Vitest hides it in-process (`defaultMs` returns Infinity
-under VITEST). A child server has no VITEST, so server/claude-isolation-contract.test.ts:133 meets the real budget: on the build host at
+under VITEST). A child server has no VITEST, so server/claude-isolation-contract.test.ts:133 meets the real budget: on Hetzner at
 0.5 CPU it failed there with no --resume, and server/claude-resume-slow-check.test.ts fails the same way with one 120 ms read.
 
 Ruled out by code: pending tools leave no cursor (the MCP gate only prefixes the prompt; the cursor is saved at `system/init`, and the

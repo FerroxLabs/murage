@@ -1,3 +1,4 @@
+import { archivedEvidencePath } from '../../scripts/evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -13,7 +14,7 @@ function captured(snapshot:string){
  return {value:JSON.parse(parts[1]),sha256:parts[2]};
 }
 it('F6 Full access frozen artifacts match the independent int19m12b recapture',()=>{
- const proof=JSON.parse(readFileSync('evidence/gnl/frozen-recapture.json','utf8'));
+ const proof=JSON.parse(readFileSync(archivedEvidencePath('evidence/gnl/frozen-recapture.json'),'utf8'));
  expect(proof.commit).toBe('49f91a80733d03aba0c3b7a422283ee05703c911');
  expect(proof.exitCode).toBe(0);
  expect(proof.files).toHaveLength(2);
@@ -34,6 +35,6 @@ it('F6 Full access frozen artifacts match the independent int19m12b recapture',(
     expect(current.value,key).toEqual(expected);expect(current.sha256,key).toBe(hash(expected));
    }
   }else expect(createHash('sha256').update(readFileSync(row.file)).digest('hex'),row.file).toBe(row.sha256);
-  expect(readFileSync(row.diff,'utf8'),row.file).toBe('');
+  expect(readFileSync(archivedEvidencePath(row.diff),'utf8'),row.file).toBe('');
  }
 });

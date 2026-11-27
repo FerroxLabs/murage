@@ -157,6 +157,8 @@ const TABLE = {
   checking: () => `[${ROOM_REPLY_CHECKING}]`,
   // a delegation result whose check has not finished: the asking bot's final answer for that request (lanes/release103/NOHOLD-DELEGATION.md)
   no_answer_checking: () => "(no answer: that memory is still being checked, try again later)",
+  // 1.0.20: what any held delegated reply reads once its bounded wait is over (held-replies.ts heldReplyRule); never the internal line above
+  reply_not_ready: () => "That reply isn't ready to share yet. Ask again in a minute.",
   // a delegation result whose check did not finish within the wait (1.0.5, DELEGATED-REPLY-WITHHELD.md): the asker learns the worker finished and where the words are
   no_answer_check_timed_out: (p: { name: BotName }) => `(no answer yet: @${p.name} finished, but the reply is still being checked against earlier memory. Read it in @${p.name}'s own conversation, or ask again in a minute)`,
   origin_unconfirmed: () => RECEIPT_ORIGIN_UNCONFIRMED_LINE,
@@ -271,7 +273,7 @@ const KEPT: Readonly<Record<string, Readonly<Record<string, ParamKind>>>> = {
   delegated_turn_could_not_start: { why: "start" }, delegated_turn_completed: {}, delegated_turn_stalled: {}, delegated_turn_stopped: {},
   delegated_turn_settings_changed: {}, delegated_turn_engine_changed: {}, turn_failed_note: { code: "code" }, row_failed_to_run: { why: "code" }, turn_failed: { code: "code" },
   queue_paused_steps: { steps: "count" }, queue_closed: { name: "bot", why: "close" },
-  withheld: {}, checking: {}, no_answer_checking: {}, no_answer_check_timed_out: { name: "bot" }, card_result_line: { desk: "bot", lead: "bot", card: "card" }, criteria_claim_corrected: { met: "count", total: "count" }, call_ended: { minutes: "count" },
+  withheld: {}, checking: {}, no_answer_checking: {}, reply_not_ready: {}, no_answer_check_timed_out: { name: "bot" }, card_result_line: { desk: "bot", lead: "bot", card: "card" }, criteria_claim_corrected: { met: "count", total: "count" }, call_ended: { minutes: "count" },
   setup_confirmed: {},
   email_outcome: { ref: "eref", outcome: "eoutcome" },
   email_arrived: { name: "bot", from: "eaddr", more: "count" },
@@ -280,7 +282,7 @@ const PERSISTABLE = new Set<string>(Object.keys(KEPT));
 
 /** The status lines a bot may read (LINEAGE-DESIGN-S6 rule 14), each rendered fresh from what its row keeps. Every other line in the table is
  * the owner's only: a bot reading a row that carries one reads nothing there. Each key here is one a row keeps (KEPT). */
-export const BOT_VISIBLE_STATUS: ReadonlySet<StatusKey> = new Set<StatusKey>(["withheld", "checking", "no_answer_checking", "no_answer_check_timed_out", "request_finished", "result_unavailable", "card_result_line", "criteria_claim_corrected", "call_ended", "setup_confirmed", "email_outcome"]);
+export const BOT_VISIBLE_STATUS: ReadonlySet<StatusKey> = new Set<StatusKey>(["withheld", "checking", "no_answer_checking", "reply_not_ready", "no_answer_check_timed_out", "request_finished", "result_unavailable", "card_result_line", "criteria_claim_corrected", "call_ended", "setup_confirmed", "email_outcome"]);
 
 /** Is this a bot on the roster now? Supplied once by the server; with none, no kept line naming a bot is written again (fail closed). */
 let rosterHas: ((name: string) => boolean) | undefined;

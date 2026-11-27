@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { lineageThreadReady } from "./deny-read.ts";
 import { ownerAudienceSessions, sessionSlot, type CursorClear, type RepairBot } from "./keepall-unwedge.ts";
 import { sessionKeyOf } from "./session-incarnation.ts";
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 
 import { GH18_BLOCKED_REASONS } from "../../shared/gh18-fresh-start-contract.ts";
 type GH18BlockedReason = typeof GH18_BLOCKED_REASONS[number];
@@ -32,7 +33,7 @@ function retained(db: DatabaseSync, threads: string[], rows: FreshStartPlan["ses
   return Number(db.prepare(`SELECT count(*) AS n FROM (
     SELECT 1 FROM memory_deny_session WHERE thread_id IN (SELECT value FROM json_each(?))
       AND NOT ((${KEY_COLUMNS}) IN (${JSON_KEYS}) AND ${AUDIENCE_ONLY})
-    UNION ALL SELECT 1 FROM memory_deny_line WHERE thread_id IN (SELECT value FROM json_each(?))
+    UNION ALL SELECT 1 FROM memory_deny_point WHERE thread_id IN (SELECT value FROM json_each(?))
     UNION ALL SELECT 1 FROM memory_deny_range WHERE thread_id IN (SELECT value FROM json_each(?))
     LIMIT ${RETAINED_LIMIT}
   )`).get(JSON.stringify(threads), keyTuples(rows), JSON.stringify(threads), JSON.stringify(threads))!.n);
@@ -62,8 +63,9 @@ export function planFreshStart(db: DatabaseSync, bot: RepairBot, deps: {
     return plan;
   };
   try {
-    // P1 is specified against the v13 memory schema, not an unknown future one.
-    if (db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version !== 13) return block("unsupported-schema");
+    // P1 is specified against this build's memory schema (v14: deny_session is unchanged, the retained count reads the v14 point table),
+    // never an older or unknown future one.
+    if (db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version !== MEMORY_SCHEMA_VERSION) return block("unsupported-schema");
     const tasks = bot.tasks ?? [];
     if (tasks.length > MAX_CANDIDATES) return block("limit-exceeded");
     const threads = [...new Set(tasks.map(task => task.threadId))];

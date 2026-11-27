@@ -287,6 +287,33 @@ export function engineErrorCategory(kind: unknown): EngineErrorCategory | undefi
     : undefined;
 }
 
+/** Murage's own plain words for an engine failure kind, for the places that must say something when the engine's own text
+ * may not be shown (the error row's reason, a routine run's error). Keyed on the kind the driver carried as a field, never on
+ * message text. Every recognized kind has a line (the Record type makes a new kind a compile error until it is worded). */
+const ENGINE_KIND_REASON: Record<EngineErrorCategory, string> = {
+  empty_response: "The model thought it through but sent no reply. Try again or switch model.",
+  idle_timeout: "The model went quiet for too long, so Murage stopped waiting. Try again or switch model.",
+  cancelled: "This turn was cancelled before it finished. Send your message again when you are ready.",
+  rate_limited: "The AI service asked for a short pause. Wait a moment and try again.",
+  auth: "The AI service did not accept the saved sign-in. Sign in again in Models & engines.",
+  http: "The AI service could not be reached cleanly. Try again in a moment.",
+  api: "The AI service reported a problem with this request. Try again or switch model.",
+  max_tokens_truncation: "The reply reached the model's length limit and was cut short. Ask for a smaller piece or switch model.",
+  doom_loop_detected: "Murage stopped this turn because the model kept repeating itself. Try rewording or switch model.",
+  serialization: "The model's answer could not be read. Try again or switch model.",
+  session_unavailable: "The engine's session is not available right now. Send your message again to open a fresh one.",
+  internal: "The engine hit a problem of its own. Try again.",
+  invalid_request: "The engine could not accept that request. Try rewording it.",
+  not_found: "The engine could not find something it needed. Try again.",
+  session_storage: "The engine could not save its session. Try again.",
+  compaction: "The engine could not shorten the conversation to fit. Start a new chat or switch model.",
+  execution_incomplete: "The engine stopped before the work was finished. Try again.",
+};
+export function engineKindReason(kind: unknown): string | undefined {
+  const category = engineErrorCategory(kind);
+  return category ? ENGINE_KIND_REASON[category] : undefined;
+}
+
 /** Codes a failed CONNECTION raises, as distinct from a server that answered
  *  badly. undici wraps all of these in `TypeError("fetch failed")`, whose
  *  message is what a user used to be shown, whole. */

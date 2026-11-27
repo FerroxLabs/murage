@@ -44,6 +44,7 @@
   "phoneCalls.error.badSettings": "Certains de ces réglages ne peuvent pas être utilisés. Vérifiez-les et enregistrez à nouveau.",
   "phoneCalls.error.notSetUp": "Enregistrez d'abord votre clé privée Vapi.",
   "phoneCalls.error.generic": "Un problème est survenu. Réessayez.",
+  "phoneCalls.error.store": "Murage n’a pas pu ouvrir l’historique des appels. Redémarre Murage. Si le problème persiste, vérifie l’espace libre sur le disque.",
   "phoneCalls.older.one": "1 appel planifié utilise d'anciens réglages",
   "phoneCalls.older.many": "{count} appels planifiés utilisent d'anciens réglages",
   "phoneCalls.cancel": "Annuler",

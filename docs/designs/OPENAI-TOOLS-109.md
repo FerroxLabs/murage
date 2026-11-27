@@ -1,6 +1,6 @@
 # OPENAI-TOOLS-109: real tools for the OpenAI-chat engines
 
-Status: DRAFT r5, 2026-10-28 (Astra r1 + r2 + r3 REVISE and Grok r5 REVISE folded, see 13 and "Changes in rev 3" / "Changes in rev 4" / "Changes in rev 5" at the end). Lane `fix/109-openai-tools`, worktree `/mnt/Fixture/ExampleWorkspace/wt-109-openai-tools`,
+Status: DRAFT r5, 2026-10-28 (Astra r1 + r2 + r3 REVISE and Grok r5 REVISE folded, see 13 and "Changes in rev 3" / "Changes in rev 4" / "Changes in rev 5" at the end). Lane `fix/109-openai-tools`, worktree `/Volumes/Fixture/ExampleWorkspace/wt-109-openai-tools`,
 base `dev/int/108` = `d4192c1625b51e20bea3b7f4251ba9c5417bacc8`. Security lane: tools mean approvals, the stop line and secrets.
 
 ## 0. The gap
@@ -323,7 +323,7 @@ error ("provider returned tool calls to a text-only helper"). Test pins: request
 - The growing per-turn `messages` array: if the provider refuses size (HTTP 413 / context-length error) after tool rounds, the turn
   fails with the existing provider copy plus "The steps so far already ran"; no automatic trimming in this lane.
 
-## 11. Tests (vitest, build host only)
+## 11. Tests (vitest, Hetzner only)
 
 New `server/drivers/openai-chat-tools.test.ts`, `describe.each(["openai-compat","grok","minimax"])` where shape allows, fetch
 stubbed, MCP = `server/testing/fake-custom-tool.ts` (real stdio child) or an in-test fake client:
@@ -353,7 +353,7 @@ stubbed, MCP = `server/testing/fake-custom-tool.ts` (real stdio child) or an in-
 15. caps: 129 tools / oversized schema / oversized catalog drop the server with a notice.
 16. existing openai-chat*.test.ts, openai-compat*.test.ts, grok.test.ts, minimax.test.ts, http-text-only*.test.ts, pi*.test.ts,
     draft-only tests stay green. Both typechecks (`tsc -b`, `tsc -p tsconfig.server.json`), base comparison 0 NEW failures.
-Real-turn proof: opt-in vitest (`MURAGE_REAL_CHAT_TOOLS_URL`/`_MODEL`, skipped otherwise) run on the build host against a private test machine's Ollama
+Real-turn proof: opt-in vitest (`MURAGE_REAL_CHAT_TOOLS_URL`/`_MODEL`, skipped otherwise) run on Hetzner against a private test machine's Ollama
 (a tailnet `/v1` endpoint, keyless, tools-capable model) with the fake custom MCP tool, in Ask mode (card answered by
 the test as the harness would) and Full mode; never the Flux test key.
 

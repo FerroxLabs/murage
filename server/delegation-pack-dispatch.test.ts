@@ -18,11 +18,14 @@ import { addTurnParents, closeTurnLineage, currentTurnLineage, openTurnLineage, 
 import { beginTurnLineage } from "./steer-lineage.ts";
 import { readDelegationPack, releaseDelegationPacks, type PackReleaseHost } from "./thread-recall.ts";
 import { buildPrompt, promptPart, noneRef } from "./memory/prompt-parts.ts";
+import { messageOnlyPrompt, handoffFramePart, assertHandoffRecoveryCarriesTask } from "./memory/fence-recovery.ts";
 import { EngineInputRevoked, assertEngineInput, fencedTurnInput } from "./drivers/engine-input.ts";
 import { turnSucceeded } from "./turn-outcome.ts";
 import { TurnSubmissionBoundary } from "./turn-dispatch-guard.ts";
 import { IndependentThreadRuns } from "./independent-thread-runs.ts";
-import { MemoryRefusalCauses, nextMemoryRebuild, turnRefusedLine, submissionRefusalKind, MEMORY_REDISPATCH_ATTEMPTS } from "./memory/dispatch.ts";
+import { RecallViewLost } from "./memory/recall-recovery.ts";
+import { MemoryRefusalCauses, nextMemoryRebuild, turnRefusedLine, turnRefusedSignInLine, submissionRefusalKind, MEMORY_REDISPATCH_ATTEMPTS } from "./memory/dispatch.ts";
+import { EngineSignInOwed } from "./engine-signin-owed.ts";
 import { once } from "./fold-steps.ts";
 import { commitRevoke } from "./memory/revoke-commit.ts";
 import { drainRevokeMarker } from "./memory/memory-revocation.ts";
@@ -48,6 +51,9 @@ function shippedFunction(name: string, env: Record<string, unknown>) {
   expect(node, `index must define ${name}`).toBeDefined();
   return evaluate(`${node!.getText(ast)}; return ${name};`, env);
 }
+/** 1.0.22: the late refusal callbacks name the sign-in through index.ts signInRefusedLine; the shipped one, over a real, empty mark set. */
+const shippedSignInRefusedLine = (engineNameOf: (instance: unknown) => string) =>
+  shippedFunction("signInRefusedLine", { engineSignInOwed: new EngineSignInOwed(), turnRefusedSignInLine, engineNameOf });
 const put = (thread: string, id: string, text: string, parentId: string | null = null, extra = {}) =>
   appendMessage(thread, { id, role: "bot", kind: "text", text, parentId, at: 1000, ...extra });
 let roster: MemoryRoster;
@@ -98,7 +104,7 @@ function rig(opts: { packSuppressed?: true } = {}, lend = true, retained = false
     limitActiveDispatches, ownerLimitSnapshot: () => null, DirectTurnSetupCancelled: Error,
   });
   const validationEnv = { assertEngineInput, directPrompt: prompt, directFence: { reader: { audience: null }, ...(retained ? { retained: turn } : {}), onRefused: (e: unknown) => boundary.refuse(e) },
-    dispatchClaimId: "g", validateOwnerLimitDispatch, memoryState: () => ({ mode: "active" }), directStoredMemoryMode: "active", recallReadiness: {}, assertMemoryPinsAtSubmission: () => {}, submissionBoundary: boundary, packGuard: guard, limitTurns: { assertCanSubmit: () => {} },
+    dispatchClaimId: "g", validateOwnerLimitDispatch, memoryState: () => ({ mode: "active" }), directStoredMemoryMode: "active", directMemoryModeMoved: () => false /* 1.0.22 heldrest C: the mode above never moves (shipped: mode moved && !directMessageOnly) */, recallReadiness: {}, assertMemoryPinsAtSubmission: () => {}, submissionBoundary: boundary, packGuard: guard, limitTurns: { assertCanSubmit: () => {} },
     assertCursorNotSealed: () => {}, store: { taskByThread: () => ({}) }, bot: { id: "ember" }, threadId: "destination", instanceId: "codex", resumeCursor: undefined,
     providerRouteIsCurrent: () => true, providerRoute: undefined, assertBackupStillUsable: () => {}, turnSelection: {}, opts: { delegationRun: { submitted } },
     trace: { mark: () => {} }, memoryReceipt: undefined };
@@ -265,7 +271,8 @@ function redispatchLiterals() {
 }
 function directRelease(r: ReturnType<typeof rig>, opts: any, branchMessages: any[] = [], memoryLastResort = false, selectiveDropped = false) {
   const from = source.indexOf("      const packAnchors =");
-  const to = source.indexOf("      const directHumanInput =", from);
+  // 60b8718354 (merged e26e91e77d) hoisted directHumanInput to the turn's top; the pack release still ends at its guard, before the recall frame
+  const to = source.indexOf("      const directRecallPrepared =", from);
   expect(from).toBeGreaterThan(0); expect(to).toBeGreaterThan(from);
   return evaluate(`let packRefusedHere = false; ${source.slice(from, to)}; return { packRelease, packGuard, refused: () => packRefusedHere };`, {
     opts, memoryLastResort, selectiveDropped, engineCommand: false, resumeCursor: undefined, sessionReset: true, branchMessages, userMessage: { id: "input" },
@@ -285,7 +292,9 @@ it.each([0, 1])("T-WRITE-CHAIN / Codex setup + late refusal: site %s retains sup
   const rebuild = shippedFunction("rebuildRefusedDirectTurn", { settleRevokesForTurn: async () => true, settleRefusedFence: async () => true, database, directRuns: runs,
     memoryRefusalCauses: new MemoryRefusalCauses(), markLastResort: (id: string) => marked.push(id), lastResortMessages: new Set(), freeThreadAfterRebuild: () => {}, DirectRebuildCancelled: Error });
   const literal = redispatchLiterals()[site].arguments[2].getText(ast);
-  const next = (opts: any, packRefusedHere: boolean, attempt: number) => evaluate(`return (${literal});`, { recallReadiness: {}, heldRecall: false, opts, packRefusedHere, attempt, threadId: "destination", userMessage: { id: "input" }, rebuildOf: held.generation });
+  const next = (opts: any, packRefusedHere: boolean, attempt: number) => evaluate(`return (${literal});`, { recallReadiness: {}, heldRecall: false, opts, packRefusedHere, attempt, threadId: "destination", userMessage: { id: "input" }, rebuildOf: held.generation,
+    // 1.0.20 T1: the setup-failure rebuild literal reads the rebuild it runs for (a memory rebuild here: no setupRetry)
+    rebuild: { attempt, lastResort: false } });
   put("source", "fork", "Off branch"); setActiveLeaf("source", "fork");
   // Codex swallows the closure's throw; assertNotRefused rethrows it during handback.
   try { r.write(); } catch { /* the adapter reports submission_refused */ }
@@ -301,7 +310,9 @@ it.each([0, 1])("T-WRITE-CHAIN / Codex setup + late refusal: site %s retains sup
 
 it("T-WRITE-THREE / T-WRITE-CAP: every replay pack stays suppressed across 600 settled inputs; fresh inputs stay eligible", () => {
   const r = rig(); const literal = redispatchLiterals()[0].arguments[2].getText(ast);
-  const next = evaluate(`return (opts, packRefusedHere) => (${literal});`, { recallReadiness: {}, heldRecall: false, threadId: "destination", userMessage: { id: "input" }, attempt: 3, rebuildOf: "g" });
+  const next = evaluate(`return (opts, packRefusedHere) => (${literal});`, { recallReadiness: {}, heldRecall: false, threadId: "destination", userMessage: { id: "input" }, attempt: 3, rebuildOf: "g",
+    // 1.0.22 heldrest C: the literal reads the rebuild it runs for (an ordinary memory rebuild here: no message-only floor)
+    rebuild: { attempt: 3, lastResort: true } });
   const original = next({}, true);
   const runs = new IndependentThreadRuns<BotRecord>(), bot = { id: "ember" } as BotRecord;
   const activeOriginal = runs.admit("ember", "destination", bot, []);
@@ -369,17 +380,21 @@ it.each([["claude", false, false], ["claude", true, false], ["codex", false, fal
   const settleDirectAttempts = vi.fn();
   const callback = evaluate(`return (${late.arguments[0].getText(ast)});`, {
     isMemoryContextRevoked: (e: Error) => e.message === "MEMORY_CONTEXT_REVOKED", turnRefused: () => {}, threadId: "destination", userMessage: { id: "input" },
-    instance: { driverKind }, opts: {}, nextMemoryRebuild, engineNameOf: () => driverKind, lateMemoryRefusalLine: () => "Changed context",
+    instance: { driverKind }, opts: {}, nextMemoryRebuild, directRevokeRebuild: nextMemoryRebuild /* 1.0.22 heldrest C: no floor owed here */, engineNameOf: () => driverKind, lateMemoryRefusalLine: () => "Changed context",
     turnExhausted: () => {}, store: { appendMessage: (_thread: string, row: any) => cards.push(row) }, murageLine: (row: any) => row,
     accepted: { turnId: "provider" }, turnFailureBuzzes: () => false, routineToken: undefined, MEMORY_REDISPATCH_ATTEMPTS,
     resendOfRow, settleDirectAttempts, dispatchClaimId: held.generation,
-    once, turnRefusedLine, refusalKind, submissionBoundary: r.boundary, memoryRefusalCauses: causes,
+    once, turnRefusedLine, signInRefusedLine: shippedSignInRefusedLine(() => driverKind), refusalKind, submissionBoundary: r.boundary, memoryRefusalCauses: causes,
     recordMemoryRefusal: (error: unknown) => causes.record("input", error, true),
     refusalCauseNote: () => "", lateMemoryRedispatches: tickets, console: { warn: () => {} },
+    // this direct turn runs no hand-off: no watch entry, so the late ticket finalizes none (lateRebuildWatches stays empty)
+    delegationWatch: new Map(), lateRebuildWatches: new Map(), finalizeDelegationWatch: vi.fn(),
     registerLateTicket: (id: string, ticket: unknown) => tickets.set(id, ticket), refusalNoted: false,
     recallReadiness: { renewAfterContextChange: vi.fn() }, sealDirectAttempts: vi.fn(),
     run: held, admitted: { rejectionOwner: { current: () => true } }, directRuns: runs,
     rebuildRefusedDirectTurn: async (_held: unknown, _owner: unknown, _id: string, _rebuild: unknown, start: (g: string) => unknown) => { await start(held.generation); return { kind: "started" }; },
+    // 60b8718354 (merged e26e91e77d): the late rebuild also learns whether the owner is waiting on this direct input (this fixture: the owner's own text)
+    directOwnerAudience: true, directHumanInput: "note", directOwnerWork: true,
     startTurn: async (_bot: string, _text: string, opts: any) => { rebuilt.push(opts); }, botId: "ember", text: "note", packRefusedHere: true,
   });
   // An unwritten refusal may rebuild with the pack suppressed; a released submission must never replay.
@@ -399,6 +414,93 @@ it.each([["claude", false, false], ["claude", true, false], ["codex", false, fal
   releaseDirect(); await Promise.resolve();
   if (toolStarted || priorSubmissionReleased) { expect(rebuilt).toEqual([]); expect(cards).toHaveLength(1); }
   else { expect(rebuilt).toHaveLength(1); expect(rebuilt[0].packSuppressed).toBe(true); expect(cards).toEqual([]); }
+});
+
+// comms "queues eight helpers" (1.0.20), third cause: the rebuilt helper's recall view was lost at acceptance (RecallViewLost, the roster moved),
+// the shipped late callback left it with no ticket, and the fold carded it. A hand-off now rebuilds; any other turn keeps its card.
+it.each([[true, "lost", true], [false, "lost", false], [true, "denied", false], [true, "revoked", true], [false, "revoked", true]] as const)("T-VIEW-LOST: hand-off=%s refusal=%s leaves a rebuild ticket=%s in the shipped late callback", async (handoff, refusalKindOf, ticketed) => {
+  const r = rig(); const runs = new IndependentThreadRuns<BotRecord>();
+  const bot = { id: "ember" } as BotRecord; const held = runs.admit("ember", "destination", bot, []);
+  const tickets = new Map<string, any>(), rebuilt: any[] = [], recorded: unknown[] = [];
+  const late = nodes(n => ts.isCallExpression(n) && n.expression.getText(ast) === "submissionBoundary.acceptedBy")[0] as ts.CallExpression;
+  const opts = handoff ? { delegationRun: { id: "job", turnKey: "input" } } : {};
+  const callback = evaluate(`return (${late.arguments[0].getText(ast)});`, {
+    isMemoryContextRevoked: (e: Error) => e.message === "MEMORY_CONTEXT_REVOKED", turnRefused: () => {}, threadId: "destination", userMessage: { id: "input" },
+    instance: { driverKind: "claude" }, opts, nextMemoryRebuild, directRevokeRebuild: nextMemoryRebuild /* 1.0.22 heldrest C: no floor owed here */, engineNameOf: () => "claude", lateMemoryRefusalLine: () => "Changed context",
+    turnExhausted: () => {}, store: { appendMessage: () => {} }, murageLine: (row: any) => row, accepted: { turnId: "provider" }, turnFailureBuzzes: () => false,
+    routineToken: undefined, MEMORY_REDISPATCH_ATTEMPTS, resendOfRow: {}, settleDirectAttempts: vi.fn(), dispatchClaimId: held.generation, once, turnRefusedLine, signInRefusedLine: shippedSignInRefusedLine(() => "claude"),
+    refusalKind: () => "before-submission", submissionBoundary: r.boundary, memoryRefusalCauses: new MemoryRefusalCauses(), recordMemoryRefusal: (error: unknown) => recorded.push(error),
+    refusalCauseNote: () => "", console: { warn: () => {} }, registerLateTicket: (id: string, ticket: unknown) => tickets.set(id, ticket), refusalNoted: false,
+    recallReadiness: { renewAfterContextChange: vi.fn() }, sealDirectAttempts: vi.fn(), run: held, admitted: { rejectionOwner: { current: () => true } }, directRuns: runs,
+    rebuildRefusedDirectTurn: async (_held: unknown, _owner: unknown, _id: string, rebuild: unknown, start: (g: string, attempt: number) => unknown) => { rebuilt.push(rebuild); await start(held.generation, 1); return { kind: "started" }; },
+    directOwnerAudience: false, directHumanInput: undefined, directOwnerWork: false, startTurn: async () => {}, botId: "ember", text: "note", packRefusedHere: false,
+    delegationWatch: new Map(), lateRebuildWatches: new Map(), finalizeDelegationWatch: vi.fn(), status: (name: string) => name, failureCodeFrom: (code: string) => code, RecallViewLost,
+  });
+  const refusal = refusalKindOf === "lost" ? new RecallViewLost() : new Error(refusalKindOf === "denied" ? "MEMORY_SCOPE_DENIED" : "MEMORY_CONTEXT_REVOKED");
+  if (refusalKindOf === "lost") expect(refusal.message).not.toBe("MEMORY_CONTEXT_REVOKED");
+  callback(refusal, { priorSubmissionReleased: false });
+  expect(tickets.has("provider")).toBe(ticketed);
+  expect(recorded).toEqual(ticketed ? [refusal] : []);
+  if (!ticketed) return;
+  // the first rebuild of the ladder, owed once; taking it runs the shipped rebuild
+  expect(tickets.get("provider")).toMatchObject({ redispatch: true, owed: true });
+  expect(runs.holdForRebuild(held)).toBe(true);
+  tickets.get("provider").take("rebuild", runs.get("destination")); await Promise.resolve();
+  expect(rebuilt).toEqual([{ attempt: 1, lastResort: false }]);
+});
+
+// comms "queues eight helpers" (1.0.20): a rebuilt helper took the last resort with only the static instruction, answered that, and its
+// hand-off read done. The shipped recovery frame of a delegated turn is its own stored hand-off line, and with no such line it does not run.
+it("T-REBUILD-TASK: a rebuilt delegated turn's last resort carries its hand-off line, and never runs without it", () => {
+  put("destination", "handoff-line", "Delegated note: batch work 3", null, { role: "user", automation: { kind: "delegation" } });
+  const render = nodes(n => ts.isVariableDeclaration(n) && n.name.getText(ast) === "renderRecoveryFrame")[0] as ts.VariableDeclaration;
+  const task = nodes(n => ts.isVariableDeclaration(n) && n.name.getText(ast) === "recoveryTaskTurn")[0] as ts.VariableDeclaration;
+  const taskTurn = (opts: object): boolean => evaluate(`return (${task.initializer!.getText(ast)});`, { opts });
+  const frameOf = (opts: object, id = "handoff-line", wake: unknown = null) => evaluate(`return (${render.initializer!.getText(ast)});`, {
+    opts, recoveryWakeFrame: () => wake, handoffFramePart, storedMessage: readMessage, threadId: "destination", userMessage: { id }, recoveryTaskTurn: taskTurn(opts),
+  })();
+  const frame = frameOf({ delegationRun: { id: "job", turnKey: "handoff-line" } });
+  expect(frame).toEqual({ text: "Delegated note: batch work 3", lineageOf: [{ kind: "line", threadId: "destination", messageId: "handoff-line" }] });
+  const prompt = messageOnlyPrompt(undefined, { rawHumanText: undefined, frame: "static frame", now: "time", serverFrame: frame });
+  expect(prompt.text).toContain("batch work 3");
+  expect(prompt.text).not.toContain("Stored context is unavailable");
+  // the task is the hand-off's line, never relabelled as the owner's words or as Murage's own
+  expect(prompt.parts[1].lineageOf.some((ref: { kind: string }) => ref.kind === "none")).toBe(false);
+  // a turn that is not a hand-off keeps the static instruction; a card run or a wake keeps its own frame
+  expect(frameOf({})).toBeNull();
+  const own = promptPart("card frame", [noneRef("murage")]);
+  expect(frameOf({ delegationRun: { id: "job", turnKey: "handoff-line" }, projectCardRun: { frame: () => own } })).toBe(own);
+  // the line is gone: no frame, and the shipped guard refuses the run instead of sending the static instruction
+  expect(frameOf({ delegationRun: { id: "job", turnKey: "missing" } }, "missing")).toBeNull();
+  const guards = nodes(n => ts.isIfStatement(n) && n.thenStatement.getText(ast).startsWith("assertHandoffRecoveryCarriesTask("));
+  expect(guards).toHaveLength(1);
+  const guard = (env: { memoryLastResort: boolean; selectiveDropped: boolean; opts: object; recoveryFrame: unknown }) =>
+    () => evaluate(guards[0].getText(ast), { assertHandoffRecoveryCarriesTask, ...env, recoveryTaskTurn: taskTurn(env.opts) });
+  expect(guard({ memoryLastResort: true, selectiveDropped: false, opts: { delegationRun: { id: "job" } }, recoveryFrame: null })).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(guard({ memoryLastResort: false, selectiveDropped: true, opts: { delegationRun: { id: "job" } }, recoveryFrame: undefined })).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(guard({ memoryLastResort: true, selectiveDropped: false, opts: { delegationRun: { id: "job" } }, recoveryFrame: frame })).not.toThrow();
+  expect(guard({ memoryLastResort: true, selectiveDropped: false, opts: {}, recoveryFrame: null })).not.toThrow();
+  expect(guard({ memoryLastResort: false, selectiveDropped: false, opts: { delegationRun: { id: "job" } }, recoveryFrame: undefined })).not.toThrow();
+  // MAIN RULING 2026-11-19: a routine run carries its own stored prompt line the same way; a card continuation's prompt is not a stored line
+  // (its message is synthetic), so its recovery is refused with its card. Neither can run on the static instruction and read "ran".
+  put("destination", "routine-line", "Routine fixture prompt", null, { role: "user", automation: { kind: "routine" } });
+  for (const source of ["schedule", "manual", "webhook"]) {
+    const routine = frameOf({ routineRunId: "run-1", automationSource: source }, "routine-line");
+    expect(routine, source).toEqual({ text: "Routine fixture prompt", lineageOf: [{ kind: "line", threadId: "destination", messageId: "routine-line" }] });
+    expect(messageOnlyPrompt(undefined, { rawHumanText: undefined, frame: "static frame", now: "time", serverFrame: routine }).text).not.toContain("Stored context is unavailable");
+  }
+  expect(guard({ memoryLastResort: true, selectiveDropped: false, opts: { routineRunId: "run-1" }, recoveryFrame: null })).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(guard({ memoryLastResort: true, selectiveDropped: false, opts: { routineRunId: "run-1" }, recoveryFrame: frameOf({ routineRunId: "run-1" }, "routine-line") })).not.toThrow();
+  const cardFrame = frameOf({ cardContinuation: true }, "card-0b0f3a52-synthetic");
+  expect(cardFrame).toBeNull();
+  expect(guard({ memoryLastResort: true, selectiveDropped: false, opts: { cardContinuation: true }, recoveryFrame: cardFrame })).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(guard({ memoryLastResort: false, selectiveDropped: true, opts: { cardContinuation: true }, recoveryFrame: cardFrame })).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(guard({ memoryLastResort: false, selectiveDropped: false, opts: { cardContinuation: true }, recoveryFrame: undefined })).not.toThrow();
+  // a card continuation flag that is not exactly true, and a turn with a fresh human line, are not task turns
+  expect([{ cardContinuation: false }, {}, { automationSource: "schedule" }].map(taskTurn)).toEqual([false, false, false]);
+  // the guard sits before the prompt is built: nothing is sent first
+  const built = nodes(n => ts.isVariableDeclaration(n) && n.name.getText(ast) === "directPrompt")[0];
+  expect(guards[0].getStart(ast)).toBeGreaterThan(render.getStart(ast)); expect(guards[0].getEnd()).toBeLessThan(built.getStart(ast));
 });
 
 // Design v2 review clarification: publication must not mint through the pack callback either.

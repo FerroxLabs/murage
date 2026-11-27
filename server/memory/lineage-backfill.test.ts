@@ -275,7 +275,7 @@ describe("v10 -> v9 downgrade", () => {
     db.prepare("UPDATE memory_lsn SET next=5 WHERE id=1").run();
     const oldBot = history.lines.get(history.threads[1]!)!.filter(line => line.role === "bot");
     const lsnOf = (t: string, m: string) => Number(db.prepare("SELECT lsn FROM memory_line_lineage WHERE thread_no=? AND message_id=?").get(testThreadNo(db, t), m)!.lsn);
-    db.prepare("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,1,2,'forget')").run(history.threads[1], lsnOf(history.threads[1]!, oldBot[0]!.id));
+    db.prepare("INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,1,2,'forget')").run(history.threads[1], lsnOf(history.threads[1]!, oldBot[0]!.id));
     db.prepare("INSERT INTO memory_deny_range(thread_id,from_lsn,until_turn_lsn,revoke_id,reason) VALUES(?,?,?,2,'forget')").run(history.threads[1], lsnOf(history.threads[1]!, oldBot[2]!.id), 0);
     db.prepare("INSERT INTO memory_deny_session(thread_id,driver_instance,native_session,revoke_id) VALUES(?,?,?,3)").run(thread, "d", "s9");
     return { history, thread, oldBot };
@@ -317,6 +317,7 @@ describe("v10 -> v9 downgrade", () => {
   });
 
   // S6 rule 30 (test 36, the downgrade part): only the owner's revoke writes a denial; the downgrade hide mirrors the deny marks already there
+  // (1.0.23: the slice runs only inside the step back to 9, after 14 -> 13 rebuilt the two 1.0.22 mark tables: the state is read under their names)
   const DENY_TABLES = ["memory_deny_line", "memory_deny_range", "memory_deny_session", "memory_deny_memory", "memory_deny_pending", "memory_deny_pending_scope", "memory_deny", "memory_revoke_jobs"];
   const denyState = (db: DatabaseSync) => ({
     hw: Number(db.prepare("SELECT next FROM memory_lsn WHERE id=1").get()!.next),
@@ -329,9 +330,11 @@ describe("v10 -> v9 downgrade", () => {
     roots: db.prepare("SELECT * FROM memory_output_roots ORDER BY thread_id,message_id").all(),
     sessions: db.prepare("SELECT * FROM memory_session_roots ORDER BY thread_id,driver_instance,native_session").all(),
   });
-  it("S6 rule 30: the hide is a mirror: writtenState, every deny table and every until_turn_lsn are unchanged, and a second run is a no-op", () => {
+  it("S6 rule 30: the hide is a mirror: writtenState, every deny table and every until_turn_lsn are unchanged, and a second run is a no-op", async () => {
     const db = database();
     const { history, oldBot } = writtenByNewBuild(db);
+    // the production order (schema.ts downgradeMemorySchema): 14 -> 13 first, which rebuilds every mark the deny rule implies
+    expect((await import("./deny-rule-migrate.ts")).denyRuleDowngrade14to13(db)).toBe(true);
     const before = denyState(db);
     let slices = 0;
     while (!lineageDowngradeSlice(db, { budgetMs: 3, now: ticking() }).done) if (++slices > 1_000_000) throw new Error("no end");
@@ -350,7 +353,7 @@ describe("v10 -> v9 downgrade", () => {
     const source = readFileSync(new URL("./lineage-backfill.ts", import.meta.url), "utf8");
     const body = source.slice(source.indexOf("export function lineageDowngradeSlice"), source.indexOf("export function lineageDowngradeMarked"));
     const WRITERS = /\b(commitRevoke|takeCommitLsn|bumpDenyGeneration|writeLine|writeRange|seedFlow|markPending)\b|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+memory_deny|UPDATE\s+memory_deny|deny_generation'\s*,|SET\s+value\s*=\s*value\s*\+/gi;
-    expect("x; commitRevoke(tx); INSERT INTO memory_deny_line(a) VALUES(1)".match(WRITERS)).toHaveLength(2); // the matcher is not vacuous
+    expect("x; commitRevoke(tx); INSERT INTO memory_deny_point(a) VALUES(1)".match(WRITERS)).toHaveLength(2); // the matcher is not vacuous
     expect(body.length).toBeGreaterThan(1000);
     expect(body.match(WRITERS)).toBeNull();
   });
