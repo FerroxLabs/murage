@@ -81,9 +81,19 @@ export function loadFailureMessage(botName: string, detail: string): string {
 /** Where a skill came from, in the words a person used to put it there. */
 export function skillSourceLabel(source: string): string {
   if (source.startsWith("library:")) return `Library · ${source.slice("library:".length)}`;
+  if (source.startsWith("collection:")) return `Your skills · ${source.slice("collection:".length)}`;
   if (source.startsWith("learn:")) return "Learned in chat";
   return source;
 }
+
+export function skillRemoveWords(skill: Pick<BotSkill, "name" | "source">, botName: string): { label: string; title: string; shared: boolean } {
+  const shared = /^(collection|library):/.test(skill.source);
+  return shared
+    ? { label: "Take off", title: `Take ${skill.name} off ${botName}. Your other bots and the shared copy keep it.`, shared }
+    : { label: "Delete", title: `Delete ${skill.name} from ${botName}. This is the only copy and can't be undone.`, shared };
+}
+
+type SkillConfirmation = ({ name: string } & NeedsLook) | { name: string; action: "delete"; lines: string[] };
 
 /** A hand-imported SKILL.md can carry no description at all. A blank second
  * line reads as a rendering bug, so fall back to something true about the
@@ -171,7 +181,7 @@ export interface SkillsSnapshot {
   rowErrors: ReadonlyMap<string, string>;
   viewing: SkillView | null;
   /** A skill that needs a look, waiting on the owner's "Use it anyway". */
-  confirming: ({ name: string } & NeedsLook) | null;
+  confirming: SkillConfirmation | null;
 }
 
 export const INITIAL_SKILLS_SNAPSHOT: SkillsSnapshot = {
@@ -212,6 +222,7 @@ export function createSkillsStore({
   // A retry fired while an earlier load is still out must win; the loser's
   // answer is thrown away rather than allowed to overwrite it.
   let loadToken = 0;
+  let approvedRemoval: string | null = null;
 
   const set = (patch: Partial<SkillsSnapshot>) => {
     snapshot = { ...snapshot, ...patch };
@@ -318,10 +329,20 @@ export function createSkillsStore({
     set({ confirming: null });
     if (!yes || !asked) return;
     const skill = snapshot.skills.find((entry) => entry.name === asked.name);
-    if (skill) await toggle(skill, asked.contentHash);
+    if (!skill) return;
+    if ("action" in asked && asked.action === "delete") {
+      approvedRemoval = skill.name;
+      await remove(skill);
+    } else if ("contentHash" in asked) await toggle(skill, asked.contentHash);
   };
 
   const remove = async (skill: BotSkill) => {
+    if (snapshot.busy.has(skill.name)) return;
+    if (!skillRemoveWords(skill, "this bot").shared && approvedRemoval !== skill.name) {
+      set({ confirming: { name: skill.name, action: "delete", lines: ["This is the only copy and can't be undone."] } });
+      return;
+    }
+    approvedRemoval = null;
     setBusy(skill.name, true);
     setRowError(skill.name, "");
     try {
@@ -370,6 +391,8 @@ export interface SkillsBodyProps {
   staged: number;
   loadFailure: string;
   authoringEnabled: boolean;
+  /** Built-in skills shown above the list (the Chief of Staff guide); with one, the bot never reads as having none. */
+  builtInSkills?: number;
   query: string;
   onQuery: (value: string) => void;
   visible: number;
@@ -383,7 +406,7 @@ export interface SkillsBodyProps {
   onToggle: (skill: BotSkill) => void;
   onRemove: (skill: BotSkill) => void;
   /** A skill waiting on "Use it anyway", and the answer. */
-  confirming?: ({ name: string } & NeedsLook) | null;
+  confirming?: SkillConfirmation | null;
   onConfirm?: (yes: boolean) => void;
   /** SEAM — "Add a skill" opens the library browser with THIS agent already
    *  chosen. Assignment is one action, `assign(skillId, botId)`; this end
@@ -485,7 +508,7 @@ export function SkillsBody(props: SkillsBodyProps) {
             <ul className="mt-1 list-disc pl-4">{skillFindingLines(skill.scan).map((line) => <li key={line}>{line}</li>)}</ul>
           </div>
         )}
-        {skill && props.confirming?.name === skill.name && (
+        {skill && props.confirming?.name === skill.name && !("action" in props.confirming) && (
           <div role="alertdialog" data-box-exempt="inline confirm inside a section" aria-label="Use this skill anyway?" className="mt-2 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
             <div className="font-medium">Use {skill.name} anyway?</div>
             <p className="mt-1 text-ink-secondary">The skill check found:</p>
@@ -563,9 +586,9 @@ export function SkillsBody(props: SkillsBodyProps) {
             the moment its proposal is confirmed (applyStagedSkillWrite). There
             is no add control on this panel, so the route has to be named. */}
         <div className="rounded-lg bg-inset px-3 py-2.5 text-[12px] leading-relaxed text-ink-secondary">
-          {botName} has no skills yet. Add one from the library and it arrives switched on.
+          {botName} has no {(props.builtInSkills ?? 0) > 0 ? "other " : ""}skills yet. Add one from the library and it arrives switched on.
           {authoringEnabled
-            ? " A skill you teach with /learn in chat is switched on once you confirm it."
+            ? ` A skill you teach ${botName} in chat is switched on once you confirm it.`
             : ""}{" "}
           Everything that lands here can be read, switched off, or removed.
         </div>
@@ -650,17 +673,25 @@ export function SkillsBody(props: SkillsBodyProps) {
                 )}
                 <button
                   type="button"
-                  aria-label={`Remove ${skill.name}`}
-                  // Names the consequence AND the way back, because the click
-                  // is the whole action — there is no dialog behind it.
-                  title={`Remove ${skill.name} from ${botName}. Add it again from the library at any time.`}
+                  aria-label={`${skillRemoveWords(skill, botName).label} ${skill.name}`}
+                  title={skillRemoveWords(skill, botName).title}
                   disabled={props.busy.has(skill.name)}
                   onClick={() => props.onRemove(skill)}
-                  className="flex size-8 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40"
+                  className="flex shrink-0 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40"
                 >
-                  <Trash2 size={15} />
+                  <Trash2 size={15} /> {skillRemoveWords(skill, botName).label}
                 </button>
               </div>
+              {props.confirming?.name === skill.name && "action" in props.confirming && props.confirming.action === "delete" && (
+                <div role="alertdialog" data-box-exempt="inline confirm inside a section" aria-label={`Delete ${skill.name}?`} className="mt-2 rounded-lg border border-danger/40 bg-card p-3 text-[12.5px] text-ink">
+                  <div className="font-medium">Delete {skill.name} from {botName}?</div>
+                  <p className="mt-1 text-ink-secondary">This is the only copy and can't be undone.</p>
+                  <div className="mt-3 flex gap-2">
+                    <button type="button" onClick={() => props.onConfirm?.(true)} disabled={props.busy.has(skill.name)} className="rounded-lg bg-danger px-3 py-1.5 font-medium text-white">Delete</button>
+                    <button type="button" onClick={() => props.onConfirm?.(false)} className="rounded-lg bg-control px-3 py-1.5 font-medium text-ink">Cancel</button>
+                  </div>
+                </div>
+              )}
               {skill.warnings.length > 0 && (
                 <div className="mt-1 text-[10.5px] text-warning">{skill.warnings.join(" · ")}</div>
               )}
@@ -754,6 +785,7 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
         staged={snapshot.staged.length}
         loadFailure={snapshot.loadFailure}
         authoringEnabled={authoringEnabled}
+        builtInSkills={isChief ? 1 : 0}
         onBrowse={() => setAdding(true)}
         query={query}
         onQuery={(value) => {

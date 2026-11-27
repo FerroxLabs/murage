@@ -460,6 +460,18 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
   /** A pooled turn on a thread, its session resumed the way the harness does. */
   const nativeOrder = (threadId: string) => readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
 
+  it("an unreadable upstream store below No limits still asks before answering", async () => {
+    await create();
+    const turnId = await send("unreadable-auto", { folderTrust: gate({ sources: ["AGENTS.md"], upstreamReadable: false, seedComplete: false }) });
+    const event = await recorder.until(e => e.turnId === turnId && (e.type === "request.opened" || e.type === "turn.completed"));
+    expect(event.type).toBe("request.opened");
+    if (event.type !== "request.opened") throw new Error("missing folder question");
+    expect(event.requestType).toBe("question");
+    await skip("unreadable-auto", event.requestId!);
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(replies()).toEqual([REJECT_REPLY]);
+  });
+
   it("N7 below No limits honours the owner's stored Do not trust without a card", async () => {
     await create();
     const turnId = await send("n7-reject", { stopLine: true,
@@ -489,36 +501,36 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
   });
 
-  it("N7 No limits overrides the owner's stored Do not trust for this turn without a card", async () => {
+  it("N7 No limits withholds the owner's stored Do not trust without a card", async () => {
     await create();
     const turnId = await send("n7-reject", { stopLine: true, noLimits: true,
       folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
     expect(await done(turnId)).toMatchObject({ ok: true });
-    expect(readDump().argv).toContain("--trust");
-    expect(readDump().folderTrust.trustedAtBuild).toBe(true);
-    expect(replies()).toEqual([]);
+    expect(readDump().argv).not.toContain("--trust");
+    expect(readDump().folderTrust.trustedAtBuild).toBe(false);
+    expect(replies()).toEqual([REJECT_REPLY]);
     expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
-    expect(chips().some(line => line.startsWith("untrusted folder"))).toBe(false);
+    expect(chips().some(line => line.startsWith("untrusted folder"))).toBe(true);
   });
 
-  it("N7 No limits trusts despite a saved reject that answers the engine key", async () => {
+  it("N7 No limits withholds a saved reject that answers the engine key", async () => {
     await create();
     const turnId = await send("n7-records", { stopLine: true, noLimits: true,
       folderTrust: gate({ sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
     expect(await done(turnId)).toMatchObject({ ok: true });
-    expect(readDump().argv).toContain("--trust");
-    expect(readDump().folderTrust.trustedAtBuild).toBe(true);
-    expect(replies()).toEqual([]);
+    expect(readDump().argv).not.toContain("--trust");
+    expect(readDump().folderTrust.trustedAtBuild).toBe(false);
+    expect(replies()).toEqual([REJECT_REPLY]);
     expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
   });
 
-  it("N7 No limits generation 1 passes --trust despite a saved reject", async () => {
+  it("generation1-no-automatic-trust-flag (W-T05, N7 saved reject)", async () => {
     await create({ FAKE_ACP_TRUST_V: "", FAKE_ACP_VERSION: "fuigo 1.0.34" }, { cli: ownCli() });
     const turnId = await send("n7-g1", { stopLine: true, noLimits: true,
       folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
     expect(await done(turnId)).toMatchObject({ ok: true });
-    expect(readDump().argv).toContain("--trust");
-    expect(replies().every(line => line?.includes('"outcome":"trust"'))).toBe(true);
+    expect(readDump().argv).not.toContain("--trust");
+    expect(readDump().decision).toEqual({ outcome: 'reject' });
     expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
   });
 
@@ -910,7 +922,8 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     }
     it("a warm in the bare desk on the owner's own home: no card, no grant; the turn after answers with no card", async () => {
       process.env.MURAGE_ACP_POOL = "1";
-      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      // Let the fixture consume the queued rejection during SIGTERM; retirement still starts immediately.
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_TERM: "linger" }, { cli: ownCli() });
       await instance!.adapter.sendTurn({ threadId: "d-warm", text: "", cwd: desk, folderTrust: deskGate(), prewarm: true } as SendTurnInput).catch(() => undefined);
       await vi.waitFor(() => expect(requests()).toHaveLength(1), { timeout: 10_000 });
       await vi.waitFor(() => expect(closed("folder-trust-undecided") || closed("post-turn-activity")).toBe(true), { timeout: 10_000 });

@@ -153,13 +153,6 @@
    }
   ],
   "general.startup::Background status line": "no-model-control",
-  "general.analytics::Send usage analytics": [
-   {
-    "dim": "default",
-    "shipped": true,
-    "spec": false
-   }
-  ],
   "general.about-me::Character counter": "no-model-control",
   "general.about-me::Save": "no-model-control",
   "general.about-me::Undo changes": "no-model-control",
@@ -759,18 +752,10 @@
     "spec": "Engine search"
    }
   ],
-  "webSearch.images::Allow image requests": [
-   {
-    "dim": "default",
-    "shipped": false,
-    "spec": "on when a route exists"
-   }
-  ],
   "webSearch.images::Connection": "no-model-control",
   "webSearch.images::Check this model now (+ confirm / cancel)": "no-model-control",
   "webSearch.images::Refresh connections": "no-model-control",
   "webSearch.images::Setup / Library tabs": "no-model-control",
-  "webSearch.voice::Open AssemblyAI dashboard": "no-model-control",
   "webSearch.provider-keys::Tavily API key": [
    {
     "dim": "kind",
@@ -822,7 +807,7 @@
    }
   ],
   "webSearch.provider-keys::Key saved / No key state": "no-model-control",
-  "webSearch.voice-key::AssemblyAI API key": [
+  "webSearch.voice-key::Your own transcription key": [
    {
     "dim": "default",
     "shipped": "",
@@ -852,45 +837,6 @@
   "connections.bot-email::Sign in (email owner key)": "no-model-control",
   "connections.bot-email::Sent today count": "no-model-control",
   "connections.bot-email::Stub (not signed in / needs account / checking): Sign in with Flux or Open Models": "no-model-control",
-  "connections.highlevel::Private integration token": [
-   {
-    "dim": "default",
-    "shipped": "",
-    "spec": null
-   }
-  ],
-  "connections.highlevel::Save token": [
-   {
-    "dim": "kind",
-    "shipped": "button",
-    "spec": "text"
-   }
-  ],
-  "connections.highlevel::Remove token": [
-   {
-    "dim": "kind",
-    "shipped": "button",
-    "spec": "text"
-   }
-  ],
-  "connections.highlevel::Location ID": [
-   {
-    "dim": "default",
-    "shipped": "",
-    "spec": null
-   }
-  ],
-  "connections.highlevel::Check location": [
-   {
-    "dim": "kind",
-    "shipped": "button",
-    "spec": "text"
-   }
-  ],
-  "connections.highlevel::Confirm": "no-model-control",
-  "connections.highlevel::Disconnect": "no-model-control",
-  "connections.highlevel::{bot} can read HighLevel (one switch per bot)": "no-model-control",
-  "connections.highlevel::Connection status line": "no-model-control",
   "connections.phone-calls::Voice account key (field + Save)": [
    {
     "dim": "default",
@@ -1705,19 +1651,6 @@
      "default": false,
      "source": "src/components/CallsSettings.tsx:88",
      "modelControl": "off-today"
-    }
-   ]
-  },
-  "general.analytics": {
-   "home": "general.analytics",
-   "controls": [
-    {
-     "control": "Send usage analytics",
-     "kind": "switch",
-     "key": "localStorage murage-analytics-opt-out (\"1\" = off, \"0\" = on); in-process choice outranks storage",
-     "default": true,
-     "source": "src/components/SettingsModal.tsx:329; src/lib/analytics.ts:37,53,72",
-     "modelControl": "analytics"
     }
    ]
   },
@@ -3203,8 +3136,16 @@
      "kind": "select",
      "key": "config.webSearch.provider via PUT /api/config {webSearch:{provider}} (engine|auto|flux|tavily|exa|firecrawl|off)",
      "default": "engine",
-     "source": "src/components/SearchSettings.tsx:60-70",
+     "source": "src/components/SearchSettings.tsx",
      "modelControl": "service"
+    },
+    {
+     "control": "Allow Murage to read web pages",
+     "kind": "switch",
+     "key": "config.webSearch.readEnabled via PUT /api/config",
+     "default": "on unless search is off",
+     "source": "src/components/SearchSettings.tsx",
+     "modelControl": "read-pages"
     }
    ]
   },
@@ -3215,7 +3156,7 @@
      "control": "Allow image requests",
      "kind": "switch",
      "key": "POST /api/images/settings {enabled}",
-     "default": false,
+     "default": "on when a route exists",
      "source": "src/components/ImageSettings.tsx:201",
      "modelControl": "on"
     },
@@ -3273,20 +3214,12 @@
    "home": "voice.voice",
    "controls": [
     {
-     "control": "AssemblyAI transcription status (dot + Connected)",
+     "control": "Voice notes transcription status (configured route)",
      "kind": "readout",
-     "key": "read-only: window.muragebox.transcription.status().configured",
+     "key": "read-only: /api/config tts.routes.transcribe",
      "default": null,
-     "source": "src/components/TranscriptionSettings.tsx:44-48",
+     "source": "src/components/TranscriptionSettings.tsx:47-58",
      "modelControl": "route"
-    },
-    {
-     "control": "Open AssemblyAI dashboard",
-     "kind": "button",
-     "key": "none (navigation only, external link)",
-     "default": null,
-     "source": "src/components/TranscriptionSettings.tsx:78",
-     "modelControl": null
     }
    ]
   },
@@ -3361,19 +3294,19 @@
    "home": "voice.voice-key",
    "controls": [
     {
-     "control": "AssemblyAI API key",
+     "control": "Your own transcription key",
      "kind": "password",
-     "key": "window.muragebox.transcription.setKey(value) (OS-protected store); disabled outside the desktop app",
+     "key": "window.muragebox.transcription.setKey(value) (OS-protected store); rendered only for a saved key with no engine that transcribes",
      "default": "",
-     "source": "src/components/TranscriptionSettings.tsx:56-66",
+     "source": "src/components/TranscriptionSettings.tsx:100-112",
      "modelControl": "key"
     },
     {
      "control": "Save / Clear (button turns Clear when field empty and key saved)",
      "kind": "button",
-     "key": "same as AssemblyAI API key (empty value clears)",
+     "key": "same as Your own transcription key (empty value clears)",
      "default": null,
-     "source": "src/components/TranscriptionSettings.tsx:67-78",
+     "source": "src/components/TranscriptionSettings.tsx:113-123",
      "modelControl": "key"
     }
    ]
@@ -3452,83 +3385,6 @@
     }
    ],
    "note": "Per-bot address, policy radios and allow lists render in each bot's Email section (BotEmailSettings.tsx:219-290), not in this card."
-  },
-  "connections.highlevel": {
-   "home": "connections.highlevel",
-   "controls": [
-    {
-     "control": "Private integration token",
-     "kind": "password",
-     "key": "window.muragebox.setCredential(highlevelPrivateToken) else PUT /api/config {highlevel:{privateToken}}",
-     "default": "",
-     "source": "src/components/HighLevelSettings.tsx:123",
-     "modelControl": "token"
-    },
-    {
-     "control": "Save token",
-     "kind": "button",
-     "key": "same as token",
-     "default": null,
-     "source": "src/components/HighLevelSettings.tsx:127",
-     "modelControl": "token"
-    },
-    {
-     "control": "Remove token",
-     "kind": "button",
-     "key": "same key written as empty string",
-     "default": null,
-     "source": "src/components/HighLevelSettings.tsx:130",
-     "modelControl": "token"
-    },
-    {
-     "control": "Location ID",
-     "kind": "text",
-     "key": "POST /api/highlevel/token/check {locationId}",
-     "default": "",
-     "source": "src/components/HighLevelSettings.tsx:139",
-     "modelControl": "location"
-    },
-    {
-     "control": "Check location",
-     "kind": "button",
-     "key": "POST /api/highlevel/token/check {locationId}",
-     "default": null,
-     "source": "src/components/HighLevelSettings.tsx:141",
-     "modelControl": "location"
-    },
-    {
-     "control": "Confirm",
-     "kind": "button",
-     "key": "POST /api/highlevel/token/:opId/confirm",
-     "default": null,
-     "source": "src/components/HighLevelSettings.tsx:148",
-     "modelControl": null
-    },
-    {
-     "control": "Disconnect",
-     "kind": "button",
-     "key": "DELETE /api/highlevel/connections/:connectionId",
-     "default": null,
-     "source": "src/components/HighLevelSettings.tsx:155",
-     "modelControl": null
-    },
-    {
-     "control": "{bot} can read HighLevel (one switch per bot)",
-     "kind": "switch",
-     "key": "PUT /api/highlevel/bots/:botId/access {grants for connectionId}",
-     "default": false,
-     "source": "src/components/HighLevelSettings.tsx:164",
-     "modelControl": null
-    },
-    {
-     "control": "Connection status line",
-     "kind": "readout",
-     "key": "read-only: GET /api/highlevel view",
-     "default": null,
-     "source": "src/components/HighLevelSettings.tsx:48-54",
-     "modelControl": null
-    }
-   ]
   },
   "connections.phone-calls": {
    "home": "calls.outbound",

@@ -11,7 +11,7 @@ import { launchVerificationServer } from './control-murage.ts';
 const root=resolve(import.meta.dirname,'..');
 const round=Number(process.env.MURAGE_PHONE_ROUND||5);
 const output=resolve(root,'../.planning/browser-extension/evidence/phone-ui-r'+round);mkdirSync(output,{recursive:true});
-assert(tmpdir().startsWith('/Volumes/Fixture/'),'Set task-owned scratch-volume TMPDIR before launch');
+assert(tmpdir().startsWith('/Volumes/Fixture/'),'Set task-owned Mando TMPDIR before launch');
 assert(existsSync(join(root,'dist/index.html')),'Built app required');
 const registryRoot=mkdtempSync(join(tmpdir(),'phone-registry-'));process.env.MURAGE_COMPANION_DIR=registryRoot;
 const {DATA_DIR}=await import('../companion/src/state.ts');

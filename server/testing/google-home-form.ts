@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // CHROME-OWNER-NAMED-SITE row 30 (Astra r1 Medium 5): the real search form of https://www.google.com/?hl=en as the server sent it on
-// 2026-11-06 (Chrome 141 user agent, fetched from build-host). Kept: every element and the attributes the recipient scan and the floor read
+// 2026-11-06 (Chrome 141 user agent, fetched from hetzner-dsm). Kept: every element and the attributes the recipient scan and the floor read
 // (tag, type, name, role, id, aria-*, value, hidden, tabindex, autocomplete). Dropped: scripts, styles, svg paths, classes, inline styles,
 // js*/data-* attributes. The per-request hidden values (sca_esv, sxsrf, ei, iflsig) and the generated ids are replaced with placeholders.
 // This is the markup before Google's scripts run; the live page in Chrome is row 48 (packaged check).

@@ -367,7 +367,8 @@ describe("Full access default and its options", () => {
       expect((await api("GET", "/api/routines")).body.routines.some((r: any) => r.name === "Approved brief")).toBe(true);
       await expect.poll(() => decisions().some((row) => row.requestId === approved.body.requestId && row.decision === "auto-approved" && row.source === "full-access"), { timeout: 5_000 }).toBe(true);
       // MAIN RULING INT-CONFLICT-DEFAULT 49a54e2fae6 / 8bfe905cabf: registered skill delivery uses the canonical terminal label; require the accepted result and enabled skill after D6 clean settle.
-      await expect.poll(async () => (await cardFor(bot.threadId, "skillRequest", "approved-skill"))?.answered, { timeout: 5_000 }).toBe("Allowed");
+      // 1.0.23 skill-switch lane (decision/implementation.ts patchTerminal): a switch_skill card now settles with the canonical service value "allow", like routine/peer cards.
+      await expect.poll(async () => (await cardFor(bot.threadId, "skillRequest", "approved-skill"))?.answered, { timeout: 5_000 }).toBe("allow");
       expect((await desktopApi("GET", `/api/bots/${bot.id}/skills`)).body.skills.some((s: any) => s.name === "approved-skill")).toBe(true);
 
       // the option does nothing once this conversation is back on Auto

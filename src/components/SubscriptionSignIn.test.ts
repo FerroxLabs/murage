@@ -33,10 +33,11 @@ describe("plan sign-in card", () => {
     expect(ended).toContain("Sign in again");
   });
 
-  it("labels Grok unofficial and says the user's own CLI logins are left alone", () => {
+  // 1.0.21: the plain sentence says what "unofficial" meant; no uppercase badge beside it (Sean's live 1.0.20 walk).
+  it("says in plain words that xAI has not published this sign-in, and that the user's own CLI logins are left alone", () => {
     const grok = row({ provider: "supergrok" });
     expect(grok).toContain("Continue with Grok");
-    expect(grok).toContain(en["modelSignIn.grok.unofficial"]);
+    expect(grok).not.toContain("uppercase");
     expect(grok).toContain(en["modelSignIn.grok.note"]);
     expect(row({ provider: "chatgpt" })).toContain("leaves your Codex sign-in alone");
   });

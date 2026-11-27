@@ -8,6 +8,7 @@
 // choices: a master switch and one switch per job.
 // A plan that cannot use it is remembered for a cooldown. Never throws.
 import { loadConfig } from "../config.ts";
+import { fluxRouteFor } from "../../shared/flux-route.ts";
 import { deciderUnavailable, markDeciderUnavailable } from "./availability.ts";
 import { fluxKey } from "../flux-config.ts";
 import { fluxBackend, isLoopbackUrl } from "./flux.ts";
@@ -61,7 +62,7 @@ export function createDecider(deps: DeciderDeps = {}): Decider {
     }
   });
   const credential = deps.credential ?? (() => fluxKey());
-  const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+  const doFetch = deps.fetch ?? ((input: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(fluxRouteFor(input).requestUrl, init));
 
   async function run(
     seam: DeciderSeam, state: unknown, questions: Record<string, DeciderQuestion>, options: AskOptions,

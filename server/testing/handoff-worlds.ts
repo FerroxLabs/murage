@@ -28,6 +28,8 @@ export interface Knobs {
   submit: Set<string>;
   /** runs just before the fake provider records a start (a deletion landing in the last instant) */
   beforeStamp: (() => void) | undefined;
+  /** bots the host reports as archived (fprod3 N3: the start refuses a fenced sender or target) */
+  fenced?: Set<string>;
   /** when set, the fake provider refuses to start the turn with this message (no such engine), before it is handed the prompt */
   failStart?: string;
   /** the refusal code the failed start carries (Murage's own refusals do: not_reachable, archived, ...) */
@@ -57,6 +59,7 @@ export function ownerWorld(origin: Origin = "owner") {
   const couldNotStart: CouldNotStart[] = [];
   const attach = () => configureHandoffDispatch({
     ...fakeHost(bus, () => {}, { stamp: false }),
+    fenced: (botId: string) => knobs.fenced?.has(botId) === true,
     destinationFor: ({ toBotId, sourceThreadId, executionAudience }) => knobs.destination ?? audienceTask(store, toBotId, threadHumanPrincipal(sourceThreadId), executionAudience ?? null)?.threadId,
     startTurn: async (_botId: string, text: string, turn: HandoffTurnOptions) => {
       if (knobs.failStart) throw Object.assign(new Error(knobs.failStart), knobs.failStartCode ? { code: knobs.failStartCode } : {});

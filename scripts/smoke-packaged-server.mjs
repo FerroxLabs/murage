@@ -11,24 +11,65 @@
 // test passes on a build that would be dead in the field — which is precisely
 // how the bug escaped. The copy is the whole point; do not "simplify" it away.
 import { execFile, spawn } from "node:child_process";
-import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
+import assert from "node:assert/strict";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import { waitForExit } from "../server/testing/cleanup.ts";
+import { raiseLevel } from "../server/testing/raise-level.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const staging = mkdtempSync(join(tmpdir(), "murage-smoke-"));
 const home = mkdtempSync(join(tmpdir(), "murage-smoke-home-"));
 const port = 21000 + Math.floor(Math.random() * 9000);
+const base = `http://127.0.0.1:${port}`;
+const dataDir = join(home, ".murage");
+const qualifyFuigoTurn = process.platform === "linux";
 
 // MURAGE_SMOKE_DIST lets the release workflow aim this at a packaged app's
 // Resources/server tree instead of the repo build.
 cpSync(process.env.MURAGE_SMOKE_DIST ?? join(root, "dist-server"), join(staging, "server"), { recursive: true });
 
-const child = spawn(process.execPath, [join(staging, "server", "index.js")], {
+const fuigoParent = join(staging, "fuigo-fixture-parent");
+const workspace = join(home, "workspace");
+if (qualifyFuigoTurn) {
+  const cli = join(root, "server", "testing", "fake-acp-cli.ts");
+  mkdirSync(workspace);
+  mkdirSync(join(home, ".fuigo"));
+  writeFileSync(join(home, ".fuigo", "auth.json"), "{}");
+  writeFileSync(join(workspace, "AGENTS.md"), "# Fixture\nPackaged Fuigo turn complete\n");
+  mkdirSync(dataDir);
+  writeFileSync(join(dataDir, "config.json"), JSON.stringify({
+    engineDiscovery: "explicit",
+    instances: {
+      fuigo: { driver: "fuigoAgent", config: { cli, fullAuto: false },
+        environment: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_TRUST_V: "2", FAKE_ACP_VERSION: "1.0.40",
+          FAKE_ACP_MCP_READY: "1", FAKE_ACP_PARENT_LOG: fuigoParent } },
+    },
+  }));
+}
+
+const unexpectedHostLaunch = join(staging, "fuigo-host-launch");
+const launchObserver = join(staging, "observe-fuigo-launch.mjs");
+writeFileSync(launchObserver, `
+import cp from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+for (const name of ["spawn", "spawnSync", "fork", "execFile", "execFileSync", "exec", "execSync"]) {
+  const original = cp[name];
+  cp[name] = function (...args) {
+    if (args.slice(0, 2).flat().some(arg => typeof arg === "string" && /host-main\\.[tj]s(?:$|["'\\s])/.test(arg))) {
+      writeFileSync(${JSON.stringify(unexpectedHostLaunch)}, "");
+    }
+    return original.apply(this, args);
+  };
+}
+syncBuiltinESMExports();
+`);
+const child = spawn(process.execPath, ["--import", pathToFileURL(launchObserver).href, join(staging, "server", "index.js")], {
   cwd: staging,
   env: {
     ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -36,6 +77,8 @@ const child = spawn(process.execPath, [join(staging, "server", "index.js")], {
     HOME: home,
     USERPROFILE: home,
     MURAGE_PORT: String(port),
+    MURAGE_WEBHOOK_PORT: String(port + 1),
+    ...(qualifyFuigoTurn ? { MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1" } : {}),
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -65,7 +108,7 @@ let listening = false;
 while (Date.now() < deadline) {
   if (child.exitCode !== null) break;
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(1000) });
+    const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1000) });
     const health = res.ok ? await res.json() : null;
     if (health?.app === "murage" && health.pid === child.pid) {
       listening = true;
@@ -170,6 +213,39 @@ if (listening) {
   }
 }
 
+let fuigoError;
+if (listening && qualifyFuigoTurn) {
+  try {
+    const secret = await fetch(`${base}/api/desktop-secret`).then(response => response.json());
+    const request = async (method, path, body) => {
+      const response = await fetch(base + path, { method, signal: AbortSignal.timeout(10_000),
+        headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": secret.secret },
+        body: body === undefined ? undefined : JSON.stringify(body) });
+      return { status: response.status, body: await response.json() };
+    };
+    const created = await request("POST", "/api/bots", { name: "Fuigo fixture", modelSelection: { instanceId: "fuigo", model: "fake-acp-model" } });
+    assert.equal(created.status, 201, "create the packaged smoke fixture bot");
+    const { id, threadId } = created.body.bot;
+    assert.equal((await request("PATCH", `/api/bots/${id}`, { computer: "off", browser: false, composio: false, autoReview: "off" })).status, 200);
+    assert.equal((await request("PATCH", `/api/bots/${id}/tasks/${threadId}`, { cwd: workspace })).status, 200);
+    assert.equal((await raiseLevel(request, id, { noLimits: true, acknowledgeNoLimits: true })).status, 200);
+    assert.equal((await request("POST", `/api/bots/${id}/messages`, { threadId, text: "Read the fixture instructions" })).status, 202);
+    let replied = false;
+    const turnDeadline = Date.now() + 30_000;
+    while (Date.now() < turnDeadline) {
+      const { body } = await request("GET", `/api/threads/${threadId}/messages?limit=50`);
+      replied = body.messages?.some(message => message.role === "bot" && message.text?.includes("Packaged Fuigo turn complete"));
+      if (replied) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.equal(replied, true, "the packaged coordinator delivered the Fuigo fixture reply");
+    assert.ok(existsSync(fuigoParent), "the Fuigo fixture recorded its parent");
+    assert.deepEqual([...new Set(readFileSync(fuigoParent, "utf8").trim().split("\n").map(Number))], [child.pid], "the packaged coordinator launched Fuigo directly");
+  } catch (error) { fuigoError = error; }
+}
+
+const hostLaunched = existsSync(unexpectedHostLaunch);
+const custodyCreated = existsSync(join(dataDir, "hosted-custody.jsonl"));
 await cleanup();
 
 if (!listening) {
@@ -178,6 +254,14 @@ if (!listening) {
   console.error(output.trim() || "(no output)");
   process.exit(1);
 }
+
+if (fuigoError) throw fuigoError;
+// The forwarder is inlined into the packaged bundle, so its init counter is the module evaluation observable.
+const reason = process.platform === "win32" ? "dump_policy_unavailable" : "hosted_unqualified";
+const fuigoMode = output.split(/\r?\n/).find(line => line.startsWith("[fuigo-mode]"));
+assert.equal(fuigoMode, `[fuigo-mode] mode=COORDINATOR reason=${reason} driver=FuigoAgentDriver hello=none forwarderInits=0 custodyUnresolved=0`);
+assert.equal(hostLaunched, false, "packaged coordinator launched a hosted process");
+assert.equal(custodyCreated, false, "packaged coordinator left a custody file");
 
 if (!proxyReport || proxyReport.error || proxyReport.missing.length > 0) {
   console.error("spawned proxy paths do not resolve inside the packaged server dir:");

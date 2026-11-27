@@ -33,6 +33,7 @@ import { forgetMemory } from "./forget.ts";
 import { accountingWrite } from "./learning-send.ts";
 import type { Message } from "../store.ts";
 import { setMemoryMode } from "./repository.ts";
+import { writeLine, writeMemory } from "./revoke-marker.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
@@ -548,5 +549,27 @@ describe("durable preSend and pre-release refund",()=>{
     if(mode==="commit-throws")vi.spyOn(db,"exec").mockImplementation(sql=>{if(sql==="COMMIT"&&released)throw new Error("commit fixture");return exec(sql);});
     const emit=()=>{released=true;expect(r.paid()).toBe(1);if(mode==="spawn-throws")throw new Error("spawn fixture");};
     try{if(mode==="after-commit")r.gate.send(emit);else expect(()=>r.gate.send(emit)).toThrow();expect(r.paid()).toBe(1);expect(r.gate.released).toBe(1);}finally{r.other.close();}
+  });
+});
+
+// 1.0.23 q1023-denyfinal (ASTRA ca61a0631b, OPUS/FABLE b5f07cee74: learning-send.ts fence triggers omit memory_deny_object). Every schema 14
+// mark table (deny-rule-schema.ts DENY_RULE_ADDED_TABLES) moves the counter when the marker's own writer (revoke-marker.ts writeLine /
+// writeMemory, which a walk slice runs on this connection) adds a mark after the sample. Entry point: the gate's send. RED on b5f07cee74 at
+// the memory_deny_object rows (no trigger: the same-connection write moves neither the epoch nor data_version, so the call is released).
+describe("W-LF a deny mark written after the sample fences the call (schema 14 mark tables)", () => {
+  const writers = [
+    ["memory_deny_point", () => writeLine(database(), 7, "thread", 1, "fixture")],
+    ["memory_deny_object", () => writeMemory(database(), 7, "source", "message:thread:m1", 1)],
+  ] as const;
+  for (const [table, write] of writers) it(`unscoped gate: a ${table} mark refuses`, () => {
+    const gate = gateOver();
+    write();
+    expect(() => gate.send(() => "sent")).toThrow(/MEMORY_SEND_FENCED/);
+  });
+  it("a gate holding a record: a memory_deny_object mark on that record refuses it (held-row re-check)", () => {
+    const id = ownerRecord("a held detail");
+    const gate = gateOver({ records: [{ id, version: 1, digest: digestOf("a held detail") }] });
+    writeMemory(database(), 7, "record", id, 1);
+    expect(() => gate.send(() => "sent")).toThrow(/MEMORY_SEND_FENCED/);
   });
 });

@@ -55,6 +55,7 @@ interface Allowlist {
   _about: string;
   fixed_probe?: { file: string; launch: string; script: string; reason: string };
   names_only: Record<string, { reason: string; lines: Record<string, string> }>;
+  shell_dialects: Record<string, { reason: string; counts: Record<string, number> }>;
   reviewed_security: Record<string, {
     reason: string; citation: string; callsite: string;
     lines: Record<string, string>; launches: Record<string, string>; source_sha256: string;
@@ -131,6 +132,7 @@ function bracketed(text: string, open: number) {
 export function scanForPowerShell(files: Record<string, string>, list: Allowlist) {
   const holders: Finding[] = [], launches: Finding[] = [], userTerminalLaunches: Finding[] = [];
   const callPrints = new Map<string, string>();
+  const dialectCounts = new Map<string, number>();
   const names = constantNames(files);
   let powershellName: RegExp | null = null, hostName: RegExp | null = null;
   const namesPowerShell = (text: string) => MENTION.test(text) || !!powershellName?.test(text);
@@ -159,7 +161,16 @@ export function scanForPowerShell(files: Record<string, string>, list: Allowlist
       }
       for (const option of call.whole.matchAll(SHELL_OPTION)) if (namesPowerShell(option[1] ?? "")) flag(match.index!);
     }
-    for (const match of code.matchAll(SHELL_OPTION)) if (namesPowerShell(match[1] ?? "")) flag(match.index!);
+    for (const match of code.matchAll(SHELL_OPTION)) {
+      if (!namesPowerShell(match[1] ?? "")) continue;
+      const finding = findingAt(match.index!);
+      const key = `${file} ${finding.fingerprint}`;
+      const count = (dialectCounts.get(key) ?? 0) + 1;
+      const reviewed = list.shell_dialects[file]?.counts[finding.fingerprint] ?? 0;
+      // These exact matches are parser metadata. Actual launch calls are checked above regardless of this count.
+      if (count > reviewed) flag(match.index!);
+      else dialectCounts.set(key, count);
+    }
     for (const match of code.matchAll(DESCRIPTOR)) {
       if (!namesHost(match[1] ?? "")) continue;
       const open = match.index!, whole = bracketed(code, open).whole;
@@ -187,7 +198,11 @@ export function scanForPowerShell(files: Record<string, string>, list: Allowlist
   const stale = [...Object.entries(list.names_only), ...Object.entries(list.user_terminal), ...Object.entries(list.reviewed_security)].flatMap(([file, entry]) => Object.keys(entry.lines).filter(print => !seen.has(`${file}\u0000${print}`)).map(print => `${file} ${print}`));
   const staleLaunches = Object.entries(list.user_terminal).flatMap(([file, entry]) => Object.keys(entry.launches ?? {}).filter(print => !permitted.some(finding => finding.file === file && finding.fingerprint === print)).map(print => `${file} ${print}`));
   staleLaunches.push(...Object.entries(list.reviewed_security).flatMap(([file, entry]) => Object.keys(entry.launches).filter(print => !securityPermitted.some(finding => finding.file === file && callPrints.get(`${file}:${finding.line}`) === print)).map(print => `${file} ${print}`)));
-  return { holders, launches, userTerminalLaunches: permitted, unlisted, forbiddenLaunches, stale: [...stale, ...staleLaunches] };
+  const staleDialects = Object.entries(list.shell_dialects).flatMap(([file, entry]) => Object.entries(entry.counts)
+    .map(([print, count]) => ({ key: `${file} ${print}`, count }))
+    .filter(({ key, count }) => dialectCounts.get(key) !== count)
+    .map(({ key }) => key));
+  return { holders, launches, userTerminalLaunches: permitted, unlisted, forbiddenLaunches, stale: [...stale, ...staleLaunches, ...staleDialects] };
 }
 
 const relativeName = (file: string) => relative(root, file).split("\\").join("/");
@@ -212,6 +227,10 @@ describe("no app-spawned PowerShell", () => {
       expect(entry.reason.trim().length, file).toBeGreaterThan(40);
       expect(Object.keys(entry.lines).length, file).toBeGreaterThan(0);
     }
+    for (const [file, entry] of Object.entries(list.shell_dialects)) {
+      expect(entry.reason.trim().length, file).toBeGreaterThan(40);
+      expect(Object.values(entry.counts).every(count => Number.isSafeInteger(count) && count > 0), file).toBe(true);
+    }
   });
   it("user_terminal is exactly one line: the Open terminal fallback's PowerShell program", () => {
     expect(Object.keys(list.user_terminal)).toEqual(["electron/terminal-launch.mjs"]);
@@ -229,7 +248,7 @@ describe("no app-spawned PowerShell", () => {
     expect(Object.keys(list.open_spawns)).toEqual([]);
   });
   it("no PowerShell script ships with the server", () => {
-    const scripts = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? (SKIP_DIRS.has(entry.name) ? [] : scripts(join(dir, entry.name))) : /\.ps1$/i.test(entry.name) ? [relative(root, join(dir, entry.name))] : []);
+    const scripts = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? (SKIP_DIRS.has(entry.name) ? [] : scripts(join(dir, entry.name))) : /\.ps1$/i.test(entry.name) ? [relativeName(join(dir, entry.name))] : []);
     // MAIN RULING 1115-DIGEST-ADOPTED (aclerk-rulings D48, basis 1114-WIPE-GATE-FOUR WINDOWS; server/wipe/SCOPE.md:94): exactly the ten approved guard/proof scripts, nothing else, no whole-directory exemption
     expect(scripts(join(root, "server")).sort()).toEqual([
       "server/wipe-guard/pwsh/external.ps1",
@@ -335,6 +354,14 @@ describe("no app-spawned PowerShell", () => {
         "electron/terminal-launch.mjs": 'export function other() { spawn("powershell.exe", []); }',
       }, list);
       expect(found.forbiddenLaunches.map(finding => finding.file).sort()).toEqual(["electron/terminal-launch.mjs", "electron/vendor/x.cjs", "server/a.ts", "server/b.ts"]);
+    });
+
+    it("reviewed parser metadata allows only the recorded occurrences in its file", () => {
+      const file = "server/x3-glob-words.ts", source = shipped[file]!;
+      const print = Object.keys(list.shell_dialects[file]!.counts)[0]!;
+      const line = source.split("\n").find(row => fingerprint(row) === print)!;
+      expect(scanForPowerShell({ [file]: source }, list).forbiddenLaunches).toEqual([]);
+      expect(scanForPowerShell({ [file]: `${source}\n${line}` }, list).forbiddenLaunches.map(finding => finding.fingerprint)).toEqual([print]);
     });
 
     const terminal = shipped["electron/terminal-launch.mjs"]!;

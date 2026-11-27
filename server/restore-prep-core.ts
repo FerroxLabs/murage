@@ -288,7 +288,8 @@ export function prepareRestoredRecords(io: RestoreIo, opts: RestorePrepOptions):
   }
   for (const path of ["delegations.json", "browser-cleanups.json"]) quarantine(path);
   for (const path of files) {
-    if (/^skill-state\/[^/]+\/staged\.json$/.test(path)) quarantine(path);
+    if (path === "skill-state/every-bot.json") write(path, { version: 1, marks: {} });
+    else if (/^skill-state\/[^/]+\/staged\.json$/.test(path)) quarantine(path);
     else if (/^skill-state\/[^/]+\/skills\.json$/.test(path)) {
       const manifest = read(path);
       if (!object(manifest)) fail("INVALID_RESTORE_SKILLS");
@@ -342,6 +343,8 @@ export function prepareRestoredDatabase(db: DatabaseSync, opts: RestoreDbOptions
   try {
     cancelOpenRecords(db, "Cancelled (restore)");
     db.exec("DROP TABLE IF EXISTS restore_boot_wait; DROP TABLE IF EXISTS restore_job_marks");
+    // Folder-trust activity is never restored (fuigo-trust Q36/Q44): an archive that still carries it loses it here.
+    db.exec("DROP TABLE IF EXISTS thread_folder_trust_activity");
     // A-M2: a home whose database has no messages table yet (a fresh or marker-only file) has nothing to expire.
     const hasMessages = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").get());
     const update = hasMessages ? db.prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?") : undefined;

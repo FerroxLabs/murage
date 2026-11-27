@@ -235,10 +235,11 @@ function runFold(db: DatabaseSync, B: number, rootJson: string, cursorJson: stri
       if (rows.length) c.after = Number(rows[rows.length - 1]!.seq);
       if (rows.length < n) c = FOLD_CLOSURE.enabled ? { ...c, pk: [0, "", Number.MIN_SAFE_INTEGER] } : { stage: "holds", job: c.job }; // then its pending copy (c2), in this stage
     } else if (c.stage === "holds") {
+      // (D3, ASTRA 27730b83cb: the member's late: notes go with its hold: rows, so the bulk's hold step looks its late children up)
       // (d) only hold: rows (B walks every thread itself), a page per step in thread_id order from the saved key (a member's rows are
       // static while B seeds: holdRevoke and releaseHold resolve its id to B); (e) the member retires in the transaction of the last page
       const id = ids[c.job]!;
-      const holds = st(db, `SELECT thread_id FROM memory_revoke_reached WHERE revoke_id=? AND thread_id>='hold:' AND thread_id>? AND thread_id<'hold;'
+      const holds = st(db, `SELECT thread_id FROM memory_revoke_reached WHERE revoke_id=? AND ((thread_id>='hold:' AND thread_id<'hold;') OR (thread_id>='late:' AND thread_id<'late;')) AND thread_id>?
         ORDER BY thread_id LIMIT ?`).all(id, c.key ?? "", n);
       const insert = st(db, "INSERT OR IGNORE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(?,?,0)");
       for (const row of holds) insert.run(B, String(row.thread_id));
@@ -339,7 +340,7 @@ function moveMember(db: DatabaseSync, R: number, B: number): { moved: number; fl
   }
   for (const row of st(db, "SELECT thread_id,since_lsn FROM memory_deny_pending WHERE revoke_id=?").all(R)) { markPending(db, B, String(row.thread_id), Number(row.since_lsn)); moved++; }
   for (const row of st(db, "SELECT scope_id,since_lsn FROM memory_deny_pending_scope WHERE revoke_id=?").all(R)) { markPending(db, B, `scope:${String(row.scope_id)}`, Number(row.since_lsn)); moved++; }
-  moved += Number(st(db, "INSERT OR IGNORE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) SELECT ?,thread_id,0 FROM memory_revoke_reached WHERE revoke_id=? AND thread_id>=? AND thread_id<'hold;'").run(B, R, HOLD_PREFIX).changes);
+  moved += Number(st(db, "INSERT OR IGNORE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) SELECT ?,thread_id,0 FROM memory_revoke_reached WHERE revoke_id=? AND ((thread_id>=? AND thread_id<'hold;') OR (thread_id>='late:' AND thread_id<'late;'))").run(B, R, HOLD_PREFIX).changes);
   for (const [table] of MEMBER_TABLES) moved += Number(st(db, `DELETE FROM ${table} WHERE revoke_id=?`).run(R).changes);
   const reset = Number(st(db, "UPDATE memory_revoke_jobs SET state='folded' WHERE revoke_id=? AND state='active'").run(R).changes) > 0;
   return { moved, flow, reset };

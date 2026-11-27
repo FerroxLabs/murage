@@ -215,6 +215,14 @@ describe("the Body picker", () => {
       }),
     );
 
+  it("keeps the selected bot color available with a photo avatar", () => {
+    const markup = card({ avatarCrop: "circle", avatarUrl: "/fixtures/avatar.png" });
+    expect(markup).toContain('aria-label="Use orange mascot color"');
+    expect(markup).toMatch(/<button[^>]+aria-pressed="true"[^>]+aria-label="Use orange mascot color"/);
+    expect(markup).toContain('aria-label="Use blue mascot color"');
+    expect(markup).not.toContain('aria-label="Mascot body"');
+  });
+
   it("offers every catalog body by name, Sean's three among them", () => {
     const markup = card();
     for (const body of MASCOT_BODY_IDS) {

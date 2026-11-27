@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "sealedui-fin-1021-wf1121",
+  "date": "2026-11-23",
+  "base": "6d4b5932a84475294f23c085b1f619c87bc1715d",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:memoryRecall.replyCheckFailed": {
+      "text": "Murage couldn’t check memory, so your message was not sent.",
+      "en": "Murage couldn’t check memory, so your message was not sent.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim; matches current locale file; says plainly the message was not sent, consistent with sibling keys and locale address form."
+    },
+    "en:memoryRecall.replyMemoryChanged": {
+      "text": "This reply went ahead without remembered context after memory changed.",
+      "en": "This reply went ahead without remembered context after memory changed.",
+      "verdict": "pass",
+      "note": "Re-read against current locale file (identical); accurate, no engine named, no placeholders, tone and terminology match neighbours."
+    },
+    "de:memoryRecall.replyCheckFailed": {
+      "text": "Murage konnte die Erinnerungen nicht prüfen. Deine Nachricht wurde daher nicht gesendet.",
+      "en": "Murage couldn’t check memory, so your message was not sent.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim; matches current locale file; says plainly the message was not sent, consistent with sibling keys and locale address form."
+    },
+    "de:memoryRecall.replyMemoryChanged": {
+      "text": "Diese Antwort kam ohne gespeicherte Erinnerungen aus, weil sich die Erinnerungen geändert hatten.",
+      "en": "This reply went ahead without remembered context after memory changed.",
+      "verdict": "pass",
+      "note": "Re-read against current locale file (identical); accurate, no engine named, no placeholders, tone and terminology match neighbours."
+    },
+    "es:memoryRecall.replyCheckFailed": {
+      "text": "Murage no pudo comprobar la memoria, por lo que tu mensaje no se envió.",
+      "en": "Murage couldn’t check memory, so your message was not sent.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim; matches current locale file; says plainly the message was not sent, consistent with sibling keys and locale address form."
+    },
+    "es:memoryRecall.replyMemoryChanged": {
+      "text": "Esta respuesta siguió adelante sin usar el contexto recordado porque la memoria había cambiado.",
+      "en": "This reply went ahead without remembered context after memory changed.",
+      "verdict": "pass",
+      "note": "Re-read against current locale file (identical); accurate, no engine named, no placeholders, tone and terminology match neighbours."
+    },
+    "fr:memoryRecall.replyCheckFailed": {
+      "text": "Murage n’a pas pu vérifier la mémoire. Ton message n’a donc pas été envoyé.",
+      "en": "Murage couldn’t check memory, so your message was not sent.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim; matches current locale file; says plainly the message was not sent, consistent with sibling keys and locale address form."
+    },
+    "fr:memoryRecall.replyMemoryChanged": {
+      "text": "La réponse a été produite sans utiliser le contexte mémorisé, car la mémoire avait changé.",
+      "en": "This reply went ahead without remembered context after memory changed.",
+      "verdict": "pass",
+      "note": "Re-read against current locale file (identical); accurate, no engine named, no placeholders, tone and terminology match neighbours."
+    },
+    "hi:memoryRecall.replyCheckFailed": {
+      "text": "Murage मेमोरी की जाँच नहीं कर सका, इसलिए आपका संदेश नहीं भेजा गया।",
+      "en": "Murage couldn’t check memory, so your message was not sent.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim; matches current locale file; says plainly the message was not sent, consistent with sibling keys and locale address form."
+    },
+    "hi:memoryRecall.replyMemoryChanged": {
+      "text": "मेमोरी बदल गई थी, इसलिए यह जवाब याद रखे गए संदर्भ के बिना दिया गया।",
+      "en": "This reply went ahead without remembered context after memory changed.",
+      "verdict": "pass",
+      "note": "Re-read against current locale file (identical); accurate, no engine named, no placeholders, tone and terminology match neighbours."
+    },
+    "ja:memoryRecall.replyCheckFailed": {
+      "text": "メモリを確認できなかったため、メッセージは送信されませんでした。",
+      "en": "Murage couldn’t check memory, so your message was not sent.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim; matches current locale file; says plainly the message was not sent, consistent with sibling keys and locale address form."
+    },
+    "ja:memoryRecall.replyMemoryChanged": {
+      "text": "メモリが変わったため、記憶していた内容を使わずに返答しました。",
+      "en": "This reply went ahead without remembered context after memory changed.",
+      "verdict": "pass",
+      "note": "Re-read against current locale file (identical); accurate, no engine named, no placeholders, tone and terminology match neighbours."
+    },
+    "pt-br:memoryRecall.replyCheckFailed": {
+      "text": "O Murage não conseguiu verificar a memória, por isso sua mensagem não foi enviada.",
+      "en": "Murage couldn’t check memory, so your message was not sent.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim; matches current locale file; says plainly the message was not sent, consistent with sibling keys and locale address form."
+    },
+    "pt-br:memoryRecall.replyMemoryChanged": {
+      "text": "A resposta seguiu sem usar o contexto lembrado porque a memória havia mudado.",
+      "en": "This reply went ahead without remembered context after memory changed.",
+      "verdict": "pass",
+      "note": "Re-read against current locale file (identical); accurate, no engine named, no placeholders, tone and terminology match neighbours."
+    },
+    "zh:memoryRecall.replyCheckFailed": {
+      "text": "Murage 未能检查记忆，因此你的消息未发送。",
+      "en": "Murage couldn’t check memory, so your message was not sent.",
+      "verdict": "pass",
+      "note": "Round 1 replacement applied verbatim; matches current locale file; says plainly the message was not sent, consistent with sibling keys and locale address form."
+    },
+    "zh:memoryRecall.replyMemoryChanged": {
+      "text": "记忆发生了变化，因此这次回复未使用记住的上下文。",
+      "en": "This reply went ahead without remembered context after memory changed.",
+      "verdict": "pass",
+      "note": "Re-read against current locale file (identical); accurate, no engine named, no placeholders, tone and terminology match neighbours."
+    }
+  },
+  "files": {}
+}

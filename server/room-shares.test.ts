@@ -300,3 +300,24 @@ it("a share answer does not retain its roster for later queued releases", () => 
   expect(roomShare(database(),later.id)!.status).toBe("unavailable");
   expect(written).toHaveLength(1);
 });
+
+// q1023-ownermask (MAIN-RULING 2026-11-26T19:04:19Z option B: shared audiences keep today's rules): a reply stored under the owner mask
+// (store.ts Message.ownerMasked) was the held-back line before option B, so a share never offers it to a room, and one that becomes
+// owner-masked after the draft is dropped at release. Base: the row is offered and released (it carries the query words).
+it("OM-SHARE-PICK an owner-masked reply in the bot's 1:1 is never offered to a room", () => {
+  const masked = say("direct", "owner masked zebra canary reply WALNUT-FIXTURE-42", { role: "bot", ownerMasked: true } as Partial<Message>);
+  const { share } = ask();
+  expect(share!.excerpts.map(e => e.messageId)).not.toContain(masked.id);
+  expect(share!.excerpts.length).toBeGreaterThan(0);
+});
+
+it("OM-SHARE-RELEASE a row that is owner-masked when the share is released drops out: nothing reaches the room", () => {
+  const plain = say("direct", "plain walnut zebra canary line WALNUT-FIXTURE-43");
+  const { share } = ask("walnut zebra canary");
+  expect(share!.excerpts.map(e => e.messageId)).toEqual([plain.id]);
+  const flagged = { ...deps, message: (t: string, id: string) => { const row = readMessage(t, id); return row && id === plain.id ? { ...row, ownerMasked: true as const } : row; } };
+  const proof = roomShare(database(), share!.id)!;
+  expect(shareRoomExcerpts(database(), roster, flagged, { id: proof.id, origin: "desktop", nonce: proof.nonce, digest: shareDigest(proof), keep: [plain.id] }, run, NOW))
+    .toMatchObject({ ok: true, status: "unavailable" });
+  expect(written.map(entry => entry.line.text).join("\n")).not.toContain("WALNUT-FIXTURE-43");
+});

@@ -76,9 +76,9 @@ describe("the breadcrumb", () => {
 
 describe("Browse bots", () => {
   const bots = [
-    { id: "n", name: "Nova", chiefOfStaff: true, chiefScope: "workspace" as const },
-    { id: "p", name: "Pepper Potts" },
-    { id: "s", name: "Sable", individual: true },
+    { id: "n", color: "orange" as const, name: "Nova", chiefOfStaff: true, chiefScope: "workspace" as const },
+    { id: "p", color: "orange" as const, name: "Pepper Potts" },
+    { id: "s", color: "orange" as const, name: "Sable", individual: true },
   ];
   it("lists one row per bot with its role and an Open button named for the bot", () => {
     const out = html(createElement(BrowseBotsPage, { bots, openId: null, onOpen: () => {} }));

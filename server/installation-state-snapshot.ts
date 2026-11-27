@@ -8,7 +8,7 @@ import { closeSync, constants, createReadStream, fstatSync, lstatSync, mkdirSync
 import { basename, dirname, join, relative, resolve, sep, isAbsolute } from "node:path";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, MAX_RESTORABLE_PATH_BYTES, type BackupSkipReason } from "../shared/backup-limits.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
+import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation, type SetAsideRow } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { claimCopyScratch } from "./settle-copy.ts";
 import { safeBackupProgress, type BackupProgressReport } from "../shared/backup-progress.mjs";
@@ -22,7 +22,7 @@ import { classifyDataDirEntryForBackup, DATA_DIR_RECORDS, classifyDataDirEntry }
 // name that list does not know).
 const JSON_COMPONENTS = new Set(DATA_DIR_RECORDS);
 const isProjectedRecord = (path: string) => JSON_COMPONENTS.has(path) || classifyDataDirEntry(path)?.backup === "record";
-const SAFE_CONFIG_FIELDS = ["settingsDefaultMode", "profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications", "hermesProfilesPinned", "newBots"] as const;
+const SAFE_CONFIG_FIELDS = ["settingsDefaultMode", "profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications", "hermesProfilesPinned", "newBots", "webSearch"] as const;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function fail(code: string, path?: string): never { throw new InstallationSnapshotError(code, path ? { path } : undefined); }
@@ -104,9 +104,26 @@ function rebuildableFolder(absolute: string, name: string): boolean {
 // Kimi audit #5) is left out and listed like an unreadable one.
 const deniedRead = (error: unknown) => ["EACCES", "EPERM", "EBUSY"].includes(String((error as NodeJS.ErrnoException)?.code));
 
+// Search connections require setup again. Carry the owner's read preference and Search Off through recovery.
+export function projectWebSearchPermission(value: unknown, invalidConfig: "INVALID_CONFIG_COMPONENT" | "INVALID_RESTORE_CONFIG") {
+  if (value === undefined) return;
+  if (!object(value) || (value.readEnabled !== undefined && typeof value.readEnabled !== "boolean")) fail(invalidConfig, "config.json/webSearch");
+  const permission: { provider?: "off"; readEnabled?: boolean } = {};
+  if (value.provider === "off") permission.provider = "off";
+  if (value.readEnabled !== undefined) permission.readEnabled = value.readEnabled;
+  if (Object.keys(permission).length) return permission;
+}
+
 function projectConfig(value: unknown, omit: (path: string, reason: string) => void): JsonObject {
   if (!object(value)) fail("INVALID_CONFIG_COMPONENT");
   const projected: JsonObject = {};
+  const webSearch = projectWebSearchPermission(value.webSearch, "INVALID_CONFIG_COMPONENT");
+  if (webSearch) projected.webSearch = webSearch;
+  if (object(value.webSearch)) {
+    for (const key of Object.keys(value.webSearch)) {
+      if (!webSearch || !Object.hasOwn(webSearch, key)) omit(`config.json/webSearch/${key}`, "Search connection or unknown configuration excluded");
+    }
+  }
   const fields: Record<string, Record<string, string>> = {
     profile: { name: "string", email: "string", timeZone: "string" },
     rooms: { turnTimeoutMinutes: "number" },
@@ -473,7 +490,14 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       if (names.length) manifest.names = names;
       if (skippedCount) { manifest.skipped = skipped; manifest.skippedCount = skippedCount; }
       mkdirSync(join(stage, "state"), { recursive: true, mode: 0o700 });
-      manifest.database = await installation.snapshotDatabase(join(stage, "state", "messages.db"), options.onProgress);
+      // A conversation row the backup could not read is left out and listed with the other items a backup leaves out (1.0.22): the
+      // manifest's database entry keeps its exact shape, and the list names the conversation and the message.
+      const { setAside, memoryAside, ...database } = await installation.snapshotDatabase(join(stage, "state", "messages.db"), options.onProgress) as Awaited<ReturnType<OfflineInstallation["snapshotDatabase"]>> & { setAside?: SetAsideRow[]; memoryAside?: string[] };
+      manifest.database = database;
+      // A memory row that failed memory's own proof is left out of the copy and named; every other memory row is kept.
+      for (const item of memoryAside ?? []) skip(`messages.db/memory/${item}`, "unreadable");
+      for (const row of setAside ?? []) skip(`messages.db/conversation ${row.thread || "?"}/message ${row.id || "?"}`, "unreadable");
+      if (skippedCount) { manifest.skipped = skipped; manifest.skippedCount = skippedCount; }
       if (manifest.database.status === "copied") add("messages.db", manifest.database.bytes, manifest.database.sha256, "messages.db");
       else manifest.missing.push("messages.db");
       safeBackupProgress(options.onProgress)("ledger");

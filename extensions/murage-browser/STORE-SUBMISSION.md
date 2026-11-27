@@ -182,7 +182,7 @@ Done for the live listing (item `gpilijlcanhphjaoogelbghhbhhminol`, shipped in r
 | --- | --- | --- |
 | Fill `release.json` | `productionIds: ["<<PRODUCTION-ID>>"]`, `publicKey: "<<PUBLIC-KEY>>"` | `extensions/murage-browser/release.json` (filled with the production ID and public key) |
 | `parseReleaseConfig` passes | needs both values | `scripts/browser-extension-release-config.mjs` |
-| Release-mode build on the build host yields a manifest `key` and helper `allowed_origins` matching the ID | needs both values | `scripts/prepare-browser-extension.mjs`, `scripts/browser-extension-host-registration.mjs` |
+| Release-mode build on Hetzner yields a manifest `key` and helper `allowed_origins` matching the ID | needs both values | `scripts/prepare-browser-extension.mjs`, `scripts/browser-extension-host-registration.mjs` |
 | `server/browser-extension-listing.test.ts` green on the real ID | `chromeWebStoreId` | `server/browser-extension-listing.ts` |
 | Store URL in the app | `https://chromewebstore.google.com/detail/<<PRODUCTION-ID>>`, shown in every release build whose `chromeWebStoreId` is one of its `productionIds` (since 1.0.6; the `murage-for-chrome-listed` announcement flag no longer gates it) | `server/browser-extension-listing.ts` |
 

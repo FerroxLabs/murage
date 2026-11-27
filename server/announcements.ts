@@ -17,7 +17,7 @@
 // download. A feed older than the one already held (issuedAt) is ignored, and
 // no failure ever replaces a good copy with nothing.
 //
-// Images come only from updates.ferroxlabs.com/murage/images/, are fetched by
+// Images come only from murage.ai/murage/images/, are fetched by
 // this server once, sniffed for PNG, JPEG or WebP, and handed to the renderer
 // from the cache. The renderer never touches the network for a notice.
 //

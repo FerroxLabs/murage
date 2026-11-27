@@ -103,7 +103,7 @@ it("the dispatch path rechecks after the recall await and before the receipt is 
   const awaitAt = source.indexOf("bundle=await buildMemoryBundle(query,access,memoryWorker,memoryOptions)");
   const recheckAt = source.indexOf("resumedSessionInvalidAfterRecall(allowance,threadId,instanceId,resumeKey().nativeSession,access,checkedStamp");
   const resetAt = source.indexOf("bundle=await buildMemoryBundleAfterReset(");
-  const receiptAt = source.indexOf("memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId,turnLineage)");
+  const receiptAt = source.indexOf("memoryReceipt=new MemoryDispatchReceipt(bundle,access,instanceId,turnLineage");
   expect(awaitAt).toBeGreaterThan(0);
   expect(recheckAt).toBeGreaterThan(awaitAt);
   expect(resetAt).toBeGreaterThan(recheckAt);
@@ -148,17 +148,20 @@ it("the image-await check and the live steer both go through the full session va
   // the steer gate runs the receipt's full check, or with no receipt the
   // retained session's own (memory off), and the same gate is the steer's
   // write fence, run again right before a late write (round 3)
-  const holdsAt = source.indexOf("const steerSessionHolds = (): boolean => {");
+  // cause23: the receipt's check is steerState() (holds / exactly checking:pending / refused), the door is steer-door.ts steerDoor
+  const holdsAt = source.indexOf("const steerSessionState = (): SteerSessionState => {");
   // MAIN RULING 1115-RECALL-HELD-REPLACE: the recall-free steer check uses the unified proof.
-  expect(source.slice(holdsAt, holdsAt + 1100)).toMatch(/receipt\.steerable\(\)[\s\S]*proveRetainedSession\(/);
+  expect(source.slice(holdsAt, holdsAt + 1100)).toMatch(/receipt\.steerState\(\)[\s\S]*proveRetainedSession\(/);
   // (1.0.2: only for an engine that can take the line mid-turn; any other
   // queues it, and that turn's own pre-submit check decides)
-  const gateAt = source.indexOf("const memorySessionHolds = steerable && steerSessionHolds();");
+  const gateAt = source.indexOf("const memorySessionHolds = steerable && steerDoor({ state: steerSessionState(),");
   const steerAt = source.indexOf("memorySessionHolds, {", gateAt);
   // MAIN RULING INT-CONFLICT-DEFAULT and 1115-SOURCE-PINS (A7): retain the exact owner/command/isolation gate and the integrated refusal checks.
-  expect(source.slice(gateAt - 350, gateAt)).toContain('const steerable = !isEngineCommand && !unprovenSend && (!directRuns.get(threadId)?.isolated || answerTurnLive()) && Boolean(steerAdapter && cardSteeringMode(steerAdapter) === "steer");');
-  expect(source).toContain("reason=steer-refused sealed");
-  expect(source).toContain('noteContinuationReset(threadId, currentAtStart.modelSelection.instanceId, "steer-refused session-invalid");');
+  expect(source.slice(gateAt - 700, gateAt)).toContain('const steerable = !isEngineCommand && !unprovenSend && (!directRuns.get(threadId)?.isolated || answerTurnLive()) && Boolean(steerAdapter && cardSteeringMode(steerAdapter) === "steer");');
+  const door = readFileSync(new URL("./steer-door.ts", import.meta.url), "utf8");
+  expect(door).toContain("reason=steer-refused sealed");
+  expect(door).toContain("noteContinuationReset(threadId, engine, 'steer-refused session-invalid');");
+  expect(source.slice(holdsAt, gateAt)).toContain("const steerSessionHolds = (): boolean => steerStateHolds(steerSessionState(), steerOwnerKeepsPending());");
   expect(gateAt).toBeGreaterThan(holdsAt);
   expect(steerAt).toBeGreaterThan(gateAt);
   expect(source.slice(steerAt, steerAt + 200)).toContain("holds: steerSessionHolds,");
@@ -298,4 +301,32 @@ it.each([true,false])('room last-resort=%s resets only the rebuild session',asyn
  expect(await run(roomLastResort)).toEqual(roomLastResort
   ?{resets:1,roomMemoryReset:true,roomContinuedSession:undefined,retained:false}
   :{resets:0,roomMemoryReset:false,roomContinuedSession:'kept-session',retained:true});
+});
+
+it('a resumed room retires shell state before resetting its adapter', async () => {
+  const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+  const start = source.indexOf('async function runGroupMemberTurnDispatch(');
+  expect(start).toBeGreaterThan(0);
+  const room = source.slice(start, source.indexOf('\n}\n', start));
+  // MAIN RULING 2026-11-17T19:46Z: execute the shipped reset; shell retirement must precede the adapter reset on resume.
+  const declaration = "const resetRoomMemberSession = ";
+  const resetStart = room.indexOf(declaration);
+  expect(resetStart).toBeGreaterThan(0);
+  const resetEnd = room.indexOf("\n  };", resetStart);
+  expect(resetEnd).toBeGreaterThan(resetStart);
+  const events: string[] = [];
+  let shellLive = true;
+  const reset = new Function('shellSessions', 'instance', 'threadId', 'internalCapabilities', 'internalGeneration',
+    'memoryState', 'roomStoredMemoryMode', 'roomRetainedMemory', 'roomRetainedKey', 'roomRetainedSession',
+    'deleteSessionChecks', 'database', 'sessionKeyOf',
+    'return (' + room.slice(resetStart + declaration.length, resetEnd + 4) + ');')(
+      { retire(thread: string, engine: string) { expect([thread, engine]).toEqual(['room-thread', 'engine']); shellLive = false; events.push('retire'); } },
+      { instanceId: 'engine', adapter: { async resetSession(thread: string) { expect(thread).toBe('room-thread'); expect(shellLive).toBe(false); events.push('reset'); } } },
+      'room-thread', { activeGeneration: () => 'generation' }, 'generation', () => ({ mode: 'active' }), 'active',
+      new Map([['retained', 'session']]), 'retained', (value: string) => value,
+      (_db: unknown, key: string[]) => { expect(key).toEqual(['room-thread', 'engine', 'session']); events.push('checks'); },
+      database, (...parts: string[]) => parts);
+  await buildMemoryBundleAfterReset('alarm code', access(), empty, reset, { allowance: LineageAllowance.tool(1_000_000_000) });
+  expect(events).toEqual(['retire', 'reset', 'checks']);
+  expect(room).toContain("const bundle=await buildMemoryBundleAfterReset(query,access,memoryWorker,undefined,");
 });

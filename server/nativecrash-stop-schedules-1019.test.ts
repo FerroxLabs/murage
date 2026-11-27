@@ -34,12 +34,16 @@ async function fakeInstance() {
 
 /** holdBrowser: Stop parks in releaseBrowserCapabilityForThread. holdLease: the lease's id-bearing interrupt parks. holdStop: the Stop's
  *  id-less interrupt parks and answers what the test opens it with. */
-async function setup(opts: { holdBrowser?: boolean; holdLease?: boolean; holdStop?: boolean; teardownConfirmed?: boolean } = {}) {
+/** engineInput (JOINT RULING STOP-VS-REFUSAL H1): the refusal is raised at the engine's own input. "deferred": a released attempt's D7 note is
+ *  owed at the lease's teardown (Q2); "l2": refused before the handback, the generic row is the L2 no-handback fallback. leaseConfirmed: the
+ *  lease's id-bearing interrupt answer. attach false: the engine's turn id is attached by the test. */
+async function setup(opts: { holdBrowser?: boolean; holdLease?: boolean; holdStop?: boolean; teardownConfirmed?: boolean;
+  engineInput?: "deferred" | "l2"; leaseConfirmed?: boolean; attach?: boolean } = {}) {
   const n = ++serial, threadId = `thread-${n}`, generation = `gen-${n}`, providerTurnId = `pt-${n}`;
   const instance = await fakeInstance();
   const leaseGate = gate(), stopGate = gate<StopAnswer>(), browserGate = gate(), browserReached = gate(), stopReached = gate();
   const interruptTurn = vi.fn(async (_threadId: string, turnId?: string): Promise<StopAnswer> => {
-    if (turnId !== undefined) { if (opts.holdLease) await leaseGate.closed; return { closeConfirmed: true }; }
+    if (turnId !== undefined) { if (opts.holdLease) await leaseGate.closed; return { closeConfirmed: opts.leaseConfirmed ?? true }; }
     stopReached.open();
     return opts.holdStop ? stopGate.closed : { closeConfirmed: true };
   });
@@ -56,14 +60,26 @@ async function setup(opts: { holdBrowser?: boolean; holdLease?: boolean; holdSto
   const noop = () => {};
   const recordStopForThread = vi.fn(), cancelDirectTurnDispatch = vi.fn(() => ({ phase: "running" }));
   const unconfirmedDirectStop = vi.fn(() => Object.assign(new Error("unconfirmed"), { code: "provider_stop_unconfirmed" }));
+  // the refusal rows the owner can read: the D7 note (deferred) and the generic status line (L2)
+  const rows: string[] = [];
+  const appendMessage = vi.fn((_thread: string, message: { text?: string }) => { if (message?.text === LEDGER_REFUSAL_LINE) rows.push("generic-row"); });
+  const deferredRefusalNotes = new Map<string, unknown>();
+  /** The D7 note the handback moves into deferredRefusalNotes for a released attempt (index.ts handback, Q2). */
+  const refusalNote = { note: () => { rows.push("refusal-note"); }, classify: () => "unwritten", clearCause: noop };
+  const engineInput = opts.engineInput ? {
+    releasingEngineInput: () => true,
+    turnRefusalNotes: new Map(opts.engineInput === "deferred" ? [[providerTurnId, refusalNote]] : []),
+  } : {};
   const g = wiring(["admitLedgerLease", "interruptDirectThread", "stopDirectThreadForOwner", "refusedTurnOf", "joinRefusedStop"], {
     recordStopForThread, dropAskerWakes: noop, markSendsStopped: noop, botCalls: { cancel: noop }, stopHeldVenuePosts: () => [],
     settleVenuePostCard: noop, routines: { activeBotRunForThread: () => undefined },
     bus, broadcast, windowRuntimeEvent: (e: unknown) => e, createLedgerLease, LEDGER_REFUSAL_LINE, stopCloseConfirmed,
     database: () => ({}), persistLedgerRefusal: (_db: unknown, work: () => void) => { work(); return Promise.resolve(); },
     transaction: (fn: (db: unknown) => void) => fn({}), captureSource: noop, memoryDispatches: new Map(),
-    store: { markTurnToolsUnrecorded: noop, appendMessage: noop, setTaskActivity: noop }, watchdog: { settle: noop, settleSetup: noop },
+    store: { markTurnToolsUnrecorded: noop, appendMessage, setTaskActivity: noop }, watchdog: { settle: noop, settleSetup: noop },
     refusedLeases, admittedLedgerLeases: new Map(), ledgerCompletionSources: new WeakMap(), ledgerLeasesByAdmission: new WeakMap(),
+    // N5: the lease reads the engine-command marks the direct dispatch writes; none here, so the refusal path is the ordinary one
+    dispatchedEngineCommands: new WeakMap(),
     ledgerProviderInstances: new WeakMap(), internalTurnOwners: new Map(), revokeInternalGeneration: noop, retireProviderTurn: noop,
     sendNoticeLine: (notice: string) => ({ notice }), murageLine: (m: unknown) => m, randomUUID: () => "uuid", Error,
     projectTurnLeases: { abandon: noop, markStopAsked: noop, releaseClosed: noop, markStopRequested: noop }, trackStopAskedInterrupt: noop, closeTurnLineage: noop, directRuns,
@@ -77,12 +93,16 @@ async function setup(opts: { holdBrowser?: boolean; holdLease?: boolean; holdSto
     rememberReleasedStoppedTurn: noop,
     // module-level state and helpers the extracted functions close over
     stopInterrupts: new Map(), fencedRefusalRegistry, releasingEngineInput: () => false, noteRefusedLeaseTerminal: noop,
+    // present() reads hidden chief proposals (a32f9b9fe8) and the seal reads the confirmed owner Stops (fable-attnisoh4): unbound, both threw
+    // inside the lease's own try and quarantined the refusal before it was told (every memoryRefused here read 0)
+    chiefProposals: { ignores: () => false }, confirmedStopGenerations: new PendingTurnKeys(), takeReleasedStoppedTurn: () => false,
     ledgerRefusalAwaitingHandback: new Set(), roomLedgerRefusalNotes: new Map(), turnRefusalNotes: new Map(),
-    deferredRefusalNotes: new Map(), refusalStopJoins: new PendingTurnKeys(), refusalStopGenerations: new PendingTurnKeys(), refusedTerminalDecisions: new Set(), lateMemoryRedispatches: new Map(),
+    deferredRefusalNotes, refusalStopJoins: new PendingTurnKeys(), refusalStopGenerations: new PendingTurnKeys(), refusedTerminalDecisions: new Set(), lateMemoryRedispatches: new Map(),
+    ...engineInput,
   });
   const lease = g.admitLedgerLease("bot", threadId, generation, { turnId: `lineage-${n}` }, instance,
-    { seal: noop, sealFencedUnwritten: () => false, canRetry: false });
-  lease.attach(providerTurnId);
+    { seal: noop, sealFencedUnwritten: () => false, canRetry: false, hasReleasedSubmission: opts.engineInput === "deferred" });
+  if (opts.attach !== false) lease.attach(providerTurnId);
   const source = admitNewTurn.mock.results[0]!.value as SourceContext;
   const terminals = () => broadcast.mock.calls.map(([m]) => m?.event).filter(e => e?.type === "turn.completed");
   const counts = () => ({
@@ -98,7 +118,7 @@ async function setup(opts: { holdBrowser?: boolean; holdLease?: boolean; holdSto
   const providerCancelled = () => bus.publish({ type: "turn.completed", eventId: `cancelled-${n}`, provider: "fake", threadId, turnId: providerTurnId,
     createdAt: new Date().toISOString(), ok: false, stopReason: "cancelled" } as RuntimeEvent, source);
   const ownerStop = (): Promise<void> => g.stopDirectThreadForOwner({ id: "bot" }, threadId);
-  return { g, lease, threadId, generation, refusedLeases, leaseGate, stopGate, browserGate, browserReached, stopReached, counts, providerCancelled, ownerStop };
+  return { g, lease, threadId, generation, providerTurnId, rows, deferredRefusalNotes, refusalNote, refusedLeases, leaseGate, stopGate, browserGate, browserReached, stopReached, counts, providerCancelled, ownerStop };
 }
 
 describe("STOP-ORD: the owner Stop route after a claimed refusal joins it", () => {
@@ -212,7 +232,9 @@ describe("STOP-AFTER-CANCEL (Stop finished): the refusal fires after a confirmed
 });
 
 describe("STOP-ADOPT-FAIL: the adopted Stop interrupt does not confirm the close", () => {
-  it("unconfirmed answer (held kill): no unconfirmed-Stop error, the refusal records stop-failed, one memory_refused, the thread stays quarantined", async () => {
+  // JOINT RULING STOP-VS-REFUSAL (fable-attnisoh4 F2): a Stop that joined a refusal's close is a fact only once that close is CONFIRMED; joined
+  // and unconfirmed it answers 409 provider_stop_unconfirmed with its one chip (it used to resolve as if the engine had stopped).
+  it("unconfirmed answer (held kill): the joined Stop is not a fact (one unconfirmed-Stop error), stop-failed, one memory_refused, the thread stays quarantined", async () => {
     const t = await setup({ holdStop: true, teardownConfirmed: false });
     const stopping = t.ownerStop();
     await t.stopReached.closed;
@@ -221,25 +243,88 @@ describe("STOP-ADOPT-FAIL: the adopted Stop interrupt does not confirm the close
     expect(t.counts(), "reached: adopted, nothing settled yet").toMatchObject({ stopInterrupts: 1, leaseInterrupts: 0, unconfirmed: 0 });
     expect(await settled(stopping)).toBe("pending");
     t.stopGate.open({ closeConfirmed: false });
-    expect(await settled(stopping), "a refused g is never an unconfirmed Stop").toBe("resolved");
+    expect(await settled(stopping), "a joined Stop whose close is unconfirmed is not a fact").toBe("rejected");
     const end = t.counts();
-    expect(end, JSON.stringify(end)).toMatchObject({ stopInterrupts: 1, leaseInterrupts: 0, memoryRefused: 1, otherTerminals: 0, unconfirmed: 0 });
+    expect(end, JSON.stringify(end)).toMatchObject({ stopInterrupts: 1, leaseInterrupts: 0, memoryRefused: 1, otherTerminals: 0, unconfirmed: 1 });
     expect(await t.lease.fencedRefusal!.teardown).toEqual({ confirmed: false, reason: "stop-failed" });
     expect(t.lease.fencedRefusal!.outcome).toBe("termination-failed");
     expect(t.refusedLeases.has(t.generation), "the unconfirmed close keeps the quarantine").toBe(true);
   });
 
-  it("rejected interrupt: the same join (no unconfirmed-Stop error, stop-failed, one memory_refused)", async () => {
+  it("rejected interrupt: the same join (one unconfirmed-Stop error, stop-failed, one memory_refused)", async () => {
     const t = await setup({ holdStop: true, teardownConfirmed: false });
     const stopping = t.ownerStop();
     await t.stopReached.closed;
     t.lease.onLedgerRefused(verdict);
     await flush();
     t.stopGate.fail(new Error("engine gone"));
-    expect(await settled(stopping)).toBe("resolved");
+    expect(await settled(stopping)).toBe("rejected");
     const end = t.counts();
-    expect(end, JSON.stringify(end)).toMatchObject({ stopInterrupts: 1, leaseInterrupts: 0, memoryRefused: 1, unconfirmed: 0 });
+    expect(end, JSON.stringify(end)).toMatchObject({ stopInterrupts: 1, leaseInterrupts: 0, memoryRefused: 1, unconfirmed: 1 });
     expect(await t.lease.fencedRefusal!.teardown).toEqual({ confirmed: false, reason: "stop-failed" });
+  });
+});
+
+// JOINT RULING STOP-VS-REFUSAL INVARIANT (fable review H1): "no turn ever ends with neither a refusal row nor a confirmed Stop". An owner Stop
+// that joins an engine-input refusal's close is a fact only if that close is CONFIRMED; joined and unconfirmed it answers 409 with its one
+// chip (unconfirmedDirectStop), and its join marks must not then hide the refusal row as "the owner stopped first".
+describe("STOP-JOIN-UNCONFIRMED: a joined Stop whose close is not confirmed never hides the engine-input refusal row", () => {
+  it("deferred note (Q2): 409 + one chip, and the refusal's one row is told when the engine later confirms the close", async () => {
+    const t = await setup({ holdLease: true, engineInput: "deferred", leaseConfirmed: false, teardownConfirmed: false });
+    t.lease.onLedgerRefused(verdict);
+    await flush();
+    expect(t.counts().leaseInterrupts, "reached: the lease's close is in flight and held").toBe(1);
+    const stopping = t.ownerStop();
+    let error: { code?: string } | undefined; void stopping.catch(e => { error = e; });
+    expect(await settled(stopping), "the Stop joins the held close").toBe("pending");
+    t.leaseGate.open();
+    expect(await settled(stopping), "a joined Stop whose close is unconfirmed is not a fact").toBe("rejected");
+    expect(error?.code).toBe("provider_stop_unconfirmed");
+    expect(t.counts().unconfirmed, "one unconfirmed chip").toBe(1);
+    expect(await t.lease.fencedRefusal!.teardown).toEqual({ confirmed: false, reason: "stop-failed" });
+    // the deferred row is owed at the lease's teardown: the engine confirms the close late (A5)
+    t.lease.fencedRefusal!.confirmedLate();
+    await flush();
+    expect(t.rows, "exactly one refusal row explains the end").toEqual(["refusal-note"]);
+    expect(t.counts().unconfirmed).toBe(1);
+  });
+
+  it("L2 (refused before the handback, no handback): 409 + one chip, and the generic refusal row is written once", async () => {
+    const t = await setup({ holdLease: true, engineInput: "l2", attach: false, leaseConfirmed: false, teardownConfirmed: false });
+    t.lease.onLedgerRefused(verdict);
+    await flush();
+    const stopping = t.ownerStop();
+    let error: { code?: string } | undefined; void stopping.catch(e => { error = e; });
+    expect(await settled(stopping), "the Stop joins the refusal's pending close").toBe("pending");
+    t.lease.attach(t.providerTurnId);
+    await flush();
+    expect(t.counts().leaseInterrupts, "reached: the lease's close of the attached turn is in flight and held").toBe(1);
+    t.leaseGate.open();
+    expect(await settled(stopping)).toBe("rejected");
+    expect(error?.code).toBe("provider_stop_unconfirmed");
+    expect(t.counts().unconfirmed, "one unconfirmed chip").toBe(1);
+    await flush();
+    expect(t.rows, "exactly one refusal row explains the end").toEqual(["generic-row"]);
+  });
+
+  it("L2 + handback Q2 note (refused before the handback, the handback defers the note): 409 + one chip, and the deferred note is told once", async () => {
+    const t = await setup({ holdLease: true, engineInput: "l2", attach: false, leaseConfirmed: false, teardownConfirmed: false });
+    t.lease.onLedgerRefused(verdict);
+    await flush();
+    const stopping = t.ownerStop();
+    let error: { code?: string } | undefined; void stopping.catch(e => { error = e; });
+    expect(await settled(stopping), "the Stop joins the refusal's pending close").toBe("pending");
+    // the handback (index.ts, Q2): a released attempt's note is deferred to the engine's teardown; with R the L2 fallback stays armed for it
+    t.lease.attach(t.providerTurnId);
+    t.deferredRefusalNotes.set(t.providerTurnId, t.refusalNote);
+    await flush();
+    expect(t.counts().leaseInterrupts, "reached: the lease's close of the attached turn is in flight and held").toBe(1);
+    t.leaseGate.open();
+    expect(await settled(stopping)).toBe("rejected");
+    expect(error?.code).toBe("provider_stop_unconfirmed");
+    expect(t.counts().unconfirmed, "one unconfirmed chip").toBe(1);
+    await flush();
+    expect(t.rows, "exactly one refusal row explains the end: the deferred note, not the generic line").toEqual(["refusal-note"]);
   });
 });
 

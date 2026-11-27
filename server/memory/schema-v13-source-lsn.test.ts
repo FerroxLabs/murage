@@ -6,6 +6,7 @@
 // text; the validator wants both on a v13 file and neither on a v12 one (F6). F9: a downgrade and re-upgrade starts the table empty, so every
 // source version made before the re-upgrade is bounded by the first new stamp and a window opened before the re-upgrade keeps holding it,
 // on the same database handle too.
+import { MEMORY_SCHEMA_V13 } from "./schema.ts";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { BRANCH_TABLES_SQL } from "../branch-index.ts";
@@ -35,9 +36,9 @@ const sourceVersion = (db: DatabaseSync, id: string, revision = 1) => {
 it("v13-fresh: a new file is v13 with the source stamp table and trigger, and every new source version is stamped with the lsn counter", () => {
   const db = open();
   try {
-    expect(MEMORY_SCHEMA_VERSION).toBe(13);
-    expect(version(db)).toBe(13);
-    expect(MEMORY_SCHEMA).toBe(MEMORY_SCHEMA_V12.replace("CHECK(schema_version=12)", "CHECK(schema_version=13)") + SOURCE_LSN_SCHEMA);
+    expect(MEMORY_SCHEMA_VERSION).toBe(14);
+    expect(version(db)).toBe(MEMORY_SCHEMA_VERSION);
+    expect(MEMORY_SCHEMA_V13).toBe(MEMORY_SCHEMA_V12.replace("CHECK(schema_version=12)", "CHECK(schema_version=13)") + SOURCE_LSN_SCHEMA);
     const fresh = frozen(MEMORY_SCHEMA);
     for (const name of OBJECTS) expect(sqlOf(db, name), name).toBe(fresh[name]);
     expect(frozen(MEMORY_SCHEMA_V12)).toEqual({ memory_source_lsn: undefined, memory_source_lsn_insert: undefined });
@@ -54,7 +55,7 @@ it("12 -> 13 creates both objects empty (no backfill: older source versions stay
   const db = open();
   try {
     room(db);
-    expect(downgradeMemorySchema(db, 12)).toMatchObject({ status: "downgraded", from: 13, to: 12 });
+    expect(downgradeMemorySchema(db, 12)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 12 });
     expect(version(db)).toBe(12);
     for (const name of OBJECTS) expect(sqlOf(db, name), name).toBeUndefined();
     expect(String(sqlOf(db, "memory_meta"))).toContain("CHECK(schema_version=12)");
@@ -62,7 +63,7 @@ it("12 -> 13 creates both objects empty (no backfill: older source versions stay
     expect(downgradeMemorySchema(db, 12)).toMatchObject({ status: "already-v12" });
     sourceVersion(db, "old");
     migrateMemorySchema(db, "active");
-    expect(version(db)).toBe(13);
+    expect(version(db)).toBe(MEMORY_SCHEMA_VERSION);
     const fresh = frozen(MEMORY_SCHEMA);
     for (const name of OBJECTS) expect(sqlOf(db, name), name).toBe(fresh[name]);
     expect(stamps(db)).toEqual([]);
@@ -94,7 +95,7 @@ it("F6 the validator refuses a v13 file missing the stamp trigger or the stamp t
 it("13 -> 10 is still the frozen 1.0.2 text (the v13 step drops its own objects first)", () => {
   const db = open();
   try {
-    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 13, to: 10 });
+    expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 10 });
     for (const name of OBJECTS) expect(sqlOf(db, name), name).toBeUndefined();
     expect(String(sqlOf(db, "memory_meta"))).toContain("CHECK(schema_version=10)");
     expect(() => validateMemorySchema(db)).not.toThrow();
@@ -114,14 +115,14 @@ it("F9 13 -> 12, a source version written on v12, 13 again: a window opened befo
     db.prepare("DELETE FROM memory_deny_pending_scope").run();
     expect(state("z")).toBe("shown");
 
-    expect(downgradeMemorySchema(db, 12)).toMatchObject({ status: "downgraded", from: 13, to: 12 });
+    expect(downgradeMemorySchema(db, 12)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 12 });
     db.exec(BRANCH_TABLES_SQL);
     at(db, 20); sourceVersion(db, "b"); // written by a v12 build: no stamp
     at(db, 25); pendingScope(db, 25, 5); // a revoke opened on v12, before the re-upgrade
     at(db, 30);
     migrateMemorySchema(db, "active");
     db.exec(BRANCH_TABLES_SQL);
-    expect(version(db)).toBe(13);
+    expect(version(db)).toBe(MEMORY_SCHEMA_VERSION);
     expect(stamps(db)).toEqual([]);
     // no stamp yet: bounded by the counter now (30)
     expect(["a", "b", "z"].map(state)).toEqual(["checking", "checking", "checking"]);

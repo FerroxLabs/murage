@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Container only; mutants run in a private snapshot and restore exact bytes.
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync, mkdirSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { resolve, join, relative } from 'node:path';
+import { safeWipeSync } from '../server/testing/safe-wipe.mjs';
 const root = resolve('.'), out = resolve(process.argv[2]);
 const scratch = mkdtempSync(join(tmpdir(), 'release-r7-checks-')); mkdirSync(out, { recursive: true });
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -60,6 +61,6 @@ try {
   run('lint', ['node_modules/oxlint/bin/oxlint', 'server/wipe-path.ts', 'server/no-limits-wipe.ts', 'server/decision/release-guard-r6.test.ts', 'scripts/verify-release-guard-r7-checks.mjs', 'scripts/verify-release-guard-r7-live.mjs']);
 } finally {
   writeFileSync(join(out, 'checks-results.json'), JSON.stringify(results, null, 2) + '\n');
-  rmSync(scratch, { recursive: true, force: true });
+  safeWipeSync(scratch);
 }
 console.log(JSON.stringify(results));

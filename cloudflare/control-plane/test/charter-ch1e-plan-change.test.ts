@@ -83,7 +83,7 @@ async function snapshot(): Promise<Record<string, unknown[]>> {
 }
 
 describe("CH1 N2 (Astra r1): plan preview and plan change take the invite admission too", () => {
-  it("CLOUD_PLAN_CHANGE=1 in invite mode: an uninvited member gets 403 not_invited, with zero changed rows and no Stripe or build host fetch", async () => {
+  it("CLOUD_PLAN_CHANGE=1 in invite mode: an uninvited member gets 403 not_invited, with zero changed rows and no Stripe or Hetzner fetch", async () => {
     const t = await token(SUB, EMAIL);
     const before = await snapshot();
     spent.length = 0;

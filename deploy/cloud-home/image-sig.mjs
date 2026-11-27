@@ -31,7 +31,7 @@ export function validImageSizeText(v) {
   const x = Number(v);
   return Number.isFinite(x) && x >= 0.001 && x < 1e6 && String(x) === v;
 }
-/** The text of a number from the build host API (`image_size`), or null when it is out of range or not a number. */
+/** The text of a number from the Hetzner API (`image_size`), or null when it is out of range or not a number. */
 export function imageSizeText(x) {
   if (typeof x !== "number" || !Number.isFinite(x) || x < 0.001 || x >= 1e6) return null;
   const s = String(x);

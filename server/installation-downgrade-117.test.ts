@@ -5,6 +5,7 @@
 // removal steps depend on the target (design PIPPERF-DOWNGRADE13-rule.md). Here, on a data folder opened by the real 1.0.18 open
 // path: a phone call still in progress, or a hand-off held for the owner, refuses --to 13 before anything changes; an ended call is kept in
 // place with a private copy beside the folder; the search index file is left as 1.0.17 has it; --to 12 and 13 report what they removed.
+import { MEMORY_SCHEMA_VERSION } from "./memory/schema.ts";
 import { execFile } from "node:child_process";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -219,7 +220,7 @@ it("the real CLI --to 13 with every call ended: phone-calls.db stays in place, a
   roots.push(out.phoneCallsPreservedAt);
   const after = objectNames(file);
   // the existing keys stay; "removed" is added: exactly what left, sorted
-  expect(out).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 13, to: 13, phoneCallsPreservedAt: expect.any(String), removed: objects.filter(name => !after.includes(name)) });
+  expect(out).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 13, phoneCallsPreservedAt: expect.any(String), removed: objects.filter(name => !after.includes(name)) });
   expect(out.removed).toContain("memory_source_lsn_created");
   // 2de8a7c65c removes the new reference queue on every supported downgrade target.
   expect(out.removed).toContain("search_intents");
@@ -270,7 +271,7 @@ it("the real CLI --to 12 reports the schema objects and the data-folder names it
   const out = JSON.parse((await exec(process.execPath, [cli, "memory-downgrade", "--data-dir", copy, "--to", "12"], { windowsHide: true, timeout: 60_000 })).stdout);
   roots.push(out.phoneCallsPreservedAt);
   const after = objectNames(join(copy, "messages.db"));
-  expect(out).toMatchObject({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 13, to: 12 });
+  expect(out).toMatchObject({ ok: true, operation: "memory-downgrade", status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 12 });
   const gone = objects.filter(name => !after.includes(name));
   expect(gone.length).toBeGreaterThan(0);
   expect(out.removed.slice(0, gone.length)).toEqual(gone);
@@ -360,7 +361,7 @@ it.each(PHASES)("a stop at %s leaves 1.0.17 refusing the folder only while the s
   await expect(downgradeInstallationMemorySchema(dir, 12, { at: reached => { if (reached === point && !hit) { hit = true; throw new Error(`STOP_AT_${point}`); } } })).rejects.toThrow(`STOP_AT_${point}`);
   expect(hit).toBe(true);
   // the stamp is the last thing lowered: a stop before it keeps it up (names and index file may already be gone), so 1.0.17 refuses the folder
-  if (point === "optimized" || point === "config-restored" || point === "index-file-removed" || point === "names-removed") expect(shape(dir).stamp).toBe(13);
+  if (point === "optimized" || point === "config-restored" || point === "index-file-removed" || point === "names-removed") expect(shape(dir).stamp).toBe(MEMORY_SCHEMA_VERSION);
   const rerun = await downgradeInstallationMemorySchema(dir, 12);
   if (rerun.phoneCallsPreservedAt) roots.push(rerun.phoneCallsPreservedAt);
   expect(shape(dir)).toEqual(done);
@@ -535,7 +536,7 @@ it.each(["{broken","{}"])("F7-DOWN-UNPARSEABLE-FAILS: invalid retained context %
   // MAIN RULING INT-CONFLICT-DEFAULT 325f8895b2 f2d348b4029: await the async downgrade refusal; unchanged error and stamp assertions.
   await expect(downgradeInstallationMemorySchema(DATA_DIR,12)).rejects.toThrow(raw === "{}" ? /must be an array/ : /JSON|property name/);
   const db=new DatabaseSync(join(DATA_DIR,"messages.db"),{timeout:5000});
-  try { expect(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({schema_version:13}); }
+  try { expect(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({schema_version:MEMORY_SCHEMA_VERSION}); }
   finally {db.close();}
 });
 

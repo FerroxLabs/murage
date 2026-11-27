@@ -4,6 +4,7 @@
 // 1.0.2 pm-upstart review round 2: (P1-1) the lineage repair's merge of older sets is linear in a thread however those sets are
 // chained or stored, counted in statements run (not wall time); (P1-2) reference checks are cut into slices that report, and the
 // statements that cannot be sliced keep the start-up note moving through a heartbeat thread.
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -200,7 +201,7 @@ it("P1 r2: the upgrade's blocking stretch is covered by a heartbeat that always 
   migrateMemorySchema(db, "off", { onBlocking: first => { steps.push(first); return { step: step => { steps.push(step); }, end: () => { ended++; } }; } });
   expect(steps).toEqual(["tables", "indexes", "validating", "committing"]);
   expect(ended).toBe(1);
-  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(13);
+  expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(MEMORY_SCHEMA_VERSION);
   // a failed upgrade ends the heartbeat too
   downgradeMemorySchema(db, 7);
   db.exec("CREATE TEMP TRIGGER boom BEFORE INSERT ON main.memory_lineage_meta BEGIN SELECT RAISE(ABORT,'boom'); END");

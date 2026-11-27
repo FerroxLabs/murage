@@ -127,6 +127,7 @@
     "mcp-servers:save-secrets",
     "mcp-servers:sign-in",
     "mcp-servers:sign-out",
+    "mcp-servers:use-own-app",
     "model-provider:mutate",
     "model-signin:cancel",
     "model-signin:sign-out",

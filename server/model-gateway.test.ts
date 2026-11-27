@@ -17,6 +17,7 @@ import { applyProviderRoute, type ProviderTurnRoute } from "./provider-routing.t
 import { providerEngineProtocol, signInEngineGap } from "../shared/provider-engine.ts";
 import type { ProviderCatalog } from "../shared/provider-connections.ts";
 import { consumingFixture } from "./testing/consuming-fixture.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 import { issueGatewayTurnCredential, revokeGatewayTurnCredentials } from "./model-gateway-release.ts";
 
 const TOKEN = "plan-access-token-SECRET-123";
@@ -213,9 +214,9 @@ function sse(events: unknown[]): Response {
   return new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n", { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-async function gateway(opts: { upstream: (call: UpstreamCall, n: number) => Response | Promise<Response>; entries?: unknown[]; requestRefresh?: (signIns: ModelSignIns) => boolean }) {
+async function gateway(opts: { upstream: (call: UpstreamCall, n: number) => Response | Promise<Response>; entries?: unknown[]; requestRefresh?: (signIns: ModelSignIns) => boolean; catalogDir?: string }) {
   const calls: UpstreamCall[] = [];
-  const signIns: ModelSignIns = new ModelSignIns({ env: {}, requestRefresh: () => opts.requestRefresh?.(signIns) ?? false });
+  const signIns: ModelSignIns = new ModelSignIns({ env: {}, requestRefresh: () => opts.requestRefresh?.(signIns) ?? false, ...(opts.catalogDir ? { planRefusalsPath: join(opts.catalogDir, "refusals.json") } : {}) });
   signIns.apply(message(...(opts.entries ?? [entry(), entry({ provider: "supergrok", connectionId: "signin-grok", revision: "g1", accessToken: "grok-token", accountId: undefined })])));
   const catalog = (id: string): ProviderCatalog => ({ connectionId: id, stale: false, assurance: "catalog-only", models: [{ connectionId: id, preset: "chatgpt", id: "gpt-5.5", label: "GPT-5.5", enabled: true, chatEligible: true, capabilities: { chat: true }, outputModalities: ["text"] }] });
   const fetchStub = (async (url: string | URL, init?: RequestInit) => {
@@ -223,7 +224,12 @@ async function gateway(opts: { upstream: (call: UpstreamCall, n: number) => Resp
     calls.push(call);
     return opts.upstream(call, calls.length);
   }) as typeof fetch;
-  server = createServer((req, res) => { void handleModelGateway(req, res, new URL(req.url ?? "/", "http://127.0.0.1").pathname, { signIns, catalog, fetch: fetchStub }); });
+  const service = opts.catalogDir ? new ProviderConnectionsService({
+    readBank: () => "[]", cacheDir: opts.catalogDir, signIns,
+    fetch: async () => Response.json({ models: [{ slug: "gpt-5.5", display_name: "GPT-5.5", visibility: "list" }] }),
+  }) : undefined;
+  if (service) await service.refresh("signin-chatgpt");
+  server = createServer((req, res) => { void handleModelGateway(req, res, new URL(req.url ?? "/", "http://127.0.0.1").pathname, { signIns, catalog: service ? id => service.getCatalog(id) : catalog, fetch: fetchStub }); });
   await new Promise<void>(resolve => server!.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as { port: number }).port;
   const base = (id = "signin-chatgpt") => gatewayBaseUrl(port, id);
@@ -238,7 +244,7 @@ async function gateway(opts: { upstream: (call: UpstreamCall, n: number) => Resp
     }
     return { authorization: `Bearer ${keys.get(id)}`, "content-type": "application/json" };
   };
-  return { calls, signIns, base, auth };
+  return { calls, signIns, base, auth, service };
 }
 
 describe("the model gateway", () => {
@@ -265,6 +271,34 @@ describe("the model gateway", () => {
     const g = await gateway({ upstream: () => sse([]) });
     const list = await (await fetch(`${g.base()}/models`, { headers: g.auth() })).json();
     expect(list).toEqual({ object: "list", data: [{ id: "gpt-5.5", object: "model", created: 0, owned_by: "openai" }] });
+  });
+
+  it("shows a plain ChatGPT plan model refusal, hides the model, and forgets it on a new sign-in", async () => {
+    const denied = "The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account.";
+    const catalogDir = mkdtempSync(join(tmpdir(), "plan-model-refusal-"));
+    onTestFinished(() => removeTempDir(catalogDir));
+    const g = await gateway({ catalogDir, upstream: () => Response.json({ error: { message: denied } }, { status: 400 }) });
+    const headers = g.auth();
+    const request = () => fetch(`${g.base()}/responses`, { method: "POST", headers, body: JSON.stringify({ model: "gpt-5.5", input: "hi" }) });
+    const models = async () => {
+      const response = await fetch(`${g.base()}/models`, { headers });
+      return (await response.json() as { data: unknown[] }).data;
+    };
+    expect(await models()).toHaveLength(1);
+    const refused = await request();
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: { code: "plan_model_unavailable", message: "This model isn't available on your ChatGPT plan. Choose another model." } });
+    expect(await models()).toEqual([]);
+    expect((await g.service!.refresh("signin-chatgpt")).models).toEqual([]);
+    const restarted = new ModelSignIns({ env: {}, planRefusalsPath: join(catalogDir, "refusals.json") });
+    restarted.apply(message(entry()));
+    const cached = new ProviderConnectionsService({ readBank: () => "[]", cacheDir: catalogDir, signIns: restarted });
+    expect(cached.getCatalog("signin-chatgpt").models).toEqual([]);
+    expect((await request()).status).toBe(400);
+    expect(g.calls).toHaveLength(1);
+    g.signIns.apply(message(entry({ revision: "rev-2", accountId: "acct-other" })));
+    await g.service!.refresh("signin-chatgpt");
+    expect(await models()).toHaveLength(1);
   });
 
   it("sends a Responses call to the pinned ChatGPT backend with Wayland's headers, and collects it when the caller did not stream", async () => {

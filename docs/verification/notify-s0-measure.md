@@ -273,21 +273,21 @@ still be refused by that runtime bound. Glyph and positive-fit cases require
 Return raw directories first, then finalize on the admission host. From Desktop:
 
 ```powershell
-scp -r C:\murage-ci\s0-w10-banner-run01 root@build-host:/work/build/notify-s0-bundles/windows/
-scp -r C:\murage-ci\s0-admit-w10 root@build-host:/work/build/notify-s0-bundles/windows/
+scp -r C:\murage-ci\s0-w10-banner-run01 root@hetzner-dsm:/root/fuigo-builds/swarm-b/notify-s0-bundles/windows/
+scp -r C:\murage-ci\s0-admit-w10 root@hetzner-dsm:/root/fuigo-builds/swarm-b/notify-s0-bundles/windows/
 ```
 
 From Beast use `D:\murage-ci\s0-w11-banner-run01` and `s0-admit-w11` to the same
 `windows/` destination. From the Mac gate GUI session:
 
 ```sh
-scp -r "$HOME/murage-ci/s0-m14-arm64-banner-run01" "$HOME/murage-ci/s0-admit-m14-arm64" root@build-host:/work/build/notify-s0-bundles/macos/
+scp -r "$HOME/murage-ci/s0-m14-arm64-banner-run01" "$HOME/murage-ci/s0-admit-m14-arm64" root@hetzner-dsm:/root/fuigo-builds/swarm-b/notify-s0-bundles/macos/
 ```
 
 From Linux:
 
 ```sh
-scp -r "$HOME/murage-ci/s0-gx-banner-run01" "$HOME/murage-ci/s0-admit-gx" root@build-host:/work/build/notify-s0-bundles/linux/
+scp -r "$HOME/murage-ci/s0-gx-banner-run01" "$HOME/murage-ci/s0-admit-gx" root@hetzner-dsm:/root/fuigo-builds/swarm-b/notify-s0-bundles/linux/
 ```
 
 MAIN creates those destination directories and supplies existing SSH access;
@@ -342,9 +342,9 @@ From this worktree (one container at a time, network none, host load below 85):
 
 ```sh
 IT_JOB=notify-s0-kit \
-IT_W=/work/build/notify-s0-kit/wt \
-IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh \
-/work/fuigo-builds/tools/it-remote.sh 'node --test electron/notify-s0.node-test.mjs electron/windows-banners.node-test.mjs electron/mac-banners.node-test.mjs electron/linux-notify.node-test.mjs shared/outside-limits.node-test.mjs'
+IT_W=/root/fuigo-builds/swarm-b/notify-s0-kit/wt \
+IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh \
+/root/fuigo-builds/tools/it-remote.sh 'node --test electron/notify-s0.node-test.mjs electron/windows-banners.node-test.mjs electron/mac-banners.node-test.mjs electron/linux-notify.node-test.mjs shared/outside-limits.node-test.mjs'
 ```
 
 The test's in-memory bundles/PNG signatures are explicitly **FIXTURES**, never

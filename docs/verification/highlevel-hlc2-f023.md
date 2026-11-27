@@ -20,7 +20,7 @@ family hooks and requires the exact post-state, including unrelated tags.
 ## Evidence
 
 Evidence is retained at
-`/work/build/hlc2/evidence/cfix2-hlc2-f02/`.
+`/root/fuigo-builds/swarm-b/hlc2/evidence/cfix2-hlc2-f02/`.
 
 - `red.log`: the reviewer interleaving, corrected earlier concurrency test, and
   tags-only add/remove successes fail: 4 failed, 21 passed.
@@ -46,8 +46,8 @@ Evidence is retained at
   type assertion failure and corrected passing check are also retained.
 
 All execution used `it-remote.sh` with `IT_JOB=cfix2-hlc2-f02`,
-`IT_W=/work/build/hlc2/wt`, and
-`IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh`, one container at a time.
+`IT_W=/root/fuigo-builds/swarm-b/hlc2/wt`, and
+`IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh`, one container at a time.
 The freeze was awaited in one shell loop using `sleep 180`.
 
 The operation regression fixtures use the production manifest, argument/wire

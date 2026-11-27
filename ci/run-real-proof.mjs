@@ -6,15 +6,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { safeWipe } from '../server/testing/safe-wipe.mjs';
 const candidate = path.resolve(process.argv[2] ?? process.cwd());
 const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'wg-int-proof-'));
 try {
-  // Preserve repository-relative imports, including the shared preload.
+  // Preserve repository-relative imports for fixture cleanup and the shared preload.
   const server = path.join(scratch, 'server');
   await fs.mkdir(server);
   const proof = path.join(server, 'wipe-proof');
   await fs.cp(path.join(candidate, 'server/wipe-proof'), proof, { recursive: true });
+  await fs.symlink(path.join(candidate, 'server/testing'), path.join(server, 'testing'), 'junction');
   await fs.symlink(path.join(candidate, 'server/wipe-guard'), path.join(server, 'wipe-guard'), 'junction');
+  await fs.symlink(path.join(candidate, 'electron'), path.join(scratch, 'electron'), 'junction');
   await fs.symlink(path.join(candidate, 'shared'), path.join(scratch, 'shared'), 'junction');
   const original = path.join(proof, 'app.mjs');
   await fs.rename(original, path.join(proof, 'fixture-app.mjs'));
@@ -105,4 +108,4 @@ export async function startApp(socket, tree, token, threadId) {
     child.once('error',reject);child.once('exit',resolve);
   });
   process.exitCode=code??1;
-} finally { await fs.rm(scratch,{recursive:true,force:true}); }
+} finally { await safeWipe(scratch); }

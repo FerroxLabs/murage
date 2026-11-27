@@ -210,7 +210,8 @@ it("the server entry installs the observer before it does anything else", () => 
   const source = ts.createSourceFile("index.ts", entry, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
   expect(entry, "the entry must import it from the shipped module").toContain(
-    'import { installServerChildCrashObserver } from "./server-child-crash.mjs";',
+    // cause12 adds the exit note to the same import; the observer is still named and still asserted first below.
+    'import { installServerChildCrashObserver, installServerChildExitNote } from "./server-child-crash.mjs";',
   );
 
   // FIRST, and asserted as first rather than merely present. A fault raised

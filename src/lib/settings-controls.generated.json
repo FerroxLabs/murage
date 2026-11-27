@@ -1,12 +1,12 @@
 {
   "generatedBy": "src/lib/settings-controls.test.ts (SETTINGS_CONTROLS_WRITE=1)",
   "counts": {
-    "app": 84,
+    "app": 82,
     "bot": 39,
     "botIndexed": 39,
     "dataSetting": 39,
-    "controlAnchors": 70,
-    "dynamicControlAnchors": 16
+    "controlAnchors": 69,
+    "dynamicControlAnchors": 15
   },
   "dataSetting": [
     "bot.access.app-access",
@@ -53,7 +53,6 @@
     "about-me-heading",
     "about-version-heading",
     "advanced-mode-heading",
-    "analytics-heading",
     "announcements-heading",
     "backups-heading",
     "bot-email-heading",
@@ -69,7 +68,6 @@
     "discord-app-setup-heading",
     "discord-settings-title",
     "health-heading",
-    "highlevel-heading",
     "image-daily-check-heading",
     "image-settings-heading",
     "language-heading",
@@ -97,6 +95,7 @@
     "room-routing-label",
     "room-turn-timeout",
     "script-access-heading",
+    "search-keys-heading",
     "search-settings-heading",
     "setup-heading",
     "shortcuts-heading",
@@ -133,10 +132,6 @@
     {
       "anchor": "advanced-mode-heading",
       "owner": "general.mode"
-    },
-    {
-      "anchor": "analytics-heading",
-      "owner": "general.analytics"
     },
     {
       "anchor": "announcements-heading",
@@ -197,10 +192,6 @@
     {
       "anchor": "health-heading",
       "owner": "about.health"
-    },
-    {
-      "anchor": "highlevel-heading",
-      "owner": "connections.highlevel"
     },
     {
       "anchor": "image-daily-check-heading",
@@ -309,6 +300,10 @@
     {
       "anchor": "script-access-heading",
       "owner": "companion.script-access"
+    },
+    {
+      "anchor": "search-keys-heading",
+      "owner": "webSearch.provider-keys"
     },
     {
       "anchor": "search-settings-heading",
@@ -684,15 +679,6 @@
       "modelControl": null
     },
     {
-      "card": "general.analytics",
-      "control": "Send usage analytics",
-      "kind": "switch",
-      "key": "localStorage murage-analytics-opt-out (\"1\" = off, \"0\" = on); in-process choice outranks storage",
-      "default": true,
-      "source": "src/components/SettingsModal.tsx:329; src/lib/analytics.ts:37,53,72",
-      "modelControl": "analytics"
-    },
-    {
       "card": "general.about-me",
       "control": "About me (rich editor, plain textarea fallback)",
       "kind": "textarea",
@@ -754,6 +740,156 @@
       "default": false,
       "source": "src/components/CallsSettings.tsx:88",
       "modelControl": "off-today"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Voice account key (field + Save)",
+      "kind": "password",
+      "key": "window.muragebox.phoneKey.save(value) (desktop bridge, handed to server)",
+      "default": "",
+      "source": "src/components/PhoneCallsSettings.tsx:131-135",
+      "modelControl": "voice-account-key"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Remove key",
+      "kind": "button",
+      "key": "window.muragebox.phoneKey.remove()",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:127",
+      "modelControl": "voice-account-key"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Find numbers",
+      "kind": "button",
+      "key": "POST /api/phone-calls/setup {}",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:174",
+      "modelControl": "find-numbers"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Phone number radios",
+      "kind": "choice",
+      "key": "PUT /api/phone-calls/settings {phoneNumberId}",
+      "default": "",
+      "source": "src/components/PhoneCallsSettings.tsx:180",
+      "modelControl": null
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "AI line (checkbox + own words)",
+      "kind": "composite",
+      "key": "PUT /api/phone-calls/settings {aiLine:{on, edits[lang]}}",
+      "default": {
+        "on": true,
+        "edits": {}
+      },
+      "source": "src/components/PhoneCallsSettings.tsx:228-233",
+      "modelControl": null
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Recording notice line (checkbox + own words)",
+      "kind": "composite",
+      "key": "PUT /api/phone-calls/settings {notice:{on, edits[lang]}}",
+      "default": {
+        "on": true,
+        "edits": {}
+      },
+      "source": "src/components/PhoneCallsSettings.tsx:228-233",
+      "modelControl": null
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Your name",
+      "kind": "text",
+      "key": "PUT /api/phone-calls/settings {ownerName} (max 80)",
+      "default": "",
+      "source": "src/components/PhoneCallsSettings.tsx:197",
+      "modelControl": "owner-name"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Language",
+      "kind": "select",
+      "key": "PUT /api/phone-calls/settings {language}",
+      "default": "auto",
+      "source": "src/components/PhoneCallsSettings.tsx:201",
+      "modelControl": null
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Longest call, minutes",
+      "kind": "number",
+      "key": "PUT /api/phone-calls/settings {maxSeconds} (minutes x 60, 1-60)",
+      "default": 300,
+      "source": "src/components/PhoneCallsSettings.tsx:208",
+      "modelControl": "max-minutes"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Record audio",
+      "kind": "switch",
+      "key": "PUT /api/phone-calls/settings {recordAudio}",
+      "default": false,
+      "source": "src/components/PhoneCallsSettings.tsx:215",
+      "modelControl": "record-audio"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Save",
+      "kind": "button",
+      "key": "PUT /api/phone-calls/settings (whole form)",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:217",
+      "modelControl": "save"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Older scheduled calls list + Cancel",
+      "kind": "list",
+      "key": "POST /api/phone-calls/:id/cancel",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:240-256",
+      "modelControl": "upcoming"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Recent calls list (status, cost, length) + Cancel",
+      "kind": "list",
+      "key": "GET /api/phone-calls; POST /api/phone-calls/:id/cancel",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:330-345",
+      "modelControl": "past"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Show / Hide transcript",
+      "kind": "button",
+      "key": "none (local expand)",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:346",
+      "modelControl": "past"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Share transcript with bot",
+      "kind": "button",
+      "key": "POST /api/phone-calls/:id/share",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:347",
+      "modelControl": "past"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Ask {chief}",
+      "kind": "button",
+      "key": "none (prefills a chat draft)",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:76",
+      "modelControl": "ask-bot"
     },
     {
       "card": "botDefaults.tool-calls",
@@ -943,24 +1079,6 @@
       "default": true,
       "source": "src/components/SettingsModal.tsx:466-495; src/lib/feature-flags.ts:8",
       "modelControl": "on"
-    },
-    {
-      "card": "webSearch.voice-key",
-      "control": "AssemblyAI API key",
-      "kind": "password",
-      "key": "window.muragebox.transcription.setKey(value) (OS-protected store); disabled outside the desktop app",
-      "default": "",
-      "source": "src/components/TranscriptionSettings.tsx:56-66",
-      "modelControl": "key"
-    },
-    {
-      "card": "webSearch.voice-key",
-      "control": "Save / Clear (button turns Clear when field empty and key saved)",
-      "kind": "button",
-      "key": "same as AssemblyAI API key (empty value clears)",
-      "default": null,
-      "source": "src/components/TranscriptionSettings.tsx:67-78",
-      "modelControl": "key"
     },
     {
       "card": "skills.library",
@@ -2129,15 +2247,24 @@
       "kind": "select",
       "key": "config.webSearch.provider via PUT /api/config {webSearch:{provider}} (engine|auto|flux|tavily|exa|firecrawl|off)",
       "default": "engine",
-      "source": "src/components/SearchSettings.tsx:60-70",
+      "source": "src/components/SearchSettings.tsx",
       "modelControl": "service"
+    },
+    {
+      "card": "webSearch.search",
+      "control": "Allow Murage to read web pages",
+      "kind": "switch",
+      "key": "config.webSearch.readEnabled via PUT /api/config",
+      "default": "on unless search is off",
+      "source": "src/components/SearchSettings.tsx",
+      "modelControl": "read-pages"
     },
     {
       "card": "webSearch.images",
       "control": "Allow image requests",
       "kind": "switch",
       "key": "POST /api/images/settings {enabled}",
-      "default": false,
+      "default": "on when a route exists",
       "source": "src/components/ImageSettings.tsx:201",
       "modelControl": "on"
     },
@@ -2197,21 +2324,12 @@
     },
     {
       "card": "webSearch.voice",
-      "control": "AssemblyAI transcription status (dot + Connected)",
+      "control": "Voice notes transcription status (configured route)",
       "kind": "readout",
-      "key": "read-only: window.muragebox.transcription.status().configured",
+      "key": "read-only: /api/config tts.routes.transcribe",
       "default": null,
-      "source": "src/components/TranscriptionSettings.tsx:44-48",
+      "source": "src/components/TranscriptionSettings.tsx:47-58",
       "modelControl": "route"
-    },
-    {
-      "card": "webSearch.voice",
-      "control": "Open AssemblyAI dashboard",
-      "kind": "button",
-      "key": "none (navigation only, external link)",
-      "default": null,
-      "source": "src/components/TranscriptionSettings.tsx:78",
-      "modelControl": null
     },
     {
       "card": "webSearch.provider-keys",
@@ -2275,6 +2393,24 @@
       "default": false,
       "source": "src/components/ImageSettings.tsx:232",
       "modelControl": "on"
+    },
+    {
+      "card": "webSearch.voice-key",
+      "control": "Your own transcription key",
+      "kind": "password",
+      "key": "window.muragebox.transcription.setKey(value) (OS-protected store); rendered only for a saved key with no engine that transcribes",
+      "default": "",
+      "source": "src/components/TranscriptionSettings.tsx:100-112",
+      "modelControl": "key"
+    },
+    {
+      "card": "webSearch.voice-key",
+      "control": "Save / Clear (button turns Clear when field empty and key saved)",
+      "kind": "button",
+      "key": "same as Your own transcription key (empty value clears)",
+      "default": null,
+      "source": "src/components/TranscriptionSettings.tsx:113-123",
+      "modelControl": "key"
     },
     {
       "card": "connections.apps",
@@ -2347,237 +2483,6 @@
       "default": null,
       "source": "src/components/BotEmailSettings.tsx:60-110",
       "modelControl": null
-    },
-    {
-      "card": "connections.highlevel",
-      "control": "Private integration token",
-      "kind": "password",
-      "key": "window.muragebox.setCredential(highlevelPrivateToken) else PUT /api/config {highlevel:{privateToken}}",
-      "default": "",
-      "source": "src/components/HighLevelSettings.tsx:123",
-      "modelControl": "token"
-    },
-    {
-      "card": "connections.highlevel",
-      "control": "Save token",
-      "kind": "button",
-      "key": "same as token",
-      "default": null,
-      "source": "src/components/HighLevelSettings.tsx:127",
-      "modelControl": "token"
-    },
-    {
-      "card": "connections.highlevel",
-      "control": "Remove token",
-      "kind": "button",
-      "key": "same key written as empty string",
-      "default": null,
-      "source": "src/components/HighLevelSettings.tsx:130",
-      "modelControl": "token"
-    },
-    {
-      "card": "connections.highlevel",
-      "control": "Location ID",
-      "kind": "text",
-      "key": "POST /api/highlevel/token/check {locationId}",
-      "default": "",
-      "source": "src/components/HighLevelSettings.tsx:139",
-      "modelControl": "location"
-    },
-    {
-      "card": "connections.highlevel",
-      "control": "Check location",
-      "kind": "button",
-      "key": "POST /api/highlevel/token/check {locationId}",
-      "default": null,
-      "source": "src/components/HighLevelSettings.tsx:141",
-      "modelControl": "location"
-    },
-    {
-      "card": "connections.highlevel",
-      "control": "Confirm",
-      "kind": "button",
-      "key": "POST /api/highlevel/token/:opId/confirm",
-      "default": null,
-      "source": "src/components/HighLevelSettings.tsx:148",
-      "modelControl": null
-    },
-    {
-      "card": "connections.highlevel",
-      "control": "Disconnect",
-      "kind": "button",
-      "key": "DELETE /api/highlevel/connections/:connectionId",
-      "default": null,
-      "source": "src/components/HighLevelSettings.tsx:155",
-      "modelControl": null
-    },
-    {
-      "card": "connections.highlevel",
-      "control": "{bot} can read HighLevel (one switch per bot)",
-      "kind": "switch",
-      "key": "PUT /api/highlevel/bots/:botId/access {grants for connectionId}",
-      "default": false,
-      "source": "src/components/HighLevelSettings.tsx:164",
-      "modelControl": null
-    },
-    {
-      "card": "connections.highlevel",
-      "control": "Connection status line",
-      "kind": "readout",
-      "key": "read-only: GET /api/highlevel view",
-      "default": null,
-      "source": "src/components/HighLevelSettings.tsx:48-54",
-      "modelControl": null
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Voice account key (field + Save)",
-      "kind": "password",
-      "key": "window.muragebox.phoneKey.save(value) (desktop bridge, handed to server)",
-      "default": "",
-      "source": "src/components/PhoneCallsSettings.tsx:131-135",
-      "modelControl": "voice-account-key"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Remove key",
-      "kind": "button",
-      "key": "window.muragebox.phoneKey.remove()",
-      "default": null,
-      "source": "src/components/PhoneCallsSettings.tsx:127",
-      "modelControl": "voice-account-key"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Find numbers",
-      "kind": "button",
-      "key": "POST /api/phone-calls/setup {}",
-      "default": null,
-      "source": "src/components/PhoneCallsSettings.tsx:174",
-      "modelControl": "find-numbers"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Phone number radios",
-      "kind": "choice",
-      "key": "PUT /api/phone-calls/settings {phoneNumberId}",
-      "default": "",
-      "source": "src/components/PhoneCallsSettings.tsx:180",
-      "modelControl": null
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "AI line (checkbox + own words)",
-      "kind": "composite",
-      "key": "PUT /api/phone-calls/settings {aiLine:{on, edits[lang]}}",
-      "default": {
-        "on": true,
-        "edits": {}
-      },
-      "source": "src/components/PhoneCallsSettings.tsx:228-233",
-      "modelControl": null
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Recording notice line (checkbox + own words)",
-      "kind": "composite",
-      "key": "PUT /api/phone-calls/settings {notice:{on, edits[lang]}}",
-      "default": {
-        "on": true,
-        "edits": {}
-      },
-      "source": "src/components/PhoneCallsSettings.tsx:228-233",
-      "modelControl": null
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Your name",
-      "kind": "text",
-      "key": "PUT /api/phone-calls/settings {ownerName} (max 80)",
-      "default": "",
-      "source": "src/components/PhoneCallsSettings.tsx:197",
-      "modelControl": "owner-name"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Language",
-      "kind": "select",
-      "key": "PUT /api/phone-calls/settings {language}",
-      "default": "auto",
-      "source": "src/components/PhoneCallsSettings.tsx:201",
-      "modelControl": null
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Longest call, minutes",
-      "kind": "number",
-      "key": "PUT /api/phone-calls/settings {maxSeconds} (minutes x 60, 1-60)",
-      "default": 300,
-      "source": "src/components/PhoneCallsSettings.tsx:208",
-      "modelControl": "max-minutes"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Record audio",
-      "kind": "switch",
-      "key": "PUT /api/phone-calls/settings {recordAudio}",
-      "default": false,
-      "source": "src/components/PhoneCallsSettings.tsx:215",
-      "modelControl": "record-audio"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Save",
-      "kind": "button",
-      "key": "PUT /api/phone-calls/settings (whole form)",
-      "default": null,
-      "source": "src/components/PhoneCallsSettings.tsx:217",
-      "modelControl": "save"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Older scheduled calls list + Cancel",
-      "kind": "list",
-      "key": "POST /api/phone-calls/:id/cancel",
-      "default": null,
-      "source": "src/components/PhoneCallsSettings.tsx:240-256",
-      "modelControl": "upcoming"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Recent calls list (status, cost, length) + Cancel",
-      "kind": "list",
-      "key": "GET /api/phone-calls; POST /api/phone-calls/:id/cancel",
-      "default": null,
-      "source": "src/components/PhoneCallsSettings.tsx:330-345",
-      "modelControl": "past"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Show / Hide transcript",
-      "kind": "button",
-      "key": "none (local expand)",
-      "default": null,
-      "source": "src/components/PhoneCallsSettings.tsx:346",
-      "modelControl": "past"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Share transcript with bot",
-      "kind": "button",
-      "key": "POST /api/phone-calls/:id/share",
-      "default": null,
-      "source": "src/components/PhoneCallsSettings.tsx:347",
-      "modelControl": "past"
-    },
-    {
-      "card": "connections.phone-calls",
-      "control": "Ask {chief}",
-      "kind": "button",
-      "key": "none (prefills a chat draft)",
-      "default": null,
-      "source": "src/components/PhoneCallsSettings.tsx:76",
-      "modelControl": "ask-bot"
     },
     {
       "card": "connections.mcp",
@@ -4463,19 +4368,6 @@
       }
     },
     {
-      "id": "general.analytics",
-      "section": "general",
-      "anchor": "analytics-heading",
-      "advanced": true,
-      "surface": "any",
-      "label": "Send usage analytics",
-      "home": {
-        "page": "general",
-        "card": "general.analytics",
-        "mode": "Advanced"
-      }
-    },
-    {
       "id": "general.about-me",
       "section": "general",
       "anchor": "about-me-heading",
@@ -4512,6 +4404,19 @@
         "page": "calls",
         "card": "calls.off-today",
         "mode": "Simple"
+      }
+    },
+    {
+      "id": "connections.phone-calls",
+      "section": "calls",
+      "anchor": "phone-calls-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Phone calls",
+      "home": {
+        "page": "calls",
+        "card": "calls.outbound",
+        "mode": "Advanced"
       }
     },
     {
@@ -4602,19 +4507,6 @@
       "home": {
         "page": "skills",
         "card": "skills.recorder",
-        "mode": "Advanced"
-      }
-    },
-    {
-      "id": "webSearch.voice-key",
-      "section": "skills",
-      "anchor": "voice-key-heading",
-      "advanced": true,
-      "surface": "desktop",
-      "label": "Voice transcription key",
-      "home": {
-        "page": "voice",
-        "card": "voice.voice-key",
         "mode": "Advanced"
       }
     },
@@ -4996,6 +4888,19 @@
       }
     },
     {
+      "id": "webSearch.voice-key",
+      "section": "webSearch",
+      "anchor": "voice-key-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Voice transcription key",
+      "home": {
+        "page": "voice",
+        "card": "voice.voice-key",
+        "mode": "Advanced"
+      }
+    },
+    {
       "id": "connections.apps",
       "section": "connections",
       "anchor": "connections-heading",
@@ -5018,32 +4923,6 @@
       "home": {
         "page": "connections",
         "card": "connections.bot-email",
-        "mode": "Advanced"
-      }
-    },
-    {
-      "id": "connections.highlevel",
-      "section": "connections",
-      "anchor": "highlevel-heading",
-      "advanced": false,
-      "surface": "desktop",
-      "label": "HighLevel",
-      "home": {
-        "page": "connections",
-        "card": "connections.highlevel",
-        "mode": "Advanced"
-      }
-    },
-    {
-      "id": "connections.phone-calls",
-      "section": "connections",
-      "anchor": "phone-calls-heading",
-      "advanced": false,
-      "surface": "desktop",
-      "label": "Phone calls",
-      "home": {
-        "page": "calls",
-        "card": "calls.outbound",
         "mode": "Advanced"
       }
     },

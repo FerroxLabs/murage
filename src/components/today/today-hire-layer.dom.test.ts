@@ -7,11 +7,11 @@ import { act, createElement as h } from 'react';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, installDOMHarness, mount, press, settle } from '../../testing/dom-harness';
 import { activeTrapCount, openLayers } from '../../lib/focus-trap';
-import { initialState } from '../../state/store';
+import { initialState, type Bot } from '../../state/store';
 
-const fixture = vi.hoisted(() => ({ state: {} as Record<string, unknown>, api: vi.fn(async () => ({})) }));
+const fixture = vi.hoisted(() => ({ state: {} as Record<string, unknown>, api: vi.fn(async () => ({})), openChat: vi.fn() }));
 vi.mock('../../state/store', async original => ({ ...await original<typeof import('../../state/store')>(), useStore: () => ({ state: fixture.state, dispatch: vi.fn() }), api: fixture.api }));
-vi.mock('../shell/shell-nav', () => ({ useShellNav: () => new Proxy({}, { get: () => vi.fn() }) }));
+vi.mock('../shell/shell-nav', () => ({ useShellNav: () => new Proxy({ openChat: fixture.openChat }, { get: (nav, key) => Reflect.get(nav, key) ?? vi.fn() }) }));
 vi.mock('./use-worth-a-look', () => ({ useWorthALook: () => ({ reconnect: [], handoffs: [] }) }));
 vi.mock('./use-today-view', () => ({ useTodayView: () => ({ view: 'calm', set: vi.fn() }) }));
 vi.mock('./use-engine-health', () => ({ useEngineReading: () => ({ engine: null }), useEngineHealthAnswer: () => null }));
@@ -20,14 +20,56 @@ vi.mock('../../lib/connectivity', () => ({ useConnectivity: () => ({ online: tru
 vi.mock('../../lib/connected-apps-preload', () => ({ cachedConnectorStatus: () => null, preloadConnectedApps: async () => undefined }));
 vi.mock('../FirstRunChrome', () => ({ useSetupView: () => ({ view: null }) }));
 vi.mock('../OpenBotListButton', () => ({ OpenBotListButton: () => null }));
-vi.mock('./TellChiefBox', () => ({ TellChiefBox: () => null }));
 const { TodayView } = await import('./TodayView');
 
 let restore: () => void;
 beforeAll(() => { restore = installDOMHarness(); });
 afterAll(() => restore());
-beforeEach(() => { fixture.state = { ...initialState, connected: true, bots: [], templates: [] }; fixture.api.mockReset().mockResolvedValue({ bots: [], templates: [] }); });
+beforeEach(() => { fixture.state = { ...initialState, connected: true, bots: [], templates: [] }; fixture.api.mockReset().mockResolvedValue({ bots: [], templates: [] }); fixture.openChat.mockClear(); });
 afterEach(async () => { cleanup(); await settle(); expect(activeTrapCount()).toBe(0); document.body.replaceChildren(); });
+
+function chiefMovedToday(firstRun: boolean) {
+  const bot = (id: string, name: string): Bot => ({
+    id, name, threadId: `${id}-thread`, title: '', description: '', notifications: false, color: 'orange',
+    unread: false, messages: [], modelSelection: { instanceId: '', model: '' },
+  });
+  fixture.state = {
+    ...initialState,
+    bots: [
+      { ...bot('first', 'Ember'), hidden: true, chiefOfStaff: false },
+      { ...bot('current', 'Atlas'), chiefOfStaff: true, chiefScope: 'workspace' },
+    ],
+  };
+  return mount(h(TodayView, {
+    needs: { count: 0, stale: false, top: [] }, health: { level: 'ok', line: '' },
+    firstRun, chiefBotId: 'first', remote: false,
+  })).container;
+}
+
+it.each([
+  ['setup status', '[data-tag="setup"] button'],
+  ['first-run card', '[data-first-run-today] button'],
+])('opens the current Chief from the %s after the first Chief is hidden', async (_surface, selector) => {
+  const today = chiefMovedToday(true);
+  await act(async () => { await import('./FirstRunTodayCard'); });
+  const button = await vi.waitFor(() => {
+    const control = today.querySelector<HTMLButtonElement>(selector);
+    if (!control) throw new Error(`Missing setup button: ${selector}`);
+    return control;
+  });
+  act(() => button.click());
+  expect(fixture.openChat.mock.calls).toEqual([['current']]);
+  expect(today.querySelector('[data-today="tell"]')).toBeNull();
+});
+
+it('renders the current Chief in the Tell composer and the Your day hint', async () => {
+  const today = chiefMovedToday(false);
+  await settle();
+  const tell = today.querySelector('[data-today="tell"]');
+  expect(tell?.getAttribute('aria-label')).toBe('Tell Atlas what you need');
+  expect(tell?.querySelector('[data-composer-compact] [aria-label="Message Atlas"]')).not.toBeNull();
+  expect(today.querySelector('[aria-labelledby="today-day"]')?.textContent).toContain('Tell Atlas what you want done every day.');
+});
 
 it('R13-M7: Today Hire a bot opens the hire-bot layer (via hire-bot-today) in the job box and Escape returns to the Hire button', async () => {
   const app = mount(h(TodayView, { needs: { count: 0, stale: false, top: [], rows: [] } as never, health: 'ok' as never, firstRun: false, chiefBotId: null, remote: false }));

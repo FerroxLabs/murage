@@ -292,15 +292,17 @@ describe("ChatMcpSession.callTool", () => {
     expect((error as Error).message).not.toContain(ENTRY_TOKEN);
   });
 
-  it("an oversize frame kills the session", async () => {
+  // changed for MAIN-RULING cause22-no-transport-caps (2026-11-22; lane cause22-main-fable owns this row and the relay it drives): the
+  // mount relay no longer cuts a frame over 2 MiB, so the large answer is delivered and the session stays open (this row used to
+  // assert that the frame killed the session).
+  it("a frame over the old 2 MiB cap is delivered and the session stays open", async () => {
     const { sessions } = await open({ fake: entry() });
     const session = sessions[0]!;
-    const error = await session.callTool("big", {}, {}).catch((err: unknown) => err);
-    expect(error).toBeInstanceOf(ChatMcpError);
-    expect((error as Error).message).toBe(CHAT_MCP_FAILED_MESSAGE);
-    expect(session.closed).toBe(true);
-    await expect(session.teardown.wait(budget)).resolves.toEqual({ closeConfirmed: true });
-    await expect(session.callTool("env", {}, {})).rejects.toBeInstanceOf(ChatMcpError);
+    const answer = await session.callTool("big", {}, {}).catch((err: unknown) => err);
+    expect(answer).not.toBeInstanceOf(Error);
+    expect(JSON.stringify(answer).length, "the whole large answer arrived").toBeGreaterThan(2 * 1024 * 1024);
+    expect(session.closed).toBe(false);
+    await expect(session.callTool("env", {}, {}), "the same session serves the next call").resolves.toBeDefined();
   });
 
   it("an abort sends notifications/cancelled, closes the session and the teardown confirms the close", async () => {

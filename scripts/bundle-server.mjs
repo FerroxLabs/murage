@@ -21,6 +21,7 @@ import { stagePiWindowsHide } from "./stage-pi-windows-hide.mjs";
 // drivers/ nested; import.meta.url still resolves to the same location, so
 // that lookup is unaffected.
 import { build } from "esbuild";
+import assert from "node:assert/strict";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { checkRuntimeSibling } from "./runtime-sibling-mode.mjs";
 import { assertSentinelBundles } from "./sentinel-bundle-check.mjs";
@@ -69,6 +70,7 @@ const ENTRY_POINTS = [
   "browser-restore-cli.ts",
   "drivers/memory-proxy.ts",
   "index.ts",
+  "host/host-main.ts",
   // The packaged smoke probe imports this manifest directly. Importing the
   // shared avatar contract widens TypeScript's inferred emit root to the repo,
   // so tsc may place its copy under dist-server/server/. Bundle an explicit
@@ -90,7 +92,6 @@ const ENTRY_POINTS = [
   "drivers/dweb-proxy.ts",
   "drivers/phone-proxy.ts",
   "drivers/phone-jobs-proxy.ts",
-  "drivers/highlevel-proxy.ts",
   "drivers/browser-proxy.ts",
   "drivers/headless-browser-proxy.ts",
   "drivers/unified-browser-proxy.ts",
@@ -99,6 +100,8 @@ const ENTRY_POINTS = [
   // or the pinned Node (Cloud/self-host), and the one producer boundary the Electron host imports. Both are checked
   // below (scripts/sentinel-bundle-check.mjs): the scanner never inlines server startup, the database opener, a
   // driver, config, memory, the producers or any package, and imports no network module.
+  // q1023-seanclean: the one-time memory clean-up command, started by the packaged app's hidden flag (electron/memory-reset-entry.mjs).
+  "memory-reset-hidden-rules.ts",
   "sentinel/cli.ts",
   "health/host-boundary.ts",
 ];
@@ -108,6 +111,7 @@ const ENTRY_POINTS = [
 // is dist-server/index.js), so each file is copied next to every output that inlines its reader, mode kept. The
 // guard test scripts/bundle-server-runtime-files.test.mjs keeps this list in step with the readers in server/.
 const RUNTIME_SIBLINGS = [
+  { reader: "host/host-main.ts", file: "host/exec-gate.mjs", mode: 0o644 },
   // server/drivers/murage-exec.ts reads the shell wrapper at module load: missing, the packaged server dies at boot.
   { reader: "drivers/murage-exec.ts", file: "drivers/murage-exec", mode: 0o755 },
   // X3: and its W5 shape list, installed beside the wrapper (installMurageExec)
@@ -133,6 +137,9 @@ const main = await build({
 });
 
 assertSentinelBundles(main.metafile);
+const hostBundle = main.metafile.outputs["dist-server/host/host-main.js"];
+assert.ok(hostBundle, "the packaged build includes the standalone Fuigo host");
+assert.equal(hostBundle.imports.some(entry => entry.path === "node:sqlite"), false, "the Fuigo host bundle imports SQLite");
 
 for (const { reader, file, mode } of RUNTIME_SIBLINGS) {
   const readerPath = relative(process.cwd(), join(server, reader)).split("\\").join("/");

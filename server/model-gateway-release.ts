@@ -3,13 +3,16 @@
 import { randomBytes } from "node:crypto";
 import type { ConsumingTurnBinding } from "./consuming-turn-response.ts";
 import { assertConsumingBinding, refuseConsumingTurn } from "./consuming-turn-response.ts";
+import { ownerTurnBinding } from "./consuming-turn-ingress.ts";
 
 // Connection credentials remain valid for catalog probes only. Inference credentials
 // are issued at admission and never resolve a replacement by thread id.
 const credentials = new Map<string, { connectionId: string; binding: ConsumingTurnBinding }>();
 export function issueGatewayTurnCredential(connectionId: string, binding: ConsumingTurnBinding): string {
   assertConsumingBinding(binding);
-  if (credentials.size >= 4096) refuseConsumingTurn(binding, { state: "checking", reason: "retained-budget" });
+  // cause22 caps: a full table refuses every turn but the owner's own, as before; the owner's turn is issued its credential
+  // regardless (no count stops it; its credentials leave the table when its generation is revoked, like any other).
+  if (credentials.size >= 4096 && !ownerTurnBinding(binding)) refuseConsumingTurn(binding, { state: "checking", reason: "retained-budget" });
   const key = randomBytes(32).toString("base64url");
   credentials.set(key, { connectionId, binding });
   return key;

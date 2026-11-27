@@ -37,7 +37,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFile
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
-  APPRUN_NO_SANDBOX, createSentinelScheduleProvider, proveSentinelRegistration, readRegistrationRecord, reconcileSentinelRegistration, writeRegistrationRecord,
+  APPRUN_NO_SANDBOX, MAC_SENTINEL_PAUSED, createSentinelScheduleProvider, proveSentinelRegistration, readRegistrationRecord, reconcileSentinelRegistration, usesMacAppBinary, writeRegistrationRecord,
 } from "./sentinel-schedule.mjs";
 
 export const SENTINEL_HOST_STATUS_FILE = "host-status.json";
@@ -110,11 +110,12 @@ function writeOwnedJson(file, value, platform) {
  *   closed             true for a closed-app backup run: no root creation, no producer timer, no registration
  *   bindingCurrent()   async: is the latest verification's folder and key the one backups use now? true or false
  *                      when checked, null when it cannot be checked (electron/backup-schedule-host.mjs bindingCurrent)
- *   loadBoundary(), provider, probe, spawnWatcher, scheduleRun, Notification, delivery, log, setInterval, clearInterval
+ *   loadBoundary(), provider, probe, spawnWatcher, kill (ends the supervisor this host started), endWatcherOnQuit (default: Windows only), scheduleRun, Notification, delivery, log, setInterval, clearInterval
  * }
  */
 export function createSentinelHost(options) {
   const platform = options.platform ?? process.platform;
+  const macApp = usesMacAppBinary(platform, options.executable);
   const env = options.env ?? process.env;
   const now = options.now ?? Date.now;
   const log = line => { try { options.log?.(line); } catch { /* logging never changes anything here */ } };
@@ -142,14 +143,21 @@ export function createSentinelHost(options) {
   let watcherPid = null;
   let fallbackRemoved = false;
   let ioLaunch = null, ioSample = null, ioControl = null;
+  let watcherExited = false;
+  // Set when quit ends the app's own supervisor: from then on this app never starts another one, even from a
+  // reconcile that was already waiting on the scheduler when quit began.
+  let quitEndsWatcher = false;
   const onIoEvent = event => {
-    if (event.type === "launch") { ioLaunch = event; ioSample = null; }
+    if (event.type === "launch") { ioLaunch = event; ioSample = null; watcherExited = false; }
+    // A supervisor that already ended is never signalled later: its pid may belong to another process by then.
+    if (event.type === "exit") watcherExited = true;
     if (event.type === "sample") ioSample = event;
     options.onIoEvent?.(event);
     if (event.type === "exit") { ioLaunch = null; ioSample = null; }
   };
   let timers = [];
   let busy = null;
+  let macRetired = false;
   let pagesShown = 0;
   let disabled = null;
 
@@ -233,6 +241,7 @@ export function createSentinelHost(options) {
           try { mkdirSync(p.dirname(p.dirname(outputRoot)), { recursive: true, mode: 0o700 }); } catch { /* reconcile reports output-root-create */ }
         }
         log(`[sentinel] health root ${state}`);
+        if (macApp && !options.closed) void host.reconcile();
         return state;
       } catch {
         disabled = "boundary";
@@ -272,8 +281,22 @@ export function createSentinelHost(options) {
 
     /** Brings the OS registration to this executable and entry (section 10.2). Never throws. */
     async reconcile() {
-      if (!boundary || !installationId || !outputRoot || options.closed) return registration;
+      if (!boundary || !installationId || options.closed) return registration;
       if (busy) return busy;
+      if (macApp) {
+        if (registration.reason !== MAC_SENTINEL_PAUSED) {
+          registration = { state: "registration-needed", mechanism: null, revision: null, reason: MAC_SENTINEL_PAUSED };
+          log(`[sentinel] registration ${registration.state} ${registration.reason}`);
+        }
+        if (macRetired) return registration;
+        busy = Promise.resolve().then(async () => {
+          macRetired = await scheduleProvider().suspendMac({ boundary, installationId, outputRoot });
+          if (outputRoot && boundary.ensureOutputRoot(outputRoot, { platform, create: false }).ok) writeHostStatus();
+          return registration;
+        }).catch(() => registration).finally(() => { busy = null; });
+        return busy;
+      }
+      if (!outputRoot) return registration;
       busy = (async () => {
         const providerNow = scheduleProvider();
         await host.forgetMovedInstallation();
@@ -299,10 +322,11 @@ export function createSentinelHost(options) {
 
     /** OS refusal: the independent supervisor, plus (Linux) an owning-user autostart entry so it returns at sign-in. */
     async fallback(result) {
+      if (macApp) return result;
       const descriptorPath = p.join(outputRoot, boundary.DESCRIPTOR_FILE);
       const loaded = boundary.loadDescriptor(descriptorPath, { platform });
       if (!loaded.ok) return result;
-      const spawnWatcher = options.spawnWatcher ?? defaultSpawnWatcher({ executable: options.executable, platform, env, onIoEvent, onChild: control => { ioControl = control; } });
+      const spawnWatcher = options.spawnWatcher ? (file, entry) => options.spawnWatcher(file, entry, { onIoEvent }) : defaultSpawnWatcher({ executable: options.executable, platform, env, onIoEvent, onChild: control => { ioControl = control; } });
       let mechanism = "supervisor";
       let created = true;
       if (platform === "linux") {
@@ -313,6 +337,8 @@ export function createSentinelHost(options) {
           mechanism = "autostart";
         } catch { mechanism = "supervisor"; created = true; }
       }
+      // Quit already ended this app's supervisor while the scheduler answered: no new one outlives the app.
+      if (quitEndsWatcher) return result;
       // An existing autostart entry already started this session's supervisor at sign-in: never a second one.
       if (created && watcherPid === null) watcherPid = spawnWatcher(descriptorPath, loaded.value.executable.entry);
       if (watcherPid === null && !(mechanism === "autostart" && !created)) {
@@ -332,7 +358,7 @@ export function createSentinelHost(options) {
 
     stopWatcher() {
       if (watcherPid === null) return;
-      try { process.kill(watcherPid); } catch { /* already gone */ }
+      if (!watcherExited) { try { (options.kill ?? process.kill)(watcherPid); } catch { /* already gone */ } }
       watcherPid = null;
     },
 
@@ -350,6 +376,7 @@ export function createSentinelHost(options) {
 
     /** Proof, rollback and the host-side freshness note. Never throws. */
     async check() {
+      if (macApp) { if (!macRetired) void host.reconcile(); return heartbeat; }
       if (!boundary || !outputRoot || options.closed) return heartbeat;
       try {
         const uid = options.uid ?? process.getuid?.() ?? -1;
@@ -417,8 +444,13 @@ export function createSentinelHost(options) {
       timers.push({ interval: every(() => { if (!suspended) void host.deliverPages(); }, PAGE_POLL_INTERVAL_MS) });
     },
 
-    /** Quit: flush the desktop producer. Never unregisters Sentinel and never stops a scanner. */
+    /** Quit: flush the desktop producer. Never unregisters Sentinel and never stops a scheduled scanner. On Windows the
+     *  fallback supervisor this app started ends with it: a child there keeps the app's listening sockets and its
+     *  executable open after quit, so the next start cannot listen and an installer cannot replace the file. A scan
+     *  started by the task or at sign-in is not this app's child and is left alone; the next start brings the
+     *  supervisor back through the same fallback. */
     async shutdown() {
+      if (options.endWatcherOnQuit ?? platform === "win32") { quitEndsWatcher = true; host.stopWatcher(); }
       // A commit still waiting on its folder/key answer publishes first, bounded so quitting never waits on it.
       await Promise.race([bindingChain, new Promise(resolve => { const t = setTimeout(resolve, 2_000); t.unref?.(); })]);
       for (const timer of timers.splice(0)) { if (timer.timeout) clearTimeout(timer.timeout); if (timer.interval) stopEvery(timer.interval); }

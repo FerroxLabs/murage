@@ -85,9 +85,10 @@ export function acceptFixtureToolText(threadId: string, text: string, refs: Para
 
 /** Bind an existing isolated producer fixture without substituting its database. */
 export function bindFixtureTurn(db: DatabaseSync, turn: TurnLineage, botId: string, generation = turn.turnId,
-  reader: LineageReader = { audience: null }) {
+  reader: LineageReader = { audience: null }, ownerTurn = false) {
   let current = true, refusals = 0;
-  prepareRetainedFence(turn, reader, () => { refusals++; }, db);
+  // ownerTurn: the owner's own turn, as index.ts binds it (send-fence.ts prepareRetainedFence ownerTurn).
+  prepareRetainedFence(turn, reader, () => { refusals++; }, db, undefined, ownerTurn);
   const members = checkedOpenTurns(turn);
   const binding = bindConsumingTurn({
     identity: { botId, threadId: turn.threadId, dispatchGeneration: generation, lineageTurnIds: members.map(m => m.turnId), adapterLeaseId: generation },
@@ -98,11 +99,12 @@ export function bindFixtureTurn(db: DatabaseSync, turn: TurnLineage, botId: stri
 }
 
 export function fixtureHttp(binding: import("../consuming-turn-response.ts").ConsumingTurnBinding,
-  route = "POST /api/internal/memory/thread-read") {
+  route = "POST /api/internal/memory/thread-read", destination?: ServerResponse) {
   const [method, path] = route.split(" ");
   if (!registeredInternalRoute(method!, path!, { project: name => projectToolHandlers.has(name), email: () => false,
     mcp: () => false, delegation: () => false, box: () => false })) throw new Error("FIXTURE_ROUTE_NOT_ADMITTED");
-  const sink = consumingResponseRecorder();
+  // `destination`: a real ServerResponse (its own socket) instead of the recorder; `output` then stays empty.
+  const sink = destination ? { ...consumingResponseRecorder(), raw: destination, get destroyed() { return destination.destroyed; } } : consumingResponseRecorder();
   const writer = consumingHttpWriter(sink.raw, binding, {
     headers: registerConsumingDescriptor(`${route}:headers`, "headers"),
     body: registerConsumingDescriptor(`${route}:body`, "body"),
@@ -115,11 +117,15 @@ export function fixtureHttp(binding: import("../consuming-turn-response.ts").Con
 
 /** Fresh temporary SQLite fixture; never consults the application's database. */
 export function consumingFixture(reader: LineageReader = MEMBER, options: { empty?: boolean; internalSchema?:boolean; threadId?: string; botId?: string;
-  onRefused?: (verdict: import("../memory/lineage-types.ts").LineageVerdict) => void } = {}) {
+  onRefused?: (verdict: import("../memory/lineage-types.ts").LineageVerdict) => void;
+  /** The owner's own turn: the keep hook index.ts binds for an owner-audience direct turn (send-fence.ts prepareRetainedFence). */
+  continuePending?: (verdict?: import("../memory/lineage-types.ts").LineageVerdict) => boolean;
+  /** The owner's own turn said without a keep hook (index.ts: a room turn answering only the owner). */
+  ownerTurn?: boolean } = {}) {
   const f = options.internalSchema?preparedInternalWritetimeFixture():new WritetimeFixture().reply("T", "X", 1).reply("T", "Y", 2);
   const turn = openTurnLineage(f.db, { threadId: options.threadId ?? "T", turnId: randomUUID() });
   let current = true, refusals = 0;
-  prepareRetainedFence(turn, reader, verdict => { refusals++; options.onRefused?.(verdict); }, f.db);
+  prepareRetainedFence(turn, reader, verdict => { refusals++; options.onRefused?.(verdict); }, f.db, options.continuePending, options.ownerTurn === true);
   if (!options.empty) addTurnParents(turn, [{ kind: "line", threadId: "T", messageId: "X" }]);
   const members = checkedOpenTurns(turn);
   const binding = bindConsumingTurn({
@@ -148,7 +154,8 @@ export function consumingResponseRecorder(options: { backpressure?: boolean } = 
     getHeaderNames: () => [...headers.keys()],
     removeHeader: (name: string) => headers.delete(name),
     writeHead: (code: number, values: object = {}) => { status = code; headersSent = true; for (const [name, value] of Object.entries(values)) headers.set(name, value); output.push({ status }); return raw; },
-    write: (data: string | Uint8Array) => { output.push({ status, body: typeof data === "string" ? data : Buffer.from(data).toString() }); events.emit("fixture-written"); return !backpressure; },
+    // like Node, a taken chunk is reported through its write callback
+    write: (data: string | Uint8Array, _encoding?: BufferEncoding, callback?: () => void) => { output.push({ status, body: typeof data === "string" ? data : Buffer.from(data).toString() }); events.emit("fixture-written"); callback?.call(raw); return !backpressure; },
     end: (data?: string | Uint8Array, _encoding?: BufferEncoding, callback?: () => void) => { if (data !== undefined) output.push({ status, body: typeof data === "string" ? data : Buffer.from(data).toString() }); writableEnded = true; events.emit("finish"); callback?.call(raw); return raw; },
     destroy: () => { destroyed = true; events.emit("close"); return raw; },
     writeContinue: () => output.push({ status: 100 }),

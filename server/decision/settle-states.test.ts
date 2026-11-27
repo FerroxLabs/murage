@@ -6,7 +6,8 @@ it('R9 never resolving transport retries same answerId, interrupts by 20s and ig
 });
 it('R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send',async()=>{
  const f=fixture();for(const id of ['q1','q2']){const ref=card(d.decide(f.open(id,{}, {requestType:'question',choices:['Red','Blue']}),baseCard));await d.presentApproval(ref,{title:'Question',subtitle:'x'});}
- expect(f.db.prepare("SELECT COUNT(*) n FROM messages WHERE kind='options'").get()!.n).toBe(0);expect(d.openApprovals()).toHaveLength(2);
+ // Owner report 2026-11-21: a No limits question is its interactive card, not numbered text (was 0 cards).
+ expect(f.db.prepare("SELECT COUNT(*) n FROM messages WHERE kind='options'").get()!.n).toBe(2);expect(f.db.prepare("SELECT COUNT(*) n FROM messages WHERE kind='text'").get()!.n).toBe(0);expect(d.openApprovals()).toHaveLength(2);
  expect((await d.answerQuestionReply('t','Please do another task')).kind).toBe('send');expect(d.openApprovals()).toHaveLength(2);
  expect((await d.answerQuestionReply('t','2')).kind).toBe('answered');expect(d.openApprovals()).toHaveLength(1);expect(f.respond.mock.calls[0][1]).toMatchObject({behavior:'answer',message:'Blue'});
  await d.answerQuestionReply('t','Red');expect(d.openApprovals()).toHaveLength(0);
@@ -35,5 +36,6 @@ it('R18 ninth question refuses under a bounded reply and leaves the eight FIFO r
  }
  expect(d.openApprovals('t')).toHaveLength(9);expect(f.respond).not.toHaveBeenCalled();
  expect(d.openApprovals('t').map(row=>row.requestId)).toEqual(Array.from({length:9},(_,i)=>'question-'+i));
- expect(f.db.prepare("SELECT COUNT(*) n FROM messages WHERE kind='options'").get()!.n).toBe(0);
+ // Owner report 2026-11-21: each retained question is a card (was 0 cards, nine text rows).
+ expect(f.db.prepare("SELECT COUNT(*) n FROM messages WHERE kind='options'").get()!.n).toBe(9);
 });

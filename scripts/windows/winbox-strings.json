@@ -2307,150 +2307,162 @@
       "strings": [
         {
           "line": 1,
-          "text": "'node:test'"
+          "text": "'../evidence-path.mjs'"
         },
         {
           "line": 2,
-          "text": "'node:assert/strict'"
+          "text": "'node:test'"
         },
         {
           "line": 3,
-          "text": "'node:fs'"
+          "text": "'node:assert/strict'"
         },
         {
           "line": 4,
+          "text": "'node:fs'"
+        },
+        {
+          "line": 5,
+          "text": "'evidence/'"
+        },
+        {
+          "line": 5,
+          "text": "'scripts/windows/'"
+        },
+        {
+          "line": 5,
           "text": "'utf8'"
         },
         {
-          "line": 8,
+          "line": 9,
           "text": "'winbox-driver.mjs'"
         },
         {
-          "line": 8,
+          "line": 9,
           "text": "'winbox-driver.node-test.mjs'"
         },
         {
-          "line": 8,
+          "line": 9,
           "text": "'winbox-gate.ps1'"
         },
         {
-          "line": 8,
+          "line": 9,
           "text": "'winbox-sampler.cs'"
         },
         {
-          "line": 8,
+          "line": 9,
           "text": "'winbox-shell-mcp.mjs'"
         },
         {
-          "line": 8,
+          "line": 9,
           "text": "'winbox-proof-audit.node-test.mjs'"
         },
         {
-          "line": 10,
+          "line": 11,
           "text": "'\\n'"
         },
         {
-          "line": 16,
+          "line": 17,
           "text": "'BLOCK 3: verification cites behavioral RED and killed implementation mutants'"
         },
         {
-          "line": 17,
+          "line": 18,
           "text": "'evidence/winbox-gate-verification.md'"
         },
         {
-          "line": 18,
+          "line": 19,
           "text": "'afix-reviewed-red.log'"
         },
         {
-          "line": 18,
+          "line": 19,
           "text": "'afix-base-replay-red.log'"
         },
         {
-          "line": 18,
+          "line": 19,
           "text": "'afix-mutant-unknown-owner.log'"
         },
         {
-          "line": 18,
+          "line": 19,
           "text": "'afix-mutant-discard-offenders.log'"
         },
         {
-          "line": 18,
+          "line": 19,
           "text": "'afix-mutant-terminal.log'"
         },
         {
-          "line": 18,
+          "line": 19,
           "text": "'afix-mutant-child.log'"
         },
         {
-          "line": 18,
+          "line": 19,
           "text": "'afix-mutant-self-test.log'"
         },
         {
-          "line": 18,
+          "line": 19,
           "text": "'afix-mutant-workflow.log'"
         },
         {
-          "line": 18,
+          "line": 19,
           "text": "'afix-audit-red.log'"
         },
         {
-          "line": 19,
+          "line": 20,
           "text": "`verification must cite ${log}`"
         },
         {
-          "line": 20,
+          "line": 21,
           "text": "`evidence/${log}`"
         },
         {
-          "line": 21,
+          "line": 22,
           "text": "`${log} must fail a behavioral assertion`"
         },
         {
-          "line": 22,
+          "line": 23,
           "text": "`${log} cannot be a missing-module RED`"
         },
         {
-          "line": 27,
+          "line": 28,
           "text": "'BLOCK 4: every quoted harness string is inventoried'"
         },
         {
-          "line": 28,
-          "text": "'winbox-strings.json'"
-        },
-        {
-          "line": 28,
+          "line": 29,
           "text": "'winbox-strings.json'"
         },
         {
           "line": 29,
+          "text": "'winbox-strings.json'"
+        },
+        {
+          "line": 30,
           "text": "'missing string inventory sources'"
         },
         {
-          "line": 33,
+          "line": 34,
           "text": "'ROUND 3: fallback retains an existing offender artifact and driver writes it first'"
         },
         {
-          "line": 34,
+          "line": 35,
           "text": "'winbox-gate.ps1'"
         },
         {
-          "line": 35,
+          "line": 36,
           "text": "\"if(-not (Test-Path -LiteralPath (Join-Path $output 'verdict.json')))\""
         },
         {
-          "line": 38,
+          "line": 39,
           "text": "'offending-windows.json'"
         },
         {
-          "line": 39,
+          "line": 40,
           "text": "'winbox-driver.mjs'"
         },
         {
-          "line": 40,
+          "line": 41,
           "text": "\"writeFileSync(join(dirname(file),'offending-windows.json')\""
         },
         {
-          "line": 40,
+          "line": 41,
           "text": "\"writeFileSync(join(dirname(file),'verdict.json')\""
         }
       ]

@@ -93,13 +93,14 @@ export function validateEngineExclusionResource(resources, platform, arch = proc
 const METER_ADDON_FUNCTIONS = ["ioMeterAdd", "ioMeterBytes", "ioMeterTotal", "ioMeterSnapshot", "ioMeterUnknown",
   "ioGrantBegin", "ioGrantEnd", "ioGrantSnapshot", "ioGrantCharge", "ioFgBegin", "ioFgEnd", "ioAllBg"];
 export const WINDOWS_ADDON_FUNCTIONS = [...METER_ADDON_FUNCTIONS,"openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree",
-  "authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave", "environment", "cwdOf",
+  "authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "terminateIfStart", "processPresence", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave", "environment", "cwdOf",
   "anchorBegin", "anchorOpen", "anchorList", "anchorRead", "anchorStat", "anchorClose", "anchorEnd"];
 
 /** macOS and Linux: the calls the server makes on top of lock / processes / renameNoReplace (engine-exec.ts writers, engine-fs.ts fullSync,
  * engine-redo.ts bootId, engine-closed.ts environment). A package whose addon lacks one is refused too. Every export the code calls is on this list or on
  * WINDOWS_ADDON_FUNCTIONS (engine-exclusion-called-exports.test.ts derives the called names from server/ and electron/). */
-export const POSIX_ADDON_FUNCTIONS = [...METER_ADDON_FUNCTIONS, "writers", "fullSync", "bootId", "environment"];
+/** disableCoreDumps: server/host/host-main.ts and index.ts refuse password admission when it is missing (it answers false on Windows by design, so only this list requires it). */
+export const POSIX_ADDON_FUNCTIONS = [...METER_ADDON_FUNCTIONS, "writers", "fullSync", "bootId", "environment", "disableCoreDumps"];
 /** What a package for `platform` must export besides the four every platform answers for. */
 /** macOS adds diskWritten (IO-IDLE-DRAIN-1018 r3.6): the io watchdog's OS write floor there (io-budget.ts readProcess; getrusage's block
  * count reads 0 on macOS). A macOS package whose addon lacks it is refused; the Linux and Windows lists are unchanged. */

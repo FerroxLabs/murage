@@ -94,6 +94,8 @@ export interface RoutineSheetModel {
   whenText: string;
   nextAt: number | null;
   paused: boolean;
+  /** "Paused", or "Ran once" for a once routine that has fired; null while enabled. */
+  offLabel: string | null;
   level: { mode: PermissionMode | null; own: boolean; text: string };
   reportsTo: string;
   /** Newest first, at most five. */
@@ -128,6 +130,13 @@ export function runLimitWords(timeoutMinutes: number | undefined | null): string
 
 function runsOf(routineId: string, runs: readonly RoutineRun[]): RoutineRun[] {
   return runs.filter((run) => run.routineId === routineId).sort((a, b) => (b.startedAt ?? b.scheduledFor) - (a.startedAt ?? a.scheduledFor));
+}
+
+/** Why a disabled routine is off: a "once" routine that has already fired is done, not paused (it turns itself off as it fires). Null while enabled. */
+export function routineOffLabel(routine: Routine, runs: readonly RoutineRun[]): string | null {
+  if (routine.enabled) return null;
+  if (routine.schedule.type === "once" && runs.some((run) => run.routineId === routine.id)) return t("ux.l5b.when.ranOnce");
+  return t("ux.l5b.when.paused");
 }
 
 /** Its last settled run did not finish, or the server counts a failure streak, or a run waits on the owner. */
@@ -173,6 +182,7 @@ export function routineSheetModel(
     whenText: scheduleWords(routine.schedule, now),
     nextAt,
     paused: !routine.enabled,
+    offLabel: routineOffLabel(routine, runs),
     level: { mode: effective, own, text: levelText },
     reportsTo,
     lastRuns: own5.slice(0, LAST_RUNS),

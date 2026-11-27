@@ -1,16 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 const script = name => fileURLToPath(new URL(name, import.meta.url));
 function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'g8-launch-test-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => safeWipeSync(dir));
   return dir;
 }
 const run = (name, args) => spawnSync('bash', [script(name), ...args], { encoding: 'utf8', timeout: 5000 });

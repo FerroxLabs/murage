@@ -13,6 +13,9 @@ const shapes = [
   ["antigravity", { event: "user", message: { content: 'system\n\né\n"' } }],
   ["boxagent", { provider: "test", model: "test-model", prompt: 'cloud computer\né\n"' }],
 ] as const;
+const FORMER_BYTE_CAP = 64 * 1024 * 1024;
+const seal = (budget: { charge(cost: { work: number }): void }) =>
+  expect(() => budget.charge({ work: budgets!.RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
 
 async function serializer(name: typeof shapes[number][0]): Promise<(frame: Record<string, unknown>, before?: () => void) => string> {
   switch (name) {
@@ -49,6 +52,8 @@ async function fixture() {
   return { ...f, input, submitted, prompt };
 }
 
+// MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the expansion itself crossed the 64 MiB byte cap.
+// Now the budget is sealed first: the final-wire charge still refuses before any write or statement bookkeeping.
 // red-at-4df086541: downstream envelopes, escaping, images and added context
 // could cross the budget after the prompt-only callback had already passed.
 it.each(shapes)("T-ENGINE-FINAL-WIRE %s expansion refuses before release", async (name, frame) => {
@@ -57,7 +62,7 @@ it.each(shapes)("T-ENGINE-FINAL-WIRE %s expansion refuses before release", async
     const serialize = await serializer(name);
     f.input.beforeSubmit!();
     expect(f.submitted).toHaveBeenCalledTimes(1);
-    f.budget.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - f.budget.counts.bytes - Buffer.byteLength(f.prompt.text) });
+    seal(f.budget);
     const statements = f.budget.counts.statements;
     const write = vi.fn();
     expect(() => write(serialize(frame, f.input.beforeSubmit))).toThrow("MEMORY_CONTEXT_REVOKED");
@@ -68,6 +73,8 @@ it.each(shapes)("T-ENGINE-FINAL-WIRE %s expansion refuses before release", async
   } finally { f.close(); }
 });
 
+// MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the frame landed exactly on the 64 MiB byte cap.
+// Now it goes past the former cap, is written and its exact cost is counted.
 // control: exact serialized UTF-8 cost includes escaping and the JSONL newline;
 // the private hook does not repeat submission bookkeeping or charge prompt text.
 it.each(shapes)("T-ENGINE-FINAL-WIRE %s exact cap", async (name, frame) => {
@@ -76,7 +83,7 @@ it.each(shapes)("T-ENGINE-FINAL-WIRE %s exact cap", async (name, frame) => {
     const serialize = await serializer(name);
     f.input.beforeSubmit!();
     const expected = JSON.stringify(frame) + (name === "boxagent" ? "" : "\n");
-    f.budget.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - f.budget.counts.bytes - Buffer.byteLength(expected) });
+    f.budget.charge({ bytes: FORMER_BYTE_CAP });
     const before = f.budget.counts;
     const actual = serialize(frame, f.input.beforeSubmit);
     expect(actual).toBe(expected);
@@ -86,12 +93,14 @@ it.each(shapes)("T-ENGINE-FINAL-WIRE %s exact cap", async (name, frame) => {
       expect(f.budget.counts.bytes).toBe(before.bytes);
       wire!.emitEngineWire(f.input.beforeSubmit, actual, () => { expect(f.f.db.isTransaction).toBe(true); });
     }
-    expect(f.budget.counts.bytes).toBe(budgets!.RELEASE_LIMITS.bytes);
+    expect(f.budget.counts.bytes).toBe(before.bytes + Buffer.byteLength(expected));
     expect(f.budget.counts.attempts - before.attempts).toBe(1);
     expect(f.submitted).toHaveBeenCalledTimes(1);
   } finally { f.close(); }
 });
 
+// MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the expanded frame crossed the byte cap.
+// Now the budget is sealed first: the concrete writer still refuses before writing.
 // red-at-4df086541: the concrete ACP writer serialized after the turn fence,
 // allowing an expanded prompt/interjection to write beyond the shared cap.
 it.each(["session/prompt", "_fuigo/interject"])("T-ENGINE-FINAL-WIRE ACP %s final writer", async method => {
@@ -100,7 +109,7 @@ it.each(["session/prompt", "_fuigo/interject"])("T-ENGINE-FINAL-WIRE ACP %s fina
     const { writeAcpResponse } = await import("./acp/approval-delivery.ts");
     const write = vi.fn(), done = vi.fn();
     const stream = new Writable({ write(chunk, _encoding, cb) { write(chunk); cb(); } });
-    f.budget.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - f.budget.counts.bytes - Buffer.byteLength(f.prompt.text) });
+    seal(f.budget);
     writeAcpResponse(stream, { jsonrpc: "2.0", id: 1, method, params: { text: f.prompt.text } }, done, undefined, null, f.input.beforeSubmit);
     expect(write).not.toHaveBeenCalled();
     expect(done).toHaveBeenCalledWith(expect.objectContaining({ code: "MEMORY_CONTEXT_REVOKED" }), false);
@@ -108,6 +117,9 @@ it.each(["session/prompt", "_fuigo/interject"])("T-ENGINE-FINAL-WIRE ACP %s fina
   } finally { f.close(); }
 });
 
+// MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn; before, the first write landed exactly on the byte
+// cap and the next crossed it in a fresh window. Now the first write goes past the former cap (counted to the owner), then the owner's
+// budget is sealed and the next write refuses on the owner, never touching the newer budget.
 // red-at-4df086541: delayed steers must retain their original callback owner;
 // the final serialization may expand after the caller's prompt check.
 it("T-ENGINE-FINAL-WIRE delayed steer retains its owner and pays each write", async () => {
@@ -118,15 +130,18 @@ it("T-ENGINE-FINAL-WIRE delayed steer retains its owner and pays each write", as
       { reader: { audience: null }, db: f.f.db, retained: f.turn });
     const frame = { type: "user", message: { role: "user", content: f.prompt.text } };
     const bytes = Buffer.byteLength(JSON.stringify(frame) + "\n");
-    f.budget.charge({ bytes: budgets!.RELEASE_LIMITS.bytes - f.budget.counts.bytes - bytes });
+    f.budget.charge({ bytes: FORMER_BYTE_CAP });
+    const owed = f.budget.counts.bytes + bytes;
     const { withUpstreamOwner } = await import("../memory/upstream-reader.ts");
     await Promise.resolve();
     expect(withUpstreamOwner({ budgets: [newer], refuse: (): never => { throw new Error("wrong owner"); } }, () => {
       const serialized = wire!.engineJsonLine(frame, before);
       return wire!.emitEngineWire(before, serialized, () => serialized);
     })).toBe(JSON.stringify(frame) + "\n");
-    expect(f.budget.counts.bytes).toBe(budgets!.RELEASE_LIMITS.bytes);
+    expect(f.budget.counts.bytes).toBe(owed);
     expect(newer.counts.bytes).toBe(0);
+    // The next write is still charged to the owner: once the owner's budget is sealed it refuses, and never charges the newer budget.
+    seal(f.budget);
     expect(() => wire!.engineJsonLine(frame, before)).toThrow("MEMORY_CONTEXT_REVOKED");
     expect(newer.counts.bytes).toBe(0);
   } finally { f.close(); }

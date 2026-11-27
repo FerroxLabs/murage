@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "../../../shared/win-hide-child-process.mjs";
 import { withHideInherit } from "../../../shared/win-hide-child-process.mjs";
-import {readFileSync,writeFileSync,mkdirSync,copyFileSync,symlinkSync,rmSync,existsSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,copyFileSync,symlinkSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
+import { safeWipeSync } from '../../testing/safe-wipe.mjs';
 assert.ok(process.env.CI&&existsSync('/source.git'),'Use the isolated network-none test container');
 const evidence=process.env.WIPE_RED_EVIDENCE??'/evidence/red';
 assert.ok(!resolve(evidence).startsWith(process.cwd()+'/'),'Evidence stays outside the repository');
@@ -66,4 +67,4 @@ try{
  writeFileSync(join(evidence,'c1-color-moved.diff'),git(['--git-dir=/source.git','diff','--color-moved=zebra',commits.b8e1,commits.c1]));
  writeFileSync(join(evidence,'report.json'),JSON.stringify(report,null,2)+'\n');if(report.failures.length){console.error(JSON.stringify(report.failures,null,2));process.exitCode=1;}else console.log('RED matrix, perf and C1 equivalence verified');
 }catch(error){console.error(error);process.exitCode=error instanceof RunnerError?2:1;}
-finally{writeFileSync(join(evidence,'report.json'),JSON.stringify(report,null,2)+'\n');rmSync(scratch,{recursive:true,force:true});}
+finally{writeFileSync(join(evidence,'report.json'),JSON.stringify(report,null,2)+'\n');safeWipeSync(scratch, { within: evidence });}

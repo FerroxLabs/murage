@@ -1,3 +1,4 @@
+import { evidencePath, assertExternalEvidencePath } from '../scripts/evidence-path.mjs';
 import {afterAll,beforeAll,expect,it} from 'vitest';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
@@ -17,7 +18,7 @@ beforeAll(async()=>{
  expect((await api('POST','/api/memory/action',{action:'configure',mode:'off'})).status).toBe(200);
 },120000);
 afterAll(async()=>{
- if(fixture){const out=process.env.GNL_PRODUCT_WIRE_EVIDENCE??'evidence/gnl-prod/wire';mkdirSync(out,{recursive:true});writeFileSync(join(out,'workflow.json'),JSON.stringify({fixture:fixture.info,evidence},null,2));writeFileSync(join(out,'server.log'),readFileSync(fixture.info.logPath));await fixture.close();}
+ if(fixture){const out=assertExternalEvidencePath(process.env.GNL_PRODUCT_WIRE_EVIDENCE ?? evidencePath('evidence/gnl-prod/wire'));mkdirSync(out,{recursive:true});writeFileSync(join(out,'workflow.json'),JSON.stringify({fixture:fixture.info,evidence},null,2));writeFileSync(join(out,'server.log'),readFileSync(fixture.info.logPath));await fixture.close();}
 });
 it('P3 bot and first-task wires inherit live No limits and retain explicit lower choices and stored fallback',async()=>{
  const instances=(await api('GET','/api/instances')).body.instances,instance=instances.find((x:any)=>x.instanceId==='verification');

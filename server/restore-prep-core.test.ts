@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The shared restore prep core, same-home profile (Cloud reset prep P1, Astra A-H2, A-H3, A-M1, Ruling F5, decision D2).
+import { MEMORY_SCHEMA_VERSION } from "./memory/schema.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -108,7 +109,7 @@ for (const [label, older] of Object.entries(OLDER)) {
     // restart: a new connection on the same file, the boot-time migration and validation both pass
     const db = new DatabaseSync(join(h.dir, "messages.db"));
     try { expect(() => migrateMemorySchema(db)).not.toThrow(); expect(() => validateMemorySchema(db)).not.toThrow(); } finally { db.close(); }
-    expect(version(h.dir)).toBe(13);
+    expect(version(h.dir)).toBe(MEMORY_SCHEMA_VERSION);
   }, 60_000);
 }
 

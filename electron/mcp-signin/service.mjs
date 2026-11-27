@@ -20,6 +20,8 @@ import { isHeadlessEnvironment } from "../model-signin-oauth.mjs";
 import { clientOnly, handleSecretsStale, projectDoc, readServerDoc, SERVER_NAME, serverNames, withServerDoc } from "./custody.mjs";
 import { discoverAuthorization } from "./discovery.mjs";
 import { runSignInFlow, unionScopes } from "./flow.mjs";
+import { checkOwnClient } from "./register.mjs";
+import { LOOPBACK_HOST } from "../oauth/loopback.mjs";
 import { createRefresher } from "./refresher.mjs";
 import { revokeTokens } from "./revoke.mjs";
 
@@ -59,6 +61,14 @@ const MESSAGES = {
     "no-registration": (host) => `${host} does not let new apps sign in on their own. If it gave you a key or token, use that instead.`,
     network: (host) => `Murage could not reach ${host}. Check your connection and try again.`,
     token: (host) => `${host} did not finish the sign-in. Try again.`,
+    "port-busy": () => "Another program is using the sign-in address of your app. Close it and try again, or set up your app again to get a new address.",
+    "own-app-changed": (host) => `${host} changed where it signs you in, so Murage did not send your app's details. Set up your own app again.`,
+    "bad-client": (host) => `${host} gave Murage a sign-in secret that is too long to hold. Use your own app instead.`,
+  },
+  ownApp: {
+    clientId: { empty: "Enter the Client ID.", long: "The Client ID is longer than 512 characters.", characters: "The Client ID cannot hold spaces or hidden characters." },
+    clientSecret: { long: "The Client secret is longer than 512 characters.", characters: "The Client secret cannot hold spaces or hidden characters." },
+    signedIn: "Sign out first, then set up your own app.",
   },
 };
 
@@ -275,7 +285,7 @@ export function createMcpServers(deps) {
       if (flow.cancelled) return fail("cancelled", MESSAGES.flow.cancelled(host));
       const origin = originOf(target.url);
       const saved = read(name);
-      const stored = saved?.origin === origin && isRecord(saved?.oauth) && saved.oauth.issuer === discovery.issuer ? saved.oauth : undefined;
+      const stored = saved?.origin === origin && isRecord(saved?.oauth) && (saved.oauth.issuer === discovery.issuer || saved.oauth.preRegistered === true) ? saved.oauth : undefined;
       // Step-up (3.7 step 10): what was granted before, plus what the server asks for now.
       const scope = unionScopes(stored?.scope, typeof target.scopeHint === "string" && target.scopeHint ? target.scopeHint : discovery.scopesSupported);
       const local = target.local === "this-computer" || target.local === "local-network" ? target.local : undefined;
@@ -327,6 +337,83 @@ export function createMcpServers(deps) {
     }
   }
 
+  /** One free loopback port, for the redirect address the owner pastes into their app. */
+  function freePort() {
+    return new Promise((resolve) => {
+      const server = deps.createServer();
+      server.once("error", () => resolve(0));
+      server.listen(0, LOOPBACK_HOST, () => {
+        const port = server.address()?.port ?? 0;
+        server.close(() => resolve(port));
+      });
+    });
+  }
+
+  /**
+   * B98 "Use my own app": the owner typed the Client ID (and maybe a secret) of an
+   * app they registered with a provider that has no registration endpoint. It is
+   * saved here only, beside the server's sign-in, before any browser opens, with
+   * the one port whose redirect address the card shows. Resolves that address.
+   */
+  async function useOwnApp(name, input) {
+    if (typeof name !== "string" || !SERVER_NAME.test(name)) return fail("invalid", MESSAGES.invalid);
+    const checked = checkOwnClient(input);
+    if (!checked.ok) return fail("invalid", MESSAGES.ownApp[checked.field][checked.reason]);
+    if (flows.has(name)) return fail("busy", MESSAGES.busy);
+    // Held in `flows` like a sign-in, so a sign-in and a second save wait their turn
+    // and no two writers replace each other's oauth record.
+    const flow = { finish: null, cancelled: false, ownApp: true };
+    flows.set(name, flow);
+    try {
+      const found = await listing(name);
+      if (found.error) return fail(found.error, found.error === "not-found" ? MESSAGES.notFound : MESSAGES.unknown);
+      if (found.entry.kind === "stdio" || found.entry.auth !== "oauth") return fail("not-sign-in", MESSAGES.notSignIn);
+      let answer;
+      try { answer = await deps.commit(`/api/mcp/servers/${name}/oauth-target`, { method: "GET" }); } catch { return fail("unknown", MESSAGES.unknown); }
+      if (answer.status === 404) return fail("not-found", MESSAGES.notFound);
+      const target = answer.body;
+      if (answer.status !== 200 || !isRecord(target) || typeof target.url !== "string" || !originOf(target.url)) return fail("unknown", MESSAGES.unknown);
+      const discovery = await discoverAuthorization({
+        url: target.url,
+        ...(typeof target.resourceMetadataUrl === "string" ? { resourceMetadataUrl: target.resourceMetadataUrl } : {}),
+        ...(target.local === "this-computer" || target.local === "local-network" ? { local: target.local } : {}),
+      }, { request });
+      if (!discovery.ok) return fail(discovery.error, discovery.message);
+      const origin = originOf(target.url);
+      await refresher.settle(name);
+      const held = read(name)?.oauth;
+      if (holdsTokens(held)) return fail("invalid", MESSAGES.ownApp.signedIn);
+      const port = await freePort();
+      if (!port) return fail("port", MESSAGES.flow.port());
+      const latest = await listing(name);
+      if (latest.error || !found.entry.rev || latest.entry.rev !== found.entry.rev) return fail("stale", MESSAGES.stale);
+      try {
+        const kept = await update(name, (current) => {
+          if (flow.cancelled || holdsTokens(current?.oauth)) return undefined;
+          const base = current && current.origin === origin ? current : {};
+          return {
+            ...base, origin, savedAt: Math.max(now(), (base.savedAt ?? 0) + 1),
+            oauth: {
+              issuer: discovery.issuer, clientId: checked.clientId, ...(checked.clientSecret ? { clientSecret: checked.clientSecret } : {}),
+              preRegistered: true, redirectPort: port,
+              authorizationEndpoint: discovery.authorizationEndpoint, tokenEndpoint: discovery.tokenEndpoint,
+              pinnedRevocationEndpoint: discovery.revocationEndpoint ?? null,
+            },
+          };
+        });
+        if (!kept && !flow.cancelled) return fail("invalid", MESSAGES.ownApp.signedIn);
+      } catch {
+        return fail("storage", MESSAGES.storage);
+      }
+      if (flow.cancelled) return fail("cancelled", MESSAGES.flow.cancelled(hostOf(target.url)));
+      return { ok: true, redirectUri: `http://127.0.0.1:${port}/callback`, tokenHost: hostOf(discovery.tokenEndpoint) };
+    } catch {
+      return fail("unknown", MESSAGES.unknown);
+    } finally {
+      if (flows.get(name) === flow) flows.delete(name);
+    }
+  }
+
   function cancelSignIn(name) {
     const flow = flows.get(name);
     if (!flow) return false;
@@ -334,7 +421,7 @@ export function createMcpServers(deps) {
     // The entry goes now, so pressing Sign in again at once opens a fresh
     // window; the cancelled flow's late finally checks identity and leaves
     // any newer flow alone.
-    flows.delete(name);
+    if (!flow.ownApp) flows.delete(name);
     flow.finish?.({ error: "cancelled" });
     return true;
   }
@@ -439,6 +526,7 @@ export function createMcpServers(deps) {
     cancelSignIn,
     signOut,
     remove,
+    useOwnApp,
     resume,
     refresh: (name, options) => (typeof name === "string" && SERVER_NAME.test(name) ? refresher.refresh(name, options) : Promise.resolve(false)),
     handleTokenRejected: (name) => (typeof name === "string" && SERVER_NAME.test(name) ? refresher.refresh(name, { reactive: true }) : Promise.resolve(false)),

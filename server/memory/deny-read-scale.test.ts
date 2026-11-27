@@ -5,11 +5,12 @@
 // pages of 200 lines, 20 quoted lines from 20 other threads, 32 recall candidates, 1 retained session with 2,000 receipts, the send fence)
 // run on a 1k-message file and on a 3M-message-shaped file (one 3M-line thread, 500k receipts, 300k records, history-sized marks). The
 // statements run, the rows they return and every verdict are identical, and every statement's query plan is an index search (no table
-// scan other than the bounded existence probes). build host only (hz-test.sh): the large fixture is built in SQL in about a minute.
+// scan other than the bounded existence probes). Hetzner only (hz-test.sh): the large fixture is built in SQL in about a minute.
 import { observeSqlReads } from "./testing/sql-read-observer.ts";
 import { afterAll, expect, it } from "vitest";
 import { denyLookup, denyReadMeter, fenceVerdict, memoryLookup, refsLookup, resetDenyReadMeter, sessionLookup } from "./deny-read.ts";
 import { buildPrompt, promptPart } from "./prompt-parts.ts";
+import { RULE_READ_LIMIT } from "./deny-rule.ts";
 import type { LineageRef, LineageVerdict, MemoryRef, PageLine } from "./lineage-types.ts";
 import { MEMBER, testThreadNo, WritetimeFixture } from "./testing/writetime-fixture.ts";
 
@@ -33,11 +34,11 @@ function build(n: number): WritetimeFixture {
   db.prepare("UPDATE memory_lsn SET next=? WHERE id=1").run(n + 1000);
   f.footprint(1, ["s-room"]).footprint(2, ["s-room", "s-secret"]);
   // tail marks
-  db.prepare(`${series} INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) SELECT 'BIG',i,1,i,'t' FROM c WHERE ?1-i<600 AND (?1-i)%50=0 AND i%2=0`).run(n);
+  db.prepare(`${series} INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) SELECT 'BIG',i,1,i,'t' FROM c WHERE ?1-i<600 AND (?1-i)%50=0 AND i%2=0`).run(n);
   db.prepare(`${series} INSERT INTO memory_tombstones(id,target_type,target_id,revision,content_hash,epoch,reason,created_at) SELECT 'tt'||i,'source','message:BIG:m'||i,NULL,NULL,0,'owner-forget',0 FROM c WHERE ?1-i<600 AND (?1-i)%41=0 AND i%2=1`).run(n);
   f.denyRange("BIG", n - 300, n - 250, 2).pending("BIG", n - 100, 3).meta("policy_bump_lsn", n - 400);
   // history-sized marks (the large file only): marks every 97th old line, forgotten sources every 101st, ranges early in the thread
-  db.prepare(`${series} INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) SELECT 'BIG',i,4,i,'t' FROM c WHERE i<=?1-1000 AND i%97=0`).run(n);
+  db.prepare(`${series} INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) SELECT 'BIG',i,4,i,'t' FROM c WHERE i<=?1-1000 AND i%97=0`).run(n);
   db.prepare(`${series} INSERT INTO memory_tombstones(id,target_type,target_id,revision,content_hash,epoch,reason,created_at) SELECT 'th'||i,'source','message:BIG:m'||i,NULL,NULL,0,'owner-forget',0 FROM c WHERE i<=?1-1000 AND i%101=0`).run(n);
   // 40 ranges in both files (their from below the tail, their until below the tail's turns), spread over whatever history there is
   for (let at = 0; at < 40; at++) { const from = 1 + Math.floor((n - 1000) * at / 40); f.denyRange("BIG", from, from + 1, 10 + at); }
@@ -56,7 +57,7 @@ function build(n: number): WritetimeFixture {
   // recall candidates (same 32 in both) and 300k-shaped history records with marks
   db.prepare("WITH RECURSIVE c(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM c WHERE i<31) INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,valid_to,supersedes_id,created_at) SELECT 'r'||i,1,'s-room','fact','x','owner-statement','active',0,0,NULL,NULL,0 FROM c").run();
   db.prepare(`${series} INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,owner_pinned,valid_from,valid_to,supersedes_id,created_at) SELECT 'h'||i,1,'s-room','fact','x','owner-statement','active',0,0,NULL,NULL,i FROM c WHERE i<=(?1-1000)/10`).run(n);
-  db.prepare(`${series} INSERT INTO memory_deny_memory(kind,id,version,revoke_id) SELECT 'record','h'||i,0,6 FROM c WHERE i<=(?1-1000)/10 AND i%13=0`).run(n);
+  db.prepare(`${series} INSERT INTO memory_deny_object(kind,id,version,revoke_id) SELECT 'record','h'||i,0,6 FROM c WHERE i<=(?1-1000)/10 AND i%13=0`).run(n);
   f.denyMemory("record", "r5", 0, 7).tombstone("record", "r9", null);
   db.exec("COMMIT");
   db.exec("ANALYZE");
@@ -103,11 +104,20 @@ function scans(f: WritetimeFixture, sql: readonly string[], queries: readonly Qu
     const boundedRaw = raw && executions.length > 0 && executions.every(query => {
       const bound = query.args.at(-1); return typeof bound === "number" && Number.isInteger(bound) && bound > 0 && bound <= 257;
     }) && plan.some(row => row.detail.startsWith(`SEARCH ${raw[1]} `));
-    const boundedCandidates = /WITH candidates AS MATERIALIZED \(SELECT revoke_id FROM memory_deny_memory WHERE kind='(?:record|source)' AND id=[^;]+? LIMIT 257\) SELECT CASE WHEN count\(\*\)>256 THEN -1/.test(text)
-      && plan.some(row => row.detail.startsWith("SEARCH memory_deny_memory "));
+    const boundedCandidates = /WITH candidates AS MATERIALIZED \(SELECT revoke_id FROM memory_deny_object WHERE kind='(?:record|source)' AND id=[^;]+? LIMIT 257\) SELECT CASE WHEN count\(\*\)>256 THEN -1/.test(text)
+      && plan.some(row => row.detail.startsWith("SEARCH memory_deny_object "));
+    // 1.0.23 read-time deny rule (deny-rule.ts): its intermediates are per-ref rows, never history. Each arm is a subquery LIMITed at
+    // RULE_READ_LIMIT + 1 and dzc materializes those arms; dze is one record version's evidence, read by the evidence primary key.
+    const arms = text.match(/SELECT revoke_id FROM \(SELECT dz/g)?.length ?? 0;
+    // an arm whose LIMIT is missing runs on into the next arm's, so one arm fewer matches
+    const boundedArms = text.match(new RegExp(`SELECT revoke_id FROM \\(SELECT dz\\w+\\.revoke_id FROM [\\s\\S]*? LIMIT ${RULE_READ_LIMIT + 1}\\)`, "g"))?.length ?? 0;
+    const boundedRule = arms > 0 && boundedArms === arms;
+    const evidenceSeek = plan.some(row => /^SEARCH memory_evidence USING (?:PRIMARY KEY|(?:COVERING )?INDEX sqlite_autoindex_memory_evidence_1) \(record_id=\?/.test(row.detail));
     for (const row of plan) {
       const detail = String(row.detail);
       if (!detail.startsWith("SCAN ")) continue;
+      if (/^SCAN (?:dzc\b|\(subquery-\d+\))/.test(detail) && boundedRule) continue;
+      if (/^SCAN dze\b/.test(detail) && boundedRule && evidenceSeek) continue;
       if (/VIRTUAL TABLE|CONSTANT ROW/.test(detail)) continue;
       // These are bounded temporary rows, not history tables. Require the source
       // index seek and the observed <=257 bound; every real-table scan still fails.

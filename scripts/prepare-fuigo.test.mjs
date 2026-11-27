@@ -246,7 +246,7 @@ describe("pinned fuigo packaging", () => {
     // executableTarget() header parser cannot classify PE ARM64, so staging
     // would fail after the download rather than before it.
     expect(() => targetForCurrentHost("win32", "arm64")).toThrow(/unsupported/);
-    // linux-arm64 is stageable now (Cloud homes on the build host CAX): the shared
+    // linux-arm64 is stageable now (Cloud homes on Hetzner CAX): the shared
     // header parser classifies ELF aarch64 (0xb7).
     expect(targetForCurrentHost("linux", "arm64")).toBe("linux-arm64");
     expect(targetsForPreparation({ targets: ["linux-arm64"] })).toEqual(["linux-arm64"]);

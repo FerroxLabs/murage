@@ -1,3 +1,5 @@
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+
 /** Bind successful responses synchronously, before the transport dispatches the next frame. */
 export async function openAcpSession(options: {
   method: 'session/new' | 'session/load';
@@ -17,11 +19,11 @@ export async function openAcpSession(options: {
     if (options.owner) options.owner.sessionId = id;
   };
   try {
-    const result = await options.request(result => {
+    const result = await NotModelRequest("ACP session opener calls the supplied local session creation callback.", options.request(result => {
       if (options.method === 'session/new' && typeof result?.sessionId === 'string') bind(result.sessionId);
       if (options.method === 'session/load' && result) bind((options.params as { sessionId: string }).sessionId);
       options.receive(result);
-    });
+    }));
     options.check(result);
     return result;
   } catch (error) {

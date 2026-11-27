@@ -13,7 +13,7 @@ function store(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE memory_meta(id INTEGER PRIMARY KEY, data_revision INTEGER NOT NULL DEFAULT 0); INSERT INTO memory_meta(id,data_revision) VALUES(1,0);
     CREATE TABLE memory_records(id TEXT, state TEXT, text TEXT);
-    CREATE TABLE memory_deny_memory(kind TEXT, id TEXT, version INTEGER, revoke_id INTEGER);
+    CREATE TABLE memory_deny_object(kind TEXT, id TEXT, version INTEGER, revoke_id INTEGER);
     CREATE TABLE memory_revoke_frontier(revoke_id INTEGER, seq INTEGER, node TEXT);
     CREATE TABLE memory_lineage_lsn_meta(key TEXT PRIMARY KEY, value INTEGER); INSERT INTO memory_lineage_lsn_meta VALUES('deny_generation',1);`);
   return db;
@@ -25,7 +25,7 @@ it("fail-before: contentStampOf exists; a marker write leaves it, a content writ
   const stamp = () => String(S.contentStampOf(db, ["memory_records"]));
   const s0 = stamp(), w0 = scan.writeStampOf(db);
   // what the marker writes every slice: deny marks, frontier rows
-  db.exec("INSERT INTO memory_deny_memory VALUES('source','s1',0,7); INSERT INTO memory_revoke_frontier VALUES(7,1,'x'); DELETE FROM memory_revoke_frontier");
+  db.exec("INSERT INTO memory_deny_object VALUES('source','s1',0,7); INSERT INTO memory_revoke_frontier VALUES(7,1,'x'); DELETE FROM memory_revoke_frontier");
   expect(scan.writeStampOf(db), "every write moves the old stamp").not.toBe(w0);
   expect(stamp(), "a marker write leaves the content stamp").toBe(s0);
   // a new record: the scanned table grew

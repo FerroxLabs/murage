@@ -7,7 +7,7 @@ const sender = { id: "sender", name: "Renamed Sable", color: "blue" as const, av
 const recipient = { ...sender, id: "recipient", name: "Sable", avatarUrl: "/api/attachments/recipient.png" };
 it("uses the stable peer identity even after rename or a duplicate name", () => {
   const html = renderToStaticMarkup(createElement(CommAvatar, { comm, bots: [recipient, sender] }));
-  expect(html).toContain('src="/api/attachments/sender.png"'); expect(html).not.toContain("recipient.png"); expect(html).toContain("Renamed Sable avatar");
+  expect(html).toContain('src="/api/attachments/sender.png"'); expect(html).not.toContain("recipient.png"); expect(html).toContain('alt=""'); expect(html).toContain(">RS</span>");
 });
 it("falls back for missing or deleted peers without borrowing recipient image", () => {
   const html = renderToStaticMarkup(createElement(CommAvatar, { comm, bots: [recipient] }));

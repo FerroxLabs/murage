@@ -87,18 +87,56 @@
 // as "Price unavailable".
 let snapshotText: string | null = null;
 let snapshotLoad: Promise<void> | null = null;
-const readyListeners = new Set<() => void>();
+const metadataListeners = new Set<() => void>();
+// Google publishes both periods independently of the bundled snapshot's refresh date.
+const GEMINI_4_PRICE_CHANGE = Date.parse("2026-12-01T00:00:00Z");
+const GOOGLE_GEMINI_PRICING_CHECKED_AT = Date.parse("2026-11-20T11:45:00Z");
+const GOOGLE_GEMINI_PROVIDERS = ["google", "google-vertex"] as const;
+const GEMINI_4_RATES = [
+  { inputPerMillion: 2, outputPerMillion: 10 },
+  { inputPerMillion: 4, outputPerMillion: 20 },
+] as const;
+let priceChangeTimer: ReturnType<typeof setTimeout> | undefined;
 const importSnapshot = (): Promise<{ default: string }> => import("../data/model-metadata.json?raw");
+
+function geminiPricePeriod(): 0 | 1 {
+  return Date.now() >= GEMINI_4_PRICE_CHANGE ? 1 : 0;
+}
 
 /** True once the snapshot's text has arrived (not parsed: that is still lazy). */
 export function modelMetadataReady(): boolean {
   return snapshotText !== null;
 }
 
-/** For `useSyncExternalStore`: called once, when the snapshot arrives. */
+export function modelMetadataRevision(): number {
+  return modelMetadataReady() ? 1 + geminiPricePeriod() : 0;
+}
+
+function notifyModelMetadata() {
+  for (const listener of [...metadataListeners]) listener();
+}
+
+function schedulePriceChange() {
+  const delay = GEMINI_4_PRICE_CHANGE - Date.now();
+  if (priceChangeTimer !== undefined || delay <= 0) return;
+  priceChangeTimer = setTimeout(() => {
+    priceChangeTimer = undefined;
+    if (geminiPricePeriod() === 1) notifyModelMetadata();
+    else schedulePriceChange();
+  }, Math.min(delay, 2_147_483_647));
+}
+
+/** For `useSyncExternalStore`: notify on snapshot arrival and the price cutover. */
 export function subscribeModelMetadata(listener: () => void): () => void {
-  readyListeners.add(listener);
-  return () => readyListeners.delete(listener);
+  metadataListeners.add(listener);
+  schedulePriceChange();
+  return () => {
+    metadataListeners.delete(listener);
+    if (metadataListeners.size === 0 && priceChangeTimer !== undefined) {
+      clearTimeout(priceChangeTimer);
+      priceChangeTimer = undefined;
+    }
+  };
 }
 
 /** Fetch the snapshot's chunk. Idempotent, and it never rejects: a failed
@@ -111,7 +149,7 @@ export function preloadModelMetadata(load: () => Promise<{ default: string }> = 
   snapshotLoad ??= load().then(
     (module) => {
       snapshotText = module.default;
-      for (const listener of [...readyListeners]) listener();
+      notifyModelMetadata();
     },
     () => {
       snapshotLoad = null;
@@ -142,6 +180,7 @@ export interface ModelMetadataMatch {
   metadata: ModelMetadata;
   provider: string;
   modelId: string;
+  pricing?: ProviderModel["pricing"];
   /** How it was found. Reported so a test — and a future audit — can tell an
    *  exact hit from a normalised one without re-deriving the rule. */
   tier: "exact" | "normalised";
@@ -196,6 +235,8 @@ export const PRESET_PROVIDER_HINTS: Readonly<Record<string, string>> = Object.fr
   mistral: "mistral",
   groq: "groq",
   xai: "xai",
+  requesty: "requesty",
+  google: "google",
 });
 
 /** The one Flux id shape that names a concrete model. Documented at
@@ -333,7 +374,7 @@ export function modelMetadataUpdatedAt(): number {
 
 /** Every id form worth trying, strongest first — or null when the id is one
  *  this rule refuses to look up at all. */
-function candidates(id: string): string[] | null {
+function candidates(id: string): { forms: string[]; qualifiedProvider?: string } | null {
   const lower = id.toLowerCase();
   // A Flux id goes through the routing code's own parser. Only a pinned route
   // names a model; a tier is a route, and flux-voice / flux-image are not chat
@@ -342,7 +383,7 @@ function candidates(id: string): string[] | null {
   if (flux !== null) {
     if (!flux.startsWith(FLUX_PINNED_PREFIX)) return null;
     const pinned = flux.slice(FLUX_PINNED_PREFIX.length).toLowerCase();
-    return pinned ? [pinned, ...(EFFORT_SUFFIX.test(pinned) ? [pinned.replace(EFFORT_SUFFIX, "")] : [])] : null;
+    return pinned ? { forms: [pinned, ...(EFFORT_SUFFIX.test(pinned) ? [pinned.replace(EFFORT_SUFFIX, "")] : [])] } : null;
   }
   const forms = [lower];
   let normalised = lower;
@@ -352,10 +393,12 @@ function candidates(id: string): string[] | null {
   // Only a segment that names a provider the snapshot knows is a vendor path;
   // `meta-llama/llama-3.3-70b-instruct` keeps its prefix because openrouter
   // lists it that way, and stripping it would find nothing.
-  if (slash > 0 && Object.hasOwn(loadModelMetadata().data.providers, normalised.slice(0, slash))) normalised = normalised.slice(slash + 1);
+  const prefix = slash > 0 ? normalised.slice(0, slash) : "";
+  const qualifiedProvider = prefix && Object.hasOwn(loadModelMetadata().data.providers, prefix) ? prefix : undefined;
+  if (qualifiedProvider) normalised = normalised.slice(slash + 1);
   if (normalised !== lower) forms.push(normalised);
   if (EFFORT_SUFFIX.test(normalised)) forms.push(normalised.replace(EFFORT_SUFFIX, ""));
-  return forms;
+  return { forms, qualifiedProvider };
 }
 
 function agree(rows: readonly ModelMetadataMatch[]): ModelMetadataMatch | null {
@@ -370,6 +413,26 @@ function agree(rows: readonly ModelMetadataMatch[]): ModelMetadataMatch | null {
     : null;
 }
 
+function isGeminiPriceModel(modelId: string): boolean {
+  return modelId === "gemini-4-argon" || modelId === "gemini-4-carbon";
+}
+
+function withEffectivePrice(match: ModelMetadataMatch, tier: ModelMetadataMatch["tier"]): ModelMetadataMatch {
+  const { provider, modelId } = match;
+  if ((provider !== "google" && provider !== "google-vertex") ||
+      !isGeminiPriceModel(modelId)) return { ...match, tier };
+  const period = geminiPricePeriod();
+  const rates = GEMINI_4_RATES[period];
+  const pricing = {
+    ...rates,
+    source: provider === "google"
+      ? `https://aistudio.google.com/docs/pricing#${modelId}`
+      : "https://cloud.google.com/model-garden/pricing?hl=en_GB",
+    updatedAt: GOOGLE_GEMINI_PRICING_CHECKED_AT,
+  };
+  return { ...match, tier, metadata: { ...match.metadata, ...rates }, pricing };
+}
+
 /** Is this id one of Murage's own four Flux routes rather than a model?
  *  Delegates to the routing code's own predicate so the two cannot disagree. */
 export function isRoutingAlias(id: string): boolean {
@@ -380,32 +443,47 @@ export function isRoutingAlias(id: string): boolean {
  *  to exactly one answer. `hint` is a models.dev provider id. */
 export function lookupModelMetadata(id: string, hint?: string | null): ModelMetadataMatch | null {
   if (typeof id !== "string" || !id.trim()) return null;
-  const forms = candidates(id);
-  if (!forms) return null;
+  const route = candidates(id);
+  if (!route) return null;
+  const { forms, qualifiedProvider } = route;
   if (!hint) {
     for (const form of forms) {
       const own = FLUX_OVERLAY[form];
       if (own) return { metadata: own, provider: "flux", modelId: form, tier: form === id.toLowerCase() ? "exact" : "normalised" };
     }
   }
+  const { index } = loadModelMetadata();
+  if (forms.some(form => isGeminiPriceModel(form.slice(form.lastIndexOf("/") + 1)))) {
+    // OpenCode IDs carry the provider in the route. A qualified reseller
+    // without a quote must not inherit Google's dated list price.
+    const routeProvider = hint || qualifiedProvider;
+    const providers = routeProvider ? [routeProvider] : GOOGLE_GEMINI_PROVIDERS;
+    for (const provider of providers) {
+      for (const form of forms) {
+        const match = index.get(form)?.find(row => row.provider === provider);
+        if (match) return withEffectivePrice(match, form === id.toLowerCase() ? "exact" : "normalised");
+      }
+    }
+    if (routeProvider) return null;
+  }
   for (let position = 0; position < forms.length; position += 1) {
-    const rows = loadModelMetadata().index.get(forms[position]!);
+    const rows = index.get(forms[position]!);
     if (!rows?.length) continue;
     // A pinned Flux route is never an "exact" hit: the id in the catalog is
     // not the id in the snapshot.
     const tier = position === 0 && forms[position] === id.toLowerCase() ? "exact" : "normalised";
     if (hint) {
       const hinted = rows.find((row) => row.provider === hint);
-      if (hinted) return { ...hinted, tier };
+      if (hinted) return withEffectivePrice(hinted, tier);
     }
     const agreed = agree(rows);
-    if (agreed) return { ...agreed, tier };
+    if (agreed) return withEffectivePrice(agreed, tier);
     const vendor = VENDOR_PROVIDERS.find((provider) => rows.some((row) => row.provider === provider));
     const canonical = vendor ? rows.find((row) => row.provider === vendor) : undefined;
     // An ambiguous hit STOPS the search. Falling through to a looser form
     // after finding the id itself under forty different prices would be
     // guessing with extra steps.
-    return canonical ? { ...canonical, tier } : null;
+    return canonical ? withEffectivePrice(canonical, tier) : null;
   }
   return null;
 }
@@ -435,6 +513,8 @@ export function providerHint(preset?: string | null, reported?: string | null): 
 
 export interface FillableModelRow {
   label: string;
+  preset?: string;
+  provider?: string;
   contextWindow?: number;
   pricing?: ProviderModel["pricing"];
   capabilities?: { vision?: boolean; tools?: boolean; reasoning?: boolean };
@@ -456,6 +536,7 @@ export function fillModelMetadata<T extends FillableModelRow>(
   const { metadata } = match;
   const pricing =
     row.pricing ??
+    match.pricing ??
     (metadata.inputPerMillion === undefined && metadata.outputPerMillion === undefined
       ? undefined
       : {
@@ -488,13 +569,13 @@ export function fillModelMetadata<T extends FillableModelRow>(
 
 
 // Cache enrichment and ordering by catalog identity, never by messages or history.
-const orderedMetadata = new WeakMap<readonly FillableModelRow[], Map<string, { ready: boolean; rows: unknown }>>();
+const orderedMetadata = new WeakMap<readonly FillableModelRow[], Map<string, { revision: number; rows: unknown }>>();
 export function orderedModelMetadata<T extends FillableModelRow & { id: string }>(rows: readonly T[], hint?: string): OrderedModel<T>[] {
   let hints = orderedMetadata.get(rows);
   if (!hints) { hints = new Map(); orderedMetadata.set(rows, hints); }
-  const key = hint ?? "", ready = modelMetadataReady(), cached = hints.get(key);
-  if (cached?.ready === ready) return cached.rows as OrderedModel<T>[];
-  const result = orderModels(rows.map(row => fillModelMetadata(row, row.id, hint)));
-  hints.set(key, { ready, rows: result });
+  const key = hint ?? "", revision = modelMetadataRevision(), cached = hints.get(key);
+  if (cached?.revision === revision) return cached.rows as OrderedModel<T>[];
+  const result = orderModels(rows.map(row => fillModelMetadata(row, row.id, hint ?? providerHint(row.preset, row.provider))));
+  hints.set(key, { revision, rows: result });
   return result;
 }

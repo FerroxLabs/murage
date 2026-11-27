@@ -14,7 +14,8 @@ import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 //                     mcp-elicitation | form-elicitation | user-input | image |
 //                     async-question (the turn posts request_user_input_async's agentMessage, then keeps running
 //                     until FAKE_CODEX_ASYNC_QUESTION_GATE exists; FAKE_CODEX_ASYNC_QUESTIONS replaces its questions;
-//                     with FAKE_CODEX_ASYNC_QUESTION_ONCE, a marker path, only the first turn asks) |
+//                     with FAKE_CODEX_ASYNC_QUESTION_ONCE, a marker path, only the first turn asks; with
+//                     FAKE_CODEX_ASYNC_QUESTION_ONLY=1 no command or search runs first and the message has no text, so the question is the turn's only output) |
 //                     logged-in-stdout | logged-out | status-fails | unauthorized
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
 //   FAKE_CODEX_DUMP_ON_TERM  "1": the dump is flushed synchronously in the SIGTERM handler, then the default signal exit is re-raised, so
@@ -46,6 +47,7 @@ import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 //                     Launch counts for these knobs go to FAKE_CODEX_STATE.
 //   (mode transient-503: every turn/start answers a transient 503 error; with FAKE_CODEX_MODE_FILE
 //                     it can be switched on for a process that is already running)
+//   (mode limit-text: every turn fails before any activity with FAKE_CODEX_LIMIT_TEXT as its error message)
 //   FAKE_CODEX_CALL_LOG   file: one "<pid> <method>" line per request received
 //   (mode late-approval: turn/completed and an approval request arrive in one write)
 //   (mode split-approval: turn/completed, then an approval request split across two writes)
@@ -60,6 +62,7 @@ import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 //   FAKE_CODEX_TURNSTART_LATE  "1": turn/start is not answered; the SIGTERM is ignored, and the ACK plus one turn notification are
 //                     written only then (a late answer while the process holds its shutdown; the kill escalates)
 //   FAKE_CODEX_SPAWN_LOG  file: one line (the pid) per app-server process started
+//   FAKE_CODEX_NO_WEB_SEARCH  "1": the scripted turn reports no web search (outside input), so a resumed thread can be kept
 //   FAKE_CODEX_WARM    "1": each turn gets its own turn id and the reported thread
 //                     total accumulates (7/4/3 more per turn), as a retained
 //                     app-server reports it; the dump also carries the credential
@@ -178,6 +181,10 @@ if (process.argv[2] === "--version") {
   process.exit(0);
 }
 if (process.argv[2] === "login" && process.argv[3] === "status") {
+  if (mode === "api-key-configured") {
+    process.stderr.write("API key configured - fixture\nAuthentication is checked when you send a request.\n");
+    process.exit(0);
+  }
   if (mode === "logged-out") {
     process.stderr.write("Not logged in\n");
     process.exit(1);
@@ -251,6 +258,13 @@ let decision: unknown = null;
 /** What each PreToolUse hook run answered, for the tests (id, tool name, input, verdict, reason), and whether the turn was interrupted. */
 const hookLog: Array<{ id: string; name: string; input: unknown; verdict: string; reason?: string }> = [];
 let interrupted = false;
+// FAKE_CODEX_HANG_FILE  path: an app-server started while this file exists never answers (its start hangs, it reads nothing and writes
+//   no rollout) and outlives a SIGTERM by FAKE_CODEX_HANG_TERM_MS (a slow shutdown). One started after the file is gone runs normally.
+const hangStart = process.argv[2] === "app-server" && !!process.env.FAKE_CODEX_HANG_FILE && existsSync(process.env.FAKE_CODEX_HANG_FILE);
+if (hangStart) {
+  process.on("SIGTERM", () => { setTimeout(() => process.exit(0), Number(process.env.FAKE_CODEX_HANG_TERM_MS ?? 0)); });
+  setInterval(() => {}, 60_000);
+}
 if (process.env.FAKE_CODEX_IGNORE_TERM === "1") {
   process.on("SIGTERM", () => {});
   setInterval(() => {}, 60_000);
@@ -326,7 +340,7 @@ if (mode === "late-output") {
 
 const finishTurn = () => {
   notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed", exitCode: 0, aggregatedOutput: "" } });
-  notify("item/completed", { item: { id: "w1", type: "webSearch", status: "completed" } });
+  if (process.env.FAKE_CODEX_NO_WEB_SEARCH !== "1") notify("item/completed", { item: { id: "w1", type: "webSearch", status: "completed" } });
   if (mode === "stream") {
     // token deltas, then the whole message — the driver must not double-emit
     notify("item/agentMessage/delta", { itemId: "m1", delta: "done from " });
@@ -392,7 +406,8 @@ const finishTurn = () => {
 //                          Codex that carries on past a hook that never ran would) | untrusted-stays (config/batchWrite answers ok and trusts nothing)
 //   FAKE_CODEX_TOOLS       JSON array of tool calls the turn makes: {kind: shell|apply_patch|mcp|update_plan|view_image|other, id,
 //                          command?, cwd?, patch?, server?, tool?, input?, name?, hook?: false (Codex skips the hook, as when it
-//                          fails open), escalate?: true (a sandbox escalation: asked about whatever the hook said)}
+//                          fails open), escalate?: true (a sandbox escalation: asked about whatever the hook said), failOutput?: the
+//                          command ends failed, exit 1, with this output (a Windows sandbox setup error, q1022-winterry)}
 //   FAKE_CODEX_ESCALATION  "0": the scripted approval modes (approval, windows-command) are NOT sandbox escalations, so `on-request` asks
 //                          nothing for them, as the real one does; by default they stand for an escalation and still ask.
 // Under `on-request` a command or file call runs without an approval request; the PreToolUse hook (when hooks.json is trusted and
@@ -478,7 +493,7 @@ const fakeSessionStart = async () => {
   if (process.env.FAKE_CODEX_SESSION_LOG) appendFileSync(process.env.FAKE_CODEX_SESSION_LOG, `${process.pid} SessionStart\n`);
   await runFakeHooks("SessionStart", { source: "startup" });
 };
-type FakeCall = { hookId?: string; helper?: boolean; hookTurnId?: string; concurrent?: boolean; delayMs?: number; runAnyway?: boolean; kind: string; id: string; command?: string; cwd?: string; patch?: string; server?: string; tool?: string; input?: unknown; name?: string; hook?: boolean; escalate?: boolean };
+type FakeCall = { hookId?: string; helper?: boolean; hookTurnId?: string; concurrent?: boolean; delayMs?: number; runAnyway?: boolean; kind: string; id: string; command?: string; cwd?: string; patch?: string; server?: string; tool?: string; input?: unknown; name?: string; hook?: boolean; escalate?: boolean; failOutput?: string };
 const hookNameOf = (call: FakeCall) => call.kind === "shell" ? "Bash" : call.kind === "mcp" ? `mcp__${call.server}__${call.tool}` : call.kind === "other" ? String(call.name) : call.kind;
 const hookInputOf = (call: FakeCall): unknown => call.kind === "shell" ? { command: call.command } : call.kind === "apply_patch" ? { command: call.patch } : call.kind === "mcp" ? (call.input ?? {}) : (call.input ?? {});
 /** One tool call: the hook first (when it is live and the call is not marked to skip it), then item/started and item/completed.
@@ -515,7 +530,7 @@ const playFakeCall = async (call: FakeCall): Promise<boolean> => {
     decision = answer;
     if (answer?.decision !== "accept") { toolNotify("item/completed", { item: { id: call.id, type: started.type, status: "declined" } }); finishHelper(); return false; }
   }
-  if (started) toolNotify("item/completed", { item: { id: call.id, type: started.type, status: "completed", exitCode: 0, aggregatedOutput: "" } });
+  if (started) toolNotify("item/completed", { item: { id: call.id, type: started.type, ...(call.failOutput !== undefined ? { status: "failed", exitCode: 1, aggregatedOutput: call.failOutput } : { status: "completed", exitCode: 0, aggregatedOutput: "" }) } });
   finishHelper();
   return true;
 };
@@ -548,6 +563,7 @@ const playScriptedTurn = async () => {
 
 let buf = "";
 process.stdin.on("data", (chunk) => {
+  if (hangStart) return;
   buf += chunk;
   let nl;
   while ((nl = buf.indexOf("\n")) !== -1) {
@@ -655,7 +671,7 @@ process.stdin.on("data", (chunk) => {
         if (path && existsSync(path)) Object.assign(accumulated, JSON.parse(readFileSync(path, "utf8")));
         // the effective model and provider, as ThreadResumeResponse requires them (codex 0.163 schema)
         const resumeAnswer = (threadId: unknown) => ({
-          thread: { id: threadId, ...(process.env.FAKE_CODEX_ROLLOUT ? { path: process.env.FAKE_CODEX_ROLLOUT } : {}) },
+          thread: { id: process.env.FAKE_CODEX_RESUME_THREAD_ID ?? threadId, ...(process.env.FAKE_CODEX_ROLLOUT ? { path: process.env.FAKE_CODEX_ROLLOUT } : {}) },
           ...(process.env.FAKE_CODEX_RESUME_MODEL === "none" ? {} : { model: process.env.FAKE_CODEX_RESUME_MODEL === "stale" ? "stale-model" : msg.params?.model ?? "fake-codex-model" }),
           modelProvider: msg.params?.modelProvider ?? "openai",
         });
@@ -776,7 +792,10 @@ process.stdin.on("data", (chunk) => {
           ];
           let frames: unknown[];
           if (mode === "parent-early") frames = [...parent, ack];
-          else if (mode === "parent-overflow") frames = [...Array.from({ length: 257 }, () => parent[0]), ack];
+          // 300 distinct replies (over the old hold of 256 early updates), the usage and the completion, all ahead of the ack
+          else if (mode === "parent-overflow") frames = [...Array.from({ length: 300 }, (_, n) => notification("item/completed", { item: { id: `parent-${n}`, type: "agentMessage", text: `parent reply ${n}` } })), parent[1], parent[2], ack];
+          // two 20 MiB reply items (40 MiB, over the old 32 MiB hold, under its 256 count), the usage and the completion, all ahead of the ack
+          else if (mode === "parent-early-large") frames = [...[0, 1].map((n) => notification("item/agentMessage/delta", { itemId: "parent-large", delta: String.fromCharCode(97 + n).repeat(20 * 1024 * 1024) })), ...parent, ack];
           else if (mode === "parent-invalid-ack") frames = [ack, ...parent];
           // a tool item announced ahead of a turn/start that then fails (OpenMausBot 7045f15a1, adapted)
           else if (mode === "parent-early-tool-fail" || mode === "parent-early-text-fail") {
@@ -838,6 +857,11 @@ process.stdin.on("data", (chunk) => {
           const error = { message: `unexpected status 402: ${JSON.stringify({ error: code })}`, codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 402 } } };
           notify("error", { error });
           notify("turn/completed", { turn: { status: "failed", error } });
+          break;
+        }
+        if (mode === "limit-text") {
+          out({ jsonrpc: "2.0", id: msg.id, result: turnResult() });
+          notify("turn/completed", { turn: { status: "failed", error: { message: process.env.FAKE_CODEX_LIMIT_TEXT ?? "" } } });
           break;
         }
         if (mode === "terminal-error" || mode === "terminal-error-duplicate") {
@@ -1033,13 +1057,16 @@ process.stdin.on("data", (chunk) => {
             }
             await fakeSessionStart();
             await playFakeCall({ kind: "shell", id: "i1", command: approvalMode && mode !== "windows-command" ? "rm -rf scratch" : command, escalate: approvalMode && escalationAsks() });
-            notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
+            if (process.env.FAKE_CODEX_NO_WEB_SEARCH !== "1") notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
             finishTurn();
           })();
           break;
         }
-        notify("item/started", { item: { id: "i1", type: "commandExecution", command } });
-        notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
+        // FAKE_CODEX_ASYNC_QUESTION_ONLY: no command or search first, the async question is the turn's only output
+        if (!(mode === "async-question" && process.env.FAKE_CODEX_ASYNC_QUESTION_ONLY === "1")) {
+          notify("item/started", { item: { id: "i1", type: "commandExecution", command } });
+          if (process.env.FAKE_CODEX_NO_WEB_SEARCH !== "1") notify("item/started", { item: { id: "w1", type: "webSearch", query: "Murage" } });
+        }
         if (mode === "mcp-elicitation") {
           out({
             jsonrpc: "2.0",
@@ -1122,7 +1149,7 @@ process.stdin.on("data", (chunk) => {
           const item = {
             type: "agentMessage",
             id: "call_async_question",
-            text: "Which source should I use?",
+            text: process.env.FAKE_CODEX_ASYNC_QUESTION_ONLY === "1" ? "" : "Which source should I use?",
             phase: "final_answer",
             memoryCitation: null,
             delivery: "async",

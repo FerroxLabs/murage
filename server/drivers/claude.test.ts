@@ -652,6 +652,101 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.find((e) => e.type === "item.completed" && (e as any).itemType === "assistant_text")).toMatchObject({ text: "FAKE_CONTEXT 12k of 200k tokens used" });
   });
 
+  it("W6d keeps a failed native /compact resume on the requested session", async () => {
+    process.env.FAKE_CLAUDE_COMMANDS = "1";
+    process.env.FAKE_CLAUDE_RESUMED_API_ERROR = "1";
+    const dump = join(scratch, "compact-resume.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    try {
+      await create();
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "compact-resume", text: "/compact",
+        resumeCursor: "original-session", engineCommand: { name: "compact", args: "" } });
+      expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false });
+      const captured = JSON.parse(readFileSync(dump, "utf8"));
+      expect(captured.argv.slice(captured.argv.indexOf("--resume"), captured.argv.indexOf("--resume") + 2)).toEqual(["--resume", "original-session"]);
+      expect(captured.argv).not.toContain("--session-id");
+      expect(captured.prompt.message.content).toBe("/compact");
+      expect(recorder.events.filter(event => event.type === "session.started")).toEqual([expect.objectContaining({ sessionId: "original-session" })]);
+    } finally {
+      delete process.env.FAKE_CLAUDE_RESUMED_API_ERROR;
+    }
+  });
+
+  it.each([false, true])("W2 writes /compact to the same Claude session (cold=%s)", async cold => {
+    process.env.FAKE_CLAUDE_COMMANDS = "1";
+    process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
+    const dump = join(scratch, "compact-exact.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    try {
+      await create();
+      const threadId = "compact-exact";
+      const cwd = fixtureBotFolder();
+      const turn = { draftOnly: true as const, cwd, threadId, system: TURN_ASK_RULES };
+      const first = await instance.adapter.sendTurn({ ...turn, text: "First ordinary message" });
+      const native = await recorder.until(event => event.type === "session.started" && event.turnId === first.turnId);
+      expect(native.type).toBe("session.started");
+      if (native.type !== "session.started") throw new Error("Claude did not publish a session");
+      const resumeCursor = native.sessionId!;
+      await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+      const second = await instance.adapter.sendTurn({ ...turn, text: "Second ordinary message", resumeCursor });
+      await recorder.until(event => event.type === "turn.completed" && event.turnId === second.turnId);
+      const previous = JSON.parse(readFileSync(dump, "utf8"));
+      if (cold) await instance.adapter.resetSession!(threadId);
+      const compact = await instance.adapter.sendTurn({ ...turn, text: "/compact", resumeCursor, engineCommand: { name: "compact", args: "" } });
+      expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === compact.turnId)).toMatchObject({ ok: true });
+      const captured = JSON.parse(readFileSync(dump, "utf8"));
+      expect(captured.prompt.message.content).toBe("/compact");
+      if (cold) {
+        expect(captured.pid).not.toBe(previous.pid);
+        expect(captured.argv.slice(captured.argv.indexOf("--resume"), captured.argv.indexOf("--resume") + 2)).toEqual(["--resume", resumeCursor]);
+      } else {
+        expect(captured.pid).toBe(previous.pid);
+      }
+    } finally {
+      delete process.env.FAKE_CLAUDE_DUMP_EACH_TURN;
+    }
+  });
+
+  it("W6e refuses if the warm Claude session changes before stdin is written", async () => {
+    process.env.FAKE_CLAUDE_COMMANDS = "1";
+    process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
+    const dump = join(scratch, "compact-warm.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    const spawned = vi.spyOn(procs, "spawnCli");
+    try {
+      await create();
+      const turn = { draftOnly: true as const, cwd: fixtureBotFolder(), threadId: "compact-warm-race", system: TURN_ASK_RULES };
+      const first = await instance.adapter.sendTurn({ ...turn, text: "Ordinary turn" });
+      const native = await recorder.until(event => event.type === "session.started" && event.turnId === first.turnId);
+      if (native.type !== "session.started" || !native.sessionId) throw new Error("Claude did not publish a session");
+      await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+      const child = spawned.mock.results.at(-1)?.value;
+      expect(child?.stdout).toBeDefined();
+      const before = readFileSync(dump, "utf8");
+      let changed = false;
+      const unsubscribe = instance.adapter.onEvent(event => {
+        if (event.type !== "turn.started" || event.turnId === first.turnId || changed) return;
+        changed = true;
+        child.stdout.emit("data", Buffer.from('{"type":"system","subtype":"init","session_id":"other-session"}\n'));
+      });
+      try {
+        const compact = await instance.adapter.sendTurn({
+          ...turn, text: "/compact", resumeCursor: native.sessionId, engineCommand: { name: "compact", args: "" },
+        });
+        expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === compact.turnId))
+          .toMatchObject({ ok: false, stopReason: "command_needs_session" });
+        expect(changed).toBe(true);
+        expect(spawned).toHaveBeenCalledTimes(1);
+        expect(readFileSync(dump, "utf8")).toBe(before);
+      } finally {
+        unsubscribe();
+      }
+    } finally {
+      spawned.mockRestore();
+      delete process.env.FAKE_CLAUDE_DUMP_EACH_TURN;
+    }
+  });
+
   it("normalizes a full turn into the canonical event sequence", async () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-happy", text: "hi", model: "claude-sonnet-5" });
@@ -4335,7 +4430,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       // every OWN_UNASKED tool of a mounted own server stays pre-allowed, by its exact name; the email tools only as the mount lists them
       // native HighLevel is not mounted on these turns: none of its tools may be pre-allowed (an owner's own server could carry the name)
       expect(allowed.filter((tool) => tool.startsWith("mcp__highlevel"))).toEqual([]);
-      const ownUnasked = OWN_UNASKED.filter((row) => row.mount !== "own:connector" && row.mount !== "own:highlevel").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
+      const ownUnasked = OWN_UNASKED.filter((row) => row.mount !== "own:connector").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
       expect(ownUnasked).toEqual(expect.arrayContaining(EMAIL_ALL));
       const expected = ownUnasked.filter((tool) => !EMAIL_ALL.includes(tool) || (emailListed as readonly string[]).includes(tool));
       expect(expected.length).toBeGreaterThan(40);
@@ -4659,6 +4754,15 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
     expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
   });
 
+  it.each(["nonboolean", "malformed", "unsupported"])("leaves Claude sign-in unknown after a %s probe", async auth => {
+    process.env.FAKE_CLAUDE_AUTH = auth;
+    await create();
+    const snapshot = await instance.snapshot();
+    expect(snapshot).toMatchObject({ state: "available", authUnverified: true, reason: expect.any(String) });
+    expect(snapshot).not.toHaveProperty("authenticated");
+    expect(snapshot).not.toHaveProperty("billing");
+  });
+
   it("never trusts stale credential storage, and shows a probe that gave no status as the CLI's own words, not as signed out", async () => {
     await create();
 
@@ -4680,10 +4784,11 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
   });
 });
 
-// A4: stream-json stdout and the ask socket are framed with a byte bound
-// before any parse. An oversized frame fails its own turn (never a replay)
-// and ends that retained process; other threads, and the next turn on the
-// same thread, run normally.
+// A4: stream-json stdout and the ask socket are framed by line before any
+// parse. MAIN-RULING cause22-no-transport-caps (1.0.21) deleted the 32 MiB
+// frame cap: a frame over it is read whole and its turn completes (these rows
+// asserted frame_too_large before, and an unterminated frame no longer fails
+// early: it is held until its newline or the process end, as upstream).
 describe("ClaudeDriver bounded ingress (A4)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
@@ -4700,9 +4805,6 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
     withClaudeFixtureCwd(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
-  /** No event on the thread may carry the dropped frame's content. */
-  const noLargePayload = (threadId: string) =>
-    recorder.events.filter((e) => e.threadId === threadId).every((e) => JSON.stringify(e).length < 1024 * 1024);
 
   beforeEach(() => {
     ensureDirs();
@@ -4713,29 +4815,23 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
     await instance?.dispose();
   });
 
-  it("fails only the turn whose frame is over the limit, even when a success result follows it", async () => {
+  it("reads a frame over the old 32 MiB cap whole and its turn completes, beside an ordinary turn", async () => {
     await create();
     const oversized = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oversize", text: "__fixture_oversize_frame__" });
     const ordinary = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ordinary", text: "hi" });
-    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
-    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
+    // A lost or cut frame leaves the turn open: the wait ends quietly so that case fails at the completion assertion below.
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId, 60_000).catch(() => undefined);
+    const other = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId, 20_000).catch(() => undefined);
 
-    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
-    expect(done).toMatchObject({ ok: true });
-    expect(recorder.events).toContainEqual(expect.objectContaining({
-      type: "runtime.error",
-      threadId: "t-oversize",
-      message: expect.stringMatching(/^Claude sent a protocol message larger than 32 MiB/),
-    }));
-    expect(recorder.events).toContainEqual(expect.objectContaining({
-      type: "item.completed", itemType: "assistant_text", threadId: "t-ordinary", text: "hello from fake claude",
-    }));
-    expect(noLargePayload("t-oversize")).toBe(true);
-    expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
+    expect(done, "the turn whose frame is over 32 MiB completes").toMatchObject({ ok: true });
+    expect(other).toMatchObject({ ok: true });
+    const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.turnId === oversized.turnId);
+    expect(Buffer.byteLength((reply as { text: string } | undefined)?.text ?? ""), "the whole frame reached the turn").toBe(32 * 1024 * 1024 + 1024);
+    expect(recorder.events.some((e) => e.type === "runtime.error" && e.threadId === "t-oversize")).toBe(false);
     expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === oversized.turnId)).toHaveLength(1);
-  });
+  }, 120_000);
 
-  it("runs the next turn on the same thread in a fresh process after an overflow", async () => {
+  it("runs the next turn on the same thread after a frame over the old cap", async () => {
     await create();
     const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-again", text: "__fixture_oversize_frame__" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
@@ -4748,15 +4844,6 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
     }));
   });
 
-  it("fails an unterminated oversized frame without waiting for a newline", async () => {
-    await create();
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-open", text: "__fixture_oversize_open_frame__" });
-    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
-
-    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
-    expect(noLargePayload("t-open")).toBe(true);
-  });
-
   it("still carries a valid 14 MiB multibyte frame intact", async () => {
     await create();
     const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-large", text: "__fixture_large_frame__" });
@@ -4767,7 +4854,7 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
     expect(Buffer.byteLength((reply as { text: string } | undefined)?.text ?? "")).toBe(14 * 1024 * 1024);
   }, 120_000);
 
-  it("drops an ask connection whose frame is over the limit and keeps serving others", async () => {
+  it("reads an ask over the old 32 MiB cap whole on its connection, and keeps serving others", async () => {
     const asks: Array<{ id: string }> = [];
     const broker = await createPermissionBroker({
       socketPaths: brokerSocketCandidates("t-ask-oversize"),
@@ -4775,17 +4862,18 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
       onResolve: () => {},
     });
     try {
-      const flooding = await connectSocket(broker.socketPath);
-      const closed = new Promise<void>((resolve) => flooding.once("close", () => resolve()));
-      flooding.on("error", () => {});
-      flooding.write(`{"t":"ask","id":"ask-huge","tool":"Bash","input":{"command":"${"a".repeat(32 * 1024 * 1024 + 1)}`);
-      await closed;
-      expect(asks).toEqual([]);
+      const large = await connectSocket(broker.socketPath);
+      const largeAnswers = answerQueue(large);
+      large.write(`{"t":"ask","id":"ask-huge","tool":"Bash","input":{"command":"${"a".repeat(32 * 1024 * 1024 + 1)}"}}\n`);
+      await expect.poll(() => asks.map((ask) => ask.id), { timeout: 30_000 }).toEqual(["ask-huge"]);
+      expect(broker.answer("ask-huge", "deny")).toBe(true);
+      expect(await largeAnswers()).toMatchObject({ id: "ask-huge", behavior: "deny" });
+      large.end();
 
       const healthy = await connectSocket(broker.socketPath);
       const answers = answerQueue(healthy);
       healthy.write(JSON.stringify({ t: "ask", id: "ask-small", tool: "Bash", input: { command: "echo hi" } }) + "\n");
-      await expect.poll(() => asks.length).toBe(1);
+      await expect.poll(() => asks.length).toBe(2);
       expect(broker.answer("ask-small", "allow")).toBe(true);
       expect(await answers()).toMatchObject({ id: "ask-small", behavior: "allow" });
       healthy.end();
@@ -4828,6 +4916,31 @@ describe("ClaudeDriver MCP tool-result images", () => {
     recorder?.stop();
     await instance?.dispose();
   });
+
+  it("cause22 counts: the 513th tool use open at once keeps its name, so its image is shown under it", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-c22-tools", text: "__fixture_many_open_tools__" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId, 60_000);
+
+    expect(recorder.events.filter((e) => e.type === "item.started" && e.itemType === "tool" && e.turnId === turnId)).toHaveLength(513);
+    const images = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_image" && e.turnId === turnId) as Array<{ alt?: string; data?: string }>;
+    expect(images.map((e) => e.alt), "the 513th tool use keeps its name").toEqual(["mcp__omarchy__screenshot"]);
+    expect(images[0]?.data).toBe("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+    expect(done).toMatchObject({ ok: true });
+  }, 90_000);
+
+  it("cause22 counts: the first of 1,025 background helpers open at once ends when it completes, and the turn closes", async () => {
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-c22-tasks", text: "__fixture_many_bg_tasks__" });
+    // The helper list shows the first 64 (server/subtasks.ts). The 64th one's end is reported with or without the
+    // old owner bound; the first one's is what the bound lost.
+    await recorder.until((e) => e.type === "turn.subtask" && (e as any).subtask.id === "bgmany64" && (e as any).subtask.status === "done", 90_000);
+    const subs = recorder.events.filter((e) => e.type === "turn.subtask" && e.turnId === turnId) as any[];
+    expect(subs.filter((e) => e.subtask.status === "done").map((e) => e.subtask.id).slice(0, 2), "the first of 1,025 open helpers ends when it completes").toEqual(["bgmany1", "bgmany2"]);
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId, 60_000);
+    expect(done, "the turn closes once all 1,025 helpers reported").toMatchObject({ ok: true });
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "item.completed", itemType: "assistant_text", turnId, text: "All 1,025 helpers reported." }));
+  }, 180_000);
 
   it("surfaces a custom MCP tool's image and withholds the computer surface's frame", async () => {
     await create();
@@ -5542,10 +5655,10 @@ describe("Claude gate: overlay, in-project check, wrapper (Rules 63, 69, 74b)", 
   });
 
   it("T47 Claude half: Windows spellings of the sensitive paths do not pass the in-project check", () => {
-    for (const path of ["C:\\Users\\sean\\.ssh\\id_rsa", ".\\.env", "src\\..\\.git\\config"]) {
-      expect(inProjectCheck(path, tmpdir(), undefined, { platform: "win32", home: "C:\\Users\\sean" }).ok).toBe(false);
+    for (const path of ["C:\\Users\\exampleuser\\.ssh\\id_rsa", ".\\.env", "src\\..\\.git\\config"]) {
+      expect(inProjectCheck(path, tmpdir(), undefined, { platform: "win32", home: "C:\\Users\\exampleuser" }).ok).toBe(false);
     }
-    expect(claudeInProjectAllow("Read", { file_path: "C:\\Users\\sean\\.ssh\\id_rsa" }, tmpdir(), tmpdir(), "win32")).toBe(false);
+    expect(claudeInProjectAllow("Read", { file_path: "C:\\Users\\exampleuser\\.ssh\\id_rsa" }, tmpdir(), tmpdir(), "win32")).toBe(false);
   });
 
   it("09-A2/A3: a search that reaches a credentials file, and a Windows .env read, reach the verdict as a key-file hold", () => {

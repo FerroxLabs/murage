@@ -14,7 +14,7 @@ for(const unknown of [false,true])for(const venue of ['bot','channel'] as const)
     registerHooks({load(url,context,next){
       const result=next(url,context),text=String(result.source);
       if(url.endsWith('/server/memory/recall-view.ts')) {
-        const needle='export function resolveRecallView(binding: RecallViewBinding, roster: MemoryRoster): Held {';
+        const needle='export function resolveRecallView(binding: RecallViewBinding, roster: MemoryRoster, issued = false): Held {';
         if(!text.includes(needle))throw Error('fixture admission injection missing');
         // Settle cold admission before the pin-lag experiment. Production's
         // earlier lineage admission otherwise masks whether this fault ran.
@@ -22,6 +22,7 @@ for(const unknown of [false,true])for(const venue of ['bot','channel'] as const)
       }
       if(url.endsWith('/server/index.ts')) {
         const needle='async function sendProjectUsageTurn(instance: ProviderInstance, built: BuiltSendTurnInput, fence: EngineFence) {';
+        if(!text.includes(needle))throw Error('fixture dispatch injection missing');
         return {...result,source:text.replace(needle,needle+\`if(!built.memoryContext?.text.includes('Keep the owner constraint.'))throw Error('fixture pin missing at dispatch'); console.warn('fixture authoritative pin dispatched');\`)};
       }
       if(url.endsWith('/server/memory/bundle.ts')) {

@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { expect, it, vi } from "vitest";
+import { PendingTurnKeys } from "./fold-steps.ts";
 
 const source = readFileSync(new URL("./index.ts",import.meta.url),"utf8");
 const start = source.indexOf("async function interruptDirectThread(");
@@ -40,6 +41,8 @@ it.each(["browser","provider","provider-reject","frame"])("STOP-AWAITS: a replac
       return {status:"stopped"};
     }}})},
     stopCloseConfirmed:()=>true,
+    // STOP-VS-REFUSAL ruling: a confirmed close is recorded per generation (the real set is PendingTurnKeys in fold-steps.ts)
+    confirmedStopGenerations:new PendingTurnKeys(),
     // LLS: no ledger refusal in this schedule (the refused-Stop join has its own witnesses)
     refusedTurnOf:()=>undefined,stopInterrupts:new Map(),refusalStopGenerations:new Set(),
     unconfirmedDirectStop:()=>new Error("unconfirmed"),
@@ -50,6 +53,8 @@ it.each(["browser","provider","provider-reject","frame"])("STOP-AWAITS: a replac
     replySpeakerTurns:{ended:()=>effects.push("reply-ended")},
     store:{setTaskActivity:()=>effects.push("idle")},
     trackStopAskedInterrupt:()=>{},
+    // 1.0.20 STOP-CHIP: the stop line of a run with no engine turn (its own witnesses: stop-chip-phases-1020-api)
+    stopWithoutEngineTurn:{arm:()=>{},noteArmed:()=>{},note:()=>{},dispatching:()=>false},
     projectTurnLeases:{releaseClosed,markStopAsked:()=>{},markStopRequested:()=>effects.push("lease")},
   };
   const stop=new Function(...Object.keys(deps),javascript+"\nreturn interruptDirectThread;")(...Object.values(deps));

@@ -355,7 +355,7 @@ describe("step bounds", () => {
   });
 });
 
-// T9: the listing at a million entries, measured. Gated (it writes a ~600 MB file): MSEARCH2_1M=1, run on the build host.
+// T9: the listing at a million entries, measured. Gated (it writes a ~600 MB file): MSEARCH2_1M=1, run on Hetzner.
 describe.skipIf(process.env.MSEARCH2_1M !== "1")("T9: one million entries", () => {
   it("listing and fill slices stay within 10 ms; the list peaks near 16 MB and ends empty", { timeout: 3_600_000 }, async () => {
     reset();

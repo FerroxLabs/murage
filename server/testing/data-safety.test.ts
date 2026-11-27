@@ -5,6 +5,7 @@
 // A stale allowlist entry (file no longer contains a recursive delete) fails
 // too, so the list can only shrink honestly.
 import { gitFixture } from "./git-fixture.mjs";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -29,27 +30,11 @@ const NOT_A_DELETE = /\b(?:mkdirSync|mkdir|readdirSync|readdir|cpSync|cp|copySyn
  * entry only with a reason a reviewer can check against the file.
  */
 const ALLOWLIST: Record<string, string> = {
-  "evidence/redsp5/mutations.mjs": "The temp-teardown mutant is a source string written only into the runner-owned disposable Git fixture; the driver never executes a raw delete, and disposes its fixture through gitFixture safeWipeSync",
-
-  "evidence/bld4-toolid-s4a/amended-fuzzer.py": "Lines 102 and 105 construct JSON/JS refusal-probe payload strings; this fuzzer emits inputs for permission evaluation and never executes those payloads.",
-
-  "evidence/bld4-toolid-s4a/prior-fuzzer.py": "Lines 102 and 105 construct JSON/JS refusal-probe payload strings; this historical fuzzer emits evaluator inputs and never executes their delete text.",
-
-  "evidence/bld6-toolid-s4a/base-app-action-grant.test.ts": "Historical test snapshot: all five delete strings are approval subjects or tool-call inputs inspected by pure permission verdict assertions, never executed.",
-
-  "evidence/bld6-toolid-s4a/base-auto-approve.ts": "The single scan hit is rm syntax quoted in a block comment explaining lexical recognition; it is not an executable delete.",
-
-  "evidence/bld6-toolid-s4a/base-routine-permissions.test.ts": "Historical permission test snapshot: the seven delete strings are arguments to pure autoVerdict tests, never shell commands that run.",
-
-  "evidence/bld7-toolid-s4b/base-auto-approve.ts": "The single scan hit is rm syntax quoted in a block comment explaining lexical recognition; it is not an executable delete.",
+  "server/testing/no-limits-answer-key-fixture.mjs": "The shell spelling is an approval subject sent to the isolated fake engine or queue fixture. The answer-key probe never runs the command",
 
   "scripts/base-toolid-r13b.ts": "The commands array and ambiguous tool-call object contain refusal-probe text passed only to permission verdict functions; neither is executed.",
 
   "scripts/fuzz-toolid-r13.py": "Lines 115 and 118 construct refusal-probe payload strings in generated JSON; this fuzzer does not execute a shell or the generated payload.",
-
-  "scripts/no-limits-live/run.mjs": "The wipe-home scenario constructs a command solely for its isolated fixture home created by the launcher; the scenario requires disposable fixture ownership and never selects the operator home. This classification does not change that command or its permission rules.",
-
-  "scripts/no-limits-live/self-test.mjs": "Both delete strings are ledger observations or probe definitions fed to the pure ledger oracle, never executed.",
 
   "server/no-limits-javascript.ts": "The three delete spellings are synthetic shell twins emitted by the static JavaScript permission reader for classification; this module never runs the twins.",
 
@@ -95,7 +80,7 @@ const ALLOWLIST: Record<string, string> = {
   "scripts/cloud-home-sign.sh": "the EXIT trap removes only `work`, the private mktemp -d folder (under TMPDIR or /tmp) made a few lines above that holds the public key and signature scratch; it is never reassigned and never comes from an argument",
   "server/testing/link-removal.fixture.cjs": "run only by link-removal.electron.test.ts on paths inside the mkdtemp folder it is given (argv[3]): it records what the runtime's own rmSync does to a junction there",
   "server/testing/link-removal-native.fixture.cjs": "run only by link-removal.native.test.ts on paths inside the mkdtemp folder it is given (argv[4]): its rmSync calls go through the installed handle-based remove, on a tree it made there",
-  "scripts/scale/hz-vitest.sh": "cleanup() runs `rm -rf -- \"${dir:?}\"` on the build host rig over ssh (never on this machine): dir is $H/vitest-<label> under the rig's own scratch root, set non-empty by ${dir:?}, and holds only the git-archive copy the same script just made",
+  "scripts/scale/hz-vitest.sh": "cleanup() runs `rm -rf -- \"${dir:?}\"` on the Hetzner rig over ssh (never on this machine): dir is $H/vitest-<label> under the rig's own scratch root, set non-empty by ${dir:?}, and holds only the git-archive copy the same script just made",
   "companion/src/index.ts": "1.0.9 share and ask: the boot clears `askSpoolDir`, which is the literal `join(DATA_DIR, \"ask-spool\")`: one fixed child folder of the companion's own data directory, holding only half-forwarded share uploads; it is never configured, never user-named, and a missing folder is recreated by the next upload",
   "scripts/safe-wipe.sh": "the shell helper itself: rm -rf runs only after the same checks pass",
   "server/backup-restic.ts": "0607 (07-A4/07-A5): each rmSync removes a folder this file made with mkdtempSync under options.workDirectory (restore-*, the upload stage); the stored prior.stage is removed only after the pathWithin(realpath(workDirectory)) check at its read",
@@ -137,7 +122,7 @@ const ALLOWLIST: Record<string, string> = {
   // stop-host.sh, android-e2e.sh, ios-e2e.sh). The two entries below are the
   // ones the preferred fix does not fit, same as data-safety.md documents
   // for a remote-host command or a test that owns its temp dir.
-  "apps/mobile/scripts/android-remote.sh": "rm -rf runs inside an ssh command string on build-host, never on this machine: only $QLANE/gradle-home and fixed build-output subdirectories of the build host build lane /root/mb-mobile/plan3b, never a Murage data directory",
+  "apps/mobile/scripts/android-hetzner.sh": "rm -rf runs inside an ssh command string on hetzner-dsm, never on this machine: only $QLANE/gradle-home and fixed build-output subdirectories of the Hetzner build lane /root/mb-mobile/plan3b, never a Murage data directory",
   "apps/mobile/src/android-cap-path.test.ts": "line 37's afterEach removes only the mkdtempSync(os.tmpdir(), 'mm-cap-path-') roots this file itself created and tracked in `dirs`; line 51 is a test-data string ('a semicolon' case) asserting cap_path REJECTS an injected `rm -rf`, not a delete that runs",
   "apps/mobile/src/e2e-host-safety.test.ts": "every rmSync is this file's own fixture teardown: root/outside are mkdtempSync(os.tmpdir(), ...) directories the test created, data is the mkdtempSync('/tmp/murage-e2e-data-test-') directory hostEnv() created, and host.lock is the mkdirSync(file(\"host.lock\")) this test made under its own copied `host` tree",
   // Production runtime. These delete paths the app itself owns (mkdtemp
@@ -186,7 +171,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/memory/pip-transport.ts": "removeTempRoot refuses any path that is not strictly inside the reflection temp base, then removes that one run directory",
   "apps/mobile/e2e/freshauth/run.mjs": "cleanup removes only the realpath'd mkdtempSync(tmpdir(), 'murage-p7-') root this run made, and only when it is still under tmpdir; apps/mobile has no dependency on server/testing",
   // Reviewed for the engine-deletion lane (each checked against its file, 2026-10-11).
-  "scripts/scale/hz-scale.sh": "the rm -rf is inside the ssh command string and runs on build-host, never on this machine: it empties the children of $H/scale-$label/src, where $H is the fixed /root/mb-0161-hz and $label passed ^[a-z0-9-]+$ above; the tree is exported again straight after",
+  "scripts/scale/hz-scale.sh": "the rm -rf is inside the ssh command string and runs on hetzner-dsm, never on this machine: it empties the children of $H/scale-$label/src, where $H is the fixed /root/mb-0161-hz and $label passed ^[a-z0-9-]+$ above; the tree is exported again straight after",
   "scripts/scale/run-container.sh": "runs inside the scale-rig container only: every rm is `rm -rf -- \"${VAR:?}\"` on the container's own /scale/data/murage mount or its /scale/cache/<key> cache folder, rebuilt from the fixed /scale/cache root and a key made of the run's shape, seed and tree names plus a short hash of the generator, so some of its parts come from the run's environment; the root is fixed and the name is a single path segment",
   "server/connector-cache-harness.ts": "usableToolsCacheDir removes once the connector tools-cache folder (CONNECTOR_TOOLS_CACHE_DIR, a folder Murage made for itself) when Windows privacy checks refuse it; everything in it can be fetched again, and it is made again at once",
   "server/drivers/acp/core.ts": "the process-exit handler removes the murage-mcp-listed- mkdtemp folder (one private marker directory per Murage process) opened a few lines above; `root` is a const copy of it, production code does not import the test-only safe-wipe",
@@ -214,6 +199,11 @@ const ALLOWLIST: Record<string, string> = {
   "src/e2e/needs-inline-approve.human.spec.ts": "'rm -rf ~/Documents/old-drafts' is the subtitle of a fixture approval card the spec draws in the browser; nothing executes it",
 };
 
+// Match reviewed hits by source text so a new delete in one of these files still fails.
+const REVIEWED: Record<string, [fingerprint: string, reason: string]> = JSON.parse(
+  readFileSync(join(ROOT, "server/testing/data-safety-reviewed.json"), "utf8"),
+);
+
 // VITEST_INCLUDE (the files that run under server/testing/setup.ts and its installSafeWipeGuard) lives in test-file-scope.ts,
 // where temp-cleanup-guard.test.ts reads the same list.
 
@@ -223,8 +213,11 @@ const tracked = (): string[] => repository.git("ls-files", "-z").split("\0").fil
 /** A JS/TS recursive delete whose options object spans lines. */
 const JS_DELETE_MULTILINE = /\b(?:rmSync|rm|rmdirSync|rmdir)\s*\((?:[^;()]|\([^;()]*\))*?\brecursive\s*:\s*true/g;
 
-const findDeletes = (file: string): string[] => {
-  const hits: string[] = [];
+type DeleteHit = { line: number; code: string };
+const fingerprint = (hits: DeleteHit[]) => createHash("sha256").update(JSON.stringify(hits.map(hit => hit.code))).digest("hex");
+
+const findDeletes = (file: string): DeleteHit[] => {
+  const hits: DeleteHit[] = [];
   const text = readFileSync(join(ROOT, file), "utf8");
   const shellLike = /\.(?:sh|yml|yaml|ps1|nsh|nsi|py)$/.test(file);
   const lines = text.split("\n");
@@ -234,7 +227,7 @@ const findDeletes = (file: string): string[] => {
     if (isComment(line)) return;
     if (NOT_A_DELETE.test(line) && !/\b(?:rmSync|rm|rmdirSync|rmdir|rimraf)\s*\(/.test(line)) return;
     if (JS_DELETE.test(line) || (shellLike && SHELL_DELETE.test(line)) || (!shellLike && /["'`][^"'`]*\brm\s+-[a-zA-Z]*[rR]/.test(line))) {
-      hits.push(`${file}:${index + 1}: ${trimmed.slice(0, 140)}`);
+      hits.push({ line: index + 1, code: trimmed });
     }
   });
   if (!shellLike) {
@@ -242,7 +235,7 @@ const findDeletes = (file: string): string[] => {
       if (!match[0].includes("\n")) continue; // the per-line pass already has it
       const index = text.slice(0, match.index).split("\n").length - 1;
       if (isComment(lines[index])) continue;
-      hits.push(`${file}:${index + 1}: ${match[0].replace(/\s+/g, " ").slice(0, 140)}`);
+      hits.push({ line: index + 1, code: match[0].replace(/\s+/g, " ") });
     }
   }
   return hits;
@@ -263,7 +256,8 @@ describe("data safety: recursive deletes", () => {
       const hits = findDeletes(file);
       if (!hits.length) continue;
       if (ALLOWLIST[file]) continue;
-      unrouted.push(...hits);
+      if (REVIEWED[file]?.[0] === fingerprint(hits)) continue;
+      unrouted.push(...hits.map(({ line, code }) => `${file}:${line}: ${code.slice(0, 140)}`));
     }
     expect(unrouted, "route these through safeWipeSync/safeWipe (server/testing/safe-wipe.mjs) or scripts/safe-wipe.sh, or allowlist them with a reason").toEqual([]);
   });
@@ -271,6 +265,8 @@ describe("data safety: recursive deletes", () => {
   it("keeps the allowlist honest: every entry still contains a recursive delete", () => {
     const stale = Object.keys(ALLOWLIST).filter(file => !files.includes(file) || findDeletes(file).length === 0);
     expect(stale).toEqual([]);
+    const changed = Object.entries(REVIEWED).filter(([file, [hash, reason]]) => !reason || !files.includes(file) || fingerprint(findDeletes(file)) !== hash);
+    expect(changed.map(([file]) => file)).toEqual([]);
   });
 
   it("human specs and configs read MURAGE_E2E_DATA_DIR only through lane-data-dir.ts, with no fallback", () => {

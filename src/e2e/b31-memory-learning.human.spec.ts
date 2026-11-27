@@ -31,8 +31,17 @@ async function openWorkspaceMemory(page: Page) {
   await page.goto(origin);
   const sidebar = await openSidebar(page);
   await sidebar.getByRole("button", { name: "App settings", exact: true }).click();
-  const settings=page.getByRole("dialog",{name:"Settings",exact:true});
-  await settings.getByRole("navigation").getByRole("button",{name:"Memory",exact:true}).click();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await expect(settings).toBeVisible();
+  const section = settings.getByRole("combobox", { name: "Settings page", exact: true });
+  if (await section.isVisible()) {
+    await section.selectOption("memory");
+    await expect(section).toHaveValue("memory");
+  } else {
+    const memoryButton = settings.getByRole("navigation").getByRole("button", { name: "Memory", exact: true });
+    await expect(memoryButton, "the desktop Memory button exists when there is no page selector").toBeVisible();
+    await memoryButton.click();
+  }
   // 1.0.19 (558df204d6): Settings > Memory is an Advanced-only page of cards; each card is a slot the
   // section portals its piece into, so the cards are not inside data-testid="memory-section". Scope to the dialog.
   return settings;
@@ -175,7 +184,9 @@ test("owner assigns, conflicts and revokes an actual verified Slack person throu
 
   await api("/api/slack/revoke", {});
   await expect.poll(async () => (await api("/api/memory/action", { action: "humans" })).bindings[0].active, { timeout: 15000 }).toBe(false);
-  await panel.getByRole("button", { name: "Refresh memory", exact: true }).click();
+  const refresh = panel.getByRole("region", { name: "Memory", exact: true }).getByRole("button", { name: "Refresh", exact: true });
+  await expect(refresh, "the Memory region's Refresh button").toBeVisible();
+  await refresh.click();
   await expect(account).toContainText("Inactive connection");
   await expect(account.getByRole("button")).toHaveCount(0);
   await page.screenshot({ path: info.outputPath("b31-people-revoked-1440.png"), fullPage: true });

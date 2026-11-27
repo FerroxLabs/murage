@@ -2,6 +2,7 @@
 // Copyright 2026 Ferrox Labs
 // S3R: main owns admission, payload ledgers and every OS handle. Electron,
 // sessions, transports, presence and clocks are injected for isolated tests.
+import { createAttentionRecovery, stableCardId } from "./attention-recovery.mjs";
 import { createAttentionRouter } from "./attention-router.mjs";
 
 export const CAP_HOME = 256, CAP_ALL = 1024, LEDGER_MAX = 288, HANDOFF_MS = 10_000;
@@ -61,8 +62,10 @@ export function createAttentionMain(deps) {
   };
   const reply = (s, fields, own) => ({ ...fields, retired: retiredRefs(s, own) });
   const stale = s => reply(s, { ok: false, stale: true });
+  const stableOf = record => CARD_KINDS.has(record.kind) && record.requestId && stableCardId(record.home, record.threadId, record.requestId);
   function syncWatch() {
-    const held = [...records.values()].some(r => r.state === "HELD" || r.state === "ORPHAN");
+    recovery.syncPoll();
+    const held = recovery.holdForPresence || [...records.values()].some(r => r.state === "HELD" || r.state === "ORPHAN");
     if (held && !stopWatch) { try { stopWatch = deps.watchPresence?.() ?? presence?.watch?.() ?? null; } catch { /* retry on next transition */ } }
     else if (!held && stopWatch) { const stop = stopWatch; stopWatch = null; try { stop(); } catch { /* already stopped */ } }
   }
@@ -110,7 +113,22 @@ export function createAttentionMain(deps) {
       return transport && threadId && messageId ? transport.readCard({ threadId, messageId }, () => {}) : { open: true };
     },
     invalidateTokens: entry => deps.invalidateTokens?.(entry),
+    onReleaseCounted: homes => recovery.release(homes),
   });
+  const recovery = createAttentionRecovery({
+    now: deps.now ?? (() => performance.now()), setTimer, clearTimer, router, log, syncWatch, refresh, epochOf,
+    isAppFocused: deps.isAppFocused, prefsTrusted: deps.prefsTrusted, shuttingDown: deps.shuttingDown,
+    prefsAllow: () => {
+      const state = prefs();
+      return state !== UPGRADE_FALLBACK && state.notify === true && deps.prefsTrusted?.() === true;
+    },
+    transportFor: deps.transportFor, homeExpected: deps.homeExpected ?? (home => home === "local"),
+    homes: deps.homes ?? (() => ["local"]),
+    presenceRev: () => presence?.rev,
+    plainWords: PLAIN_WORDS, createNotice: deps.createNotice, openRecovered: deps.openRecovered,
+    inFlight: key => [...records.values()].some(record => record.state !== "SHOWN" && stableOf(record) === key),
+  });
+  let trayGeneration = 0;
   function victim(home) {
     const rank = r => r.state === "SHOWN" && !r.cardKey ? 0 : r.state === "HELD" && !r.cardKey ? 1
       : r.state === "SHOWN" && r.cardKey ? 2 : r.cardKey && ["HELD", "ORPHAN"].includes(r.state) ? 3 : 4;
@@ -125,6 +143,15 @@ export function createAttentionMain(deps) {
     if (!validSession(s) || stopped || payload?.session !== s.session) return { ok: false };
     sessions.add(s);
     if (payload.kind === "attention.settled") return reply(s, { ok: true, decision: settled(s.home, payload.threadId, payload.requestId) ? "settled" : "unknown" });
+    if (payload.kind === "attention.resync") {
+      const gen = Number.isSafeInteger(payload.gen) && payload.gen >= 0 ? payload.gen : `missing-${now()}`;
+      recovery.lifecycle(s.home, JSON.stringify(["stream", s.home, s.session, gen]));
+      return reply(s, { ok: true, decision: "resync" });
+    }
+    if (payload.kind === "attention.bot") {
+      recovery.configChanged(s.home, text(payload.botId));
+      return reply(s, { ok: true, decision: "config" });
+    }
     if (payload.kind === "attention.config") { void previewsCheck(s.home); return reply(s, { ok: true, decision: "config" }); }
     const frame = frameFromOffer(payload);
     if (!frame?.ref) return { ok: false };
@@ -273,12 +300,15 @@ export function createAttentionMain(deps) {
           if (++overtakes >= 3) { presence.markConservative(); hold(record); return "held"; }
           continue;
         }
+        const stable = stableOf(record);
+        if (stable && recovery.recoveryPosted.has(stable)) { retire(record, "counted"); return "done"; }
         const previews = lastPreviews.get(record.home) === true;
         const display = previews ? (prepared?.words ?? words ?? PLAIN_WORDS) : PLAIN_WORDS;
         const key = `${record.home}|${record.session}|${record.ref}|${record.gen}`, handle = `${native ? "n" : "m"}:${key}`;
         const failed = () => {
           if (!current(record) || record.handle !== handle) return;
           if (connectorFailed(record, words)) return;
+          if (stable && record.state === "SHOWN") recovery.unshown(stable);
           record.handle = null; record.notice?.removeAllListeners(); record.notice = null; retire(record, "counted");
         };
         let opened = false;
@@ -322,6 +352,7 @@ export function createAttentionMain(deps) {
           notice.show(); if (!currency()) return "done";
         }
         record.state = "SHOWN";
+        if (stable) recovery.shown(stable);
         clearDeadline(record); router.unhold(record.entry); closePayload(record);
         if (record.kind === "connector-reconnect" && !deps.connectorReceipts?.has(record.home, record.deliveryId)) {
           record.deadline = setTimer(() => {
@@ -378,10 +409,12 @@ export function createAttentionMain(deps) {
   }
   function visible(s, payload) {
     if (!validSession(s) || stopped || !payload || (payload.threadId !== null && !text(payload.threadId))) return { ok: false };
+    recovery.sounds(s.home, payload.sounds);
     router.visible(payload.threadId, payload.focused === true, s.home, s); return reply(s, { ok: true });
   }
   function settled(home, threadId, requestId) {
     if (!text(threadId) || !text(requestId)) return false;
+    recovery.settled(home, threadId, requestId);
     const result = router.settled(threadId, requestId, home); syncWatch(); return result;
   }
   function reconcile(home) {
@@ -393,7 +426,9 @@ export function createAttentionMain(deps) {
     })(); return reconciling;
   }
   async function previewsCheck(home = "local") {
+    recovery.configChanged(home);
     let value; try { value = await deps.readPreviews?.(home); } catch { value = null; }
+    if (value !== true) recovery.previewsOff(home, value !== false);
     if (typeof value !== "boolean") { lastPreviews.delete(home); return false; }
     const before = lastPreviews.get(home); lastPreviews.set(home, value);
     const changed = before === undefined ? value === false : value !== before;
@@ -407,21 +442,26 @@ export function createAttentionMain(deps) {
   function watcherFrame(frame) {
     if (frame?.kind === "attention.settled") settled("local", frame.threadId, frame.requestId);
     else if (frame?.kind === "config") void previewsCheck("local");
+    else if (frame?.kind === "bot") recovery.configChanged("local", text(frame.botId));
   }
   function homeGone(home) {
     epochs.set(home, (epochs.get(home) ?? 0) + 1); lastPreviews.delete(home);
     for (const record of [...records.values()]) if (record.home === home) retire(record, "settled");
-    router.homeGone(home); syncWatch();
+    router.homeGone(home); recovery.homeGone(home); syncWatch();
   }
   function dispose() {
     stopped = true;
+    recovery.stop();
     for (const record of [...records.values()]) retire(record, "settled");
     sessions.clear(); router.quietHoursUntil(null); syncWatch();
   }
   deps.nativeApprovals?.setOnEvict?.(key => {
     for (const record of records.values()) if (record.handle === `n:${key}`) { retire(record, "evicted"); break; }
   });
+  recovery.start();
   return { hello, offer, present, gone, freed, sessionEnded, visible, settled, reconcile, previewsCheck, watcherFrame,
+    focusChanged: recovery.focusChanged, stopRecovery: recovery.stop,
+    trayConnected: () => recovery.lifecycle("local", `tray|${++trayGeneration}`),
     serverChanged: () => homeGone("local"), homeGone, dispose, closeAll: dispose, records, router,
-    quietChanged: async () => { await router.quietChanged(); syncWatch(); }, quietHoursUntil: (endsAt, onEnd) => router.quietHoursUntil(endsAt, onEnd) };
+    quietChanged: async () => { await router.quietChanged(); if (recovery.holdForPresence) recovery.requestPass(); syncWatch(); }, quietHoursUntil: (endsAt, onEnd) => router.quietHoursUntil(endsAt, onEnd) };
 }

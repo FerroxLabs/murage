@@ -24,6 +24,8 @@ it("answers free bytes, the floor and what Murage keeps", () => {
     floorBytes: DISK_FLOOR_BYTES,
     attachments: { bytes: 2048, inProgressBytes: 0 },
     files: { bytes: 300 },
+    // q1022-disk item 1: the pre-upgrade copies of messages.db (none in this data folder)
+    upgradeCopies: { bytes: 0, count: 0 },
   });
 });
 

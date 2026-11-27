@@ -1,6 +1,8 @@
 import { eligibleViewPage, lexicalViewPage, pendingViewPage, RecallWorkBudget } from './recall-view-index.ts';
+import { scopeSetOf, scopeSetWire } from './oneindex.ts';
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { database } from "../database.ts";
+import { noteSemanticCapacityHit } from "./model-adoption.ts";
 import { assertMemoryAccess, inMemoryAccessPass, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { authorityStamp } from "./authority-epoch.ts";
 import { denyGeneration } from "./deny-read.ts";
@@ -14,7 +16,7 @@ import { createHash } from "node:crypto";
 import { MemoryQueryCache } from "./cache.ts";
 import { selectMemoryEvidence } from "./relevance.ts";
 import { keywordMemoryHits, recentMemoryHitsSliced } from "./recent.ts";
-import { lexicalPage, ownerIndexHandle, memoryIndexReaderState, RECALL_FIRST_PAGE, vectorlessAmong } from "./index-reader.ts";
+import { lexicalPage, lexicalPageSliced, ownerIndexHandle, memoryIndexReaderState, RECALL_FIRST_PAGE, vectorlessAmong } from "./index-reader.ts";
 import { causeOf, logSwallowed } from "./worker-log.ts";
 import { rateLimited } from "../observe.ts";
 import { noteRecallMode } from "./recall-budget.ts";
@@ -76,7 +78,10 @@ const RECENT_READABLE=20;
 /** How often a search whose data moved under it reads its accepted records again before it answers nothing. */
 const REVALIDATION_ROUNDS=3;
 const yieldTurn=()=>new Promise<void>(resolve=>setImmediate(resolve));
-export async function searchMemory(query:string,access:MemoryAccess,bridge:MemorySearchBridge,given:{workBudget?:RecallWorkBudget;allowance:LineageAllowance;limit?:number;historical?:boolean;cursor?:string;signal?:AbortSignal;profile?:boolean;lexical?:((...args:Parameters<typeof lexicalPage>)=>ReturnType<typeof lexicalPage>|Promise<ReturnType<typeof lexicalPage>>)|null;evolutionPolicy?:MemoryEvolutionPolicy;withheldMessage?:(threadId:string,messageId:string,allowance:LineageAllowance,verdict?:{checking?:boolean})=>boolean;caller?:RecallCaller;telemetry?:(facts:SearchTelemetry)=>void}){
+export async function searchMemory(query:string,access:MemoryAccess,bridge:MemorySearchBridge,given:{workBudget?:RecallWorkBudget;allowance:LineageAllowance;limit?:number;historical?:boolean;cursor?:string;signal?:AbortSignal;profile?:boolean;lexical?:((...args:Parameters<typeof lexicalPage>)=>ReturnType<typeof lexicalPage>|Promise<ReturnType<typeof lexicalPage>>)|null;evolutionPolicy?:MemoryEvolutionPolicy;withheldMessage?:(threadId:string,messageId:string,allowance:LineageAllowance,verdict?:{checking?:boolean})=>boolean;caller?:RecallCaller;telemetry?:(facts:SearchTelemetry)=>void;
+  /** The search is made for the owner's OWN direct turn (bundle.ts passes its own flag): candidates are read by the durable deny rows alone
+   *  (readable.ts MemoryReadOptions.ownerTurn). A bot's own tool search (routes.ts) never sets it. */
+  ownerTurn?:boolean}){
   // the reader's transcript rule, defaulted for a reader whose audience is not the owner (readable.ts withReaderRule)
   const options=withReaderRule(access,given);
   const serviceStarted=performance.now();
@@ -108,7 +113,7 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   const helperAbort=new AbortController();
   const helperSignal=AbortSignal.any([signal,helperAbort.signal]);
   const helper=cached?null:(()=>{
-    try{return withinDeadline(bridge.search({query,scopeIds:[],view:access.view,reader:{botId:access.botId,threadId:access.threadId,humanPrincipal:access.humanPrincipal,notOwnerAudience:memoryAccessNotOwnerAudience(access)},policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,historical:options.historical??false,cursor:rawCursor,limit,semantic:true,deadlineAt,...options.profile?{profile:true}:{}},helperSignal),helperSignal);}
+    try{return withinDeadline(bridge.search({query,scopeIds:[],view:access.view,...scopeSetOf(access.view)?{scopeSet:scopeSetWire(access.view)}:{},reader:{botId:access.botId,threadId:access.threadId,humanPrincipal:access.humanPrincipal,notOwnerAudience:memoryAccessNotOwnerAudience(access)},policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,historical:options.historical??false,cursor:rawCursor,limit,semantic:true,deadlineAt,...options.profile?{profile:true}:{}},helperSignal),helperSignal);}
     catch(error){return Promise.reject(error);}
   })();
   helper?.catch(()=>{});
@@ -116,7 +121,8 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // evidence withdrawn, outside the reader's scopes), and stops at the search's own deadline with a page flagged partial
   // (msearch review round 6). Reader-specific refusals are still decided record by record below.
   const lexicalSource=options.lexical===null?null:((q:string,_scopes:readonly string[],limit:number,offset=0)=>
-    options.lexical ? options.lexical(q,[],limit,offset) : lexicalViewPage(database(),q,access.view,limit,offset,scanBudget));
+    options.lexical ? options.lexical(q,[],limit,offset) : scopeSetOf(access.view) ? sharedPage(q,access,limit,offset,options.historical??false,deadlineAt,signal)
+      : lexicalViewPage(database(),q,access.view,limit,offset,scanBudget,!(options.historical??false),options.historical??false));
   assertMemoryAccess(access);
   ownerIndexHandle();
   const direct=lexicalSource?await lexicalSource(query,[],RECALL_FIRST_PAGE):null;
@@ -135,7 +141,9 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // The helper's index was readable and it did not answer: whether anything the reader may read is still waiting for the
   // word index is worked out below, from the reader's own scopes and after authorization.
   let pendingScan=false;
-  try{result=cached??await helper!;}
+  try{result=cached??await helper!;
+    // The scan stopped at its budget with records left: the owner is told (memory status semantic.capacityHitAt).
+    if(result.resumeAfter!==undefined)noteSemanticCapacityHit();}
   catch(error){
     options.signal?.throwIfAborted();assertMemoryAccess(access);
     logSwallowed("recall",error);helperAnswered=false;
@@ -170,17 +178,20 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // with the loop released between slices, and when the data, the policy or the deletion epoch moved while the loop was
   // released, every record already accepted is read again before anything is answered.
   let partial=false;
+  // q1023-leftout: a record the search FOUND was left out because its own check could not finish (not known now: a revoke walk still
+  // pending, or the read's allowance) or because the results would not hold still. Unlike a time or scan cut, something found is missing.
+  let foundUnchecked=false;
   // Hydration stops at the limit for every caller and returns what it has, flagged partial. No candidate is exempt: a
   // search that starts late (a stalled event loop) answers partial or empty, inside the proxy's wait (P1, msearch review).
   const mode=options.historical?"historical" as const:"current" as const;
-  const readOptions={workBudget,allowance:options.allowance,mode,agent:true,discovery:true,...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}};
+  const readOptions={workBudget,allowance:options.allowance,mode,agent:true,discovery:true,...options.withheldMessage?{withheldMessage:options.withheldMessage}:{},...options.ownerTurn===true?{ownerTurn:true}:{}};
   const keyOf=(ref:{id:string;version:number})=>`${ref.id}:${ref.version}`;
   const checked=new Map<string,{ref:{id:string;version:number};value:Readable|null}>();
   const hydrate=(ref:{id:string;version:number}):Readable|null=>{
     let read:ReturnType<typeof readableMemoryRecord>;
     // a read the allowance could not finish is left out for now, and the answer says it is partial
     try{read=readableMemoryRecord(ref.id,ref.version,access,readOptions);}
-    catch(error){if(isLineageLimit(error)){partial=true;return null;}throw error;}
+    catch(error){if(isLineageLimit(error)){partial=true;foundUnchecked=true;return null;}throw error;}
     if(typeof read==="string")return null;
     const record=read.row;
     // masked at read like the bundle (bundle.ts hydrateInPass): an unscrubbed 1.0.3 row never hands a recall its digits
@@ -361,13 +372,13 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     // Pending projections the reader's own scopes hold (the word index has not caught up): only a readable one counts.
     let pendingReadable=false;
     if(pendingScan){
-      for(let after=0;;){
+      for(let after='';;){
         const refs=pendingViewPage(database(),access.view,after,PENDING_PAGE,scanBudget);
         if(!refs.length){if(scanBudget.remaining===0)partial=true;break;}
         await authorizeAll(refs);
         if(refs.some(ref=>readableOf(ref)!==null)){pendingReadable=true;break;}
         if(partial){pendingReadable=true;break;}
-        after=refs[refs.length-1].rowid;
+        after=JSON.stringify([refs[refs.length-1].id,refs[refs.length-1].version]);
       }
     }
     return {ranked:ranked.map(({read,...hit})=>({...hit,...read})),incomplete:incomplete||unproven,unscored,recentReadable,meaningRead:meaning.taken.length>0,paged,pendingReadable};
@@ -396,7 +407,7 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     if(revalidationCut){lists=await rankLists();break;}
     if(attempt>=REVALIDATION_ROUNDS){
       // It will not hold still: answer nothing rather than something that may have been withdrawn.
-      partial=true;
+      partial=true;foundUnchecked=true;
       lists={ranked:[],incomplete:true,unscored:undefined,recentReadable:0,meaningRead:false,paged:false,pendingReadable:false};
       break;
     }
@@ -428,12 +439,17 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   const note=caller==="tool"&&isPartial?(selected.length?PARTIAL_NOTE:degradedReason==="MEMORY_RECALL_UNAVAILABLE"?UNAVAILABLE_NOTE:undefined):caller==="tool"&&boundedScan?BOUNDED_NOTE:undefined;
   // The recent fallback is reported only when it found a record this reader may read.
   if(cut||boundedScan||lists.recentReadable)coverage=false;
+  // q1022 recallperf item 4: the meaning search was dropped (cut off at SEMANTIC_CUTOFF_MS or failed): what meaning alone would find was
+  // never looked at, so the answer is never reported complete.
+  if(!helperAnswered&&!cached)coverage=false;
   // Only these fields are the answer. The helper's counts, memory use and timings stay in the process (telemetry above), and
   // the helper's cursor, an id that may name a record this reader cannot read, is replaced by a token only this reader can use.
   // Final admission check follows every callback and all result construction work.
   assertMemoryAccess(access);
   return {hits:selected,...degradedReason!==undefined?{degradedReason}:{},...coverage!==undefined?{coverageComplete:coverage}:{},...lists.paged?{nextCursor:sealMemoryCursor(result.resumeAfter!,access,options.historical??false)}:{},
-    ...isPartial?{partial:true,recallMode:"keyword" as const}:{},...note?{note}:{},evolutionPolicyRevision:evolutionPolicy.revision,...lists.recentReadable?{recentFallback:true}:{},
+    ...isPartial?{partial:true,recallMode:"keyword" as const}:{},
+    // A readable record may have been missed (hydration or scan cut short, or words only before the word index is ready); words-only recall over a ready index misses none.
+    ...partial||scanCut||keywordOnly&&!lexicalReady?{missed:true as const}:{},...foundUnchecked?{unproven:true as const}:{},...note?{note}:{},evolutionPolicyRevision:evolutionPolicy.revision,...lists.recentReadable?{recentFallback:true}:{},
     };
 }
 
@@ -464,4 +480,13 @@ function withinDeadline<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{
     signal.addEventListener("abort",stop,{once:true});
     work.then(resolve,reject).finally(()=>signal.removeEventListener("abort",stop));
   });
+}
+
+/** ONEINDEX + H4: a scope-set reader's words come from the shared index (rare-word plan + postings, eligible form, its computed scopes).
+ * When the index cannot answer (missing, unreadable, blocked, writer drain) this is null and searchMemory takes its bounded keyword
+ * fallback (keywordMemoryHits + recentMemoryHitsSliced over the reader's own records, recent.ts), so a cold index never gives an empty
+ * recall and never waits on a view build. */
+async function sharedPage(query: string, access: MemoryAccess, limit: number, offset: number, historical: boolean, deadlineAt: number, signal: AbortSignal) {
+  try { return await lexicalPageSliced(query,scopeSetOf(access.view)!.set.scopes,limit,offset,undefined,{eligible:true,historical,deadlineAt,signal}); }
+  catch (error) { logSwallowed("recall",error); return null; }
 }

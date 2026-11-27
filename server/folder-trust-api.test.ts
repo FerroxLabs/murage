@@ -1,3 +1,4 @@
+import { fixtureDisplayedResponse, fixtureDisplayRequest } from "./testing/display-http-fixture.ts";
 import { fakeEngineServerArgs } from "./testing/fake-engine-server.ts";
 // Folder trust through the real server (0.1.52 FUIGOTRUST1): a Fuigo bot on
 // the fake ACP CLI in `folder-trust` mode, which reads ./AGENTS.md into its
@@ -38,12 +39,13 @@ let dump: string;
 let stderr = "";
 
 const request = async (method: string, path: string, body?: unknown, headers = desktopHeaders): Promise<{ status: number; body: any }> => {
+  body = fixtureDisplayRequest(join(home, ".murage/messages.db"), path, body);
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  return { status: res.status, body: await res.json() };
+  return { status: res.status, body: fixtureDisplayedResponse(join(home, ".murage/messages.db"), await res.json()) };
 };
 const messages = async (threadId: string) => (await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const openTrustCard = async (threadId: string) => (await messages(threadId)).filter((m) => m.card?.folderTrust && !m.card.answered).at(-1);
@@ -190,7 +192,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     const wire = readDump();
     expect(wire.argv).toContain("--trust");
     expect(wire.argv.indexOf("--trust")).toBeLessThan(wire.argv.indexOf("agent"));
-    expect(wire.initialize.clientCapabilities._meta).toEqual({ "fuigo/folderTrust": { interactive: true } });
+    expect(wire.initialize.clientCapabilities._meta).toEqual({ "fuigo/folderTrust": { interactive: true }, "fuigo/permissionPrompts": true });
     expect(wire.folderTrust).toMatchObject({ trustedAtBuild: true, requested: false });
     expect((await activities(bot.threadId)).filter((name) => name.startsWith("untrusted folder:"))).toEqual([]);
   });

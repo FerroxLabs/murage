@@ -1,4 +1,5 @@
 import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
+import { budgetMcpServers } from "../../mcp-tool-schema.ts";
 // Kimi Code harness support — Moonshot's `kimi` CLI over ACP stdio
 // (`kimi acp`), on the Kimi Code subscription login
 // (~/.kimi-code/credentials/kimi-code.json for kimi.com, or
@@ -734,6 +735,7 @@ const support: AcpSupport = {
   // Kimi answers initialize with mcpCapabilities and takes the servers handed
   // at session/new (kimi-code 0.29.1, file header), with no readiness signal.
   mcpListedWait: true,
+  sessionMcpServers: servers => budgetMcpServers(servers, 12_000),
   displayName: "Kimi",
   // Aliases from the CLI's own catalog (~/.kimi-code/config.toml
   // [models."kimi-code/…"] — `kimi provider list` reports the same four).

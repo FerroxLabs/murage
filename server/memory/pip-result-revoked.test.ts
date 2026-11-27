@@ -14,7 +14,7 @@ import { captureStoredMessage } from "./testing/captured-message.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { setMemoryMode } from "./repository.ts";
 import { httpTextOnlyTurn } from "../drivers/http-text-only.ts";
-import { maintainPip, pipReadHooks, readReflectState, runPipReflect, type ReflectDeps } from "./pip-reflect.ts";
+import { COOLDOWN_MS, UNSTABLE_RUNS_GIVE_UP, maintainPip, pipReadHooks, readReflectState, runPipReflect, type ReflectDeps } from "./pip-reflect.ts";
 
 import { removeTempDirSync } from "../testing/cleanup.ts";
 const T0 = 1_760_000_000_000, MIN = 60_000;
@@ -134,3 +134,28 @@ it("three read moves of held results: at most three paid calls, then refused uns
     expect(recordsWithWords()).toBe(0);
   } finally { r.close(); }
 });
+
+// q1023-rcready (FABLE/OPUS/ASTRA int-1023-fwd 5ea7e9a8d1 High 1): a run that spent its three paid calls and lost each result to a moved read is
+// still a failed run on the same history: three of them give the thread up (1.0.22 H d11e43d8c6), so paid calls stop at 9, not 3 per cooldown forever.
+it("W-PAID-READMOVED-GIVEUP: runs whose paid results were all lost to moved reads give the thread up after UNSTABLE_RUNS_GIVE_UP, spending no more paid calls", async () => {
+  let n = 0, clock = T0 + 60 * MIN;
+  const r = await rig(other => other.prepare("INSERT INTO zz_unrelated VALUES(?)").run(++n));
+  r.deps.now = () => clock;
+  vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(clock);
+  whileValidated(() => r.other.prepare("INSERT INTO zz_unrelated VALUES(?)").run(++n), false);
+  try {
+    const perRound: number[] = [], states: string[] = [];
+    for (let round = 0; round < 6; round++) {
+      clock += COOLDOWN_MS + MIN; vi.setSystemTime(clock);
+      const before = vi.mocked(r.fetchImpl).mock.calls.length;
+      for (let pass = 0; pass < 8; pass++) await runPipReflect(r.deps, undefined, new AbortController().signal);
+      perRound.push(vi.mocked(r.fetchImpl).mock.calls.length - before);
+      const st = readReflectState(database(), "moss");
+      states.push(JSON.stringify({ t: st.threads["private"], cd: st.cooldownUntil - clock, run: st.run && Object.values(st.run.families).map(f => [f.state, f.reason, f.attempt, f.readMoves]), ref: st.refusals[0]?.reason }));
+    }
+    expect(perRound, `paid calls per round ${states.join(" | ")}`).toEqual([3, 3, 3, 0, 0, 0]);
+    const thread = readReflectState(database(), "moss").threads["private"];
+    expect(thread?.unstableRuns).toBe(UNSTABLE_RUNS_GIVE_UP);
+    expect(thread?.gaveUpAt).toBeDefined();
+  } finally { vi.useRealTimers(); r.close(); }
+}, 60_000);

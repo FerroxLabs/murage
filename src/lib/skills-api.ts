@@ -14,6 +14,8 @@ export interface SkillSummary {
   description: string;
   kind: "collection" | "library" | "builtin";
   verdict: SkillVerdict;
+  /** For a skill that needs a look or is blocked: what was found, in words (server/skills-api.ts). */
+  reason?: string;
   /** "Library", "Built-in", or where an imported skill came from. */
   source: string;
   usedBy: Array<{ botId: string; botName: string; enabled: boolean }>;
@@ -25,6 +27,8 @@ export interface SkillDetail extends SkillSummary {
   scan: SkillScan;
   /** Every bot, and whether this skill is on for it. */
   bots: Array<{ botId: string; botName: string; canUseSkills: boolean; enabled: boolean }>;
+  /** F10/E1: marked for every bot, now and later (not for built-ins). */
+  everyBot?: boolean;
 }
 export interface SkillsPage {
   yours: SkillSummary[];
@@ -49,6 +53,13 @@ export const CLEAN_LINE = "Checked, nothing risky found";
 
 export function verdictLabel(verdict: SkillVerdict): typeof CLEAN_LINE | "Needs a look" | "Blocked" {
   return verdict === "clean" ? CLEAN_LINE : verdict === "review" ? "Needs a look" : "Blocked";
+}
+
+/** What a row says under a skill that needs a look or is blocked: what was found, then what the owner can do. */
+export function verdictHint(skill: Pick<SkillSummary, "verdict" | "reason">): string | null {
+  if (skill.verdict === "clean") return null;
+  const found = skill.reason ? `${skill.reason}. ` : "";
+  return skill.verdict === "review" ? `${found}Open it to read what was found, then decide.` : `${found}It can't be switched on.`;
 }
 
 /** The instructions without their header block (name, description and
@@ -78,6 +89,14 @@ export function readSkill(ref: string, request: Request = api): Promise<SkillDet
 
 export function importSkill(input: ImportInput, request: Request = api): Promise<{ skill: SkillDetail }> {
   return request("/api/skills/import", { method: "POST", body: JSON.stringify(input) });
+}
+
+/** F10/E1: give a skill to every bot now and every bot added later, or take that mark away. */
+export function setSkillForEveryBot(ref: string, on: boolean, acknowledged?: string, request: Request = api): Promise<{ everyBot: boolean }> {
+  return request(`/api/skills/${encodeURIComponent(ref)}/every-bot`, {
+    method: "PUT",
+    body: JSON.stringify(acknowledged ? { on, acknowledged } : { on }),
+  });
 }
 
 export function setSkillForBot(ref: string, botId: string, on: boolean, acknowledged?: string, request: Request = api): Promise<{ skill: unknown }> {

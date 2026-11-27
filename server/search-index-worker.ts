@@ -5,7 +5,7 @@ export const SEARCH_INDEX_WORKER_SOURCE = String.raw`
 const { parentPort, workerData } = require('node:worker_threads');
 const { DatabaseSync } = require('node:sqlite');
 const { randomUUID, createHash } = require('node:crypto');
-const { unlinkSync, chmodSync } = require('node:fs');
+const { unlinkSync, chmodSync, statSync } = require('node:fs');
 const { file, searchFile, ddl, token } = workerData;
 let a, b, resetWaiting = false;
 const scrubDelay = eval('('+workerData.scrubDelaySource+')');
@@ -50,15 +50,48 @@ function latest() {
   return b.prepare('SELECT seq,CAST(nonce AS TEXT) AS nonce FROM search_intents ORDER BY seq DESC LIMIT 1').get();
 }
 function owner() { return b.prepare("SELECT done FROM transcript_index_state WHERE name='search_owner'").get()?.done; }
+// messages.db's schema cookie moves on every ordinary start: start-up migrations
+// drop and remake triggers and indexes with no net change (owner copy: 2142 -> 2150
+// in one start). A moved cookie alone used to reset and rebuild the whole index.
+// Row anchors decide instead: rowid -> hash of the message's primary key, taken
+// whenever the index is stamped. Every present anchor unchanged (and at least half
+// present) proves the rowids the index points at still name the same messages, so
+// the index adopts the new cookie. Any changed anchor, or none stored: reset.
+const rowHash = r => createHash('sha256').update(JSON.stringify([String(r.thread_id),String(r.id)])).digest('hex').slice(0,16);
+function anchors() {
+  const top = Number(b.prepare('SELECT COALESCE(MAX(rowid),0) AS n FROM messages').get().n);
+  const at = b.prepare('SELECT rowid,thread_id,id FROM messages WHERE rowid>=? ORDER BY rowid LIMIT 1');
+  const rows = new Map();
+  for (let i = 0; top && i < 48; i++) { const r = at.get(1 + Math.floor(top * i / 48)); if (r) rows.set(Number(r.rowid), r); }
+  for (const r of b.prepare('SELECT rowid,thread_id,id FROM messages ORDER BY rowid DESC LIMIT 16').all()) rows.set(Number(r.rowid), r);
+  return [...rows.values()].map(r => Number(r.rowid)+':'+rowHash(r)).join(',');
+}
+function anchorsHold() {
+  const stored = state('source_anchors');
+  if (!stored) return false;
+  const one = b.prepare('SELECT thread_id,id FROM messages WHERE rowid=?');
+  let present = 0, total = 0;
+  for (const item of stored.split(',')) {
+    const [rowid, hash] = item.split(':'); total++;
+    const r = one.get(Number(rowid));
+    if (!r) continue;
+    if (rowHash(r) !== hash) return false;
+    present++;
+  }
+  return present * 2 >= total;
+}
 function valid() {
   if (String(owner()) !== state('owner')) return false;
-  if (String(b.prepare('PRAGMA schema_version').get().schema_version) !== state('source_schema')) return false;
+  const schema = String(b.prepare('PRAGMA schema_version').get().schema_version);
+  const moved = schema !== state('source_schema');
+  if (moved && !anchorsHold()) return false;
   for (const prefix of ['applied','seen']) {
     const seq = state(prefix+'_seq'), nonce = state(prefix+'_nonce');
     if (!seq || !nonce) return false;
     const row = b.prepare('SELECT CAST(nonce AS TEXT) AS nonce FROM search_intents WHERE seq=?').get(seq);
     if (!row || String(row.nonce) !== nonce) return false;
   }
+  if (moved) { const fresh = anchors(); a.exec('BEGIN IMMEDIATE'); try { put('source_schema',schema); put('source_anchors',fresh); a.exec('COMMIT'); } catch (error) { if (a.isTransaction) a.exec('ROLLBACK'); throw error; } send('source-adopted',{ schema: Number(schema) }); }
   return true;
 }
 function observed(marker) { put('seen_seq',marker.seq); put('seen_nonce',marker.nonce); }
@@ -99,10 +132,16 @@ function converge(row) {
   if (row.text) a.prepare('INSERT INTO messages_fts(rowid,t) VALUES(?,?)').run(row.rowid,row.text);
   if (row.text || row.oversized) a.prepare('INSERT INTO docs(rowid,thread_key,oversized) VALUES(?,?,?)').run(row.rowid,row.thread,row.oversized ? 1 : 0);
 }
+// Measured write cost of this step: bytes each commit appended to search.db-wal (a log that restarted counts from 0), and the
+// same again when a checkpoint copies them into search.db. The parent spaces steps by it (a full rebuild wrote 4-11 GB/min).
+let stepBytes = 0;
+const walSize = () => { try { return statSync(searchFile+'-wal').size; } catch { return 0; } };
 function write(run) {
+  const before = walSize();
   a.exec('BEGIN IMMEDIATE');
   try { run(); barrier('before-search-commit'); a.exec('COMMIT'); barrier('after-search-commit'); }
   catch (error) { if (a.isTransaction) a.exec('ROLLBACK'); throw error; }
+  const after = walSize(); stepBytes += 2 * (after >= before ? after - before : after);
 }
 function apply() {
   const batch = snapshot(() => {
@@ -182,6 +221,11 @@ function cleanup() {
   const debt = state('debt');
   if (debt !== scrubDebt) { scrubBusy = 0; scrubNotBefore = 0; scrubDebt = debt; }
   if (!debt) return { done: false };
+  // A rebuild commits a new segment every step, so the merge probe below never
+  // reads zero while it runs, and each negative merge restarts a merge of the
+  // whole index: O(index) bytes per step, about 17 GB for a 55 MB owner index.
+  // The debt stays recorded and is scrubbed by the first step after the rebuild.
+  if (state('built') !== undefined) return { done: false };
   if (debt.endsWith(':0')) {
     // A writing negative merge proves nothing. Continue positive slices until a
     // fresh negative probe writes zero pages (total_changes includes FTS shadows).
@@ -229,43 +273,64 @@ function reset(marker) {
   }
   readOpen(); writeOpen();
   b.exec('BEGIN');
-  let seen, top, who, schema;
+  let seen, top, who, schema, anchored;
   try {
-    who = owner(); seen = latest(); schema = b.prepare('PRAGMA schema_version').get().schema_version;
+    who = owner(); seen = latest(); schema = b.prepare('PRAGMA schema_version').get().schema_version; anchored = anchors();
     if (!b.prepare('SELECT 1 FROM search_intents WHERE seq=? AND nonce=?').get(marker.seq,marker.nonce)) throw Error('reset marker lost');
     top = b.prepare('SELECT COALESCE(MAX(rowid),0) AS n FROM messages').get().n;
     b.exec('COMMIT');
   } catch (error) { b.exec('ROLLBACK'); throw error; }
   write(() => {
-    put('index_id',randomUUID()); put('owner',who); put('source_schema',schema); applied(marker); observed(seen); put('built',Number(top)+1);
+    put('index_id',randomUUID()); put('owner',who); put('source_schema',schema); put('source_anchors',anchored); applied(marker); observed(seen); put('built',Number(top)+1);
   });
   resetWaiting = false; send('ready',{ index_id: state('index_id'), synchronous: Number(a.prepare('PRAGMA synchronous').get().synchronous), journal_mode: a.prepare('PRAGMA journal_mode').get().journal_mode });
 }
+// 1.0.22 q1022-startup: quick_check and the FTS integrity-check read all of search.db. They run only when the last writer did not
+// stop cleanly (no clean_close mark: crash, kill, failure, reset) or the last full check is a week old or unreadable; the mark is
+// cleared before anything else on open, so a crash after this start checks again on the next one.
+const CHECK_EVERY_MS = 7 * 24 * 60 * 60 * 1000;
+// The mark names the index position at the clean stop: an older build run on the same folder (a rollback to 1.0.21) never clears it, so
+// one that indexed anything and then crashed leaves a mark that no longer matches, and the next start checks (self-review M4).
+const cleanMark = () => state('index_id')+':'+state('applied_seq')+':'+state('applied_nonce');
+function checkDue() {
+  const clean = state('clean_close') === cleanMark(), last = Number(state('checked_at')), now = Date.now();
+  return !clean || !(last > 0) || now < last || now - last >= CHECK_EVERY_MS;
+}
+function stopClean() {
+  if (!a || resetWaiting) return;
+  try { a.exec('BEGIN IMMEDIATE'); put('clean_close',cleanMark()); a.exec('COMMIT'); } catch { try { if (a.isTransaction) a.exec('ROLLBACK'); } catch {} }
+}
 function activate() {
   readOpen(); writeOpen();
-  if (a.prepare('PRAGMA quick_check').get().quick_check !== 'ok') return requestReset();
-  a.exec("INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')");
+  const due = checkDue();
+  if (state('clean_close') !== undefined) { a.exec('BEGIN IMMEDIATE'); try { del('clean_close'); a.exec('COMMIT'); } catch (error) { if (a.isTransaction) a.exec('ROLLBACK'); throw error; } }
+  if (due) {
+    send('full-check');
+    if (a.prepare('PRAGMA quick_check').get().quick_check !== 'ok') return requestReset();
+    a.exec("INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')");
+  }
   b.exec('BEGIN'); let ok;
   try { ok = valid(); b.exec('COMMIT'); } catch (error) { b.exec('ROLLBACK'); throw error; }
   if (!ok) return requestReset();
+  if (due) { a.exec('BEGIN IMMEDIATE'); try { put('checked_at',Date.now()); a.exec('COMMIT'); } catch (error) { if (a.isTransaction) a.exec('ROLLBACK'); throw error; } }
   send('ready',{ index_id: state('index_id'), synchronous: Number(a.prepare('PRAGMA synchronous').get().synchronous), journal_mode: a.prepare('PRAGMA journal_mode').get().journal_mode });
 }
 parentPort.on('message', message => {
   if (message.token !== token) return;
   try {
-    if (message.type === 'stop') { close(); parentPort.close(); return; }
+    if (message.type === 'stop') { stopClean(); close(); parentPort.close(); return; }
     if (message.type === 'activate') { close(); activate(); return; }
     if (message.type === 'reset') { reset(message.marker); return; }
     if (message.type === 'reset-request') { if (!resetWaiting) requestReset(); return; }
     if (message.type !== 'step' || resetWaiting) return;
-    const stepStart = performance.now();
+    const stepStart = performance.now(); stepBytes = 0;
     const worked = apply();
     if (resetWaiting) return;
     const built = rebuild();
     if (resetWaiting) return;
     const cleaned = cleanup();
     busyStep = 0; fullStep = 0;
-    send('stepped',{ worked: worked || built || cleaned.done, retryInMs: cleaned.retryInMs, scrubBusy, rebuilding: state('built') !== undefined, applied: Number(state('applied_seq')), 'step-ms': performance.now() - stepStart });
+    send('stepped',{ worked: worked || built || cleaned.done, retryInMs: cleaned.retryInMs, scrubBusy, rebuilding: state('built') !== undefined, applied: Number(state('applied_seq')), bytes: stepBytes, 'step-ms': performance.now() - stepStart });
   } catch (error) {
     if (storageFull(error)) { reportFull(error, message.type); }
     else if (typeof error.errcode === 'number' && [5,6].includes(error.errcode & 255)) {

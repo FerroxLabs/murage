@@ -38,22 +38,31 @@ export class RoomOpenTools {
   }
 }
 
+/** Why the watchdog stopped the turn (turn-watchdog.ts WatchedTurn.stalledBy). */
+export type RoomStallCause = "silence" | "heartbeat-only" | "no-first-response";
+
+/** WINTERRY (1.0.22): the line for a turn whose engine never gave a first response. One wording for direct, room and routine turns. */
+export function noFirstResponseMessage(minutes: number, tail = "the turn was stopped"): string {
+  const unit = minutes === 1 ? "minute" : "minutes";
+  return `error: the engine gave no first response for ${minutes} ${unit}: ${tail}`;
+}
+
 /** Completes the active room turn when its activity watchdog stalls. */
 export class RoomTurnStallRegistry {
-  private handlers = new Map<string, () => void>();
+  private handlers = new Map<string, (stalledBy?: RoomStallCause) => void>();
 
-  register(threadId: string, handler: () => void): () => void {
+  register(threadId: string, handler: (stalledBy?: RoomStallCause) => void): () => void {
     this.handlers.set(threadId, handler);
     return () => {
       if (this.handlers.get(threadId) === handler) this.handlers.delete(threadId);
     };
   }
 
-  stall(threadId: string): boolean {
+  stall(threadId: string, stalledBy?: RoomStallCause): boolean {
     const handler = this.handlers.get(threadId);
     if (!handler) return false;
     this.handlers.delete(threadId);
-    handler();
+    handler(stalledBy);
     return true;
   }
 }

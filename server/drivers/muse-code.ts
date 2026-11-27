@@ -1,6 +1,6 @@
 import { askExecWipe, deliverWipeGuardTerminal, wipeGuardTurnEnvironment } from './murage-exec-wipe.ts';
 import { renderDriverReplay } from '../turn-context.ts';
-import { takeNoLimitsPowerFallbackNotice } from "../host-power.ts";
+import { SEATBELT_LAUNCH_ATTEMPTS, takeNoLimitsPowerFallbackNotice } from "../host-power.ts";
 import type { EngineTransport } from "../../shared/engine-transport.ts";
 import { NotModelRequest } from "../../shared/engine-transport.ts";
 import { registerBusyloopRequestSite, fluxRouteFor, noFluxTraffic } from "../../shared/flux-route.ts";
@@ -53,7 +53,7 @@ import { newEventId, newId } from "../contracts.ts";
 import { augmentedPath } from "../env-path.ts";
 import { awaitCliTreeStopped, describeSpawnFailure, engineJob, engineExecutableMissing, noteEngineMissing, resolveEngineExecutable, hostPowerRefused, spawnCli } from "../procs.ts";
 import { botFolderOrThrow } from "../bot-folder.ts";
-import { hostPowerPlatform, recordNoLimitsMacPowerRefusal } from "../host-power.ts";
+import { hostPowerPlatform } from "../host-power.ts";
 import { probeFolder } from "../probe-folder.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { answersFromMessage, fromCodex, type QuestionAnswer, type QuestionSpec } from "../question-normalize.ts";
@@ -61,6 +61,7 @@ import { ASK_STOP_NOTE, ASK_STOP_PROMPT, ASK_STOP_REASON, askStopUnavailableLine
 import { buildMcpServers } from "./mcp-mounts.ts";
 import { providerCloseDeadlineMs } from "./child-teardown.ts";
 import { createStopGate, GateStopped, type GateEntry, type StopGate } from "./stop-gate.ts";
+import { appendTurnText } from "./bounded-lines.ts";
 
 const DRIVER_KIND = "museCode";
 const ENGINE = "Muse Code";
@@ -830,13 +831,13 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
     });
     /** Which thread a gate entry belongs to: dispose uses it to tell a turn held by an unconfirmed host shutdown from a stuck startup. */
     const entryThreads = new WeakMap<GateEntry, ThreadState>();
-    const startHost = async (args: string[], cwd: string, key: string, requestMcp: boolean, register?: (host: Host) => void, noLimits = false, powerRetried = false, turnEnv?: NodeJS.ProcessEnv): Promise<Host> => {
+    const startHost = async (args: string[], cwd: string, key: string, requestMcp: boolean, register?: (host: Host) => void, noLimits = false, powerRetries = 0, turnEnv?: NodeJS.ProcessEnv): Promise<Host> => {
       guardSpawn();
       if (!executable) throw new Error(MUSE_NOT_INSTALLED_NOTE);
-      if (powerBlocked() && !noLimits) throw new Error(MUSE_POWER_REFUSED_NOTE);
+      if (powerBlocked() && !noLimits && powerRetries === 0) throw new Error(MUSE_POWER_REFUSED_NOTE);
       const child = spawnCli(config.cli, args, { cwd, env: turnEnv ?? childEnv(), stdio: ["pipe", "pipe", "pipe"] }, museJob(noLimits));
       let initializing = true;
-      const recoveringStartup = () => noLimits && initializing;
+      const recoveringStartup = () => initializing && (noLimits || (hostPowerPlatform() === "darwin" && powerRetries < SEATBELT_LAUNCH_ATTEMPTS));
       watchPowerRefusal(child);
       let spawnError: NodeJS.ErrnoException | undefined;
       child.once("error", (error) => { spawnError = error as NodeJS.ErrnoException; });
@@ -912,8 +913,10 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
         powerRecovered();
         return host;
       } catch (error) {
-        if (noLimits && hostPowerPlatform() === "darwin") await host.close();
-        const retryPower = noLimits && !powerRetried && hostPowerPlatform() === "darwin" && hostPowerRefused(child);
+        if (hostPowerPlatform() === "darwin") await host.close(); // so the child's close has classified a sandbox-exec refusal
+        // sandbox-exec refused a launch (child.pid: it really ran) after its probe passed: the next launch of this session takes
+        // the next narrower power block rule set (procs recordSeatbeltLaunchRefusal), never a refused turn for this alone.
+        const retryPower = powerRetries < SEATBELT_LAUNCH_ATTEMPTS && hostPowerPlatform() === "darwin" && child.pid !== undefined && hostPowerRefused(child);
         const previousState = host.state, previousActive = previousState?.active, previousSession = previousState?.sessionId;
         if (retryPower) host.owner = undefined;
         await retireHost(host, spawnError ? describeSpawnFailure(spawnError, config.cli).message : "Muse Code startup failed.");
@@ -921,9 +924,8 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
         if (retryPower) {
           if (previousActive && (previousState?.active !== previousActive || previousActive.finished || previousActive.stopping || gate.why(previousActive.entry) !== null)) throw new Error(`${ENGINE} was stopped while it was starting.`);
           if (previousState && previousState.host === undefined) previousState.sessionId = previousSession;
-          recordNoLimitsMacPowerRefusal(powerSession, "sandbox-exec refused the Muse launch after its profile probe");
           powerRecovered();
-          return startHost(args, cwd, key, requestMcp, register, true, true, turnEnv);
+          return startHost(args, cwd, key, requestMcp, register, noLimits, powerRetries + 1, turnEnv);
         }
         if (hostPowerRefused(child)) throw new Error(MUSE_POWER_REFUSED_NOTE);
         throw spawnError ? new Error(describeSpawnFailure(spawnError, config.cli).message) : error;
@@ -1163,7 +1165,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
               emit({ type: "content.delta", threadId, turnId: active.turnId, itemId: item.itemId, streamKind: "assistant_text", delta: text.slice(streamed.length) });
             }
             if (text) {
-              active.reply += `${text}\n`;
+              active.reply = appendTurnText(active.reply, `${text}\n`);
               emit({ type: "item.completed", threadId, turnId: active.turnId, itemId: item.itemId, itemType: "assistant_text", origin: "engine", text });
             }
           } else if (item.kind === "reasoning") {
@@ -1413,7 +1415,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       let host: Host;
       try {
         // A mark that lands while the host starts reaps the host it started (onStopped), then the step throws GateStopped.
-        host = await gate.step(e, startHost(args, cwd, key, mcpServers !== null, (launch) => { launch.owner = active.turnId; launch.state = state; launch.requested = selected; launch.selection = { model: selected, classification: classify(selected), revision: 0, generation: launch.generation, source: "requested", provisional: true }; state.host = launch; }, active.posture === "unlimited", false, turnEnv),
+        host = await gate.step(e, startHost(args, cwd, key, mcpServers !== null, (launch) => { launch.owner = active.turnId; launch.state = state; launch.requested = selected; launch.selection = { model: selected, classification: classify(selected), revision: 0, generation: launch.generation, source: "requested", provisional: true }; state.host = launch; }, active.posture === "unlimited", 0, turnEnv),
           { onStopped: (started) => { void started.close().catch(() => {}); } });
       } catch (error) {
         if (error instanceof GateStopped) throw error;

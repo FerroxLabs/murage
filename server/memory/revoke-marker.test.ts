@@ -5,11 +5,11 @@
 // written here as S1's writers will write them (S1's writeLineage is still a stub), and every verdict is read through `verdict` below,
 // the design's read predicate (section 1) over the tables S3 writes: S4's deny-read.ts is the production reader of the same rows.
 // The revbound r3 cases closed in the write-time slices (REPORT.md A1-A6, FABLE-REPORT.md P1-1/P1-2 as F1/F2) have their commit side
-// here; S4 owns their reader side (lessons.ts, readable.ts, deny-read.ts) and references these tests. Every test runs on the build host.
+// here; S4 owns their reader side (lessons.ts, readable.ts, deny-read.ts) and references these tests. Every test runs on Hetzner.
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { backup, DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
@@ -30,7 +30,9 @@ import { FIRST_LSN, lineChildRef } from "./lineage-types.ts";
 import { testThreadNo } from "./testing/writetime-fixture.ts";
 import { noteReceiptOutput } from "./receipt-outputs.ts";
 import { migrateMemorySchema } from "./schema.ts";
-import { sessionLookup } from "./deny-read.ts";
+import { memoryLookup, sessionLookup } from "./deny-read.ts";
+import { writetimeRecordRefusal } from "./readable.ts";
+import { mergeDestinationMemoryDeletions } from "./restore.ts";
 
 const inline = { ...INLINE_REVOCATION };
 const dirs: string[] = [], dbs: DatabaseSync[] = [];
@@ -96,7 +98,7 @@ function verdict(db: DatabaseSync, t: string, id: string): V {
   if (!row) return "checking";
   const lsn = Number(row.lsn);
   if (db.prepare("SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(t)) return "withheld";
-  if (db.prepare("SELECT 1 FROM memory_deny_line WHERE thread_id=? AND lsn=?").get(t, lsn)) return "withheld";
+  if (db.prepare("SELECT 1 FROM memory_deny_point WHERE thread_id=? AND lsn=?").get(t, lsn)) return "withheld";
   if (Number(row.generated) !== 1) return "shown";
   const turn = row.turn_lsn === null ? lsn : Number(row.turn_lsn);
   if (db.prepare("SELECT 1 FROM memory_deny_range WHERE thread_id=? AND from_lsn<? AND ?<until_turn_lsn").get(t, lsn, turn)) return "withheld";
@@ -104,7 +106,7 @@ function verdict(db: DatabaseSync, t: string, id: string): V {
   return "shown";
 }
 function memVerdict(db: DatabaseSync, kind: "record" | "source", id: string, version: number, scopeId: string): V {
-  if (db.prepare("SELECT 1 FROM memory_deny_memory WHERE kind=? AND id=? AND version IN (0,?)").get(kind, id, version)) return "withheld";
+  if (db.prepare("SELECT 1 FROM memory_deny_object WHERE kind=? AND id=? AND version IN (0,?)").get(kind, id, version)) return "withheld";
   if (db.prepare("SELECT 1 FROM memory_deny WHERE kind='scope' AND id=?").get(scopeId)) return "withheld";
   const created = kind === "record" ? db.prepare("SELECT created_lsn AS c FROM memory_record_lsn WHERE id=? AND version=?").get(id, version)?.c : undefined;
   const pending = db.prepare("SELECT 1 FROM memory_deny_pending_scope WHERE scope_id IN (?,'*') AND (? IS NULL OR since_lsn<=?)").get(scopeId, created ?? null, created ?? null);
@@ -192,7 +194,7 @@ it("forgetting an early line in a 200k-line thread: the commit is flat, every de
   expect(run.maxStatements).toBeLessThanOrEqual(400);
   expect(run.slices).toBeGreaterThan(1);
   // each capture after the forgotten line was reached as a source (one deny_memory row each); the ones before were not
-  expect(count(db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='source'")).toBe(count(db, "SELECT count(*) AS n FROM memory_line_capture WHERE lsn>?", a));
+  expect(count(db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='source'")).toBe(count(db, "SELECT count(*) AS n FROM memory_line_capture WHERE lsn>?", a));
   for (const id of copies) expect(verdict(db, "U", id)).toBe("withheld");
   expect(verdict(db, "V", "v-0")).toBe("shown"); // its parent came before the forgotten line
   for (let i = 11; i < ids.length; i += 2) expect(verdict(db, "T", ids[i]!)).toBe("withheld");
@@ -280,7 +282,7 @@ it("undo by revoke id restores what that revoke alone withheld, and keeps anothe
   expect(verdict(db, "T", ids[201]!)).toBe("shown");
   expect(verdict(db, "U", "u-1")).toBe("shown");
   expect(verdict(db, "T", ids[601]!)).toBe("withheld"); // the forget's own marks stay
-  for (const table of ["memory_deny_line", "memory_deny_range", "memory_deny_pending", "memory_deny_pending_scope", "memory_revoke_frontier", "memory_revoke_reached"])
+  for (const table of ["memory_deny_point", "memory_deny_range", "memory_deny_pending", "memory_deny_pending_scope", "memory_revoke_frontier", "memory_revoke_reached"])
     expect(count(db, `SELECT count(*) AS n FROM ${table} WHERE revoke_id=?`, hide), table).toBe(0);
   expect(count(db, "SELECT count(*) AS n FROM memory_deny_range WHERE revoke_id=?", forget)).toBe(1);
 });
@@ -309,7 +311,7 @@ it("inheritance at write: a child of a marked line enters the revoke's frontier 
   expect(verdict(db, "Y", "y-1")).toBe("withheld"); // its own deny row at its write (DELETION-DRAIN-V2 2.3), not only held until the pop
   drain(db);
   expect(verdict(db, "Y", "y-1")).toBe("withheld");
-  expect(count(db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='Y' AND revoke_id=?", R)).toBe(1);
+  expect(count(db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='Y' AND revoke_id=?", R)).toBe(1);
 });
 
 it("a new memory record version carries its created lsn (memory_record_lsn, the one v10 column S3 adds)", () => {
@@ -370,13 +372,51 @@ it("A2: forgetting a record with more supporting rows than the commit tombstones
   expect(memVerdict(db, "record", "C", 1, scope)).toBe("shown");
   stopJobs();
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: "R" });
-  expect(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id='s-1'").get()).toBeUndefined(); // still the job's
+  // cause10 v2 (FORGET-ATOMIC, MAIN-RULING 2026-11-21T15:05Z): the older supporting source's key is written in the commit (r3 asserted
+  // it was still the job's here), and the reader's verdict on that source (deny-read.ts memoryLookup, which reads the key) is a definite
+  // refusal from the commit.
+  expect(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id='s-1' AND revision=1 AND reason='forgotten-supporting-source'").get()).toBeDefined();
+  expect(memoryLookup(db, [{ kind: "source", id: "s-1", version: 1 }], { audience: null }).values().next().value!.state).toBe("withheld");
+  // cause10 v2 r2: this file's memVerdict reads only the write-time marks (memory_deny_object) and the revoke's pending window, never
+  // a tombstone. Those marks are still the marker's and the job's work, so it answers "checking" (held, not shown) until the drain, as
+  // r3 asserted; v2 changed these two lines to "withheld" in a commit that never ran (red on ff40e6d6ac: logs a2-base).
   expect(memVerdict(db, "record", "C", 1, scope)).toBe("checking");
   expect(memVerdict(db, "source", "s-1", 0, scope)).toBe("checking");
   drainAll();
-  expect(memVerdict(db, "record", "C", 1, scope)).toBe("withheld");
+  // 1.0.23 deny rule: C was reached through its evidence (s-1), so it takes no row of its own; the production reader withholds it through
+  // s-1's row (deny-rule.ts). memVerdict reads explicit rows only, so C is asked of the reader itself.
+  expect(memoryLookup(db, [{ kind: "record", id: "C", version: 1 }], { audience: null }).values().next().value!.state).toBe("withheld");
   expect(memVerdict(db, "source", "s-1", 0, scope)).toBe("withheld");
   expect(memVerdict(db, "record", "R", 1, scope)).toBe("withheld");
+});
+
+/** The production recall verdict on a record (readable.ts writetimeRecordRefusal, what recall and the reply's write-time check ask):
+ * "withheld" is a definite refusal (the record or a source it rests on), "checking" is a pending window only. */
+function recallVerdict(db: DatabaseSync, id: string, version: number, evidence: Array<[string, number]>): V {
+  try { return writetimeRecordRefusal(db, { kind: "record", id, version }, evidence.map(([sourceId, revision]) => ({ sourceId, revision, startByte: 0, endByte: 5 }))) ? "withheld" : "shown"; }
+  catch (error) { if (String(error).includes("MEMORY_REPLAY_LIMIT")) return "checking"; throw error; }
+}
+
+it("A2b: a record resting on an older supporting source of a forgotten record (past the newest 64) is refused by the production recall verdict once the Forget's job is lost (a backup from before it restored: only the merged ledger carries over, no job, no marker mark)", async () => {
+  const scope = live();
+  for (let v = 1; v <= 100; v++) { source(`s-${v}`, scope, null, null); record("R", scope, v, [[`s-${v}`, 1]]); }
+  record("C", scope, 1, [["s-1", 1]]);
+  expect(recallVerdict(database(), "C", 1, [["s-1", 1]])).toBe("shown");
+  // cause10 v2 r4 (ASTRA cbea3962df A2 evidence gap): A2 asks the mark-only helper while the job is pending, and on the live file the
+  // revoke's marker withholds C on its own (memory_deny_object). A restore carries neither the job nor those marks, only the ledger.
+  const candidate = join(DATA_DIR, "restore-candidate");
+  mkdirSync(candidate, { recursive: true });
+  await backup(database(), join(candidate, "messages.db"));
+  stopJobs();
+  forgetMemory(ownerMemoryTicket(), { kind: "record", id: "R" });
+  closeDatabase(); await stopWalMaintenance();
+  expect(mergeDestinationMemoryDeletions(DATA_DIR, candidate).history).toBe("destination-ledger-preserved");
+  const restored = new DatabaseSync(join(candidate, "messages.db"));
+  try { await backup(restored, join(DATA_DIR, "messages.db")); } finally { restored.close(); }
+  const db = database();
+  expect(count(db, "SELECT count(*) AS n FROM memory_scope_bindings WHERE subject_id='memory-revocation'")).toBe(0);
+  expect(count(db, "SELECT count(*) AS n FROM memory_deny_object")).toBe(0);
+  expect(recallVerdict(db, "C", 1, [["s-1", 1]])).toBe("withheld");
 });
 
 it("A3/A4: a copy of a reply that repeated a forgotten line is withheld (checking from the commit, marked by the walk); the reply a lesson cites is withheld from the commit", () => {
@@ -419,8 +459,10 @@ it("A6: a re-import admitted while the forgotten source's older hashes waited fo
   source("legacy:x", scope, null, null, 100);
   stopJobs();
   forgetMemory(ownerMemoryTicket(), { kind: "source", id: "legacy:x" });
-  // an old revision's bytes come in again under another path: no tombstone for that hash yet, so admission (import.ts) lets it in
-  expect(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='import' AND target_id=? AND content_hash='h-legacy:x-5'").get(scope)).toBeUndefined();
+  // cause10 v2 (FORGET-ATOMIC): every revision's import key is written in the commit, so admission (import.ts) refuses that hash from the
+  // commit (r3 asserted the key was still owed here). A line written without admission (this fixture's capture) is still held
+  // "checking" and ended by the window step, which a long source Forget keeps as cleanup.
+  expect(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='import' AND target_id=? AND content_hash='h-legacy:x-5'").get(scope)).toBeTruthy();
   source("legacy:y", scope, null, null, 1, () => "h-legacy:x-5");
   expect(memVerdict(db, "source", "legacy:y", 0, scope)).toBe("checking");
   // the marker alone cannot close the window: it holds for the bookkeeping job's imports phase

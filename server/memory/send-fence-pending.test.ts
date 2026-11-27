@@ -60,13 +60,13 @@ describe("pending send fence", () => {
     // The content denial is beyond 256 audience-only marks. The bounded reader
     // cannot establish absence of a content denial and must refuse the write.
     for (let id = 1; id <= 257; id++) {
-      f.db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES(?,'overflow-secret',0,?)").run(kind, id);
+      f.db.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES(?,'overflow-secret',0,?)").run(kind, id);
       if (id <= 256) f.db.prepare("INSERT INTO memory_revoke_audience(revoke_id) VALUES(?)").run(id);
     }
     expect(denyGeneration(f.db)).toBe(prompt.denyGeneration);
     expect(fenceVerdict(f.db, prompt, CONTENT)).toEqual({ state: "checking", reason: "lookup-error" });
     expect(() => assertSendFence(prompt, CONTENT, f.db)).toThrow("MEMORY_CONTEXT_REVOKED");
-    f.db.exec("DROP TABLE memory_deny_memory");
+    f.db.exec("DROP TABLE memory_deny_object");
     expect(fenceVerdict(f.db, prompt, CONTENT)).toEqual({ state: "checking", reason: "lookup-error" });
   });
   it("R4 refuses with counts and never invokes an injected legacy drain or writes marker rows", () => {
@@ -117,12 +117,12 @@ print(json.dumps({'steps':steps,'rows':len(rows)}))
       expect(result.rows).toBe(257); expect(result.steps).toBeLessThan(20000);
       work.push(result.steps);
       f.db.exec("BEGIN");
-      const mark = f.db.prepare("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('T',25,?,25,'fixture')");
+      const mark = f.db.prepare("INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('T',25,?,25,'fixture')");
       for (let id = 1; id <= n; id++) mark.run(id);
       f.db.exec("COMMIT");
       resetDenyReadMeter();
       expect(refsLookup(f.db, [prefix(null)], CONTENT)).toEqual({ state: "checking", reason: "lookup-error" });
-      const markSql = denyReadMeter().sql.find(text => text.startsWith("SELECT lsn,revoke_id FROM memory_deny_line"));
+      const markSql = denyReadMeter().sql.find(text => text.startsWith("SELECT lsn,revoke_id FROM memory_deny_point"));
       expect(markSql).toMatch(/LIMIT \?$/);
       expect(f.db.prepare(markSql!).all("T", "[25]", 257)).toHaveLength(257);
 

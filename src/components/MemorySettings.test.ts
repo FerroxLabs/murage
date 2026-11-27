@@ -91,7 +91,7 @@ describe("compact memory state", () => {
 
 describe("folder memory is never called a project (PM5)", () => {
   it("labels a folder audience as folder memory and offers it only where it is used", () => {
-    expect(memoryAudienceLabel({ kind: "project", label: "/Users/alex/closedesk" })).toBe("Folder memory: /Users/alex/closedesk");
+    expect(memoryAudienceLabel({ kind: "project", label: "/Users/exampleuser/closedesk" })).toBe("Folder memory: /Users/exampleuser/closedesk");
     expect(memoryAudienceLabel({ kind: "room", label: "Tallyroo Launch" })).toBe("Tallyroo Launch");
     expect(folderMemoryInUse([{ kind: "room" }, { kind: "bot" }])).toBe(false);
     expect(folderMemoryInUse([{ kind: "project" }])).toBe(true);

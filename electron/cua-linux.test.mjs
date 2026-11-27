@@ -37,7 +37,7 @@ function healthyDoctor() {
   return {
     ok: true,
     probes: [
-      { label: "binary", status: "ok", message: "cua-driver 0.19.3" },
+      { label: "binary", status: "ok", message: "cua-driver 0.55.0" },
       { label: "display server", status: "ok", message: "X11 (DISPLAY=:0)" },
       { label: "X11 connection", status: "ok", message: "connected, 1 visible top-level window" },
       { label: "AT-SPI", status: "ok", message: "org.a11y.Bus reachable via session bus" },
@@ -50,7 +50,7 @@ function healthyWaylandDoctor() {
   return {
     ok: true,
     probes: [
-      { label: "binary", status: "ok", message: "cua-driver 0.19.3" },
+      { label: "binary", status: "ok", message: "cua-driver 0.55.0" },
       {
         label: "display server",
         status: "ok",
@@ -66,13 +66,13 @@ function successfulRunner(binary, { doctor = healthyDoctor() } = {}) {
   return vi.fn(async (_command, args, options) => {
     expect(_command).toBe(binary);
     expect(options.env.OPENAI_API_KEY).toBeUndefined();
-    if (args[0] === "--version") return { exitCode: 0, stdout: "cua-driver 0.19.3\n", stderr: "" };
+    if (args[0] === "--version") return { exitCode: 0, stdout: "cua-driver 0.55.0\n", stderr: "" };
     if (args[0] === "manifest") {
       return {
         exitCode: 0,
         stdout: JSON.stringify({
           schema_version: "1",
-          binary_version: "0.19.3",
+          binary_version: "0.55.0",
           binary_path: binary,
           mcp_invocation: { command: binary, args: ["mcp"] },
         }),
@@ -149,7 +149,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA discovery", () => {
 
   it("resolves the official user-local symlink to its canonical executable", () => {
     const root = temporaryDirectory();
-    const release = executable(path.join(root, ".cua-driver", "packages", "releases", "0.19.3"));
+    const release = executable(path.join(root, ".cua-driver", "packages", "releases", "0.55.0"));
     const localBin = path.join(root, ".local", "bin");
     fs.mkdirSync(localBin, { recursive: true, mode: 0o700 });
     fs.symlinkSync(release, path.join(localBin, "cua-driver"));
@@ -184,7 +184,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA discovery", () => {
     "accepts the official 0775 layout only for a proven user-private primary group",
     () => {
       const root = temporaryDirectory();
-      const releaseDirectory = path.join(root, ".cua-driver", "packages", "releases", "0.19.3");
+      const releaseDirectory = path.join(root, ".cua-driver", "packages", "releases", "0.55.0");
       const release = executable(releaseDirectory);
       const localBin = path.join(root, ".local", "bin");
       fs.mkdirSync(localBin, { recursive: true, mode: 0o775 });
@@ -325,8 +325,8 @@ describe.skipIf(process.platform === "win32")("Linux CUA discovery", () => {
 });
 
 describe("Linux private primary group proof", () => {
-  const identity = { uid: 1000, gid: 1000, username: "kesleydev" };
-  const getent = ({ group = "kesleydev:x:1000:", passwd = "kesleydev:x:1000:1000::/home/kesleydev:/bin/bash" } = {}) =>
+  const identity = { uid: 1000, gid: 1000, username: "exampledev" };
+  const getent = ({ group = "exampledev:x:1000:", passwd = "exampledev:x:1000:1000::/home/exampledev:/bin/bash" } = {}) =>
     vi.fn((args) => ({
       ok: true,
       stdout: args[0] === "group" ? `${group}\n` : `${passwd}\n`,
@@ -336,21 +336,21 @@ describe("Linux private primary group proof", () => {
     expect(privatePrimaryGroup(identity, { getent: getent() })).toEqual({
       exclusive: true,
       gid: 1000,
-      name: "kesleydev",
+      name: "exampledev",
     });
   });
 
   it("rejects explicit supplementary members and another primary-GID account", () => {
     expect(
       privatePrimaryGroup(identity, {
-        getent: getent({ group: "kesleydev:x:1000:other" }),
+        getent: getent({ group: "exampledev:x:1000:other" }),
       }),
     ).toMatchObject({ exclusive: false, reason: "primary-group-shared" });
     expect(
       privatePrimaryGroup(identity, {
         getent: getent({
           passwd: [
-            "kesleydev:x:1000:1000::/home/kesleydev:/bin/bash",
+            "exampledev:x:1000:1000::/home/exampledev:/bin/bash",
             "other:x:1001:1000::/home/other:/bin/bash",
           ].join("\n"),
         }),
@@ -371,7 +371,7 @@ describe("Linux private primary group proof", () => {
       privatePrimaryGroup(identity, {
         getent: getent({
           passwd: [
-            "kesleydev:x:1000:1000::/home/kesleydev:/bin/bash",
+            "exampledev:x:1000:1000::/home/exampledev:/bin/bash",
             "malformed-entry",
           ].join("\n"),
         }),
@@ -380,10 +380,10 @@ describe("Linux private primary group proof", () => {
   });
 
   it("uses absolute getent argv without a shell and with bounded resources", () => {
-    const spawnCommand = vi.fn(() => ({ status: 0, stdout: "kesleydev:x:1000:\n", stderr: "" }));
+    const spawnCommand = vi.fn(() => ({ status: 0, stdout: "exampledev:x:1000:\n", stderr: "" }));
     expect(runGetent(["group", "1000"], { spawnCommand })).toEqual({
       ok: true,
-      stdout: "kesleydev:x:1000:\n",
+      stdout: "exampledev:x:1000:\n",
     });
     expect(spawnCommand).toHaveBeenCalledWith(
       "/usr/bin/getent",
@@ -422,7 +422,7 @@ describe.skipIf(process.platform === "win32")("Linux CUA diagnostics", () => {
       status: "ready",
       path: binary,
       fileIdentity: validateDriverCandidate(binary).fileIdentity,
-      driverVersion: "0.19.3",
+      driverVersion: "0.55.0",
       manifestSchema: "1",
       mcp: { command: binary, args: ["mcp"] },
     });
@@ -512,12 +512,12 @@ describe.skipIf(process.platform === "win32")("Linux CUA diagnostics", () => {
     const root = temporaryDirectory();
     const binary = executable(path.join(root, "bin"));
     const run = successfulRunner(binary);
-    run.mockImplementationOnce(async () => ({ exitCode: 0, stdout: "cua-driver 0.19.3", stderr: "" }));
+    run.mockImplementationOnce(async () => ({ exitCode: 0, stdout: "cua-driver 0.55.0", stderr: "" }));
     run.mockImplementationOnce(async () => ({
       exitCode: 0,
       stdout: JSON.stringify({
         schema_version: "1",
-        binary_version: "0.19.3",
+        binary_version: "0.55.0",
         mcp_invocation: { command: binary, args: ["mcp"] },
       }),
       stderr: "",

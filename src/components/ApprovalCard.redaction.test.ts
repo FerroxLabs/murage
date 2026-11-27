@@ -29,3 +29,18 @@ describe("approval display handles", () => {
     expect(html).not.toContain("hunter2");
   });
 });
+
+it("Grok C1/H2: the real composer dispatch preserves the reviewed skill hash with an opaque permission handle", async () => {
+  const posts: any[] = [];
+  const sha256 = "a".repeat(64);
+  vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+    if (init?.method === "POST") posts.push(JSON.parse(init.body));
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  }));
+  let dispatch!: (action: store.Action) => void;
+  const Probe = () => { dispatch = store.useStore().dispatch; return null; };
+  renderToStaticMarkup(createElement(store.StoreProvider, null, createElement(Probe)));
+  dispatch({ type: "decideRequest", threadId: "fixture-thread", requestId: "p.fixture-card", behavior: "allow", reviewedSha256: sha256 });
+  await vi.waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toEqual({ requestHandle: "p.fixture-card", action: "allow", reviewedSha256: sha256 });
+});

@@ -58,11 +58,12 @@ describe("Calls: two lists, each named for whose calls it holds", () => {
 });
 
 describe("Models in Simple: the weekly job first, in plain words", () => {
-  it("puts Add a key first in Simple and leaves Advanced in its built order", () => {
+  // 1.0.21 (Sean, standing): Flux Router (models.providers) leads in both modes; Add a key comes right after it in Simple.
+  it("puts Flux first and Add a key next in Simple, and leaves Advanced in its built order", () => {
     const simple = modelsCardsFor("simple", { desktop: true }).map((card) => card.id);
     const advanced = modelsCardsFor("advanced", { desktop: true }).map((card) => card.id);
-    expect(simple[0]).toBe("models.paste-keys");
-    expect(advanced[0]).toBe("models.engines");
+    expect(simple.slice(0, 2)).toEqual(["models.providers", "models.paste-keys"]);
+    expect(advanced[0]).toBe("models.providers");
     expect([...simple].sort()).toEqual([...advanced].sort());
     expect(simple.filter((id) => id !== "models.paste-keys")).toEqual(advanced.filter((id) => id !== "models.paste-keys"));
   });

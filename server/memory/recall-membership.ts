@@ -7,18 +7,60 @@ import { type MemoryRoster } from './policy.ts';
 import { scopeRow } from './scope-id.ts';
 import { ConstructionBudget, constructionSort } from './recall-construction.ts';
 import { recallPartitionSteps } from './recall-partitions.ts';
+import { optionalIndexReady } from './optional-index.ts';
+import { SCOPE_OWNER_INDEX } from './schema.ts';
+import { threadExcluded } from './deny.ts';
 import type { ensureScope } from './policy.ts';
 import type { RecallViewBinding } from './recall-view.ts';
 
 type Row = Record<string, unknown>;
-/** Raw rows are paged BEFORE residual classification; no complete binding/scope result is read at once. */
-function* rows(db: DatabaseSync, table: 'memory_scope_bindings'|'memory_scopes'): Generator<Row> {
+/** Raw rows are paged BEFORE residual classification; no complete binding/scope result is read at once. Without memory_scopes_owner
+ * (built after listen, schema.ts ensureScopeOwnerIndex) a linked person's scopes are still read this way: by kind and owner they would
+ * be a scan per thread. */
+function* scopeRows(db: DatabaseSync): Generator<Row> {
   let after=0;
   for(;;) {
-    const fields=table==='memory_scopes'?'id,kind,owner_key':"id,scope_id,subject_type,subject_id,state,CASE WHEN subject_type='human-thread' THEN json_extract(intent,'$.personId') END AS person";
-    const page=db.prepare(`SELECT rowid AS position,${fields} FROM ${table} WHERE rowid>? ORDER BY rowid LIMIT 64`).all(after);
+    const page=db.prepare('SELECT rowid AS position,id,kind,owner_key FROM memory_scopes WHERE rowid>? ORDER BY rowid LIMIT 64').all(after);
     if(!page.length)return;
     for(const row of page){after=Number(row.position);yield row;}
+  }
+}
+const BINDING_FIELDS="id,scope_id,subject_type,subject_id,state,CASE WHEN subject_type='human-thread' THEN json_extract(intent,'$.personId') END AS person";
+/** Each named thread's human-thread rows in rowid order (the last binding wins), and the grants to one subject. */
+function* namedBindings(db: DatabaseSync, threads: readonly string[], grantee: [string,string]): Generator<Row> {
+  const human=db.prepare(`SELECT rowid AS position,${BINDING_FIELDS} FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type='human-thread' AND subject_id=? ORDER BY rowid`);
+  for(const thread of new Set(threads))for(const row of human.all(thread))yield row;
+  const subject=`SELECT rowid AS position,${BINDING_FIELDS} FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type=? AND subject_id=?`;
+  if(grantee[0]!=='person') {
+    yield* db.prepare(`${subject} AND state='granted' ORDER BY rowid`).all(...grantee);
+    return;
+  }
+  // Take the page before filtering state, so revoked grants cannot hide an unbounded index walk.
+  const first=db.prepare(`${subject} ORDER BY rowid LIMIT 64`);
+  const next=db.prepare(`${subject} AND rowid>? ORDER BY rowid LIMIT 64`);
+  for(let rows=first.all(...grantee);rows.length;rows=next.all(...grantee,Number(rows[rows.length-1].position))) {
+    yield* rows;
+    if(rows.length<64)return;
+  }
+}
+/** Page the index before classifying the person. Finish a split subject by rowid before seeking later subjects. */
+function* humanThreadRows(db: DatabaseSync): Generator<Row> {
+  const human="SELECT subject_id,rowid AS position,json_extract(intent,'$.personId') AS person FROM memory_scope_bindings INDEXED BY memory_bindings_subject WHERE subject_type='human-thread'";
+  const first=db.prepare(`${human} AND subject_id>=? ORDER BY subject_id,rowid LIMIT 64`);
+  const next=db.prepare(`${human} AND subject_id>? ORDER BY subject_id,rowid LIMIT 64`);
+  const same=db.prepare(`${human} AND subject_id=? AND rowid>? ORDER BY rowid LIMIT 64`);
+  let subject='';
+  for(let rows=first.all(subject);rows.length;rows=next.all(subject)) {
+    yield* rows;
+    if(rows.length<64)return;
+    subject=String(rows[rows.length-1].subject_id);
+    let position=Number(rows[rows.length-1].position);
+    for(;;) {
+      const tail=same.all(subject,position);
+      yield* tail;
+      if(tail.length<64)break;
+      position=Number(tail[tail.length-1].position);
+    }
   }
 }
 export interface ConstructedMembership {scopes:string[];lineage:string[];personScopes:Set<string>;room:boolean;threadRecall?:boolean}
@@ -62,7 +104,19 @@ export function* recallMembershipSteps(db: DatabaseSync,binding: RecallViewBindi
   function* add(kind:string,key:string): Generator<void> {const row=scopeRow(db,kind,key);if(row)scopes.add(String(row.id));yield;}
   yield* add('conversation',threadId);
   if(isGroupPrincipal(principal)){for(const scope of scopes){result.scopes.push(scope);yield;}return result;}
-  for(const row of rows(db,'memory_scope_bindings')) {
+  // 1020 CTXSTOP-ROSTER B: only the bindings of the threads this view can name (its own, the rooms') and the grants to its own bot or
+  // room (the workspace owner) or to its person (anyone else) are read, by memory_bindings_subject. A full page walk of every binding per
+  // view (system, pip and checkpoint rows included) made a rebuild of 1167 views after one roster change read 158k-285k pages a minute and
+  // held the admission ledger lock past its deadline. S(P) needs the human-thread range too, in cooperative raw pages.
+  const named=[threadId,...ownThreads,...[...roomThreads.values()].flatMap(threads=>[...threads])];
+  const bindings=namedBindings(db,named,isWorkspaceOwner(principal)?group?['room',group.id]:['bot',botId]:['person',principal.personId]);
+  if(!isWorkspaceOwner(principal))for(const row of humanThreadRows(db)) {
+    const thread=String(row.subject_id);
+    if(row.person===principal.personId&&!personThreads.has(thread)){budget.add(thread);personThreads.add(thread);}
+    yield;
+  }
+  for(const row of bindings) {
+    if(row.subject_type==='person'&&row.state!=='granted'){yield;continue;}
     budget.add(String(row.id),String(row.scope_id),String(row.subject_id));
     if(row.subject_type==='human-thread') {
       const person=row.person;
@@ -72,7 +126,7 @@ export function* recallMembershipSteps(db: DatabaseSync,binding: RecallViewBindi
     if(row.state==='granted' && ['bot','room','person'].includes(String(row.subject_type)))grants.push({scope:String(row.scope_id),type:String(row.subject_type),id:String(row.subject_id)});
     yield;
   }
-  const excluded=(thread:string)=>!!db.prepare('SELECT 1 FROM memory_recall_excluded WHERE thread_id=?').get(thread);
+  const excluded=(thread:string)=>threadExcluded(db,thread);
   const sameAudience=(thread:string)=>(persons.has(thread)?persons.get(thread):WORKSPACE_OWNER)===principal.personId;
   function* own():Generator<void> {for(const thread of ownThreads){if(!foreign.has(thread)&&!excluded(thread)&&sameAudience(thread))yield* add('conversation',thread);yield;}}
   function* reach(room:MemoryRoster['groups'][number],same=false):Generator<void> {
@@ -120,7 +174,15 @@ export function* recallMembershipSteps(db: DatabaseSync,binding: RecallViewBindi
   }
   if(!isWorkspaceOwner(principal)) {
     try {
-      for(const row of rows(db,'memory_scopes')) {
+      // 1021 RECALLWALK: by (kind, owner_key) when memory_scopes_owner exists, every scope of a person thread and the person's preferences
+      // (all rows of each key, as the walk kept); without it the paged walk below.
+      if(optionalIndexReady(db,SCOPE_OWNER_INDEX)) {
+        const byOwner=db.prepare(`SELECT id FROM memory_scopes INDEXED BY ${SCOPE_OWNER_INDEX} WHERE kind=? AND owner_key=?`);
+        for(const [kind,key] of [...[...personThreads].map(thread=>['conversation',thread]),['preferences','person:'+principal.personId]]) {
+          for(const row of byOwner.all(kind,key)){budget.add(String(row.id),key);result.personScopes.add(String(row.id));}
+          yield;
+        }
+      } else for(const row of scopeRows(db)) {
         budget.add(String(row.id),String(row.owner_key));
         const kind=String(row.kind),key=String(row.owner_key);
         if(kind==='conversation'&&personThreads.has(key) || kind==='preferences'&&key==='person:'+principal.personId)result.personScopes.add(String(row.id));yield;

@@ -213,6 +213,7 @@ export const cloudHomeCopy = {
   vpsComputerUnavailable: "A VPS computer is not available on your Cloud. Use a hosted computer instead.",
   ownServerRelayRefused: "This request is not allowed",
   ownServerRelayNotFound: "No computer is connected for this bot",
+  ownServerComputerOff: "Your own-server computer isn't available on Murage Cloud yet, so this bot is running without a computer here. It works when the bot runs on your own computer.",
   boxEngineUnavailable: "The Computer engine is not available on your Cloud. Choose another engine; hosted computers work with them.",
   ownServerHostInvalid: "Enter your server's public address, like server.example.com or a public IP address.",
   ownServerHostNotPublic: "That address points inside a private network. Enter your server's public address.",

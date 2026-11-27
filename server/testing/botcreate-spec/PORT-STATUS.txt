@@ -1,8 +1,8 @@
 BOT-CREATE-OUTSIDE-1019 r3.3.1: predicate and actual helper-driver draft, NOT a completed bot-create server feature.
 
 Base: 81d7239a011b2851af6807142965cf51bea5585d
-MAIN ruling: /work/fuigo-builds/orph/_ev/designs/RULING-botcreate-r331-MAIN.md
-READY: /work/fuigo-builds/orph/_ev/designs/botcreate-spec-r331/READY.txt
+MAIN ruling: /root/fuigo-builds/orph/_ev/designs/RULING-botcreate-r331-MAIN.md
+READY: /root/fuigo-builds/orph/_ev/designs/botcreate-spec-r331/READY.txt
 
 settle.py, gate.py, traces.tsv and mutants.tsv are byte-identical reference fixtures, SHA256 asserted by tests.
 106 traces (33 accept / 73 reject), including all five Susan/Sable cases.
@@ -18,7 +18,7 @@ Reference world.py op_delegate emits no such mark, so SUSAN-a and A-held-work ex
 No mark exemption or expectation change was invented. Stopped under the user's trace-conflict rule.
 
 Evidence and complete withdrawn runtime/UI source overlay:
-/work/build/bld2-botcreate/evidence/
+/root/fuigo-builds/swarm-b/bld2-botcreate/evidence/
 - OPEN-SUSAN-a-delegate-mark.txt: exact conflict, command, scope and remaining work.
 - SUSAN-a-conflict.txt: mandatory ACTIVE assertion fails through isolated launchVerificationServer.
 - SUSAN-a.json: verification wait=settled, messages and observed staged:outside record.

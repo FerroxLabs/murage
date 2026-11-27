@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { restoreWindowOpenOnDisk } from "./restore-window.mjs";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "j5-rw-"));
 const journal = (dir, phase) => fs.writeFileSync(path.join(dir, "restore-job.json"), JSON.stringify({ version: 1, id: "j", archiveId: "a", source: "s", at: 1, phase }));
@@ -15,7 +16,7 @@ test("the window is open for armed, captured, swapped; closed for none, prepared
   try {
     assert.equal(restoreWindowOpenOnDisk(dir), false);
     for (const [phase, open] of [["armed", true], ["captured", true], ["swapped", true], ["prepared", false], ["aborted", false]]) { journal(dir, phase); assert.equal(restoreWindowOpenOnDisk(dir), open, phase); }
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { safeWipeSync(dir); }
 });
 test("an unreadable journal fails closed", () => {
   const dir = tmp();
@@ -25,7 +26,7 @@ test("an unreadable journal fails closed", () => {
     fs.rmSync(path.join(dir, "restore-job.json")); fs.mkdirSync(path.join(dir, "restore-job.json")); assert.equal(restoreWindowOpenOnDisk(dir), true);
     fs.rmdirSync(path.join(dir, "restore-job.json")); journal(dir, "prepared"); fs.chmodSync(path.join(dir, "restore-job.json"), 0o000);
     if (process.getuid?.() !== 0) assert.equal(restoreWindowOpenOnDisk(dir), true, "a journal that cannot be read fails closed");
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { safeWipeSync(dir); }
 });
 test("main.mjs builds the host BackupCoordinator with the restore window (the J2 backup-side gate is not inert on desktop)", () => {
   const main = fs.readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
@@ -48,5 +49,5 @@ test("a scheduled backup during an open restore window is refused by the coordin
     fs.rmSync(path.join(dir, "restore-job.json"));
     await c.tick();
     assert.equal(worked, 1, "with no restore open the tick runs");
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { safeWipeSync(dir); }
 });

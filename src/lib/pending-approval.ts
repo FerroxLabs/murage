@@ -1,3 +1,4 @@
+import { isSkillSwitchAction, skillSwitchAllowLabel } from "../../shared/skill-request";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -69,7 +70,7 @@ export function needsRoutineReview(pending: Pending): boolean {
 export function isPendingApprovalMessage(m: Message): boolean {
   // a publish card carries its own Publish / Not now buttons and is never answered by voice or from the composer
   // a limit offer card is a choice of engine, never a permission (1.0.4 SL-I I5)
-  return !m.card?.botReviewId && m.kind === "options" && m.card?.kind !== "own-write" && m.card?.kind !== "publish" && m.card?.kind !== "email-send" && m.card?.kind !== "email-trust-offer" && m.card?.tool !== "murage_limit_offer" && !isQuestionCard(m.card) && Boolean(m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed);
+  return !m.card?.botReviewId && m.kind === "options" && m.card?.kind !== "own-write" && m.card?.kind !== "publish" && m.card?.kind !== "email-send" && m.card?.kind !== "email-trust-offer" && m.card?.tool !== "murage_limit_offer" && !isQuestionCard(m.card) && Boolean(m.card?.requestId && m.card.tool && (!m.card.answered && !m.card.dismissed || m.card.deliveryRetry));
 }
 
 /** A waiting card as the panel reads it. */
@@ -156,6 +157,7 @@ export function spokenApprovalPrompt(pending: Pending, requester: string, firstP
   const isRoutineRequest = isRoutineApproval(pending);
   const isSkillRequest = isSkillApproval(pending);
   if (isSkillRequest) {
+    if (isSkillSwitchAction(pending.message.card?.skillRequest?.action)) return `${requester} asks: ${pending.message.card?.title} Review the skill on screen. Say "${skillSwitchAllowLabel(pending.message.card?.skillRequest, pending.message.card?.options)?.toLowerCase() ?? "deny"}" or "deny".`;
     const updating = pending.message.card?.skillRequest?.action === "update";
     const title = pending.message.card?.title.trim() || (updating ? "Update this skill?" : "Enable this skill?");
     return `${requester} asks: ${title}${/[.!?]$/.test(title) ? "" : "."} Review the skill on screen. Should I ${updating ? "update" : "enable"} it?`;
@@ -188,6 +190,7 @@ export const QUEUE_ONE_AT_A_TIME = "I answer one request at a time. Say yes or n
 export function spokenQueueItem(pending: Pending, requester: string, routine?: string): string {
   const forRoutine = routine ? ` for the routine ${routine}` : "";
   if (isSkillApproval(pending)) {
+    if (isSkillSwitchAction(pending.message.card?.skillRequest?.action)) return `${requester} asks: ${pending.message.card?.title}`;
     return `${requester} wants to ${pending.message.card?.skillRequest?.action === "update" ? "update" : "enable"} a learned skill`;
   }
   if (isHostConsentApproval(pending)) return `${requester} wants to use this computer`;
@@ -314,6 +317,7 @@ export function approvalFoldKey(pending: Pending): LocaleKey {
 /** What a card asks, in the panel's own words; the queue lists it by these. */
 export function approvalLabel(pending: Pending): string {
   if (isSkillApproval(pending)) {
+    if (isSkillSwitchAction(pending.message.card?.skillRequest?.action)) return pending.message.card?.title ?? "Confirm skill change";
     return pending.message.card?.skillRequest?.action === "update"
       ? "Update this learned skill"
       : "Enable this learned skill";

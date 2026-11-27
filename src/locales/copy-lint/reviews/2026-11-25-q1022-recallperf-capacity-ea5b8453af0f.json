@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "recallperf-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 recallperf Memory page capacity line"
+  },
+  "author": "q1022-recallperf-opus",
+  "date": "2026-11-25",
+  "base": "8cf662cc4b",
+  "scope": "q1022 recallperf item 4d: Memory page capacity sentence memoryHealth.capacityHit (8 locales)",
+  "strings": {
+    "en:memoryHealth.capacityHit": {
+      "text": "Murage searched your most recent memories first; older ones are still there.",
+      "en": "Murage searched your most recent memories first; older ones are still there.",
+      "verdict": "pass",
+      "note": "Source string matches the product ruling: one plain sentence framed as a strength."
+    },
+    "de:memoryHealth.capacityHit": {
+      "text": "Murage hat zuerst deine neuesten Erinnerungen durchsucht; ältere sind weiterhin da.",
+      "en": "Murage searched your most recent memories first; older ones are still there.",
+      "verdict": "pass",
+      "note": "Meaning matches, informal du, pack item term Erinnerungen, brand kept, punctuation correct."
+    },
+    "es:memoryHealth.capacityHit": {
+      "text": "Murage buscó primero en tus memorias más recientes; las más antiguas siguen ahí.",
+      "en": "Murage searched your most recent memories first; older ones are still there.",
+      "verdict": "pass",
+      "note": "Corrected text now uses the pack term memorias with matching feminine agreement, informal tú, punctuation correct."
+    },
+    "fr:memoryHealth.capacityHit": {
+      "text": "Murage a d’abord cherché dans tes souvenirs les plus récents ; les plus anciens sont toujours là.",
+      "en": "Murage searched your most recent memories first; older ones are still there.",
+      "verdict": "pass",
+      "note": "Meaning matches, informal tu, pack term souvenirs, typographic apostrophe and spaced semicolon match pack convention."
+    },
+    "hi:memoryHealth.capacityHit": {
+      "text": "Murage ने पहले आपकी सबसे नई यादें खोजीं; पुरानी यादें अब भी मौजूद हैं।",
+      "en": "Murage searched your most recent memories first; older ones are still there.",
+      "verdict": "pass",
+      "note": "Corrected text now uses the pack term यादें with correct plural agreement, आप register, danda ending."
+    },
+    "ja:memoryHealth.capacityHit": {
+      "text": "Murage は新しいメモリから先に検索しましたが、古いメモリもそのまま残っています。",
+      "en": "Murage searched your most recent memories first; older ones are still there.",
+      "verdict": "pass",
+      "note": "Corrected text is now one sentence joined with が, pack term メモリ, punctuation correct."
+    },
+    "pt-br:memoryHealth.capacityHit": {
+      "text": "O Murage buscou primeiro nas suas memórias mais recentes; as mais antigas continuam lá.",
+      "en": "Murage searched your most recent memories first; older ones are still there.",
+      "verdict": "pass",
+      "note": "Meaning matches, você register with O Murage as in pack, pack term memórias, punctuation correct."
+    },
+    "zh:memoryHealth.capacityHit": {
+      "text": "Murage 先搜索了你最近的记忆；较早的记忆仍然都在。",
+      "en": "Murage searched your most recent memories first; older ones are still there.",
+      "verdict": "pass",
+      "note": "Meaning matches, informal 你, pack term 记忆, full-width semicolon and period correct."
+    }
+  },
+  "files": {}
+}

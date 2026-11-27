@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "held1022-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 held rows 21 (Fuigo Trust) and 29 (Sentinel Health)"
+  },
+  "author": "sentcopy-fix-1021-wf1121",
+  "date": "2026-11-21",
+  "base": "6405f9d84e",
+  "scope": "1.0.22 row 29 sentcopy: Health line when background checks are retired (8 languages)",
+  "strings": {
+    "en:ux.l2b.health.backgroundChecksRetired": {
+      "text": "Background health checks have been retired.",
+      "en": "Background health checks have been retired.",
+      "verdict": "pass",
+      "note": "Source string; clear that the background checks were intentionally retired."
+    },
+    "es:ux.l2b.health.backgroundChecksRetired": {
+      "text": "Las comprobaciones de estado en segundo plano se han retirado.",
+      "en": "Background health checks have been retired.",
+      "verdict": "pass",
+      "note": "Matches neighbour term \"comprobación de estado\"; \"se han retirado\" reads as an intentional retirement."
+    },
+    "zh:ux.l2b.health.backgroundChecksRetired": {
+      "text": "后台健康检查已停用。",
+      "en": "Background health checks have been retired.",
+      "verdict": "pass",
+      "note": "Matches neighbour term \"健康检查\"; \"已停用\" is natural for a retired feature."
+    }
+  },
+  "files": {}
+}

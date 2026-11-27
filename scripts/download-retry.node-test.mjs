@@ -102,7 +102,7 @@ test("CUA linux: falls back to the mirror and still rejects tampered bytes", asy
   const root = mkdtempSync(path.join(tmpdir(), "retry-cua-m-")); const seen = [];
   const fetchImpl = async u => { seen.push(u); return u.includes("build-mirror") ? res(200, "tampered") : res(504); };
   await assert.rejects(stageLinuxCua({ rootDirectory: root, platform: "linux", arch: "x64", fetchImpl, downloadAttempts: 2, downloadRetryDelayMs: 1, sleep: async () => {} }), /size does not match|checksum mismatch/);
-  assert.equal(seen.length, 3); assert.ok(seen[2].includes("build-mirror-1/cua-driver-rs-0.19.3-linux-x86_64-binary.tar.gz"));
+  assert.equal(seen.length, 3); assert.ok(seen[2].includes("build-mirror-1/cua-driver-rs-0.55.0-linux-x86_64-binary.tar.gz"));
   safeWipeSync(root);
 });
 

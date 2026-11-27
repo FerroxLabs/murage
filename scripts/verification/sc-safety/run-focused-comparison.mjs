@@ -1,11 +1,12 @@
 // Owner: sc-safety-rd (focused/touched by-ID comparison under MAIN D2).
 // Owner: MAIN (full integration related-set/full-suite train comparison).
 import {spawnSync} from 'node:child_process';
-import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync,existsSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,existsSync} from 'node:fs';
 import {resolve,join,relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {reviewedPrechecks} from './reviewed-prechecks.mjs';
+import { safeWipeSync } from '../../../server/testing/safe-wipe.mjs';
 const root=resolve(fileURLToPath(new URL('../../../',import.meta.url)));
 const base=resolve(process.env.SC_BASE_DIR??''),out=resolve(process.env.SC_OUT??'');
 if(!process.env.SC_BASE_DIR||!process.env.SC_OUT||!relative(root,base).startsWith('..')||!relative(root,out).startsWith('..')||out==='/dev'||out.startsWith('/dev/'))throw Error('External baseline and evidence directories required');
@@ -34,7 +35,7 @@ for(const[side,cwd]of [['head',root],['base',base]]){
   runs[side]={runtimeErrors:suites.filter(suite=>suite.status==='failed'&&!(suite.assertionResults??[]).length).map(suite=>relative(cwd,suite.name)),status:run.status,signal:run.signal,error:run.error?.message,elapsed:Date.now()-started,selected,absent,unreported:selected.filter(file=>!reportedFiles.includes(file)),rows,
    sourceHashes:Object.fromEntries(selected.map(file=>[file,createHash('sha256').update(readFileSync(join(cwd,file))).digest('hex')]))};
   writeFileSync(join(out,`${side}-by-id.jsonl`),rows.map(row=>JSON.stringify(row)).join('\n')+'\n');
- }finally{rmSync(scratch,{recursive:true,force:true});}
+ }finally{safeWipeSync(scratch, { within: out });}
  process.stdout.write(`SC_FOCUSED_${side.toUpperCase()} ${runs[side].rows.length} IDs\n`);
 }
 const group=rows=>{const result=new Map();for(const row of rows)result.set(row.id,[...(result.get(row.id)??[]),row.status]);return result;};

@@ -283,6 +283,9 @@ function derivedSlice<T>(db: DatabaseSync, job: BackgroundJob, run: () => T): T 
   try { return run(); } finally { try { db.exec("PRAGMA synchronous=FULL"); } catch { /* closed */ } }
 }
 
+/** Jobs that read what an earlier job writes (backgroundJobsPending's order): such a job never overtakes that job when the head rotates. */
+const BACKGROUND_JOB_AFTER: Partial<Record<BackgroundJob, BackgroundJob[]>> = { scrub: ["integrity"], writetime: ["lineage"] };
+
 export interface BackgroundHandle { done: Promise<void>; stop(): void; slices: number; jobs: BackgroundJob[] }
 /** Even under I/O throttling, one small slice can run each interval when no owner work is waiting. */
 export const BACKGROUND_DEFER_PROGRESS_MS = 15_000;
@@ -342,6 +345,15 @@ export function startBackgroundUpgradeWork(db: DatabaseSync, hooks: BackgroundHo
   handle.stop = finish;
   let lastProgress = 0;
   let lastSliceAt = Date.now();
+  // The head goes to the back, and the next job that reads what a job still queued has to write first waits behind it too: the order of
+  // backgroundJobsPending is kept between a job and the jobs it reads (a job left alone keeps the head; a cycle cannot form, the order is fixed).
+  const rotate = () => {
+    for (let turns = 0; queue.length > 1 && turns < queue.length; turns++) {
+      queue.push(queue.shift()!);
+      const head = queue[0]!;
+      if (!(BACKGROUND_JOB_AFTER[head] ?? []).some(before => queue.includes(before))) return;
+    }
+  };
   const tick = async () => {
     timer = null;
     if (stopped) return;
@@ -373,9 +385,11 @@ export function startBackgroundUpgradeWork(db: DatabaseSync, hooks: BackgroundHo
       // at most half the time: the pause after a slice is at least as long as the slice, so the background never writes back to back
       delay = Math.max(delay, Math.round(performance.now() - sliceStarted));
       handle.slices++;
-      if (result === "busy") delay = hooks.lockedRetryMs ?? BACKGROUND_LOCKED_RETRY_MS;
-      else if (result === "failed") delay = hooks.failureRetryMs ?? BACKGROUND_FAILURE_RETRY_MS;
-      else if ("retryMs" in result) { delay = Math.max(delay, (result as RetryLater).retryMs); tracker?.update(result.phase ?? job, result.done, result.total, false, null); }
+      // a slice that could not move (busy, failed, retry later) hands the head to the next job that may run: it used to keep the head, so
+      // every job queued behind it waited with no end (HIDDEN-COST H14)
+      if (result === "busy") { delay = hooks.lockedRetryMs ?? BACKGROUND_LOCKED_RETRY_MS; rotate(); }
+      else if (result === "failed") { delay = hooks.failureRetryMs ?? BACKGROUND_FAILURE_RETRY_MS; rotate(); }
+      else if ("retryMs" in result) { delay = Math.max(delay, (result as RetryLater).retryMs); tracker?.update(result.phase ?? job, result.done, result.total, false, null); rotate(); }
       else {
         failures.delete(job);
         report(job, result);
@@ -396,7 +410,7 @@ export function startBackgroundUpgradeWork(db: DatabaseSync, hooks: BackgroundHo
         if ((error as { killed?: boolean } | null)?.killed) { finish(); return; }
         delay = Math.min(300_000, (hooks.failureRetryMs ?? BACKGROUND_FAILURE_RETRY_MS) * 2 ** Math.min(count - 1, 6));
         // the others carry on: a job that keeps failing goes to the back of the queue
-        if (queue.length > 1) queue.push(queue.shift()!);
+        rotate();
       }
     }
     if (!stopped) timer = setTimeout(() => { void tick(); }, delay);

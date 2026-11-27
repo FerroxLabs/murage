@@ -42,7 +42,7 @@ describe("M5: one drain of the receipt flips is one audience bulk", () => {
       const walkBefore = totalChanges(fx);
       drainAll(fx);
       const walkWrites = totalChanges(fx) - walkBefore;
-      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='record' AND id=?", SHARED.id)).toBe(1);
+      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='record' AND id=?", SHARED.id)).toBe(1);
       expect(num(fx, "SELECT count(*) AS n FROM memory_deny_session")).toBe(122);
       for (const T of THREADS) expect(num(fx, "SELECT count(*) AS n FROM memory_deny_range WHERE thread_id=?", T)).toBe(1);
       // O(receipts + lines + sessions): a fixed handful of rows per receipt, not a walk per receipt
@@ -61,19 +61,19 @@ describe("M5: one drain of the receipt flips is one audience bulk", () => {
       drainAll(fx);
       const shared: LineageRef = { kind: "memory", ref: SHARED };
       // the audience bulk marked the record once; an audience-only mark never withholds the object itself
-      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='record' AND id=? AND revoke_id=?", SHARED.id, jobs[0]!.r)).toBe(1);
+      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='record' AND id=? AND revoke_id=?", SHARED.id, jobs[0]!.r)).toBe(1);
       expect(refsLookup(fx.db, [shared], CONTENT).state).toBe("shown");
       expect(refsLookup(fx.db, [shared], OWNER).state).toBe("shown");
       // the owner forgets the record: its own mark, never deduped against the audience one
       const F = slice(fx, () => commitRevoke(fx.db, { kind: "memory", ref: SHARED, cause: "forget" }, { inline: false })) as number;
       expect(F).toBeGreaterThan(jobs[0]!.r);
-      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='record' AND id=? AND revoke_id=?", SHARED.id, F)).toBe(1);
+      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='record' AND id=? AND revoke_id=?", SHARED.id, F)).toBe(1);
       drainAll(fx);
       expect(refsLookup(fx.db, [shared], CONTENT).state).toBe("withheld");
       // an audience-only revoke is never undone (DRAIN-104 2.5): its marks may be what another audience job skipped under
       expect(() => slice(fx, () => undoRevoke(fx.db, jobs[0]!.r))).toThrow("MEMORY_REVOKE_UNDO_BULK");
       drainAll(fx);
-      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_memory WHERE revoke_id=?", jobs[0]!.r)).toBe(1);
+      expect(num(fx, "SELECT count(*) AS n FROM memory_deny_object WHERE revoke_id=?", jobs[0]!.r)).toBe(1);
       expect(refsLookup(fx.db, [shared], CONTENT).state).toBe("withheld");
       expect(refsLookup(fx.db, [shared], OWNER).state).toBe("withheld");
     } finally { fx.close(); }
@@ -106,7 +106,7 @@ describe("M1: an owner-audience room reads its own transcript by content", () =>
 // 1.0.3 revoke drain, F3: the runner used to carry the oldest job to its end while every younger job sat in its flow phase, holding its '*'
 // window over every thread and scope for the whole drain. Each job's cheap flow phase now runs first; marking starts once none is left.
 describe("F3: every pending job narrows its windows before any job marks", () => {
-  const marks = (fx: WritetimeFixture) => ["memory_deny_session", "memory_deny_line", "memory_deny_memory", "memory_deny_range"]
+  const marks = (fx: WritetimeFixture) => ["memory_deny_session", "memory_deny_point", "memory_deny_object", "memory_deny_range"]
     .reduce((sum, table) => sum + num(fx, `SELECT count(*) AS n FROM ${table}`), 0);
   const inFlow = (fx: WritetimeFixture) => num(fx, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE state='active' AND phase='flow'");
   it("six per-receipt jobs: no mark is written and no mark node is taken while any job is still in its flow phase; then all finish", () => {

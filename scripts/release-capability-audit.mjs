@@ -27,7 +27,7 @@ export const NON_RELEASE_SECRETS = new Set([
   'MAC_CERT_P12_BASE64', 'MAC_CERT_PASSWORD', 'APPLE_API_KEY_P8_BASE64',
   'APPLE_API_KEY_ID', 'APPLE_API_ISSUER_ID', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID',
   'AZURE_CLIENT_SECRET', 'RELEASE_GPG_PRIVATE_KEY', 'RELEASE_GPG_PASSPHRASE',
-  'BUILD_HOST_SSH_KEY', 'BUILD_HOST_NAME', 'FLUX_CONTRACT_KEY',
+  'HETZNER_SSH_KEY', 'HETZNER_HOST', 'FLUX_CONTRACT_KEY',
 ]);
 
 // GitHub expressions use single-quoted strings with doubled quote escapes.
@@ -198,7 +198,9 @@ export function auditReleaseCapabilities(root, overrides = new Map(), files = tr
         const probe = steps.find(step => step.run === 'node scripts/release-guard.mjs probe-prepared');
         if (probe?.name !== 'Probe release token before builds' || probe?.env?.GH_TOKEN !== '${{ secrets.RELEASES_PAT }}') fail(file, `jobs.${id}.steps`, 'required early token probe missing');
         if (jobs.preflight?.steps?.at(-1)?.run !== 'node scripts/release-guard.mjs wait-probe' || JSON.stringify(jobs.preflight?.needs) !== JSON.stringify(['prepare'])) fail(file, 'jobs.preflight', 'read-only probe gate required');
-        if (jobs.preflight?.['continue-on-error'] || jobs.preflight?.steps?.some(step => step.if || step['continue-on-error'])) fail(file, 'jobs.preflight', 'probe failures cannot be skipped or ignored');
+        const releaseWriteMode = "needs.prepare.outputs.artifact_only == 'false'";
+        if (job.if !== `needs.prepare.outputs.should_release == 'true' && ${releaseWriteMode}`) fail(file, `jobs.${id}.if`, 'release writer requires explicit write mode');
+        if (jobs.preflight?.['continue-on-error'] || jobs.preflight?.steps?.at(-1)?.if !== releaseWriteMode || jobs.preflight?.steps?.some((step, index, steps) => step['continue-on-error'] || (index < steps.length - 1 && step.if))) fail(file, 'jobs.preflight', 'probe failures cannot be skipped or ignored in release write mode');
         for (const platform of ['mac','mac-x64','windows','linux']) if (![jobs[platform]?.needs].flat().includes('preflight')) fail(file, `jobs.${platform}.needs`, 'build must wait for token probe');
         for (const dependency of ['prepare','ci-gate','mac','mac-x64','windows','linux']) if (![jobs.stage?.needs].flat().includes(dependency)) fail(file, 'jobs.stage.needs', 'staging must wait for CI and every build');
         if (steps.length !== RELEASE_COMMANDS.length + 2 || RELEASE_COMMANDS.some((command,i) => steps[i+2]?.run?.trim() !== `node scripts/release-guard.mjs ${command}`)) fail(file, `jobs.${id}.steps`, 'release commands must run in the reviewed order');

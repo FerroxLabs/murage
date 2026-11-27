@@ -32,6 +32,10 @@ export type CommandRunner = (
   timeout?: number,
 ) => Promise<{ stdout: string }>;
 
+// The Local VM installs Cua's PyPI wheel, not the npm/GitHub build the Linux and
+// Mac hosts bundle (0.55.0). PyPI publishes no cua-driver 0.55.0 wheel, so this pin
+// cannot follow the host bundle; move it only to a published wheel, with both wheel
+// hashes, IMAGE_LAYER_VERSION and the serve/status/call readiness CLI checked together.
 export const CUA_DRIVER_VERSION = "0.20.0";
 export const BASE_IMAGE_REPOSITORY = "docker.io/trycua/xfce-cua";
 // Official multi-architecture Cua XFCE 0.1.0 manifest (amd64 + arm64).

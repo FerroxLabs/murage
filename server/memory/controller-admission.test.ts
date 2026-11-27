@@ -208,6 +208,23 @@ it("A3 dispatch plans its step from remaining room after server background work"
  const state=ioBudget.admissionState();expect(state.bg+state.debt+state.reserved,"A3 dispatch preserves minute bound").toBeLessThanOrEqual(12*1024*1024);
 });
 
+it("RED2C an owed capture is claimed in the minute an index batch has no room for, instead of waiting behind it",()=>{
+ enqueue();const db=database(),scope=String(db.prepare("SELECT id FROM memory_scopes LIMIT 1").get()!.id);
+ db.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,valid_from,created_at) VALUES('fixture-small',1,?,'fact','fixture','owner-statement','active',0,0)").run(scope);
+ db.exec("INSERT INTO memory_projection_receipts VALUES('fixture-small',1,0,'pending','pending',NULL)");
+ // Leave less BG room than one index batch needs beside the parent's 2 MiB write room, but plenty for a capture lease.
+ const page=ioMeterPageSize(),minimum=commitCeiling(META_ENVELOPE_FRAMES+32,4096,page)+checkpointCeiling(META_ENVELOPE_FRAMES+32,4096,page)+4*page;
+ const paid=ioBudget.admit("BG",ioBudget.backgroundRoom()-(2*1024*1024+minimum-page))!;ioBudget.settle(paid,paid.bytes);
+ expect(ioBudget.backgroundRoom()-2*1024*1024,"fixture: an index batch does not fit").toBeLessThan(minimum);
+ const i=controller as unknown as Internals;
+ ioBudget.withSource("memory-worker",()=>i.tick(true));
+ const sent=i.child!.send.mock.calls.map(([m])=>m as {type?:string;stage?:string});
+ expect(sent.some(m=>m.type==="index"),"no index batch without its room").toBe(false);
+ expect(db.prepare("SELECT status FROM memory_jobs LIMIT 1").get()?.status,"the capture is leased in this minute").toBe("leased");
+ expect(sent.some(m=>m.stage==="capture"),"the capture went to the helper").toBe(true);
+ expect(db.prepare("SELECT lexical_status FROM memory_projection_receipts WHERE record_id='fixture-small'").get()?.lexical_status,"the index stays owed").toBe("pending");
+});
+
 it.each([[2600960,9900032,40960],[2486272,10022912,36864]])('capture snapshot %i/%i: native minimum commit refuses before lease, settlement restores it', (charged,reserved,cap)=>{
  ioBudget.start();enqueue();
  const paid=ioBudget.admit('BG',charged)!;ioBudget.settle(paid,charged);
@@ -227,12 +244,20 @@ it.each([[2600960,9900032,40960],[2486272,10022912,36864]])('capture snapshot %i
  expect(database().prepare('SELECT status FROM memory_jobs LIMIT 1').get()?.status).toBe('leased');
  expect(ioBudget.admissionState().reserved).toBe(0);
 });
-it('an owed capture can claim on an idle minute while unrelated BG remains refused',()=>{
+// CHANGED-EXPECTATION (q1022-idlefix, MAIN-RULING 2026-11-25T05:54:59Z idle DO LESS + 11:49:12Z (a)/(b)): was "an owed capture can claim
+// on an idle minute while unrelated BG remains refused". (a) idle minute: the owed capture is refused like every background writer, the
+// job stays pending, nothing reserved; (b) the next ACTIVE minute: the SAME original asserts hold (leased, nothing left reserved).
+it('an owed capture waits on an idle minute like unrelated BG and claims on the next active minute',()=>{
  enqueue();at=60000;ioBudget.setIsIdle(()=>true);
  expect(ioBudget.admit('BG',61440,61440)).toBeNull();
  const i=controller as unknown as Internals;
  ioBudget.withSource('memory-worker',()=>i.tick(true));
- expect(database().prepare('SELECT status FROM memory_jobs LIMIT 1').get()?.status).toBe('leased');
+ expect(database().prepare('SELECT status FROM memory_jobs LIMIT 1').get()?.status,'(a) idle minute: not claimed').toBe('pending');
+ expect(ioBudget.admissionState().reserved,'(a) idle minute: nothing reserved').toBe(0);
+ at=120000;ioBudget.setIsIdle(()=>false);i.nextEligibleWorkAt=0;
+ ioBudget.withSource('memory-worker',()=>i.tick(true));
+ expect(database().prepare('SELECT status FROM memory_jobs LIMIT 1').get()?.status,'(b) next active minute: claimed').toBe('leased');
+ expect(database().prepare("SELECT count(*) AS n FROM memory_jobs WHERE status='leased'").get()?.n,'(b) claimed exactly once').toBe(1);
  expect(ioBudget.admissionState().reserved).toBe(0);
 });
 it('a capture write refused only by another holder\'s live reservation retries when it settles, not at the next minute',()=>{
@@ -290,8 +315,16 @@ it('a capture write refused by spent bytes alone still waits for the next minute
  expect(isBgDeferred(err)).toBe(true);
  expect((controller as unknown as {bgRetryMs(e:BgDeferred):number}).bgRetryMs(err as BgDeferred)).toBe(ioBudget.nextAdmissionMs());
 });
+// CHANGED-EXPECTATION (q1022-idlefix, MAIN-RULING 2026-11-25T05:54:59Z idle DO LESS + 11:49:12Z (a)/(b)): the capture's grant was taken
+// on an idle minute. (a) idle minute: the capture write is deferred before it starts, nothing reserved; (b) the next ACTIVE minute: the
+// SAME per-frame asserts hold for the capture, and the other writer keeps the half split one minute later, as before.
 it('an owed capture write reserves its copy at the per-frame bound; other writers keep the half split',()=>{
  enqueue();at=60000;ioBudget.setIsIdle(()=>true);
+ let idleError:unknown=null;
+ try{ioBudget.withSource('memory-capture',()=>transaction(()=>{database().prepare('UPDATE memory_meta SET data_revision=data_revision').run();}));}catch(error){idleError=error;}
+ expect(isBgDeferred(idleError),'(a) idle minute: the capture write is deferred').toBe(true);
+ expect(ioBudget.admissionState().reserved,'(a) idle minute: nothing reserved').toBe(0);
+ at=120000;ioBudget.setIsIdle(()=>false);
  const os=ioGrantSnapshot().pageSize,page=Number(database().prepare('PRAGMA page_size').get()!.page_size);
  // Every WAL frame is charged at least one OS page of header plus its page span, and owes exactly one page span of copy.
  const copy=Math.ceil(page/os)*os,frame=os+copy;
@@ -304,13 +337,15 @@ it('an owed capture write reserves its copy at the per-frame bound; other writer
  });
  const capture=grant('memory-capture');
  expect(capture.room).toBeGreaterThan(0);
- expect(capture.cap).toBe(Math.floor(capture.room*frame/(frame+copy)));
+ // (b) the same per-frame split; on an active minute the room is the active BG room, so the product's 1 MiB slice cap applies to it
+ expect(capture.cap).toBe(Math.min(Math.floor(capture.room*frame/(frame+copy)),1024*1024));
  expect(capture.reserved).toBe(capture.cap+Math.floor(capture.cap/frame)*copy);
  expect(capture.reserved).toBeLessThanOrEqual(capture.room);
  expect(ioBudget.admissionState().reserved).toBe(0);
  const settled=ioBudget.admissionState();
- expect(settled.total+settled.debt).toBeLessThanOrEqual(1024*1024-65536);
- at=120000;ioBudget.setIsIdle(()=>false);
+ // (was: under the idle ceiling, 1 MiB - 64 KiB) what the capture was charged stays inside what it reserved
+ expect(settled.total+settled.debt).toBeLessThanOrEqual(capture.reserved);
+ at=180000;
  const worker=grant('memory-worker');
  expect(worker.cap).toBe(Math.min(Math.floor(worker.room/2),1024*1024));
  expect(worker.reserved).toBe(2*worker.cap);

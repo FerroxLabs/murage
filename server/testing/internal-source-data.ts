@@ -11,10 +11,11 @@ const names = [
   "ROUTINE_RESULT_PUBLICATION_WAIT_MS", "ROUTINE_WEEKDAY_NAMES", "AUTOMATION_PROPOSAL_REFUSED", "MAX_WORKSPACE_BOTS",
   "ASK_USER_REFUSED", "ASK_USER_SHOWN", "HOST_CONSENT_WAIT_MS", "ASK_BOT_TIMEOUT_MS", "ASK_ORIGIN_GRACE_MS",
   "UNATTENDED_TTL_MS", "GROUP_GOAL_COORDINATOR_GUARD_MS", "GROUP_GOAL_MAX_WAIT_EXHAUSTIONS", "IMAGES_NOT_SENT_RECORD_WAIT_MS",
-  "TURN_REFUSAL_NOTES_MAX", "ROOM_LEDGER_REFUSAL_NOTES_MAX", "SCREEN_MIN_GAP_MS", "SCREEN_POLL_MS", "BROWSER_REVOCATION_RETRY_MS", "ROUTINE_REBUILD_STOPPED",
+  "TURN_REFUSAL_NOTES_MAX", "ROOM_LEDGER_REFUSAL_NOTES_MAX", "MEMORY_LINE_LATCH_MAX", "SCREEN_MIN_GAP_MS", "SCREEN_POLL_MS", "BROWSER_REVOCATION_RETRY_MS", "ROUTINE_REBUILD_STOPPED",
   "GROUP_GOAL_WAIT_MAX_MS", "IMAGE_PRESETS", "LEGACY_IMAGE_IDS", "AGENTS_NODE_FLAG",
   "signalCustodyHeld", "signalAuthorityReplayHeld",
   "TURN_STALL_MS", "TURN_HEARTBEAT_ONLY_MS", "MAX_GROUP_HOPS", "REQUEST_ENDED_LINE", "ROOM_TURN_REVOKED_BEFORE_DISPATCH",
+  "MURAGE_NOT_STARTED_LINE", "MURAGE_INTERNAL_CODES", "DELETION_HOLD_WAIT_MS", "ENGINE_START_WAIT_MS",
   "watchdog.stallMs", "watchdog.setupStallMs", "watchdog.heartbeatOnlyMs", "watchdog.checkMs",
   "repeats.thresholds", "repeats.maxKeysPerThread",
   "routines.catchUpStaggerMs", "routines.dispatchStaggerMs", "routines.maxConcurrentAutomaticRuns", "routines.automaticCapCeiling",
@@ -36,6 +37,10 @@ for (const name of names) {
     if(!expression) throw new Error(`FIXTURE_SOURCE_DATA_MISSING ${name}`);
     const included = new Set<string>(), active = new Set<string>(), dependencies:string[]=[];
     const inspect = (node:ts.Node):void=>{
+      // A Set of string literals (MURAGE_INTERNAL_CODES) is data: no call, no reference, nothing to run. Any other `new` stays refused.
+      const literalSet=ts.isNewExpression(node)&&ts.isIdentifier(node.expression)&&node.expression.text==="Set"&&!declarations.has("Set")&&node.arguments?.length===1
+        &&ts.isArrayLiteralExpression(node.arguments[0]!)&&node.arguments[0].elements.every(element=>ts.isStringLiteral(element));
+      if(literalSet)return;
       if(ts.isNewExpression(node)||ts.isAwaitExpression(node)||ts.isYieldExpression(node)||ts.isDeleteExpression(node)
         ||ts.isBinaryExpression(node)&&node.operatorToken.kind>=ts.SyntaxKind.FirstAssignment&&node.operatorToken.kind<=ts.SyntaxKind.LastAssignment)throw new Error(`FIXTURE_SOURCE_DATA_EFFECT ${name}`);
       if(ts.isCallExpression(node)) {

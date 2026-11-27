@@ -2,11 +2,13 @@
 import "../../shared/win-hide-child-process.mjs";
 import { readFileSync, appendFileSync, existsSync } from "node:fs";
 import { createInterface } from "node:readline";
+const NotModelRequest = (_reason, value) => value;
+
 const args = process.argv.slice(2);
 if (args.includes("--version")) { console.log("2.1.310 (Claude Code)"); process.exit(0); }
 if (args[0] === "auth") { console.log(JSON.stringify({ loggedIn: true, authMethod: "api_key" })); process.exit(0); }
 const names = Object.keys(JSON.parse(readFileSync(args[args.indexOf("--mcp-config") + 1], "utf8")).mcpServers);
-const out = value => process.stdout.write(JSON.stringify(value) + "\n");
+const out = value => NotModelRequest("Offline fake CLI emits synthetic protocol frames on stdout.", process.stdout.write(JSON.stringify(value) + "\n"));
 let prompts = 0;
 createInterface({ input: process.stdin }).on("line", async line => {
   const frame = JSON.parse(line);

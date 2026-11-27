@@ -55,7 +55,7 @@ it('patches the standalone Capacitor → rimraf → glob → minimatch path', ()
 });
 
 it('accounts for all eight incidental workspace resolutions and their consumers', () => {
-  const rows = json('lane-evidence/incidental-resolutions.json');
+  const rows = json('ci/incidental-resolutions.json');
   expect(rows.map(row => row.name).sort()).toEqual(['chai', '@jridgewell/sourcemap-codec', 'es-module-lexer', 'obug', 'picomatch', 'std-env', 'tinyrainbow', 'tinyexec'].sort());
   for (const row of rows) {
     expect(row.reason.length).toBeGreaterThan(40);

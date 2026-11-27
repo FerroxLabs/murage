@@ -561,8 +561,8 @@ export async function callTool(name: string, args: unknown, request: HostRequest
 }
 
 const send = (message: object) => sendProxyFrame("browser", message);
-const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
-const rpcError = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
+const ok = (id: unknown, result: unknown) => NotModelRequest("Browser MCP replies on the local tool protocol.", send({ jsonrpc: "2.0", id, result }));
+const rpcError = (id: unknown, code: number, message: string) => NotModelRequest("Browser MCP replies on the local tool protocol.", send({ jsonrpc: "2.0", id, error: { code, message } }));
 
 async function handle(line: string) {
   const parsed = rpcMessageSchema.safeParse(JSON.parse(line));

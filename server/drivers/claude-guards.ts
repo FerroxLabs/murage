@@ -9,7 +9,7 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { execCli, resolveCli } from "../procs.ts";
 import { engineLaunchFile } from "./isolation-cache.ts";
 
-/** The pinned 2.1.292 artifact contains Sonnet 5.5; see the captured support
+/** The 2.1.292 floor artifact contains Sonnet 5.5; see the captured support
  * evidence in docs/verification/model-defaults-artifacts.json. */
 export const CLAUDE_MIN_VERSION = "2.1.292";
 

@@ -36,10 +36,14 @@ describe("in a reply", () => {
     }
   });
 
-  it("marks the Grok plan button Unofficial, and only that one", () => {
+  // 1.0.21 (Sean's live 1.0.20 walk): the uppercase "Unofficial" badge read as a warning sticker. The sign-in it opens
+  // says the plain sentence (modelSignIn.grok.note, SubscriptionSignIn.test.ts); the button carries only the bot's words.
+  it("draws no Unofficial badge on the Grok plan button", () => {
     desktop();
-    expect(markdown("[Grok](murage://plan/supergrok)")).toContain(en["modelSignIn.grok.unofficial"]);
-    expect(markdown("[ChatGPT](murage://plan/chatgpt)")).not.toContain(en["modelSignIn.grok.unofficial"]);
+    const grok = markdown("[Grok](murage://plan/supergrok)");
+    expect(grok).toContain("Grok");
+    expect(grok).not.toContain(en["modelSignIn.grok.unofficial"]);
+    expect(grok).not.toContain("uppercase");
   });
 
   it("draws no button and keeps no murage:// for any other link", () => {

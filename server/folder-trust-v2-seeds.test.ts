@@ -1,3 +1,4 @@
+import { fixture as decisionFixture, d } from './decision/fixture.ts';
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // FUIGO-TRUST-V2 R4, R5, S5a: seeds on a home made for one routed turn. The real Fuigo
 // support runs against the fake ACP CLI's 1.0.35 protocol, which reads the seeded
@@ -15,6 +16,16 @@ vi.mock("node:fs", async (original) => {
   return { ...actual, renameSync: (...args: Parameters<typeof actual.renameSync>) => {
     if (fixture.failRename) throw Object.assign(new Error("fixture rename"), { code: "EIO" });
     return actual.renameSync(...args);
+  } };
+});
+
+// The seed's rename goes through atomic.ts, which a setup file has already loaded with the real fs,
+// so the fault is injected at that one export instead of at node:fs.
+vi.mock("./atomic.ts", async (original) => {
+  const actual = await original<typeof import("./atomic.ts")>();
+  return { ...actual, renameAndSyncParent: (...args: Parameters<typeof actual.renameAndSyncParent>) => {
+    if (fixture.failRename) throw Object.assign(new Error("fixture rename"), { code: "EIO" });
+    return actual.renameAndSyncParent(...args);
   } };
 });
 
@@ -39,8 +50,10 @@ const table = (path: string, trusted: boolean) => `[folders.${JSON.stringify(pat
 const U2 = (key: string) => `You chose not to trust ${key}, and Murage passed that answer to Fuigo for this folder. To change it, forget ${key} in this conversation's folder settings.`;
 
 let scratch: string;
-beforeEach(() => { scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-trust-seeds-"))); fixture.failRename = false; });
-afterEach(async () => { fixture.failRename = false; await removeTempDir(scratch); });
+let ownerNoLimits = false;
+let decision: ReturnType<typeof decisionFixture> | undefined;
+beforeEach(() => { ownerNoLimits = false; scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-trust-seeds-"))); fixture.failRename = false; });
+afterEach(async () => { decision?.dispose(); decision = undefined; fixture.failRename = false; await removeTempDir(scratch); });
 const folder = (...parts: string[]) => { const path = join(scratch, ...parts); mkdirSync(path, { recursive: true }); return path; };
 
 describe("the seed plan (R4)", () => {
@@ -219,8 +232,22 @@ posixOnly("a routed turn on the real Fuigo driver", () => {
   const passed = () => chips().filter((title) => folderTrustNotice(title)?.kind === "passed").map((title) => folderTrustNotice(title)!.key);
   const done = (turnId: string) => recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
   const opened = (turnId: string) => recorder.until((e) => e.type === "request.opened" && e.turnId === turnId) as Promise<Extract<RuntimeEvent, { type: "request.opened" }> & { requestId: string }>;
-  const send = async (threadId: string, input: Partial<SendTurnInput> = {}) =>
-    (await instance!.adapter.sendTurn({ threadId, text: "go", cwd, folderTrust: gate(), ...routed, ...input })).turnId;
+  const send = async (threadId: string, input: Partial<SendTurnInput> = {}) => {
+    const folderTrust = input.folderTrust ?? gate();
+    if (!ownerNoLimits) return (await instance!.adapter.sendTurn({ threadId, text: "go", cwd, folderTrust, ...routed, ...input })).turnId;
+    decision ??= decisionFixture();
+    const generation = 'fixture-generation';
+    d.installProvenanceReader({ turnGenerationFor: id => id === threadId ? generation : undefined,
+      provenance: () => ({ generation, threadId, botId: 'b', principal: 'owner', roomOwnerOnly: true, at: 1, initiator: { k: 'owner-typed' } }),
+      live: () => ({ botId: 'b', turnId: 'turn', providerInstanceId: instance!.instanceId, principal: 'owner', owner: true, level: 'unlimited' }) });
+    const complete = !planFuigoSeeds({ trustKeys: folderTrust.trustKeys ?? [], rejects: folderTrust.rejects ?? [], realCwd: cwd }, null).declineSkipped;
+    return (await instance!.adapter.sendTurn({ threadId, text: "go", cwd, ...routed, ...input,
+      stopLine: true, noLimits: true, warmIdentity: { botId: 'b', audience: 'owner' },
+      folderTrust: { upstreamReadable: true, seedComplete: complete, ...folderTrust },
+      permissionNow: () => d.readTurnPolicy({ threadId, generation })?.permission ?? { routeAsks: true, askLevel: true },
+      folderTrustAuthorityNow: () => ({ generation, owner: true, level: 'unlimited', revision: 'fixture-pick' }),
+    })).turnId;
+  };
   const skip = (threadId: string, requestId: string) => instance!.adapter.respondToRequest(threadId, requestId, { behavior: "deny" });
   const decline = (key: string, decidedIn: string) => store.remember(decidedIn, "reject", "card", { key, consent: 2 });
   const grant = (key: string, decidedIn = key) => store.remember(decidedIn, "trust", "card", { key, consent: 2 });
@@ -417,6 +444,7 @@ posixOnly("a routed turn on the real Fuigo driver", () => {
   });
 
   describe("rule 3b: a picked folder on the owner's No limits turn", () => {
+    beforeEach(() => { ownerNoLimits = true; });
     const withheld = () => chips().filter((title) => folderTrustNotice(title)?.kind === "withheld");
     const open = () => recorder.events.filter((e) => e.type === "request.opened");
     it("answers with no card and no stored answer, notes what was left out, and the next turn is asked again", async () => {
@@ -430,10 +458,12 @@ posixOnly("a routed turn on the real Fuigo driver", () => {
       await done(await send("t3b-a", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [cwd] }) }));
       expect(requests()).toHaveLength(2);
     });
-    it("without the list the card stands", async () => {
+    it("without the list configuration is rejected with zero cards", async () => {
       await create();
-      await sendThroughCard("t3b-b", { folderTrust: gate({ sources: ["AGENTS.md"] }) });
-      await sendThroughCard("t3b-b2", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [join(scratch, "other")] }) });
+      await done(await send("t3b-b", { folderTrust: gate({ sources: ["AGENTS.md"] }) }));
+      await done(await send("t3b-b2", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [join(scratch, "other")] }) }));
+      expect(replies()).toEqual([REJECT_REPLY, REJECT_REPLY]);
+      expect(open()).toHaveLength(0);
       expect(requests()).toHaveLength(2);
     });
     it("a stored no answers first", async () => {
@@ -443,16 +473,19 @@ posixOnly("a routed turn on the real Fuigo driver", () => {
       expect(replies()).toEqual([REJECT_REPLY]);
       expect(withheld().map((title) => folderTrustNotice(title)?.key)).toEqual([K]);
     });
-    it("a decline that could not be written shows the card", async () => {
+    it("a decline that could not be written withholds configuration without a card", async () => {
       await create();
-      await sendThroughCard("t3b-d", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [cwd], rejects: [{ key: folder("unrelated"), folder: "not/absolute" }] }) });
+      await done(await send("t3b-d", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [cwd], rejects: [{ key: folder("unrelated"), folder: "not/absolute" }] }) }));
       expect(requests()).toHaveLength(1);
+      expect(replies()).toEqual([REJECT_REPLY]);
+      expect(open()).toHaveLength(0);
     });
-    it("a consent-2 answer stays under rule 3", async () => {
+    it("an unsafe key cannot acquire automatic configuration through a consent-2 record", async () => {
       const K = join(scratch, "line\nbreak");
       await create({ FAKE_ACP_TRUST_WORKSPACE: K });
       await done(await send("t3b-e", { folderTrust: gate({ sources: ["AGENTS.md"], trustKeys: [K], noCardPickKeys: [K] }) }));
-      expect(replies()).toEqual([TRUST_REPLY]);
+      expect(replies()).toEqual([REJECT_REPLY]);
+      expect(open()).toHaveLength(0);
     });
     describe("the active primary route retains version and card boundaries", () => {
       const picked = (extra = {}) => ({ folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [cwd], ...extra }) });
@@ -488,10 +521,12 @@ posixOnly("a routed turn on the real Fuigo driver", () => {
         expect(order()).toEqual(["reply", "prompt"]);
         expect(replies()).toEqual([PROCESS_REPLY]);
       });
-      it("a key not in the list keeps the card on 1.0.38, with no duration", async () => {
+      it("a key not in the list is rejected on 1.0.38, with zero cards and no duration", async () => {
         await create({ FAKE_ACP_VERSION: "1.0.38" });
-        await sendThroughCard("t3b-t", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [join(scratch, "other")] }) });
+        await done(await send("t3b-t", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [join(scratch, "other")] }) }));
         expect(requests()).toHaveLength(1);
+        expect(replies()).toEqual([REJECT_REPLY]);
+        expect(open()).toHaveLength(0);
         expect(replies().some((line) => line?.includes("duration"))).toBe(false);
       });
     });
@@ -505,7 +540,7 @@ posixOnly("a routed turn on the real Fuigo driver", () => {
         expect(replies()).toEqual([PROCESS_REPLY]);
         expect(order()).toEqual(["reply", "prompt"]);
         expect(open()).toHaveLength(0);
-        expect(chips().filter((title) => folderTrustNotice(title)?.kind === "chosen")).toHaveLength(1);
+        expect(chips().filter((title) => folderTrustNotice(title)?.kind === "process")).toHaveLength(1);
         expect(store.list()).toEqual(before);
       });
       it("the production No limits shortcut preserves its verdict with a process reply before the prompt", async () => {
@@ -544,10 +579,12 @@ posixOnly("a routed turn on the real Fuigo driver", () => {
         expect(order()).toEqual(["prompt", "reply"]);
         expect(replies()).toEqual([PROCESS_REPLY]);
       });
-      it("a key not in the list has no hold and keeps the card", async () => {
+      it("a key not in the list has no hold and is rejected with zero cards", async () => {
         await create({ FAKE_ACP_VERSION: "1.0.38" });
-        await sendThroughCard("t3b-t", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [join(scratch, "other")] }) });
+        await done(await send("t3b-t", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [join(scratch, "other")] }) }));
         expect(requests()).toHaveLength(1);
+        expect(replies()).toEqual([REJECT_REPLY]);
+        expect(open()).toHaveLength(0);
         expect(replies().some((line) => line?.includes("duration"))).toBe(false);
       });
       it("Stop during the hold sends no prompt", async () => {

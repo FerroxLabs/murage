@@ -18,6 +18,36 @@ export function reusableClient(oauth, issuer, port) {
   return { clientId: oauth.clientId, ...(clientText(oauth.clientSecret) ? { clientSecret: oauth.clientSecret } : {}) };
 }
 
+/** Client details the owner typed for an app they registered themselves (B98).
+ * Never trims or shortens: a value that does not fit is refused with a reason. */
+export function checkOwnClient(input) {
+  const clientId = input?.clientId, clientSecret = input?.clientSecret;
+  if (typeof clientId !== "string" || !clientId) return { ok: false, field: "clientId", reason: "empty" };
+  if (!clientText(clientId)) return { ok: false, field: "clientId", reason: clientId.length > 512 ? "long" : "characters" };
+  if (clientSecret === undefined || clientSecret === "") return { ok: true, clientId };
+  if (typeof clientSecret !== "string" || !clientText(clientSecret)) {
+    return { ok: false, field: "clientSecret", reason: typeof clientSecret === "string" && clientSecret.length > 512 ? "long" : "characters" };
+  }
+  return { ok: true, clientId, clientSecret };
+}
+
+const trimSlash = (value) => typeof value === "string" ? value.replace(/\/$/, "") : value;
+
+/** The owner's own app when it was saved for exactly these sign-in addresses
+ * (issuer, authorize, token and revocation endpoints, pinned at enrollment), with
+ * the one port its redirect was shown for; else null. A server that moves its
+ * token endpoint never receives the owner's secret. */
+export function preRegisteredClient(oauth, discovery) {
+  if (!isRecord(oauth) || oauth.preRegistered !== true || !isRecord(discovery) || !clientText(oauth.clientId)) return null;
+  if (trimSlash(oauth.issuer) !== trimSlash(discovery.issuer)) return null;
+  if (oauth.authorizationEndpoint !== discovery.authorizationEndpoint || oauth.tokenEndpoint !== discovery.tokenEndpoint) return null;
+  if ((oauth.pinnedRevocationEndpoint ?? null) !== (discovery.revocationEndpoint ?? null)) return null;
+  const port = oauth.redirectPort;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return null;
+  if (oauth.clientSecret !== undefined && !clientText(oauth.clientSecret)) return null;
+  return { clientId: oauth.clientId, redirectPort: port, ...(oauth.clientSecret ? { clientSecret: oauth.clientSecret } : {}) };
+}
+
 export function registrationBody(redirectUri) {
   return {
     client_name: "Murage",
@@ -30,7 +60,7 @@ export function registrationBody(redirectUri) {
 }
 
 /**
- * @returns {Promise<{ ok: true, clientId: string, clientSecret?: string } | { ok: false, error: "no-registration" | "network" }>}
+ * @returns {Promise<{ ok: true, clientId: string, clientSecret?: string } | { ok: false, error: "no-registration" | "network" | "bad-client" }>}
  */
 export async function registerClient({ registrationEndpoint, redirectUri, local, request = guardedRequest, signal }) {
   let response;
@@ -48,5 +78,10 @@ export async function registerClient({ registrationEndpoint, redirectUri, local,
   let json = null;
   try { json = JSON.parse(Buffer.from(response.body).toString("utf8")); } catch { json = null; }
   if (!isRecord(json) || !clientText(json.client_id)) return { ok: false, error: "no-registration" };
-  return { ok: true, clientId: json.client_id, ...(clientText(json.client_secret) ? { clientSecret: json.client_secret } : {}) };
+  // A secret Murage cannot hold is refused, never dropped: signing in without it
+  // would fail later at the token step with no reason shown.
+  if (json.client_secret !== undefined && json.client_secret !== null && json.client_secret !== "" && !clientText(json.client_secret)) {
+    return { ok: false, error: "bad-client" };
+  }
+  return { ok: true, clientId: json.client_id, ...(json.client_secret ? { clientSecret: json.client_secret } : {}) };
 }

@@ -16,6 +16,152 @@
 // Ported by content from upstream 5ef9a59e.
 type JsonObject = Record<string, unknown>;
 
+/** Kimi measures parameters after expanding local references. Bound the walk
+ * as well as the encoded size, including Go JSON's HTML escaping. A cycle or
+ * an unresolved reference cannot be proved to fit and is withheld. */
+export function toolSchemaOverBudget(schema: unknown, limit: number): boolean {
+  let bytes = 0, nodes = 0;
+  const root = schema;
+  const size = (value: unknown) => {
+    const text = JSON.stringify(value) ?? "";
+    return Buffer.byteLength(text) + 5 * (text.match(/[<>&]/g)?.length ?? 0) + 3 * (text.match(/[\u2028\u2029]/g)?.length ?? 0);
+  };
+  const walk = (value: unknown, refs: Set<string>, depth: number): boolean => {
+    if (++nodes > 20_000 || depth > 30 || bytes > limit) return true;
+    if (value === null || typeof value !== "object") { bytes += size(value); return bytes > limit; }
+    if (Array.isArray(value)) {
+      bytes += 2 + Math.max(0, value.length - 1);
+      return value.some(item => walk(item, refs, depth + 1)) || bytes > limit;
+    }
+    const object = value as Record<string, unknown>;
+    if (typeof object.$ref === "string") {
+      const ref = object.$ref;
+      if (!ref.startsWith("#/") || refs.has(ref)) return true;
+      let target: unknown = root;
+      for (const key of ref.slice(2).split("/").map(part => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+        if (!target || typeof target !== "object" || !Object.hasOwn(target, key)) return true;
+        target = (target as Record<string, unknown>)[key];
+      }
+      if (!target || typeof target !== "object" || Array.isArray(target)) return true;
+      const { $ref: _, ...siblings } = object;
+      return walk({ ...target, ...siblings }, new Set([...refs, ref]), depth + 1);
+    }
+    const entries = Object.entries(object);
+    bytes += 2 + Math.max(0, entries.length - 1);
+    for (const [key, child] of entries) {
+      bytes += size(key) + 1;
+      if (walk(child, refs, depth + 1)) return true;
+    }
+    return bytes > limit;
+  };
+  return walk(schema, new Set(), 0);
+}
+
+type StdioMount = { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> };
+
+/** A separate guard for each mount. It runs from an inline program so source
+ * and packaged servers use the same code without a new executable asset.
+ * The engine still owns the whole child tree, including the original server. */
+export function budgetMcpServers(servers: StdioMount[], limit: number): StdioMount[] {
+  const source = `
+const {spawn} = require('node:child_process');
+const {randomUUID} = require('node:crypto');
+const overBudget = ${toolSchemaOverBudget.toString()};
+const limit = ${JSON.stringify(limit)};
+const child = spawn(process.argv[1], process.argv.slice(2), {stdio:['pipe','pipe','pipe'],windowsHide:true});
+let blocked = false, closing = false, diagnosticBytes = 0, privateBlock = false;
+const lists = new Map();
+const key = id => typeof id + ':' + String(id);
+const write = (stream, line) => new Promise((resolve,reject) => stream.write(line+'\\n', error => error ? reject(error) : resolve()));
+// Frame stderr before masking: credentials may straddle child writes. Drop an
+// overlong/incomplete line, and cap the total diagnostic output per mount.
+const diagnostic = raw => {
+ if(diagnosticBytes>=4096)return;
+ let text=String(raw).replace(/[\\u0000-\\u001f\\u007f-\\u009f]/g,' ');
+ const keyStart=/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(text), keyEnd=/-----END [A-Z ]*PRIVATE KEY-----/.test(text);
+ if(privateBlock && !keyStart) {if(keyEnd)privateBlock=false;return;}
+ if(keyStart) {privateBlock=!keyEnd;text='[redacted private key]';}
+ for(const value of [...Object.values(process.env),...process.argv.slice(1)].filter(value=>value && value.length>=4).sort((a,b)=>b.length-a.length)) text=text.split(value).join('[redacted]');
+ text=text.replace(/(?:https?:\\/\\/)[^\\s]+/gi,'[redacted URL]').replace(/(?:(?:bearer|basic)\\s+|(?:token|password|passwd|secret|cookie|credential|api[_-]?key|authorization|access[_-]?key)\\s*[=:]\\s*).*/gi,'[redacted credential]');
+ text=text.replace(/[A-Za-z0-9_+/=-]{24,}/g,'[redacted value]');
+ const line=Buffer.from('MCP: '+text+'\\n');
+ if(line.length>4096-diagnosticBytes)return;
+ diagnosticBytes+=line.length;process.stderr.write(line);
+};
+const stop = () => { if(closing)return; closing=true; child.stdin.end(); child.kill(); };
+const failed = error => { diagnostic(error?.code ? error.code+': '+error.message : error?.message??'stream failure');process.exitCode=1;stop();process.stdin.destroy(); };
+async function pipe(source, handle) {
+ source.setEncoding('utf8');
+ let buffer='';
+ for await (const chunk of source) {
+  buffer += chunk;
+  if(Buffer.byteLength(buffer)>8*1024*1024) throw Error('frame bound');
+  let end;
+  while((end=buffer.indexOf('\\n'))>=0) {const line=buffer.slice(0,end);buffer=buffer.slice(end+1);await handle(line);}
+ }
+ if(buffer.trim()) await handle(buffer);
+}
+const parse = line => {try{return JSON.parse(line)}catch{return null}};
+let stderrLine='', stderrOverflow=false;
+child.stderr.setEncoding('utf8');
+child.stderr.on('data',chunk=>{
+ for(const part of chunk.split(/(\\n)/)) {
+  if(part==='\\n') {diagnostic(stderrOverflow?'child diagnostic line exceeded bound':stderrLine);stderrLine='';stderrOverflow=false;}
+  else if(!stderrOverflow) {stderrLine+=part;if(Buffer.byteLength(stderrLine)>4096){stderrLine='';stderrOverflow=true;}}
+ }
+});
+child.stderr.on('end',()=>{if(stderrLine||stderrOverflow)diagnostic('child diagnostic ended without a complete bounded line');});
+child.stderr.on('error',failed);
+child.on('error',failed);
+child.on('close',code=>{process.exitCode=process.exitCode??code??0;process.stdin.destroy();});
+child.stdin.on('error',failed);
+process.stdout.on('error',failed);
+process.on('SIGTERM',stop);process.on('SIGINT',stop);
+pipe(process.stdin, async line => {
+ const m=parse(line);
+ if(m && typeof m.method==='string' && m.id!==undefined) {
+  if(blocked && m.method==='tools/call') return write(process.stdout,JSON.stringify({jsonrpc:'2.0',id:m.id,result:{isError:true,content:[{type:'text',text:'This server was left out because its tool schemas exceed Kimi’s size limit.'}]}}));
+  if(m.method==='tools/list') {
+   if(blocked)return write(process.stdout,JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:[]}}));
+   if(lists.size>=256)throw Error('request bound');
+   lists.set(key(m.id),{id:m.id,tools:[],bytes:0,cursors:new Set()});
+  }
+ }
+ await write(child.stdin,line);
+}).then(stop).catch(failed);
+pipe(child.stdout, async line => {
+ const m=parse(line);
+ const catalog=m && !m.method && lists.get(key(m.id));
+ if(catalog) {
+  lists.delete(key(m.id));
+  if(Array.isArray(m.result?.tools)) {
+   if(!blocked && m.result.tools.some(tool=>overBudget(tool?.inputSchema,limit))) {
+    blocked=true;diagnostic('Murage left out one MCP server: its tool schemas exceed Kimi’s size limit.');
+   }
+   if(!blocked) {
+    catalog.bytes+=Buffer.byteLength(line);
+    if(catalog.bytes>8*1024*1024)throw Error('catalog bound');
+    catalog.tools.push(...m.result.tools);
+    const cursor=m.result.nextCursor;
+    if(cursor!==undefined) {
+     if(typeof cursor!=='string'||catalog.cursors.has(cursor)||catalog.cursors.size>=256)throw Error('catalog cursor bound');
+     catalog.cursors.add(cursor);
+     const id='murage-schema:'+randomUUID();lists.set(key(id),catalog);
+     return write(child.stdin,JSON.stringify({jsonrpc:'2.0',id,method:'tools/list',params:{cursor}}));
+    }
+   }
+   m.result={...m.result,tools:blocked?[]:catalog.tools};delete m.result.nextCursor;
+  }
+  // A page error aborts the whole withheld catalog; no earlier tools escape.
+  m.id=catalog.id;line=JSON.stringify(m);
+ }
+ await write(process.stdout,line);
+}).catch(failed);
+`;
+  return servers.map(server => ({ ...server, command: process.execPath, args: ["-e", source, "--", server.command, ...server.args],
+    env: [...server.env.filter(entry => entry.name !== "ELECTRON_RUN_AS_NODE"), { name: "ELECTRON_RUN_AS_NODE", value: "1" }] }));
+}
+
 const ROOT_COMBINATORS = ["anyOf", "oneOf", "allOf", "not"] as const;
 
 function isObject(value: unknown): value is JsonObject {
@@ -77,7 +223,7 @@ export function providerSafeInputSchema(schema: unknown): JsonObject {
 /** Rewrites tools/list responses on an MCP stdio stream. Only a response to
  * a tools/list the agent actually sent is touched; every other line (tool
  * results, notifications, errors, non-JSON) passes through byte-for-byte. */
-export function createToolListNormalizer(): {
+export function createToolListNormalizer(schemaBudget?: number): {
   /** Record an agent → server line. */
   observeRequest: (line: string) => void;
   /** Map a server → agent line to what the agent should receive. */
@@ -87,6 +233,7 @@ export function createToolListNormalizer(): {
 } {
   // JSON-RPC ids may be numbers or strings, and 7 is not "7".
   const pending = new Set<string>();
+  let blocked = false;
   const idKey = (id: unknown) => `${typeof id}:${String(id)}`;
 
   return {
@@ -114,6 +261,13 @@ export function createToolListNormalizer(): {
       }
       if (!isObject(frame) || "method" in frame || !pending.delete(idKey(frame.id))) return line;
       if (!isObject(frame.result) || !Array.isArray(frame.result.tools)) return line;
+
+      if (schemaBudget !== undefined && (blocked || frame.result.tools.some((tool: unknown) => isObject(tool) && toolSchemaOverBudget(tool.inputSchema, schemaBudget)))) {
+        blocked = true;
+        const result: JsonObject = { ...frame.result, tools: [] };
+        delete result.nextCursor;
+        return JSON.stringify({ ...frame, result });
+      }
 
       let changed = false;
       const tools = frame.result.tools.map((tool: unknown) => {

@@ -1,3 +1,5 @@
+import { fixtureDisplayedResponse, fixtureDisplayRequest } from "./testing/display-http-fixture.ts";
+import { fakeEngineServerArgs } from "./testing/fake-engine-server.ts";
 // FUIGO-TRUST-V2 through the real server, with the opt-in pool on: the records
 // are the recovery surface. What can say no is exactly what GET lists, DELETE
 // key= forgets any of it, and a process that learned something is never kept.
@@ -7,7 +9,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
@@ -15,7 +17,6 @@ import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
-const posixOnly = describe.skipIf(process.platform === "win32");
 
 let base: string;
 let serverOutput = "";
@@ -27,12 +28,13 @@ let spawnLog: string;
 let output = "";
 
 const request = async (method: string, path: string, body?: unknown, headers = desktopHeaders): Promise<{ status: number; body: any }> => {
+  body = fixtureDisplayRequest(join(home, ".murage/messages.db"), path, body);
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  return { status: res.status, body: await res.json().catch(() => null) };
+  return { status: res.status, body: fixtureDisplayedResponse(join(home, ".murage/messages.db"), await res.json().catch(() => null)) };
 };
 const messages = async (threadId: string) => (await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const openCard = async (threadId: string) => (await messages(threadId)).filter((m) => m.card?.folderTrust && !m.card.answered).at(-1);
@@ -43,6 +45,9 @@ const decisions = (): any[] => {
 };
 const lines = (path: string) => (existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : []);
 const spawnCount = () => lines(spawnLog).length;
+const poolTrace = (threadId: string) => lines(join(home, ".murage", "native", `${threadId}.ndjson`))
+  .map(line => JSON.parse(line).msg)
+  .filter(msg => msg?.acpPool || ["spawn_requested", "turn_settled"].includes(msg?.phase));
 const trustEvents = () => lines(trustLog).map((line) => JSON.parse(line)) as Array<{ event: string; pid: number; raw?: string; params?: any }>;
 const requestsFor = (key: string) => trustEvents().filter((entry) => entry.event === "request" && entry.params.workspace === key).length;
 const storeFile = () => join(home, ".murage", "folder-trust.json");
@@ -50,6 +55,7 @@ const stored = () => (existsSync(storeFile()) ? JSON.parse(readFileSync(storeFil
 
 const K_TOPOLOGY = () => join(home, "topology-main");
 const K_SEQUENCE = () => join(home, "sequence-main");
+const K_WRITERS = () => join(home, "writers-main");
 const K_SIBLING = () => join(home, "sibling");
 const K_HELD = () => join(home, "held-main");
 
@@ -69,18 +75,33 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
       fuigo: engine(),
       "fuigo-topology": engine({ FAKE_ACP_TRUST_WORKSPACE: K_TOPOLOGY() }),
       "fuigo-sequence": engine({ FAKE_ACP_TRUST_WORKSPACE: K_SEQUENCE() }),
+      "fuigo-writers": engine({ FAKE_ACP_TRUST_WORKSPACE: K_WRITERS() }),
       "fuigo-sibling": engine({ FAKE_ACP_TRUST_WORKSPACE: K_SIBLING() }),
       "fuigo-held": engine({ FAKE_ACP_TRUST_HOLD_MS: "1500", FAKE_ACP_TRUST_WORKSPACE: K_HELD() }),
       "fuigo-plain": engine({ FAKE_ACP_TRUST_KINDS: "" }),
       "fuigo-1037": engine({ FAKE_ACP_VERSION: "1.0.37", FAKE_ACP_TRUST_FORCE_REQUEST: "1" }),
+      "fuigo-1038": engine({ FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_TRUST_FORCE_REQUEST: "1" }),
+      "fuigo-unpicked": engine({ FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_TRUST_FORCE_REQUEST: "1", FAKE_ACP_TRUST_WORKSPACE: join(home, "e5-not-picked-key") }),
       computer: { driver: "boxAgent" },
     },
   }));
   // Only native execution is faked. Trust, owner authority, cards and replies
   // still run through the real child server, including the Full access control.
-  const fakeEngineSetup = join(homeDir, "fake-engine-setup.mjs");
-  writeFileSync(fakeEngineSetup, "globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;\n");
-  const proc = spawn(process.execPath, ["--import", fakeEngineSetup, join(SERVER_DIR, "index.ts")], {
+  // The r5 pool is for unmounted sessions. Advertise the fixture's actual tool support without changing the real Fuigo adapter.
+  const poolFixture = join(homeDir, "pool-fixture.mjs");
+  const driver = pathToFileURL(join(SERVER_DIR, "drivers", "acp", "fuigo.ts")).href;
+  writeFileSync(poolFixture, `
+    import { FuigoAgentDriver } from ${JSON.stringify(driver)};
+    const create = FuigoAgentDriver.create.bind(FuigoAgentDriver);
+    FuigoAgentDriver.create = async (input) => {
+      const instance = await create(input);
+      if (input.instanceId === "fuigo-sequence") {
+        Object.defineProperties(instance.adapter.capabilities, { agentsMcp: { value: false }, memoryMcp: { value: false } });
+      }
+      return instance;
+    };
+  `);
+  const proc = spawn(process.execPath, fakeEngineServerArgs("--import", poolFixture, join(SERVER_DIR, "index.ts")), {
     windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
@@ -152,11 +173,12 @@ const forget = (key: string, extra = "") => request("DELETE", `/api/folder-trust
 async function decide(bot: { id: string; threadId: string }, label: "Trust this folder" | "Don't trust") {
   await send(bot);
   const open = await card(bot);
-  expect((await answer(bot, open.requestId, label)).status).toBe(200);
+  const response = await answer(bot, open.requestId, label);
+  expect(response.status, JSON.stringify(response.body)).toBe(200);
   await settled(bot);
 }
 
-posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
+describe("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1]);
     base = `http://127.0.0.1:${port}`;
@@ -175,7 +197,7 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
     await removeTempDir(home);
   });
 
-  it("(rule 3b, wiring) a folder the owner picked raises no card on his No limits turn on Fuigo 1.0.37, and still does at Auto", async () => {
+  it("(rule 3b, wiring) an old Fuigo rejects a process choice without a card; Auto still asks", async () => {
     const picked = (name: string) => { const folder = join(home, name); mkdirSync(folder, { recursive: true }); writeFileSync(join(folder, "AGENTS.md"), "x\n"); return folder; };
     const auto = await makeBot("Picked at Auto");
     const atAuto = picked("picked-auto");
@@ -192,14 +214,15 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
     expect((await request("PATCH", `/api/bots/${owner.id}`, { cwd: atNoLimits })).status).toBe(200);
     await turn(owner);
     expect(requestsFor(atNoLimits)).toBe(1);
-    expect(JSON.parse(trustEvents().filter((entry) => entry.event === "reply").at(-1)!.raw!).result).toEqual({ outcome: "trust", scope: "configAndCommands" });
+    // MAIN RULING G2: an old version cannot receive a duration-less automatic grant.
+    expect(JSON.parse(trustEvents().filter((entry) => entry.event === "reply").at(-1)!.raw!).result).toEqual({ outcome: "reject" });
     expect(await openCard(owner.threadId)).toBeUndefined();
     expect(stored()[atNoLimits]).toMatchObject({ decision: "trust", source: "picker" });
     expect(stored()[atNoLimits].consent).not.toBe(2);
   }, 40_000);
 
-  it("E5 owner No limits opens native Fuigo folder trust through the isolated server", async () => {
-    const owner = await makeBot("No limits native trust", "fuigo-1037");
+  it("E5 owner-picked No limits sends only a process choice through the isolated server", async () => {
+    const owner = await makeBot("No limits native trust", "fuigo-1038");
     const folder = join(home, "e5-no-limits-native");
     mkdirSync(folder, { recursive: true });
     writeFileSync(join(folder, "AGENTS.md"), "fixture instructions\n");
@@ -209,13 +232,53 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
       expect((await request("PATCH", `/api/bots/${owner.id}`, { cwd: folder })).status).toBe(200);
       await turn(owner);
       const native = trustEvents().filter(entry => entry.event === "request" && entry.params.workspace === folder);
-      // The No limits launch grants trust for this process before the native
-      // protocol can ask. Prove the instructions reached the actual engine.
-      expect(native.length).toBeLessThanOrEqual(1);
-      if (native.length) {
-        const reply = trustEvents().filter(entry => entry.event === "reply" && entry.pid === native[0]!.pid).at(-1)!;
-        expect(JSON.parse(reply.raw!).result).toEqual({ outcome: "trust", scope: "configAndCommands" });
-      }
+      // MAIN RULING G2(e): the picked positive still requires a current process-only reply.
+      expect(native).toHaveLength(1);
+      const reply = trustEvents().filter(entry => entry.event === "reply" && entry.pid === native[0]!.pid).at(-1)!;
+      expect(JSON.parse(reply.raw!).result).toEqual({ outcome: "trust", scope: "configAndCommands", duration: "process" });
+      expect(JSON.stringify(await messages(owner.threadId))).toContain("fixture instructions");
+      expect(await openCard(owner.threadId)).toBeUndefined();
+      expect(stored()[folder]).toMatchObject({ decision: "trust", source: "picker" });
+      expect(stored()[folder].consent).not.toBe(2);
+    } finally {
+      await request("DELETE", `/api/bots/${owner.id}`);
+      await forget(folder);
+    }
+  }, 40_000);
+
+  it("E5 owner-unpicked No limits withholds configuration with zero cards and no saved grant", async () => {
+    const owner = await makeBot("Unpicked native trust", "fuigo-unpicked");
+    const folder = join(home, "e5-unpicked-folder");
+    mkdirSync(folder, { recursive: true }); writeFileSync(join(folder, "AGENTS.md"), "unpicked-instruction-marker");
+    expect((await request("POST", "/api/no-limits/terms", { acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await raise(owner, "no-limits", { fullAccess: true, acknowledgeFullAccess: true, noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await request("PATCH", `/api/bots/${owner.id}`, { cwd: folder })).status).toBe(200);
+    const before = readFileSync(storeFile(), "utf8");
+    await turn(owner);
+    const asked = trustEvents().filter(entry => entry.event === "request" && entry.params.workspace === join(home, "e5-not-picked-key")).at(-1)!;
+    expect(asked).toBeDefined();
+    expect(JSON.parse(trustEvents().filter(entry => entry.event === "reply" && entry.pid === asked.pid).at(-1)!.raw!).result).toEqual({ outcome: "reject" });
+    expect(JSON.stringify(await messages(owner.threadId))).toContain("agents: withheld");
+    expect(JSON.stringify(await messages(owner.threadId))).not.toContain("unpicked-instruction-marker");
+    expect(await openCard(owner.threadId)).toBeUndefined();
+    expect(readFileSync(storeFile(), "utf8")).toBe(before);
+    await request("DELETE", `/api/bots/${owner.id}`); await forget(folder);
+  });
+
+  it("E5 owner No limits opens native Fuigo folder trust through the isolated server", async () => {
+    const owner = await makeBot("No limits native trust", "fuigo-1038");
+    const folder = join(home, "e5-native-isolated-server");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "AGENTS.md"), "fixture instructions\n");
+    try {
+      expect((await request("POST", "/api/no-limits/terms", { acknowledgeNoLimits: true })).status).toBe(200);
+      expect((await raise(owner, "no-limits", { fullAccess: true, acknowledgeFullAccess: true, noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+      expect((await request("PATCH", `/api/bots/${owner.id}`, { cwd: folder })).status).toBe(200);
+      await turn(owner);
+      const native = trustEvents().filter(entry => entry.event === "request" && entry.params.workspace === folder);
+      expect(native).toHaveLength(1);
+      const reply = trustEvents().filter(entry => entry.event === "reply" && entry.pid === native[0]!.pid).at(-1)!;
+      expect(JSON.parse(reply.raw!).result).toEqual({ outcome: "trust", scope: "configAndCommands", duration: "process" });
       expect(JSON.stringify(await messages(owner.threadId))).toContain("fixture instructions");
       expect(await openCard(owner.threadId)).toBeUndefined();
       expect(stored()[folder]).toMatchObject({ decision: "trust", source: "picker" });
@@ -251,7 +314,9 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
       expect((await request("POST", "/api/no-limits/terms", { acknowledgeNoLimits: true })).status).toBe(200);
       expect((await raise(owner, "no-limits", { fullAccess: true, acknowledgeFullAccess: true, noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
       await turn(owner, "No limits reads the native saved-no folder");
-      expect(JSON.stringify(await messages(owner.threadId))).toContain("full-native-rejected-instructions");
+      // MAIN RULING G1/G2: No limits retains the saved decline while ordinary commands run.
+      expect(JSON.stringify(await messages(owner.threadId))).not.toContain("full-native-rejected-instructions");
+      expect(JSON.stringify(await messages(owner.threadId))).toContain("agents: withheld");
       expect(await openCard(owner.threadId)).toBeUndefined();
       expect(readFileSync(nativeFile, "utf8")).toBe(rejected);
     } finally {
@@ -304,11 +369,11 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
     const after1 = { spawns: spawnCount(), asks: requestsFor(K_SEQUENCE()) };
     // the digest is equal: adopted, and the fake's dedup sends no request
     await turn(bot, "two");
-    expect(spawnCount(),serverOutput.slice(-4000)).toBe(after1.spawns);
+    expect(spawnCount(), JSON.stringify(poolTrace(bot.threadId)) + serverOutput.slice(-4000)).toBe(after1.spawns);
     expect(requestsFor(K_SEQUENCE())).toBe(after1.asks);
     // negative control: nothing changed, so a third turn adopts again
     await turn(bot, "three");
-    expect(spawnCount(),serverOutput.slice(-4000)).toBe(after1.spawns);
+    expect(spawnCount(), JSON.stringify(poolTrace(bot.threadId)) + serverOutput.slice(-4000)).toBe(after1.spawns);
     expect((await list(workspaceOf(bot))).records.map((row: any) => row.key)).toContain(K_SEQUENCE());
     expect((await forget(K_SEQUENCE())).status).toBe(200);
     await send(bot, "four");
@@ -364,11 +429,12 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
   }, 40_000);
 
   it("(7) rule 2, rule 4 and skipped cards write nothing; the card, the picker, POST and the seed are the only writers", async () => {
-    const decider = await makeBot("Bound decider", "fuigo-sequence");
+    const decider = await makeBot("Bound decider", "fuigo-writers");
     await decide(decider, "Don't trust");
+    expect(stored()[K_WRITERS()]).toMatchObject({ decision: "reject", consent: 2 });
     const before = readFileSync(storeFile(), "utf8");
     // 50 folders, one each: 46 answered by rule 2, 2 at Full access with nothing to bring in, 2 skipped
-    const rule2 = await Promise.all(Array.from({ length: 46 }, (_, index) => makeBot(`Bound rule 2 ${index}`, "fuigo-sequence")));
+    const rule2 = await Promise.all(Array.from({ length: 46 }, (_, index) => makeBot(`Bound rule 2 ${index}`, "fuigo-writers")));
     const full = await Promise.all(Array.from({ length: 2 }, (_, index) => makeBot(`Bound full ${index}`, "fuigo-plain")));
     for (const bot of full) {
       expect((await raise(bot, "full", { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
@@ -389,7 +455,7 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
     expect(source.match(/folderTrust\.seedOnce\(/g)).toHaveLength(1);
     const core = readFileSync(join(SERVER_DIR, "drivers", "acp", "core.ts"), "utf8");
     expect(core).not.toMatch(/new FolderTrustStore|folderTrust\.remember\(/);
-    expect((await forget(K_SEQUENCE())).status).toBe(200);
+    expect((await forget(K_WRITERS())).status).toBe(200);
   }, 240_000);
 
   it("(6) GET does not change a reply: records never reach a turn", async () => {

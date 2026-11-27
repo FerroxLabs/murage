@@ -1,7 +1,9 @@
 import { isReadOnly, schemaStep } from '../read-only-start.ts';
+import { denyRuleSchemaText } from "./deny-rule-schema.ts";
+import { denyRuleDowngrade14to13, denyRuleUpgradeRows } from "./deny-rule-migrate.ts";
 import { ensureCheckpointSchema, checkpointSchemaObjects, assertCheckpointDowngradeSafe, dropEmptyCheckpointSchema } from './checkpoint-schema.ts';
-import { ensureSessionProofSchema, dropSessionProofSchema, sessionProofSchemaObjects, sessionProofOptionalGroups } from './session-proof-schema.ts';
-import { ensureRecallViewSchema, dropRecallViewSchema, recallSchemaObjects, recallExternalObjects } from './recall-view-schema.ts';
+import { ensureSessionProofSchema, dropSessionProofSchema, sessionProofSchemaObjects, sessionProofOptionalGroups, sessionChecksCandidateSql } from './session-proof-schema.ts';
+import { ensureRecallViewSchema, dropRecallViewSchema, dropRecallViewsAtSchema14, recallSchemaObjects, recallExternalObjects, RECALL_PENDING_OBJECTS } from './recall-view-schema.ts';
 import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import { beginIntegrityPass } from "./integrity-state.ts";
 import { seedScrubPassDone } from "./scrub-state.ts";
@@ -1604,7 +1606,7 @@ export function* repairOutputRootBackfillSteps(db: DatabaseSync, options: { onPr
   db.prepare("DELETE FROM transcript_index_state WHERE name LIKE ?").run(`${REPAIR_THREAD_PREFIX}%`);
   return done;
 }
-export const MEMORY_SCHEMA_VERSION = 13;
+export const MEMORY_SCHEMA_VERSION = 14;
 const SHAPE_MARKER = "memory-shape-check";
 /** The frozen v2 text (0.1.54 to 0.1.60), for validation and the v3 -> v2 inverse. */
 export const MEMORY_SCHEMA_V2 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=2)") + LEARNING_SCHEMA;
@@ -1628,8 +1630,10 @@ export const MEMORY_SCHEMA_V11 = MEMORY_SCHEMA_V10.replace("CHECK(schema_version
 /** v12 (1.0.3 lineage S6): the door epoch (rules 25, 27). Frozen here (1.0.3 to 1.0.6) for the v13 -> v12 inverse. */
 export const MEMORY_SCHEMA_V12 = MEMORY_SCHEMA_V1.replace("CHECK(schema_version=1)", "CHECK(schema_version=12)") + LEARNING_SCHEMA + OUTPUT_INDEX_SCHEMA + LEDGER_SCHEMA + BOT_LEARNING_SCHEMA + LINEAGE_SCHEMA + REVOCATION_INDEX_SCHEMA + OPEN_TURNS_SCHEMA + WRITETIME_SCHEMA_V12;
 /** v13 (1.0.7 memory-recall-hydration): the source created-lsn stamps (SOURCE_LSN_SCHEMA). */
-export const MEMORY_SCHEMA = MEMORY_SCHEMA_V12.replace("CHECK(schema_version=12)", "CHECK(schema_version=13)") + SOURCE_LSN_SCHEMA;
-const SCHEMA_TEXT: Record<number, string> = { 1: MEMORY_SCHEMA_V1, 2: MEMORY_SCHEMA_V2, 3: MEMORY_SCHEMA_V3, 4: MEMORY_SCHEMA_V4, 5: MEMORY_SCHEMA_V5, 6: MEMORY_SCHEMA_V6, 7: MEMORY_SCHEMA_V7, 8: MEMORY_SCHEMA_V8, 9: MEMORY_SCHEMA_V9, 10: MEMORY_SCHEMA_V10, 11: MEMORY_SCHEMA_V11, 12: MEMORY_SCHEMA_V12, 13: MEMORY_SCHEMA };
+export const MEMORY_SCHEMA_V13 = MEMORY_SCHEMA_V12.replace("CHECK(schema_version=12)", "CHECK(schema_version=13)") + SOURCE_LSN_SCHEMA;
+/** v14 (1.0.23): the deny rule's explicit-mark and seed tables replace the four 1.0.22 mark and queue tables (deny-rule-schema.ts). */
+export const MEMORY_SCHEMA = denyRuleSchemaText(MEMORY_SCHEMA_V13).replace("CHECK(schema_version=13)", "CHECK(schema_version=14)");
+const SCHEMA_TEXT: Record<number, string> = { 1: MEMORY_SCHEMA_V1, 2: MEMORY_SCHEMA_V2, 3: MEMORY_SCHEMA_V3, 4: MEMORY_SCHEMA_V4, 5: MEMORY_SCHEMA_V5, 6: MEMORY_SCHEMA_V6, 7: MEMORY_SCHEMA_V7, 8: MEMORY_SCHEMA_V8, 9: MEMORY_SCHEMA_V9, 10: MEMORY_SCHEMA_V10, 11: MEMORY_SCHEMA_V11, 12: MEMORY_SCHEMA_V12, 13: MEMORY_SCHEMA_V13, 14: MEMORY_SCHEMA };
 /** The kinds the search index never holds (the PIP kinds, pip-kinds.ts, frozen here because an index definition cannot follow a list
  * that changes: owner-tail.test.ts proves the two equal), and the checkpoint versions that are no longer the live one. */
 export const OWNER_TAIL_KIND_LIST = ["continuity-brief", "commitment", "self-trait", "relation", "pip-proposal", "pip-counter", "concern", "episode"] as const;
@@ -2135,7 +2139,9 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   const externalRecall=recallExternalObjects(),externalRows=recallRows.filter(row=>externalRecall.has(row.name));
   if(externalRows.length && (externalRows.length!==externalRecall.size || externalRows.some(row=>{const expected=externalRecall.get(row.name)!;return row.type!==expected.type || row.tbl_name!==expected.tbl_name || row.sql!==expected.sql;})))throw new Error('MEMORY_SCHEMA_UNSUPPORTED');
   const coreRecallRows=recallRows.filter(row=>!externalRecall.has(row.name));
-  if (recallRows.length && (coreRecallRows.length !== recallObjects.size || coreRecallRows.some(row => {
+  // A 1.0.20 candidate build dropped the pending table: all four of its objects gone, everything else exact. ensureRecallViewSchema puts it back.
+  const pendingDropped=!coreRecallRows.some(row=>(RECALL_PENDING_OBJECTS as readonly string[]).includes(row.name));
+  if (recallRows.length && (coreRecallRows.length !== recallObjects.size-(pendingDropped?RECALL_PENDING_OBJECTS.length:0) || coreRecallRows.some(row => {
     const expected = recallObjects.get(row.name);
     return !expected || row.type !== expected.type || row.tbl_name !== expected.tbl_name || row.sql !== expected.sql;
   }))) throw new Error('MEMORY_SCHEMA_UNSUPPORTED');
@@ -2143,7 +2149,8 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   const proofRows = rows.filter(row => proofObjects.has(row.name));
   for (const row of proofRows) {
     const expected = proofObjects.get(row.name)!;
-    if(row.type!==expected.type || row.tbl_name!==expected.tbl_name || row.sql!==expected.sql)throw new Error('MEMORY_SCHEMA_UNSUPPORTED');
+    // The 1.0.20 candidate's table (one added column) is accepted with its exact text only; ensureSessionProofSchema hands the column back.
+    if(row.type!==expected.type || row.tbl_name!==expected.tbl_name || (row.sql!==expected.sql && !(row.name==='memory_session_checks' && row.sql===sessionChecksCandidateSql())))throw new Error('MEMORY_SCHEMA_UNSUPPORTED');
   }
   // Only a marked root-set hand-back excuses its two triggers; every remaining proof object must still match exactly.
   const rootless = !rows.some(row => row.type === 'table' && row.name === 'memory_session_roots')
@@ -2167,7 +2174,7 @@ export function validateMemorySchema(db: DatabaseSync, options: { references?: b
   const memoryRows = allMemoryRows.filter(row => !late.includes(row) && !revokeLate.includes(row));
   // Recognize only an exact known meta table before reading its version field.
   const metaSchema = memoryRows.find(row => row.name === "memory_meta");
-  const version = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].find(value => metaSchema?.sql === expectedSchema(value).get("memory_meta")?.sql);
+  const version = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].find(value => metaSchema?.sql === expectedSchema(value).get("memory_meta")?.sql);
   if (!version) {
     // A newer Murage wrote this file: say so, and name the way out, instead of
     // the bare unsupported-schema code an older build prints.
@@ -2706,6 +2713,10 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
       // v4 -> v5 widens the ledger's kind CHECK, which SQLite only allows by rebuilding the table.
       if (from === 4) db.exec(`${LEDGER_INDEXES.map(name => `DROP INDEX ${name};`).join("")} ALTER TABLE memory_learning_events RENAME TO memory_learning_events_v4;`);
       if (from === 10 || from === 11) db.exec(DOOR_EPOCH_UP_PRE);
+      // 1.0.18's reclaim (root-set-reclaim.ts, a v13 file) handed the root-set tables back: the schema text below makes them again (IF NOT
+      // EXISTS), empty, so the ones it handed back leave again in this transaction and the file stays reclaimed, start after start.
+      const handedBack = from === 13 && Number(db.prepare("SELECT value FROM memory_lineage_lsn_meta WHERE key='root_sets_dropped'").get()?.value ?? 0) === 1
+        ? ROOT_SET_RECLAIM_TABLES.filter(name => !db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name)) : [];
       db.exec("ALTER TABLE memory_meta RENAME TO memory_meta_previous;");
       startupMark("migrate.rename");
       // v9 adds the open-turns table and its triggers, all created empty (constant time, whatever the history holds); the turns already
@@ -2720,7 +2731,12 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
       // DROP just took it: made again here (only objects that are missing are created; from a v10 file on this is that trigger).
       db.exec(MEMORY_SCHEMA.replace(DISCLOSURE_STATE_INDEX, "").replace(`${SCOPE_OWNER_INDEX_SQL};\n`, ""));
       if (from === 10 || from === 11) db.exec(DOOR_EPOCH_UP_COPY);
+      for (const name of handedBack) db.exec(`DROP TABLE IF EXISTS ${name}`);
       seedSessionIncarnations(db);
+      // v14 (1.0.23 deny rule): the 1.0.22 marks the read-time rule does not imply become explicit rows, the two old mark tables go (deny-rule-migrate.ts)
+      if (from >= 10 && from < 14) denyRuleUpgradeRows(db);
+      // v14 (1.0.23 oneindex, same transaction): every per-view recall copy goes, forget work owed or not (recall-view-schema.ts)
+      if (from < 14) dropRecallViewsAtSchema14(db);
       if (from === 1) db.exec(`INSERT INTO memory_record_details(record_id,record_version,partition,attention,claim_status,observed_at)
         SELECT id,version,CASE kind WHEN 'source' THEN 'episodic' WHEN 'checkpoint' THEN 'working' WHEN 'procedure' THEN 'procedural' WHEN 'identity' THEN 'identity' ELSE 'semantic' END,
           CASE WHEN state IN ('archived','superseded','deleted') THEN 'historical' ELSE 'useful' END,
@@ -2891,6 +2907,9 @@ export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarge
   const from = Number(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version);
   if (from > MEMORY_SCHEMA_VERSION) throw new Error("MEMORY_SCHEMA_UNSUPPORTED");
   if(from>=to)assertCheckpointDowngradeSafe(db);
+  // v14 -> v13 (1.0.23 -> 1.0.22) first, in one transaction of its own: the 1.0.22 mark tables come back with every mark the deny rule implies
+  // (deny-rule-migrate.ts); a failure leaves the file at 14. The step to `to` then runs from 13 exactly as 1.0.22's own command runs it.
+  if (from === 14 && to <= 13) { denyRuleDowngrade14to13(db); return { ...downgradeMemorySchema(db, to), status: "downgraded", from }; }
   // 1.0.3 -> 1.0.2 is v10 -> v10: the 1.0.2 validator refuses an object it does not know, so the lane-2 derived objects (the key table, its
   // indexes, triggers and build row, the past-chats progress table) leave in one transaction; the next 1.0.3 open makes and fills them again.
   // The same objects leave first on every deeper downgrade. (The search index file is prepared by its own step, age-index.ts.)
@@ -2938,6 +2957,9 @@ export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarge
     // every optional index leaves first: an older build's inspector accepts none of them (1.0.2 and later make and keep their own)
     dropEmptyCheckpointSchema(db); dropSessionProofSchema(db); dropRecallViewSchema(db);
     db.exec("DROP TABLE IF EXISTS memory_capture_deferred");
+    // The 1.0.19 bot create marker (bot-create-rollback.ts): no older inspector knows it. Empty, it holds nothing; a row is a committed create whose
+    // journal is still on disk, and dropping it would make the next start roll that bot back, so a non-empty table stays and the file is refused.
+    if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='bot_create_commits'").get() && !db.prepare("SELECT 1 FROM bot_create_commits LIMIT 1").get()) db.exec("DROP TABLE bot_create_commits");
     if (to >= 10) { for (const index of [...REQUIRED_INDEXES, ...OPTIONAL_INDEXES]) if (!OPTIONAL_INDEXES_KEPT_FOR_102.has(index.name)) db.exec(`DROP INDEX IF EXISTS ${index.name}`); }
     else dropOptionalIndexes(db);
     if (from >= 10) dropRecordKeys(db); // the 1.0.3 derived objects (above): no older build knows them

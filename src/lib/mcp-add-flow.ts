@@ -9,7 +9,7 @@
 import { isSecretName, looksSecretValue, PASTE_MESSAGES, PASTE_NOTE_TEMPLATES, formatPasteNote, parsePaste, type PasteDraft, type PasteField, type PasteFailureReason, type PasteNote, type PasteRemoteDraft, type PasteStdioDraft } from "../../shared/mcp-paste";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
-import type { McpBridge, McpSecretsInput } from "./mcp-bridge";
+import { canUseOwnMcpApp, type McpBridge, type McpSecretsInput } from "./mcp-bridge";
 
 export type ApiFn = (path: string, init?: { method?: string; body?: string }) => Promise<any>;
 export interface FlowDeps { api: ApiFn; bridge?: McpBridge }
@@ -250,11 +250,17 @@ export async function setEnabled(deps: FlowDeps, name: string, enabled: boolean)
   await deps.api(`/api/mcp/servers/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
 }
 
-/** Sign in needs the desktop shell. */
-export async function signInTo(deps: FlowDeps, name: string): Promise<{ ok: true } | { ok: false; message: string; cancelled: boolean }> {
-  if (!deps.bridge) return { ok: false, message: "", cancelled: false };
+/** Sign in needs the desktop shell, or a Cloud home's connect route. */
+export async function signInTo(deps: FlowDeps, name: string, host = ""): Promise<{ ok: true } | { ok: false; message: string; cancelled: boolean; ownApp?: true }> {
+  if (!deps.bridge) {
+    // A plain browser on a Cloud home has no shell: the home's own connect route does the sign-in (the fresh-code step is api()'s).
+    const { isCloudHome } = await import("./cloud-workspace");
+    if (!isCloudHome()) return { ok: false, message: "", cancelled: false };
+    const { signInViaHome } = await import("./mcp-cloud-connect");
+    return signInViaHome(name, deps.api, host);
+  }
   const result = await deps.bridge.signIn(name);
-  return result.ok ? { ok: true } : { ok: false, message: result.message, cancelled: result.error === "cancelled" };
+  return result.ok ? { ok: true } : { ok: false, message: result.message, cancelled: result.error === "cancelled", ...(canUseOwnMcpApp(result.error) ? { ownApp: true } : {}) };
 }
 
 /** Remove an entry. With the shell it does the revoking, clearing and DELETE

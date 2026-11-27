@@ -9,8 +9,6 @@ import type { ProviderStopResult } from "../contracts.ts";
 import { object } from "./openai-chat-protocol.ts";
 import type { ChatMcpSession } from "./chat-mcp-client.ts";
 
-export const MAX_CHAT_ROUNDS = 64;
-export const MAX_TURN_TOOL_CALLS = 200;
 export const MAX_ANNOUNCEMENT_NUDGES = 3;
 /** s4 caps. */
 export const MAX_TURN_TOOLS = 128;
@@ -91,24 +89,19 @@ export function scrubKnownLeaves<T>(value: T, secrets: readonly string[], depth 
 /** True when a known secret (raw or JSON-escaped) appears anywhere in `text`. */
 export const namesSecret = (text: string, secrets: readonly string[]): boolean => secrets.some((secret) => text.includes(secret));
 
-/** s8: the provider-facing copy of a call's JSON arguments. Parsed, scrubbed on its string leaves and serialized again (escaping
- *  inside JSON text would hide a secret from a text split); text that does not parse is scrubbed as text, raw and JSON-escaped.
- *  Arguments holding no known secret are returned byte for byte. The exact arguments that run are never this copy. */
+/** Keeps assistant tool calls valid in the next request and removes known secrets from their JSON. */
 export function providerArguments(text: string, secrets: readonly string[]): string {
-  if (!secrets.length) return text;
+  const trimmed = text.trim() || "{}";
   try {
-    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(text));
-    // a replayed call's keys are the model's own words, never matched on: a secret used as a key is removed too (Astra code-r2)
+    const parsed = object(registerBusyloopPayloadSite("read", JSON.parse(trimmed)));
+    if (!parsed) return "{}";
+    if (!secrets.length) return trimmed;
+    // The tool result carries validation errors while its replayed arguments stay valid.
     const scrubbed = scrubKnownLeaves(parsed, secrets, 0, true);
     const out = JSON.stringify(scrubbed);
-    return out === JSON.stringify(parsed) ? text : out;
+    return out === JSON.stringify(parsed) ? trimmed : out;
   } catch {
-    let out = replaceKnown(text, secrets);
-    for (const secret of secrets) {
-      const escaped = JSON.stringify(secret).slice(1, -1);
-      if (escaped !== secret && out.includes(escaped)) out = out.split(escaped).join("[redacted]");
-    }
-    return out;
+    return "{}";
   }
 }
 

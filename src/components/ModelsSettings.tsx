@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { orderedModelMetadata, preloadModelMetadata, subscribeModelMetadata, modelMetadataReady, type FillableModelRow } from "@/lib/model-metadata";
+import { orderedModelMetadata, preloadModelMetadata, subscribeModelMetadata, modelMetadataRevision, type FillableModelRow } from "@/lib/model-metadata";
 import { Card, InAdvanced, Part, Switch } from "./SettingsPrimitives";
 import { fluxDesktopSigninEnabled } from "@/lib/feature-flags";
 import { api, useStore, type ConfigStatus } from "@/state/store";
@@ -35,6 +35,16 @@ export function ModelCatalogRows({ models, query = "", searchContext = "", showC
 }
 function chatModels(connection: PublicProviderConnection): ProviderModel[] {
   return orderedModelMetadata(connection.catalog.models).filter(model => model.enabled && model.chatEligible && model.capabilities.chat && !model.outputModalities.some(type => type === "image" || type === "video"));
+}
+/** The one line under a connection's name. 1.0.21: a fetched list with no chat model in it never reads "0 chat models
+ *  listed", and a connection that needs attention says it is not used until the reason below it is fixed (never "manage
+ *  it" on the page the owner is already on). */
+export function connectionStatusLine(connection: PublicProviderConnection, chatModelCount: number): string {
+  if (connection.signIn?.state === "needs-sign-in") return t("modelSignIn.rowEnded");
+  if (connection.state === "saved") return connection.signIn ? t("modelSignIn.rowNotFetched") : "Key saved · model list not fetched";
+  if (connection.state === "needs-attention") return "Not in use until the problem below is fixed";
+  if (chatModelCount === 0) return "Key saved · this provider's list has no chat models Murage can use yet. Refresh models to check again.";
+  return `${chatModelCount.toLocaleString()} chat model${chatModelCount === 1 ? "" : "s"} listed`;
 }
 function failureMessage(error: unknown, action: string): string {
   const message = error instanceof Error ? error.message : "";
@@ -76,7 +86,7 @@ function ExistingKey({ id, label, configured, onSaved, settingControl }: { setti
 }
 
 export function ModelsSettings() {
-  useSyncExternalStore(subscribeModelMetadata, modelMetadataReady, modelMetadataReady);
+  useSyncExternalStore(subscribeModelMetadata, modelMetadataRevision, modelMetadataRevision);
   useEffect(() => { void preloadModelMetadata(); }, []);
   const { state, dispatch } = useStore();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null), [busy, setBusy] = useState<string | null>(null), [error, setError] = useState(""), [notice, setNotice] = useState("");
@@ -228,7 +238,7 @@ export function ModelsSettings() {
       const models = chatModels(connection), matching = models.filter(model => !search || `${model.label} ${model.id} ${connection.label} ${labels[connection.preset]}`.toLowerCase().includes(search));
       return <section key={connection.id} aria-label={`${connection.label} connection`} className="min-w-0 rounded-xl border border-hairline/40 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0"><h4 className="break-words text-[14px] font-medium">{connection.label}</h4><p className="text-[12px] text-ink-secondary">{labels[connection.preset]} · {connection.legacy ? "Existing default" : connection.enabled ? "Enabled" : "Disabled"}</p></div>{!connection.legacy && !connection.signIn && <div className="flex min-h-11 items-center gap-2 text-[12px]"><span aria-hidden="true">Use connection</span><Switch aria-label={`Use ${connection.label}`} checked={connection.enabled} disabled={Boolean(busy)} onClick={() => void changeConnection({ action: "update", id: connection.id, revision: connection.revision, enabled: !connection.enabled })} className={focus} /></div>}</div>
-        <p className="mt-2 text-[12px] text-ink-secondary">{connection.signIn?.state === "needs-sign-in" ? t("modelSignIn.rowEnded") : connection.state === "saved" ? connection.signIn ? t("modelSignIn.rowNotFetched") : "Key saved · model list not fetched" : connection.state === "needs-attention" ? "Model list needs attention" : `${models.length} chat models listed`}</p>
+        <p className="mt-2 text-[12px] text-ink-secondary">{connectionStatusLine(connection, models.length)}</p>
         {connection.catalog.error && <p className="mt-2 break-words text-[12px] text-danger">{connection.catalog.error.message}</p>}
         {connection.catalog.stale && connection.catalog.fetchedAt && <p className="mt-1 text-[12px] text-ink-secondary">Showing last saved models from {new Date(connection.catalog.fetchedAt).toLocaleString()}.</p>}
         <div className="mt-3 flex flex-wrap gap-2"><button type="button" className={button} disabled={Boolean(busy)} onClick={() => void refresh(connection.id)}>Refresh models for {connection.label}</button>{connection.legacy ? <a href="#existing-model-keys" className={`flex min-h-11 items-center rounded-lg px-3 text-[12px] text-accent ${focus}`}>Manage existing key below</a> : connection.signIn ? <a href="#signin-heading" className={`flex min-h-11 items-center rounded-lg px-3 text-[12px] text-accent ${focus}`}>{t("modelSignIn.rowManage")}</a> : <><button type="button" className={button} disabled={Boolean(busy)} onClick={() => setEditing(connection.id)}>Rename {connection.label}</button><button type="button" className={button} disabled={Boolean(busy)} onClick={() => setRemoving({ id: connection.id, label: connection.label, revision: connection.revision })}>Remove {connection.label}</button></>}</div>

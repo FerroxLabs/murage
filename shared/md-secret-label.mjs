@@ -33,6 +33,24 @@ function isCountedMarkerValue(text, at) {
   return COUNTED_MARKER_VALUE.test(text);
 }
 
+/** Turn mode (MAIN-RULING 2026-11-22T17:58:19Z Q1): a label whose value is EXACTLY one counted marker, alone to the end of its
+ * line (blanks and emphasis marks around it only), is complete: the value was already redacted. Anything else on the line after
+ * the marker, a marker glued to other text, or a line that ends inside the marker is not this rule and is judged as before. */
+const TURN_MARKER_VALUE = new RegExp("[ \\t*`~]*" + COUNTED + "[ \\t*`~]*$", "uy");
+function isTurnMarkerValue(line, at) {
+  TURN_MARKER_VALUE.lastIndex = at;
+  return TURN_MARKER_VALUE.test(line);
+}
+/** The same rule one UTF-16 unit at a time (scanLabelDelta): 0 = `c` cannot continue an exact marker value,
+ * 1 = still possible, 2 = the marker is closed (only blanks and emphasis marks may follow on this line). */
+const MARKER_HEAD = "«redacted ", MARKER_TAIL = " chars»";
+function markerStep(m, c) {
+  if (m.at < MARKER_HEAD.length) { if (c !== MARKER_HEAD[m.at]) return 0; m.at++; return 1; }
+  if (m.tail === 0 && c >= "0" && c <= "9") { if (++m.digits > 9) return 0; return 1; }
+  if (m.digits === 0 || c !== MARKER_TAIL[m.tail]) return 0;
+  return ++m.tail === MARKER_TAIL.length ? 2 : 1;
+}
+
 /** C5: as a label's value, a marker glued to an ASCII alphanumeric is a fake. The folded
  * AWS ID mask does end before one, so in prose a glued marker is still ordinary text. */
 const COUNTED_MARKER = new RegExp(`${COUNTED}(?![A-Za-z0-9])`, "y");
@@ -214,12 +232,13 @@ export function maskSecretLabelsToEnd(text, mask, charge, edits, discardCarry) {
 // in its leading run, the last normalized characters a label can end in, and
 // an open label whose value has not started yet.
 
-/** Fresh per-(thread, field) line state. `len` is the unfinished line length. */
-export function createLabelStream() {
-  return { len: 0, d: -1, lead: true, win: "", prevAlnum: false, pendU: -1, open: false, units: 0 };
+/** Fresh per-(thread, field) line state. `len` is the unfinished line length. With `turn`, the caller latches on a finding and
+ * releases nothing from this result (server/redact-turn.ts), so emphasis marks before an undecided Q1 value wait for it. */
+export function createLabelStream({ turn = false } = {}) {
+  return { len: 0, d: -1, lead: true, win: "", prevAlnum: false, pendU: -1, open: false, units: 0, value: null, turn };
 }
 function resetLine(st) {
-  st.len = 0; st.d = -1; st.lead = true; st.win = ""; st.prevAlnum = false; st.pendU = -1; st.open = false;
+  st.len = 0; st.d = -1; st.lead = true; st.win = ""; st.prevAlnum = false; st.pendU = -1; st.open = false; st.value = null;
 }
 // A bounded normalized suffix retaining the first two horizontal whitespace
 // units verbatim. Two units preserve non-matching internal name gaps; retaining
@@ -237,17 +256,36 @@ function normalizedUnit(st, c) {
   let endingHere = false;
   for (let m; (m = SECRET_LABEL.exec(st.win));) if (m.index + m[0].length === st.win.length) endingHere = true;
   if (!endingHere) return false;
+  // Q1: the value may still be exactly one counted marker; scanLabelDelta decides on the units that follow.
+  // A wrapped label (a mark was deleted before it) is a finding at once, as before: its value may arrive on another stream.
   if (st.d >= 0) return true;
+  st.value = { at: 0, digits: 0, tail: 0, done: false };
   st.open = true;
   return false;
 }
 /** Feed only new UTF-16 units; return the safe prefix length in this delta. */
 export function scanLabelDelta(st, raw) {
   if (typeof raw !== "string") throw new SecretLabelBudgetError();
-  if (raw.length > 1_048_576) throw new SecretLabelBudgetError();
   for (let i = 0; i < raw.length; i++) {
     const c = raw[i], abs = st.len;
     st.units++;
+    if (st.value) {
+      // Q1 (turn mode): after a label only an exact counted marker, alone to the end of the line, is not a finding. Blanks and
+      // emphasis marks may stand after it (blanks only before it); any other unit, or a line that ends inside the marker, is the finding.
+      const v = st.value, around = c === " " || c === "\t" || c === "*" || c === "`" || c === "~";
+      if (c === "\n") { if (v.at > 0 && !v.done) return i; if (!v.done) st.value = null; else { resetLine(st); continue; } }
+      else if (v.done) { if (!around) return i; st.len++; continue; }
+      // Before the marker only blanks wait: a mark there is the finding at once, as before Q1. A stream cannot take back units it
+      // already called safe, so a mark released while the value is undecided would be shown ahead of a value that is not a marker.
+      else if (v.at === 0 && (c === " " || c === "\t")) { st.len++; continue; }
+      // A turn stream releases nothing from this result, so there a mark may open a counted marker (`**«redacted 12 chars»**`,
+      // complete under Q1); it is kept as the line's D and the value that follows decides: a marker is complete, anything else
+      // is the finding (the wrapped rule below).
+      else if (v.at === 0 && around) { if (!st.turn) return i; if (st.d < 0) st.d = abs; st.len++; continue; }
+      else if (v.at === 0 && c !== "«") st.value = null; // an ordinary value: the rules below judge it (wrapped = finding)
+      else { const step = markerStep(v, c); if (step === 0) return i; if (step === 2) v.done = true; st.len++; continue; }
+      if (!st.value && st.d >= 0 && c !== "\n") return i;
+    }
     if (c === "\n") {
       if (st.pendU >= 0) { if (st.d < 0) st.d = st.pendU; st.pendU = -1; }
       if (st.open && st.d >= 0) return i;
@@ -338,8 +376,11 @@ export function scan(text, options = {}, complete) {
   try {
     const requested = options.budget ?? SECRET_SCAN_BUDGET;
     if (!Number.isFinite(requested) || requested < 0) throw new SecretLabelBudgetError();
-    budget = Math.min(SECRET_SCAN_BUDGET, Math.floor(requested));
     if (typeof text !== "string") throw new SecretLabelBudgetError();
+    // MAIN-RULING cause22-no-transport-caps (1.0.21): `perChar` grants work per input character on top of the
+    // fixed budget, so the cap bounds the work per character (linear time) and never the size of the text.
+    const perChar = Number.isFinite(options.perChar) && options.perChar > 0 ? Math.floor(options.perChar) : 0;
+    budget = Math.min(SECRET_SCAN_BUDGET, Math.floor(requested)) + perChar * text.length;
     // Reserve normalization/input and output work before copies or offset maps.
     spend(text.length * 2);
     const providers = options.providers === false ? [] : providerSpans(text, spend);
@@ -366,6 +407,7 @@ export function scan(text, options = {}, complete) {
         // A completed marker ends this value; later labels still need scanning.
         // C3 unwrapped: complete whatever follows. C4 wrapped: only at a follower boundary.
         if (options.mode !== "turn" && (wrapped ? isCountedMarkerValue(line, sepEnd) : startsWithCounted(line, sepEnd))) continue;
+        if (options.mode === "turn" && isTurnMarkerValue(line, sepEnd)) continue;
         let nameEnd = sep; while (nameEnd > m.index && isBlank(n[nameEnd - 1])) nameEnd--;
         const code = line[map[m.index] - 1] === "`" && line[map[nameEnd - 1] + 1] === "`";
         const word = line.slice(Math.max(wordStart, sepEnd), wordEnd).trim();

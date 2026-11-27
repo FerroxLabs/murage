@@ -128,6 +128,8 @@ export function createRefresher(ctx) {
       });
       if (!result.ok) {
         if (result.failure === "dead") return markDead();
+        // The owner's own app is kept; its tokens go and the server needs a sign-in.
+        if (result.failure === "client" && oauth.preRegistered === true) return markDead();
         if (result.failure === "client") {
           unsaved.delete(name);
           cancelTimer(name);

@@ -1,3 +1,4 @@
+import { assertExternalEvidencePath, evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Run only in an isolated test checkout/container. Always restores the source.
 import assert from 'node:assert/strict';
@@ -7,7 +8,7 @@ import { join, resolve } from 'node:path';
 
 const target = 'server/decision/release-guard.ts';
 const original = readFileSync(target, 'utf8');
-const out = resolve(process.argv[2] ?? 'lane-evidence/nolim-release-guard/mutants');
+const out = assertExternalEvidencePath(resolve(process.argv[2] ?? evidencePath('lane-evidence/nolim-release-guard/mutants')));
 mkdirSync(out, { recursive: true });
 const anchor = 'if(!fresh.wipes?.length||approved&&wipeEvidenceCovers(fresh.wipes,approved.inspection.wipes??[]))return RELEASE;';
 assert.equal(original.split(anchor).length, 2, 'release predicate must be uniquely pinned');

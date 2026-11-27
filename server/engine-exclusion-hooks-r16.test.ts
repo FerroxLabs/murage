@@ -59,6 +59,15 @@ describe("R16: every test-hook export is refused by every production gate", () =
     });
   }
 
+  // rel/1023 o1m2-extract: server/index.ts and host/host-main.ts refuse password admission when the addon's disableCoreDumps is missing,
+  // so a macOS or Linux package without it must fail the build at this load check, not ship and refuse every password at run time.
+  it.runIf(process.platform !== "win32")("an addon without disableCoreDumps is refused by the after-pack load check (ENGINE_EXCLUSION_RESOURCE_FUNCTIONS)", () => {
+    const file = join(scratch, "no-core-dump-guard.cjs");
+    writeFileSync(file, `const f=${JSON.stringify(FUNCTIONS.filter(name => name !== "disableCoreDumps"))};const a={version:()=>${ADDON_VERSION},processes:()=>[{pid:process.pid}]};for(const n of f)a[n]??=()=>undefined;module.exports=a;`);
+    expect(() => loadEngineExclusionResource(file, process.platform, process.arch, ADDON_VERSION, run, process.execPath)).toThrow("ENGINE_EXCLUSION_RESOURCE_FUNCTIONS");
+    expect(FUNCTIONS, "the list the check enforces names it").toContain("disableCoreDumps");
+  });
+
   it("a hook nobody listed yet (any anchorTest* name) is refused too", () => {
     expect(addonIsUsable(plainAddon(["anchorTestSomethingNew"]) as Partial<ExclusionAddon>)).toBe(false);
     expect(windowsAddonIsUsable(plainAddon(["anchorTestSomethingNew"]))).toBe(false);

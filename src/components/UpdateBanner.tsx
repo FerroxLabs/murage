@@ -22,6 +22,7 @@ import { localeVersion, subscribeLocale, t } from "@/lib/i18n";
 import { releaseHighlights } from "@/lib/release-highlights";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
+import { useNoticeTurn } from "@/lib/notice-lane";
 
 // The one action button in the card. Disabled drops the accent fill for the
 // flat raised grey — the "I heard you" the click needs while the main process
@@ -49,6 +50,8 @@ export function UpdateBanner() {
   const cardOpen = useUpdateCardOpen();
   const popupUp = useUpdatePopup(s);
   const status = s?.status;
+  // The pop-up floats in the bottom-left corner: it waits while a notice above it is up (lib/notice-lane.ts), never stacks.
+  const popupTurn = useNoticeTurn("update", Boolean(popupUp && s && s.status !== "idle" && s.status !== "checking" && !(cardOpen && status !== "downloading")));
   // Closing is just closing: the round button stays while there is anything to do.
   const dismiss = () => {
     closeUpdateCard();
@@ -61,7 +64,7 @@ export function UpdateBanner() {
   }, [cardOpen, status]);
   if (!s || s.status === "idle" || s.status === "checking") return null;
   if (cardShows) return <UpdateCardLayer s={s} dismiss={dismiss} />;
-  return popupUp ? <UpdatePopup s={s} onDismiss={dismiss} /> : null;
+  return popupUp && popupTurn ? <UpdatePopup s={s} onDismiss={dismiss} /> : null;
 }
 /** Mount with the visible card so the action opener belongs to this activation. */
 function UpdateCardLayer({ s, dismiss }: { s: UpdaterState; dismiss: () => void }) {

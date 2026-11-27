@@ -77,9 +77,11 @@ describe("release.yml GEPA receipts", () => {
     // windows-gepa-ci.mjs entry is not called. The two-parameter verifier then refuses any image without our timestamped signature.
     for (const content of [source, win]) {
       expect(content).not.toContain("node scripts/windows-gepa-ci.mjs");
-      // The 1.0.18 action call signs the whole worker tree (nested .dll/.pyd too); the verifier below walks the same tree
-      // recursively and refuses any image left unsigned. The controller-era ban on recursion applied to its own driver only.
-      expect(content).toContain("files-folder-recurse: true"); expect(content).toContain("files-folder-filter: exe,dll,pyd");
+      // The action signs every worker image (nested .dll/.pyd too) from the list sign-list-windows.ps1 writes, except
+      // Microsoft's VC++ runtime, which keeps Microsoft's signature (1.0.20: re-signing it made the verdict depend on the
+      // runner's catalog database). The verifier below walks the same tree recursively and refuses any image left unsigned.
+      expect(content).toContain("native/gepa/sign-list-windows.ps1"); expect(content).toContain("files-catalog: ${{ github.workspace }}/qualification-evidence/gepa-windows-sign-list.txt");
+      expect(content).not.toContain("files-folder");
       expect(content).toMatch(/verify-windows\.ps1 -Bundle \S+ -Receipt \S+\s*\n/);
       expect(content).not.toContain("-SigningManifest");
     }

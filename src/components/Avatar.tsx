@@ -13,8 +13,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { liveEventsOpened } from "@/lib/live-events";
 import { EMBER_COLORS, type EmberColor, type EmberMotion, type EmberState } from "@/lib/mascot";
 import {
   EmberAvatar as EmberMascot,
@@ -257,11 +259,6 @@ export type BotAvatarProps = Omit<EmberAvatarProps, "color"> & {
   presentation?: { silhouette?: boolean; pixelArt?: boolean } | null;
 };
 
-/**
- * The one renderer for a bot's chosen profile image. Malformed persisted
- * values and images that fail to load both fall back to the animated mascot,
- * so an old/corrupt profile can never leave a broken-image icon in the app.
- */
 const BOT_AVATAR_RADIUS = { mascot: "0", circle: "50%", rounded: "22%", square: "0" } satisfies Record<BotAvatarCrop, string>;
 /** How much of a shaped tile the mascot fills, leaving room for the corners. */
 const MASCOT_IN_TILE = 0.78;
@@ -270,13 +267,9 @@ const MASCOT_TILE_EDGE = "shadow-[inset_0_0_0_1px_var(--color-hairline)]";
 
 export function BotAvatar({ bot, size = 44, label, presentation, ...mascotProps }: BotAvatarProps) {
   const profile = botAvatarProfile(bot);
-  const [imageFailed, setImageFailed] = useState(false);
-
-  useEffect(() => setImageFailed(false), [profile.avatarUrl]);
-
   const radius = BOT_AVATAR_RADIUS[profile.avatarCrop];
 
-  if (profile.avatarCrop === "mascot" || !profile.avatarUrl || imageFailed) {
+  if (profile.avatarCrop === "mascot" || !profile.avatarUrl) {
     const mascot = (
       <EmberAvatar
         {...mascotProps}
@@ -304,25 +297,64 @@ export function BotAvatar({ bot, size = 44, label, presentation, ...mascotProps 
     );
   }
 
-  // The owner's zoom and point (Settings > Appearance > Framing), the same
-  // everywhere this picture shows; a whole sprite on the call screen is not cropped.
+  return <BotAvatarPhoto key={profile.avatarUrl} src={profile.avatarUrl} bot={bot} size={size} radius={radius} label={label} presentation={presentation} />;
+}
+
+const FIRST_AVATAR_RETRY_MS = 250;
+const LAST_AVATAR_RETRY_MS = 32_000;
+
+function BotAvatarPhoto({ bot, src, size, radius, label, presentation }: Pick<BotAvatarProps, "bot" | "label" | "presentation"> & {
+  src: string;
+  size: number;
+  radius: string;
+}) {
+  const [status, setStatus] = useState<"loading" | "loaded" | "failed">("loading");
+  const nextDelay = useRef(FIRST_AVATAR_RETRY_MS);
+  useEffect(() => {
+    if (status !== "failed") return;
+    const delay = nextDelay.current;
+    const retry = () => setStatus("loading");
+    const timer = delay <= LAST_AVATAR_RETRY_MS ? setTimeout(() => {
+      nextDelay.current = delay * 2;
+      retry();
+    }, delay) : undefined;
+    // A missing attachment eventually goes quiet until the connection comes back.
+    const wake = () => {
+      clearTimeout(timer);
+      nextDelay.current = FIRST_AVATAR_RETRY_MS;
+      retry();
+    };
+    liveEventsOpened.addEventListener("open", wake);
+    window.addEventListener("online", wake);
+    return () => {
+      clearTimeout(timer);
+      liveEventsOpened.removeEventListener("open", wake);
+      window.removeEventListener("online", wake);
+    };
+  }, [status]);
+
+  const visible = status === "loaded";
+  const initials = bot.name?.trim().split(/\s+/, 2).map(word => [...word][0]?.toUpperCase()).join("") || "?";
   const framing = presentation?.silhouette ? null : avatarFraming(bot);
-  const image = (
+  const image = status !== "failed" && (
     <DesktopImg
-      // A new element per picture: a reused <img> keeps showing the previous
-      // bot's face until the next one loads, which on a slow link is a while.
-      key={profile.avatarUrl}
-      src={profile.avatarUrl}
-      alt={label ?? (bot.name ? `${bot.name} avatar` : "Bot avatar")}
+      src={src}
+      alt=""
+      retryTicket={false}
       width={size}
       height={size}
       draggable={false}
-      onError={() => setImageFailed(true)}
+      onError={() => setStatus("failed")}
+      onLoad={() => {
+        nextDelay.current = FIRST_AVATAR_RETRY_MS;
+        setStatus("loaded");
+      }}
       data-avatar-silhouette={presentation?.silhouette ? "true" : undefined}
       className={presentation?.silhouette ? "block shrink-0 object-contain" : "block shrink-0 bg-raised object-cover"}
       style={{
         width: size,
         height: size,
+        display: visible ? undefined : "none",
         borderRadius: presentation?.silhouette || framing?.transform ? 0 : radius,
         imageRendering: presentation?.pixelArt ? "pixelated" : undefined,
         objectPosition: framing?.objectPosition,
@@ -331,28 +363,36 @@ export function BotAvatar({ bot, size = 44, label, presentation, ...mascotProps 
       }}
     />
   );
-  // zoomed in: the tile keeps its shape and clips the larger picture
-  if (!framing?.transform) return image;
-  return (
-    <span data-avatar-zoomed="" className="block shrink-0 overflow-hidden bg-raised" style={{ width: size, height: size, borderRadius: radius }}>
-      {image}
-    </span>
+  const content = (
+    <>
+      {!visible && <InitialsAvatar initials={initials} size={size} style={{
+        borderRadius: radius,
+        backgroundColor: mix(EMBER_COLORS[bot.color] ?? EMBER_COLORS.orange, "#ffffff", 0.35),
+        color: "#111",
+      }} />}
+      {image && (framing?.transform ? (
+        <span data-avatar-zoomed="" className="block shrink-0 overflow-hidden bg-raised"
+          style={{ display: visible ? undefined : "none", width: size, height: size, borderRadius: radius }}>
+          {image}
+        </span>
+      ) : image)}
+    </>
   );
+  return label ? <span role="img" aria-label={label} className="inline-flex shrink-0">{content}</span> : content;
 }
 
-export function InitialsAvatar({
-  initials,
-  size = 32,
-}: {
+export function InitialsAvatar({ initials, size = 32, style }: {
   initials: string;
   size?: number;
+  style?: CSSProperties;
 }) {
   return (
-    <div
-      className="flex shrink-0 items-center justify-center rounded-full bg-raised text-ink-secondary font-medium"
-      style={{ width: size, height: size, fontSize: size * 0.38 }}
+    <span
+      aria-hidden="true"
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-raised text-ink-secondary font-medium"
+      style={{ width: size, height: size, fontSize: size * 0.38, ...style }}
     >
       {initials}
-    </div>
+    </span>
   );
 }

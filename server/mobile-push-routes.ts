@@ -1,3 +1,4 @@
+import {revokePhoneOwnerSettlementSession} from './owner-settlement-session.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -57,6 +58,7 @@ export async function mobilePushRoute(
   if (!DEVICE.test(device)) return NO_ROUTE;
   const rest = req.path.slice(PREFIX.length);
   const route = `${req.method} ${rest}`;
+  if(route==='POST revoke-device')revokePhoneOwnerSettlementSession(device);
   // Almost every route here writes (a token expiry, a binding, a delivery mark), GET included. They all wait, without
   // blocking the loop, while the revocation index build holds the writer lock; only the settings read does not.
   // The clock is read after the wait, so an expiry is counted from when it is written.

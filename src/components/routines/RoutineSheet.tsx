@@ -21,6 +21,7 @@ import {
   occurrenceWords,
   routineListModel,
   routineNeedsLook,
+  routineOffLabel,
   routineSheetModel,
   runStatusWords,
   scheduleWords,
@@ -121,7 +122,7 @@ export function RoutineSheet({ lifecycle,
           </Field>
           <Field label={t("ux.l5b.when.label")}>
             <span className="flex flex-wrap items-center gap-2">
-              <span>{model.paused ? `${model.whenText} · ${t("ux.l5b.when.paused")}` : model.whenText}</span>
+              <span>{model.offLabel ? `${model.whenText} · ${model.offLabel}` : model.whenText}</span>
               {canEdit && !appEvent && <button type="button" onClick={() => onEdit(routine)} className="min-h-11 rounded-lg px-2 text-[12px] font-medium text-accent hover:bg-accent/10">{t("ux.l5b.change")}</button>}
             </span>
           </Field>
@@ -148,7 +149,7 @@ export function RoutineSheet({ lifecycle,
                     <li key={run.id}>
                       <button type="button" data-routine-run-mark={run.id} onClick={() => onOpenRun(run)} aria-label={t("ux.l5b.runs.open", { when })} className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg px-2 text-left hover:bg-raised/60">
                         <span className="truncate">{when}</span>
-                        <span className={cn("shrink-0 text-[11.5px]", run.status === "failed" || run.status === "missed" ? "text-danger" : "text-ink-secondary")}>{runStatusWords(run.status)}</span>
+                        <span className={cn("shrink-0 text-[11.5px]", run.status === "failed" || run.status === "missed" ? "text-danger" : "text-ink-secondary")}>{run.status === "queued" && run.error?.startsWith("Waiting for") ? run.error : runStatusWords(run.status)}</span>
                       </button>
                     </li>
                   );
@@ -229,7 +230,7 @@ export function RoutineListSheet({ lifecycle,
                       {bot && <BotAvatar bot={bot} state={routine.enabled ? "idle" : "sleeping"} size={32} animated={false} />}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12.5px] font-medium text-ink">{routine.name}</span>
-                        <span className="block truncate text-[11px] text-ink-secondary">{[room?.name ?? bot?.name, scheduleWords(routine.schedule, now), routine.enabled ? "" : t("ux.l5b.when.paused")].filter(Boolean).join(" · ")}</span>
+                        <span className="block truncate text-[11px] text-ink-secondary">{[room?.name ?? bot?.name, scheduleWords(routine.schedule, now), routineOffLabel(routine, state.routineRuns) ?? ""].filter(Boolean).join(" · ")}</span>
                       </span>
                       {look && <span className="flex shrink-0 items-center gap-1 text-[11px] text-danger"><CircleAlert size={12} aria-hidden />{t("ux.l5b.needsLook")}</span>}
                     </button>

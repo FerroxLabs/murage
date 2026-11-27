@@ -62,11 +62,15 @@ function RecordRow({ row, generation, files, busy, onForgetKey }: {
 /** "Folders you decided on" (S6): every stored decision with a Forget by its
  * exact key, the ones on this folder's path open and the rest behind a
  * disclosure, then what the engine's own trust file says for itself. */
-export function FolderTrustRecords({ results, busy, onForgetKey }: {
+export function FolderTrustRecords({ results, busy, onForgetKey, onSearch, onMore, searchQuery = "" }: {
   results: FolderTrustResult[];
   busy: boolean;
   onForgetKey: (key: string) => void;
+  onSearch?: (query: string) => void;
+  onMore?: () => void;
+  searchQuery?: string;
 }) {
+  const search = searchQuery;
   const first = results[0]?.status;
   const records = first?.records ?? [];
   const generation = results.find((result) => result.status.trustGeneration === 2)?.status.trustGeneration ?? first?.trustGeneration;
@@ -77,9 +81,14 @@ export function FolderTrustRecords({ results, busy, onForgetKey }: {
   const row = (record: FolderTrustRecordRow) => <RecordRow key={record.key} row={record} generation={generation} files={files} busy={busy} onForgetKey={onForgetKey} />;
   const storedNo = stores.flatMap((status) => (status.upstreamDeclines ?? []).map((key) => ({ key, path: status.upstreamTrustFile as string })));
   const unreadable = stores.filter((status) => status.upstreamUnreadable);
-  if (!records.length && !storedNo.length && !unreadable.length) return null;
+  if (!records.length && !storedNo.length && !unreadable.length && !search && !first?.recordsTotal) return null;
   return (
     <div className="mt-2" data-testid="folder-trust-records">
+      {onSearch && ((first?.recordsTotal ?? 0) > 50 || search) && <input type="search" value={search} disabled={busy}
+        aria-label={t("folderTrust.searchAnswers")} placeholder={t("folderTrust.searchAnswers")}
+        className="mb-1 w-full rounded-md border border-hairline bg-transparent px-2 py-1"
+        onChange={event => { onSearch(event.target.value); }} />}
+      {first?.recordsNext && onMore && <button type="button" onClick={onMore} disabled={busy} className="mt-1 underline">{t("folderTrust.moreAnswers")}</button>}
       {records.length > 0 && <div className="font-medium">{t("folderTrust.decidedHeading")}</div>}
       {near.length > 0 && <ul className="mt-0.5 flex flex-col gap-1">{near.map(row)}</ul>}
       {other.length > 0 && (

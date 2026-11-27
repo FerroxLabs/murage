@@ -62,9 +62,11 @@ export function fixtureBoundTurn(turn: SendTurnInput): SendTurnInput {
   return fencedTurnInput({ ...input, prompt: buildPrompt(binding.turn, [promptPart(turn.text, [noneRef("owner-turn")])]) },
     { db: binding.db, retained: binding.turn, reader: checkedOpenTurns(binding.turn)[0]!.reader! });
 }
-export function fixtureMountTurn(turn: SendTurnInput, onRefused?: (verdict: import("../memory/lineage-types.ts").LineageVerdict) => void): SendTurnInput {
+/** ownerTurn: bind the owner's own turn (the production owner path); default is a non-owner turn. */
+export function fixtureMountTurn(turn: SendTurnInput, onRefused?: (verdict: import("../memory/lineage-types.ts").LineageVerdict) => void,
+  { ownerTurn = false }: { ownerTurn?: boolean } = {}): SendTurnInput {
   if (!hasAdmission) return turn;
-  const fixture = consumingFixture(undefined, { threadId: turn.threadId, botId: turn.warmIdentity?.botId ?? turn.threadId, onRefused });
+  const fixture = consumingFixture(undefined, { threadId: turn.threadId, botId: turn.warmIdentity?.botId ?? turn.threadId, onRefused, ownerTurn });
   const caps = new InternalCapabilities(); caps.begin(fixture.binding.identity.botId, turn.threadId, fixture.binding.identity.dispatchGeneration);
   const authority = ingressApi!.createProxyReleaseAuthority(caps);
   authorities.set(caps, authority);
