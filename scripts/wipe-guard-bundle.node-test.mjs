@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'yaml';
+import { safeWipeSync } from '../server/testing/safe-wipe.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const require = createRequire(import.meta.url);
@@ -60,7 +61,7 @@ for (const checkout of process.platform === 'win32' ? ['normal', 'symlinks-disab
         ok('git', ['-c', 'core.autocrlf=false', 'add', '.'], { cwd: source });
         for (const name of names) rmSync(join(source, name));
         ok('git', ['-c', 'core.autocrlf=false', '-c', 'core.symlinks=false', 'checkout-index', '--all', '--force'], { cwd: source });
-        rmSync(join(source, '.git'), { recursive: true, force: true });
+        safeWipeSync(join(source, '.git'));
       }
       if (checkout === 'legacy-links') {
         // Keep a legacy input witness: recursive cp must not reintroduce build paths.
@@ -92,7 +93,7 @@ for (const checkout of process.platform === 'win32' ? ['normal', 'symlinks-disab
       const packaged = join(scratch, 'relocated', ...(process.platform === 'darwin' ? ['Fixture.app', 'Contents', 'Resources'] : ['resources']), 'server');
       await copyDir(dist, packaged, { isUseHardLink: () => false });
       // Remove the entire build machine source/output before executing the copy.
-      rmSync(build, { recursive: true, force: true });
+      safeWipeSync(build);
       for (const dir of shims) for (const name of names) {
         const file = join(packaged, dir, name);
         assert.ok(lstatSync(file).isFile(), file);
@@ -132,6 +133,6 @@ for (const checkout of process.platform === 'win32' ? ['normal', 'symlinks-disab
         assert.equal(blocked.stdout, '', file);
         assert.match(blocked.stderr, /wipe guard: refused/);
       }
-    } finally { rmSync(scratch, { recursive: true, force: true }); }
+    } finally { safeWipeSync(scratch); }
   });
 }

@@ -48,7 +48,7 @@ describe("engine login relay", () => {
     expect(await echoed).toBe("device-code-SECRET123");
     ws.close();
     expect(await gone(launches[0]!.pid!)).toBe(true);
-    await new Promise(r => setTimeout(r, 100));
+    await settled("codex", 0); // the end line is logged when the launcher has exited, after the socket closes
     expect(logs.filter(line => line.startsWith("engine-login start"))).toHaveLength(1);
     expect(logs.filter(line => line.startsWith("engine-login end"))).toHaveLength(1);
     expect(logs.join("\n")).not.toContain("SECRET123");
@@ -68,7 +68,7 @@ describe("engine login relay", () => {
     await expect(open("codex")).rejects.toMatchObject({ status: 409 });
     const other = await open("claudeAgent"); other.close();
     const done = closed(first); first.close(); await done;
-    await gone(launches[0]!.pid!); await new Promise(r => setTimeout(r, 100));
+    await gone(launches[0]!.pid!); await settled("codex", 0);
     const again = await open("codex"); again.close(); await closed(again);
   });
   it("closes with 1009 and kills the child past the output cap", async () => {

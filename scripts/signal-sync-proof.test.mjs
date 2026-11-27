@@ -2,9 +2,9 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import { assertSyncEvidence } from '../server/channels/signal/evidence.mjs';
-const proof = JSON.parse(readFileSync('docs/verification/evidence/signal-sync/sync-proof.json', 'utf8'));
+const proof = JSON.parse(readFileSync('docs/verification/signal-sync-proof.json', 'utf8'));
 test('T-SYNC-PROOF: corrected URL-bearing block passes and all committed copies agree', () => {
- const markdown = readFileSync('docs/verification/evidence/signal-sync/SYNC-CITATIONS.md', 'utf8');
+ const markdown = readFileSync('docs/verification/signal-sync-citations.md', 'utf8');
  expect(JSON.parse(markdown.match(/```json\n([\s\S]*?)\n```/)[1])).toEqual(proof);
  expect(() => assertSyncEvidence({ signalNetwork: { syncProof: proof } })).not.toThrow();
  const pin = JSON.parse(readFileSync('server/channels/signal/runtime-pin.json', 'utf8'));

@@ -7,7 +7,11 @@
 // committed since they were read. A call still waiting is dropped unsent; a call the gate released is out of our hands (forget.ts:83).
 //
 // The fence counter is a TEMP table on the main connection moved by TEMP triggers, independent of deletion_epoch. Another connection's
-// commit moves PRAGMA data_version, which the gate checks too. `send` holds BEGIN IMMEDIATE from the check through the release and the
+// commit moves PRAGMA data_version, which the gate checks too. 1.0.22 (mem-strict): a gate that names the rows it read (HeldRefs) is
+// fenced on THOSE rows only. When the counter or data_version moved, it re-reads its own rows under the lock and is refused only when one
+// of them changed, or when a withdrawal (policy, mode, learning settings, a binding, a roster bump) moved the separate `withdrawal`
+// counter or, for another connection's commit, the withdrawal stamp. An unrelated write never drops it. A gate with no refs keeps the
+// global fence: it has no row list to re-check. `send` holds BEGIN IMMEDIATE from the check through the release and the
 // write, so no other connection can commit in between. Busy waits at most BACKGROUND_BUSY_MS and defers the call (released unchanged).
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -72,6 +76,14 @@ export const LEARNING_FENCE_QUIET_BINDINGS: readonly LearningFenceQuietBinding[]
   Object.freeze({ type: "human-delivery", insert: true, update: null }),
   Object.freeze({ type: "system", subject: "memory-evolution-corpus", insert: true, update: Object.freeze(["id", "scope_id", "revision", "state", "intent"] as const) }),
 ]);
+/** 1.0.22 mem-strict r5: a revocation job's queue row (subject `memory-revocation`). A Forget whose inline budget runs out writes it in the
+ * Forget's own commit (memory-revocation.ts startRevocationJob) and the runner removes it when the job ends; it grants and withdraws
+ * nothing, so writing or removing it moves the epoch, never the withdrawal counter (which no held-row re-check could ever clear). */
+const REVOCATION_JOB = (row: "NEW" | "OLD" | "b") => `(${row}.subject_type='system' AND ${row}.subject_id='memory-revocation')`;
+/** r6: the runner's in-place rewrite of that row (memory-revocation.ts stepJobRow `SET intent=?,state=...`): the same row id and scope, a
+ * job row before and after. On this connection a row moved into or out of the job subject, or to another scope, is not this and still
+ * withdraws; another connection's commit is judged by the stamp below, which leaves out every row whose current subject is the job's. */
+const REVOCATION_JOB_REWRITE = `(${REVOCATION_JOB("NEW")} AND ${REVOCATION_JOB("OLD")} AND NEW.id IS OLD.id AND NEW.scope_id IS OLD.scope_id)`;
 const LITERAL = /^[a-z][a-z-]*$/;
 const lit = (value: string) => { if (!LITERAL.test(value)) throw new Error("LEARNING_FENCE_QUIET_LITERAL"); return `'${value}'`; };
 const QUIET_BINDING_INSERT = LEARNING_FENCE_QUIET_BINDINGS.filter(q => q.insert).map(q =>
@@ -79,17 +91,30 @@ const QUIET_BINDING_INSERT = LEARNING_FENCE_QUIET_BINDINGS.filter(q => q.insert)
 const QUIET_BINDING_UPDATE = LEARNING_FENCE_QUIET_BINDINGS.filter(q => q.update).map(q =>
   `(NEW.subject_type IS ${lit(q.type)} AND OLD.subject_type IS ${lit(q.type)}${q.subject ? ` AND NEW.subject_id IS ${lit(q.subject)}` : ""} AND NEW.subject_id IS OLD.subject_id${q.update!.map(c => ` AND NEW.${c} IS OLD.${c}`).join("")})`).join(" OR ") || "0";
 const BUMP = "UPDATE memory_learning_fence SET epoch=epoch+1 WHERE id=1";
-const trig = (name: string, event: string, table: string, when?: string) =>
-  ({ name: `learning_fence_${name}`, sql: `CREATE TEMP TRIGGER IF NOT EXISTS learning_fence_${name} AFTER ${event} ON main.${table}${when ? ` WHEN ${when}` : ""} BEGIN ${BUMP}; END;` });
-const all = (table: string, events: readonly string[] = ["INSERT", "UPDATE", "DELETE"]) =>
-  events.map(event => trig(`${table}_${event[0]!.toLowerCase()}`, event, table));
+/** A withdrawal moves both counters: a gate with held refs still refuses on it, whatever rows it holds. */
+const BUMP_WITHDRAWAL = "UPDATE memory_learning_fence SET epoch=epoch+1, withdrawal=withdrawal+1 WHERE id=1";
+const trig = (name: string, event: string, table: string, when?: string, bump = BUMP) =>
+  ({ name: `learning_fence_${name}`, sql: `CREATE TEMP TRIGGER IF NOT EXISTS learning_fence_${name} AFTER ${event} ON main.${table}${when ? ` WHEN ${when}` : ""} BEGIN ${bump}; END;` });
+const all = (table: string, events: readonly string[] = ["INSERT", "UPDATE", "DELETE"], bump = BUMP) =>
+  events.map(event => trig(`${table}_${event[0]!.toLowerCase()}`, event, table, undefined, bump));
 const TRIGGER_DEFS = [
-  ...all("memory_tombstones"), ...all("memory_deny"), ...all("memory_deny_line"), ...all("memory_deny_range"),
-  trig("memory_meta_u", "UPDATE", "memory_meta", "OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch OR OLD.mode IS NOT NEW.mode"),
-  trig("bindings_i", "INSERT", "memory_scope_bindings", `NOT (${QUIET("NEW")}) AND NOT (${ACCT_INSERT}) AND NOT (${QUIET_BINDING_INSERT})`),
-  trig("bindings_u", "UPDATE", "memory_scope_bindings", `(NOT (${QUIET("NEW")}) OR NOT (${QUIET("OLD")})) AND NOT (${ACCT_UPDATE}) AND NOT (${QUIET_BINDING_UPDATE})`),
-  trig("bindings_d", "DELETE", "memory_scope_bindings", `NOT (${QUIET("OLD")})`),
-  ...all("memory_learning_config", ["INSERT", "UPDATE"]),
+  ...all("memory_tombstones"), ...all("memory_deny"), ...all("memory_deny_point"), ...all("memory_deny_range"),
+  // 1.0.23: schema 14 keeps every source and record mark here (deny-rule-schema.ts DENY_RULE_ADDED_TABLES; it replaced memory_deny_memory)
+  ...all("memory_deny_object"),
+  // a Forget (forget.ts: deletion_epoch and policy_revision in one statement, plus its tombstone) is a row change: held refs re-check their own
+  // rows through memoryLookup, which also withholds what rests on a forgotten row. A policy bump with no deletion, or a mode change, withdraws.
+  trig("memory_meta_u", "UPDATE", "memory_meta", "OLD.deletion_epoch IS NOT NEW.deletion_epoch AND OLD.mode IS NEW.mode"),
+  trig("memory_meta_w", "UPDATE", "memory_meta", "OLD.mode IS NOT NEW.mode OR (OLD.policy_revision IS NOT NEW.policy_revision AND OLD.deletion_epoch IS NEW.deletion_epoch)", BUMP_WITHDRAWAL),
+  trig("bindings_i", "INSERT", "memory_scope_bindings", `NOT (${QUIET("NEW")}) AND NOT (${ACCT_INSERT}) AND NOT (${QUIET_BINDING_INSERT}) AND NOT (${REVOCATION_JOB("NEW")})`, BUMP_WITHDRAWAL),
+  trig("bindings_u", "UPDATE", "memory_scope_bindings", `(NOT (${QUIET("NEW")}) OR NOT (${QUIET("OLD")})) AND NOT (${ACCT_UPDATE}) AND NOT (${QUIET_BINDING_UPDATE}) AND NOT ${REVOCATION_JOB_REWRITE}`, BUMP_WITHDRAWAL),
+  trig("bindings_d", "DELETE", "memory_scope_bindings", `NOT (${QUIET("OLD")}) AND NOT (${REVOCATION_JOB("OLD")})`, BUMP_WITHDRAWAL),
+  // a Forget's revocation job row (memory-revocation.ts createRevocationJob) is a deletion in progress, a row change like the Forget itself:
+  // held refs re-check their rows (memoryLookup reads the job's pending window as "checking" until the marker resolves it), an unscoped
+  // gate still refuses on the epoch. r6: the runner's bounded-slice rewrite of the row in place moves the epoch only, too.
+  trig("bindings_job_i", "INSERT", "memory_scope_bindings", REVOCATION_JOB("NEW")),
+  trig("bindings_job_u", "UPDATE", "memory_scope_bindings", REVOCATION_JOB_REWRITE),
+  trig("bindings_job_d", "DELETE", "memory_scope_bindings", REVOCATION_JOB("OLD")),
+  ...all("memory_learning_config", ["INSERT", "UPDATE"], BUMP_WITHDRAWAL),
   ...all("memory_sources", ["DELETE"]), ...all("memory_records", ["DELETE"]), ...all("memory_source_versions", ["DELETE"]), ...all("messages", ["DELETE"]),
 ];
 /** Every trigger the counter rests on; `check` fails closed when any one is missing from temp.sqlite_master. */
@@ -101,7 +126,7 @@ export function installLearningFence(db: DatabaseSync = database()): boolean {
   if (installed.get(db) && fenceIntact(db)) return true;
   if (db.isTransaction) return false;
   try {
-    db.exec("CREATE TEMP TABLE IF NOT EXISTS memory_learning_fence(id INTEGER PRIMARY KEY CHECK(id=1), epoch INTEGER NOT NULL, token TEXT NOT NULL, quiet TEXT, quiet_subject TEXT)");
+    db.exec("CREATE TEMP TABLE IF NOT EXISTS memory_learning_fence(id INTEGER PRIMARY KEY CHECK(id=1), epoch INTEGER NOT NULL, token TEXT NOT NULL, quiet TEXT, quiet_subject TEXT, withdrawal INTEGER NOT NULL DEFAULT 0)");
     db.prepare("INSERT OR IGNORE INTO temp.memory_learning_fence(id,epoch,token) VALUES(1,0,?)").run(randomUUID());
     for (const t of TRIGGER_DEFS) db.exec(t.sql);
   } catch { installed.set(db, false); return false; }
@@ -113,7 +138,7 @@ function fenceIntact(db: DatabaseSync): boolean {
   try {
     // the singleton row too: a dropped table makes install recreate it with a NEW token, so every sample taken before fails on the token
     // `quiet` too (r9): without it the binding triggers cannot run, so every check fails closed
-    if (!db.prepare("SELECT 1 AS ok, quiet, quiet_subject FROM temp.memory_learning_fence WHERE id=1").get()) return false;
+    if (!db.prepare("SELECT 1 AS ok, quiet, quiet_subject, withdrawal FROM temp.memory_learning_fence WHERE id=1").get()) return false;
     const names = new Set(db.prepare("SELECT name FROM temp.sqlite_master WHERE type='trigger' AND name LIKE 'learning_fence_%'").all().map(r => String(r.name)));
     return LEARNING_FENCE_TRIGGERS.every(name => names.has(name));
   } catch { return false; }
@@ -142,13 +167,34 @@ export function accountingWrite(db: DatabaseSync, name: LearningFenceAccountingN
 export { bumpLearningFence };
 
 /** What the counter looked like when the words were read. `undefined` fields mean the sample failed: the gate then refuses. */
-export interface LearningFenceSample { epoch: number; token: string; connection: string; dataVersion: number }
+export interface LearningFenceSample { epoch: number; token: string; connection: string; dataVersion: number; withdrawal: number; stamp: string | undefined }
+/** The withdrawal state as stored, read directly so another connection's commit is seen: policy and mode, the learning settings, and every
+ * non-quiet binding row whole (id, scope, subject, revision, state, intent), so a revoke swapped for a grant at the same count and revision
+ * still moves it. A new grant moves it too (fail closed). Policy is kept as policy_revision - deletion_epoch: a Forget moves both by one in
+ * one statement (forget.ts), which is a row change the held refs judge; a policy bump with no deletion moves it. Undefined when unreadable. */
+const BINDING_QUIET = `b.subject_type='system' AND b.subject_id IN (${LEARNING_FENCE_QUIET_SUBJECTS.map(s => `'${s}'`).join(",")})`;
+/** r8 (ASTRA f443268f73): a revocation job's queue row is left out of the stamp, as its triggers move the epoch only (above): another
+ * connection's runner ending a job (or a Forget writing one) between the sample and the send is a row change the held rows judge, never a
+ * withdrawal. Only rows whose CURRENT subject is the job's are left out: a job row turned into a grant adds a line, a grant removed with
+ * the job loses one, and both still withdraw. */
+const BINDING_JOB = REVOCATION_JOB("b");
+const STAMP_SQL = `SELECT (SELECT (policy_revision-deletion_epoch)||':'||mode FROM main.memory_meta WHERE id=1) AS meta,
+ (SELECT revision||':'||settings FROM main.memory_learning_config WHERE id=1) AS config,
+ (SELECT group_concat(row, char(10)) FROM (SELECT quote(b.id)||','||quote(b.scope_id)||','||quote(b.subject_type)||','||quote(b.subject_id)||','||quote(b.revision)||','||quote(b.state)||','||quote(b.intent) AS row
+   FROM main.memory_scope_bindings b WHERE NOT (${BINDING_QUIET}) AND NOT ${BINDING_JOB} ORDER BY b.id)) AS bindings`;
+function withdrawalStamp(db: DatabaseSync): string | undefined {
+  try {
+    const row = db.prepare(STAMP_SQL).get();
+    return row ? digestOf(`${row.meta ?? "-"}\u0000${row.config ?? "-"}\u0000${row.bindings ?? "-"}`) : undefined;
+  } catch { return undefined; }
+}
 function readCounter(db: DatabaseSync): LearningFenceSample | undefined {
-  const row = db.prepare("SELECT (SELECT epoch FROM temp.memory_learning_fence WHERE id=1) AS epoch, (SELECT token FROM temp.memory_learning_fence WHERE id=1) AS token").get();
-  if (!row || row.epoch === null || row.epoch === undefined || typeof row.token !== "string") return undefined;
+  const row = db.prepare("SELECT (SELECT epoch FROM temp.memory_learning_fence WHERE id=1) AS epoch, (SELECT token FROM temp.memory_learning_fence WHERE id=1) AS token, (SELECT withdrawal FROM temp.memory_learning_fence WHERE id=1) AS withdrawal").get();
+  if (!row || row.epoch === null || row.epoch === undefined || typeof row.token !== "string" || row.withdrawal === null || row.withdrawal === undefined) return undefined;
+  const stamp = withdrawalStamp(db);
   // data_version last: nothing between this read and the gate's next step awaits
   const version = db.prepare("PRAGMA data_version").get();
-  return { epoch: Number(row.epoch), token: row.token, connection: connectionId(db), dataVersion: Number(version?.data_version) };
+  return { epoch: Number(row.epoch), token: row.token, connection: connectionId(db), dataVersion: Number(version?.data_version), withdrawal: Number(row.withdrawal), stamp };
 }
 /** Samples the counter before the call reads its words. Outside a transaction only; undefined (fail closed) otherwise. */
 export function sampleLearningFence(): LearningFenceSample | undefined {
@@ -193,6 +239,14 @@ export function heldRefsCurrent(db: DatabaseSync, refs: HeldRefs): boolean {
   }
   return true;
 }
+/** The scoped re-check's record verdicts (deny-read.ts memoryLookup): a deny mark on a held record (memory_deny_object, or the deny
+ * rule's rows, deny-rule.ts; 1.0.23: the fence watches the object, point and range tables) refuses the call as a tombstone does. Sources are already judged so in heldRefsCurrent. */
+function heldRecordsShown(db: DatabaseSync, refs: HeldRefs): boolean {
+  const records = (refs.records ?? []).map(ref => ({ kind: "record" as const, id: ref.id, version: ref.version }));
+  if (!records.length) return true;
+  for (const verdict of memoryLookup(db, records, { audience: null, ownFlag: true }).values()) if (verdict.state !== "shown") return false;
+  return true;
+}
 /** The digest of a record's text at a version, or of a source's payload at a revision, as the call reads it (for building a HeldRefs). */
 export function recordDigest(db: DatabaseSync, id: string, version: number): string | undefined {
   const row = db.prepare("SELECT text FROM memory_records WHERE id=? AND version=?").get(id, version);
@@ -215,8 +269,15 @@ export interface LearningGateOptions {
   /** The refusal to throw (PIP's readMoved); MemorySendFenced by default. */
   refuse?: () => Error;
 }
+/** Why a gate refused, fixed words only (the log's `cause=`): `unsampled` (no sample, or the counter is gone), `transaction` (called inside
+ * one), `connection` (the handle or counter was replaced), `changed` (the global fence moved and the gate holds no rows to re-check),
+ * `withdrawal` (policy, mode, learning settings, a binding or a roster bump), `held-row` (a row the call read changed), `check` (a
+ * caller's own state check threw). */
+export type LearningFenceCause = "unsampled" | "transaction" | "connection" | "changed" | "withdrawal" | "held-row" | "check";
 export interface LearningGate {
   readonly purpose: LearningPurpose;
+  /** The cause of the last refusal, undefined until one. */
+  readonly cause: LearningFenceCause | undefined;
   /** Attempts this gate let out (cumulative over every attempt, pin, fallback, relaunch and re-run of the call). */
   readonly released: number;
   readonly refused: boolean;
@@ -236,28 +297,37 @@ function noteHold(ms: number) { if (holdSamples.length >= 4096) holdSamples.shif
 
 /** A gate over the words a learning call read after `at` was sampled, plus the rows it holds. One gate per learning call. */
 export function learningGate(purpose: LearningPurpose, at: LearningFenceSample | undefined, refs: HeldRefs = {}, options: LearningGateOptions = {}): LearningGate {
-  let released = 0, refused = false;
+  let released = 0, refused = false, cause: LearningFenceCause | undefined;
   const refusal = (): Error => options.refuse?.() ?? new MemorySendFenced();
+  const scoped = (refs.records?.length ?? 0) + (refs.sources?.length ?? 0) > 0;
+  const no = (why: LearningFenceCause): false => { cause = why; return false; };
   const current = (db: DatabaseSync): boolean => {
-    if (!at || !Number.isFinite(at.epoch) || !Number.isFinite(at.dataVersion)) return false;
-    if (!installed.get(db) || !fenceIntact(db)) return false;
+    cause = undefined;
+    if (!at || !Number.isFinite(at.epoch) || !Number.isFinite(at.dataVersion) || !Number.isFinite(at.withdrawal)) return no("unsampled");
+    if (!installed.get(db) || !fenceIntact(db)) return no("unsampled");
     const now = readCounter(db);
-    if (!now || now.token !== at.token || now.connection !== at.connection || now.epoch !== at.epoch || now.dataVersion !== at.dataVersion) return false;
-    if (!heldRefsCurrent(db, refs)) return false;
-    for (const check of options.checks ?? []) check();
+    if (!now || now.token !== at.token || now.connection !== at.connection) return no("connection");
+    if (now.epoch !== at.epoch || now.dataVersion !== at.dataVersion) {
+      // something moved: only the call's OWN rows (and a withdrawal) may refuse it; without rows to re-check, the global fence holds
+      if (!scoped) return no("changed");
+      if (now.withdrawal !== at.withdrawal) return no("withdrawal");
+      if (now.dataVersion !== at.dataVersion && (at.stamp === undefined || now.stamp !== at.stamp)) return no("withdrawal");
+      if (!heldRefsCurrent(db, refs) || !heldRecordsShown(db, refs)) return no("held-row");
+    } else if (!heldRefsCurrent(db, refs)) return no("held-row");
+    try { for (const check of options.checks ?? []) check(); } catch (error) { cause = "check"; throw error; }
     return true;
   };
-  const fail = (): never => { refused = true; throw refusal(); };
+  const fail = (why?: LearningFenceCause): never => { if (why) cause = why; refused = true; throw refusal(); };
   /** Private: valid only inside the gate's own BEGIN IMMEDIATE. */
   const checkHeld = (db: DatabaseSync, context: ReleaseContext) => {
     assertReleaseContext(context, db);
     let ok: boolean;
-    try { ok = current(db); } catch { ok = false; }
+    try { ok = current(db); } catch { cause ??= "held-row"; ok = false; }
     if (!ok) fail();
   };
   const locked = <R>(emit: (context: ReleaseContext) => R, validate?: (context: ReleaseContext) => void): R => {
     const db = database();
-    if (db.isTransaction) fail();
+    if (db.isTransaction) fail("transaction");
     let started = false;
     let refund: (() => void) | undefined;
     const start = performance.now();
@@ -292,11 +362,12 @@ export function learningGate(purpose: LearningPurpose, at: LearningFenceSample |
     purpose,
     get released() { return released; },
     get refused() { return refused; },
+    get cause() { return cause; },
     check() {
       const db = database();
-      if (db.isTransaction) fail();
+      if (db.isTransaction) fail("transaction");
       let ok: boolean;
-      try { ok = current(db); } catch { ok = false; }
+      try { ok = current(db); } catch { cause ??= "held-row"; ok = false; }
       if (!ok) fail();
     },
     send<R>(emit: () => R, validate?: (context: ReleaseContext) => void): R { return locked(emit, validate); },

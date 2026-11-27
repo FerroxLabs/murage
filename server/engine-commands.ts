@@ -41,6 +41,10 @@ const ENGINE_LABELS: Record<string, string> = {
   hermesAgent: "Hermes",
   openclawAgent: "OpenClaw",
   clineAgent: "Cline",
+  commandCodeAgent: "Command Code",
+  kiroAgent: "Kiro",
+  ompAgent: "OMP",
+  devinAgent: "Devin",
   museCode: "Muse Code",
   deepseekAgent: "DeepSeek Harness", copilotAgent: "GitHub Copilot",
 };

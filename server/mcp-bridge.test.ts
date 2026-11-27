@@ -157,10 +157,14 @@ describe("near-side MCP ping", () => {
     expect(forward).not.toHaveBeenCalled();
   });
 
-  it("bounds incomplete frames", () => {
-    const splitter = createLineSplitter(() => {}, 8);
-    splitter.push("12345678");
-    expect(() => splitter.push("9")).toThrow("MCP frame exceeds bridge limit");
+  // MAIN-RULING cause22-no-transport-caps: the splitter has no frame bound (this row used to assert the 8 MiB throw).
+  it("delivers a frame of any size whole, however it is chunked", () => {
+    const lines: string[] = [];
+    const splitter = createLineSplitter((line) => lines.push(line));
+    const big = "x".repeat(9 * 1024 * 1024);
+    splitter.push(big.slice(0, 5_000_000));
+    splitter.push(big.slice(5_000_000) + "\nnext\n");
+    expect(lines.map((line) => line.length)).toEqual([big.length, 4]);
   });
 
   it("keeps injected output whole, waits for slow writes and flushes final fragments", async () => {

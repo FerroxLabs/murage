@@ -127,7 +127,7 @@ describe("Lee_J / Phantom: delegated team replies after permission, roster and s
       measure({ kind: "diag", label, threadNo: no,
         lines: all("SELECT * FROM memory_line_lineage WHERE thread_no=? ORDER BY lsn DESC LIMIT 6", no),
         ranges: all("SELECT * FROM memory_deny_range WHERE thread_id=? ORDER BY from_lsn DESC LIMIT 8", threadId),
-        denyLines: all("SELECT * FROM memory_deny_line WHERE thread_id=? ORDER BY lsn DESC LIMIT 8", threadId),
+        denyLines: all("SELECT * FROM memory_deny_point WHERE thread_id=? ORDER BY lsn DESC LIMIT 8", threadId),
         sessions: all("SELECT * FROM memory_deny_session WHERE thread_id=? LIMIT 8", threadId),
         sessionLineage: all("SELECT * FROM memory_session_lineage WHERE thread_id=? LIMIT 8", threadId),
         carriesInto: all("SELECT * FROM memory_lineage_carry WHERE child_thread_no=? ORDER BY from_lsn DESC LIMIT 24", no),

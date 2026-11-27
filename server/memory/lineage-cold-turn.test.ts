@@ -14,9 +14,11 @@
 import { observeSqlReads } from "./testing/sql-read-observer.ts";
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { database } from "../database.ts";
+import * as databaseMethods from "../database.ts";
+import * as handles from "../test-handle-registry.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { chainStore } from "./schema.ts";
@@ -37,7 +39,7 @@ const source = (reply: number) => `message:${thread}:r${reply}`;
  * turn, the turn after the warmer, and a turn that judges again what a forget dropped (its three entry points each spend their own allowance). */
 const TURN_STATEMENT_CAP = 600, WARM_STATEMENT_CAP = 100, FORGET_STATEMENT_CAP = 1_800;
 
-beforeEach(() => { resetLineageWarmForTest(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(async () => { resetLineageWarmForTest(); await handles.settleTestHandles(DATA_DIR); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { setReplayNodeBudgetForTest(null); setTurnLineageNodesForTest(null); });
 
 const tally = { rows: 0, statements: 0 };
@@ -83,7 +85,7 @@ function build(n: number, legacy = false): void {
   db.exec("COMMIT");
 }
 /** An upgrade restart: the file stays, nothing kept in memory does. */
-function restart(): void { closeDatabase(); forgetKeptLineageForTest(); resetLineageWarmForTest(); database(); }
+async function restart(): Promise<void> { await handles.settleTestHandles(DATA_DIR); forgetKeptLineageForTest(); resetLineageWarmForTest(); database(); }
 
 const windowOf = (n: number) => Array.from({ length: Math.min(100, n) }, (_, back) => ({ id: `r${n - 1 - back}`, role: "bot" }));
 /** What a turn asks about the long session: recall's verdicts for the newest replies, the continuation check, the replay window. */
@@ -102,15 +104,15 @@ function warmToCompletion(limit = 20_000): number {
   return steps;
 }
 
-for (const legacy of [true, false]) it(`a cold first turn costs the same statements on 300 and on 1,500 replies, below the cap, and shows no line it did not prove (${legacy ? "legacy" : "current"} output lists)`, () => {
+for (const legacy of [true, false]) it(`a cold first turn costs the same statements on 300 and on 1,500 replies, below the cap, and shows no line it did not prove (${legacy ? "legacy" : "current"} output lists)`, async () => {
   const measured: Record<number, { statements: number; excluded: number }> = {};
   for (const n of [300, 1_500]) {
-    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+    await handles.settleTestHandles(DATA_DIR); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     database();
     build(n, legacy);
     // a deep root is forgotten: the unbounded check withholds every reply built on it, so a turn that cannot finish must withhold them too
     database().prepare("UPDATE memory_sources SET state='deleted' WHERE id=?").run(source(5));
-    restart();
+    await restart();
     const spent = sqlWork(() => turnOf(n));
     measured[n] = { statements: spent.statements, excluded: spent.value.excluded.length };
     expect(spent.value.excluded.length, `the window of ${n} replies rests on a forgotten root`).toBe(Math.min(100, n));
@@ -122,12 +124,12 @@ for (const legacy of [true, false]) it(`a cold first turn costs the same stateme
   expect(measured[1_500]!.statements).toBeLessThanOrEqual(measured[300]!.statements * 1.3);
 }, 900_000);
 
-it("a cold first turn on sound history withholds what it cannot prove, shows nothing the unbounded check would withhold, and the warmer then finishes", () => {
+it("a cold first turn on sound history withholds what it cannot prove, shows nothing the unbounded check would withhold, and the warmer then finishes", async () => {
   // (the unbounded check is the reference, so the session is one it can finish: 300 sound chained replies, a window of 100)
   const n = 300;
   database();
   build(n);
-  restart();
+  await restart();
   // the reference: the unbounded cold answer. It allows the window, and nothing in it ran out of a budget: an empty answer is the answer,
   // not an exhausted one (the receipts it visits are counted once each, not once per visit)
   setReplayNodeBudgetForTest(1_000_000_000);
@@ -136,7 +138,7 @@ it("a cold first turn on sound history withholds what it cannot prove, shows not
   setReplayNodeBudgetForTest(null);
   expect(replayLimitWithheld(), "the reference ran out of no budget").toBe(ranOutBefore);
   expect(reference).toEqual([]);
-  restart();
+  await restart();
   const cold = turnOf(n);
   for (const id of cold.excluded) expect(windowOf(n).some(line => line.id === id)).toBe(true);
   // unproven lines are withheld, never shown: what the cold turn lets through is a subset of what the unbounded check lets through
@@ -155,13 +157,13 @@ it("a cold first turn on sound history withholds what it cannot prove, shows not
   expect(after.statements, "the turn after a forget").toBeLessThan(FORGET_STATEMENT_CAP);
 }, 900_000);
 
-it("a warmed 1,500-reply session answers the next turn within the warm cap, and a forgotten deep root is still honoured", () => {
+it("a warmed 1,500-reply session answers the next turn within the warm cap, and a forgotten deep root is still honoured", async () => {
   const n = 1_500;
   database();
   build(n);
   // the session the turns resume, as a 1.0.3 fresh start leaves it (S6 rule 26)
   stampFreshSession(database(), thread, driver, session);
-  restart();
+  await restart();
   // cold: the retained session is reset until the thread is warm, and the reason says so
   const why: { reason?: string } = {};
   expect(retainedSessionInvalid(LineageAllowance.tool(), thread, driver, session, why)).toBe(true);
@@ -179,11 +181,11 @@ it("a warmed 1,500-reply session answers the next turn within the warm cap, and 
   expect(after.statements).toBeLessThan(FORGET_STATEMENT_CAP);
 }, 900_000);
 
-it("a check that runs out of its allowance keeps what it finished: the next one gets further, and the one after the last reads far less", () => {
+it("a check that runs out of its allowance keeps what it finished: the next one gets further, and the one after the last reads far less", async () => {
   const n = 40;
   database();
   build(n);
-  restart();
+  await restart();
   // an allowance a little short of what the window needs (about 1,100 nodes, content lookups included): the first check proves part of it
   setTurnLineageNodesForTest(1_060);
   const ask = () => { resetReplayRowsRead(); const turnAllowance = LineageAllowance.turn(); const spent = sqlWork(() => ({ excluded: replayExclusions(turnAllowance, thread, windowOf(n), null, { failClosed: true }).size, hit: turnAllowance.hit })); return { ...spent, kept: keptVerdictCount() }; };
@@ -198,3 +200,23 @@ it("a check that runs out of its allowance keeps what it finished: the next one 
   expect(settled.value.excluded).toBe(0);
   expect(settled.rows, "the check after the last reads far less than the first").toBeLessThan(first.rows / 2);
 }, 900_000);
+
+
+it("restart waits for owned handles to stop before reopening the fixture database", async () => {
+  let release!: () => void;
+  const stopped = new Promise<void>(resolve => { release = resolve; });
+  const realSettle = handles.settleTestHandles;
+  const settle = vi.spyOn(handles, "settleTestHandles").mockImplementation(async dir => { await realSettle(dir); await stopped; });
+  const open = vi.spyOn(databaseMethods, "database");
+  const pending = restart();
+  try {
+    expect(settle).toHaveBeenCalledWith(DATA_DIR);
+    expect(open).not.toHaveBeenCalled();
+    release();
+    await pending;
+    expect(open).toHaveBeenCalledTimes(1);
+  } finally {
+    release();
+    try { await pending; } finally { open.mockRestore(); settle.mockRestore(); }
+  }
+});

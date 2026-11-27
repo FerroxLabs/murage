@@ -96,7 +96,8 @@ it("the upgrade from v8 creates no index on a table that holds rows, and the tri
   const indexes = added.filter(row => row.type === "index");
   expect(indexes.length).toBeGreaterThan(0);
   // (v10 adds the write-time lineage tables in the same step, all created empty with their indexes)
-  const writetime = new Set<string>(Object.values(WRITETIME_TABLES));
+  // (1.0.23: the two schema 14 mark tables, made empty in the same step, deny-rule-schema.ts)
+  const writetime = new Set<string>([...Object.values(WRITETIME_TABLES), "memory_deny_point", "memory_deny_object"]);
   for (const index of indexes) expect(index.tbl_name.startsWith("memory_open_turns") || writetime.has(index.tbl_name), index.name).toBe(true);
   expect(added.filter(row => row.type === "table" && !writetime.has(row.name)).map(row => row.name).sort()).toEqual(["memory_open_turns", "memory_open_turns_build", "memory_session_incarnation", "upgrade_integrity_pass"]); // (upgrade_integrity_pass: the integrity pass's own empty table, made in the same step; memory_session_incarnation: v12 makes it empty)
   for (const trigger of added.filter(row => row.type === "trigger")) {

@@ -20,7 +20,7 @@ it("pauses automatic admission through the real owner API while manual work rema
   await api("PATCH",`/api/bots/${bot.id}`,{computer:"off",browser:false,composio:false});
   // Past-due once schedules are explicitly supported by initialOccurrence.
   // runNow invokes tick, so this exercises the paused schedule callback now.
-  const created=await api("POST","/api/routines",{botId:bot.id,name:"Paused schedule",prompt:"Offline fixture manual and scheduled work",schedule:{type:"once",at:Date.now()-1000}});
+  const created=await api("POST","/api/routines",{botId:bot.id,name:"Paused schedule",prompt:"Offline fixture manual and scheduled work",schedule:{type:"once",at:Date.now()-1000},runNow:true});
   expect(created.status).toBe(201);const routine=created.body.routine;
   const manual=await api("POST",`/api/routines/${routine.id}/run`,{});expect(manual.status).toBe(201);
   const runs=async()=>(await api("GET","/api/routines")).body.runs.filter((run:any)=>run.routineId===routine.id);

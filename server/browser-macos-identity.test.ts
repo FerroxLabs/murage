@@ -24,7 +24,7 @@ vi.mock("node:fs", async (original) => {
     openSync: (p: string) => { mock.opened.push(p); return mock.opened.length - 1; }, closeSync: (fd: number) => mock.closed.push(fd),
     readFileSync: (fd: number) => { mock.reads.push(mock.opened[fd]); const bytes = mock.bytes.get(mock.opened[fd]); if (!bytes) throw new Error("missing fixture"); return bytes; } };
 });
-import { MAC_BROWSER_PAYLOADS, checkPackagedMacBrowserAsync, clearMacBrowserCodesignCache, packagedMacBrowserState, verifyMacBrowserImage, verifyPackagedMacBrowser, verifyPackagedMacBrowserAsync } from "./browser-macos-identity.ts";
+import { MAC_BROWSER_PAYLOADS, MAC_CHROME_EXECUTABLE_BYTES, checkPackagedMacBrowserAsync, clearMacBrowserCodesignCache, packagedMacBrowserState, verifyMacBrowserImage, verifyPackagedMacBrowser, verifyPackagedMacBrowserAsync } from "./browser-macos-identity.ts";
 
 const root = "/fixture/Murage.app/Contents/Resources", directory = `${root}/browser-engine`;
 const spec = browserBundleSpec("darwin-arm64");
@@ -53,7 +53,7 @@ beforeEach(() => {
   mock.bytes.clear();
   mock.bytes.set(`${directory}/manifest.json`, Buffer.from(JSON.stringify({ ...spec, files: [
     { path: spec.engine.executable, kind: "file", bytes: spec.engine.bytes, sha256: spec.engine.sha256 },
-    { path: spec.chrome.executable, kind: "file", bytes: 166887216, sha256: spec.chrome.executableSha256 },
+    { path: spec.chrome.executable, kind: "file", bytes: MAC_CHROME_EXECUTABLE_BYTES, sha256: spec.chrome.executableSha256 },
   ] })));
   mock.bytes.set(`${directory}/${spec.engine.executable}`, images.get("engine")!);
   mock.bytes.set(`${directory}/${spec.chrome.executable}`, images.get("chrome")!);
@@ -174,6 +174,17 @@ describe.skipIf(process.platform === "win32")("arm64 packaged browser identity",
     const chrome = images.get("chrome")!, original = chrome[100];
     chrome[100] ^= 1;
     try { expect(packagedMacBrowserState(root, exe)).toBe("failed"); } finally { chrome[100] = original; }
+  });
+  // 1.0.19 refused every Apple Silicon browser with nothing in the log: a refusal says once which tool and which check, never per turn, never a path.
+  it("logs one line naming the tool and the check when the byte check refuses it", async () => {
+    const exe = "/fixture/Murage.app/Contents/MacOS/Murage", warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const engine = images.get("engine")!, original = engine[100];
+    engine[100] ^= 1;
+    try {
+      expect(packagedMacBrowserState(root, exe)).toBe("failed");
+      expect(packagedMacBrowserState(root, exe)).toBe("failed");
+      expect(warn.mock.calls).toEqual([[`[browser] packaged engine refused: signature layout does not match the pinned build (100 bytes)`]]);
+    } finally { engine[100] = original; warn.mockRestore(); }
   });
   // P1: the remembered codesign answer is keyed on ctime (and dev), so a change that keeps size, mtime and inode asks again.
   it("asks codesign again when a tool's ctime changes", async () => {

@@ -1,0 +1,22 @@
+[
+  {
+    "name": "M-SCOPE-CUSTOMFIELD-ID-SKIP",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M-SCOPE-SKIP-READ-PERMISSION",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M-SCOPE-AFTER-FIRST-READ",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M-SCOPE-PIT-ALL-WRITES",
+    "killed": true,
+    "status": 1
+  }
+]

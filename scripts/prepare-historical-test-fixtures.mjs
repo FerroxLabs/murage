@@ -3,11 +3,12 @@
 // by production. CI may fetch the exact commits during preparation; tests run
 // offline and never substitute current source for a released inspector.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { safeWipeSync } from '../server/testing/safe-wipe.mjs';
 
 export const HISTORICAL_TEST_PINS = Object.freeze({
   '.v101-ref': 'd950cbf67bd3b7dddc7f562a3d75f5ca71e0c340',
@@ -41,7 +42,7 @@ export function prepareHistoricalTestFixtures({repository=root,destination=repos
       }
       writeFileSync(join(target,'.fixture-revision'),revision+'\n');
       console.log(JSON.stringify({directory,revision,checked}));
-    } finally {rmSync(scratch,{recursive:true,force:true});}
+    } finally {safeWipeSync(scratch);}
   }
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {

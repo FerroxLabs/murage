@@ -92,6 +92,38 @@ describe("the setup poll", () => {
     expect(calls, "an action left the poll asleep").toBeGreaterThan(asleep + 1);
   });
 
+  it("notices Downloads discovery finish after the ordinary idle limit", async () => {
+    reply = () => view({ next: "flux", moveIn: { grok: 0 }, moveInPending: true });
+    forgetSetupView();
+    await letTimeRun(12);
+    const held = calls;
+    reply = () => view({ next: "flux", moveIn: { grok: 1 } });
+    await letTimeRun(3);
+    expect(calls).toBeGreaterThan(held);
+    expect(await readSetupView()).toMatchObject({ moveIn: { grok: 1 } });
+
+    await letTimeRun(12);
+    const idle = calls;
+    await letTimeRun(3);
+    expect(calls).toBe(idle);
+  });
+
+  it("keeps polling while a Downloads reading is still in flight after the Flux hold has ended", async () => {
+    reply = () => view({ next: "flux", moveIn: { grok: 0 }, moveInReading: true });
+    forgetSetupView();
+    await letTimeRun(12);
+    const held = calls;
+    reply = () => view({ next: "flux", moveIn: { grok: 1 } });
+    await letTimeRun(3);
+    expect(calls).toBeGreaterThan(held);
+    expect(await readSetupView()).toMatchObject({ moveIn: { grok: 1 } });
+
+    await letTimeRun(12);
+    const idle = calls;
+    await letTimeRun(3);
+    expect(calls).toBe(idle);
+  });
+
   it("stops the moment the flow has nothing left to do", async () => {
     reply = () => view({ next: null });
     forgetSetupView();

@@ -132,6 +132,21 @@ it('agy bound Ask turn refused with no relay registers agy.direct.889 and the le
   expect(watch.escaped).toEqual([]);
 });
 
+// 1.0.20 busy-engines (antigravity family): the driver's own refusal of a bound Ask turn (no relay) reaches the lease as ENGINE_OWN_REFUSAL
+// (driverRaised): the verdict the direct turn's lease reads at its seal to end the turn at once, as on 1.0.19, instead of rebuilding it into
+// the same refusal (index.ts admitLedgerLease). Before, agy refused with the plain verdict and the turn took its re-prepares first.
+it('busy-engines agy: a bound Ask turn refused with no relay gives the lease the driverRaised verdict', async () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'be-agy-')); cleanups.push(() => removeTempDir(scratch));
+  instance = await AntigravityDriver.create({ instanceId: 'be-agy', displayName: 'Antigravity', enabled: true, environment: { HOME: scratch }, config: { cli: FAKE_CLI, fullAuto: false } });
+  const open = vi.spyOn(relayModule, 'openAntigravityRelay').mockRejectedValue(new Error('fixture relay unavailable')); cleanups.push(() => open.mockRestore());
+  const { input, rig } = leasedMountTurn({ threadId: 'be-agy', cwd: scratch, routeAsks: true, askLevel: true, permissionNow: () => ({ routeAsks: true, askLevel: true }) });
+  const error = await instance.adapter.sendTurn(input).then(() => undefined, e => e);
+  expect(error).toMatchObject({ code: 'MEMORY_CONTEXT_REVOKED' });
+  expect(rig.refusals().map(r => r.site)).toEqual(['agy.direct.889']);
+  expect(rig.lease.verdict, 'the verdict the seal reads').toEqual({ state: 'checking', reason: 'not-built', driverRaised: true });
+  await rig.lease.teardownConfirmed;
+});
+
 // AGK: a mounted turn's Stop is confirmed only when the mount relay finished AND the child tree stopped. The fake holds its close
 // (FAKE_AGY_HOLD_CLOSE) across the Stop: the confirmation stays pending while the child lives and lands once the gate releases it.
 it('agy mounted turn Stop is not confirmed while the child is held open', async () => {

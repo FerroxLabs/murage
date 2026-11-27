@@ -1,4 +1,4 @@
-import { CURRENT_CHECKPOINT_SQL } from './checkpoints.ts';
+import { CURRENT_CHECKPOINT_SQL } from './checkpoint-sql.ts';
 import { RecallPreparationPending } from './recall-recovery.ts';
 import { eligibleViewPage, lexicalViewPage, RecallWorkBudget } from './recall-view-index.ts';
 import { assertRecallView, type RecallViewHandle, type RecallViewBinding } from './recall-view.ts';
@@ -57,7 +57,10 @@ export class MemoryEligibility {
       if(!input.reader)throw new RecallPreparationPending();
       assertRecallView(this.db,input.view,input.reader);
       const chunk=Math.min(eligibleLimits.chunk,4096,Math.max(0,budget.remaining-1));
-      const rows=eligibleViewPage(this.db,input.view,input.cursor,chunk+1,budget),over=rows.length>chunk;
+      // MAIN-RULING 2026-11-26T21:32Z short page = cut: a page the raw budget ended is capacity, continued from the last key it examined;
+      // it is never reported as the end of the eligible set.
+      const cut:{next?:string}={},rows=eligibleViewPage(this.db,input.view,input.cursor,chunk+1,budget,cut),over=rows.length>chunk;
+      if(!over&&cut.next!==undefined)return {allowed:rows.map(({id,version})=>({id,version})),capacity:true,nextCursor:cut.next};
       return {allowed:rows.slice(0,chunk).map(({id,version})=>({id,version})),capacity:over,nextCursor:over?(chunk?encodeEligibleCursor(rows[chunk-1]):input.cursor):undefined};
     }
     const scopes=this.db.prepare(`SELECT DISTINCT scope_id FROM memory_records WHERE scope_id IN (SELECT value FROM json_each(?)) AND state IN ${input.historical?"('active','archived','superseded')":"('active')"}`).all(JSON.stringify(input.scopeIds)).map(r=>String(r.scope_id)).sort();
@@ -71,7 +74,8 @@ export class MemoryEligibility {
     const chunk=eligibleLimits.chunk,over=rows.length>chunk;
     return {allowed:over?rows.slice(0,chunk):rows,capacity:over,nextCursor:over?encodeEligibleCursor(rows[chunk-1]):undefined};
   }
-  lexical(query:string,view:RecallViewHandle,budget=new RecallWorkBudget(8192)) { return lexicalViewPage(this.db,query,view,1000,0,budget); }
+  /** `historical`: also the superseded and archived versions, whose words are read from their text (they store no terms, memv2 A5). */
+  lexical(query:string,view:RecallViewHandle,budget=new RecallWorkBudget(8192),historical=false) { return lexicalViewPage(this.db,query,view,1000,0,budget,false,historical); }
   validate(view:RecallViewHandle,reader:RecallViewBinding) {assertRecallView(this.db,view,reader);}
   /** Ids of every PIP record, any state: what the derived index must not hold. */
   pipRecordIds():string[]{

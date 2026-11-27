@@ -19,7 +19,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   fixture.api.mockImplementation(async (path: string) => {
     const url = new URL(path, "http://fixture");
-    if (url.pathname === "/api/skills") return { yours: [skill("review", "review"), skill("blocked", "blocked"), skill("clean", "clean")], library: [], categories: [], libraryReady: true, pagination: { offset: 0, limit: 60, total: 0 } };
+    if (url.pathname === "/api/skills") return { yours: [{ ...skill("review", "review"), reason: "Pressures the bot not to say no" }, { ...skill("blocked", "blocked"), reason: "Reads passwords, keys or tokens" }, skill("clean", "clean"), skill("unexplained", "review")], library: [], categories: [], libraryReady: true, pagination: { offset: 0, limit: 60, total: 0 } };
     return {};
   });
 });
@@ -39,4 +39,14 @@ it("keeps a needs-a-look or blocked verdict word on a phone and lets only the cl
   const clean = rowFor("Skill clean").querySelector('[role="img"]');
   expect(clean).toBeTruthy();
   expect(hiddenOnPhone(clean)).toBe(true);
+});
+
+// polish-1021 (d2): "Needs a look" alone left the owner guessing. The row says what was found and what to do next.
+it("says what a needs-a-look or blocked skill was flagged for and what to do, in the row", async () => {
+  mount(h(SkillsSettings));
+  await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+  expect(rowFor("Skill review").textContent).toContain("Pressures the bot not to say no. Open it to read what was found, then decide.");
+  expect(rowFor("Skill blocked").textContent).toContain("Reads passwords, keys or tokens. It can't be switched on.");
+  expect(rowFor("Skill unexplained").textContent).toContain("Open it to read what was found, then decide.");
+  expect(rowFor("Skill clean").textContent).not.toContain("Open it to read");
 });

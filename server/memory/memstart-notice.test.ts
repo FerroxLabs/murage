@@ -1,8 +1,11 @@
-import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import ts from "typescript";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { source as serverSource, wiring } from "../decision-wiring/fixture.ts";
 import { EngineInputRevoked } from "../drivers/engine-input.ts";
+import { DirectRebuildCancelled } from "../independent-thread-runs.ts";
 import { MemoryRefusalCauses, memoryRefusalCause, sessionCheckRefusal, turnRefusedLine } from "./dispatch.ts";
+import { awaitExactPendingCheck as settleRefusedFence } from "./fence-pending.ts";
 
 const checking = new EngineInputRevoked({ state: "checking", reason: "pending" });
 const withheld = new EngineInputRevoked({ state: "withheld", reason: "deny-line" });
@@ -45,44 +48,49 @@ describe("MEMSTART B / T10 cause selection", () => {
     expect(history.kind("b")).toBe("without-memory-checking");
     expect(turnRefusedLine("Claude", history.kind("a"))).toBe("This reply ran without remembered context.");
     expect(turnRefusedLine("Claude", history.kind("b"))).toBe("Murage prepared this reply from your message, with remembered context left out.");
-    expect(turnRefusedLine("Claude", "without-memory")).toBe("Memory changed while Claude was starting, so this reply ran without remembered context.");
+    expect(turnRefusedLine("Claude", "without-memory")).toBe("This reply went ahead without remembered context after memory changed.");
   });
 });
 
 // Exercise the production rebuild helper, including admission that returns without launching (a held continuation).
-const serverSource = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
-const helperStart = serverSource.indexOf("async function rebuildRefusedDirectTurn(");
-const helperEnd = serverSource.indexOf("/** Ends a rebuild", helperStart);
-const helperJS = ts.transpile(serverSource.slice(helperStart, helperEnd), { target: ts.ScriptTarget.ES2022 });
-class CancelledAdmission extends Error {}
-function rebuildFixture(active = true) {
+function rebuildFixture(active = true, refusal = withheld) {
   const causes = new MemoryRefusalCauses(); causes.record("message", withheld, true);
-  const markers = new Set<string>(), free = vi.fn();
-  const rebuild = new Function("settleRevokesForTurn", "database", "directRuns", "memoryRefusalCauses", "freeThreadAfterRebuild", "markLastResort", "lastResortMessages", "DirectRebuildCancelled", helperJS + ";return rebuildRefusedDirectTurn;")(
-    async () => false, () => ({}), { rebuilding: () => active }, causes, free, (id: string) => markers.add(id), markers, CancelledAdmission,
-  );
-  return { causes, markers, free, run: (start: () => Promise<unknown>) => rebuild({}, "message", { lastResort: true }, start) };
+  const db = new DatabaseSync(":memory:");
+  onTestFinished(() => db.close());
+  const markers = new Set<string>(), free = vi.fn(), wake = vi.fn();
+  const { rebuildRefusedDirectTurn } = wiring(["rebuildRefusedDirectTurn"], {
+    settleRefusedFence, database: () => db, directRuns: { rebuilding: () => active },
+    memoryRefusalCauses: causes, freeThreadAfterRebuild: free, markLastResort: (id: string) => markers.add(id),
+    lastResortMessages: markers, DirectRebuildCancelled, schedulePendingFenceCheck: wake,
+  });
+  const held = { generation: "generation" }, owner = { held: () => active };
+  return { causes, markers, free, wake, run: (start: () => Promise<unknown>) =>
+    rebuildRefusedDirectTurn(held, owner, "message", { attempt: 1, lastResort: true }, start, refusal, true) };
 }
 describe("MEMSTART B direct admission cleanup", () => {
   it("keeps history when a rebuild is admitted, until its eventual notice", async () => {
-    const f = rebuildFixture(); expect(await f.run(async () => ({ id: "message" }))).toBe(true);
+    const f = rebuildFixture(); expect(await f.run(async () => ({ id: "message" }))).toEqual({ kind: "started" });
     expect(f.causes.kind("message")).toBe("without-memory"); expect(f.free).not.toHaveBeenCalled();
   });
   it("cleans history when admission returns without launching, preserving the existing return and marker", async () => {
-    const f = rebuildFixture(); expect(await f.run(async () => undefined)).toBe(true);
+    const f = rebuildFixture(); expect(await f.run(async () => undefined)).toEqual({ kind: "started" });
     expect(f.causes.kind("message")).toBe("without-memory-unknown");
     expect(f.free).not.toHaveBeenCalled(); expect(f.markers.has("message")).toBe(true);
   });
   it("cleans a stopped settle before calling admission", async () => {
-    const f = rebuildFixture(false), start = vi.fn(async () => ({})); expect(await f.run(start)).toBe(false);
+    const f = rebuildFixture(false, checking), start = vi.fn(async () => ({}));
+    expect(await f.run(start)).toEqual({ kind: "stopped" });
+    expect(f.wake).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled(); expect(f.free).toHaveBeenCalledTimes(1); expect(f.causes.kind("message")).toBe("without-memory-unknown");
   });
-  it("cleans a failed admission and rethrows the same error", async () => {
-    const f = rebuildFixture(), error = new Error("admission failed"); await expect(f.run(async () => { throw error; })).rejects.toBe(error);
-    expect(f.causes.kind("message")).toBe("without-memory-unknown"); expect(f.markers.size).toBe(0); expect(f.free).toHaveBeenCalledTimes(1);
+  it("cleans a failed admission and returns the same error to the owner for reporting", async () => {
+    const f = rebuildFixture(), error = new Error("admission failed");
+    const result = await f.run(async () => { throw error; });
+    expect(result.kind).toBe("rejected"); expect(result.error).toBe(error);
+    expect(f.causes.kind("message")).toBe("without-memory-unknown"); expect(f.markers.size).toBe(0); expect(f.free).not.toHaveBeenCalled();
   });
-  it("cleans a cancelled admission while retaining its quiet false result", async () => {
-    const f = rebuildFixture(); expect(await f.run(async () => { throw new CancelledAdmission(); })).toBe(false);
+  it("cleans a cancelled admission with a stopped result", async () => {
+    const f = rebuildFixture(); expect(await f.run(async () => { throw new DirectRebuildCancelled(); })).toEqual({ kind: "stopped" });
     expect(f.causes.kind("message")).toBe("without-memory-unknown"); expect(f.markers.size).toBe(0); expect(f.free).toHaveBeenCalledTimes(1);
   });
 });
@@ -91,8 +99,9 @@ describe("MEMSTART B direct admission cleanup", () => {
 describe("MEMSTART cleanup after a released submission", () => {
   it.each(["none", "card"])("settles %s once, clears cause history, and never redispatches", outcome => {
     const start = serverSource.indexOf("const releasedTicket: LateMemoryTicket =");
-    const end = serverSource.indexOf("lateMemoryRedispatches.set", start);
+    const end = serverSource.indexOf("registerLateTicket(accepted.turnId, releasedTicket)", start);
     expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
     const ticketJS = ts.transpile(serverSource.slice(start, end), { target: ts.ScriptTarget.ES2022 });
     const causes = new MemoryRefusalCauses(); causes.record("message", withheld, true);
     const card = vi.fn(), settleDispatch = vi.fn(), routineToken = {};

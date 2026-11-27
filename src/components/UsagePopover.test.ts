@@ -137,7 +137,10 @@ describe("removing a skill actually issues the DELETE", () => {
   it("says on the control what the single click will do", () => {
     // No dialog means the click IS the action, so the consequence and the way
     // back have to be on the control itself.
-    expect(skillsPanel).toContain("title={`Remove ${skill.name} from ${botName}. Add it again from the library at any time.`}");
+    // row 45 (U8) moved the sentence into skillRemoveWords: the control title is built there, and states what the click does to this bot and to the other copies.
+    expect(skillsPanel).toContain("title={skillRemoveWords(skill, botName).title}");
+    expect(skillsPanel).toContain("Take ${skill.name} off ${botName}. Your other bots and the shared copy keep it.");
+    expect(skillsPanel).toContain("Delete ${skill.name} from ${botName}. This is the only copy and can't be undone.");
   });
 });
 

@@ -1,10 +1,11 @@
 // Owner: sc-safety-rd (repeat counts and immutable test selection).
 // Owner: lane runner (isolated container, fixture launch and external evidence).
 import {spawnSync} from 'node:child_process';
-import {mkdirSync,mkdtempSync,readFileSync,writeFileSync,rmSync,readdirSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,readFileSync,writeFileSync,readdirSync} from 'node:fs';
 import {join,resolve,relative} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
+import { safeWipeSync } from '../../../server/testing/safe-wipe.mjs';
 const root=resolve(fileURLToPath(new URL('../../../',import.meta.url)));
 const out=resolve(process.env.SC_OUT??'');
 if(!process.env.SC_OUT||!relative(root,out).startsWith('..')||out==='/dev'||out.startsWith('/dev/'))throw Error('External SC_OUT is required');
@@ -48,7 +49,7 @@ try{
       process.stdout.write(`${label} ${row.pass?'PASS':'FAIL'}\n`);
     }
   }
-}finally{rmSync(scratch,{recursive:true,force:true});}
+}finally{safeWipeSync(scratch, { within: out });}
 const report={sourceBefore:before,sourceAfter:hash(),cleanup:{passed:rows.filter(row=>row.kind==='cleanup'&&row.pass).length,total:25},
   probe:{passed:rows.filter(row=>row.kind==='r3-probe'&&row.pass).length,total:10},rows};
 report.runtimeBefore=runtimeBefore;report.runtimeAfter=runtimeHashes();

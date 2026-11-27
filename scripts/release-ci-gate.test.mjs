@@ -386,8 +386,8 @@ describe("real-engine nightly wiring", () => {
     const build = nightly.jobs['real-engine-package'].steps.find(step => step.name === 'Build the exact RC package');
     expect(build.env.SOURCE_SHA).toBe('${{ github.sha }}');
     expect(build.run).toContain('--config.extraMetadata.murageSourceSha=$SOURCE_SHA');
-    // MAIN RULING INT-CONFLICT-DEFAULT 619386c4b7 60a100f02b: retain both slow and cloud-portal gates; real engines remain separately required.
-    expect(nightly.jobs.nightly.needs).toEqual(['slow', 'cloud-portal']);
+    // MAIN RULING INT-CONFLICT-DEFAULT 619386c4b7 60a100f02b: retain both slow and cloud-portal gates; real engines and whole-file scale are separately required.
+    expect(nightly.jobs.nightly.needs).toEqual(['slow', 'nightly-scale', 'cloud-portal', 'real-engine-package', 'real-engine']);
   });
 });
 

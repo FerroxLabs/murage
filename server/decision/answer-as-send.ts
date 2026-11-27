@@ -17,7 +17,7 @@ export function claimAnswerAsSend(store:Store,ref:ApprovalRef,answer:ApprovalAns
  const payload=JSON.parse(row.evidence),action=payload.action;
  if(row.source_kind!=='service'||row.queue_kind!=='peer'||action.answerAsSend!==true||answer.behavior!=='answer')throw new Error('answer-send-source-mismatch');
  if(row.delivery==='accepted'||(late?!['expired','cancelled'].includes(row.state):row.state!=='open'))return false;
- const s=store,m=s.messageById(row.thread_id,row.chat_message_id,{buildIndex:false});
+ const s=store,m=records.decisionMessage(database(),s,row,{buildIndex:false});
  if(!m?.card||m.card.approvalId!==row.id)throw new Error('answer-send-card-missing');
  transaction(db=>{
   claim();

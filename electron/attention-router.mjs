@@ -290,11 +290,16 @@ export function createAttentionRouter(deps) {
     for (const entry of open) held.delete(entry.key);
     const p = prefs();
     if (open.length === 0) return;
+    const releasedCards = entries => {
+      const homes = new Set(entries.filter(entry => CARD_KINDS.has(entry.frame.kind)).map(entry => entry.home));
+      if (homes.size) deps.onReleaseCounted?.(homes);
+    };
     if (focusedHomes.size > 0) {
       for (const entry of open) {
         if (CARD_KINDS.has(entry.frame.kind)) remember(entry);
         if (entry.record) deps.delivery.retire(entry.record, "counted");
       }
+      releasedCards(open);
       pushCounts(); return;
     }
     // No summary surface yet (it arrives with the slice that owns it): fail safe to ONE banner for the newest held card, never silence.
@@ -308,10 +313,11 @@ export function createAttentionRouter(deps) {
       else if (newest.record) deps.delivery.retire(newest.record, "counted");
       for (const e of open) if (e !== newest && CARD_KINDS.has(e.frame.kind)) remember(e);
       for (const e of open) if (e !== newest && e.record) deps.delivery.retire(e.record, "counted");
+      if (rung === "counts") releasedCards(open);
       pushCounts();
       return;
     }
-    if (!summaryOn) { for (const e of open) { if (CARD_KINDS.has(e.frame.kind)) remember(e); if (e.record) deps.delivery.retire(e.record, "counted"); } pushCounts(); return; }
+    if (!summaryOn) { for (const e of open) { if (CARD_KINDS.has(e.frame.kind)) remember(e); if (e.record) deps.delivery.retire(e.record, "counted"); } releasedCards(open); pushCounts(); return; }
     // quietSummary on: ONE notification. N = 1 shows that event itself; a summary never carries Allow.
     if (open.length === 1) {
       const only = open[0]; remember(only);
@@ -406,6 +412,7 @@ export function createAttentionRouter(deps) {
     }
   }
   return { offer, settled, visible, reconcile, quietChanged, quietHoursUntil, previewsChanged, homeGone,
+    clearFocus() { focusedHomes.clear(); for (const visible of visibleState.values()) visible.focused = false; },
     register, known, cardKey, decide, quietReason, finish, count, hold, armNudge, bannersAvailable, forgetVisibility,
     unhold: entry => held.delete(entry.key), current: entry => tracked.get(entry.key) === entry && !entry.dead,
     pushCounts, size: () => tracked.size, heldSize: () => held.size, snapshot };

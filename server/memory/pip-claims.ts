@@ -313,11 +313,16 @@ export function admissibleSentenceRanges(text: string, options: { botName?: stri
     if (segment.party === "owner") ownerRanges.push({ start: at, end: cursor });
   }
   // Split the complete source so a quotation spanning a pasted block keeps its context.
+  // byte offsets are counted forward from the last sentence, never from the start of the text again (spans come in order): a 200 KB
+  // source is split across requests now (pip-reflect.ts fitRequest) and is validated whole at publication
+  let countedTo = 0, countedBytes = 0;
+  const bytesTo = (index: number) => { countedBytes += Buffer.byteLength(text.slice(countedTo, index)); countedTo = index; return countedBytes; };
   for (const span of sentenceSpans(normalized)) {
     const raw = span.raw.trim(), result = parseOwnerSentence(raw, options);
     const start = span.index + span.raw.length - span.raw.trimStart().length;
     if (!result.ok || !ownerRanges.some(r => start >= r.start && start + raw.length <= r.end)) continue;
-    out.push({ start: Buffer.byteLength(text.slice(0, offsets[start])), end: Buffer.byteLength(text.slice(0, offsets[start + raw.length])), text: raw, result });
+    const startByte = bytesTo(offsets[start]);
+    out.push({ start: startByte, end: bytesTo(offsets[start + raw.length]), text: raw, result });
   }
   return out;
 }

@@ -1,0 +1,340 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "rel1023-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.23 integrator merge of the reviewers list and the phone removal outcome strings"
+  },
+  "author": "int-1023-fwd-r2-translator",
+  "date": "2026-11-26",
+  "base": "2232e61d60",
+  "scope": "rel/1023 integration: reviewers.json merge + phone removal outcome translations",
+  "strings": {
+    "en:phone.removal.outcome.removed": {
+      "text": "Removed. This phone is signed out and its notifications are off.",
+      "en": "Removed. This phone is signed out and its notifications are off.",
+      "verdict": "pass"
+    },
+    "en:phone.removal.outcome.removed-no-notifications": {
+      "text": "Removed. This phone had no notifications set up.",
+      "en": "Removed. This phone had no notifications set up.",
+      "verdict": "pass"
+    },
+    "en:phone.removal.outcome.waiting": {
+      "text": "Removing. Murage is still turning this phone's notifications off and will keep trying.",
+      "en": "Removing. Murage is still turning this phone's notifications off and will keep trying.",
+      "verdict": "pass"
+    },
+    "en:phone.removal.outcome.gave-up": {
+      "text": "Removed, but Murage could not confirm this phone's notifications are off. Turn them off in the phone's settings if they keep arriving.",
+      "en": "Removed, but Murage could not confirm this phone's notifications are off. Turn them off in the phone's settings if they keep arriving.",
+      "verdict": "pass"
+    },
+    "en:phone.removal.outcome.uncertain": {
+      "text": "Murage could not tell whether this went through. Check again in a moment.",
+      "en": "Murage could not tell whether this went through. Check again in a moment.",
+      "verdict": "pass"
+    },
+    "en:phone.removal.outcome.not-recorded": {
+      "text": "No removal is recorded for this phone yet.",
+      "en": "No removal is recorded for this phone yet.",
+      "verdict": "pass"
+    },
+    "en:phone.removal.outcome.finishing": {
+      "text": "Notifications are off. Murage is still finishing removing this phone and will keep trying.",
+      "en": "Notifications are off. Murage is still finishing removing this phone and will keep trying.",
+      "verdict": "pass"
+    },
+    "en:phone.removal.checkAgain": {
+      "text": "Check again",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "de:phone.removal.outcome.removed": {
+      "text": "Entfernt. Dieses Telefon ist abgemeldet und seine Benachrichtigungen sind aus.",
+      "en": "Removed. This phone is signed out and its notifications are off.",
+      "verdict": "pass"
+    },
+    "de:phone.removal.outcome.removed-no-notifications": {
+      "text": "Entfernt. Für dieses Telefon waren keine Benachrichtigungen eingerichtet.",
+      "en": "Removed. This phone had no notifications set up.",
+      "verdict": "pass"
+    },
+    "de:phone.removal.outcome.waiting": {
+      "text": "Wird entfernt. Murage schaltet die Benachrichtigungen dieses Telefons noch aus und versucht es weiter.",
+      "en": "Removing. Murage is still turning this phone's notifications off and will keep trying.",
+      "verdict": "pass"
+    },
+    "de:phone.removal.outcome.gave-up": {
+      "text": "Entfernt, aber Murage konnte nicht bestätigen, dass die Benachrichtigungen dieses Telefons aus sind. Schalte sie in den Einstellungen des Telefons aus, falls weiter welche ankommen.",
+      "en": "Removed, but Murage could not confirm this phone's notifications are off. Turn them off in the phone's settings if they keep arriving.",
+      "verdict": "pass"
+    },
+    "de:phone.removal.outcome.uncertain": {
+      "text": "Murage konnte nicht feststellen, ob das geklappt hat. Prüfe es gleich noch einmal.",
+      "en": "Murage could not tell whether this went through. Check again in a moment.",
+      "verdict": "pass"
+    },
+    "de:phone.removal.outcome.not-recorded": {
+      "text": "Für dieses Telefon ist noch keine Entfernung erfasst.",
+      "en": "No removal is recorded for this phone yet.",
+      "verdict": "pass"
+    },
+    "de:phone.removal.outcome.finishing": {
+      "text": "Die Benachrichtigungen sind aus. Murage schließt das Entfernen dieses Telefons noch ab und versucht es weiter.",
+      "en": "Notifications are off. Murage is still finishing removing this phone and will keep trying.",
+      "verdict": "pass"
+    },
+    "de:phone.removal.checkAgain": {
+      "text": "Erneut prüfen",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "es:phone.removal.outcome.removed": {
+      "text": "Se ha quitado. Se ha cerrado la sesión de este teléfono y sus notificaciones están desactivadas.",
+      "en": "Removed. This phone is signed out and its notifications are off.",
+      "verdict": "pass"
+    },
+    "es:phone.removal.outcome.removed-no-notifications": {
+      "text": "Se ha quitado. Este teléfono no tenía notificaciones configuradas.",
+      "en": "Removed. This phone had no notifications set up.",
+      "verdict": "pass"
+    },
+    "es:phone.removal.outcome.waiting": {
+      "text": "Quitando. Murage sigue desactivando las notificaciones de este teléfono y seguirá intentándolo.",
+      "en": "Removing. Murage is still turning this phone's notifications off and will keep trying.",
+      "verdict": "pass"
+    },
+    "es:phone.removal.outcome.gave-up": {
+      "text": "Se ha quitado, pero Murage no pudo confirmar que las notificaciones de este teléfono estén desactivadas. Desactívalas en los ajustes del teléfono si siguen llegando.",
+      "en": "Removed, but Murage could not confirm this phone's notifications are off. Turn them off in the phone's settings if they keep arriving.",
+      "verdict": "pass"
+    },
+    "es:phone.removal.outcome.uncertain": {
+      "text": "Murage no pudo saber si esto se completó. Vuelve a comprobarlo en un momento.",
+      "en": "Murage could not tell whether this went through. Check again in a moment.",
+      "verdict": "pass"
+    },
+    "es:phone.removal.outcome.not-recorded": {
+      "text": "Aún no hay ninguna eliminación registrada para este teléfono.",
+      "en": "No removal is recorded for this phone yet.",
+      "verdict": "pass"
+    },
+    "es:phone.removal.outcome.finishing": {
+      "text": "Las notificaciones están desactivadas. Murage sigue terminando de quitar este teléfono y seguirá intentándolo.",
+      "en": "Notifications are off. Murage is still finishing removing this phone and will keep trying.",
+      "verdict": "pass"
+    },
+    "es:phone.removal.checkAgain": {
+      "text": "Comprobar de nuevo",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "fr:phone.removal.outcome.removed": {
+      "text": "Retiré. Ce téléphone est déconnecté et ses notifications sont désactivées.",
+      "en": "Removed. This phone is signed out and its notifications are off.",
+      "verdict": "pass"
+    },
+    "fr:phone.removal.outcome.removed-no-notifications": {
+      "text": "Retiré. Aucune notification n’était configurée sur ce téléphone.",
+      "en": "Removed. This phone had no notifications set up.",
+      "verdict": "pass"
+    },
+    "fr:phone.removal.outcome.waiting": {
+      "text": "Retrait en cours. Murage désactive encore les notifications de ce téléphone et continuera d’essayer.",
+      "en": "Removing. Murage is still turning this phone's notifications off and will keep trying.",
+      "verdict": "pass"
+    },
+    "fr:phone.removal.outcome.gave-up": {
+      "text": "Retiré, mais Murage n’a pas pu confirmer que les notifications de ce téléphone sont désactivées. Désactive-les dans les paramètres du téléphone si elles continuent d’arriver.",
+      "en": "Removed, but Murage could not confirm this phone's notifications are off. Turn them off in the phone's settings if they keep arriving.",
+      "verdict": "pass"
+    },
+    "fr:phone.removal.outcome.uncertain": {
+      "text": "Murage n’a pas pu savoir si l’opération a abouti. Vérifie à nouveau dans un instant.",
+      "en": "Murage could not tell whether this went through. Check again in a moment.",
+      "verdict": "pass"
+    },
+    "fr:phone.removal.outcome.not-recorded": {
+      "text": "Aucun retrait n’est encore enregistré pour ce téléphone.",
+      "en": "No removal is recorded for this phone yet.",
+      "verdict": "pass"
+    },
+    "fr:phone.removal.outcome.finishing": {
+      "text": "Les notifications sont désactivées. Murage termine encore le retrait de ce téléphone et continuera d’essayer.",
+      "en": "Notifications are off. Murage is still finishing removing this phone and will keep trying.",
+      "verdict": "pass"
+    },
+    "fr:phone.removal.checkAgain": {
+      "text": "Vérifier à nouveau",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "hi:phone.removal.outcome.removed": {
+      "text": "हटा दिया गया। यह फ़ोन साइन आउट हो गया है और इसकी सूचनाएँ बंद हैं।",
+      "en": "Removed. This phone is signed out and its notifications are off.",
+      "verdict": "pass"
+    },
+    "hi:phone.removal.outcome.removed-no-notifications": {
+      "text": "हटा दिया गया। इस फ़ोन पर कोई सूचना सेट नहीं थी।",
+      "en": "Removed. This phone had no notifications set up.",
+      "verdict": "pass"
+    },
+    "hi:phone.removal.outcome.waiting": {
+      "text": "हटाया जा रहा है। Murage अभी भी इस फ़ोन की सूचनाएँ बंद कर रहा है और कोशिश करता रहेगा।",
+      "en": "Removing. Murage is still turning this phone's notifications off and will keep trying.",
+      "verdict": "pass"
+    },
+    "hi:phone.removal.outcome.gave-up": {
+      "text": "हटा दिया गया, लेकिन Murage पक्का नहीं कर सका कि इस फ़ोन की सूचनाएँ बंद हैं। अगर सूचनाएँ आती रहें, तो उन्हें फ़ोन की सेटिंग में बंद करें।",
+      "en": "Removed, but Murage could not confirm this phone's notifications are off. Turn them off in the phone's settings if they keep arriving.",
+      "verdict": "pass"
+    },
+    "hi:phone.removal.outcome.uncertain": {
+      "text": "Murage यह पता नहीं लगा सका कि यह पूरा हुआ या नहीं। थोड़ी देर में फिर से जाँचें।",
+      "en": "Murage could not tell whether this went through. Check again in a moment.",
+      "verdict": "pass"
+    },
+    "hi:phone.removal.outcome.not-recorded": {
+      "text": "इस फ़ोन को हटाने का अभी तक कोई रिकॉर्ड नहीं है।",
+      "en": "No removal is recorded for this phone yet.",
+      "verdict": "pass"
+    },
+    "hi:phone.removal.outcome.finishing": {
+      "text": "सूचनाएँ बंद हैं। Murage अभी भी इस फ़ोन को हटाने का काम पूरा कर रहा है और कोशिश करता रहेगा।",
+      "en": "Notifications are off. Murage is still finishing removing this phone and will keep trying.",
+      "verdict": "pass"
+    },
+    "hi:phone.removal.checkAgain": {
+      "text": "फिर से जाँचें",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "ja:phone.removal.outcome.removed": {
+      "text": "削除しました。このスマートフォンはサインアウトされ、通知はオフになっています。",
+      "en": "Removed. This phone is signed out and its notifications are off.",
+      "verdict": "pass"
+    },
+    "ja:phone.removal.outcome.removed-no-notifications": {
+      "text": "削除しました。このスマートフォンには通知が設定されていませんでした。",
+      "en": "Removed. This phone had no notifications set up.",
+      "verdict": "pass"
+    },
+    "ja:phone.removal.outcome.waiting": {
+      "text": "削除中です。Murageはこのスマートフォンの通知をオフにしている途中で、引き続き試みます。",
+      "en": "Removing. Murage is still turning this phone's notifications off and will keep trying.",
+      "verdict": "pass"
+    },
+    "ja:phone.removal.outcome.gave-up": {
+      "text": "削除しましたが、Murageはこのスマートフォンの通知がオフになったことを確認できませんでした。通知が届き続ける場合は、スマートフォンの設定でオフにしてください。",
+      "en": "Removed, but Murage could not confirm this phone's notifications are off. Turn them off in the phone's settings if they keep arriving.",
+      "verdict": "pass"
+    },
+    "ja:phone.removal.outcome.uncertain": {
+      "text": "Murageは処理が完了したかどうかを判断できませんでした。少し待ってからもう一度確認してください。",
+      "en": "Murage could not tell whether this went through. Check again in a moment.",
+      "verdict": "pass"
+    },
+    "ja:phone.removal.outcome.not-recorded": {
+      "text": "このスマートフォンの削除はまだ記録されていません。",
+      "en": "No removal is recorded for this phone yet.",
+      "verdict": "pass"
+    },
+    "ja:phone.removal.outcome.finishing": {
+      "text": "通知はオフになりました。Murageはこのスマートフォンの削除をまだ完了させている途中で、引き続き試みます。",
+      "en": "Notifications are off. Murage is still finishing removing this phone and will keep trying.",
+      "verdict": "pass"
+    },
+    "ja:phone.removal.checkAgain": {
+      "text": "もう一度確認",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "pt-br:phone.removal.outcome.removed": {
+      "text": "Removido. Este celular foi desconectado e as notificações dele estão desativadas.",
+      "en": "Removed. This phone is signed out and its notifications are off.",
+      "verdict": "pass"
+    },
+    "pt-br:phone.removal.outcome.removed-no-notifications": {
+      "text": "Removido. Este celular não tinha notificações configuradas.",
+      "en": "Removed. This phone had no notifications set up.",
+      "verdict": "pass"
+    },
+    "pt-br:phone.removal.outcome.waiting": {
+      "text": "Removendo. O Murage ainda está desativando as notificações deste celular e continuará tentando.",
+      "en": "Removing. Murage is still turning this phone's notifications off and will keep trying.",
+      "verdict": "pass"
+    },
+    "pt-br:phone.removal.outcome.gave-up": {
+      "text": "Removido, mas o Murage não conseguiu confirmar que as notificações deste celular estão desativadas. Desative-as nas configurações do celular se elas continuarem chegando.",
+      "en": "Removed, but Murage could not confirm this phone's notifications are off. Turn them off in the phone's settings if they keep arriving.",
+      "verdict": "pass"
+    },
+    "pt-br:phone.removal.outcome.uncertain": {
+      "text": "O Murage não conseguiu saber se isso deu certo. Verifique de novo daqui a pouco.",
+      "en": "Murage could not tell whether this went through. Check again in a moment.",
+      "verdict": "pass"
+    },
+    "pt-br:phone.removal.outcome.not-recorded": {
+      "text": "Ainda não há nenhuma remoção registrada para este celular.",
+      "en": "No removal is recorded for this phone yet.",
+      "verdict": "pass"
+    },
+    "pt-br:phone.removal.outcome.finishing": {
+      "text": "As notificações estão desativadas. O Murage ainda está concluindo a remoção deste celular e continuará tentando.",
+      "en": "Notifications are off. Murage is still finishing removing this phone and will keep trying.",
+      "verdict": "pass"
+    },
+    "pt-br:phone.removal.checkAgain": {
+      "text": "Verificar de novo",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "zh:phone.removal.outcome.removed": {
+      "text": "已移除。这部手机已退出登录，通知已关闭。",
+      "en": "Removed. This phone is signed out and its notifications are off.",
+      "verdict": "pass"
+    },
+    "zh:phone.removal.outcome.removed-no-notifications": {
+      "text": "已移除。这部手机没有设置通知。",
+      "en": "Removed. This phone had no notifications set up.",
+      "verdict": "pass"
+    },
+    "zh:phone.removal.outcome.waiting": {
+      "text": "正在移除。Murage 仍在关闭这部手机的通知，并会继续尝试。",
+      "en": "Removing. Murage is still turning this phone's notifications off and will keep trying.",
+      "verdict": "pass"
+    },
+    "zh:phone.removal.outcome.gave-up": {
+      "text": "已移除，但 Murage 无法确认这部手机的通知已关闭。如果仍收到通知，请在手机设置中关闭。",
+      "en": "Removed, but Murage could not confirm this phone's notifications are off. Turn them off in the phone's settings if they keep arriving.",
+      "verdict": "pass"
+    },
+    "zh:phone.removal.outcome.uncertain": {
+      "text": "Murage 无法确定操作是否完成。请稍后再检查一次。",
+      "en": "Murage could not tell whether this went through. Check again in a moment.",
+      "verdict": "pass"
+    },
+    "zh:phone.removal.outcome.not-recorded": {
+      "text": "这部手机还没有移除记录。",
+      "en": "No removal is recorded for this phone yet.",
+      "verdict": "pass"
+    },
+    "zh:phone.removal.outcome.finishing": {
+      "text": "通知已关闭。Murage 仍在完成这部手机的移除，并会继续尝试。",
+      "en": "Notifications are off. Murage is still finishing removing this phone and will keep trying.",
+      "verdict": "pass"
+    },
+    "zh:phone.removal.checkAgain": {
+      "text": "再次检查",
+      "en": "Check again",
+      "verdict": "pass"
+    }
+  },
+  "files": {
+    "reviewers.json": {
+      "text": "{\n  \"version\": 1,\n  \"reviewers\": [\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol\",\n      \"account\": \"gpt-6.1-sol read-only, codex acct2 and acct6\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"claude-copyrev\",\n      \"account\": \"claude sonnet 5.5, copy-review seat for MurageMain\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"muragemain-copyrev\",\n      \"account\": \"claude opus 5.5, MurageMain copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-sc-issues-r3\",\n      \"account\": \"sc-issues-r3 independent review of inherited sc-issues copy\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-copyrev-m5-followup\",\n      \"account\": \"Independent Sol review session for the copyrev-m5 replacement titles\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"g9-ux-fable\",\n      \"account\": \"Fable copy seat g9-ux-fable, read-only G9 Settings copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"ctxstop-lease-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.20 A-2 refusal line\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"polish-1021-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.21 Settings polish strings\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"held1022-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 held rows 21 (Fuigo Trust) and 29 (Sentinel Health)\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"held1022b2-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 N5 command send notices\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"int1022n2-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 integrator merge of the reviewers list (wave233)\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"settingstruth-1022-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 row 22 settings-truth strings\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"settingstruth1022r2-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 row 22 settings-truth r2 merge of the reviewers list\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"mcpconnect-1022-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 MCP Connect strings\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"botpages-copyrev\",\n      \"account\": \"claude subagent, independent read-only copy review of the bot pages Archive or delete strings (not their author)\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"recallperf-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 recallperf Memory page capacity line\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"rel1023-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.23 integrator merge of the reviewers list and the phone removal outcome strings\"\n    }\n  ]\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

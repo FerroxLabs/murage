@@ -517,8 +517,9 @@ export function scanBotPackageForImport(files: readonly BotPackageScanFile[], on
   }
   const guard = guardBotPackage(files, onProgress ? (stage, fraction) => onProgress(stage === "prepare" ? 0.1 + 0.3 * fraction : 0.4 + 0.6 * fraction) : undefined);
   const result: BotPackageScanResult = { ...base, findings: [...base.findings] };
+  let matches = base.findings.reduce((total, finding) => total + (finding.count ?? 1), 0);
   for (const finding of guard.findings) {
-    if (result.findings.length >= MAX_FINDINGS) { result.truncated = true; result.blocked = true; break; }
+    if (++matches > MAX_FINDINGS) { result.truncated = true; result.blocked = true; break; }
     result.findings.push(finding);
     if (finding.severity === "block") result.blocked = true; else result.reviewRequired = true;
   }

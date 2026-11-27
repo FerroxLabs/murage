@@ -18,7 +18,7 @@ export function watchInboxChanges(onChange,options){
           controller=new AbortController();
           const response=await fetchImpl(options.url(),{headers:options.headers(),signal:controller.signal,redirect:"error"});
           if(response.ok&&response.body){
-            delay=5000;onChange({});
+            delay=5000;onChange({connected:true});
             const decoder=new TextDecoder();let buffer="";
             for await(const chunk of response.body){
               buffer+=decoder.decode(chunk,{stream:true});

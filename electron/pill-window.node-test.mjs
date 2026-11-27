@@ -45,8 +45,8 @@ function fixture(options = {}) {
     auxiliaryTopLeftArea: { x: 0, y: 0, width: 700, height: 32 }, auxiliaryTopRightArea: { x: 820, y: 0, width: 780, height: 32 } };
   const external = { id: 2, internal: false, bounds: { x: -1200, y: -300, width: 1200, height: 900 }, workArea: { x: -1200, y: -276, width: 1200, height: 876 } };
   const screen = new EventEmitter(), powerMonitor = new EventEmitter(); let display = internal;
-  screen.getCursorScreenPoint = () => ({ x: display.bounds.x + 100, y: display.bounds.y + 100 });
-  screen.getDisplayNearestPoint = point => { assert.deepEqual(point, screen.getCursorScreenPoint()); return display; };
+  screen.getAllDisplays = () => [internal, external];
+  screen.getPrimaryDisplay = () => display;
   const urlFor = kind => `file:///fixture/${kind}.html`;
   const ipc = createAttentionIpc({ urlFor });
   const pill = createPillWindow({ BrowserWindow: Window, screen, powerMonitor, platform: options.platform ?? "darwin", loadUrlFor: urlFor,
@@ -133,12 +133,13 @@ test("show, Allow and Deny never focus; panel privacy, workspace, IPC and naviga
   }
   assert.equal(f.posts.length, 2); assert.equal(w.inactiveCalls, 1); f.pill.destroy();
 });
-test("notch geometry uses auxiliary areas; Top pill follows the pointer across negative display coordinates", async () => {
+test("notch geometry uses auxiliary areas and clamps to each display's work area", async () => {
   const f = fixture(); assert.deepEqual(f.pill.geometryFor(f.internal), { x: 620, y: 32, width: 280, height: 72 });
   assert.deepEqual(f.pill.geometryFor({ ...f.internal, id: 3 }), { x: 660, y: 24, width: 280, height: 72 });
+  assert.deepEqual(f.pill.geometryFor({ ...f.internal, workArea: f.internal.bounds }), { x: 620, y: 32, width: 280, height: 72 });
   assert.deepEqual(f.pill.geometryFor(f.external), { x: -740, y: -276, width: 280, height: 72 });
   await f.pill.show(item("a")); f.pointTo(f.external); await f.pill.show(item("b"));
-  assert.deepEqual(f.windows[0].bounds, f.pill.geometryFor(f.external)); assert.equal(f.windows.length, 1);
+  assert.deepEqual(f.windows[0].bounds, f.pill.geometryFor(f.internal)); assert.equal(f.windows.length, 1);
   f.pill.pillExpand(1, true); assert.equal(f.windows[0].bounds.width, 380); assert.equal(f.windows[0].bounds.height, 560); f.pill.destroy();
 });
 test("display bursts and wake coalesce once, never create idle windows or revive hidden content", async () => {
@@ -280,4 +281,18 @@ test("PW1 the real pill surface retains cards on a stack change and discards on 
     assert.ok(calls.length > 0); for (const call of calls) assert.deepEqual(call, [1], "closed discards"); f.pill.destroy(); }
   { const { f, calls, surface } = await mk(); surface.dispose();
     assert.ok(calls.length > 0); for (const call of calls) assert.deepEqual(call, [1], "dispose discards"); f.pill.destroy(); }
+});
+
+test("a visible external pointer does not move the pill away from the built-in screen", async () => {
+  const f = fixture();
+  f.screen.getAllDisplays = () => [f.external, f.internal];
+  f.screen.getPrimaryDisplay = () => f.external;
+  f.pointTo(f.external);
+  await f.pill.show(item("waiting"));
+  assert.deepEqual(f.windows[0].bounds, { x: 620, y: 32, width: 280, height: 72 });
+  f.screen.getAllDisplays = () => [f.external];
+  f.screen.emit("display-removed");
+  f.tick(0);
+  assert.deepEqual(f.windows[0].bounds, { x: -740, y: -276, width: 280, height: 72 });
+  f.pill.destroy();
 });

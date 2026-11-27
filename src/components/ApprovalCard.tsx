@@ -1,3 +1,4 @@
+import { isSkillSwitchAction } from "../../shared/skill-request";
 import { BotReviewSheet } from './BotReviewSheet';
 import { BotCallFields } from './BotCallFields';
 // The approval box: what the bot wants to do, and three ways to answer.
@@ -14,7 +15,6 @@ import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
-import { HighLevelReviewValues, highlevelReviewId } from "@/components/HighLevelReviewValues";
 import { approvalTitle, isAcpPermissionKind, isPendingApprovalMessage, knownToolAction, pendingOf, toolLabel, whyLine } from "@/lib/pending-approval";
 import { focusApprovalPanel } from "@/lib/approval-focus";
 import { plainApproval, usePlainApprovalReady } from "@/lib/plain-approval";
@@ -280,6 +280,9 @@ function automationUndoOffered(card: NonNullable<Message["card"]>, now = Date.no
 const SKILL_SETTLED_LABEL = {
   create: "Skill enabled",
   update: "Skill updated",
+  turn_on: "Skill turned on",
+  turn_off: "Skill turned off",
+  delete: "Skill deleted",
 } as const;
 
 /** Kept here for the callers that import it from the card. */
@@ -317,7 +320,11 @@ export function ApprovalCard({
   const routineSettledLabel = !routineAction ? undefined
     : isWebhookRequest ? (routineAction === "run_now" ? undefined : t(WEBHOOK_SETTLED_LABEL[routineAction]))
       : ROUTINE_SETTLED_LABEL[routineAction];
-  const skillSettledLabel = skillAction ? SKILL_SETTLED_LABEL[skillAction] : undefined;
+  const switching = isSkillSwitchAction(skillAction);
+  const skillSettledLabel = skillAction === "delete" && (/^(collection|library):/.test(card.skillRequest?.source ?? "") || card.subtitle?.startsWith("Your other bots and the shared copy keep it."))
+    ? t("approval.skillTakenOff") : skillAction === "turn_on" ? t("approval.skillTurnedOn")
+    : skillAction === "turn_off" ? t("approval.skillTurnedOff") : skillAction === "delete" ? t("approval.skillDeleted")
+    : skillAction ? SKILL_SETTLED_LABEL[skillAction] : undefined;
   // The one-time "use this computer" question (server/host-computer-consent.ts)
   // is not a tool call: it reads as a sentence with a plain explanation.
   const isHostConsent = card.tool === "local_computer_consent";
@@ -329,7 +336,7 @@ export function ApprovalCard({
     ? isWebhookRequest ? routineAction === "create" ? "create_webhook" : "manage_webhook"
       : routineAction === "create" ? "schedule_routine" : "manage_routine"
     : isSkillRequest
-      ? skillAction === "update" ? "update_skill" : "stage_skill"
+      ? switching ? "switch_skill" : skillAction === "update" ? "update_skill" : "stage_skill"
     : card.tool;
   // An engine's request, said in plain words (shared/approval-plain.ts).
   // Until they load, an ACP "other" request reads "wants to use a tool" with
@@ -349,6 +356,7 @@ export function ApprovalCard({
         <div className="text-[15px] font-semibold text-ink">
           {isHostConsent
             ? `${bot ? `@${bot.name}` : "This bot"} wants to use this computer`
+            : switching ? card.title
             : card.tool === "browser_extension_action" && card.title ? card.title
             : <>{bot ? `${bot.name} wants to ` : "Wants to "}{(delegation && knownToolAction(displayTool ?? "other", card.subtitle ?? "", peerTarget ? { who: peerTarget } : undefined)) || plain?.action || (plainReady && (displayTool === "other") && knownToolAction("other", card.subtitle ?? "")) || toolLabel(displayTool)}</>}
         </div>
@@ -374,13 +382,11 @@ export function ApprovalCard({
             preClassName="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink"
             bare
           />
-          {card.skillRequest && <SkillRequestPreview request={card.skillRequest} />}
+          {card.skillRequest && (!settled || card.skillRequest.preview) && <SkillRequestPreview request={card.skillRequest} messageId={message.id} />}
           </>
         )}
       </details>
 
-      {/* a HighLevel change: every value it would send, read live from the open review (never stored in the chat) */}
-      {!settled && highlevelReviewId(card.requestId) && <HighLevelReviewValues reviewId={highlevelReviewId(card.requestId)!} />}
       {card.botAuthority && <BotCallFields authority={card.botAuthority} />}
 
       {/* one reason sentence: the held note only when there is no why-line */}
@@ -412,15 +418,16 @@ export function ApprovalCard({
             <Check size={14} className="text-success" />
             {grantAdded && card.requestId ? <GrantAddedLine requestId={card.requestId} bot={bot?.name ?? t("ux.l1.outcome.botFallback")} /> : t("ux.l1.outcome.approved")}
           </>
-        ) : settled === "unavailable" ? (
+        ) : settled === "unavailable" || (card.dismissed === true && settled?.startsWith("Cancelled") === true) ? (
           // closed by nobody: the turn stopped, the request was revoked, or
-          // the wait ran out — never the owner's own decision (H08)
+          // the wait ran out — never the owner's own decision (H08). A Stop closes it as "Cancelled": the same words,
+          // never "Denied" (q1022-approvefix: the owner denied nothing).
           <>
             <X size={14} /> {isRoutineRequest || isSkillRequest ? "Not answered" : t("ux.l1.outcome.stopped", { bot: bot?.name ?? t("ux.l1.outcome.botFallback") })}
           </>
         ) : settled ? (
           <>
-            <X size={14} /> {isRoutineRequest || isSkillRequest ? "Cancelled" : isHostConsent ? "Not allowed" : t("ux.l1.outcome.denied")}
+            <X size={14} /> {switching ? t("approval.skillNotChanged") : isRoutineRequest || isSkillRequest ? "Cancelled" : isHostConsent ? "Not allowed" : t("ux.l1.outcome.denied")}
           </>
         ) : card.dismissed ? (
           // closed without an answer: the same words as a stopped wait
@@ -440,8 +447,7 @@ function ApprovalWaitingRow({ bot, message }: { bot?: Bot; message: Message }) {
   usePlainApprovalReady();
   const who = bot?.name ?? message.from?.name ?? t("ux.l1.outcome.botFallback");
   const title = approvalTitle(pendingOf(message), who);
-  const highlevel = highlevelReviewId(message.card?.requestId);
-  const row = (
+  return (
     <div data-approval-waiting={message.card?.requestId} className="flex w-full max-w-[840px] items-center gap-2.5 rounded-xl border border-accent/40 bg-card py-1.5 pl-3.5 pr-1.5 text-[14px]">
       <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
       <span role="status" className="min-w-0 flex-1 text-ink">{t("ux.l1.card.waiting", { bot: who })}</span>
@@ -456,7 +462,4 @@ function ApprovalWaitingRow({ bot, message }: { bot?: Bot; message: Message }) {
       </button>
     </div>
   );
-  // a HighLevel change: its values show here too, read live from the open review (HL-S2-WRITES (a)3)
-  if (!highlevel) return row;
-  return <div className="w-full max-w-[840px]">{row}<HighLevelReviewValues reviewId={highlevel} /></div>;
 }

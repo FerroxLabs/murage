@@ -12,8 +12,9 @@ function questionsForAction(action:Readonly<Record<string,unknown>>):QuestionSpe
     options:action.options as string[],questions:action.questions as QuestionSpec[]|undefined});
 }
 
-/** Registered questions have a text row, not a permission card. Enumerate the
- * durable record and retain its exact identity through the channel offer. */
+/** A registered question is offered from its durable record (its chat row is
+ * the question card, or a text row from an earlier build), and keeps the
+ * record's exact identity through the channel offer. */
 export function registeredChannelQuestions(store:Store,bot:{id:string;name:string;threadId:string;modelSelection:unknown}):TelegramApproval[]{
   return openApprovals(bot.threadId).flatMap(record=>{
     if(record.why!=='question'||record.botId!==bot.id||!store.messageById(bot.threadId,record.chatMessageId,{buildIndex:false}))return [];

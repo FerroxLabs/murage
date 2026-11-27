@@ -1,3 +1,5 @@
+import type { DatabaseSync } from "node:sqlite";
+import { projectFrame } from "./mailbox/projection.ts";
 import type { FrameSubject } from "./sse-visibility.ts";
 
 export const SSE_MAX_FRAME_BYTES = 2 * 1024 * 1024;
@@ -28,6 +30,8 @@ export class SseWriter {
   private blocked = false;
   private stopped = false;
   private readonly limits: { maxBytes: number; maxFrames: number; maxFrameBytes: number };
+  private readonly mailboxDatabase?: () => DatabaseSync;
+  private queuedSealGeneration?: number;
   private readonly response: SseWritable;
   private readonly onClose: (reason: SseCloseReason) => void;
   private readonly onProgress: () => void;
@@ -39,13 +43,15 @@ export class SseWriter {
   constructor(
     response: SseWritable,
     onClose: (reason: SseCloseReason) => void,
-    options: Partial<SseWriter["limits"]> = {},
+    options: Partial<SseWriter["limits"]> & { mailboxDatabase?: () => DatabaseSync } = {},
     onProgress: () => void = () => {},
   ) {
     this.response = response;
     this.onClose = onClose;
     this.onProgress = onProgress;
-    this.limits = { maxBytes: SSE_MAX_PENDING_BYTES, maxFrames: SSE_MAX_PENDING_FRAMES, maxFrameBytes: SSE_MAX_FRAME_BYTES, ...options };
+    const { mailboxDatabase, ...limits } = options;
+    this.mailboxDatabase = mailboxDatabase;
+    this.limits = { maxBytes: SSE_MAX_PENDING_BYTES, maxFrames: SSE_MAX_PENDING_FRAMES, maxFrameBytes: SSE_MAX_FRAME_BYTES, ...limits };
     response.on("drain", this.drain);
     response.on("close", this.peerClosed);
     response.on("error", this.errored);
@@ -66,6 +72,7 @@ export class SseWriter {
     }
     this.acceptedBytes += bytes - WRITE_OVERHEAD_BYTES;
     if (this.blocked) {
+      if (!this.queue.length && this.mailboxDatabase) this.queuedSealGeneration = this.sealGeneration();
       this.queue.push({ frame, bytes });
       this.queueBytes += bytes;
       this.observe();
@@ -90,6 +97,12 @@ export class SseWriter {
   private readonly errored = () => this.close("error");
   private readonly drain = () => {
     if (this.stopped) return;
+    // Reconnect runs current-seal replay for frames encoded before the barrier.
+    if (this.queue.length && this.mailboxDatabase
+      && (this.queuedSealGeneration === undefined || this.queuedSealGeneration !== this.sealGeneration())) {
+      this.close("backpressure");
+      return;
+    }
     this.blocked = false;
     while (this.queue.length && !this.blocked && !this.stopped) {
       const next = this.queue.shift()!;
@@ -98,6 +111,13 @@ export class SseWriter {
     }
     this.observe();
   };
+
+  private sealGeneration(): number | undefined {
+    try {
+      const generation = this.mailboxDatabase?.().prepare("SELECT COALESCE(MAX(generation),0) AS generation FROM mailbox_sealed_threads").get()?.generation;
+      return typeof generation === "number" && Number.isSafeInteger(generation) ? generation : undefined;
+    } catch { return undefined; }
+  }
 
   private write(frame: string): boolean {
     try {
@@ -123,6 +143,7 @@ export interface SseReplayEntry {
   seq: number;
   kind: string;
   subject: FrameSubject;
+  threadId?: string;
   frame: string | null;
   bytes: number;
   /** A required frame was too large to replay; matching clients need a snapshot. */
@@ -131,16 +152,47 @@ export interface SseReplayEntry {
   besideOnly?: boolean;
 }
 
+function encodeSseFrame(streamId: string, seq: number, payload: Record<string, unknown>, sealed: boolean): string {
+  const visible = sealed ? projectFrame(payload) : payload;
+  return `id: ${streamId}:${seq}\ndata: ${JSON.stringify({ ...visible, seq })}\n\n`;
+}
+
+export function encodeSseFrames(
+  streamId: string, seq: number, sealed: boolean,
+  primary: Record<string, unknown>, taskDelta?: Record<string, unknown>, cardsBeside?: Record<string, unknown>,
+) {
+  return {
+    primary: encodeSseFrame(streamId, seq, primary, sealed),
+    taskDelta: taskDelta && encodeSseFrame(streamId, seq, taskDelta, sealed),
+    cardsBeside: cardsBeside && encodeSseFrame(streamId, seq, cardsBeside, sealed),
+  };
+}
+
+function projectReplayFrame(frame: string, seq: number): string | null {
+  const [id, data] = frame.split("\n", 2);
+  const stream = /^id: ([^:\s]+):[0-9]+$/.exec(id)?.[1];
+  if (!stream || !data?.startsWith("data: ")) return null;
+  try {
+    const payload = JSON.parse(data.slice(6));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+    return encodeSseFrame(stream, seq, payload, true);
+  } catch { return null; }
+}
+
 export class SseReplay {
   private entries: SseReplayEntry[] = [];
   private readonly limits: { maxBytes: number; maxEntries: number; maxFrameBytes: number };
+  private readonly sealedSubject: ((subject: FrameSubject) => boolean) | undefined;
   bytes = 0;
 
   constructor(limits = {
     maxBytes: SSE_REPLAY_MAX_BYTES,
     maxEntries: SSE_REPLAY_MAX_ENTRIES,
     maxFrameBytes: SSE_MAX_FRAME_BYTES,
-  }) { this.limits = limits; }
+  }, sealedSubject?: (subject: FrameSubject) => boolean) {
+    this.limits = limits;
+    this.sealedSubject = sealedSubject;
+  }
 
   get count(): number { return this.entries.length; }
 
@@ -149,7 +201,7 @@ export class SseReplay {
     return since !== null && this.entries.some((entry) => entry.seq > since && entry.besideOnly === true);
   }
 
-  append(meta: Pick<SseReplayEntry, "seq" | "kind" | "subject"> & { besideOnly?: boolean }, frame: string): SseReplayEntry {
+  append(meta: Pick<SseReplayEntry, "seq" | "kind" | "subject" | "threadId"> & { besideOnly?: boolean }, frame: string): SseReplayEntry {
     const size = Buffer.byteLength(frame);
     const screen = meta.kind === "screen";
     const gap = !screen && (size > this.limits.maxFrameBytes || size > this.limits.maxBytes);
@@ -176,9 +228,13 @@ export class SseReplay {
       if (entry.seq <= since || !accepts(entry)) continue;
       if (entry.gap) return unavailable;
       if (!entry.frame) continue;
-      bytes += entry.bytes + WRITE_OVERHEAD_BYTES;
+      const sealed = this.sealedSubject?.(entry.subject) ||
+        (entry.threadId && this.sealedSubject?.({ scope: "thread", threadId: entry.threadId }));
+      const frame = sealed ? projectReplayFrame(entry.frame, entry.seq) : entry.frame;
+      if (frame === null) return unavailable;
+      bytes += (frame === entry.frame ? entry.bytes : Buffer.byteLength(frame)) + WRITE_OVERHEAD_BYTES;
       if (bytes > budget.maxBytes || frames.length >= budget.maxFrames) return unavailable;
-      frames.push(entry.frame);
+      frames.push(frame);
     }
     return { resumed: true, frames };
   }

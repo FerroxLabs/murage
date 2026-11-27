@@ -40,7 +40,7 @@ export function deskState({ idle, locked, asleep }) {
  *
  * @param {{
  *   clientId: string,
- *   post: (body: { clientId: string, visible: boolean, seq: number }) => Promise<unknown>,
+ *   post: (body: { clientId: string, visible: boolean, seq: number, state?: "locked" | "asleep" }) => Promise<unknown>,
  *   idleState: (thresholdSeconds: number) => string,
  *   onPower: (listener: (event: string) => void) => () => void,
  *   every: (fn: () => void, ms: number) => () => void,
@@ -51,20 +51,21 @@ export function deskState({ idle, locked, asleep }) {
 export function startDeskPresence(deps) {
   // One report in flight at a time, and only the newest state waits behind
   // it; each carries a rising seq so the host drops one that arrives late.
-  // The same queue as the renderer's (src/lib/presence.ts).
+  // The same queue as the renderer's (src/lib/presence.ts), except that a lock
+  // or sleep report (`state`, the warm engines' away edge) is never coalesced
+  // away by a later report without one: it is replaced only by a newer state.
   let inFlight = false;
-  /** @type {boolean | null} */
-  let next = null;
+  /** @type {{ visible: boolean, state?: "locked" | "asleep" }[]} */
+  const queue = [];
   let seq = 0;
   const flush = () => {
-    if (inFlight || next === null) return;
-    const visible = next;
-    next = null;
+    if (inFlight || !queue.length) return;
+    const { visible, state } = /** @type {{ visible: boolean, state?: "locked" | "asleep" }} */ (queue.shift());
     inFlight = true;
     seq += 1;
     let pending;
     try {
-      pending = Promise.resolve(deps.post({ clientId: deps.clientId, visible, seq }));
+      pending = Promise.resolve(deps.post(state ? { clientId: deps.clientId, visible, seq, state } : { clientId: deps.clientId, visible, seq }));
     } catch (error) {
       pending = Promise.reject(error);
     }
@@ -73,8 +74,10 @@ export function startDeskPresence(deps) {
       flush();
     });
   };
-  const send = (visible) => {
-    next = visible;
+  /** @param {boolean} visible @param {"locked" | "asleep"} [state] */
+  const send = (visible, state) => {
+    for (let tail = queue.at(-1); tail && (!tail.state || state); tail = queue.at(-1)) queue.pop();
+    queue.push(state ? { visible: false, state } : { visible });
     flush();
   };
 
@@ -88,15 +91,19 @@ export function startDeskPresence(deps) {
       deps.log?.(line);
     } catch { /* a trace that cannot be written is not a failure */ }
   };
-  /** A change is reported at once; a beat renews presence while active. */
-  const evaluate = (beat) => {
+  /** A change is reported at once; a beat renews presence while active.
+   * Every move into locked or asleep is reported with its state, also from
+   * idle; an unlock or resume (`edge`) is always reported, even while idle. */
+  const evaluate = (beat, edge = false) => {
     if (stopped) return;
     const state = deskState({ idle: deps.idleState(DESK_IDLE_SECONDS), locked, asleep });
     const present = state === "active";
     const changed = last === null || (last === "active") !== present;
+    const into = (state === "locked" || state === "asleep") && state !== last ? state : undefined;
     if (state !== last) note(`presence source=desk-activity state=${state}`);
     last = state;
-    if (changed || (beat && present)) send(present);
+    if (into) send(false, into);
+    else if (changed || edge || (beat && present)) send(present);
   };
 
   const stopPower = deps.onPower((event) => {
@@ -105,7 +112,7 @@ export function startDeskPresence(deps) {
     else if (event === "suspend") asleep = true;
     else if (event === "resume") asleep = false;
     else return;
-    evaluate(false);
+    evaluate(false, event === "unlock-screen" || event === "resume");
   });
   const stopPoll = deps.every(() => evaluate(false), DESK_POLL_MS);
   const stopBeat = deps.every(() => evaluate(true), DESK_BEAT_MS);

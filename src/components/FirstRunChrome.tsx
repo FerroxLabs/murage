@@ -149,6 +149,7 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null;
  * goes through `forgetSetupView`, and so does `refresh`.
  */
 export const SETUP_POLL_IDLE_LIMIT = 20;
+const MOVE_IN_POLL_MS = 15_000;
 
 /** A read that failed, and how many times in a row. A failure is retried
  *  rather than swallowed: with nothing cached, several cards render nothing
@@ -181,7 +182,8 @@ export function setupPollWanted(view: SetupView, idle: number): boolean {
   // Every step done is not the end while the first backup is still owed:
   // setup ends verified, so keep noticing the desktop's report land.
   if (view.next === null && view.complete !== false) return false;
-  return idle < SETUP_POLL_IDLE_LIMIT;
+  // The Downloads question can stay open past the idle limit and still move setup when answered.
+  return idle < SETUP_POLL_IDLE_LIMIT || view.moveInPending === true || view.moveInReading === true;
 }
 
 function clearPoll(): void {
@@ -196,7 +198,7 @@ function schedulePoll(view: SetupView): void {
   pollTimer = setTimeout(() => {
     pollTimer = null;
     void readSetupView(true);
-  }, POLL_MS);
+  }, idleReads < SETUP_POLL_IDLE_LIMIT ? POLL_MS : MOVE_IN_POLL_MS);
 }
 
 /**

@@ -1,3 +1,4 @@
+import { evidencePath } from '../evidence-path.mjs';
 import {runNodeFixture} from './native-launcher.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
@@ -14,7 +15,7 @@ try {
  const testSource=fixedImports(readFileSync(new URL('./receipt-pair.node-test.mjs',import.meta.url),'utf8').replace("'./receipt-pair.mjs'",JSON.stringify(pathToFileURL(file).href)));
  const testFile=join(dir,'receipt-pair.node-test.mjs');writeFileSync(testFile,testSource);
  const result=runNodeFixture(['--test',testFile],{encoding:'utf8'});
- const output=result.stdout+result.stderr;writeFileSync(new URL('./evidence/receipt-mutant-red.log',import.meta.url),output);
+ const output=result.stdout+result.stderr;writeFileSync(evidencePath('scripts/windows/evidence/receipt-mutant-red.log'),output);
  assert.notEqual(result.status,0,'mutant survived');
  assert.match(output,/one desktop receipt cannot pass/);assert.match(output,/one handoff receipt cannot pass/);
  console.log('MUTANT RED: one-receipt bypass rejected by both missing-half tests');

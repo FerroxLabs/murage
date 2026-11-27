@@ -4,12 +4,12 @@
 // Browse bots (SETTINGS-LOCKED-1019.md 2.1): the page past five bots. A filter box and one row per bot: name, role,
 // then Open. A bot's own settings are its page; this is only the door to it.
 import { useState } from "react";
-import { Bot } from "lucide-react";
+import { BotAvatar, type BotAvatarProps } from "../Avatar";
 import { sw } from "@/lib/settings-words";
 import { BOT_ROLE_TITLE, botRole } from "@/lib/bot-role";
 import { browsableBots } from "@/lib/settings-shell-bots";
 
-interface Row { id: string; name: string; hidden?: boolean; section?: string; chiefOfStaff?: boolean; chiefScope?: "workspace"; individual?: boolean }
+type Row = BotAvatarProps["bot"] & { id: string; name: string; hidden?: boolean; section?: string; chiefOfStaff?: boolean; chiefScope?: "workspace"; individual?: boolean };
 
 /** The rows a filter keeps: a bot whose name contains every word typed, in any order, ignoring case. */
 export function filterBotRows<T extends { name: string }>(bots: readonly T[], query: string): T[] {
@@ -34,7 +34,7 @@ export function BrowseBotsPage({ bots, openId, onOpen }: { bots: readonly Row[];
         <ul className="flex flex-col gap-1.5">
           {rows.map((bot) => (
             <li key={bot.id} data-settings-browse-row={bot.id} className="flex items-center gap-3 rounded-xl bg-card px-3 py-2">
-              <Bot size={15} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+              <BotAvatar bot={bot} label="" size={15} animated={false} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13.5px] font-medium text-ink">{bot.name}</span>
                 <span className="block truncate text-[12px] text-ink-secondary">{BOT_ROLE_TITLE[botRole(bot)]}</span>

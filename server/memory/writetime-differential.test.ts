@@ -259,7 +259,7 @@ it(`${RUN_ACTIONS.length} owner actions x ${SEEDS} histories: the new lookup nev
         const line = db.prepare("SELECT lsn,turn_lsn AS tl FROM memory_line_lineage WHERE thread_no=? AND message_id=?").get(no(threadId) ?? -1, messageId);
         if (!line) return null;
         const lsn = Number(line.lsn);
-        const marks = db.prepare("SELECT revoke_id AS r FROM memory_deny_line WHERE thread_id=? AND lsn=?").all(threadId, lsn).map(mark => Number(mark.r));
+        const marks = db.prepare("SELECT revoke_id AS r FROM memory_deny_point WHERE thread_id=? AND lsn=?").all(threadId, lsn).map(mark => Number(mark.r));
         if (!marks.length) return null;
         // every mark follows from a range of its revoke over the line, and the line is PROVEN under each (the weakest proof decides)
         const proofs = marks.map(revoke => proveRange(threadId, messageId, [revoke]));

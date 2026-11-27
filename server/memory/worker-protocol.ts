@@ -8,9 +8,15 @@ export const resultSchema = z.object({id:z.string(),leaseGeneration:z.number().i
 export type MemoryWorkResult = z.infer<typeof resultSchema>;
 /** id and scopeId bounded at 512 (1.11 BOUNDED INPUT): an over-bound record goes the index reset path, never a wedge (T2(3)). */
 export const indexBatchSchema=z.array(z.object({id:z.string().max(512),version:z.number().int(),scopeId:z.string().max(512),text:z.string().max(65536),deleted:z.boolean(),archived:z.boolean().optional(),rolled:z.boolean().optional(),ageKey:z.number().int().nonnegative().nullable().optional()})).max(16);
-export const recallViewHandleSchema=z.object({viewId:z.string().uuid(),generation:z.string().uuid(),digest:z.string().length(64)}).strict();
+/** A built-view handle (two uuids) or an ONEINDEX scope-set handle (oneindex.ts scopeSetHandle: "scopes:<sha256>" at the authority epoch). */
+export const recallViewHandleSchema=z.union([
+  z.object({viewId:z.string().uuid(),generation:z.string().uuid(),digest:z.string().length(64)}).strict(),
+  z.object({viewId:z.string().regex(/^scopes:[0-9a-f]{64}$/),generation:z.string().regex(/^(0|[1-9][0-9]{0,15})$/),digest:z.string().regex(/^[0-9a-f]{64}$/)}).strict(),
+]);
 export const recallReaderSchema=z.object({botId:z.string().max(512),threadId:z.string().max(512),humanPrincipal:z.object({personId:z.string().max(512),bindingId:z.string().max(512),revision:z.number().int().nonnegative()}).strict(),notOwnerAudience:z.boolean()});
-export const searchInputSchema=z.object({view:recallViewHandleSchema.optional(),reader:recallReaderSchema.optional(),query:z.string().max(4096),scopeIds:z.array(z.string().max(512)).max(256),scopeCount:z.number().int().min(1).max(200000).optional(),policyRevision:z.number().int(),deletionEpoch:z.number().int(),historical:z.boolean(),cursor:z.string(),limit:z.number().int().min(1).max(20),semantic:z.boolean(),deadlineAt:z.number().optional(),profile:z.boolean().optional()});
+/** ONEINDEX: the computed scope set behind a scope-set `view` handle, so the helper thread answers from the same set (oneindex.ts adoptScopeSet). */
+const scopeSetWireSchema=z.object({scopes:z.array(z.string().max(512)).max(4096),lineage:z.array(z.string().max(512)).max(4096),personScopes:z.array(z.string().max(512)).max(4096),room:z.boolean(),epoch:z.number().int()});
+export const searchInputSchema=z.object({view:recallViewHandleSchema.optional(),scopeSet:scopeSetWireSchema.optional(),reader:recallReaderSchema.optional(),query:z.string().max(4096),scopeIds:z.array(z.string().max(512)).max(256),scopeCount:z.number().int().min(1).max(200000).optional(),policyRevision:z.number().int(),deletionEpoch:z.number().int(),historical:z.boolean(),cursor:z.string(),limit:z.number().int().min(1).max(20),semantic:z.boolean(),deadlineAt:z.number().optional(),profile:z.boolean().optional()});
 /** One bounded part of a scope list too long for the query message itself (scope-set.ts). */
 export const scopePartSchema=z.object({part:z.number().int().nonnegative(),ids:z.array(z.string().max(512)).max(256)});
 export type MemorySearchInput=z.infer<typeof searchInputSchema>;

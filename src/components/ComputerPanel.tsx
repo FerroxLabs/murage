@@ -56,10 +56,10 @@ import {
   autoSelectsLocalComputer,
   computerSwitchNeedsLocalAutoWarning,
   instanceSupportsLocalComputer,
-  linuxAutoDescription,
+  autoRunsOnSentence,
+  windowsThisComputerText,
   localAutoHostPlatform,
   localComputerDisabledReason,
-  WINDOWS_COMPUTER_TEXT,
   localComputerSelectable,
   switchRevokesThisComputer,
   type HarnessAnnouncement,
@@ -398,6 +398,8 @@ export function ComputerPanel({
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
   const localAvailable = capabilities.localComputer.available;
   const isLinux = capabilities.host.platform === "linux";
+  // Auto mounts this computer on macOS only (autoSelectsLocalComputer, DESIGN 1022-cua-windows P1).
+  const isMac = capabilities.host.platform === "darwin";
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
   const [localAutoWarning, setLocalAutoWarning] = useState(false);
@@ -597,7 +599,7 @@ export function ComputerPanel({
     if (bot.computer !== "cloud" && !capabilitiesReady) return;
     if (cloudBackend === "vps") {
       const autoLocal =
-        !isLinux && bot.computer !== "cloud" && capabilitiesReady && localSelectable;
+        isMac && bot.computer !== "cloud" && capabilitiesReady && localSelectable;
       if (!vpsSupported) {
         if (autoLocal) setPhase("local");
         else {
@@ -1096,7 +1098,7 @@ export function ComputerPanel({
     "vps-stopped": "The managed VPS computer is stopped",
     "local-unavailable": localDisabledReason ?? "Local computer control isn't ready.",
     "vm-unavailable": "The Local VM isn't available for this bot",
-    "windows-computer": WINDOWS_COMPUTER_TEXT,
+    "windows-computer": windowsThisComputerText({ localReady: localAvailable, disabledReason: localDisabledReason }),
     "engine-unsupported": engineWithoutComputerText(selectedInstance?.displayName),
     off: "This bot's computer is off",
     error: "Couldn't reach the computer",
@@ -1515,14 +1517,7 @@ export function ComputerPanel({
           <div className="mt-4 rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">Runs on</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
-              {!bot.computer &&
-                (isLinux || !localSelectable
-                  ? cloudBackend === "vps"
-                    ? "Auto reuses a ready VPS when one is configured; otherwise computer use stays off. "
-                    : `${linuxAutoDescription()} `
-                  : cloudBackend === "vps"
-                    ? "Auto reuses a ready VPS when one exists, otherwise this computer, and asks you once before it first uses this computer. "
-                    : "Auto uses a cloud box when one exists, otherwise this computer, and asks you once before it first uses this computer. ")}
+              {!bot.computer && `${autoRunsOnSentence({ platform: capabilities.host.platform, localSelectable, vps: cloudBackend === "vps" })} `}
               Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Cua-controlled Linux desktop
               in a container on this machine, kept apart from your own desktop. Set it up in App
               Settings → Computer & browser.
@@ -1545,7 +1540,7 @@ export function ComputerPanel({
               void revokeThisScreen();
             }
           }} />
-          {!bot.computer && !isLinux && localSelectable && (
+          {!bot.computer && isMac && localSelectable && (
             <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
               <div className="min-w-0">
                 <div className="text-[13px] text-ink">Using this computer on Auto</div>

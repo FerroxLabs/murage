@@ -1,10 +1,12 @@
 // Paste-a-key rows. Packaged Electron saves secrets in the OS-backed store;
 // browser development falls back to PUT /api/config. Secrets are write-only
 // either way — GET /api/config returns configured flags, never values.
+import { imeComposing } from "@/lib/composer-enter";
 import { useEffect, useId, useRef, useState } from "react";
 import { Check, CircleHelp, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { DeveloperDetail } from "./DeveloperDetail";
 
 export type ConfigSection = "box" | "opencodeGo";
 
@@ -248,7 +250,7 @@ export function ApiKeyRow({
           type="password"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && save()}
+          onKeyDown={(e) => e.key === "Enter" && !imeComposing(e.nativeEvent) && save()}
           placeholder={configured ? "••••••••  (paste to replace)" : credential.placeholder}
           data-setting-control={settingControl}
           aria-label={credential.label}
@@ -313,6 +315,8 @@ export function VpsConnection() {
         </span>
         {configured && <span className="text-[11px] text-success">Connected</span>}
       </div>
+      {/* The SSH alias is for people who run their own server: closed until asked for, open once one is saved (1.0.21). */}
+      <DeveloperDetail key={configured ? "saved" : "none"} label="Set up your own server" defaultOpen={configured}>
       <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">
         SSH config alias for the Linux VPS. Murage uses your normal SSH config and agent; it does not store keys or passwords.{" "}
         See the{" "}
@@ -331,7 +335,7 @@ export function VpsConnection() {
           type="text"
           value={alias}
           onChange={(e) => setAlias(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && save()}
+          onKeyDown={(e) => e.key === "Enter" && !imeComposing(e.nativeEvent) && save()}
           placeholder="my-vps"
           aria-label="Self-hosted VPS SSH config alias"
           autoComplete="off"
@@ -350,6 +354,7 @@ export function VpsConnection() {
           {saving ? <Loader2 size={13} className="animate-spin" /> : !alias.trim() && configured ? "Clear" : <><Check size={13} />Save</>}
         </button>
       </div>
+      </DeveloperDetail>
       {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
     </div>
   );

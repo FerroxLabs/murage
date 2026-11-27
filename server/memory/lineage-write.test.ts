@@ -19,12 +19,16 @@ vi.doMock("./revoke-commit.ts", () => ({
   // DRAIN-104 2.11's late-edge inheritance (capture.ts and the record writers call it): not this file's subject
   inheritEdge: vi.fn(),
   inheritEdges: vi.fn(),
+  // CTXREV H2 A-2 (capture.ts asks whether a reply is hidden; a noReplay turn's reply and records take their own marks): not this file's subject
+  replyHiddenFromBots: vi.fn(() => false),
+  hideReplyLine: vi.fn(() => false),
+  hideTurnRecord: vi.fn(),
   // a stand-in for S3's inheritMarks: a marked line inside a carried range marks the child (a line, or a turn: its turn_lsn position)
   inheritMarks: vi.fn((tx: import("node:sqlite").DatabaseSync, child: { kind: string; threadId?: string; lsn: number }, _refs: unknown[], ranges: Array<{ threadId: string; from: number; to: number }> = []) => {
     if (!child.threadId) return;
     for (const range of ranges)
-      for (const mark of tx.prepare("SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn BETWEEN ? AND ?").all(range.threadId, range.from, range.to) as Array<{ revoke_id: number }>)
-        tx.prepare("INSERT OR IGNORE INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,?,?,'inherited')").run(child.threadId, child.lsn, mark.revoke_id, child.lsn);
+      for (const mark of tx.prepare("SELECT revoke_id FROM memory_deny_point WHERE thread_id=? AND lsn BETWEEN ? AND ?").all(range.threadId, range.from, range.to) as Array<{ revoke_id: number }>)
+        tx.prepare("INSERT OR IGNORE INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,?,?,'inherited')").run(child.threadId, child.lsn, mark.revoke_id, child.lsn);
   }),
 }));
 
@@ -315,17 +319,17 @@ describe("a reply written after a mark is born marked", () => {
   it("a reply whose running turn carries a marked line inherits the mark in its own transaction", () => {
     appendMessage("other", msg("x1"));
     const x1 = Number(lineage("other", "x1")!.lsn);
-    db().prepare("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('other',?,42,?,'forget')").run(x1, x1);
+    db().prepare("INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES('other',?,42,?,'forget')").run(x1, x1);
     const turn = openTurnLineage(db(), { threadId: "chat", turnId: memberTurnId("bot") });
     addTurnParents(turn, [{ kind: "line", threadId: "other", messageId: "x1" }]);
     appendMessage("chat", msg("r1"));
     // the turn child inherits at its position (the marker's range from there denies every line of the turn)
-    expect(db().prepare("SELECT revoke_id FROM memory_deny_line WHERE thread_id='chat' AND lsn=?").all(turn.turnLsn)).toEqual([{ revoke_id: 42 }]);
+    expect(db().prepare("SELECT revoke_id FROM memory_deny_point WHERE thread_id='chat' AND lsn=?").all(turn.turnLsn)).toEqual([{ revoke_id: 42 }]);
     expect(inheritMarks).toHaveBeenCalledWith(expect.anything(), { kind: "turn", threadId: "chat", lsn: turn.turnLsn, line: Number(lineage("chat", "r1")!.lsn), holdFrom: Number(lineage("chat", "r1")!.lsn) }, [], [{ threadId: "other", from: x1, to: x1 }]);
     // and a line written outside any turn, with no carried parent, inherits nothing
     closeTurnLineage(turn);
     appendMessage("chat", msg("r2"));
-    expect(db().prepare("SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='chat' AND lsn=?").get(Number(lineage("chat", "r2")!.lsn))).toEqual({ n: 0 });
+    expect(db().prepare("SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='chat' AND lsn=?").get(Number(lineage("chat", "r2")!.lsn))).toEqual({ n: 0 });
   });
 
   it("a steer quote joins the running turn's parents; the fence refuses every verdict but a proven allow, the S0 not-built answer and a failed lookup included", () => {

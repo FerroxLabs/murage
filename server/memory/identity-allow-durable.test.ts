@@ -5,6 +5,7 @@
 // The identity set a consumer ALLOWS on is kept in the file under a durable counter that every identity write of any connection moves
 // (schema.ts IDENTITY_STAMP_SCHEMA); a fresh process serves it at once, an unrelated commit does not throw it away, an identity write does
 // (withheld until the recompute lands), a set computed under a counter that moved is discarded, and the downgrade step drops the mirror.
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -107,7 +108,7 @@ it("the small-store read keeps its set in the file, and the downgrade step drops
   expect([...identityForAllow(db)!]).toEqual([`${a.id}:1`]);
   expect(db.prepare(`SELECT stamp FROM ${IDENTITY_ALLOW_TABLE} WHERE id=1`).get()?.stamp).toBe(n);
   expect(() => validateMemorySchema(db)).not.toThrow();
-  expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: 13, to: 10 }); // 1.0.3: the file is v13, 1.0.2 reads v10
+  expect(downgradeMemorySchema(db, 10)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 10 }); // 1.0.3: the file is v13, 1.0.2 reads v10
   expect(objects(db)).toEqual([]);
   expect(durableIdentityStamp(db)).toBeNull();
   expect(() => validateMemorySchema(db)).not.toThrow();

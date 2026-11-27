@@ -1,7 +1,7 @@
+import { evidencePath } from '../scripts/evidence-path.mjs';
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlMurage } from "../scripts/control-murage.ts";
 
@@ -114,8 +114,8 @@ it("an idle fixture discovers a lapse, retains it through restart and missing in
     evidence.push({ customConnectorTerminal: terminal, customConnectorRecovery: "newer sign-in wins over delayed terminal projection" });
   } finally {
     evidence.push({ finalLogPath: fixture.info.logPath });
-    writeFileSync(fileURLToPath(new URL("../lane-evidence/connector-reconnect-r1/restart-workflow.json", import.meta.url)), JSON.stringify(evidence, null, 2));
-    writeFileSync(fileURLToPath(new URL("../lane-evidence/connector-reconnect-r1/restart-fixture.log", import.meta.url)), readFileSync(fixture.info.logPath));
+    writeFileSync(evidencePath("lane-evidence/connector-reconnect-r1/restart-workflow.json"), JSON.stringify(evidence, null, 2));
+    writeFileSync(evidencePath("lane-evidence/connector-reconnect-r1/restart-fixture.log"), readFileSync(fixture.info.logPath));
     await fixture.close();
     await new Promise<void>(resolve => broker.close(() => resolve()));
   }

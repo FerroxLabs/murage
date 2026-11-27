@@ -308,6 +308,11 @@ export class ProviderRegistry {
     return this.byId.get(instanceId)?.live ?? null;
   }
 
+  /** The driver this registry dispatches for a driver kind (boot `[fuigo-mode]` driver= field). */
+  driverFor(driverKind: string): AnyProviderDriver | undefined {
+    return this.driversByKind.get(driverKind);
+  }
+
   /** Is this engine still set up (running or not); a removed one is not. */
   has(instanceId: InstanceId): boolean {
     return this.byId.has(instanceId);

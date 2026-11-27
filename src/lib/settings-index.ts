@@ -61,7 +61,7 @@ const FLUX_EMAIL: SettingsGate = { feature: "flux-email", reason: () => SETTINGS
 /** Gates on app cards, by card id: their card renders a stub while the feature is off (S1). */
 const APP_GATES: Readonly<Record<string, SettingsGate>> = {
   "connections.bot-email": FLUX_EMAIL,
-  "skills.recorder": OFF_BY_CHOICE("learn a skill from a recording or /learn"),
+  "skills.recorder": OFF_BY_CHOICE("learn a skill from a recording or from chat"),
   "companion.browser": OFF_BY_CHOICE("use a browser tab you can watch and take over"),
 };
 

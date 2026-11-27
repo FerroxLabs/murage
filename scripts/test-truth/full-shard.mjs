@@ -1,11 +1,12 @@
 // Complete-source release comparison. Results include every assertion ID;
 // a missing JSON report or a killed process is a failure, never a green file.
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, readdirSync, symlinkSync, existsSync, lstatSync, readlinkSync, openSync, closeSync, rmSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, readdirSync, symlinkSync, existsSync, lstatSync, readlinkSync, openSync, closeSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { dedicatedFileBudget } from './file-budget.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const [side, shardText] = process.argv.slice(2), shard = Number(shardText);
 if (!['base', 'head'].includes(side) || !Number.isInteger(shard) || shard < 0 || shard > 7) throw Error('side base|head, shard 0..7');
 // Prepare both revisions and all ignored runtime fixtures before the first
@@ -108,5 +109,5 @@ try {
   if (archive.status !== 0) throw Error('result archive failed');
   process.stdout._handle?.setBlocking(true);
   writeFileSync(1, 'BEGIN_RESULTS\n' + archive.stdout.toString('base64') + '\nEND_RESULTS\n');
-  rmSync(scratch, { recursive: true, force: true });
+  safeWipeSync(scratch);
 }

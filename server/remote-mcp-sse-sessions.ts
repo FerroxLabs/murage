@@ -100,14 +100,17 @@ export class RemoteSseSessions {
 
   private readonly maxPerGeneration: number;
   private readonly isLive: ((generation: string) => boolean) | undefined;
+  /** q1022-connparity: a store only Settings → Test uses (no turn, so no upstream accounting), read as a probe reads. */
+  private readonly probeOnly: boolean;
   private sweeper: ReturnType<typeof setInterval> | undefined;
 
   /** `isLive` says whether a turn generation still exists. A session whose
    * generation is gone is closed on the next sweep (every 10 s), on the next
    * open and on the next call: a stopped turn must not leave a stream open to
    * the owner's server. */
-  constructor(options: { idleMs?: number; max?: number; maxPerGeneration?: number; isLive?: (generation: string) => boolean; sweepMs?: number } = {}) {
+  constructor(options: { idleMs?: number; max?: number; maxPerGeneration?: number; isLive?: (generation: string) => boolean; sweepMs?: number; probeOnly?: true } = {}) {
     this.idleMs = options.idleMs ?? SSE_SESSION_IDLE_MS;
+    this.probeOnly = options.probeOnly === true;
     this.max = options.max ?? MAX_SSE_SESSIONS;
     this.maxPerGeneration = options.maxPerGeneration ?? MAX_SSE_SESSIONS_PER_GENERATION;
     this.isLive = options.isLive;
@@ -155,7 +158,8 @@ export class RemoteSseSessions {
     try {
       reserveUpstreamRequest(0);
       opened = await guardedRequest({
-        url: input.url, method: "GET", kind: "sse", responseMode: "stream", mode: "request", confirmed: input.confirmed,
+        // MAIN-RULING cause22-no-transport-caps: no byte ceiling on the session's stream or on a POST's answer.
+        url: input.url, method: "GET", kind: "sse", responseMode: "stream", mode: "request", confirmed: input.confirmed, maxBytes: Number.POSITIVE_INFINITY,
         signal: input.signal, resolver: input.resolver, totalMs: LIMITS.initializeRelayMs,
         headers: { accept: "text/event-stream", ...input.headers, ...(input.bearer ? { authorization: `Bearer ${input.bearer}` } : {}) },
       });
@@ -169,7 +173,7 @@ export class RemoteSseSessions {
     }
     const stream = opened as unknown as GuardedStreamResponse;
     const accounting: UpstreamAccounting | undefined = currentUpstreamAccounting("sse");
-    const events = createSseReader(stream.stream as Readable, { idleMs: this.idleMs, maxEventBytes: LIMITS.sseEventBytes, accounting });
+    const events = createSseReader(stream.stream as Readable, { idleMs: this.idleMs, accounting, ...(this.probeOnly ? { probeOnly: true as const } : {}) });
     let first;
     let endpointTimer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -203,7 +207,11 @@ export class RemoteSseSessions {
 
   /** Read answers off the stream until it ends, matching them to waiting calls. */
   private async pump(session: Session, events: AsyncGenerator<{ event: string; data: string }>): Promise<void> {
-    let reason: unknown = "unreachable";
+    // q1023-connparity-fix (MAIN-RULING CONNPARITY-1022; ASTRA 14d1f27d48 High 3): the stream ending or breaking under a
+    // waiting call is a mid-call stream break, named as one, so the engine proxy reconnects once and fails that call by
+    // name (remote-mcp-proxy.ts fail -> broke) as it does for a streamable HTTP answer that breaks. It used to be
+    // "unreachable", which the proxy could not tell from a server that refused the connection.
+    let reason: unknown = "stream-broke";
     try {
       for (;;) {
         const next = await events.next();
@@ -226,7 +234,7 @@ export class RemoteSseSessions {
       }
     } catch (error) {
       reason = (error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED" ? error
-        : error instanceof SseReaderError && error.code === "idle-timeout" ? "no-answer" : "unreachable";
+        : error instanceof SseReaderError && error.code === "idle-timeout" ? "no-answer" : "stream-broke";
     } finally {
       this.finish(session, reason);
     }
@@ -279,7 +287,7 @@ export class RemoteSseSessions {
       // resumed outside the opening async scope or under another owner.
       if (session.accounting) reserveRelease(session.accounting.budgets, { attempts: 1, bytes: Buffer.byteLength(JSON.stringify(message)), work: 1 });
       response = await guardedRequest({
-        url: session.endpoint, method: "POST", kind: "mcp", mode: "request", confirmed: session.confirmed,
+        url: session.endpoint, method: "POST", kind: "mcp", mode: "request", confirmed: session.confirmed, maxBytes: Number.POSITIVE_INFINITY,
         signal: input.signal, resolver: input.resolver, totalMs: input.timeoutMs, body: JSON.stringify(message),
         headers: { "content-type": "application/json", ...input.headers, ...(input.bearer ? { authorization: `Bearer ${input.bearer}` } : {}) },
       });

@@ -19,6 +19,8 @@ import { runEngineHistoryJob } from "./engine-history-run.ts";
 import { InstanceHolds } from "./harness/instance-holds.ts";
 import { recordFact } from "./health/counters.ts";
 import { resetDeletionObserverForTests } from "./health/deletion-observer.ts";
+import { assertWalWriteAdmission, setWalRecoveryKnobsForTest } from "./wal-maintenance.ts";
+import { notifyAttachmentIndexComplete, onAttachmentIndexComplete } from "./transcript-backfill.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("./health/counters.ts", async (original) => ({ ...(await original<typeof import("./health/counters.ts")>()), recordFact: vi.fn() }));
@@ -201,6 +203,50 @@ it("a failed prepare arms a retry, and nothing reaches the engine work before th
   const firstEngineJob = order.findIndex((step) => step === "removeTrees" || step === "probe");
   expect(order.lastIndexOf("forget")).toBeLessThan(firstEngineJob);
   deletions.dispose();
+});
+
+it("a first foreground write can commit while legacy pending deletion rows are fenced during boot settling", async () => {
+  let finishBoot!: () => void;
+  const settled = new Promise<void>(resolve => { finishBoot = resolve; });
+  const bootSettled = vi.fn(() => settled);
+  const { dataDir, deletions } = service(
+    [record({ engineHomes: [], deferredAttachments: [FILE] })], { bootSettled },
+  );
+  const file = join(dataDir, "messages.db");
+  using db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; PRAGMA secure_delete=ON");
+  db.prepare("INSERT INTO messages VALUES (?, 'legacy', zeroblob(1048576))").run(THREAD);
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  const ids = deletions.triage(never, threadId => {
+    assertWalWriteAdmission(file);
+    db.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
+  });
+  setWalRecoveryKnobsForTest({ admissionBytes: 64 * 1024 });
+  const pass = deletions.resumeAfterBoot(ids);
+  let deferred: Promise<number> | undefined;
+  const unsubscribe = onAttachmentIndexComplete(() => { setImmediate(() => { deferred = deletions.settleDeferred(never); }); });
+  try {
+    notifyAttachmentIndexComplete();
+    await new Promise<void>(resolve => { setImmediate(resolve); });
+    await new Promise<void>(resolve => { setImmediate(resolve); });
+    expect(deferred).toBeDefined();
+    expect(bootSettled).toHaveBeenCalledTimes(1);
+    expect(() => {
+      assertWalWriteAdmission(file);
+      db.prepare("INSERT INTO messages VALUES ('owner-thread', 'first-send', 'hello')").run();
+    }).not.toThrow();
+    expect(deletions.isDeleting(THREAD)).toBe(true);
+    expect(deletions.pending()).toHaveLength(1);
+  } finally {
+    unsubscribe();
+    setWalRecoveryKnobsForTest();
+    finishBoot();
+    await Promise.all([pass, deferred]);
+  }
+  expect(bootSettled).toHaveBeenCalledTimes(1);
+  expect(db.prepare("SELECT id FROM messages").all()).toEqual([{ id: "first-send" }]);
+  expect(deletions.isDeleting(THREAD)).toBe(false);
+  expect(deletions.pending()).toEqual([]);
 });
 
 it("settleDeferred and Try again now cannot finish a record that was never prepared", async () => {

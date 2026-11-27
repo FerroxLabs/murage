@@ -83,7 +83,8 @@ describe("textOnlyErrorResultLine", () => {
     const answers = [...callback.matchAll(/\banswer\(([^\n]*)/g)];
     expect(answers.length).toBeGreaterThan(0);
     for (const [, argument] of answers) {
-      expect(argument).toMatch(/^textOnlyErrorResultLine\(toolLists\.rewriteResponse\(line\)\)\)/);
+      // every answer goes through the filter; the one the bridge builds itself (the -32000 "could not record" error) wraps its own JSON
+      expect(argument).toMatch(/^textOnlyErrorResultLine\((toolLists\.rewriteResponse\(line\)|JSON\.stringify\()/);
     }
   });
 });

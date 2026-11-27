@@ -9,6 +9,7 @@ import { engineLimitText } from "../../shared/web-read-routing";
 // Escape, another page, another bot) goes through `leaveRef`, so unsaved edits still ask and a save still finishes.
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useStore, type Bot } from "@/state/store";
+import { DuplicateBotNameNotice } from "./DuplicateBotNameNotice";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SettingsPanel } from "./SettingsPanel";
 import { BOT_SETTINGS_SECTIONS, DESKTOP_ONLY_BOT_SETTINGS, GATED_BOT_SETTINGS, GATED_ROW_MARK, LEARNING_BADGE_SECTION, botSettingsSectionLabel, filterBotSettingsSections, type BotSettingsSection } from "./bot-settings-sections";
@@ -129,7 +130,7 @@ function ActiveBotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose: 
         <label htmlFor="bot-settings-search" className="sr-only">Search settings</label>
         <input ref={searchRef} id="bot-settings-search" type="search" value={query} maxLength={100} onChange={event => setQuery(event.target.value)} placeholder={`Search ${bot.name}'s settings`} className="min-h-10 w-full min-w-0 flex-1 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus sm:min-h-0" />
         <label className="block min-w-0 flex-1 text-[12px] sm:hidden"><span className="sr-only">Section</span><select value={section} onChange={event => chooseSection(event.target.value as BotSettingsSection)} className="min-h-10 w-full rounded-lg border border-hairline/50 bg-inset px-2 text-[13px]">
-          {!matches.some(item => item.id === section) && <option value={section}>{label(selected)}{gatedOff(section) ? ` (${GATED_ROW_MARK})` : ""}</option>}{matches.map(item => <option key={item.id} value={item.id}>{label(item)}{item.id === LEARNING_BADGE_SECTION && badgeText(newLearning) ? ` (${badgeText(newLearning)})` : ""}{gatedOff(item.id) ? ` (${GATED_ROW_MARK})` : ""}</option>)}
+          {!matches.some(item => item.id === section) && <option value={section}>{label(selected)}{gatedOff(section) ? ` (${GATED_ROW_MARK})` : ""}</option>}{matches.map(item => <option key={item.id} value={item.id}>{label(item)}{item.id === LEARNING_BADGE_SECTION && badgeText(newLearning) ? ` ${badgeText(newLearning)}` : ""}{gatedOff(item.id) ? ` (${GATED_ROW_MARK})` : ""}</option>)}
         </select></label>
         </div>
         <div className="mt-3 hidden space-y-1 sm:block">{matches.map(item => <button key={item.id} type="button" aria-pressed={section === item.id} onClick={() => chooseSection(item.id)} className={`min-h-10 w-full rounded-lg px-3 py-2 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus ${section === item.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-inset"}`}>{label(item)}{item.id === LEARNING_BADGE_SECTION && badgeText(newLearning) && <span aria-label={badgeLabel(newLearning) ?? undefined} className="ml-2 rounded-full bg-accent/15 px-1.5 text-[11px] font-medium text-ink">{badgeText(newLearning)}</span>}{gatedOff(item.id) && <span data-gated-row={item.id} className="ml-2 text-[11px] text-ink-secondary">{GATED_ROW_MARK}</span>}</button>)}</div>
@@ -143,6 +144,7 @@ function ActiveBotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose: 
             className="min-h-8 rounded-full border border-hairline/40 bg-raised/60 px-3 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">{chip.label}{chip.section === "email" && gatedOff("email") ? ` (${GATED_ROW_MARK})` : ""}</button>)}
         </div>
         {/* The section menu above already shows this name on a phone. */}
+        <DuplicateBotNameNotice bot={bot} bots={state.bots ?? []} onRename={name => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })} />
         <h2 className="shrink-0 px-5 pt-3 text-[17px] font-medium max-sm:sr-only">{label(selected)}</h2>
         <BotSettingsDraftContext.Provider value={updateDraft}><BotSettingsNavigationContext.Provider value={navigate}><SettingsPanel bot={bot} section={section} embedded /></BotSettingsNavigationContext.Provider></BotSettingsDraftContext.Provider>
         {section === "model" && engineLimit && <EngineLimitRow settings text={engineLimit} />}

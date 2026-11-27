@@ -20,6 +20,11 @@ async function readJson(response) {
   } catch { return null; }
 }
 
+async function recoverFrom(response) {
+  return { status: response.status, body: await readJson(response) };
+}
+const recoverPath = "/api/desktop/attention?recover=1";
+
 /** The card as attention-actions wants it: a 200 is an open card, a 404 is settled, anything else is a failed read (refused, never guessed). */
 async function cardFrom(response) {
   if (response.status === 404) return { open: false };
@@ -41,12 +46,15 @@ async function resultFrom(response) {
  */
 export function createLocalTransport({ origin, secret, fetchImpl = fetch, identity }) {
   const headers = extra => ({ "x-murage-surface": "desktop", "x-murage-surface-secret": secret, ...extra });
+  const get = (path, guard) => {
+    guard();
+    return fetchImpl(origin + path, { headers: headers({}), signal: AbortSignal.timeout(5000), redirect: "error" });
+  };
   return {
     current: identity,
-    async readCard(entry, guard) {
-      guard();
-      return cardFrom(await fetchImpl(origin + cardPath(entry), { headers: headers({}), signal: AbortSignal.timeout(5000), redirect: "error" }));
-    },
+    async readCard(entry, guard) { return cardFrom(await get(cardPath(entry), guard)); },
+    async readRecover(guard) { return recoverFrom(await get(recoverPath, guard)); },
+    async readRecoverCard(entry, guard) { return cardFrom(await get(cardPath(entry) + "&recover=1", guard)); },
     async post(body, guard, entry) {
       guard();
       return resultFrom(await fetchImpl(origin + respondPath(entry), { method: "POST", headers: headers({ "content-type": "application/json" }), body: JSON.stringify(body), signal: AbortSignal.timeout(8000), redirect: "error" }));
@@ -65,6 +73,8 @@ export function createCloudTransport({ client, homeId, windowId }) {
     async readCard(entry, guard) {
       return cardFrom(await client.fetch(homeId, cardPath(entry), { beforeSend: guard }));
     },
+    async readRecover(guard) { return recoverFrom(await client.fetch(homeId, recoverPath, { beforeSend: guard })); },
+    async readRecoverCard(entry, guard) { return cardFrom(await client.fetch(homeId, cardPath(entry) + "&recover=1", { beforeSend: guard })); },
     async post(body, guard, entry) {
       return resultFrom(await client.fetch(homeId, respondPath(entry), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), beforeSend: guard }));
     },

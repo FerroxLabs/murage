@@ -1,9 +1,10 @@
 // Fake-only production-boundary qualification, never a real-log receipt.
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { productionAdapter } from './production.mjs';
 import { judgeScenario, machineSummary } from '../no-limits-live/counts.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const out=resolve(process.argv[2]);mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'gnl-production-')),home=join(root,'home'),data=join(root,'data');
 mkdirSync(home);mkdirSync(data);writeFileSync(join(data,'config.json'),'{}');
@@ -32,7 +33,7 @@ try {
   report.verdict=report.rows.every(r=>r.verdict==='PASS')?'PASS':'FAIL';
 } catch {report.errors.push('Isolated production adapter failed');}
 finally {
-  await adapter?.close();rmSync(root,{recursive:true,force:true});
+  await adapter?.close();safeWipeSync(root);
   writeFileSync(join(out,'verdict.json'),JSON.stringify(report,null,2)+'\n');
   log(machineSummary(report));process.exitCode=report.verdict==='PASS'?0:1;
 }

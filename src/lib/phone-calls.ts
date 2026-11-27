@@ -182,6 +182,7 @@ export function phoneErrorKey(error: unknown): PhoneCopyKey {
     case "not_confirmed": return "phoneCalls.error.notConfirmed";
     case "vendor_unreachable": case "vendor_unavailable": return "phoneCalls.error.unreachable";
     case "settings_pending": return "phoneCalls.error.pending";
+    case "store_unavailable": return "phoneCalls.error.store";
     case "bad_settings": return "phoneCalls.error.badSettings";
     case "not_set_up": return "phoneCalls.error.notSetUp";
     default: return "phoneCalls.error.generic";

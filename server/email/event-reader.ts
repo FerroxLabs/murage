@@ -123,6 +123,8 @@ export class EmailEventReader {
   /** Records, applies and acknowledges one batch in one transaction. Returns the fresh lifecycle events, applied after the commit. */
   applyBatch(events: EmailEvent[], nextCursor: string | null): EmailEvent[] {
     const { store, send } = this.options;
+    // 1.0.22 idle: an empty long-poll that names the cursor already stored writes nothing (no transaction, no fresh updated_at)
+    if (!events.length && (!nextCursor || nextCursor === store.getCursor(EVENT_CURSOR_SCOPE))) return [];
     return store.tx(() => {
       const lifecycle: EmailEvent[] = [];
       const arrivals = new Map<string, EmailArrival[]>();

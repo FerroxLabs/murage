@@ -21,6 +21,7 @@
 import { assertFluxNotPaused } from "./cloud-home/flux-pause.ts";
 import { assertNoFluxForSignInEngine } from "./cloud-home/engine-flux-guard.ts";
 import type { DriverKind } from "./contracts.ts";
+import { fluxRouteFor } from "../shared/flux-route.ts";
 import { FLUX_CODEX_TABLE_HEADERS, codexHttpHeaderArgs } from "./flux-memory-wire.ts";
 
 /** The three verified wire surfaces. Endpoints confirmed live against
@@ -334,6 +335,28 @@ const NATIVE_OPENAI_ENV = ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"] 
 /** codex's own alternative bearer, which would outrank the provider table. */
 const NATIVE_CODEX_ENV = ["OPENAI_API_KEY", "CODEX_API_KEY"] as const;
 
+/** Cap codex's retry of a Flux 503 (defaults 4 request + 5 stream retries held a "briefly busy" turn for ~14.5 min). Keys live per provider. Private: callers go through codexProviderTableArgs so the decision is made once, from the base URL host. */
+function fluxRetryCapArgs(provider: string): string[] {
+  return ["-c", `model_providers.${provider}.request_max_retries=2`, "-c", `model_providers.${provider}.stream_max_retries=2`];
+}
+
+/**
+ * The ONE writer of a codex `model_providers.<id>` table. Every source (built-in
+ * Flux tables, saved connection, Local models server) goes through here, and the
+ * two retry caps are added whenever `baseUrl` is a Flux host, whatever the
+ * provider id or preset. A new table source that does not call this has no table.
+ */
+export function codexProviderTableArgs(provider: string, table: { name: string; baseUrl: string; envKey: string; wireApi?: string }): string[] {
+  const key = (field: string, value: string) => ["-c", `model_providers.${provider}.${field}=${JSON.stringify(value)}`];
+  return [
+    ...key("name", table.name),
+    ...key("base_url", table.baseUrl),
+    ...(table.wireApi ? key("wire_api", table.wireApi) : []),
+    ...key("env_key", table.envKey),
+    ...(fluxRouteFor(table.baseUrl).routed ? fluxRetryCapArgs(provider) : []),
+  ];
+}
+
 /**
  * Point one engine's child env at Flux, in place, and report what changed.
  *
@@ -432,28 +455,15 @@ export function applyFluxSurface(
   // `modelProvider: selection.modelProvider`), so a global default here would
   // be redundant for a Flux turn and would hijack a native turn on the same
   // app-server. codexLocalProviderArgs makes the same choice for local hosts.
-  const args = [
-    "-c",
-    `model_providers.${FLUX_CODEX_PROVIDER}.name=${JSON.stringify("Flux Router")}`,
-    "-c",
-    `model_providers.${FLUX_CODEX_PROVIDER}.base_url=${JSON.stringify(FLUX_RESPONSES_BASE)}`,
-    "-c",
-    `model_providers.${FLUX_CODEX_PROVIDER}.wire_api=${JSON.stringify("responses")}`,
-    "-c",
-    `model_providers.${FLUX_CODEX_PROVIDER}.env_key=${JSON.stringify(FLUX_CODEX_ENV_KEY)}`,
-  ];
+  const flux = { name: "Flux Router", baseUrl: FLUX_RESPONSES_BASE, envKey: FLUX_CODEX_ENV_KEY, wireApi: "responses" };
+  const args = codexProviderTableArgs(FLUX_CODEX_PROVIDER, flux);
   // Flux Memory: the same provider declared three times with fixed headers
   // (base, flux-off, flux-noinject). The app-server is shared, so a thread picks
   // its table at thread/start; the argv never changes with the audience, so
   // no running server is recycled when a settings switch moves a thread.
   for (const [provider, headers] of Object.entries(FLUX_CODEX_TABLE_HEADERS)) {
     if (provider !== FLUX_CODEX_PROVIDER) {
-      args.push(
-        "-c", `model_providers.${provider}.name=${JSON.stringify("Flux Router")}`,
-        "-c", `model_providers.${provider}.base_url=${JSON.stringify(FLUX_RESPONSES_BASE)}`,
-        "-c", `model_providers.${provider}.wire_api=${JSON.stringify("responses")}`,
-        "-c", `model_providers.${provider}.env_key=${JSON.stringify(FLUX_CODEX_ENV_KEY)}`,
-      );
+      args.push(...codexProviderTableArgs(provider, flux));
     }
     args.push(...codexHttpHeaderArgs(provider, headers));
   }

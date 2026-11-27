@@ -63,7 +63,7 @@ const anchorWithheld = { state: "withheld", reason: "murage-anchor" };
 /** Everything the read might write: deny marks, revoke jobs, the deny generation, the lsn allocator, a summary's stale flag. */
 function written(db: ReturnType<typeof database>) {
   const one = (sql: string) => JSON.stringify(db.prepare(sql).all());
-  return [one("SELECT * FROM memory_deny_memory"), one("SELECT * FROM memory_revoke_jobs"), one("SELECT * FROM memory_lineage_lsn_meta ORDER BY key"),
+  return [one("SELECT * FROM memory_deny_object"), one("SELECT * FROM memory_revoke_jobs"), one("SELECT * FROM memory_lineage_lsn_meta ORDER BY key"),
     one("SELECT * FROM memory_lsn"), one("SELECT group_id,version,stale FROM project_summaries ORDER BY version")];
 }
 

@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# INSTALLABLE DEFINITION ONLY. MAIN may copy this into .github/workflows on a
+# squashed ci/try snapshot after the matching hz gate is green. No dispatch here.
+name: search qualification macOS
+on:
+  workflow_dispatch:
+    inputs:
+      hz_gate_run:
+        description: Run containing green hz-gate and q1-legacy artifacts for this snapshot
+        required: true
+      snapshot_sha:
+        description: Squashed ci/try snapshot SHA attested by the hz gate
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  qualify:
+    if: github.ref == 'refs/heads/ci/try' && github.sha == inputs.snapshot_sha
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Require a root snapshot, never development history
+        shell: bash
+        run: |
+          test "$(git rev-list --count HEAD)" = 1
+          test "$(git rev-parse HEAD)" = '${{ inputs.snapshot_sha }}'
+      - uses: actions/download-artifact@v4
+        with:
+          name: search-hz-green
+          path: ${{ runner.temp }}/search-evidence/hz
+          run-id: ${{ inputs.hz_gate_run }}
+          github-token: ${{ github.token }}
+      - name: Require matching green hz attestation
+        env:
+          EXPECTED_SHA: ${{ inputs.snapshot_sha }}
+        run: |
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'search-evidence/hz/hz-gate.json')))
+          assert d['sha']==os.environ['EXPECTED_SHA'] and d['gates_rc']==0
+          PY
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: 103k workload and reset handshake set, fake engines, no network
+        env:
+          MURAGE_QUAL: q2-103k
+          MURAGE_QUAL_EVIDENCE: ${{ runner.temp }}/search-evidence
+          MURAGE_QUAL_LEGACY_REPORT: ${{ runner.temp }}/search-evidence/hz/q1-legacy.json
+        run: |
+          sandbox-exec -p '(version 1)(allow default)(deny network*)' pnpm vitest run --config scripts/qualify-search/vitest.config.ts --tags-filter=qual
+          sandbox-exec -p '(version 1)(allow default)(deny network*)' pnpm vitest run server/search-index-r3.test.ts server/search-index-r3-crash.test.ts server/search-index-review-recovery.test.ts -t "T-RESET-HANDSHAKE|C15'|T-REC-|T-SCRUB-" --reporter=json --outputFile="$MURAGE_QUAL_EVIDENCE/q2-macos-reset.json"
+          node scripts/qualify-search/check-reset-set.mjs "$MURAGE_QUAL_EVIDENCE/q2-macos-reset.json"
+      - name: 192 MB sparse-image disk exhaustion
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$RUNNER_TEMP/search-qual.sparseimage"
+          mount="$RUNNER_TEMP/search-qual-volume"
+          mkdir -p "$mount"
+          hdiutil create -size 192m -type SPARSE -fs HFS+ -volname MurageQual "$image"
+          hdiutil attach "$image" -mountpoint "$mount" -nobrowse
+          trap 'hdiutil detach "$mount"' EXIT
+          MURAGE_QUAL=q2-diskfull MURAGE_QUAL_STORAGE="$mount" MURAGE_QUAL_EVIDENCE="$RUNNER_TEMP/search-evidence" sandbox-exec -p '(version 1)(allow default)(deny network*)' pnpm vitest run --config scripts/qualify-search/vitest.config.ts --tags-filter=qual
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-q2-macos
+          path: ${{ runner.temp }}/search-evidence

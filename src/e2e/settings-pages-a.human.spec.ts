@@ -296,7 +296,7 @@ for (const { w, h } of widths) {
     await page.setViewportSize({ width: w, height: h });
     await mount(page, "advanced");
     for (const [id, label, anchors] of [
-      ["general", "General", ["advanced-mode-heading", "profile-heading", "about-me-heading", "appearance-heading", "sidebar-density-heading", "language-heading", "time-zone-heading", "send-key-heading", "notifications-heading", "analytics-heading"]],
+      ["general", "General", ["advanced-mode-heading", "profile-heading", "about-me-heading", "appearance-heading", "sidebar-density-heading", "language-heading", "time-zone-heading", "send-key-heading", "notifications-heading"]],
       ["calls", "Calls", ["calls-settings-title"]],
       ["botDefaults", "How every bot behaves", ["house-rules-heading", "starter-profiles-heading", "tool-calls-heading", "project-autonomy-heading", "room-turn-timeout", "room-routing-label"]],
       ["skills", "Skills", ["skill-recorder-heading", "skills-settings-title", "skill-scan-rules-heading"]],
@@ -379,9 +379,9 @@ for (const { w, h } of widths) {
       await expect(dialog(page).locator("[role='alert']"), `${id} shows no error`).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), `${id} overflow`).toBe(false);
     }
-    // The AssemblyAI key is one field, on Skills, next to Teach a skill: not on Search, images and dictation.
+    // No transcription key anywhere unless one saved earlier is in use (Sean 11-06): none saved here, so no field.
     await open(page, "webSearch");
-    await expect(dialog(page).locator("#voice-key-heading")).toHaveCount(0);
+    await expect(dialog(page).getByLabel("Your own transcription key")).toHaveCount(0);
     // Refresh the real store from the fixture response: no reload or replacement voice component.
     for (const { route, state, text } of [
       { route: "flux", state: "configured", text: "Configured to transcribe voice notes with Flux. Service availability is checked when you transcribe." },
@@ -397,18 +397,12 @@ for (const { w, h } of widths) {
       await expect(notes.getByRole("status")).toHaveText(text);
       await expect(notes).toContainText("Chat attachments and phone recordings also need a Flux key.");
       await expect(notes).not.toContainText("AssemblyAI");
-      await expect(voice.getByText("AssemblyAI transcription", { exact: true })).toBeVisible();
-      await expect(voice.getByText("Live narration for recorded skills. Audio is sent to AssemblyAI while recording; the API key is protected by your operating system.", { exact: true })).toBeVisible();
-      await expect(voice.getByRole("button", { name: "Open Skills", exact: true })).toBeEnabled();
-      await expect(notes.getByRole("button", { name: "Open Skills", exact: true })).toHaveCount(0);
+      await expect(voice).not.toContainText("AssemblyAI");
+      await expect(voice.getByRole("button", { name: "Open Skills", exact: true })).toHaveCount(0);
       await themedState(page, `dictation-voice-notes-${state}`, voice);
     }
-    await dialog(page).locator("#voice-settings-heading").getByRole("button", { name: "Open Skills", exact: true }).click();
-    await expect.poll(() => page.evaluate(() => (window as unknown as EvidenceWindow).__settings.section())).toBe("skills");
-    await expect(dialog(page).locator("#voice-key-heading")).toHaveCount(1);
-    await expect(dialog(page).getByLabel("AssemblyAI API key")).toHaveCount(1);
-    await expect(dialog(page).getByLabel("AssemblyAI API key")).toBeEnabled();
-    await expect(dialog(page).getByTestId("settings-stub-voice-key-heading")).toHaveCount(0);
+    await open(page, "skills");
+    await expect(dialog(page).getByLabel("Your own transcription key")).toHaveCount(0);
   });
   });
 }
@@ -470,6 +464,8 @@ test("Auto stays chosen after a Tavily key is saved, and saving a key changes no
   await open(page, "webSearch");
   await dialog(page).locator("#web-search-provider").selectOption("auto");
   await expect.poll(() => fx.webSearch.provider).toBe("auto");
+  // polish-1021: a search service with no key and not chosen waits behind "Other search services".
+  await dialog(page).locator("#search-keys-heading").getByRole("button", { name: "Other search services", exact: true }).click();
   await dialog(page).locator("#tavily-search-key").fill("tvly-fixture");
   await dialog(page).locator("#search-keys-heading").getByRole("button", { name: "Save Tavily key", exact: true }).click();
   await expect.poll(() => fx.webSearch.tavilyConfigured).toBe(true);
@@ -538,8 +534,11 @@ for (const { w, h } of widths) {
         if (entry.id === "webSearch") await expect(dialog(page).locator("#web-search-provider")).toBeEnabled();
         if (entry.id === "calls") await populateCalls(page);
         if (entry.id === "skills") {
-          await expect(dialog(page).getByLabel("AssemblyAI API key")).toBeEnabled();
+          // The transcription key card left Skills (56891c6b16, Sean 11-06): no key field and no vendor name here.
           await expect(dialog(page).getByRole("button", { name: /Weekly brief/ })).toBeVisible();
+          await expect(dialog(page).locator("#voice-key-heading")).toHaveCount(0);
+          await expect(dialog(page).getByLabel("Your own transcription key")).toHaveCount(0);
+          await expect(dialog(page)).not.toContainText("AssemblyAI");
         }
         if (entry.id === "models") await expect(dialog(page).locator("[data-engine-row]")).toHaveCount(3);
         if (entry.id === "memory") {
@@ -716,6 +715,7 @@ test("web search: failed key save keeps the input and retry persists only the ke
   await mount(page, "advanced");
   await open(page, "webSearch");
   const card = dialog(page).locator("#search-keys-heading");
+  await card.getByRole("button", { name: "Other search services", exact: true }).click();
   const key = card.locator("#tavily-search-key");
   await key.fill("tvly-retry-fixture");
   fx.failNext = "web-search-key";
@@ -776,24 +776,33 @@ test("engine toggle: failed disable retains confirmation, retry changes the row"
   await themedState(page, "flow-models-engines", row);
 });
 
-test("AssemblyAI: rejected desktop bridge save keeps the key and retry reconnects", async ({ page }) => {
+test("Own transcription key: a key saved earlier shows only with no engine; a rejected save keeps the value and retry saves", async ({ page }) => {
   await mount(page, "advanced");
-  await open(page, "skills");
+  await page.evaluate(() => { (window as unknown as EvidenceWindow).__settingsBridge.assemblyKey = "earlier-fixture"; });
+  await open(page, "webSearch");
   const card = dialog(page).locator("#voice-key-heading");
-  const key = card.getByLabel("AssemblyAI API key");
+  const key = card.getByLabel("Your own transcription key");
+  await expect(key).toHaveCount(1);
+  await expect(card).not.toContainText("AssemblyAI");
   await key.fill("assembly-retry-fixture");
   await page.evaluate(() => { (window as unknown as EvidenceWindow).__settingsBridge.failAssembly = true; });
   await card.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(card.getByRole("alert")).toHaveText("Could not save AssemblyAI key. Try again.");
+  await expect(card.getByRole("alert")).toHaveCount(1);
   await expect(key).toHaveValue("assembly-retry-fixture");
-  await themedState(page, "fail-assemblyai-key", card);
+  await themedState(page, "fail-own-transcription-key", card);
   await card.getByRole("button", { name: "Save", exact: true }).click();
   await expect(card.getByRole("button", { name: "Clear", exact: true })).toBeEnabled();
   await expect(key).toHaveValue("");
-  await expect(card.getByRole("alert")).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as EvidenceWindow).__settingsBridge.assemblyKey)).toBe("assembly-retry-fixture");
+  // With Flux transcribing, the saved key stays stored and the field is gone.
+  fx.transcribe = "flux";
+  await page.evaluate(() => (window as unknown as EvidenceWindow).__settings.refreshConfig());
+  await expect(dialog(page).getByLabel("Your own transcription key")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as EvidenceWindow).__settingsBridge.assemblyKey)).toBe("assembly-retry-fixture");
+  fx.transcribe = null;
+  await open(page, "skills");
   await expect(dialog(page).getByRole("button", { name: /Weekly brief/ })).toBeVisible();
-  await themedState(page, "flow-skills-populated", card);
+  await themedState(page, "flow-skills-populated", dialog(page).locator("#skills-settings-title"));
   await dialog(page).getByLabel("Search skills").fill("Weekly");
   await expect(dialog(page).getByRole("button", { name: /Research notes/ })).toHaveCount(0);
   await expect(dialog(page).getByRole("button", { name: /Weekly brief/ })).toBeVisible();

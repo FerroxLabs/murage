@@ -16,9 +16,9 @@
 // so an older app still shows a newer notice. The lint is strict about the
 // same values, so nothing unknown is published by mistake.
 
-export const ANNOUNCEMENT_FEED_URL = "https://updates.ferroxlabs.com/murage/announcements.json";
+export const ANNOUNCEMENT_FEED_URL = "https://murage.ai/murage/announcements.json";
 /** Images must live here: https, our host, our folder. */
-export const ANNOUNCEMENT_IMAGE_PREFIX = "https://updates.ferroxlabs.com/murage/images/";
+export const ANNOUNCEMENT_IMAGE_PREFIX = "https://murage.ai/murage/images/";
 
 export const ANNOUNCEMENT_KINDS = ["info", "important", "security"] as const;
 /** The style packs. Each draws on both surfaces (sidebar banner, full card),

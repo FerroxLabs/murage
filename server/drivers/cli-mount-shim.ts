@@ -1,6 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Dumb stdio transport. No child credentials, release authority, retry or reply.
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import "../../shared/win-hide-child-process.mjs";
 import { connect } from "node:net";
 import { turnSecret } from "../turn-credential.ts";
@@ -16,7 +17,7 @@ socket.on("error", fail);
 process.stdin.on("error", fail);
 process.stdout.on("error", fail);
 socket.once("connect", () => {
-  socket.write(JSON.stringify({ ticket, server }) + "\n");
+  NotModelRequest("Local CLI relay socket authenticates the mounted MCP server using its ticket.", socket.write(JSON.stringify({ ticket, server }) + "\n"));
   process.stdin.pipe(socket);
   socket.pipe(process.stdout);
 });

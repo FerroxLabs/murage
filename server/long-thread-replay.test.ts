@@ -188,6 +188,7 @@ it("the direct turn replays through filterDirectReplay and resets a retained ses
   expect(direct).toMatch(/needsReplay=!resumeCursor \|\| revoked/);
   // the retained session is checked under this turn's allowance (the session id argument's spelling is not the point)
   // MAIN RULING INT-CONFLICT-DEFAULT a0a7856460 84f97983e8: the same retained-session check also receives its current reader and admits the additional pack-forced reset.
-  expect(direct).toMatch(/if \(resumeCursor && \(packNeedsFreshSession \|\| offProof\?\.kind==='fresh'\)/);
+  // 1.0.23 lastresort (f1f2563f10): a last-resort replay session is reset too until its memory check settles (partialReplay).
+  expect(direct).toMatch(/if \(resumeCursor && \(packNeedsFreshSession \|\| offProof\?\.kind==='fresh' \|\| partialReplay\)/);
   expect(direct).toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
 });

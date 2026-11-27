@@ -4,6 +4,41 @@ import type { RuntimeEvent } from "../../server/contracts.ts";
 import type { InspectorEntry, InspectorPage, NativeRecord } from "../../server/thread-events.ts";
 export type { InspectorEntry, InspectorPage, NativeRecord } from "../../server/thread-events.ts";
 
+/** Matches the recent disk page; retained payloads and all live append scans
+ * stay bounded even when a turn never settles or a refresh stays pending. */
+export const INSPECTOR_ENTRY_LIMIT = 400;
+
+export function retainInspectorPage(page: InspectorPage): InspectorPage {
+  const counts = { runtime: 0, native: 0 };
+  const entries = page.entries.slice().reverse().filter(entry => ++counts[entry.kind] <= INSPECTOR_ENTRY_LIMIT).reverse();
+  return entries.length === page.entries.length ? page : { ...page, entries };
+}
+
+/** A refresh can overlap an arbitrarily long stream. Keep its recent tail,
+ * and never claim an exact count when unseen buffered frames were evicted. */
+export function createInspectorBuffer() {
+  let events: RuntimeEvent[] = [];
+  let overflow = false;
+  return {
+    get size() { return events.length; },
+    push(event: RuntimeEvent) {
+      if (events.length === INSPECTOR_ENTRY_LIMIT) { events.shift(); overflow = true; }
+      events.push(event);
+    },
+    clear() { events = []; overflow = false; },
+    drain(): (page: InspectorPage | null) => InspectorPage | null {
+      const held = events, incomplete = overflow;
+      events = []; overflow = false;
+      // The updater is pure: React may evaluate it more than once.
+      return (page) => {
+        let next = page;
+        for (const event of held) next = appendInspectorRuntime(next, event);
+        return incomplete && next ? { ...next, totalComplete: { runtime: false, native: next.totalComplete?.native ?? true } } : next;
+      };
+    },
+  };
+}
+
 export function inspectorCountLabel(shown: number, total: number, complete = true): string {
   if (!complete) return `${shown} recent records; total not fully counted`;
   return shown < total ? `last ${shown} of ${total}` : `${shown} entries`;
@@ -14,7 +49,7 @@ export function appendInspectorRuntime(page: InspectorPage | null, runtime: Runt
   if (page?.entries.some((entry) => entry.kind === "runtime" && entry.data.eventId === runtime.eventId)) return page;
   const entry: InspectorEntry = { kind: "runtime", at: runtime.createdAt, data: runtime };
   if (!page) return { entries: [entry], total: { runtime: 1, native: 0 }, totalComplete: { runtime: false, native: false } };
-  return { ...page, entries: [...page.entries, entry], total: { ...page.total, runtime: page.total.runtime + 1 } };
+  return { ...page, entries: retainInspectorPage({ ...page, entries: [...page.entries, entry] }).entries, total: { ...page.total, runtime: page.total.runtime + 1 } };
 }
 
 interface FoldPreview {
@@ -160,7 +195,7 @@ export function toRows(entries: InspectorEntry[]): InspectorRow[] {
   for (const [i, entry] of entries.entries()) {
     if (entry.kind === "native") {
       rows.push({
-        key: `n${i}`,
+        key: `n:${entry.at}:${entry.data.source}:${entry.data.dir}:${i}`,
         kind: "native",
         at: entry.at,
         tag: entry.data.dir === "out" ? "→ out" : "← in",

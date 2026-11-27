@@ -1,5 +1,4 @@
-import { receiveLearningNoticeFrame } from "@/lib/live-events";
-import { forgetHighLevelReview, highlevelReviewId } from "@/components/HighLevelReviewValues";
+import { privateSkillReviewDigest, privateSkillReviewVerdict } from "@/lib/skill-switch-review";
 import type { TurnStateCapabilities, TurnStateEnvelope, ResendAction, ResendActionResult, SendActionTarget } from "../../shared/help-turn-state";
 import { chatsGenHello, chatsGenFrame, chatsGenUnproven, registerChatsGenReplacement } from "@/lib/chats-gen";
 import { createStoreSubscriptions } from "./store-subscriptions";
@@ -23,7 +22,7 @@ import { EMAIL_STATUS_EVENT } from "@/lib/email-status-event";
 // stream from the harness server into local state. The reducer stays
 // pure; everything async lives in the wrapped dispatch + SSE fold.
 import type { SharedRow, SharedWorkMarker } from "@/lib/shared-teams";
-import { requestFailedSentence } from "@/lib/request-failed";
+import { RECONNECTING_SENTENCE, requestFailedSentence } from "@/lib/request-failed";
 import type { TaskResourceWait } from "@/lib/resource-wait";
 import type { BotSettingsSection } from "@/components/bot-settings-sections";
 import {
@@ -85,7 +84,8 @@ import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
 import { isDiskNotice, isHealthPage, showDiskNotice, showHealthPage, showNotification } from "@/lib/notify";
-import { forwardAttentionConfig, forwardAttentionSettled, reportAttentionVisible, routeNotification } from "@/lib/attention-offer";
+import { notificationSoundsEnabled } from "@/lib/notification-sounds";
+import { dropReplayedNotify, forwardAttentionBot, forwardAttentionConfig, forwardAttentionResync, forwardAttentionSettled, reportAttentionVisible, routeNotification } from "@/lib/attention-offer";
 import { replyController } from "@/lib/tts/reply-speech";
 import { knownComputer, surface } from "@/lib/surface";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
@@ -98,9 +98,10 @@ import { sameSidebarLine, sidebarLineOf, type SidebarLine } from "../../shared/s
 import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { persistCardPatch } from "./card-persist";
 import { noteTurnEvent } from "./turn-status";
+import { noteStarTurn } from "@/lib/star-prompt";
 import { applyTranscriptInput, hydrateTranscript, legacyTranscriptInput, transcriptState, vouches, type InputKind, type SeqTranscript } from "./transcript-seq";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
-import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
+import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents, responderIsOurs } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
 import { busyRetriesFor, busyRetryDelayMs, createOutbox, createSendDelivery, sendActionRequest, terminalSendReceipt, deliverEdit, isDatabaseBusyAnswer, retryWhileBusy, venuePostBody, type OutboxDraft, type OutboxEntry, type VenuePostPick } from "./send-delivery";
 import { checkPinnedDrafts, draftJournal, forgetDeletedDrafts, migrateLegacyDrafts, noteRefusedChips, releaseRecoveredSend, setDraftOwnerCheck, setDraftSendLookup, settleDraftSend, type DraftSendLookupResult } from "@/lib/drafts";
@@ -112,6 +113,7 @@ import { isCloudOrigin, notificationBridge } from "@/lib/cloud-workspace";
 import { applyThreadDelta, conversationCache, loadConversationCache } from "@/lib/conversation-cache-host";
 import type { CachedConversation } from "@/lib/conversation-cache";
 import { deletionErrorSentence, deletionNote, owedNote, type OwedLine } from "@/lib/deletion-notes";
+import { permissionAnswerBody } from "./permission-answer";
 import { ANSWER_TTL_MS, answerClock, carryAnswerTag, fromAnswer, sentAtOf, tagAnswer, type HttpOrigin, type RoomOrigin } from "./answer-tag";
 export { asAnswer, freshAnswer, fromAnswer } from "./answer-tag";
 import { hiddenPatchFrom } from "@/lib/record-numbers";
@@ -168,6 +170,42 @@ export function commandOutboxBody(entry: OutboxEntry): { threadId: string; comma
   return { threadId: entry.threadId, commandHandle: command.commandHandle, args: command.args, sendId: entry.sendId };
 }
 
+/** The chat card's Allow/Deny post (decideRequest's plain answer), through fresh authentication where the card needs it.
+ *  Exported so the chat's own code is the one a test drives (q1022-approvefix); `send` is the store's api(). */
+export function postPermissionDecision(
+  action: Extract<Action, { type: "decideRequest" }>,
+  showError: (error: unknown) => void,
+  send: typeof api = api,
+) {
+  // One body for every surface (q1022-approvefix): the Needs you row posts the same one (permission-answer.ts).
+  // rel/1023 merge: the skill review proofs (reviewedSha256, and the skill-switch reviewedVerdictHash) ride with the display
+  // action too, as the chat card's decideRequest posted them before this body moved into permissionAnswerBody.
+  const answer = {
+    ...permissionAnswerBody(action.card, action.requestId, action.behavior, {
+      message: action.message, reviewedSha256: action.reviewedSha256, seen: action.seen, allowForTask: action.allowForTask }),
+    ...(action.reviewedSha256 ? { reviewedSha256: action.reviewedSha256 } : {}),
+    ...(action.reviewedVerdictHash ? { reviewedVerdictHash: action.reviewedVerdictHash } : {}),
+  };
+  const { allowForTask, onTaskAdded } = action;
+  return decideWithFreshAuth(
+    async (extra) => {
+      const body = await send(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) });
+      // UX-TRUST-MOMENTS-1012 1.3: the allowance this answer added, for the card's Undo
+      if (allowForTask && body?.outcome === "allowed-once") onTaskAdded?.(stringList(body.taskAdded));
+      return body;
+    },
+    {
+      threadId: action.threadId,
+      requestId: action.requestId,
+      decision: action.behavior === "allow" ? (action.allowForTask ? "allow-task" : "allow") : undefined,
+      card: action.card,
+      botName: action.botName,
+      onDevicePrompt: action.onDevicePrompt,
+    },
+    { onError: action.onError, onSuccess: action.onSuccess, showError },
+  );
+}
+
 export function permissionDisplayAction(requestHandle: string, action: "allow" | "deny"): DisplayAction {
   return { requestHandle, action };
 }
@@ -220,6 +258,8 @@ export interface OptionCardData {
   options: string[];
   answered?: string;
   dismissed?: boolean;
+  /** 1021 Retry: the owner's answer did not reach the bot, which still waits ('offered': Send again; 'sending'). The card is open. */
+  deliveryRetry?: "offered" | "sending";
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
   requestHandle?: string;
@@ -1027,7 +1067,7 @@ export interface ConfigStatus extends TurnStateCapabilities {
   flux?: { configured: boolean; keyState?: FluxKeyState };
   /** Decision model switches (never a key). Absent from an older harness. */
   decider?: { enabled: boolean; /** false while this key's plan cannot use it */ available?: boolean; byoKeyConfigured?: boolean; jobs?: { roomRouting?: boolean } };
-  webSearch?: { provider: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyConfigured: boolean; exaConfigured: boolean; firecrawlConfigured: boolean; fluxConfigured?: boolean };
+  webSearch?: { provider: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; readEnabled?: boolean; tavilyConfigured: boolean; exaConfigured: boolean; firecrawlConfigured: boolean; fluxConfigured?: boolean };
   notifications?: import("../../shared/notification-preferences").NotificationPreferences;
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
@@ -1148,7 +1188,7 @@ export interface InstanceInfo {
     setUpOnHome?: boolean;
     renewSignIn?: boolean;
   };
-  models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string; variants?: Array<{ id: string; label: string }> }> };
+  models: { default: string; note?: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string; variants?: Array<{ id: string; label: string }> }> };
   capabilities?: {
     computerMcp?: boolean;
     agentsMcp?: boolean;
@@ -1784,8 +1824,7 @@ export type Action =
       message?: string;
       /** Exact proposal hash displayed by a current learned-skill client. */
       reviewedSha256?: string;
-      /** HighLevel: the digest of the open review whose values this surface showed (HL-S2-WRITES (a)4). */
-      reviewDigest?: string;
+      reviewedVerdictHash?: string;
       seen?: { renderer: string; digest: string };
       /** remember this exact grant (the server's allowKey) for the bot, or a
        * several-action card's whole set (its allowKeys, Rule 78c) */
@@ -1810,7 +1849,7 @@ export type Action =
       botName?: string;
       /** Local UI recovery hook for voice flows. Never sent to the server.
        * A Face ID cancel arrives as ("", "cancelled"). */
-      onError?: (message: string, code?: import("../lib/fresh-auth").FreshAuthCode) => void;
+      onError?: (message: string, code?: import("../lib/fresh-auth").FreshAuthCode | import("../lib/fresh-auth").DeliveryCode) => void;
       /** Local UI hook: the answer was accepted by the server. Never sent. */
       onSuccess?: () => void;
       /** Local UI hook: the phone's device prompt opened (true) or closed (false). Never sent. */
@@ -1867,7 +1906,7 @@ export type Action =
   | ({ type: "threadDeltaApplied"; bot: BotAnnouncement & { threadDelta: { messages: Message[]; activeLeafId?: string | null } }; intent: number } & HttpOrigin)
   | { type: "renameTask"; botId: string; threadId: string; title: string }
   | { type: "pinTask"; botId: string; threadId: string; pinned: boolean }
-  | { type: "deleteTask"; botId: string; threadId: string }
+  | { type: "deleteTask"; botId: string; threadId: string; nextThreadId?: string }
   /** `profile`: hire in one sentence (UX-L6A part 2, src/lib/hire-defaults.ts). The engine is still the server's birth rule. */
   | { type: "newBot"; profile?: { name: string; description: string }; onSettled?: (error: unknown | null) => void }
   | { type: "botComputerNotice"; botId: string; message: string }
@@ -4615,7 +4654,11 @@ export const initialState: AppState = {
 };
 
 // ── API client ─────────────────────────────────────────────────────────
-export async function api(path: string, init?: RequestInit, busyTries: number = busyRetriesFor(init?.method)): Promise<any> {
+/** Reads asked again while another responder answers, one second apart. */
+const RECONNECT_TRIES = 8;
+const RECONNECT_RETRY_MS = 1000;
+
+export async function api(path: string, init?: RequestInit, busyTries: number = busyRetriesFor(init?.method), reconnectTries: number = RECONNECT_TRIES): Promise<any> {
   // Resolve the desktop proof before the first call rather than racing it.
   // Already known in the packaged app (the preload answered synchronously),
   // so this costs a microtask; in dev it is one loopback fetch, memoized.
@@ -4655,6 +4698,17 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
     // redirect would hand the launch secret to whatever it points at.
     redirect: "error",
   });
+  if (!responderIsOurs(res)) {
+    // Not our engine answering (another program on this port, or a launch this page has no proof for): its words are never shown and its body
+    // never applied. A read asks again while main moves the window to the engine (electron/server-follow.mjs); a write is not repeated, because
+    // it may have reached an engine that did not answer as ours.
+    const method = (init?.method ?? "GET").toUpperCase();
+    if ((method === "GET" || method === "HEAD") && reconnectTries > 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, RECONNECT_RETRY_MS));
+      return api(path, init, busyTries, reconnectTries - 1);
+    }
+    throw Object.assign(new Error(RECONNECTING_SENTENCE), { status: 503, reconnecting: true, body: { error: RECONNECTING_SENTENCE } });
+  }
   const body = normalizeAudienceWire(await res.json().catch(() => ({})));
   // Not proof on its own: a harness route answers 401 for a provider it
   // could not sign in to. The door's /session decides (lib/session-check.ts).
@@ -4682,7 +4736,7 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
     // Only that answer: any other 503 is a real failure and reaches the caller on the first try.
     if (busyTries > 1 && isDatabaseBusyAnswer(error)) {
       await new Promise<void>((resolve) => setTimeout(resolve, busyRetryDelayMs(error)));
-      return api(path, init, busyTries - 1);
+      return api(path, init, busyTries - 1, reconnectTries);
     }
     throw error;
   }
@@ -4792,6 +4846,8 @@ export type AudienceRegion = { regionId?: string; itemRevision?: number; speechD
  *
  * Adapted narrowly from OpenMausBot 31777c6c1e417d487e314fad3c1353f16c5264bd.
  */
+/** The live bubble's line for an assistant region the server withheld whole (the same words as the stored row: server/owner-display.ts REPLY_WITHHELD, fix/1020-redact2-n2). */
+export const LIVE_REPLY_WITHHELD = "Murage held back this message because it may repeat something that must stay hidden.";
 /** About 30 flushes a second: each one re-renders every stream consumer. */
 const STREAM_FLUSH_MS = 33;
 export function createStreamDeltaBuffer(
@@ -4837,10 +4893,14 @@ export function createStreamDeltaBuffer(
         const suppressed = audience.speechDisposition === "none" && delta.includes("«redacted»");
         if (previous?.suppressed) { previous.revision = audience.itemRevision!; return; }
         if (!previous && own.size >= 64) return;
-        const text = audience.op === "omit" ? "«redacted»"
+        const raw = audience.op === "omit" ? "«redacted»"
           : audience.op === "replace" ? delta : (previous?.text ?? "") + delta;
+        // 1.0.20 redact2-1020: an assistant region that is only the marker paints the plain line, never a bare «redacted» bubble while the
+        // bot works (the stored row replaces it when the item completes); an inline mask inside other words is kept as the server sent it.
+        const withheld = kind === "assistant_text" && raw.includes("«redacted»") && !raw.replaceAll("«redacted»", "").trim();
+        const text = withheld ? LIVE_REPLY_WITHHELD : raw;
         own.set(audience.regionId, { revision: audience.itemRevision!, text, suppressed: suppressed || audience.op === "omit" });
-        if (audience.op === "replace" || audience.op === "omit") {
+        if (audience.op === "replace" || audience.op === "omit" || withheld) {
           delta = [...own.values()].map((entry) => entry.text).join("");
           replacement = true;
         }
@@ -4985,6 +5045,8 @@ export function BrowserStoreProvider({ botId, children }: { botId: string; child
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 
+let attentionStreamGeneration = 0;
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const [selections] = useState(() => createStoreSubscriptions(state));
@@ -4996,7 +5058,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { syncReplyContext(); }, [state.hydrated, state.selectedId, state.activeView, state.bots, state.groups]);
   // NOTIFY-EVERYWHERE-1019 S3: tell the router which conversation is on screen and whether this window has focus (changes only).
   useEffect(() => {
-    const report = () => reportAttentionVisible(visibleNotificationThread(stateRef.current), document.hasFocus() && document.visibilityState !== "hidden");
+    const report = () => reportAttentionVisible(visibleNotificationThread(stateRef.current), document.hasFocus() && document.visibilityState !== "hidden", undefined, notificationSoundsEnabled());
     report();
     window.addEventListener("focus", report);
     window.addEventListener("blur", report);
@@ -5616,46 +5678,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         }
         case "decideRequest": {
-          const requestHandle = action.card && "requestHandle" in action.card && typeof action.card.requestHandle === "string"
-            ? action.card.requestHandle : action.requestId;
-          // PROVISIONAL INTERFACE: existing task-grant and fresh-auth proof
-          // fields are transport metadata. The route must separate them before
-          // strict resolveDisplayAction validation, as it does legacy proofs.
-          const answer = /^p\.[A-Za-z0-9-]+$/.test(requestHandle) && (action.behavior === "allow" || action.behavior === "deny")
-            ? { ...permissionDisplayAction(requestHandle, action.behavior), ...(action.allowForTask ? { allowForTask: true } : {}) }
-            : {
-            requestId: action.requestId,
-            behavior: action.behavior,
-            message: action.message,
-            reviewedSha256: action.reviewedSha256,
-            ...(action.reviewDigest ? { reviewDigest: action.reviewDigest } : {}),
-            ...(action.seen ? { seen: action.seen } : {}),
-            ...(action.allowForTask ? { allowForTask: true } : {}),
-          };
           // SEC-006: an Allow from the phone may be met by a challenge; the
           // helper asks for Face ID and re-posts once. A deny or an answer is
           // never signed.
-          const { allowForTask, onTaskAdded } = action;
-          const respond = () =>
-            decideWithFreshAuth(
-              async (extra) => {
-                const body = await api(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) });
-                const highlevelId = highlevelReviewId(action.requestId);
-                if (highlevelId && (body?.outcome === "allowed-once" || body?.outcome === "rejected")) forgetHighLevelReview(highlevelId);
-                // UX-TRUST-MOMENTS-1012 1.3: the allowance this answer added, for the card's Undo
-                if (allowForTask && body?.outcome === "allowed-once") onTaskAdded?.(stringList(body.taskAdded));
-                return body;
-              },
-              {
-                threadId: action.threadId,
-                requestId: action.requestId,
-                decision: action.behavior === "allow" ? (action.allowForTask ? "allow-task" : "allow") : undefined,
-                card: action.card,
-                botName: action.botName,
-                onDevicePrompt: action.onDevicePrompt,
-              },
-              { onError: action.onError, onSuccess: action.onSuccess, showError },
-            );
+          const respond = () => postPermissionDecision(action, showError);
           // AMEND-13 Rule 81b (A13 C1 amendment): a remembered choice is
           // checked and staged BEFORE the answer releases the bot (it may ask
           // again within milliseconds), by the server, in the same request,
@@ -5799,12 +5825,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
           if (card?.requestId) {
             const behavior = card.skillRequest
-              ? skillRequestBehavior(action.answer)
+              ? skillRequestBehavior(action.answer, card.skillRequest, card.options)
               // a held Post in… card (server/venue-post-held.ts): Post it is the owner's yes, Don't post a no
               : card.requestId.startsWith("venue-post-") ? (action.answer === "Post it" ? "allow" : "deny")
               : action.answer === "Allow" ? "allow" : action.answer === "Deny" ? "deny" : "answer";
             const requestId = card.requestId;
-            const reviewedSha256 = behavior === "allow" && card.skillRequest ? reviewedSkillSha256(card.skillRequest) : undefined;
+            const reviewedSha256 = behavior === "allow" && card.skillRequest ? (reviewedSkillSha256(card.skillRequest) ?? privateSkillReviewDigest(card.skillRequest, action.messageId)) : undefined;
             // An Allow goes through fresh authentication like every other
             // phone Allow; a deny or an answer is posted as it always was.
             void decideWithFreshAuth(
@@ -5816,6 +5842,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   behavior,
                   message: behavior === "answer" ? action.answer : undefined,
                   reviewedSha256,
+                  reviewedVerdictHash:card.skillRequest?.preview ? card.skillRequest.verdictHash : card.skillRequest ? privateSkillReviewVerdict(card.skillRequest,action.messageId) : undefined,
                   ...extra,
                 }),
               }),
@@ -6131,7 +6158,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // record already moved to it and waits for its snapshot), not by intent: the server's deletion frame, which precedes this
             // answer, is the server's own intent and moves it.
             const intent = requestPage(rawDispatch, stateRef.current, action.botId);
-            api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
+            const next = action.nextThreadId === undefined ? "" : `?nextThreadId=${encodeURIComponent(action.nextThreadId)}`;
+            api(`/api/bots/${action.botId}/tasks/${action.threadId}${next}`, { method: "DELETE" })
               .then((r: any) => {
                 showDeletionNote(r);
                 const current = stateRef.current.bots.find(bot => bot.id === action.botId);
@@ -6451,7 +6479,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         key: "config",
         request: async () => {
           const config = configReply<ConfigStatus>(await api("/api/config"));
-          return () => { receiveLearningNoticeFrame({ kind: "config", learningFluxSent: config.learningFluxSent }); rawDispatch({ type: "configStatus", config }); };
+          return () => { rawDispatch({ type: "configStatus", config }); };
         },
       },
       {
@@ -6605,6 +6633,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let liveGen = 0;
     const pendingFrames: Array<{ frame: any; replayed: boolean; liveGen: number }> = [];
     let handleFrame: (frame: any, replayed?: boolean) => void;
+    let attentionGen = 0;
+    const forwardedAttention = new WeakSet<object>();
+    function forwardAttentionControl(frame: { kind: string; threadId?: unknown; requestId?: unknown; bot?: { id?: unknown } }) {
+      if (forwardedAttention.has(frame)) return;
+      if (frame.kind === "attention.settled") forwardAttentionSettled(frame);
+      else if (frame.kind === "config") forwardAttentionConfig();
+      else if (frame.kind === "bot") forwardAttentionBot(frame.bot?.id);
+      else return;
+      forwardedAttention.add(frame);
+    }
     // What is still owed for deleted conversations is asked for on every connect and reconnect: a notice raised while this
     // window was closed or disconnected is never broadcast again, and one that was settled meanwhile must go.
     const refreshOwed = () => {
@@ -6645,11 +6683,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // server replays what we missed when it can, and re-downloading every
     // transcript on a reconnect it already covered is pure waste.
     handleFrame = (frame, replayed = false) => {
-      receiveLearningNoticeFrame(frame);
+      forwardAttentionControl(frame);
       frame = normalizeAudienceWire(frame);
       if (frame.kind === "inbox.changed") { emitInboxChanged(frame.pollScale); return; }
-      if (frame.kind === "attention.settled") { forwardAttentionSettled(frame); return; }
-      if (frame.kind === "config") forwardAttentionConfig(); // a content-free signal; the handling below is unchanged
+      if (frame.kind === "attention.settled") return;
       // A memory the bot just kept (B5m): the open chat attaches its chip under the reply it came from.
       if (frame.kind === "learning.remembered" || frame.kind === "learning.improved") { window.dispatchEvent(new CustomEvent(REMEMBERED_EVENT, { detail: frame })); return; }
       // How many memories wait for the owner (counts only): the shared counts, the badge and the Memory screen move at once.
@@ -6709,10 +6746,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "message.patch":
           conversationCache()?.applyFrame(frame);
-          if (frame.message?.card?.answered || frame.message?.card?.dismissed) {
-            const reviewId = highlevelReviewId(frame.message.card.requestId);
-            if (reviewId) forgetHighLevelReview(reviewId);
-          }
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message, ...seqEnvelope(frame) });
           break;
         case "thread":
@@ -6762,7 +6795,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // the harness decided this was worth interrupting for; the toggle
         // in each bot's settings is what gates it, server-side
         case "notify":
-          if (frame.notification?.kind === "approval" && replayed) break;
+          if (dropReplayedNotify(frame.notification?.kind, replayed)) break;
           // A read-only start (boot tolerance D3): one fixed line in the owner's language, opens the Inbox where the same line and the restart button are.
           if (isDiskNotice(frame.notification)) {
             if (!replayed) showDiskNotice({ title: "Murage", body: t("ux.l2b.disk.readOnly") }, () => dispatch({ type: "showNeedsYou" }));
@@ -6823,6 +6856,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const event = frame.event;
           // Whether the thread's turn has ended keeps the mascot for the whole turn (turn-status.ts).
           noteTurnEvent(event);
+          // The star card counts days of use and whether the last turn went well; local only (lib/star-prompt.ts).
+          noteStarTurn(event, knownComputer(), replayed);
           if (event.type === "content.delta") {
             // Batch token deltas per animation frame (t3code-style): a fast
             // stream dispatches once per frame instead of once per token, so
@@ -6923,12 +6958,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         screens: phone ? false : undefined,
         taskDelta: true,
         cardsBeside: true,
-        onOpen: () => { rawDispatch({ type: "connected", value: true }); requestMemoryWake("RECONNECT"); refreshOwed(); deleteControl.current.kick(); },
+        onOpen: () => { attentionGen = ++attentionStreamGeneration; forwardAttentionResync(attentionGen); rawDispatch({ type: "connected", value: true }); requestMemoryWake("RECONNECT"); refreshOwed(); deleteControl.current.kick(); },
         onError: () => { chatsGenUnproven(); replyController.disconnect(); streamProof.live = false; rawDispatch({ type: "connected", value: false }); },
         onHello: (resumed, chatsGen) => { chatsGenHello(chatsGen); streamProof.live = resumed; },
         onConnection: identity => replyController.hello(identity.connectionId, identity.bootId),
         onCaughtUp: () => { syncReplyContext(hydrated); replyController.caughtUp(); },
         onSnapshotRequired: () => {
+          forwardAttentionResync(attentionGen);
           syncReplyContext(false);
           projectEvents.replayGap();
           clearTimeout(hydrationFallback);
@@ -6940,6 +6976,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return hydrate().then((loaded) => { if (loaded) streamProof.live = true; return loaded; });
         },
         onFrame: (frame, delivery) => {
+          forwardAttentionControl(frame);
           if (frame.kind === "chats.forgot") { if (frame.gen) chatsGenFrame(frame.gen, delivery?.replayed === true); return; }
           syncReplyContext(hydrated);
           replyController.receive(frame as unknown as Record<string, unknown>, delivery?.replayed === true);

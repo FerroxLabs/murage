@@ -36,7 +36,6 @@ const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
 const THREAD_ID = process.env.MURAGE_THREAD_ID ?? "";
 const token = () => turnSecret("MURAGE_CONNECTORS_TOKEN");
-const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 /** The upstream session is opened behind the local initialize answer; a call
  * that needs it waits this long at most, then goes without it. */
 const INITIALIZE_RELAY_TIMEOUT_MS = 10_000;
@@ -688,21 +687,13 @@ function initializeResult(id: unknown, protocolVersion: unknown): Json {
 class ConnectorApplicationRefusal extends Error {}
 
 async function readBounded(response: Response): Promise<string> {
-  const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > Math.min(MAX_RESPONSE_BYTES, 8 * 1024 * 1024)) throw new Error("connector response exceeded 20 MB");
   if (!response.body) return "";
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let size = 0;
   let text = "";
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    size += value.byteLength;
-    if (size > Math.min(MAX_RESPONSE_BYTES, 8 * 1024 * 1024)) {
-      await reader.cancel();
-      throw new Error("connector response exceeded 20 MB");
-    }
     text += decoder.decode(value, { stream: true });
   }
   return text + decoder.decode();

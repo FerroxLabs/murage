@@ -25,6 +25,7 @@ import {
   type LocalServerKind,
   type LocalToolTestOutcome,
 } from "../../shared/local-models.ts";
+import { codexProviderTableArgs } from "../flux-routing.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
 import { cachedLocalToolTest, readLocalServers, userLocalServer, type StoredLocalServer } from "../local-servers.ts";
 
@@ -233,14 +234,7 @@ export async function codexLocalProviderArgs(
   if (!(await checkLocalServerUrl(host.baseUrl)).ok) return [];
   const envKey = `MURAGE_LOCAL_${host.id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
   env[envKey] = hostApiKey(host, env);
-  return [
-    "-c",
-    `model_providers.${host.id}.name=${JSON.stringify(host.label)}`,
-    "-c",
-    `model_providers.${host.id}.base_url=${JSON.stringify(host.baseUrl)}`,
-    "-c",
-    `model_providers.${host.id}.env_key=${JSON.stringify(envKey)}`,
-  ];
+  return codexProviderTableArgs(host.id, { name: host.label, baseUrl: host.baseUrl, envKey });
 }
 
 function firstUnslothToken(row: unknown): string | null {

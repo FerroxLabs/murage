@@ -8,9 +8,9 @@ export function shouldMountLocalComputer({
   providerSupportsLocal: boolean;
 }): boolean {
   if (!providerSupportsLocal) return false;
-  if (requested === "local") return hostPlatform === "darwin" || hostPlatform === "linux";
-  // Preserve the established macOS Auto behavior. Linux local control is a
-  // beta and can only be selected explicitly per bot.
+  if (requested === "local") return hostPlatform === "darwin" || hostPlatform === "linux" || hostPlatform === "win32";
+  // Preserve the established macOS Auto behavior. Linux and Windows local
+  // control can only be selected explicitly per bot: Auto never reaches them.
   return requested === undefined && hostPlatform === "darwin";
 }
 
@@ -27,7 +27,7 @@ export function shouldMountLocalComputer({
  *
  *  "vm" and "browser" are their own destinations and never the person's
  *  desktop; "cloud" and "off" never are; an explicit "local" mounts it on
- *  macOS and Linux; and a bot that never chose a computer (`undefined`, the
+ *  macOS, Linux and Windows; and a bot that never chose a computer (`undefined`, the
  *  "Auto" destination) mounts it on macOS — the established macOS Auto
  *  behaviour. The platform matters: fold `undefined` in without it and a
  *  Windows or Linux owner's every default bot answers "yes". */

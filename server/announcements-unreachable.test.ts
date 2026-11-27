@@ -37,8 +37,32 @@ const consoleLines = () => output.reduce((sum, spy) => sum + spy.mock.calls.leng
 
 describe("announcements when the host is unreachable", () => {
   it("the production source asks only the fixed feed host, so the case below is the one users would hit", () => {
-    expect(new URL(source.feedUrl).hostname).toBe("updates.ferroxlabs.com");
+    expect(new URL(source.feedUrl).hostname).toBe("murage.ai");
+    expect(source.feedUrl).toBe("https://murage.ai/murage/announcements.json");
+    expect(source.signatureUrl).toBe("https://murage.ai/murage/announcements.json.sig");
   });
+
+  it("refresh() asks the network for exactly the murage.ai feed and its .sig, and nothing else", async () => {
+    const asked: string[] = [];
+    const fetchImpl = vi.fn(async (url: unknown) => { asked.push(String(url)); return new Response("", { status: 404 }); });
+    await service(fetchImpl as unknown as typeof fetch).refresh();
+    expect(asked.sort()).toEqual(["https://murage.ai/murage/announcements.json", "https://murage.ai/murage/announcements.json.sig"]);
+  });
+
+  for (const status of [404, 403, 500]) {
+    it(`a file that is missing or refused (HTTP ${status}) resolves false: no throw, no console line, no retry before the next tick`, async () => {
+      const fetchImpl = vi.fn(async () => new Response("not here", { status }));
+      const announcements = service(fetchImpl as unknown as typeof fetch);
+      await expect(announcements.refresh()).resolves.toBe(false);
+      await vi.advanceTimersByTimeAsync(ANNOUNCEMENT_REFRESH_MS - 1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(consoleLines()).toBe(0);
+      expect(unhandled).toEqual([]);
+      expect(announcements.visible("1.0.19")).toEqual([]);
+      const answer = await handleAnnouncementsApi({ method: "GET", path: "/api/announcements", version: "1.0.19", readBody: async () => null }, announcements);
+      expect(answer).toEqual({ status: 200, body: { show: true, items: [] } });
+    });
+  }
 
   for (const code of ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"]) {
     it(`a ${code} failure resolves false: no throw, no console line, one request each for the feed and signature, no retry`, async () => {

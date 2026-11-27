@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomBytes } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { mailboxSealed } from "./mailbox/custody.ts";
+import { MAILBOX_PLACEHOLDER } from "./mailbox/projection.ts";
+import { markerOnly, REPLY_WITHHELD } from "./owner-display.ts";
 import { readIndexState, stepUpRow, writeIndexState } from "./transcript-backfill.ts";
 import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 
@@ -140,9 +143,15 @@ const FILL = "thread_summary";
 export const SUMMARY_WALK_ROWS = 50;
 export interface ThreadSummary { last_at: number | null; last_role: string | null; last_from: string | null; snippet: string }
 
+export function redactThreadSummary(db: DatabaseSync, threadId: string): void {
+  db.prepare("UPDATE thread_summary SET snippet=?,last_from=NULL WHERE thread_id=? AND (snippet IS NOT ? OR last_from IS NOT NULL)")
+    .run(MAILBOX_PLACEHOLDER, threadId, MAILBOX_PLACEHOLDER);
+}
+
 /** Called only inside the message/branch/forget transaction. Never reads more
  * than 50 ancestors, including cards and forgotten lines. No branch fill. */
 export function syncThreadSummary(db: DatabaseSync, threadId: string): void {
+  if (mailboxSealed(db, threadId)) { redactThreadSummary(db, threadId); return; }
   const state = db.prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id = ?").get(threadId);
   let id = (state?.active_leaf_id || db.prepare("SELECT id FROM messages WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1").get(threadId)?.id) as string | undefined;
   if (!id) { db.prepare("DELETE FROM thread_summary WHERE thread_id = ?").run(threadId); return; }
@@ -166,7 +175,7 @@ export function syncThreadSummary(db: DatabaseSync, threadId: string): void {
       summary.last_role = typeof m.role === "string" ? m.role : null;
       const from = m.from as { name?: unknown } | undefined;
       summary.last_from = typeof from?.name === "string" ? from.name : null;
-      summary.snippet = [...m.text.replace(/\s+/g, " ").trim()].slice(0, 160).join("");
+      summary.snippet = [...previewSnippet(summary.last_role, m.text.replace(/\s+/g, " ").trim())].slice(0, 160).join("");
       break;
     }
     id = step.parent ?? undefined;
@@ -175,9 +184,23 @@ export function syncThreadSummary(db: DatabaseSync, threadId: string): void {
     .run(threadId, summary.last_at, summary.last_role, summary.last_from, summary.snippet);
 }
 
-/** Owner-route only. One primary-key probe; no transcript reads. */
+/** MAIN-RULING 2026-11-23T00:58:16Z (redact-marker): a bot line that is only the marker previews as the held-back sentence, the same
+ * mapping as the transcript (transcript-page.ts); applied on write and on read, so an already-saved summary repairs on load. */
+function previewSnippet(role: string | null, snippet: string): string {
+  return role === "bot" && markerOnly(snippet) ? REPLY_WITHHELD : snippet;
+}
+
+/** Read a stored preview on the supplied handle, including an offline staging database. */
 export function readThreadSummary(db: DatabaseSync, threadId: string): ThreadSummary | undefined {
-  return db.prepare("SELECT last_at,last_role,last_from,snippet FROM thread_summary WHERE thread_id=?").get(threadId) as unknown as ThreadSummary | undefined;
+  const row = db.prepare("SELECT last_at,last_role,last_from,snippet FROM thread_summary WHERE thread_id=?").get(threadId) as unknown as ThreadSummary | undefined;
+  return row && { ...row, snippet: previewSnippet(row.last_role, row.snippet) };
+}
+
+export function readGenericThreadSummary(db: DatabaseSync, threadId: string) {
+  const summary = readThreadSummary(db, threadId);
+  return mailboxSealed(db, threadId)
+    ? { last_at: summary?.last_at ?? null, last_role: summary?.last_role ?? null, last_from: undefined, snippet: MAILBOX_PLACEHOLDER }
+    : summary;
 }
 export function threadSummaryPending(db: DatabaseSync): boolean {
   return db.prepare("SELECT 1 FROM sqlite_schema WHERE name='thread_summary'").get() !== undefined && readIndexState(db, FILL).done !== 1;

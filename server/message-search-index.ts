@@ -9,7 +9,7 @@ import { windowsHidePrelude } from "../shared/win-hide-child-process.mjs";
 import { settleLegacySearchMerge } from "./legacy-search-merge.ts";
 import { MESSAGE_SEARCH_DDL } from "./message-tables.ts";
 import { SEARCH_INDEX_WORKER_SOURCE } from "./search-index-worker.ts";
-import { ioBudget } from "./io-budget.ts";
+import { ioBudget, SEARCH_SEED_SOURCE } from "./io-budget.ts";
 import { ownerFirst } from "./owner-first.ts";
 import { isDatabaseBusy, writersHeldForIndexBuild } from "./db-busy.ts";
 import { assertWalWriteAdmission, walMaintenanceCounters, scrubWalAfterDelete } from "./wal-maintenance.ts";
@@ -26,6 +26,7 @@ export const IDLE_PRUNE_ROWS = 64;
 export const RETIRE_CHUNK_BYTES = 256 * 1024;
 export const PENDING_MAX = 2_000;
 export const SEARCH_RECOVERY_CONSECUTIVE = 8;
+export const SEARCH_ADMISSION_BACKOFF_CAP_MS = 30_000;
 export const SEARCH_RECOVERY_ATTEMPTS = SEARCH_RECOVERY_CONSECUTIVE;
 export const SEARCH_RECOVERY_WINDOW_MS = 24 * 3600_000;
 export const SEARCH_RECOVERY_WINDOW_MAX = 12;
@@ -36,6 +37,13 @@ export function scrubDelay(n: number): number {
 }
 export const SCRUB_BACKOFF_BASE_MS = scrubDelay(1);
 export const SCRUB_BACKOFF_CAP_MS = scrubDelay(50);
+/** Background write rate of the search index (rebuild, merges, catch-up): a step that wrote N bytes waits N / rate before the next.
+ * Owner start-up on a reset index re-indexed every message at 4-11 GB/min; the bar is under 1 GB/min for the whole process. */
+export const SEARCH_WRITE_BYTES_PER_MIN = 256 * 1048576;
+export function searchPacedDelay(bytes: unknown): number {
+  const n = Number(bytes);
+  return Number.isFinite(n) && n > 0 ? Math.max(10, Math.ceil(n * 60_000 / SEARCH_WRITE_BYTES_PER_MIN)) : 10;
+}
 export function searchRetryDelay(n: number): number { return Math.max(10, Math.min(SCRUB_BACKOFF_CAP_MS, n)); }
 export { MESSAGE_SEARCH_DDL };
 export function intentCount(db: DatabaseSync): number {
@@ -45,7 +53,9 @@ export function intentCount(db: DatabaseSync): number {
 export function searchDbPath(dir: string): string { return join(dir, SEARCH_FILES[0]); }
 export function openSearchIndex(dir: string): DatabaseSync { return new DatabaseSync(searchDbPath(dir), { readOnly: true }); }
 type RecoveryState = "HEALTHY" | "RECOVERING" | "DEFERRED" | "THROTTLED" | "PARKED";
-interface Recovery { state: RecoveryState; consecutive: number; cycleStarts: number[]; markerSeq?: number }
+interface Recovery { state: RecoveryState; consecutive: number; cycleStarts: number[]; markerSeq?: number; refusals?: number }
+// Admission refusals (a WAL over its admission size) and busy writer locks never consume a reset cycle, so they back off on their own
+// count: 100 ms doubling to SEARCH_ADMISSION_BACKOFF_CAP_MS (declared once, above).
 export function recovery(db: DatabaseSync): { state: RecoveryState; consecutive: number; windowCount: number } {
   const current = runs.get(db)?.recovery;
   return { state: current?.state ?? "HEALTHY", consecutive: current?.consecutive ?? 0,
@@ -86,6 +96,7 @@ export function mergeMessageSearchIndex(_db: DatabaseSync): void { /* worker deb
 /** Retire the inherited owner atomically. Once the replacement worker proves
  * its backfill complete, idle passes erase the inert shadows and drop them. */
 export function settleInheritedSearchMerge(db: DatabaseSync, _firstOpen: boolean): void {
+  forgetSearchRetirementProbe(db);
   if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='messages_fts' AND type='table'").get()) return;
   // A pre-worker handle has no intent queue. Keep its legacy compatibility
   // behavior; current startup creates the queue before calling this function.
@@ -164,7 +175,8 @@ interface SearchRun {
   db: DatabaseSync; file: string; token: string; worker: Worker; reader: DatabaseSync | null;
   indexId: string | null; cache: Cache | null; stopped: boolean; exited: Promise<void>;
   recovery: Recovery; resetMarker?: { seq: number; nonce: string };
-  inflight: boolean; scrubTimer?: boolean; nudged?: boolean; requestedThrough?: number; ioState?: RecoveryState; timer?: ReturnType<typeof setTimeout>; firstDeferredAt?: number;
+  pruneHold?: { until: number; refusals: number };
+  inflight: boolean; pruned?: { indexId: string; applied: number; more: boolean }; scrubTimer?: boolean; parked?: boolean; nudged?: boolean; requestedThrough?: number; ioState?: RecoveryState; timer?: ReturnType<typeof setTimeout>; firstDeferredAt?: number;
 }
 const runs = new WeakMap<DatabaseSync, SearchRun>();
 const live = new Set<SearchRun>();
@@ -206,12 +218,17 @@ function nudge(db: DatabaseSync, seq: number): void {
   if (run.timer && run.scrubTimer) {
     clearTimeout(run.timer); run.timer = undefined;
     schedule(run, 10);
+  } else if (run.parked && !run.timer && !run.inflight) {
+    // 1.0.22 idle burn: a parked step (an idle reply that owed nothing) wakes on the write
+    schedule(run, 10);
   }
 }
 function schedule(run: SearchRun, delay = 25, scrubTimer = false): void {
   if (run.stopped || run.timer || !["HEALTHY", "RECOVERING"].includes(run.recovery.state)) return;
-  run.scrubTimer = scrubTimer;
-  run.timer = setTimeout(() => {
+  run.scrubTimer = scrubTimer; run.parked = false;
+  // bgstarve 1.0.22: an append made inside a background slice (a phone delivery's card) nudges this timer; it must not carry that slice's
+  // io-budget source into every later step (Node hands the store on to the timer and to the timers it starts).
+  run.timer = ioBudget.withoutSource(() => setTimeout(() => {
     run.timer = undefined; run.scrubTimer = false;
     searchIndexTestHooks.event?.({ type: "timer", token: run.token });
     if (run.stopped || run.inflight) return;
@@ -222,7 +239,7 @@ function schedule(run: SearchRun, delay = 25, scrubTimer = false): void {
       post: () => { run.nudged = false; run.inflight = true; run.worker.postMessage({ type: "step", token: run.token }); },
     });
     if (!sent) schedule(run, 100);
-  }, delay);
+  }, delay));
   run.timer.unref();
 }
 function closeReader(run: SearchRun): void {
@@ -261,6 +278,29 @@ function retryRecovery(run: SearchRun, retry: () => void): void {
   run.timer = setTimeout(() => { run.timer = undefined; if (!run.stopped) retry(); }, delay);
   run.timer.unref();
 }
+/** A busy writer lock (or a refused WAL gate, which is also busy) backs off 100 ms x 2^refusals (cap, +0..25% jitter) and never gives up. An owner-turn yield stays on retryRecovery (silent, spends no cycle).
+ * It warns on the first and each doubling (one summary line per backoff window), not once per attempt. No reset cycle is spent. */
+function admissionRefused(run: SearchRun, error: unknown): void {
+  const n = run.recovery.refusals ?? 0;
+  run.recovery.refusals = n + 1;
+  if ((n & (n - 1)) === 0) recoveryWarning(error);
+  run.recovery.state = "DEFERRED";
+  if (run.stopped || run.timer) return;
+  const base = Math.min(100 * 2 ** Math.min(n, 20), SEARCH_ADMISSION_BACKOFF_CAP_MS);
+  run.timer = setTimeout(() => { run.timer = undefined; if (!run.stopped) acknowledgeSearchReset(run); }, Math.round(base * (1 + Math.random() * 0.25)));
+  run.timer.unref();
+}
+/** Idle prune gate: a refused WAL gate holds the prune off (250 ms doubling to the cap) instead of retrying on every idle reply. */
+function pruneAdmitted(run: SearchRun, file: string): boolean {
+  try { assertWalWriteAdmission(file); } catch (refused) {
+    const n = run.pruneHold?.refusals ?? 0;
+    run.pruneHold = { until: searchIndexTestHooks.now() + Math.min(250 * 2 ** n, SEARCH_ADMISSION_BACKOFF_CAP_MS), refusals: n + 1 };
+    if ((n & (n - 1)) === 0) recoveryWarning(refused);
+    return false;
+  }
+  run.pruneHold = undefined;
+  return true;
+}
 function acknowledgeSearchReset(run: SearchRun): void {
   if (run.stopped || (!run.ioState && !recoveryBudget(run))) return;
   const { db } = run;
@@ -275,7 +315,7 @@ function acknowledgeSearchReset(run: SearchRun): void {
     setBusy(db,Math.min(priorBusy,BACKGROUND_BUSY_MS));
     // A single retained marker serves every retry until ready. Admission refusal
     // and failed marker transactions do not consume a reset cycle.
-    assertWalWriteAdmission(run.file);
+    try { assertWalWriteAdmission(run.file); } catch (refused) { admissionRefused(run, refused); return; }
     if (!run.resetMarker) {
       db.exec("BEGIN IMMEDIATE"); began = true;
       const n = nonce();
@@ -283,6 +323,7 @@ function acknowledgeSearchReset(run: SearchRun): void {
       db.exec("COMMIT"); began = false;
       run.resetMarker = { seq: Number(inserted.lastInsertRowid), nonce: String(n) };
     }
+    run.recovery.refusals = 0;
     if (run.ioState) { run.recovery.state = run.ioState; run.ioState = undefined; }
     run.recovery.consecutive++;
     run.recovery.cycleStarts.push(searchIndexTestHooks.now());
@@ -292,6 +333,7 @@ function acknowledgeSearchReset(run: SearchRun): void {
     run.worker.postMessage({ type: "reset", token: run.token, marker: run.resetMarker });
   } catch (error) {
     if (began) try { db.exec("ROLLBACK"); } catch { /* keep the original failure */ }
+    if (isDatabaseBusy(error)) { admissionRefused(run, error); return; }
     recoveryWarning(error);
     if (storageFull(error)) {
       throttleStorage(run, () => acknowledgeSearchReset(run), 1000); return;
@@ -383,7 +425,8 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
   const run: SearchRun = { db, file, token, worker, reader: null, indexId: null, cache: null, stopped: false, inflight: true, recovery: { state: "HEALTHY", consecutive: 0, cycleStarts: [] },
     exited: new Promise<void>(resolve => { exited = resolve; }) };
   runs.set(db, run); live.add(run); sessions.add(run);
-  worker.on("message", (event: { type: string; token: string; index_id?: string; worked?: boolean; rebuilding?: boolean; applied?: number; retryInMs?: number; operation?: string; message?: string }) => {
+  // bgstarve 1.0.22: the worker's port keeps the io-budget store of whoever started it; its replies are nobody's background slice.
+  worker.on("message", (event: { type: string; token: string; index_id?: string; worked?: boolean; rebuilding?: boolean; applied?: number; retryInMs?: number; bytes?: number; operation?: string; message?: string }) => ioBudget.withoutSource(() => {
     if (event.token !== token || run.stopped || runs.get(db) !== run) return;
     searchIndexTestHooks.event?.(event);
     if ((event.type === "ready" || event.type === "stepped") && run.ioState) {
@@ -406,6 +449,11 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
       openSearchReader(run, String(event.index_id));
     } else if (event.type === "stepped") {
       run.inflight = false;
+      // cause18e: the first index of the messages a store already holds is charged to its own named seed source (io-budget.ts
+      // IO_SEED_BUDGETS). The worker writes search.db on its own connection, so until now these bytes had no name and the watchdog's line
+      // blamed whatever statement the main thread ran most (`writing 65.0 MB/min ... source: INSERT INTO messages`). Only while the worker
+      // says the index is still building; a built index's own steps (one message at a time) are judged as before.
+      if (event.rebuilding === true && event.worked && Number(event.bytes) > 0) ioBudget.noteBytes(SEARCH_SEED_SOURCE, Number(event.bytes));
       // The same worker's token-bound reply follows its committed step. Keep
       // that conservative watermark until its next acknowledgement or reset;
       // owner writes must not query search.db when a wall-clock cache expires.
@@ -421,12 +469,12 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
         run.recovery.markerSeq = undefined;
       }
       // Pruning is idle admitted and never paid by a small owner commit.
+      let settled = false;
       try {
         if (!event.worked && !db.isTransaction && !searchIndexTestHooks.fence() && ioBudget.deferredForMs("search-index") === 0 &&
-            ownerFirst.admit("search-index-prune").admitted) {
-          assertWalWriteAdmission(file);
+            (run.pruneHold?.until ?? 0) <= searchIndexTestHooks.now() && ownerFirst.admit("search-index-prune").admitted && pruneAdmitted(run, file)) {
           ioBudget.withSource("search-index", () => {
-          pruneMessageSearchIntents(db, IDLE_PRUNE_ROWS);
+          pruneAppliedIntents(db, run);
           // A ready event alone only proves an empty index. An idle completed
           // step proves the replacement backfill before any inherited bytes go.
           if (event.rebuilding === false && run.reader && searchRetirementPending(db)) {
@@ -436,13 +484,19 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
               if (retired.complete) void scrubWalAfterDelete().catch(recoveryWarning);
             } finally { setBusy(db, DEFAULT_BUSY_MS); }
           }
+          // nothing left on the main side: the index is built, nothing retired is pending (remembered answer), no full prune batch is left
+          settled = event.rebuilding === false && !!run.reader && !!run.pruned && !run.pruned.more && run.recovery.state === "HEALTHY" && !searchRetirementPending(db);
           });
         }
       } catch (error) { recoveryWarning(error); }
-      schedule(run, event.worked || run.nudged ? 10 : searchRetryDelay(event.retryInMs ?? 250),
+      // 1.0.22 idle burn (HIDDEN-COST row 7): an idle reply that owes nothing parks the step (no timer at all) until an append nudges it.
+      // It used to come back every 250 ms (down to 10 ms) forever: a prune check and a retirement probe each time, x1117 a minute idle.
+      if (settled && !event.worked && !run.nudged && event.retryInMs === undefined && run.requestedThrough === undefined) { run.parked = true; return; }
+      // A step that wrote waits out its measured bytes at the search write rate; an owner append (nudge) never waits behind a rebuild's pacing.
+      schedule(run, run.nudged ? 10 : event.worked ? searchPacedDelay(event.bytes) : searchRetryDelay(event.retryInMs ?? 250),
         !event.worked && !run.nudged && event.retryInMs !== undefined);
     }
-  });
+  }));
   worker.on("error", error => { console.warn("[message-search] worker stopped:", error instanceof Error ? error.message : String(error)); });
   worker.on("exit", () => {
     closeReader(run); live.delete(run); exited();
@@ -460,9 +514,23 @@ export function startSearchIndex(db: DatabaseSync, file: string): void {
     }
   });
 }
-export function pruneMessageSearchIntents(db: DatabaseSync, count = PRUNE_PER_COMMIT): void {
+/** bgstarve 1.0.22 (field: "DELETE FROM search_intents ..." x154 a minute on an idle app, one per idle reply of the worker, each a write
+ * statement that found nothing): the idle batch runs only while it is owed. It is owed when the worker's applied watermark has moved past
+ * the one the last batch pruned to, or when the last batch was full (more applied rows may be left). An idle index costs no statement. */
+function pruneAppliedIntents(db: DatabaseSync, run: SearchRun): void {
+  const applied = run.cache?.indexId === run.indexId ? run.cache!.applied : undefined;
+  if (applied !== undefined && run.pruned && run.pruned.indexId === run.indexId && !run.pruned.more && applied <= run.pruned.applied) return;
+  const removed = pruneMessageSearchIntents(db, IDLE_PRUNE_ROWS);
+  const now = run.cache?.indexId === run.indexId ? run.cache!.applied : undefined;
+  run.pruned = removed === undefined || now === undefined || !run.indexId ? undefined : { indexId: run.indexId, applied: now, more: removed >= IDLE_PRUNE_ROWS };
+}
+/** Returns the rows removed, or undefined when no prune ran. The per-commit prune (the default count) is the owner's: a commit made by a
+ * background slice (a phone delivery's card under "push-delivery") leaves its rows to the worker's idle batch instead of paying a second
+ * write statement inside its own slice (bgstarve 1.0.22). */
+export function pruneMessageSearchIntents(db: DatabaseSync, count = PRUNE_PER_COMMIT): number | undefined {
   const run = runs.get(db);
   if (!run?.reader || !run.indexId) return;
+  if (count < IDLE_PRUNE_ROWS && ioBudget.currentSource() === "push-delivery") return;
   // A cold generation verifies its reader once. Later progress comes from the
   // worker's committed acknowledgements, rather than an age-based owner read.
   if (!run.cache) {
@@ -472,7 +540,8 @@ export function pruneMessageSearchIntents(db: DatabaseSync, count = PRUNE_PER_CO
       run.cache = { indexId: String(row.id), applied: Number(row.seq) };
     } catch { run.cache = null; return; }
   }
-  if (run.cache.indexId === run.indexId) db.prepare(PRUNE_SQL).run(run.cache.applied, Math.min(count, IDLE_PRUNE_ROWS));
+  if (run.cache.indexId === run.indexId) return Number(db.prepare(PRUNE_SQL).run(run.cache.applied, Math.min(count, IDLE_PRUNE_ROWS)).changes);
+  return undefined;
 }
 export function messageSearchIndexReady(db: DatabaseSync): boolean { return !!runs.get(db)?.reader; }
 export function disableMessageSearchIndex(db: DatabaseSync, _error: unknown): void {
@@ -505,8 +574,20 @@ export function readMessageSearchCandidates(db: DatabaseSync, match: string, cap
   for (const row of pending) if (row.rowid !== null && Number(row.rowid) !== 0) rowids.push(Number(row.rowid));
   return { rowids: [...new Set(rowids)], partial };
 }
+/** bgstarve 1.0.22 (field: this probe x154 to x1471 a minute, a scan of the whole schema table each time, from every idle reply of the
+ * worker and every cleanup question): "nothing is retired" is remembered per connection for RETIREMENT_PROBE_TTL_MS. The inherited table
+ * appears only through settleInheritedSearchMerge and the legacy merge on this connection (both forget the answer); a table that arrives
+ * any other way is seen at the next probe after the TTL. "Pending" is never remembered: its drain asks after every pass. */
+export const RETIREMENT_PROBE_TTL_MS = 60_000;
+export const RETIREMENT_PROBE_SQL = "SELECT 1 FROM sqlite_schema WHERE name GLOB 'messages_fts_retired*' OR name='messages_fts' LIMIT 1";
+const retirementClear = new WeakMap<DatabaseSync, number>();
+export function forgetSearchRetirementProbe(db: DatabaseSync): void { retirementClear.delete(db); }
 export function searchRetirementPending(db: DatabaseSync): boolean {
-  return !!db.prepare("SELECT 1 FROM sqlite_schema WHERE name GLOB 'messages_fts_retired*' OR name='messages_fts' LIMIT 1").get();
+  const clearAt = retirementClear.get(db), now = performance.now();
+  if (clearAt !== undefined && now - clearAt < RETIREMENT_PROBE_TTL_MS) return false;
+  const pending = !!db.prepare(RETIREMENT_PROBE_SQL).get();
+  if (pending) retirementClear.delete(db); else retirementClear.set(db, now);
+  return pending;
 }
 export function searchCleanupPending(db: DatabaseSync): boolean {
   if (searchRetirementPending(db)) return true;

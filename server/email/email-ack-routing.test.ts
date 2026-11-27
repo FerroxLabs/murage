@@ -25,7 +25,8 @@ function chain(cloudEmailStore: boolean, epoch = 100, pendingCloudSave = true) {
   const cloud = createCloudEmailSaver(3, () => epoch, { onSaved });
   const cloudAck = vi.spyOn(cloud, "ack");
   const sink = vi.fn((message: unknown) => applyEmailShellMessage(desktop, message));
-  const bindings = { receiveComposioAdmission, cloudHome: cloudEmailStore, cloudEmailStore, cloudEmailSaver: cloud, cloudEmailAvailability: { receive: () => false }, cloudEmailSignin: undefined, emailShellSink: sink, earlyEmailShellMessages, isCloudEmailOwnerMessage, isEmailShellMessage };
+  const bindings = { receiveComposioAdmission, handleHostMessage: () => false, hostComputer: {}, // host-computer broker (1022 CUA Windows) is an unrelated private-port service: inert, never claims an email message
+     cloudHome: cloudEmailStore, cloudEmailStore, cloudEmailSaver: cloud, cloudEmailAvailability: { receive: () => false }, cloudEmailSignin: undefined, emailShellSink: sink, earlyEmailShellMessages, isCloudEmailOwnerMessage, isEmailShellMessage };
   const receive = new Function(...Object.keys(bindings), callback)(...Object.values(bindings)) as (event: { data: object }) => void;
   desktop.setBotKey("fixture", { token: "fixture-value", keyId: "key_desktop" });
   const save = pendingCloudSave ? cloud.message({ bots: { fixture: { token: "fixture-value", keyId: "key_cloud", label: "bot-email:fixture" } } }) : { epoch, gen: 3, rev: 1 };

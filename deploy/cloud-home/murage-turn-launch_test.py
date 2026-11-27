@@ -236,5 +236,28 @@ class FuigoNoSilentHangPins(unittest.TestCase):
             self.assertNotIn(name, env)
 
 
+class CodexConfigFluxRetryCap(unittest.TestCase):
+    """If the home refusal for Flux is ever lifted, the launcher's codex config must still carry both retry caps."""
+
+    def text(self, base):
+        route = {"provider": "murage_selected", "baseUrl": base, "label": "Selected provider"}
+        return launcher.codex_config_text({"route": route, "mcp": {}})
+
+    def test_flux_hosts_carry_both_caps(self):
+        for base in (PROD_BASE, STAGING_BASE, "https://API.FluxRouter.ai./v1/", "http://api.fluxrouter.ai/v1"):
+            with self.subTest(base=base):
+                text = self.text(base)
+                self.assertEqual(text.count("request_max_retries = 2\n"), 1)
+                self.assertEqual(text.count("stream_max_retries = 2\n"), 1)
+
+    def test_other_hosts_keep_codex_defaults(self):
+        for base in ("https://notfluxrouter.ai/v1", "https://fluxrouter.ai.example.com/v1", "https://example.com/v1"):
+            with self.subTest(base=base):
+                self.assertNotIn("_max_retries", self.text(base))
+
+    def test_no_route_has_no_caps(self):
+        self.assertNotIn("_max_retries", launcher.codex_config_text({"route": None, "mcp": {}}))
+
+
 if __name__ == "__main__":
     unittest.main()

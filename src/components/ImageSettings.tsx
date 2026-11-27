@@ -2,7 +2,7 @@ import { orderModels } from "../../shared/model-order";
 import { OrderedModelOptions } from "./OrderedModelOptions";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { IMAGE_GENERATION_REFERENCE_MAX } from "../../shared/media-assets";
-import { IMAGE_BUDGET_NOTES, ratioLabel, type ImageModelCapabilities, type SizeRule } from "../../shared/image-capabilities";
+import { IMAGE_BUDGET_NOTES, fluxImageModelLabel, ratioLabel, type ImageModelCapabilities, type SizeRule } from "../../shared/image-capabilities";
 import { t } from "@/lib/i18n";
 import { api } from "@/state/store";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
@@ -107,7 +107,8 @@ export function imageSizeRuleWords(rule: SizeRule): string {
     return rule.experimentalAbovePixels ? `${base} ${t("imageSettings.rule.experimental", { pixels: n(rule.experimentalAbovePixels) })}` : base;
   }
   if (rule.kind === "ratioTier") return t("imageSettings.rule.ratioTier", { ratios: rule.ratios.join(", "), tiers: rule.tiers.join(", ") });
-  return rule.sizes.length ? t("imageSettings.rule.list", { sizes: rule.sizes.join(", ") }) : t("imageSettings.rule.providerDefault");
+  // The card already says "Sizes:", so a list is just the sizes ("Sizes: Only these sizes: ..." read twice).
+  return rule.sizes.length ? `${rule.sizes.join(", ")}.` : t("imageSettings.rule.providerDefault");
 }
 const budgetNote = (note: string) => note === IMAGE_BUDGET_NOTES.notPublished ? t("imageSettings.limits.notPublished") : note === IMAGE_BUDGET_NOTES.tokens ? t("imageSettings.limits.tokens") : note;
 
@@ -201,11 +202,11 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
   return <section aria-labelledby="image-settings-title" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
     <h3 id="image-settings-title" className="text-[14px] font-medium text-ink">{t("imageSettings.heading")}</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.intro")}</p>
-    <div className="mt-3 flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
+    {snapshot && <div className="mt-3 flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
       <span id="image-settings-allow">{t("imageSettings.allow")}</span>
-      <Switch data-setting-control="image-settings-heading" aria-labelledby="image-settings-allow" checked={snapshot?.enabled ?? false} disabled={!snapshot || Boolean(busy) || (!snapshot.enabled && !usable)}
-        onClick={() => snapshot && onChange({ enabled: !snapshot.enabled })} className={focus} />
-    </div>
+      <Switch data-setting-control="image-settings-heading" aria-labelledby="image-settings-allow" checked={snapshot.enabled} disabled={Boolean(busy) || (!snapshot.enabled && !usable)}
+        onClick={() => onChange({ enabled: !snapshot.enabled })} className={focus} />
+    </div>}
     {snapshot?.connections.length === 0 ? <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.noConnections")}</p> : <>
       <label className="mt-3 block text-[13px] text-ink">{t("imageSettings.connection")}
         <select aria-label={t("imageSettings.connectionAria")} value={connectionId} disabled={!snapshot || Boolean(busy)} onChange={event => onChange({ connectionId: event.target.value })} className={select}>
@@ -216,7 +217,7 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
       <label className="mt-3 block text-[13px] text-ink">{t("imageSettings.model")}
         <select aria-label={t("imageSettings.model")} value={modelId} disabled={!catalog || Boolean(busy)} onChange={event => onChange({ connectionId, model: event.target.value })} className={select}>
           <option value="" disabled>{t("imageSettings.chooseModel")}</option>
-          {modelId && !model && <option value={modelId} disabled>{t("imageSettings.modelUnavailable", { model: modelId })}</option>}
+          {modelId && !model && <option value={modelId} disabled>{t("imageSettings.modelUnavailable", { model: fluxImageModelLabel(modelId) ?? modelId })}</option>}
           {catalog && <OrderedModelOptions rows={orderModels(catalog.models)} label={item => imageModelOptionLabel(item, catalog.defaultModel)} disabled={item => !item.generate || Boolean(item.disabledReason)} />}
         </select>
       </label>

@@ -1,3 +1,4 @@
+import { evidencePath } from '../../scripts/evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Actual provider transports plus S1 registration/automatic answer; only the
 // engines and filesystem are fixtures. No tool input is executed.
@@ -62,7 +63,7 @@ async function run(engine:Engine,changed:boolean,native:boolean,level:'full'|'un
   offs.push(instance.adapter.onEvent(event=>{if(event.type!=='request.opened')return;opened.push(event);const h=d.openRequest({kind:'engine',threadId:'t',requestId:event.requestId!});const outcome=d.decide(h,level==='full'?baseCard:baseRun);expect(outcome.kind).toBe(level==='full'?'card':'run');deliveries.push(outcome.kind==='card'?d.presentApproval(outcome.ref,{title:'Full access protected write',subtitle:'Fixture target'}):d.deliverRequest(h));}));
   await instance.adapter.sendTurn({threadId:'t',cwd:scratch,text:engine==='claude'?'__fixture_permission_tool__':'fake-only',routeAsks:true,stopLine:true,...(level==='unlimited'?{noLimits:true}:{}),permissionNow:()=>d.readTurnPolicy({threadId:'t',generation:'g'})!.permission});
   await recorder.until(event=>event.type==='request.opened');await Promise.all(deliveries);
-  const directory='evidence/nlsym-A4/provider-cwd';mkdirSync(directory,{recursive:true});
+  const directory=evidencePath('evidence/nlsym-A4/provider-cwd');mkdirSync(directory,{recursive:true});
   const first=opened[0] as Extract<RuntimeEvent,{type:'request.opened'}>|undefined;
   const exact=first?extractInspectedOperation({tool:first.toolCall?.name??first.tool??'',input:first.toolCall?.input,event:first} as any):undefined;
   writeFileSync(join(directory,`${process.env.NLSYM_PHASE??'GREEN'}-${engine}-${native?'native':'exec'}-${changed}${auto?'-auto':''}.json.gz`),gzipSync(JSON.stringify({engine,native,changed,level,crossed,exact,opened,frames,rawFrames,approvals:d.openApprovals('t'),events:recorder.events},null,2)));

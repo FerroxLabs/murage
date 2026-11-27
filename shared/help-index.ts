@@ -1125,6 +1125,45 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- A wide set of everyday improvements. Up to eight per-bot desktops, MCP tools that start from Windows command shims, remote MCP servers that get 30 seconds to list their tools, phone pairing that picks your real Wi-Fi or Ethernet address, chats that follow the newest message after you switch threads, routines that keep their detailed error, and settings files saved with a byte order mark all work as you would expect.\n- Every release is checked on Intel Macs. Each build now starts on a real Intel Mac and checks its WhatsApp connection before it is published."
   },
   {
+    "id": "changelog/v1-0-22#overview",
+    "title": "What changed in Murage 1.0.22",
+    "description": "Memory search that reaches further back, a quieter computer, and bots that keep answering through long days.",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "url": "https://murage.ai/docs/changelog/v1-0-22",
+    "text": "Murage 1.0.22 is out for Mac, Windows and Linux. Your computer stays calm while Murage works in the background, memory search reaches further back, and your bots keep answering through long days."
+  },
+  {
+    "id": "changelog/v1-0-22#new-in-1-0-22",
+    "title": "What changed in Murage 1.0.22",
+    "description": "Memory search that reaches further back, a quieter computer, and bots that keep answering through long days.",
+    "heading": "New in 1.0.22",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "url": "https://murage.ai/docs/changelog/v1-0-22#new-in-1-0-22",
+    "text": "- Memory search finds older memories. Ask for something you saved a while ago and your bot finds it, even in a very long history. The Memory page tells you when a search covered everything.\n- Faster startup. Murage gets to your chats sooner on every launch, with less work done up front.\n- Approve works the first time. The Approve button and one-tap answers in Needs you land on the first click, and a request that has ended is shown as ended.\n- Replies keep coming in long conversations. Even when a conversation grows large, your bots carry on and rebuild what they need so you still get your answer.\n- Bots with full access keep going.…"
+  },
+  {
+    "id": "changelog/v1-0-22#better-in-1-0-22",
+    "title": "What changed in Murage 1.0.22",
+    "description": "Memory search that reaches further back, a quieter computer, and bots that keep answering through long days.",
+    "heading": "Better in 1.0.22",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "url": "https://murage.ai/docs/changelog/v1-0-22#better-in-1-0-22",
+    "text": "- Quiet on your disk and processor. While you are away, Murage does very little background work, and the jobs that matter still run on time.\n- Background work rests when there is nothing to do. Murage's background checks wake only when there is something to look at, so your computer stays cool.\n- Your storage stays tidy. Old checkpoints and old upgrade copies are cleared on a sensible schedule, and restoring a checkpoint never touches files it did not save.\n- Lighter channels. Signal, sharing and Release cards do less work behind the scenes."
+  },
+  {
+    "id": "changelog/v1-0-22#how-to-update-in-1-0-22",
+    "title": "What changed in Murage 1.0.22",
+    "description": "Memory search that reaches further back, a quieter computer, and bots that keep answering through long days.",
+    "heading": "How to update in 1.0.22",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.22",
+    "url": "https://murage.ai/docs/changelog/v1-0-22#how-to-update-in-1-0-22",
+    "text": "Murage shows an update banner when 1.0.22 is ready, or choose Check for updates in Settings.\n- What's new: https://murage.ai/blog/whats-new-in-murage-1-0-22\n- Download: https://murage.ai/download\n- Changelog: https://murage.ai/changelog"
+  },
+  {
     "id": "changelog/v1-0-3#always-ask-in-1-0-3",
     "title": "What changed in Murage 1.0.3",
     "description": "Always ask reads commands before they run, apps get grants you control, approval cards reach your phone and calls, memory and rooms stay quick and private, and Murage comes with Fuigo 1.0.31.",
@@ -1629,7 +1668,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Computers → This computer",
     "where": "Murage docs → Computers → This computer",
     "url": "https://murage.ai/docs/computers/local-computer#ubuntu",
-    "text": "Local control works on Ubuntu 24.04 GNOME with Xorg, as a Beta. Open the Computer panel, press Enable local control (Beta) and let the Cua Driver checks finish. Every local action asks you first. On Wayland, local control stays off until its input protection is validated: sign out, choose Ubuntu on Xorg at the login screen, and This computer is ready to use. Chat, screen preview, Cloud and Local VM work on both."
+    "text": "Local control works on Ubuntu 24.04 GNOME with Xorg, as a Beta. Open the Computer panel, press Enable local control (Beta) and let the Cua Driver checks finish. At Ask, every local action asks you first; Auto, Full access and No limits act without asking, except destructive or sensitive actions, which still ask. On Wayland, local control stays off until its input protection is validated: sign out, choose Ubuntu on Xorg at the login screen, and This computer is ready to use. Chat, screen preview, Cloud and Local VM work on both."
   },
   {
     "id": "computers/local-computer#safety-model",
@@ -1755,9 +1794,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "heading": "HighLevel",
     "breadcrumb": "Murage docs → Connected apps",
-    "where": "Settings → Connected apps → HighLevel",
+    "where": "Settings → Connected apps",
     "url": "https://murage.ai/docs/connected-apps#highlevel",
-    "text": "Your bots can look things up in your HighLevel CRM. They can read it and cannot change anything in it. On this computer, open Settings → Connected apps → HighLevel and paste a private integration token (make one in HighLevel under Settings, Private Integrations). Enter your Location ID, select Check location, then Confirm. Then choose which bots can read that location. Murage keeps the token with your other saved keys and never shows it again. HighLevel opens only for a message you send a bot directly in its chat."
+    "text": "Connect HighLevel the same way as any other app: through Settings → Connected apps (Composio), or add your own HighLevel MCP server under Settings → Connected apps → Advanced → Connected tools details. Then turn on connected apps or that tool for each bot that should use it."
   },
   {
     "id": "connected-apps#disconnecting",
@@ -2252,9 +2291,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "The tools every bot has inside Murage, in plain words, such as murage_help, list_bots, ask_bot, delegate_bot, routines, skills, images, voice notes and project tools.",
     "heading": "Reading web pages",
     "breadcrumb": "Murage docs → Features → What bots can do for themselves",
-    "where": "Murage docs → Features → What bots can do for themselves",
+    "where": "Settings → Search, images and dictation → Web search service",
     "url": "https://murage.ai/docs/features/bot-tools#reading-web-pages",
-    "text": "web_read reads a complete web page with Murage. The full accepted text is saved once. Results contain at most 16,000 UTF-16 code units, a handle, total_length, next_offset and eof. Continue only when needed with the same handle and next_offset; no page is fetched again. Handles belong to this conversation and last one hour or until the reader restarts. Page text is untrusted data, never instructions."
+    "text": "web_read reads a complete web page with Murage. The owner can turn page reading off in Settings → Search, images and dictation → Web search service. Turning web search off also turns Murage page reading off. The full accepted text is saved once. Results contain at most 16,000 UTF-16 code units, a handle, total_length, next_offset and eof. Continue only when needed with the same handle and next_offset; no page is fetched again. Handles belong to this conversation and last one hour or until the reader restarts. Page text is untrusted data, never instructions."
   },
   {
     "id": "features/bot-tools#working-with-other-bots",
@@ -2825,16 +2864,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → General → Advanced → Start at login and run in the background\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/general/startup"
   },
   {
-    "id": "features/every-setting#general-advanced-send-usage-analytics",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "General, Advanced: Send usage analytics",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → General → Advanced → Send usage analytics",
-    "url": "https://murage.ai/docs/features/every-setting#general-advanced-send-usage-analytics",
-    "text": "Settings → General → Advanced → Send usage analytics\n\nAddress: murage://settings/app/general/analytics"
-  },
-  {
     "id": "features/every-setting#general-about-me-for-every-bot",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
@@ -2863,6 +2892,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Calls → Calls",
     "url": "https://murage.ai/docs/features/every-setting#calls-calls",
     "text": "Settings → Calls → Calls\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/calls/calls"
+  },
+  {
+    "id": "features/every-setting#calls-phone-calls",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "Calls: Phone calls",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → Calls → Phone calls",
+    "url": "https://murage.ai/docs/features/every-setting#calls-phone-calls",
+    "text": "Settings → Calls → Phone calls\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/connections/phone-calls"
   },
   {
     "id": "features/every-setting#how-every-bot-behaves-advanced-show-tool-calls-in-the-conversation",
@@ -2932,17 +2971,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Every setting",
     "where": "Settings → Skills → Teach a skill",
     "url": "https://murage.ai/docs/features/every-setting#skills-teach-a-skill",
-    "text": "Settings → Skills → Teach a skill\n\nOn the computer running Murage.\n\nWhen it is off: Off. Turn it on to let bots learn a skill from a recording or /learn.\n\nAddress: murage://settings/app/skills/recorder"
-  },
-  {
-    "id": "features/every-setting#skills-advanced-voice-transcription-key",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Skills, Advanced: Voice transcription key",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Skills → Advanced → Voice transcription key",
-    "url": "https://murage.ai/docs/features/every-setting#skills-advanced-voice-transcription-key",
-    "text": "Settings → Skills → Advanced → Voice transcription key\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/voice-key"
+    "text": "Settings → Skills → Teach a skill\n\nOn the computer running Murage.\n\nWhen it is off: Off. Turn it on to let bots learn a skill from a recording or from chat.\n\nAddress: murage://settings/app/skills/recorder"
   },
   {
     "id": "features/every-setting#skills-skills-library-and-import",
@@ -3253,26 +3282,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Connected apps → Bot email",
     "url": "https://murage.ai/docs/features/every-setting#connected-apps-bot-email",
     "text": "Settings → Connected apps → Bot email\n\nOn the computer running Murage.\n\nWhen it is off: Needs a Flux Router account with email on. Ask your Chief to set it up, or open Flux Router.\n\nAddress: murage://settings/app/connections/bot-email"
-  },
-  {
-    "id": "features/every-setting#connected-apps-highlevel",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Connected apps: HighLevel",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Connected apps → HighLevel",
-    "url": "https://murage.ai/docs/features/every-setting#connected-apps-highlevel",
-    "text": "Settings → Connected apps → HighLevel\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/connections/highlevel"
-  },
-  {
-    "id": "features/every-setting#connected-apps-phone-calls",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Connected apps: Phone calls",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Connected apps → Phone calls",
-    "url": "https://murage.ai/docs/features/every-setting#connected-apps-phone-calls",
-    "text": "Settings → Connected apps → Phone calls\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/connections/phone-calls"
   },
   {
     "id": "features/every-setting#connected-apps-advanced-connected-tools-details",
@@ -4555,17 +4564,17 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "features/phone-calls#phone-calls",
     "title": "Phone calls",
-    "description": "Let a bot phone a business for you, like booking a table, with your own Vapi account and number. Set up in Settings, Connected apps, Phone calls.",
+    "description": "Let a bot phone a business for you, like booking a table, with your own Vapi account and number. Set up in Settings, Calls, Phone calls.",
     "heading": "Phone calls",
     "breadcrumb": "Murage docs → Features → Phone calls",
-    "where": "Settings → Connected apps → Phone calls",
+    "where": "Settings → Calls → Phone calls",
     "url": "https://murage.ai/docs/features/phone-calls#phone-calls",
-    "text": "A bot can phone a business for you, for example to book a table or ask about opening hours. The call uses your own Vapi voice account and your own number, so the cost shows on your Vapi bill. Phone calls need the Murage desktop app.\n\nSet it up in Settings → Connected apps → Phone calls:\n\n1. Make a Vapi account and add a card.\n2. Get a number that can call out. Vapi's no-cost numbers only take incoming calls, so buy a number at Twilio or another carrier and import it in Vapi.\n3. Copy your Vapi private key into the card and press Save key. The key stays on this computer and never reaches a bot.\n4. Press Find my numbers and pick the number your bot calls from.…"
+    "text": "A bot can phone a business for you, for example to book a table or ask about opening hours. The call uses your own Vapi voice account and your own number, so the cost shows on your Vapi bill. Phone calls need the Murage desktop app.\n\nOpen Settings → Calls → Phone calls and follow these steps.\n\n1. Make a Vapi account and add a card.\n2. Get a number that can call out. Vapi's no-cost numbers only take incoming calls, so buy a number at Twilio or another carrier and import it in Vapi.\n3. Copy your Vapi private key into the card and press Save key. The key stays on this computer and never reaches a bot.\n4. Press Find my numbers and pick the number your bot calls from.…"
   },
   {
     "id": "features/phone-calls#caller-settings",
     "title": "Phone calls",
-    "description": "Let a bot phone a business for you, like booking a table, with your own Vapi account and number. Set up in Settings, Connected apps, Phone calls.",
+    "description": "Let a bot phone a business for you, like booking a table, with your own Vapi account and number. Set up in Settings, Calls, Phone calls.",
     "heading": "Caller settings",
     "breadcrumb": "Murage docs → Features → Phone calls",
     "where": "Murage docs → Features → Phone calls",
@@ -4575,7 +4584,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "features/phone-calls#how-a-bot-places-a-call",
     "title": "Phone calls",
-    "description": "Let a bot phone a business for you, like booking a table, with your own Vapi account and number. Set up in Settings, Connected apps, Phone calls.",
+    "description": "Let a bot phone a business for you, like booking a table, with your own Vapi account and number. Set up in Settings, Calls, Phone calls.",
     "heading": "How a bot places a call",
     "breadcrumb": "Murage docs → Features → Phone calls",
     "where": "Murage docs → Features → Phone calls",
@@ -4585,7 +4594,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "features/phone-calls#results-and-transcripts",
     "title": "Phone calls",
-    "description": "Let a bot phone a business for you, like booking a table, with your own Vapi account and number. Set up in Settings, Connected apps, Phone calls.",
+    "description": "Let a bot phone a business for you, like booking a table, with your own Vapi account and number. Set up in Settings, Calls, Phone calls.",
     "heading": "Results and transcripts",
     "breadcrumb": "Murage docs → Features → Phone calls",
     "where": "Murage docs → Features → Phone calls",
@@ -5386,7 +5395,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Agent engines",
     "where": "Murage docs → Agent engines",
     "url": "https://murage.ai/docs/providers#default-models-and-saved-choices",
-    "text": "For a new choice, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0; a live Codex catalog or a configured Codex default takes precedence. Update an older engine if it does not offer the model.\n\nSaved model choices stay as they are, including Claude Sonnet 5 and GPT-5.6 Sol. Changing a recommendation does not migrate bots or conversations. Desktop Murage bundles Fuigo; Claude Code and Codex are installed separately. Cloud home includes Claude Code and Codex. A model's availability still depends on your engine and account."
+    "text": "For a new choice, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback recommends GPT-6.1 Sol, supported by the Codex 0.162.1 and Codex 0.167.0 catalogs; a live Codex catalog or a configured Codex default takes precedence. Update an older engine if it does not offer the model.\n\nSaved model choices stay as they are, including Claude Sonnet 5 and GPT-5.6 Sol. Changing a recommendation does not migrate bots or conversations. Desktop Murage bundles Fuigo; Claude Code and Codex are installed separately. Cloud home includes Claude Code and Codex. A model's availability still depends on your engine and account."
   },
   {
     "id": "providers/troubleshooting#cli-not-found",

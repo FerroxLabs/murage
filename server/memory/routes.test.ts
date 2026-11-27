@@ -425,8 +425,8 @@ it.each(["accepted", "record-revoked", "source-revoked", "retired"] as const)("a
     expect(serialized).toContain("Verified source note");
     expect(serialized).not.toContain('"refs"');
     stageResultProvenance(sink.writer,result);
-    if(scenario==="record-revoked")db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('record',?,1,1)").run(f.recordId);
-    if(scenario==="source-revoked")db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('source',?,1,1)").run(f.evidence[0].sourceId);
+    if(scenario==="record-revoked")db.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES('record',?,1,1)").run(f.recordId);
+    if(scenario==="source-revoked")db.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES('source',?,1,1)").run(f.evidence[0].sourceId);
     if(scenario==="retired")bound.replace();
     const release=()=>{sink.writer.writeHead(200,{"content-type":"application/json"});sink.writer.end(serialized);};
     if(scenario==="accepted") {

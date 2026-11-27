@@ -5,7 +5,7 @@
 // or writes a row: the index writer (index.ts, age-index.ts) asks these functions how much one step, unit, group or merge may take,
 // and the WAL core (index-wal.ts) checks afterwards that it took no more. Every figure is in bytes of write-ahead log unless named.
 
-import { helperEnforced } from "./helper-admission.ts";
+import { helperEnforced, helperReliefPlan } from "./helper-admission.ts";
 import { FTS_SEGMENT_LIMIT } from "./segment-limit.ts";
 
 const MiB = 1024 * 1024;
@@ -184,7 +184,7 @@ export function formGroup(units: readonly GroupUnit[], from: number, state: { L:
   for (let i = from; i < units.length && count < MEMW_GROUP_MAX_UNITS; i++) {
     const u = units[i];
     const nextCost = cost + u.cost;
-    let over = state.L + nextCost + s > c || (helperEnforced()&&nextCost>runtimeStepWalBytes(state.pageSize));
+    let over = state.L + nextCost + s > c || (helperEnforced()&&nextCost>runtimeStepWalBytes(state.pageSize)&&!(count===0&&helperReliefPlan()));
     for (const [t, n] of Object.entries(u.writes)) if ((writes.get(t) ?? 0) + n > MEMW_GROUP_MAX_WRITES) over = true;
     if (count && state.msPerCostByte * nextCost > MEMW_GROUP_AIM_MS) over = true;
     if (over) { if (!count) return { count: 0, cost: 0, fitsAlone: false }; break; }
@@ -289,7 +289,7 @@ export interface IndexWriter {
   readonly pageSize: number; readonly stopped: boolean;
   L(): number; admit(kind: AdmitKind, reserve: number): boolean;
   write<T>(kind: AdmitKind, reserve: number, body: (meta: (key: string, value: string) => void) => T): T;
-  checkOwed(): boolean; check(): Promise<void>; sealAndTruncate(): Promise<{ truncated: boolean }>; prepareExit(): Promise<void>;
+  checkOwed(): boolean; check(): Promise<void>; sealAndTruncate(): Promise<{ truncated: boolean }>; prepareExit(): Promise<import("./index-wal.ts").ExitSealOutcome>;
 }
 // 1.8 merges and tier --------------------------------------------------------------------------------------------------------------
 

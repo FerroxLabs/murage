@@ -105,7 +105,7 @@ function revocationFootprint() {
     scanJobs: n("SELECT count(*) AS n FROM memory_scope_bindings WHERE subject_type='system' AND subject_id=?", REVOCATION_JOB_SUBJECT),
     pending: n("SELECT count(*) AS n FROM memory_deny_pending") + n("SELECT count(*) AS n FROM memory_deny_pending_scope"),
     denySessions: n("SELECT count(*) AS n FROM memory_deny_session"),
-    denyMemory: n("SELECT count(*) AS n FROM memory_deny_memory"),
+    denyMemory: n("SELECT count(*) AS n FROM memory_deny_object"),
   };
 }
 

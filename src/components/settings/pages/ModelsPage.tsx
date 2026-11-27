@@ -1,8 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Settings > Models & engines (1.0.19 page 6 of 14; PAGES-A-astra.md). Engines first (each row is S1's EngineRow, read from
-// routeState), then local servers, Flux and the model connections, pasted keys, Claude accounts, the existing keys, the
+// Settings > Models & engines (1.0.19 page 6 of 14; PAGES-A-astra.md). Flux and the model connections first (1.0.21), then
+// the engines (each row is S1's EngineRow, read from routeState), then local servers, pasted keys, Claude accounts, the existing keys, the
 // catalogs, the new-bot effort (moved here from How every bot behaves; its id botDefaults.new-bot-effort is kept) and the
 // engine command lines. ModelsSettings is hosted once; each card is a slot it sends its piece to (PartsHost).
 import type { ReactNode } from "react";
@@ -34,6 +34,8 @@ export function modelsCards({ desktop, cloud = false }: Pick<SettingsPageProps, 
   });
   const slot = (name: string) => () => <PartSlot id={`models.${name}`} />;
   return [
+    // 1.0.21 (Sean, standing): Flux Router leads the page, then the engines with Fuigo first (EnginesSettings).
+    card("providers", "models-heading", slot("providers")),
     {
       ...card("engines", "engines-heading", () => (
         <>
@@ -45,7 +47,6 @@ export function modelsCards({ desktop, cloud = false }: Pick<SettingsPageProps, 
       ...(live === false ? { render: () => <Card title={t("settings.l4.engines.title")}><EnginesReadout /></Card> } : {}),
     },
     card("local-servers", "local-models-heading", slot("local-servers")),
-    card("providers", "models-heading", slot("providers")),
     card("paste-keys", "paste-any-keys", () => (
       <AddKeyCard />
     )),
@@ -67,11 +68,13 @@ function AddKeyCard() {
   return <AddKeyFrame simple={useSettingsMode() === "simple"}><PasteKeys /></AddKeyFrame>;
 }
 
-/** Simple puts the one weekly job first: "Add a key" leads, the rest keep their order. Advanced is the full list as built. */
+/** Flux Router leads in both modes (1.0.21, Sean standing). Simple then puts the one weekly job next: "Add a key" right
+ *  after Flux, the rest keep their order. Advanced is the full list as built. */
 export function modelsCardsFor(mode: SettingsPageProps["mode"], input: Pick<SettingsPageProps, "desktop"> & { cloud?: boolean }): SettingsPageCard[] {
   const cards = modelsCards(input);
   if (mode !== "simple") return cards;
-  return [...cards.filter((card) => card.id === "models.paste-keys"), ...cards.filter((card) => card.id !== "models.paste-keys")];
+  const lead = (id: string) => cards.filter((card) => card.id === id);
+  return [...lead("models.providers"), ...lead("models.paste-keys"), ...cards.filter((card) => card.id !== "models.providers" && card.id !== "models.paste-keys")];
 }
 
 export default function ModelsPage({ mode, desktop, cloud }: SettingsPageProps) {

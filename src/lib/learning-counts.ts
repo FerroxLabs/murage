@@ -42,8 +42,9 @@ export function overviewSentence(counts: Pick<LearningCounts, "lessons" | "memor
   return total === 1 ? t("learningCounts.overview.one" as LocaleKey) : t("learningCounts.overview.many" as LocaleKey, { count: total });
 }
 
-/** The badge text, or null for zero. */
-export const badgeText = (unseen: number): string | null => (unseen > 0 ? (unseen > 99 ? "99+" : String(unseen)) : null);
+/** The badge mark, or null for zero: a quiet dot, never a count that reads as work waiting for the owner (1.0.21). The
+ *  number stays in `badgeLabel`, the accessible name. */
+export const badgeText = (unseen: number): string | null => (unseen > 0 ? "•" : null);
 export const badgeLabel = (unseen: number): string | null => (unseen > 0 ? t("learningBadge.label" as LocaleKey, { count: unseen }) : null);
 
 // ── when the owner last looked ───────────────────────────────────────────

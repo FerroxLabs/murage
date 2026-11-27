@@ -142,13 +142,15 @@ describe("S1 admitted relay", () => {
     await x.create({ one: { command: process.execPath, args: [SPAWNED_PROXIES.memory], env: {} } });
     expect(x.spawn).toHaveBeenCalledOnce();
   });
+  // MAIN-RULING cause22-no-transport-caps: the 64-mount bound (mcp-mounts.ts) is deleted; 65 mounts are admitted and each one spawns.
   it("T-MOUNTS-64/65: all admission precedes every spawn", async () => {
     const x = fixture();
     await x.create(Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`m${i}`, custom])));
     expect(x.spawn).toHaveBeenCalledTimes(64);
     const y = fixture();
-    await expect(y.create(Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`m${i}`, custom])))).rejects.toThrow();
-    expect(y.spawn).not.toHaveBeenCalled(); expect(y.f.refusals).toBe(1);
+    const refused = await y.create(Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`m${i}`, custom]))).then(() => null, (error: unknown) => String(error));
+    expect([refused, y.f.refusals], "65 mounts are admitted").toEqual([null, 0]);
+    expect(y.spawn).toHaveBeenCalledTimes(65);
   });
   it("T-DRAFT: only a mount-free draft needs no admission", async () => {
     const { mountedTurn } = relayApi();
@@ -173,6 +175,57 @@ describe("S1 admitted relay", () => {
     const socket = await socketFor(relay); const input = once(x.children[0]!.stdin!, "data"); socket.write(request(1) + "\n"); await input;
     const duplicate = await socketFor(relay); await once(duplicate, "close"); expect(x.f.refusals).toBe(1);
     // The actual Python mount plan is covered by T-S1-BROKER-BIND.
+  });
+  it("T-SEALCAUSE-NAMES-MOUNT: every relay seal names the mount and the site, never a frame", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const x = fixture(); const relay = await x.create();
+      const socket = await socketFor(relay); const input = once(x.children[0]!.stdin!, "data");
+      socket.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { cursor: "fixture-marker" } }) + "\n"); await input;
+      const duplicate = await socketFor(relay); await once(duplicate, "close"); expect(x.f.refusals).toBe(1);
+      const lines = warning.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("[mount-relay]"));
+      expect(lines).toContain("[mount-relay] second engine connection for one mount seals the relay mount=one");
+      expect(lines.join("\n")).not.toMatch(/fixture-marker/);
+      warning.mockClear();
+      const y = fixture(); await y.create(); y.children[0]!.emit("exit", 1, null);
+      const exitLines = warning.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("[mount-relay]"));
+      expect(exitLines).toContain("[mount-relay] mount child exited code=1 signal=-");
+      expect(exitLines).toContain("[mount-relay] mount failure seals the relay mount=one cause=native");
+    } finally { warning.mockRestore(); }
+  });
+  it("MACMOUNTS-TERMINAL-REASON: a child's terminal notice is logged with its frame code and reason word, never frame text", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const x = fixture(); await x.create();
+      x.children[0]!.emit("message", { type: "turn-release-terminal", instanceId: "fixture", reason: "Tools-List:HTTP 500\n<b>",
+        frame: { jsonrpc: "2.0", id: null, error: { code: -32099, message: "fixture-marker", data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true } } } });
+      const lines = warning.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("[mount-relay]"));
+      expect(lines).toContain("[mount-relay] mount ipc message seals the relay type=turn-release-terminal keys=type,instanceId,reason,frame"
+        + " frame=memory_context_revoked reason=tools-list:http-500-b-");
+      expect(lines.join("\n")).not.toMatch(/fixture-marker|<b>/);
+    } finally { warning.mockRestore(); }
+  });
+  it.each([["terminal", "cause=ipc reason=tools-list:http-401"], ["disconnect", "cause=ipc reason=disconnect"]])(
+    "BROWSERROOT-DROP-REASON: a dropped browser mount (%s) names the child's refusing check and its stderr code words, never its text", async (signal, named) => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const x = fixture();
+      const relay = await x.create({ browser: { command: process.execPath, args: [SPAWNED_PROXIES.browser] } });
+      relay.attach(x.children[0]!, vi.fn());
+      const child = x.children[0]!;
+      (child.stderr as PassThrough).write("fixture-marker private page text\n[consuming] swallowed error site=proxy.fetch n=1 class=TypeError code=ECONNREFUSED fence=- message=\"fixture-marker\" at=a.js:1\n"
+        + "[consuming] swallowed error site=proxy.refuse n=1 class=Error code=- fence=- message=\"PROXY_RELEASE_REFUSED\" at=a.js:2\n");
+      await new Promise(resolve => setImmediate(resolve));
+      if (signal === "terminal") child.emit("message", { type: "turn-release-terminal", instanceId: x.envs[0]!.MURAGE_RELEASE_INSTANCE, reason: "tools-list:http-401",
+        frame: { jsonrpc: "2.0", id: null, error: { code: -32099, message: "fixture-marker", data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true } } } });
+      else child.emit("disconnect");
+      expect(relay.mountUnavailable("browser")).toBe(true);
+      child.emit("close", 1, null);
+      const lines = warning.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("[mount-relay]"));
+      expect(lines).toContain(`[mount-relay] mount unavailable mount="browser" ${named}`);
+      expect(lines).toContain('[mount-relay] dropped mount child closed mount="browser" code=1 signal=- stderr=proxy.fetch/typeerror/econnrefused,proxy.refuse/error/-');
+      expect(lines.join("\n")).not.toMatch(/fixture-marker|private page/);
+    } finally { warning.mockRestore(); }
   });
   it("T-CLOUD-CODEX-ONE-TICKET: equal env, distinct names, unknown name cannot refuse", async () => {
     const x = fixture(); const relay = await x.create({ one: custom, two: custom });
@@ -234,6 +287,38 @@ describe("S1 admitted relay", () => {
     await expect(relayApi().CliMountRelay.create(turn, { one: custom }, {}, next.cred, next.spawn))
       .rejects.toThrow("MOUNT_RELAY_STOP_UNCONFIRMED");
     expect(next.spawn).not.toHaveBeenCalled();
+  });
+  it("T-STOP-ENGINE-FIRST: a Stop ends the engine at once, while the mount servers still wait for their process list", async () => {
+    const x = fixture(); const relay = await x.create();
+    const cli = Object.assign(new EventEmitter(), { stdin: new PassThrough(), pid: undefined, exitCode: null, signalCode: null }) as unknown as ChildProcess;
+    let listAnswered!: () => void;
+    const ready = vi.spyOn(ChatMcpDescendants.prototype, "ready").mockReturnValue(new Promise<void>(resolve => { listAnswered = resolve; }));
+    vi.mocked(procs.killCliTree).mockClear();
+    try {
+      const finished = relay.finish(cli);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      // the process list has not answered: the engine is already ended, the mount server is not (its descendants are still to be read)
+      expect(vi.mocked(procs.killCliTree).mock.calls.map(([child]) => child)).toEqual([cli]);
+      listAnswered();
+      expect(await finished).toBe(true);
+      expect(vi.mocked(procs.killCliTree).mock.calls.map(([child]) => child)).toEqual([cli, x.children[0]]);
+    } finally { ready.mockRestore(); }
+  });
+  it("T-STOP-CANCEL-FIRST: a cancellation the caller writes in the same step as the stop goes out before the engine is ended", async () => {
+    const x = fixture(); const relay = await x.create();
+    // the engine's stdin records, in order, what reached it: a line written, its end, and the tree signal
+    const order: string[] = [];
+    const stdin = { write: (line: string) => { order.push(`write ${line.trim()}`); return true; }, end: () => { order.push("end"); } };
+    const cli = Object.assign(new EventEmitter(), { stdin, pid: undefined, exitCode: null, signalCode: null }) as unknown as ChildProcess;
+    vi.mocked(procs.killCliTree).mockClear();
+    vi.mocked(procs.killCliTree).mockImplementation(child => { if (child === cli) order.push("kill"); });
+    try {
+      // ACP interrupt: the relay's stop starts, then session/cancel is written, in one step
+      const finished = relay.finish(cli);
+      cli.stdin!.write("session/cancel\n");
+      expect(await finished).toBe(true);
+      expect(order).toEqual(["write session/cancel", "end", "kill"]);
+    } finally { vi.mocked(procs.killCliTree).mockReset(); }
   });
   it("T-TEARDOWN-DESCENDANT: CLI death alone cannot release mount quarantine", async () => {
     const x = fixture(); const relay = await x.create();
@@ -319,6 +404,49 @@ it.each(["request", "response"] as const)("R1 relay %s writer failure keeps its 
   } finally { writer.mockRestore(); }
 });
 
+it.each([false, true])("T-MOUNT-APPROVAL-BROKER: exit seals after release=%s", async released => {
+  const x = fixture();
+  x.turn.integrations = { custom: { muragebox: custom } };
+  const relay = await x.create({ muragebox: custom });
+  const failed = vi.fn(), notice = vi.fn();
+  relay.attach(x.children[0]!, failed);
+  if (released) {
+    const socket = await socketFor(relay, "muragebox");
+    const input = once(x.children[0]!.stdin!, "data");
+    socket.write(request(1, "initialize") + "\n");
+    await input;
+    const output = once(socket, "data");
+    x.children[0]!.stdout!.emit("data", Buffer.from('{"jsonrpc":"2.0","id":1,"result":{}}\n'));
+    expect((await output)[0].toString()).toContain('"id":1');
+  }
+  x.children[0]!.emit("exit", 1, null);
+  expect(failed).toHaveBeenCalledOnce();
+  expect(relay.mountUnavailable("muragebox")).toBe(false);
+  relay.reportUnavailable(() => ({ eventId: "notice", provider: "claudeAgent", threadId: x.turn.threadId,
+    createdAt: new Date().toISOString() }), notice);
+  expect(notice).not.toHaveBeenCalled();
+});
+it.each(["stdout", "terminal"])("T-MOUNT-ISSUANCE-REFUSAL: a parent denial survives %s before the first response", async signal => {
+  const x = fixture();
+  const relay = await x.create({ browser: { command: process.execPath, args: [SPAWNED_PROXIES.browser] } });
+  const failed = vi.fn();
+  relay.attach(x.children[0]!, failed);
+  const socket = await socketFor(relay, "browser");
+  const requestEntered = once(x.children[0]!.stdin!, "data");
+  socket.write(request(1, "initialize") + "\n");
+  await requestEntered;
+  const frame = '{"jsonrpc":"2.0","id":1,"result":{}}';
+  const env = x.envs[0]!;
+  const claim = x.caps.resolve(`Bearer ${env.MURAGE_RELEASE_TOKEN}`)!;
+  x.f.flip();
+  expect(() => x.authority.verdict(claim, { bytes: Buffer.byteLength(frame), descriptor: "proxy:browser:frame",
+    digest: frameDigest(frame), frame, instanceId: env.MURAGE_RELEASE_INSTANCE, requestId: 1, sequence: 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(x.f.refusals).toBe(1);
+  if (signal === "terminal") x.children[0]!.emit("message", { type: "turn-release-terminal", instanceId: env.MURAGE_RELEASE_INSTANCE });
+  else x.children[0]!.stdout!.emit("end");
+  expect(failed).toHaveBeenCalledOnce();
+  expect(relay.mountUnavailable("browser")).toBe(false);
+});
 it.each(["child-error", "child-exit", "stdout-end", "stdin-error", "socket-close"])("R1 native transport %s retires all authority without a ledger refusal", async event => {
   const x = fixture(), relay = await x.create({ one: custom, two: custom });
   const failed = vi.fn(), native = Object.assign(new Error("fixture transport loss"), { code: "EPIPE" });

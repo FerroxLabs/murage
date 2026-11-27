@@ -21,6 +21,11 @@ function render(state) {
       " last used this folder on a computer named " + (ownership.recordedHost || "(unknown)") +
       ". This computer is named " + (ownership.currentHost || "(unknown)") + ".";
   }
+  const words = state.context?.updateMessages || {};
+  byId("set-aside").hidden = !ownership || !state.setAsideAvailable;
+  byId("ownership-leave").hidden = !!ownership && !!state.setAsideAvailable;
+  if (words["set-aside-foreign-note"]) byId("set-aside-note").textContent = words["set-aside-foreign-note"];
+  if (words["set-aside-foreign"]) byId("set-aside-foreign").textContent = words["set-aside-foreign"];
   // Only the sentence is shown; the code stays in diagnostics and in a
   // data attribute for support tools.
   const error = state.error ? recoveryMessage(state) : "";
@@ -51,7 +56,7 @@ function render(state) {
     if (state.context?.updatePause) button.hidden = unavailable;
     if(action==="retry")button.textContent=(state.context?.backupMode||state.context?.updatePause)?"Return to workspace":state.context?.oneTimeStep?"Open Murage again":"Retry startup";
     const separate = ["choose-separate-backup", "restore-separate"].includes(action);
-    button.disabled = unavailable || pending || state.busy || (action === "capture-separate" ? !state.captureAvailable : separate ? !state.separateAvailable : !state.available && !["retry","diagnostics"].includes(action)) ||
+    button.disabled = unavailable || pending || state.busy || (action === "capture-separate" ? !state.captureAvailable : action === "set-aside-foreign" ? !state.setAsideAvailable : separate ? !state.separateAvailable : !state.available && !["retry","diagnostics"].includes(action)) ||
       (action.includes("encrypted")&&!state.encryptedAvailable)||(action==="restore-encrypted-new"&&!state.selection?.encrypted)||
       (action === "restore" && (!state.selection || state.selection.separate)) || (action === "restore-separate" && !state.selection?.separate) || (action === "activate" && !state.review);
   }

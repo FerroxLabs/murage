@@ -3,7 +3,7 @@ import * as relayApi from "../cli-mount-relay.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,7 +88,7 @@ it.each(names)(`${wrapped?"wrapped ":""}native Fuigo allows only this injected m
   expect(readFileSync(join(f.home, "config.toml"), "utf8")).toBe("# unchanged native settings\n");
 });
 
-it.each(["old-alias", "wrong-alias", "missing-meta", "wrong-version", "wrong-namespace", "missing-session", "question", "no-once", "ambiguous-option", "before-prompt", "other-engine", "no-integration", "routed", "unregistered-tool"])(`${wrapped?"wrapped ":""}retains ordinary owner permission handling for %s`, async scenario => {
+it.each(["old-alias", "wrong-alias", "missing-meta", "wrong-version", "wrong-namespace", "missing-session", "question", "no-once", "before-prompt", "other-engine", "no-integration", "routed", "unregistered-tool"])(`${wrapped?"wrapped ":""}retains ordinary owner permission handling for %s`, async scenario => {
   const f = await fixture(scenario, scenario === "unregistered-tool" ? "memory_delete" : "memory_search", wrapped), sent = await f.instance.adapter.sendTurn(f.turn);
   const opened = await f.recorder.until(event => event.type === "request.opened");
   if (opened.type !== "request.opened" || typeof opened.requestId !== "string") throw Error("missing request");
@@ -97,6 +97,23 @@ it.each(["old-alias", "wrong-alias", "missing-meta", "wrong-version", "wrong-nam
   const observed = JSON.parse(readFileSync(f.dump, "utf8"))[0];
   expect(observed.decisions[0].outcome).toEqual({ outcome: "selected", optionId: "deny" });
   if (scenario === "routed" || scenario === "other-engine") expect(observed.alias).toBe("murage-memory");
+});
+
+// MC63 ruling K2 (cl-eng-hermes-int2): "A permission request whose option ids are not unique, or whose allow and reject share
+// an id, is refused (no card)." ambiguous-option gives allow_always and allow_once the one id "standing": it used to fall back
+// to an owner card; it is now cancelled with no card and no option.
+it(`${wrapped?"wrapped ":""}cancels a permission request whose option ids are not unique: no card, no option (K2)`, async () => {
+  const f = await fixture("ambiguous-option", "memory_search", wrapped), sent = await f.instance.adapter.sendTurn(f.turn);
+  // A card, the refusal or the turn's end, whichever comes first: every wrong outcome fails at an assertion below, not at a timeout.
+  const refused = (event: { type: string; message?: string }) => event.type === "runtime.error" && String(event.message).includes("share an ID");
+  await f.recorder.until(event => event.type === "request.opened" || refused(event) || (event.type === "turn.completed" && event.turnId === sent.turnId));
+  expect(f.recorder.events.some(event => event.type === "request.opened")).toBe(false);
+  expect(f.recorder.events.filter(refused)).toHaveLength(1);
+  // The peer ends the turn once it has its reply; a refusal that never replied leaves it waiting, bounded here.
+  await Promise.race([f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId).catch(() => {}), new Promise(done => setTimeout(done, 5_000))]);
+  const decisions = existsSync(f.dump) ? JSON.parse(readFileSync(f.dump, "utf8"))[0].decisions : [];
+  expect(decisions).toEqual([{ outcome: { outcome: "cancelled" } }]);
+  expect(f.recorder.events.some(event => event.type === "turn.completed" && event.turnId === sent.turnId)).toBe(true);
 });
 
 it(`${wrapped?"wrapped ":""}refuses a permission request for another session with an error: never allowed, never shown to the owner`, async () => {
@@ -157,22 +174,23 @@ it(`${wrapped?"wrapped ":""}uses the same fresh alias through session/load then 
 it.each(["after-result", "after-cancel"])(`${wrapped?"wrapped ":""}never automatically grants a request %s`, async scenario => {
   const f = await fixture(scenario, "memory_search", wrapped);
   const readWire = () => readFileSync(join(NATIVE_DIR, `${f.threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
-  // Stop sends session/cancel and then, in the same turn of the event loop, kills the engine tree once every mount child's
-  // descendant probe is ready. The late request the peer sends on cancel must be read before that kill, so the kill is held
-  // (after Stop only) until the adapter has logged the request as received; a request never read keeps this held and fails the
-  // poll below, so the first assertion still proves the request was observed.
+  // Stop sends session/cancel and the mount relay ends the engine tree right after it (CliMountRelay.endEngine; since 1.0.21
+  // cause9 it no longer waits for the mount children's descendant probes, so holding ChatMcpDescendants.ready no longer holds
+  // it). The late request the peer sends on cancel must be read before that end, so the end is held (after Stop only) until
+  // the adapter has logged the request as received; a request never read keeps this held and fails the poll below, so the
+  // first assertion still proves the request was observed.
   let cancelSent = false;
-  const actualReady = ChatMcpDescendants.prototype.ready;
-  const ready = vi.spyOn(ChatMcpDescendants.prototype, "ready").mockImplementation(async function (this: ChatMcpDescendants) {
+  const actualEnd = relayApi.CliMountRelay.prototype.endEngine;
+  const end = vi.spyOn(relayApi.CliMountRelay.prototype, "endEngine").mockImplementation(async function (this: relayApi.CliMountRelay, cli) {
     if (cancelSent) await expect.poll(() => readWire().some(item => item.dir === "in" && item.msg?.id === "memory-permission")).toBe(true);
-    return actualReady.call(this);
+    return actualEnd.call(this, cli);
   });
   try {
     const sent = await f.instance.adapter.sendTurn(f.turn);
     if (scenario === "after-cancel") { await f.recorder.until(event => event.type === "content.delta"); cancelSent = true; await f.instance.adapter.interruptTurn(f.threadId, sent.turnId); }
     await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
     await f.instance.dispose();
-  } finally { ready.mockRestore(); }
+  } finally { end.mockRestore(); }
   const wire = readWire();
   expect(wire.some(item => item.dir === "in" && item.msg?.id === "memory-permission")).toBe(true);
   expect(wire.some(item => item.dir === "out" && item.msg?.id === "memory-permission" && item.msg?.result?.outcome?.optionId === "once")).toBe(false);

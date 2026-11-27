@@ -1,18 +1,19 @@
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import { deliverWipeGuardTerminal, wipeGuardTurnEnvironment } from './murage-exec-wipe.ts';
 import { wipeContextFor, wipeEnvironment } from '../wipe/context.ts';
 import { withHideInherit, stripNodeOptionsExceptHide } from "../../shared/win-hide-child-process.mjs";
-import { highlevelHandlerTools } from "../highlevel/engine-policy.ts";
 import { CLAUDE_NATIVE_SHELL_TOOLS } from './claude-tool-names.ts';
 import { HelperReadEvidence } from './helper-read-evidence.ts';
 import { complete_flag } from '../turn-settle.ts';
 import { authenticatedTurnWrittenScripts, registerRecoveryScriptRequest } from '../no-limits-wipe-scripts.ts';
 import { Duplex } from 'node:stream';
 import { markTurnOutside } from '../email/external-marks.ts';
+import { CLAUDE_UNUSABLE_TOOLS } from "./claude-unusable-tools.ts";
 import { registerBusyloopPayloadSite, fluxRouteFor, registerBusyloopRequestSite } from "../../shared/flux-route.ts";
 import { isTerminal, type Decision } from "../../shared/flux-busyloop.ts";
 import { gatewayBusyLine } from "../limit-continuation.ts";
-import { permissionReplyFits, PERMISSION_REPLY_TOO_LARGE } from '../permission-reply.ts';
-import { holdEnginePermissionReply, guardEngineRelease } from '../decision/provider-release.ts';
+import { permissionReplyFits, PERMISSION_REPLY_TOO_LARGE, OWNER_PERMISSION_REPLY_TOO_LARGE } from '../permission-reply.ts';
+import { settleOversizePermissionReply, guardEngineRelease } from '../decision/provider-release.ts';
 import { deliverNative, type NativeAskSlot } from './native-ask.ts';
 import { recordPostureAck } from './posture-tap.ts';
 import { RequestTransport } from './request-transport.ts';
@@ -55,6 +56,7 @@ import { cliFluxBudget } from "./cli-flux-budget.ts";
 import { nativeTurnModel } from "../default-engine.ts";
 import { botFolderOrThrow, BotFolderUnavailableError } from "../bot-folder.ts";
 import type { ExecEnv } from "../../shared/mount-identity.ts";
+import type { PhoneAskTurn } from "../phone-calls/contracts.ts";
 import { phoneAskLine } from "./phone-tool-schemas.ts";
 import { claudeModelExtras } from "./claude-model-extras.ts";
 import { oneShots } from "../engine-one-shots.ts";
@@ -176,13 +178,15 @@ import {
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 import { assertFinalEngineEnv, scrubFluxFromSignInEnv } from "../cloud-home/engine-flux-guard.ts";
-import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { createBoundedLineSplitter } from "./bounded-lines.ts";
+import { LINE_FITTED_NOTICE, OVERSIZE_FITTED_ASK_LINE } from "../owner-turn-caps.ts";
 import { registerIntake } from "../harness/intake.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "../permission-pipe.ts";
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
-import { engineClosedLine, mountNeverConnectedLine } from "./stop-copy.ts";
+import { REPLY_MEMORY_CHECK_FAILED } from "../../shared/memory-reply-copy.ts";
+import { engineClosedLine, mountStopCause, mountStoppedDetails, mountStoppedLine } from "./stop-copy.ts";
 import { createStopGate, GateStopped, type GateEntry, type Verdict } from "./stop-gate.ts";
 import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
@@ -217,7 +221,7 @@ export function claudeSignedIn(
   run: typeof execCli = execCli,
   leadArgs: string[] = [],
 ): Promise<boolean> {
-  return claudeAuthStatus(cli, env, run, leadArgs).then((status) => status.signedIn);
+  return claudeAuthStatus(cli, env, run, leadArgs).then((status) => status.signedIn === true);
 }
 
 /** What `auth status --json` said, with its failures kept apart from "signed out": a CLI that
@@ -225,7 +229,7 @@ export function claudeSignedIn(
  * lost login, and the snapshot must offer the update rather than a sign-in. `error` is the CLI's
  * own words (stderr or the spawn error) when it gave no status at all. */
 export interface ClaudeAuthStatus {
-  signedIn: boolean;
+  signedIn?: boolean;
   /** How the login is billed, from the CLI's own `authMethod`; absent when the CLI did not say or said something new. */
   billing?: "metered" | "subscription";
   refusal?: ClaudeLaunchRefusal;
@@ -252,9 +256,10 @@ export function claudeAuthStatus(
   return new Promise((resolve) => {
     run(cli, [...leadArgs, "auth", "status", "--json"], { timeout: 8000, maxBuffer:65536, env }, (error, stdout, stderr) => {
       try {
-        const status: unknown = registerBusyloopPayloadSite("read", JSON.parse(stdout));
-        if (typeof status === "object" && status !== null && "loggedIn" in status) {
-          const signedIn = status.loggedIn === true;
+        const killed = (error as { killed?: boolean } | null)?.killed;
+        const status: unknown = killed ? undefined : registerBusyloopPayloadSite("read", JSON.parse(stdout));
+        if (typeof status === "object" && status !== null && "loggedIn" in status && typeof status.loggedIn === "boolean") {
+          const signedIn = status.loggedIn;
           const billing = signedIn ? claudeBillingOf((status as { authMethod?: unknown }).authMethod) : undefined;
           resolve({ signedIn, ...(billing ? { billing } : {}) });
           return;
@@ -262,12 +267,12 @@ export function claudeAuthStatus(
       } catch { /* no status: read the failure below */ }
       const said = `${stderr ?? ""}\n${stdout ?? ""}`;
       const refusal = claudeLaunchRefusal(said);
-      if (refusal) resolve({ signedIn: false, refusal });
+      if (refusal) resolve({ refusal });
       // The exec buffer keeps stderr from its start (maxBuffer); it is redacted whole before the shown cut (acp/core.ts EngineStderrCapture).
       else {
         const truncated = (error as { stderrTruncated?: boolean } | null)?.stderrTruncated === true;
         const detail = engineStderrRedacted(String(stderr ?? ""), truncated).trim().slice(-300).trim();
-        resolve({ signedIn: false, error: detail || engineStderrRedacted(error?.message ?? "", false).trim().slice(-300).trim() || "auth status printed no status" });
+        resolve({ error: detail || engineStderrRedacted(error?.message ?? "", false).trim().slice(-300).trim() || "auth status printed no status" });
       }
     });
   });
@@ -751,7 +756,6 @@ export function claudeMountRecords(keys: readonly string[], connectorKey: string
  * (phone, browser, computer) gets none, and every one of its calls asks through the broker. */
 export function claudeOwnUnaskedTools(builtin: OwnBuiltin, emailMode?: string): string[] {
   const server = OWN_BUILTINS[builtin];
-  if (builtin === "highlevel") return highlevelHandlerTools.map(tool => `mcp__${server}__${tool}`);
   // the email tools only on a turn whose email mount listed them (dark launch: with no mode the list is the build without email)
   return OWN_UNASKED.filter((row) => row.mount === `own:${builtin}`)
     .flatMap((row) => row.tools.filter((tool) => ownToolListedOnTurn(tool, emailMode)).map((tool) => `mcp__${server}__${tool}`));
@@ -762,11 +766,11 @@ export function claudeOwnUnaskedTools(builtin: OwnBuiltin, emailMode?: string): 
 export const CLAUDE_BROKER_TOOLS = ["mcp__muragebox__approve", "mcp__muragebox__ask_user"] as const;
 
 /** One human-readable line for an ask — what the card subtitle shows. */
-function askSummary(ask: Ask): string {
+function askSummary(ask: Ask, phoneTurn?: PhoneAskTurn): string {
   const input = ask.input;
   if (ask.questions?.length) return ask.questions[0]!.question.slice(0, 300);
   if (!input) return "";
-  const phone = phoneAskLine(ask.tool, input as Record<string, unknown>);
+  const phone = phoneAskLine(ask.tool, input as Record<string, unknown>, phoneTurn);
   if (phone) return phone;
   if (typeof input.question === "string") return input.question.slice(0, 300);
   if (typeof input.command === "string") return approvalSummary(input.command);
@@ -944,7 +948,7 @@ export async function createPermissionBroker(opts: {
     const answer = (socket: import("node:net").Socket, value: unknown) => {
       if (connectionGeneration !== generation) return false;
       const serialized = JSON.stringify(value) + "\n";
-      return releaseNativeAnswer(answerBinding, "claude:broker", serialized, () => socket.write(serialized));
+      return releaseNativeAnswer(answerBinding, "claude:broker", serialized, () => NotModelRequest("Claude broker replies on the local socket to an existing hook request.", socket.write(serialized)));
     };
     /** CL1-5: a fenced local reply (or owner answer) is a recorded refusal on the turn (joined by dispatch generation), never swallowed.
      * The proxy only resolves on an answer or a closed connection, so the refused connection closes (fail-closed deny). */
@@ -966,13 +970,21 @@ export async function createPermissionBroker(opts: {
     // A native socket error (including a proxy exiting during Stop) is not
     // a retained-context lookup failure. The owning transport handles closure.
     conn.on("error", () => {});
-    // The ask proxy runs in the engine's process tree, so its socket is
-    // engine-controlled ingress too (A4). An oversized ask is never parsed:
-    // dropping the connection makes permission-proxy answer every ask on it
-    // with a deny.
+    // The ask proxy runs in the engine's process tree; its asks are framed
+    // by line with no size limit (MAIN-RULING cause22-no-transport-caps).
     const askLines = createBoundedLineSplitter({
       onLine: (line) => handleAskLine(line),
-      onOverflow: () => conn.destroy(),
+      // 1.0.21 group B (design3-fable B R1): an ask past the string limit is never shown on cut text: that one ask gets the
+      // oversize deny on this socket by its id (the proxy resolves only on an answer); never broker-unavailable.
+      onFit: (line) => {
+        if (connectionGeneration !== generation) return;
+        let msg: any;
+        try { msg = JSON.parse(line); } catch { return; }
+        if (!msg || typeof msg !== "object" || msg.t !== "ask" || msg.id === undefined || msg.id === null) return;
+        const kind = msg.kind === "question" ? "answer" : "deny";
+        try { answer(conn, { t: "answer", id: String(msg.id), behavior: kind, message: OVERSIZE_FITTED_ASK_LINE }); }
+        catch (error) { refusedReply(error, "claude.broker.fit"); }
+      },
     });
     conn.on("data", (chunk: Buffer) => askLines.push(chunk));
     const handleAskLine = (line: string) => {
@@ -1044,7 +1056,7 @@ export async function createPermissionBroker(opts: {
         answers?: Record<string, string | string[]>, updatedInput?: Record<string, unknown>) => {
         const frame = JSON.stringify({ t: 'answer', id: askId, behavior, message, ...(answers ? { answers } : {}), ...(updatedInput ? { updatedInput } : {}) }) + '\n';
         const receipt = deliverNative(slot, source === 'user' || source === 'auto' ? 'answer' : 'retire', frame,
-          () => new Promise<boolean>((resolve, reject) => { try { releaseNativeAnswer(answerBinding, "claude:broker", frame, () => conn.write(frame, error => resolve(!error))); } catch (error) { if (isMemoryRefusal(error)) reject(error); else resolve(false); } }),
+          () => new Promise<boolean>((resolve, reject) => { try { releaseNativeAnswer(answerBinding, "claude:broker", frame, () => NotModelRequest("Claude broker replies on the local socket to an existing hook request.", conn.write(frame, error => resolve(!error)))); } catch (error) { if (isMemoryRefusal(error)) reject(error); else resolve(false); } }),
           () => connectionGeneration === generation && conn.writable && !conn.destroyed,
           accepted => commit(accepted, behavior, source),
           () => behavior !== 'allow' || !generationRetiring && opts.canAllow?.(askId, updatedInput) !== false,
@@ -1164,7 +1176,7 @@ export async function createPermissionBroker(opts: {
           setImmediate(()=>conn.destroy());
         };
         const conn=new Duplex({read(){},write(chunk,_encoding,callback){
-          try{const answer=JSON.parse(chunk.toString());callback();finish({behavior:answer.behavior==='allow'?'allow':'deny',...(answer.updatedInput?{updatedInput:answer.updatedInput}:{})});}
+          try{const answer=registerBusyloopPayloadSite("read", JSON.parse(chunk.toString()));callback();finish({behavior:answer.behavior==='allow'?'allow':'deny',...(answer.updatedInput?{updatedInput:answer.updatedInput}:{})});}
           catch{callback();finish({behavior:'deny'});}
         }});
         const abort=()=>{finish({behavior:'deny'});conn.destroy();};
@@ -1712,7 +1724,7 @@ function syncedSkillNames(root: string): string[] {
  *   conflict it can see (managed-mcp.json refusing --strict-mcp-config) is reported to the owner
  *   as CLAUDE_MANAGED_MCP_CONFLICT (claudeLaunchRefusal).
  *
- * Rig evidence (build host stub API, CLI 2.1.280, 2.1.281 and 2.1.295, each case with and without the flags so
+ * Rig evidence (Hetzner stub API, CLI 2.1.280, 2.1.281 and 2.1.295, each case with and without the flags so
  * the baseline proves the marker loads; logs in /root/mb-0161-hz/m102-rig4/logs, rig6 and rig7):
  * user plugin with hooks and a skill, plugins enabled only in personal or project-local
  * settings.local.json, a user hook, a user MCP server, `~/.claude/CLAUDE.md` and `rules/*.md`, a
@@ -2322,7 +2334,7 @@ const CLAUDE_OWNER_ROUTING_2_1_305: ReadonlyArray<{ name: string; prefix?: true;
     { name: "CLAUDE_CODE_PROXY_AUTH_HELPER_TTL_MS", why: "proxy login helper (Nl)" },
 ];
 
-/** 2.1.307 (measured against @anthropic-ai/claude-code-linux-x64@2.1.307 on the build host, diffed with 2.1.305): every set this table was
+/** 2.1.307 (measured against @anthropic-ai/claude-code-linux-x64@2.1.307 on Hetzner, diffed with 2.1.305): every set this table was
  * read from is the same except the untrusted-source refusal list (Ro in 2.1.305, Io in 2.1.307), whose last member NODE_TLS_REJECT_UNAUTHORIZED
  * became the pair NODE_TLS_REJECT_UNAUTHORIZED + BUN_TLS_REFUSE_DISTRUSTED_KEYS. NO_PROXY, no_proxy and the other proxy names
  * stay in that list and out of the project/local settings-env allowlist, exactly as in 2.1.305, so they stay routing names here.
@@ -3018,7 +3030,6 @@ class StartedToolKeys {
   }
   note(threadId: string, turn: string | undefined, key: string): void {
     const slot = this.slot(threadId, turn);
-    if (slot.keys.size >= 512 && !slot.keys.has(key)) slot.keys.delete(slot.keys.keys().next().value!);
     slot.keys.set(key, (slot.keys.get(key) ?? 0) + 1);
     for (const waiter of [...slot.waiters]) if (waiter.key === key) { slot.waiters.delete(waiter); waiter.done(true); }
   }
@@ -3419,6 +3430,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       helperReads?: HelperReadEvidence;
       steerEverWaited?: true;
       bgEverHeld?: true;
+      /** 1.0.21 group B: the owner was told once this turn that one engine line was fitted (cut to the string limit). */
+      lineFitNoticed?: true;
       /** A continuation of an EARLIER turn (a background task's notice, then
        * the model's follow-up) is playing out on this process. Its frames
        * belong to that turn and are dropped until its own result closes it. */
@@ -3707,7 +3720,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (!s || s.closing) return;
       s.closing = true;
       reuseStats.closed(why);
-      s.spare?.lost(why === "idle" || why === "activity window" ? "no-send" : why);
+      s.spare?.lost(why === "idle" || why === "activity window" || why === "prewarm unused" ? "no-send" : why);
       endElicitations(s, "system");
       warmPool.release(s);
       retire(s, threadId);
@@ -4314,7 +4327,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const { threadId } = turn;
       if (turn.background) backgroundThreads.add(threadId); else backgroundThreads.delete(threadId);
       if (!turn.background && !relaunch) {
-        warmPool.noteUserActivity(); warmPool.sent(threadId);
+        warmPool.noteTurn(turn.warmIdentity, threadId); warmPool.sent(threadId);
         lastTurns.remember(threadId, spawnInputsOf(turn));
       }
       const turnId = relaunch?.turnId ?? newId();
@@ -4336,10 +4349,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const warming = active.get(threadId);
           const warmSetup = warming && setupEnds.get(warming.turnId);
           try {
-            if (!(await stopGate.step(e, prewarming.wait(threadId)))) {
-              const stuck = active.get(threadId);
-              if (stuck) { try { stuck.stop(); } catch {} }
-            }
+            // P-FENCE 3: claim it when ready, bounded only against a hang (from the prewarm's own start); past that it is hung:
+            // detach it and run cold now (P-FENCE 2), never wait for its close or fail because of it.
+            if (!(await stopGate.step(e, prewarming.claim(threadId)))) detachPrewarm(threadId);
           } finally {
             // A warm-up's possible child survives its setup unwind; missing evidence stays strict.
             const setup = setupEnds.get(turnId);
@@ -4500,6 +4512,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // so a fake's transient failures don't stall real seconds
       const retryScale = Number(process.env.FAKE_CLAUDE_RETRY_SCALE ?? "1");
       const sessionId = !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+      const commandCursor = turn.engineCommand ? sessionId : null;
       const newSessionId = sessionId ? null : newId();
 
       const args = [
@@ -4536,6 +4549,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       else if (nativeTools.tools !== undefined) args.push("--tools", nativeTools.tools.filter((tool) => !CLAUDE_SEARCH_TOOLS.has(tool)).join(","));
       const disallowedTools = [...new Set([
         ...(nativeTools.disallowedTools ?? []),
+        // An explicit list, a draft, another audience and No limits keep
+        // their own tool policy. nativeTools is config only with No limits off.
+        ...(nativeTools === config && nativeTools.tools === undefined && !turn.draftOnly && turn.warmIdentity?.audience !== "non-owner" ? CLAUDE_UNUSABLE_TOOLS : []),
         // These native tools address provider sessions, not Murage's roster.
         ...(turn.integrations?.agents ? ["ListAgents", "SendMessage", "WebFetch"] : []),
       ])];
@@ -4659,12 +4675,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (turn.integrations?.phoneJobs) {
         mcpServers.phoneJobs = { ...turn.integrations.phoneJobs };
         allowed.push(...claudeOwnUnaskedTools("phoneJobs"));
-      }
-      // native HighLevel (HL-S2, read only): its read tools are pre-allowed; the host checks the grant on every call and
-      // lists no change tool.
-      if (turn.integrations?.highlevel) {
-        mcpServers.highlevel = { ...turn.integrations.highlevel };
-        allowed.push(...claudeOwnUnaskedTools("highlevel"));
       }
       if (turn.integrations?.browser) {
         mcpServers.browser = claudeBrowserMount(turn);
@@ -4833,7 +4843,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (execShell) {
         // X3 r2 section 2 / r4.5 B6: PROVEN for this spawn (thread flag, refusal memory, managed hooks read at every spawn,
         // shell, C2), and the immediate PROVEN=0 rewrite on the thread's first flag
-        const execCli = await knownClaudeCliVersion(config.cli);
+        let execCli: string | null;
+        try {
+          execCli = await stopGate.step(e, knownClaudeCliVersion(config.cli));
+        } catch (error) {
+          removePrivateTempDir(mcpConfigPath);
+          throw error;
+        }
         const spawnProven = claudeExecSpawnProven({ threadId, cli: execCli, shell: execShell, map: childEnv, cwd, envs: [isolationEnv, handed.env], noLimits: shellNoLimits });
         if (spawnProven.reason) console.info(`claude exec floor thread=${threadId} reason=${spawnProven.reason}`);
         const envFile = writeExecEnvFile(threadId, childEnv, cwd, execShell, spawnProven.proven);
@@ -4970,7 +4986,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         credentials: credentialDigest(Object.fromEntries(Object.entries(env).filter(([name]) => /^(ANTHROPIC_|CLAUDE_CODE_)/.test(name) && name !== "CLAUDE_CODE_MCP_STARTUP_WAIT_MS"))),
         cwd,
         // X3 r4.5 B1: the mounts carry the spawn nonce too (the murage-exec stanzas); the key sees the same placeholder
-        mcp: execNonce ? JSON.parse(JSON.stringify(stableServers).split(execNonce).join("<exec-nonce>")) : stableServers,
+        mcp: execNonce ? registerBusyloopPayloadSite("read", JSON.parse(JSON.stringify(stableServers).split(execNonce).join("<exec-nonce>"))) : stableServers,
         // the bot's connected-app access: a change relists the tools by recycling
         connectorScope: connectorScopeOf(mountSecrets),
         system: turn.system ?? null,
@@ -5058,7 +5074,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         : live.startupHoldOff && Object.keys(mcpServers).length > 0 && claudeMcpStatusSupport.get(cliIdentity) === "unsupported" ? "mcp-startup-hold"
         : diffWarmKey(live.warm, warm) ?? (sessionId && sessionId !== live.sessionId ? "cursor" : null)
           // the bridge filed that this engine was handed only the stand-in list and has not listed again since
-          ?? (anyMountIncomplete(mountRefs) ? "connector-mount-incomplete" : null);
+          ?? (anyMountIncomplete(mountRefs) ? "connector-mount-incomplete" : null)
+          // P-FENCE 2 (presence): an unclaimed prewarm whose CLI never confirmed its start may be hung; the send never waits on it
+          ?? (!live.used && !live.startConfirmed ? "prewarm-start-unconfirmed" : null);
       if (spawnReason !== null && live) clearMountsIncomplete(mountRefs);
       const dispatchTrace = `claude dispatch thread=${threadId} process=${spawnReason === null ? "reused reason=unchanged" : `spawned reason=${spawnReason}`} ${shellDispatch}`;
       console.info(dispatchTrace);
@@ -5102,6 +5120,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }
         };
         let startedTurn: SessionTurn | null = null;
+        const refuseWarmCommand = () => {
+          if (commandCursor === null || live.sessionId === commandCursor) return false;
+          dropConfig();
+          withdrawCredentials();
+          if (startedTurn && live.turn === startedTurn) {
+            startedTurn.settled = true;
+            live.turn = null;
+          }
+          if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
+          endTurn(turnId, { ok: false, stopReason: "command_needs_session", final: true });
+          return true;
+        };
         /** The turn starts here: before the write, or as soon as the check
          * takes long enough to show its chip (which belongs to a turn). */
         const startLiveTurn = (boundary = createAttemptBoundary()): SessionTurn => {
@@ -5191,6 +5221,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             if(turn.beforePrepare)turn.beforePrepare();
             else if(turn.prepareSubmit&&turn.beforeSubmit)turn.prepareSubmit(turn.beforeSubmit.bind(turn));
             kept.relay!.barrierPassed();
+            if (refuseWarmCommand()) return { turnId };
             const boundary = createAttemptBoundary();
             const submission = writeUser(kept, threadId, turnPrompt, boundary, turn.images, turn.beforeSubmit, turn,
               prompt => gate.release(prompt, () => { startLiveTurn(boundary); }, frame => {
@@ -5284,6 +5315,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (live.idleTimer) clearTimeout(live.idleTimer);
         live.idleTimer = null;
         const liveTurn = startLiveTurn();
+        if (refuseWarmCommand()) return { turnId };
         if (reused.missing.length) liveTurn.toolsUnavailable = reused.missing;
         if (reused.readiness === "unknown" && reused.required.length) liveTurn.mcpReadiness = "unknown";
         // A Stop inside the turn.started listeners writes nothing.
@@ -5505,7 +5537,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 })() : {}),
                 requestType: ask.kind,
                 tool: ask.tool ?? "",
-                summary: askSummary(ask),
+                summary: askSummary(ask, sessions.get(threadId)?.turn?.releaseBinding?.identity),
                 approvalScope:
                   typeof ask.tool === "string" && controlsHost && ask.tool.startsWith("mcp__computer")
                     ? "local-computer"
@@ -5555,8 +5587,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // The broker bind awaited: a second dispatch may have claimed the
         // thread meanwhile. Give up (the catch below closes the broker).
         assertSoleDispatch();
-        // Headroom for one more engine: evicts an idle one if needed, never refuses.
-        await stopGate.step(e, warmPool.beforeSpawn());
+        // Headroom for one more engine: evicts an idle one if needed, never refuses; a prewarm evicts only an unclaimed prewarm, never an owner engine.
+        await stopGate.step(e, warmPool.beforeSpawn({ speculative: turn.prewarm === true }));
         assertSoleDispatch();
         // A quarantine or reset that arose during setup: wait for it to clear
         // (bounded), then revalidate ownership and the Stop fence before the
@@ -5715,7 +5747,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         queueMicrotask(() => {
           if (sessions.get(threadId) !== session || !session.turn || session.turn.stopRequested || session.turn.settled) return;
           if (session.turn.submission === null) {
-            turnError({ message: mountNeverConnectedLine(ENGINE) });
+            // 1.0.20 item 5: the card names the real cause; only an app's own native failure blames a connected app.
+            const live = session.turn;
+            const cause = mountStopCause(_nativeError, refusal, live.fenced ?? fencedRefusalRegistry.byGeneration((live.releaseBinding as { identity?: { dispatchGeneration?: string | number } } | null | undefined)?.identity?.dispatchGeneration));
+            if (cause.kind === "memory" && turn.warmIdentity?.audience === "owner" && !turn.background && !turn.prewarm) {
+              turnError({ message: REPLY_MEMORY_CHECK_FAILED, details: `${REPLY_MEMORY_CHECK_FAILED}\nCause code: ${cause.code}` });
+            } else {
+              turnError({ message: mountStoppedLine(ENGINE, cause), details: mountStoppedDetails(ENGINE, cause) });
+            }
             void settle(false, "mcp_unavailable");
           } else closeSession(threadId, "mount-relay-sealed");
         });
@@ -5910,6 +5949,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }
         }
         rememberCompletionProof(threadId, t.turnId, session, session.settleCheck, retireSingleUse);
+        if (ok && !t.stopRequested) session.relay?.reportUnavailable(() => base(threadId, t.turnId), emit);
         endTurn(t.turnId, { ok, stopReason: stopReason as string, ...opts, ...(refusedTurn ? { final: true as const, ...(fenced.lease ? { leaseMode: true as const } : {}) } : {}), extra: { cost, ...(usage ? { usage } : {}), ...(t.toolsUnavailable?.length ? { toolsUnavailable: t.toolsUnavailable } : {}), ...(t.mcpReadiness ? { mcpReadiness: t.mcpReadiness } : {}) } });
         // Teardown also runs when an earlier Stop already installed its proof,
         // or when the bounded proof cache cannot retain another entry.
@@ -6000,6 +6040,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         } catch {
           return;
         }
+        // 1.0.21 group B (ASTRA 1b652749de): a frame is a JSON object; any other value (a fitted line of padding around `null`)
+        // is skipped like a malformed line, never dereferenced, so nothing throws out of the live stdout listener.
+        if (!o || typeof o !== "object" || Array.isArray(o)) return;
+        // Private quota telemetry cannot confirm startup or settle a turn.
+        if (o.type === "rate_limit_event") return;
         // Startup is confirmed only by a validated signal: the `system`/`init` event, or the
         // control_response that carries OUR initialize request id and succeeded. A banner,
         // keep_alive, any other system frame and an unmatched control_response never count,
@@ -6118,7 +6163,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 const owner = owners.get(taskId);
                 if (owner === t.turnId) return true;
                 if (owner !== undefined || !mayStart) return false;
-                if (owners.size >= 1024) owners.delete(owners.keys().next().value!);
                 owners.set(taskId, t.turnId);
                 return true;
               };
@@ -6214,7 +6258,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             }
             for (const b of Array.isArray(msg.content) ? msg.content : []) {
               if (b.type === "tool_use") {
-                if (typeof b.id === "string" && typeof b.name === "string" && toolNameByUse.size < 512) toolNameByUse.set(b.id, b.name);
+                if (typeof b.id === "string" && typeof b.name === "string") toolNameByUse.set(b.id, b.name);
                 const callKey = claudeToolKey(b.name, b.input);
                 emit({ ...base(threadId, currentTurnId()), type: "item.started", itemType: "tool", origin: "engine", itemId: b.id, title: b.name, input: b.input, callKey, ...(startedToolKeys.late(threadId, currentTurnId(), callKey) ? { lateFrame: true } : {}) });
                 // V5: after the item is emitted (its mark is set in that handler), release an ask waiting for it
@@ -6492,9 +6536,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
       };
 
-      // Byte-bounded framing (A4): UTF-8 is decoded per complete line, so a
-      // multibyte character split across reads stays intact, and one frame
-      // never holds more than ENGINE_FRAME_MAX_BYTES of the shared process.
+      // Line framing (A4): UTF-8 is decoded per complete line, so a
+      // multibyte character split across reads stays intact. No frame size
+      // limit (MAIN-RULING cause22-no-transport-caps).
       const stdoutLines = createBoundedLineSplitter({
         onLine: (line) => {
           if (!line.trim()) return;
@@ -6503,17 +6547,37 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // exact context after that operation ends or the process is reused.
           emissionSource.run(session.turn?.sourceContext, () => handleLine(line));
         },
-        onOverflow: (overflow) => {
-          appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: { frameOverflow: overflow } });
-          // The stream is unrecoverable: fail the turn it belongs to (never a
-          // replay — settle() clears the retry budget and the turn), then end
-          // this retained process so no later frame is read out of context.
-          if (session.turn && !session.turn.settled) {
-            turnError({ message: frameOverflowMessage("Claude", overflow) });
-            settle(false, FRAME_TOO_LARGE);
+        // 1.0.21 group B (cause22-eng-design3-fable B, AMEND X6): a line past the string limit, fitted. R1 a control_request is
+        // never run or shown on cut text: a Bash wipe hook is denied, anything else fails by its request_id. R2 any other line
+        // (assistant, result) goes to the same handler; the live turn is marked and told once BEFORE it, so a fitted `result`
+        // that settles the turn still carries the mark. A mark, never a stop.
+        onFit: (line) => {
+          let o: any;
+          try { o = JSON.parse(line); } catch { o = null; }
+          if (o && typeof o === "object" && !Array.isArray(o) && o.type === "control_request") {
+            const requestId = typeof o.request_id === "string" ? o.request_id : null;
+            if (!requestId) return;
+            const binding = session.turn?.releaseBinding ?? null;
+            if (o.request && typeof o.request === "object" && o.request.subtype === "hook_callback") {
+              writeControlResponse(session, threadId, { subtype: "success", request_id: requestId, response: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: OVERSIZE_FITTED_ASK_LINE } } }, binding, "claude.control.fit");
+            } else writeControlResponse(session, threadId, { subtype: "error", request_id: requestId, error: OVERSIZE_FITTED_ASK_LINE }, binding, "claude.control.fit");
+            return;
           }
-          if (sessions.get(threadId) === session) closeSession(threadId, FRAME_TOO_LARGE);
-          if (child.exitCode === null) killCliTree(child);
+          const live = session.turn;
+          if (live && !live.settled) {
+            markTurnOutside(threadId, "outside tool", undefined, undefined, "claude-line-fitted");
+            if (!live.lineFitNoticed) {
+              live.lineFitNoticed = true;
+              const itemId = `line-fit-${live.turnId}`;
+              emit({ ...base(threadId, live.turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: LINE_FITTED_NOTICE, toolKind: "notice" }, live.sourceContext);
+              emit({ ...base(threadId, live.turnId), type: "item.completed", itemId, itemType: "tool", ok: true }, live.sourceContext);
+            }
+          }
+          // ASTRA 629eae4816: a fitted frame can hold values the handler never sees on a whole line (a `null` block in
+          // message.content); whatever it throws is that one fitted frame skipped like a malformed line, never thrown out of this
+          // live listener. A fenced memory refusal is never swallowed: it goes on exactly as from `onLine`.
+          try { if (line.trim()) emissionSource.run(session.turn?.sourceContext, () => handleLine(line)); }
+          catch (error) { if (isMemoryRefusal(error)) throw error; }
         },
       });
       child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
@@ -6537,6 +6601,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         warmPool.release(session);
         prewarmTurns.delete(turnId);
         if (sessions.get(threadId) === session) heldStarted.delete(threadId);
+        if (sessionId && code !== 0 && !session.initHandled && session.turn && !session.turn.settled && !session.turn.stopRequested) {
+          // Mask the whole capture before clipping it. Neither the cursor
+          // nor the prompt belongs in this diagnostic, and it grants no retry.
+          const reason = session.stderr.redactedEnd(8_192);
+          console.warn(`Claude could not resume the saved session (exit code ${code})${reason ? `: ${reason}` : ""}`);
+        }
         if (session.turn && !session.turn.settled && session.turn.stopRequested) {
           // The process ended because Murage stopped the turn. That is the
           // user's Stop (or a reset/shutdown the caller reports itself), not
@@ -6872,6 +6942,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (!await refuseSubmission(error, "claude.prompt.launch2", threadId, turn, session) && sessions.get(threadId) === session) closeSession(threadId, "submission refused", refusalName(error));
         throw error;
       }
+      if (commandCursor !== null && session.sessionId !== commandCursor) {
+        turn.attemptNotWritten?.(launchAttempt);
+        void settle(false, "command_needs_session", null, undefined, { final: true });
+        return { turnId };
+      }
       if (mcpGate.missing.length) launchTurn.toolsUnavailable = mcpGate.missing;
       if (mcpGate.readiness === "unknown" && mcpGate.required.length) launchTurn.mcpReadiness = "unknown";
       try {
@@ -6929,11 +7004,31 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * window. A no-op without remembered inputs (after a restart, say), when an engine is
      * already live, or when the thread is busy. The next real turn still runs the warm-key
      * check, so changed settings, routeAsks or MCP config recycle this process. */
+    /** P-FENCE 2 (presence): a send found this thread's prewarm still starting past its bound: it is hung. It is detached NOW:
+     * the gate entry ends (abandoned) and its reservation or turn leaves `active` (its own stop recorded, so assertSoleDispatch ends
+     * its launch). A Claude prewarm parks in the same tick as its spawn, so a CLI it already started is a parked session, which a
+     * send never reuses while its start is unconfirmed (dispatchTurn, "prewarm-start-unconfirmed"). The send dispatches cold. */
+    const detachPrewarm = (threadId: string, reason: "hung" | "away" = "hung") => {
+      prewarming.abandon(threadId);
+      const warming = active.get(threadId);
+      if (warming && prewarmTurns.has(warming.turnId)) { try { warming.stop(); } catch {} forgetActive(threadId); }
+      console.info(`claude prewarm detach thread=${threadId} reason=${reason}`);
+    };
+    // P-FENCE 2 (W-PR6 a): the owner went away (lock, sleep, idle): every prewarm of this instance still starting is detached the
+    // same way (a Claude prewarm that already spawned is parked, and the away sweep retires it as an idle engine)
+    const offOwnerAway = warmPool.onOwnerAway(() => {
+      const threads = prewarming.threads();
+      for (const threadId of threads) detachPrewarm(threadId, "away");
+      return threads.length;
+    });
     const prewarm = async (threadId: string, opts?: { fence?: PrewarmFence }): Promise<boolean> => {
       const mem = lastTurns.get(threadId);
       const held = sessions.get(threadId);
-      if (mem && mountedTurn(mem, !mem.draftOnly)) return false;
-      if (idleHeld > 0 || !mem || active.has(threadId) || resetBarriers.has(threadId) || resetBlocked.has(threadId) || (held && !held.closing && held.child.exitCode === null) || !prewarming.begin(threadId)) return false;
+      // S1 (unchanged): a mounted turn is never prewarmed, whatever warm.s2r says; the skip is logged content-free (presence W-PR3 g)
+      if (mem && mountedTurn(mem, !mem.draftOnly)) { console.info("prewarm skipped reason=mounted"); return false; }
+      if (idleHeld > 0 || !mem || active.has(threadId) || resetBarriers.has(threadId) || resetBlocked.has(threadId) || (held && !held.closing && held.child.exitCode === null)) return false;
+      const token = prewarming.begin(threadId);
+      if (!token) return false;
       const turnId = newId();
       // a prewarm is gate-checked like a send (a dispose or a Stop All reaches it), but it announces nothing: no turn exists
       const pe = stopGate.enter(`${PREWARM_GATE_KEY}${threadId}`, { turnId, announceStart: false });
@@ -6968,7 +7063,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         turnEntries.delete(turnId);
         startingSpares.delete(threadId);
         if (sessions.get(threadId)?.spare !== spare) spare.lost("not parked");
-        prewarming.end(threadId);
+        prewarming.end(threadId, token);
       }
     };
 
@@ -7052,7 +7147,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // A probe that gave no status at all (a spawn error, a crash, a launch the OS refused) is not
       // a lost login: the CLI's own words, and "not verified" rather than "sign in", so chat stays open.
       // How it bills is unknown too, so neither "subscription" nor "API key" is claimed.
-      if (auth.error) return { state: "available", version, reason: auth.error };
+      if (auth.signedIn === undefined) return { state: "available", version, authUnverified: true, reason: auth.error };
       const authenticated = auth.signedIn;
       // Cloud home: the launcher holds a long-lived token; offer its renewal before it lapses.
       const renewSignIn = await cloudClaudeRenewalDue(authenticated);
@@ -7385,9 +7480,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const updated = extra.updatedInput && typeof extra.updatedInput === "object" && !Array.isArray(extra.updatedInput) ? (extra.updatedInput as Record<string, unknown>) : undefined;
           if (behavior === "allow" && !broker.allowFits(requestId, updated)) {
             const live = sessions.get(threadId)?.turn;
-            const held = live && holdEnginePermissionReply({ threadId, requestId, turnId: live.turnId, providerInstanceId: instanceId }, PERMISSION_REPLY_TOO_LARGE);
+            const how = live ? settleOversizePermissionReply({ threadId, requestId, turnId: live.turnId, providerInstanceId: instanceId }, PERMISSION_REPLY_TOO_LARGE) : "none";
+            // cause22 caps r3: on the owner's turn the reply cap denies this ONE ask with a fixed note; the engine reads it and the turn goes on
+            if (how === "deny" && broker.answer(requestId, "deny", OWNER_PERMISSION_REPLY_TOO_LARGE)) { askCalls.delete(key); return "rejected"; }
             answerTransport.guardRelease(threadId, requestId, () => false);
-            return held ? "card" : "unavailable";
+            return how === "card" ? "card" : "unavailable";
           }
           if (!broker.answer(requestId, behavior, decision.message, decision.answers, updated)) return "unavailable";
           askCalls.delete(key);
@@ -7409,6 +7506,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       reviewPermission: async (prompt, signal, botId, cwd) => generateReview(prompt, signal, undefined, botId, undefined, botFolderOrThrow({ cwd })),
       proposeProject: async (prompt, signal, model, botId, cwd) => generateReview(prompt, signal, model, botId, undefined, botFolderOrThrow({ cwd })),
       dispose: async () => {
+        offOwnerAway();
         // closing for every turn now and every turn that enters later, before anything else
         stopGate.close();
         for (const { stop } of active.values()) stop();

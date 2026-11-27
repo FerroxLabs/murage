@@ -5,8 +5,9 @@ import { forgetAllVenuePostTurns, forgetVenuePostTurn } from "./venue-post-turns
 import { forgetAllEmailTurns, forgetEmailTurn } from "./email/email-turns.ts";
 import { forgetAllPhoneTurns, forgetPhoneTurn } from "./phone-calls/phone-turns.ts";
 import { assertConsumingBinding, type ConsumingTurnBinding } from "./consuming-turn-response.ts";
+import { isHostedGeneration, retireHostedGeneration } from "./host/hosted-generations.ts";
 
-export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp" | "device" | "highlevel" | "turn-release";
+export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp" | "device" | "turn-release";
 export type InternalCapability = Readonly<{
   botId: string;
   threadId: string;
@@ -41,8 +42,6 @@ export function requiredInternalKind(path: string): InternalCapabilityKind {
   if (path.startsWith("/api/internal/mcp-remote/")) return "mcp";
   if (path.startsWith("/api/internal/box/v1/")) return "computer";
   if (path.startsWith("/api/internal/device/")) return "device";
-  // the native HighLevel CRM host (GAP-HIGHLEVEL-109 section 5.2)
-  if (path.startsWith("/api/internal/highlevel/")) return "highlevel";
   if (["/api/internal/computer-control", "/api/internal/computer-activity", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path)) return "computer";
   return "agents";
 }
@@ -50,6 +49,21 @@ export function requiredInternalKind(path: string): InternalCapabilityKind {
 const MEMORY_VIEW_LEASES_MAX = 128;
 
 /** Ephemeral authority for one dispatched turn. No claim is persisted or logged. */
+/** 1.0.21 ROSTER RESIDUAL 2 (Astra code read #2): the threads with a live turn generation, counted across every registry (the server's,
+ * a service's, a fixture's). A generation lives from begin() until it is revoked, so a turn still preparing (a recall-held room turn
+ * building its working context, before its engine reports turn.started) counts. Owners: InternalCapabilities writes it; policy.ts
+ * roomNarrowed reads it. A registry dropped without revoking leaves its thread counted: that only fails closed (the save stays global). */
+const liveTurnGenerations = new Map<string, number>();
+function noteGeneration(threadId: string, delta: 1 | -1): void {
+  const n = (liveTurnGenerations.get(threadId) ?? 0) + delta;
+  if (n > 0) liveTurnGenerations.set(threadId, n); else liveTurnGenerations.delete(threadId);
+}
+/** True when any of `threads` has a live turn generation in this process (bound: the threads asked). */
+export function liveTurnGenerationOn(threads: Iterable<string>): boolean {
+  for (const thread of threads) if (liveTurnGenerations.has(thread)) return true;
+  return false;
+}
+
 export class InternalCapabilities {
   // Reader lifetime owner: askcards-flake-b; turn teardown owner: internal capabilities.
   readonly #memoryViews = new WeakMap<InternalCapability, Map<string, () => void>>();
@@ -57,6 +71,10 @@ export class InternalCapabilities {
   readonly #now: () => number;
   readonly #orphanMs: number;
   readonly #tombstoneLimit: number;
+  /** O1 m2 S1a G2: every live registry in this process, so a hosted generation retires only when none of them still holds it. */
+  static readonly #live = new Set<WeakRef<InternalCapabilities>>();
+  /** A collected registry's WeakRef leaves #live, so short-lived private registries never accumulate (Astra r7 pass 3). */
+  static readonly #collected = new FinalizationRegistry<WeakRef<InternalCapabilities>>(ref => InternalCapabilities.#live.delete(ref));
   readonly #tokens = new Map<string, InternalCapability>();
   /** 7C P3: dead credentials of retired generations, by token digest, so a stale token can be told from garbage (401, not the sealed binding 409). Bounded, oldest first; holds no live authority. */
   readonly #retired = new Map<string, Readonly<{ threadId: string; generation: string }>>();
@@ -73,6 +91,9 @@ export class InternalCapabilities {
 
   constructor(options: { now?: () => number; orphanMs?: number; tombstoneLimit?: number } = {}) {
     this.#now = options.now ?? Date.now;
+    const ref = new WeakRef(this);
+    InternalCapabilities.#live.add(ref);
+    InternalCapabilities.#collected.register(this, ref);
     this.#orphanMs = options.orphanMs ?? 30 * 24 * 60 * 60_000;
     this.#tombstoneLimit = options.tombstoneLimit ?? 4096;
     if (!(this.#orphanMs > 0) || !Number.isFinite(this.#orphanMs)
@@ -84,6 +105,7 @@ export class InternalCapabilities {
   begin(botId: string, threadId: string, generation: string = randomUUID(), humanPrincipal?: HumanPrincipal): string {
     if (!botId || !threadId || !generation) throw new Error("invalid internal turn owner");
     this.revokeThread(threadId);
+    noteGeneration(threadId, 1);
     this.#generations.set(threadId, {
       botId, humanPrincipal, id: generation, claims: new Set(),
       budgets: { create: { committed: 0, pending: 0 }, handoff: { committed: 0, pending: 0 } },
@@ -96,7 +118,7 @@ export class InternalCapabilities {
     if (!owner || owner.id !== input.generation || owner.botId !== input.botId
       || JSON.stringify(owner.humanPrincipal) !== JSON.stringify(input.humanPrincipal)
       || !Number.isInteger(input.depth) || input.depth < 0
-      || !["agents", "connectors", "computer", "memory", "mcp", "device", "highlevel"].includes(input.kind)
+      || !["agents", "connectors", "computer", "memory", "mcp", "device"].includes(input.kind)
       || typeof input.skillAuthoring !== "boolean") throw new Error("invalid internal capability owner");
     const claim: InternalCapability = Object.freeze({ ...input, expiresAt: this.#now() + this.#orphanMs });
     const token = randomBytes(24).toString("hex");
@@ -162,6 +184,16 @@ export class InternalCapabilities {
       views.delete(oldest);
       release();
     }
+  }
+
+  /** Q2 (int-1020q-n1 DECISIONS): a re-validation that replaced an intermediate view releases that one lease, so a live reader holds
+   * its issued view and its latest view, never one lease per past epoch move. */
+  releaseMemoryView(claim: InternalCapability, key: string): void {
+    const views = this.#memoryViews.get(claim);
+    const release = views?.get(key);
+    if (!views || !release) return;
+    views.delete(key);
+    release();
   }
 
   #releaseMemoryViews(claim: InternalCapability): void {
@@ -244,10 +276,25 @@ export class InternalCapabilities {
     for (const [token, claim] of this.#tokens) {
       if (claim.threadId === threadId && claim.generation === generation) { this.#releaseMemoryViews(claim); this.#tokens.delete(token); this.#retire(token, claim); }
     }
-    if (this.#generations.get(threadId)?.id === generation) this.#generations.delete(threadId);
+    if (this.#generations.get(threadId)?.id === generation) { this.#generations.delete(threadId); noteGeneration(threadId, -1); }
     for (const [key, owner] of this.#providers) {
       if (owner.threadId === threadId && owner.generation === generation) this.#providers.delete(key);
     }
+    InternalCapabilities.#retireHosted(generation);
+  }
+
+  /** O1 m2 S1a G2 (designs/1021-m2-w0 r5.1): a hosted generation leaves the refusal set only after its last token retired.
+   * Fail-closed: while any live token or owner of the same generation id remains in ANY registry of this process (another
+   * thread, or the main registry while a private one is released), it stays refused. Production: the set is empty, one lookup. */
+  static #retireHosted(generation: string): void {
+    if (!isHostedGeneration(generation)) return;
+    for (const ref of InternalCapabilities.#live) {
+      const registry = ref.deref();
+      if (!registry) { InternalCapabilities.#live.delete(ref); continue; }
+      if ([...registry.#tokens.values()].some(claim => claim.generation === generation)
+        || [...registry.#generations.values()].some(owner => owner.id === generation)) return;
+    }
+    retireHostedGeneration(generation);
   }
 
   #retire(token: string, claim: InternalCapability): void {
@@ -271,14 +318,18 @@ export class InternalCapabilities {
   }
 
   revokeAll(): void {
+    // G2: only the generations this registry held are candidates, each retired only if no registry still holds it.
+    const held = new Set([...this.#tokens.values()].map(claim => claim.generation).concat([...this.#generations.values()].map(owner => owner.id)));
     for (const claim of this.#tokens.values()) this.#releaseMemoryViews(claim);
     forgetAllVenueReadTurns();
     forgetAllVenuePostTurns();
     forgetAllEmailTurns();
     forgetAllPhoneTurns();
     this.#tokens.clear();
+    for (const threadId of this.#generations.keys()) noteGeneration(threadId, -1);
     this.#generations.clear();
     this.#providers.clear();
+    for (const generation of held) InternalCapabilities.#retireHosted(generation);
     // Keep bounded terminal tombstones: a late handshake can still resolve.
   }
 

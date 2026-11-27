@@ -240,8 +240,10 @@ describe("I18 an edit is held under its normalized and real spellings", () => {
     const edits = sessionEdits("t1", "i1");
     for (const n of ["f1", "f2", "f3", "f4"]) expect(edits.has(lex(n)), n).toBe(true);
     expect(edits.has(SESSION_EDITS_OVERFLOW)).toBe(false);
-    expect(edits.has(real("f1"))).toBe(true);
-    expect(edits.has(real("f4"))).toBe(false);
+    // cause22-eng-design3-fable C5 (built per MAIN-RULING 2026-11-22T21:15:56Z groupB-left: "Both groups build to its design
+    // when posted"): "each distinct path gets its own RealBudget (64), so no location's real spelling is skipped". The 4th
+    // path no longer loses its real spelling to its neighbours' lookups: every path is held under its real spelling too.
+    for (const n of ["f1", "f2", "f3", "f4"]) expect(edits.has(real(n)), `real ${n}`).toBe(true);
   });
   it("I18g extra spellings do not bring the session to its cap sooner than the same paths did before", () => {
     wire();

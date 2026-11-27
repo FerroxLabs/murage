@@ -6,9 +6,13 @@
 // own Fuigo home is never written.
 import { randomBytes } from "node:crypto";
 import { writeSync } from "./counted-fs.ts";
-import { closeSync, constants, fsyncSync, lstatSync, openSync, renameSync, rmSync } from "node:fs";
+import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+
+import { renameAndSyncParent, type PublishDurableOptions } from "./atomic.ts";
+import { DATA_DIR } from "./config.ts";
+import { linkSharedEntry, LoginLinkUnavailableError } from "./drivers/shared-login-link.ts";
 
 import { cloudEngineHome, cloudTurnRender } from "./cloud-home/turn-process.ts";
 import { folderTrustKey, folderTrustRejectFor, isUnrecordableTrustRoot, type FolderTrustReject } from "./folder-trust.ts";
@@ -87,18 +91,23 @@ export function fuigoSeedText(plan: Pick<FuigoSeedPlan, "trusts" | "declines">):
   return [...plan.declines.map((path) => table(path, false)), ...plan.trusts.map((path) => table(path, true))].join("\n");
 }
 
+/** Whether a published seed is known to be on disk. "uncertain": the name exists but no barrier proved it (Windows without the
+ * native write-through move); "failed": nothing was published. Frozen interface of the store seat. */
+export type SeedDurability = "synced" | "uncertain" | "failed";
+
 /** Rename onto a name that must not exist yet. Any failure leaves no file, so the
- * engine asks and R3 answers: a partial store would neither trust nor ask (F8). */
-export function writeFuigoSeed(home: string, text: string): boolean {
+ * engine asks and R3 answers: a partial store would neither trust nor ask (F8).
+ * An "uncertain" seed stays in place (it is still the better answer for this turn) but is never counted as complete. */
+export function writeFuigoSeedDurable(home: string, text: string, options: PublishDurableOptions = {}): SeedDurability {
   const file = join(home, FUIGO_TRUST_FILE);
   try {
     lstatSync(file);
     console.warn("[folder-trust] a fresh Fuigo home already holds a trust file; nothing seeded");
-    return false;
+    return "failed";
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       console.warn(`[folder-trust] could not check a fresh Fuigo home: ${(error as NodeJS.ErrnoException).code ?? "unknown"}`);
-      return false;
+      return "failed";
     }
   }
   const temp = `${file}.${randomBytes(8).toString("hex")}.tmp`;
@@ -110,14 +119,68 @@ export function writeFuigoSeed(home: string, text: string): boolean {
     fsyncSync(fd);
     closeSync(fd);
     fd = null;
-    renameSync(temp, file);
-    return true;
+    return renameAndSyncParent(temp, file, options);
   } catch (error) {
     if (fd !== null) { try { closeSync(fd); } catch { /* it is being removed */ } }
     rmSync(temp, { force: true });
     console.warn(`[folder-trust] could not write a Fuigo seed: ${(error as NodeJS.ErrnoException).code ?? "unknown"}`);
-    return false;
+    return "failed";
   }
+}
+
+/** true only for a durable ("synced") seed. */
+export function writeFuigoSeed(home: string, text: string, options: PublishDurableOptions = {}): boolean {
+  return writeFuigoSeedDurable(home, text, options) === "synced";
+}
+
+// ── isolated per-turn configuration homes (N3) ──────────────────────────────
+
+/** Each boot gets one epoch; a home is `<epoch>-<n>`. Never os.tmpdir(), never a path in a log. */
+const bootEpoch = randomBytes(6).toString("hex");
+let homeCounter = 0;
+let swept = false;
+const HOMES_DIR = (root: string) => join(root, "run", "fuigo-turn-homes");
+
+/** Removes every home from an earlier boot epoch. Run at boot before the first
+ * turn; creating a home also runs it once per process. A failure logs one fixed code and never blocks a turn. */
+export function sweepIsolatedFuigoHomes(root: string = DATA_DIR): number {
+  swept = true;
+  let removed = 0;
+  let names: string[];
+  try { names = readdirSync(HOMES_DIR(root)); } catch { return 0; }
+  for (const name of names) {
+    if (name.startsWith(`${bootEpoch}-`)) continue;
+    try { rmSync(join(HOMES_DIR(root), name), { recursive: true, force: true }); removed++; }
+    catch { console.warn("[folder-trust] isolated-home-sweep-failed"); }
+  }
+  return removed;
+}
+
+/** A native automatic turn shares the owner's sign-in and refresh lock. The private
+ * launch home under DATA_DIR/run starts without native configuration or saved folder grants.
+ * Frozen interface (store seat): isolatedFuigoConfigurationHome(turn) -> { home, release() }. */
+export function isolatedFuigoConfigurationHome(turn: { sourceHome: string | null }, root: string = DATA_DIR): { home: string; release(): void } {
+  if (!swept) sweepIsolatedFuigoHomes(root);
+  const parent = HOMES_DIR(root);
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const home = join(parent, `${bootEpoch}-${++homeCounter}`);
+  mkdirSync(home, { mode: 0o700 });
+  let released = false;
+  const release = () => { if (released) return; released = true; rmSync(home, { recursive: true, force: true }); };
+  try {
+    if (turn.sourceHome) {
+      const sourceHome = resolve(turn.sourceHome);
+      const file = join(sourceHome, "auth.json");
+      const stat = statSync(file, { throwIfNoEntry: false });
+      if (stat) {
+        if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error("Fuigo sign-in could not be read. Check Fuigo sign-in and try again.");
+        const login = linkSharedEntry(realpathSync(file), join(home, "auth.json"));
+        const lock = linkSharedEntry(join(sourceHome, "auth.json.lock"), join(home, "auth.json.lock"), undefined, { lock: true });
+        if (login === "absent" || lock === "absent") throw new LoginLinkUnavailableError("symlink-needed");
+      }
+    }
+    return { home, release };
+  } catch (error) { release(); throw error; }
 }
 
 function pathsToRoot(folder: string): string[] {
@@ -169,6 +232,8 @@ export async function folderPolicySeedAllowed(realCwd: string, rejects: readonly
 }
 
 export interface FuigoSeedOutcome extends FuigoSeedPlan {
+  /** Barrier result of the seed write: synced | uncertain | failed. A Cloud home is "synced" by the launcher's own barrier. */
+  durable: SeedDurability;
   /** R4: every Murage decline reached this home. Read by R3 rule 3 and the card. */
   declinesSeeded: boolean;
   /** The stored key the S5a chip names, or null. */
@@ -185,10 +250,11 @@ export async function seedFuigoHome(
   const policyFolder = policyGrant && await folderPolicySeedAllowed(realCwd, rejects) ? realCwd : null;
   const plan = planFuigoSeeds({ trustKeys, rejects, realCwd }, policyFolder, cloudHome);
   const seeded = plan.trusts.length + plan.declines.length > 0;
-  const written = seeded && (home.cloud || writeFuigoSeed(home.path, fuigoSeedText(plan)));
-  if (seeded && !written) return { ...plan, trusts: [], declines: [], policySeeded: false, declinesSeeded: false, chipKey: null };
-  const chip = written && plan.declines.includes(realCwd) ? rejects.find((reject) => reject.key === realCwd || reject.folder === realCwd) : undefined;
-  return { ...plan, declinesSeeded: !plan.declineSkipped, chipKey: chip?.key ?? null };
+  const durable: SeedDurability = !seeded || home.cloud ? "synced" : writeFuigoSeedDurable(home.path, fuigoSeedText(plan));
+  // Only a durable seed counts as complete; an uncertain one stays in the home but is never reported as decline coverage.
+  if (seeded && durable !== "synced") return { ...plan, trusts: [], declines: [], policySeeded: false, declinesSeeded: false, chipKey: null, durable };
+  const chip = durable === "synced" && seeded && plan.declines.includes(realCwd) ? rejects.find((reject) => reject.key === realCwd || reject.folder === realCwd) : undefined;
+  return { ...plan, declinesSeeded: !plan.declineSkipped, chipKey: chip?.key ?? null, durable };
 }
 
 /** The r7 addendum (2026-11-01): an unrouted Cloud Fuigo turn has no `applyProviderRoute`, but its

@@ -118,7 +118,7 @@ it("the step back to 1.0.17 (--to 13) takes only the floor index, in one step, a
   expect(db.prepare("SELECT 1 AS ok FROM sqlite_schema WHERE type='table' AND name='memory_thread_flow_last'").get()).toEqual({ ok: 1 });
   // The derived capture queue and indexes unknown to 1.0.17 leave. Every authoritative table, trigger and older index stays. A newer tree reaches 13
   // through its own step, which takes that version's own objects as well.
-  if (MEMORY_SCHEMA_VERSION === 13) {
+  if ((MEMORY_SCHEMA_VERSION as number) === 13) {
     expect(tables()).toEqual(before.tables);
     expect((db.prepare("SELECT name FROM sqlite_schema WHERE type='index' ORDER BY name").all() as Array<{ name: string }>).map(row => row.name)).toEqual(before.indexes);
   }

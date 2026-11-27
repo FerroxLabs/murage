@@ -271,7 +271,7 @@ it.each(['masked', 'exhausted'] as const)('collector.post-latch-flood-bounds-ret
   const state = (collector as unknown as { admissions: WeakMap<object, {
     snapshots: Map<string, string>; regions: Set<string>; items: Map<string, string>; anonymousAssistant: number;
   }> }).admissions.get(cap)!;
-  collector.intake(rawEvent({ type: 'item.completed', itemType: 'assistant_text', text: latch === 'masked' ? '**password**:' : 'x'.repeat(262_145) }), source);
+  collector.intake(rawEvent({ type: 'item.completed', itemType: 'assistant_text', text: latch === 'masked' ? '**password**:' : 42 }), source); // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z: 256 KiB + 1 of text no longer masks a turn (size cut removed); the non-secret mask this row needs is now a shape refusal (text that is not a string)
   expect(collector.masked(source)).toBe(true);
   for (let i = 0; i < 2_000; i++) {
     const result = collector.intake(rawEvent({ type: 'item.completed', itemType: 'assistant_text', text: 'fixture private value' }), source);
@@ -297,7 +297,7 @@ it.each(['masked', 'exhausted'] as const)('collector.post-latch-question-keeps-o
   const attachment = collector.attach('instance');
   const cap = collector.admitNewTurn({ attachment, instanceId: 'instance', threadId: 'thread' });
   const source = collector.source(cap);
-  collector.intake(rawEvent({ type: 'item.completed', itemType: 'assistant_text', text: latch === 'masked' ? '**password**:' : 'x'.repeat(262_145) }), source);
+  collector.intake(rawEvent({ type: 'item.completed', itemType: 'assistant_text', text: latch === 'masked' ? '**password**:' : 42 }), source); // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z: 256 KiB + 1 of text no longer masks a turn (size cut removed); the non-secret mask this row needs is now a shape refusal (text that is not a string)
   expect(collector.masked(source)).toBe(true);
   const result = collector.intake(rawEvent({ type: 'request.opened', requestType: 'question', questions: [{
     id: 'private-question-id', question: 'fixture private question', options: [{ label: 'fixture private option' }, { label: 'another private option' }],
@@ -309,4 +309,36 @@ it.each(['masked', 'exhausted'] as const)('collector.post-latch-question-keeps-o
     { handle: 'o.0.0', label: 'Option 1' }, { handle: 'o.0.1', label: 'Option 2' },
   ] }]);
   expect(JSON.stringify(result.audience)).not.toMatch(/private-question-id|fixture private|another private/);
+});
+
+it('collector.a rich startup command catalog does not mask a short answer', () => {
+  const bus = new EventBus(() => {}); bus.omitLog(() => true);
+  const attachment = bus.collector.attach('instance');
+  const source = bus.collector.source(bus.collector.admitNewTurn({ attachment, instanceId: 'instance', threadId: 'thread' }));
+  const commands = Array.from({ length: 40 }, (_, i) => ({ name: `command-${i}`, description: 'An ordinary menu entry.', hint: 'Optional input.' }));
+  const privateValue = 'fixture' + 'MenuValue123';
+  commands[0]!.description = `password: ${privateValue}`;
+  const report = rawEvent({ type: 'engine.commands', commands });
+  bus.publish(report, source);
+  expect(bus.audienceFor(report).map(row => row.event)).toContainEqual(expect.objectContaining({ type: 'engine.commands', commands: [] }));
+  expect(JSON.stringify(bus.audienceFor(report))).not.toContain(privateValue);
+  const reply = rawEvent({ type: 'item.completed', itemType: 'assistant_text', text: 'A short answer.' });
+  bus.publish(reply, source);
+  expect(bus.audienceMaskedFor(reply)).toBe(false);
+  expect(bus.audienceFor(reply).map(row => row.event)).toContainEqual(expect.objectContaining({ type: 'item.completed', text: 'A short answer.' }));
+});
+
+it('collector.a long ordinary tool turn keeps its final owner reply', () => {
+  const bus = new EventBus(() => {}); bus.omitLog(() => true);
+  const attachment = bus.collector.attach('instance');
+  const source = bus.collector.source(bus.collector.admitNewTurn({ attachment, instanceId: 'instance', threadId: 'thread' }));
+  for (let i = 0; i < 120; i++) {
+    const itemId = `step-${i}`;
+    bus.publish(rawEvent({ type: 'item.started', itemType: 'tool', itemId, title: 'Read', input: { path: 'fixture.txt' } }), source);
+    bus.publish(rawEvent({ type: 'item.completed', itemType: 'tool', itemId, ok: true, detail: 'Read a file.' }), source);
+  }
+  const reply = rawEvent({ type: 'item.completed', itemType: 'assistant_text', text: 'All files were read.' });
+  bus.publish(reply, source);
+  expect(bus.audienceMaskedFor(reply)).toBe(false);
+  expect(bus.audienceFor(reply).map(row => row.event)).toContainEqual(expect.objectContaining({ type: 'item.completed', text: 'All files were read.' }));
 });

@@ -35,13 +35,29 @@ function configOptions(result: unknown): Record<string, unknown>[] {
   return Array.isArray(options) ? options.slice(0, ACP_OPTION_LIMIT).flatMap((entry) => { const value = record(entry); return value ? [value] : []; }) : [];
 }
 
-function selectValues(value: unknown): SelectValue[] {
+/** How many distinct models a select offers before Murage's own option limit cuts it. */
+function countSelectValues(value: unknown): number {
+  const seen = new Set<string>();
+  const walk = (entries: unknown, depth = 0) => {
+    if (!Array.isArray(entries) || depth > 8) return;
+    for (const raw of entries) {
+      const entry = record(raw);
+      if (!entry) continue;
+      const id = nonempty(entry.value);
+      if (id) seen.add(id); else walk(entry.options, depth + 1);
+    }
+  };
+  walk(value);
+  return seen.size;
+}
+
+function selectValues(value: unknown, limit = ACP_OPTION_LIMIT): SelectValue[] {
   const values: SelectValue[] = [];
   const seen = new Set<string>();
   const collect = (entries: unknown, provider?: string, depth = 0) => {
     if (!Array.isArray(entries) || depth > 8) return;
-    for (const raw of entries.slice(0, ACP_OPTION_LIMIT)) {
-      if (values.length >= ACP_OPTION_LIMIT) break;
+    for (const raw of entries.slice(0, limit)) {
+      if (values.length >= limit) break;
       const entry = record(raw);
       if (!entry) continue;
       const id = nonempty(entry.value);
@@ -55,7 +71,7 @@ function selectValues(value: unknown): SelectValue[] {
     }
   };
   collect(value);
-  return decodeChoices(values);
+  return decodeChoices(values, limit);
 }
 
 export function acpVariantOption(result: unknown): { configId: string; options: ModelVariantOption[]; currentValue?: string; defaultValue?: string } | undefined {
@@ -72,24 +88,27 @@ export function acpVariantOption(result: unknown): { configId: string; options: 
   };
 }
 
-export function acpModelOption(result: unknown, configId = "model"): {
+export function acpModelOption(result: unknown, configId = "model", limit = ACP_OPTION_LIMIT): {
   configId?: string;
   currentValue?: string;
+  /** Set only when the agent advertised more models than `options` holds. */
+  total?: number;
   options: ModelCatalog["options"];
 } | undefined {
   const configs = configOptions(result);
   const option = configs.find((entry) => entry.type === "select" && entry.id === configId)
     ?? configs.find((entry) => entry.type === "select" && entry.category === "model" && nonempty(entry.id));
   if (option) {
-    const options = selectValues(option.options);
+    const options = selectValues(option.options, limit);
     const currentValue = options.some(({ id }) => id === option.currentValue) ? nonempty(option.currentValue) : undefined;
-    return { configId: option.id as string, options, ...(currentValue ? { currentValue } : {}) };
+    const total = countSelectValues(option.options);
+    return { configId: option.id as string, options, ...(total > options.length ? { total } : {}), ...(currentValue ? { currentValue } : {}) };
   }
   const models = record(record(result)?.models);
   if (!models || !Array.isArray(models.availableModels)) return;
   const options: ModelCatalog["options"] = [];
   const seen = new Set<string>();
-  for (const raw of models.availableModels.slice(0, ACP_OPTION_LIMIT)) {
+  for (const raw of models.availableModels.slice(0, limit)) {
     const model = record(raw);
     const id = nonempty(model?.modelId);
     if (!model || !id || seen.has(id)) continue;
@@ -97,7 +116,7 @@ export function acpModelOption(result: unknown, configId = "model"): {
     const provider = nonempty(model.provider);
     options.push({ id, label: nonempty(model.name) ?? id, ...(provider ? { provider } : {}) });
   }
-  const bounded = decodeChoices(options);
+  const bounded = decodeChoices(options, limit);
   const currentValue = bounded.some(({ id }) => id === models.currentModelId) ? nonempty(models.currentModelId) : undefined;
   return { options: bounded, ...(currentValue ? { currentValue } : {}) };
 }

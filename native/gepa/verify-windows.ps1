@@ -1,5 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$Bundle, [Parameter(Mandatory=$true)][string]$Receipt)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-signers.ps1')
 $root = (Resolve-Path -LiteralPath $Bundle).Path
 $rows = @()
 foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File) {
@@ -19,11 +20,18 @@ foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File) {
         $stream.Position = $offset
         if ($reader.ReadUInt32() -ne 0x00004550 -or $reader.ReadUInt16() -ne 0x8664) { throw 'Native image is not AMD64' }
     } finally { $reader.Dispose(); $stream.Dispose() }
-    $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
-    if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw "Invalid or untimestamped signature: $($file.Name)" }
-    $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
-    if ($publisher -ne 'Ferrox Labs, LLC') { throw "Unexpected native publisher: $($file.Name)" }
-    $rows += @{ path = [System.IO.Path]::GetRelativePath($root, $file.FullName); sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant(); publisher = $publisher }
+    $relative = [System.IO.Path]::GetRelativePath($root, $file.FullName)
+    if (Test-MicrosoftRedistributable $root $file) {
+        $publisher = Assert-MicrosoftRedistributable $file
+    } else {
+        $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+        if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw "Invalid or untimestamped signature: $relative" }
+        $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+        if ($publisher -ne 'Ferrox Labs, LLC') { throw "Unexpected native publisher: $relative" }
+        # The catalog-independent reading must agree, so the verdict never depends on the runner image.
+        if ((Get-EmbeddedPublisher $file.FullName) -ne 'Ferrox Labs, LLC') { throw "Unexpected embedded native publisher: $relative" }
+    }
+    $rows += @{ path = $relative; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant(); publisher = $publisher }
 }
 if ($rows.Count -eq 0 -or -not (Test-Path -LiteralPath (Join-Path $root 'gepa-worker.exe'))) { throw 'Missing GEPA native worker' }
 $rows | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Receipt -Encoding utf8

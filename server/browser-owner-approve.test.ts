@@ -100,7 +100,7 @@ function fixture(): Fixture {
     stopHitByRequest: new Map(),
     peerApprovalHolder: () => undefined,
     browserExtension: undefined,
-    store: { botByThread: () => ({ id: "b1", name: "Bot" }), bot: () => ({ id: "b1", name: "Bot" }), cardForRequest: () => undefined },
+    store: { isMailboxSealed: () => false, botByThread: () => ({ id: "b1", name: "Bot" }), bot: () => ({ id: "b1", name: "Bot" }), cardForRequest: () => undefined },
     taskGrantRefusal: () => undefined,
     answerLimitCard: () => null,
     isEmailRequestId: () => false,

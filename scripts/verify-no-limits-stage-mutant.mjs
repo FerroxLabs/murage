@@ -1,3 +1,4 @@
+import { assertExternalEvidencePath, evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Run inside the network-disabled test container. Mutate only a temp copy.
 import {createHash} from 'node:crypto';
@@ -7,7 +8,7 @@ import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {safeWipeSync} from '../server/testing/safe-wipe.mjs';
 if(process.env.CI!=='1')throw Error('Use the isolated test container');
-const out=resolve(process.argv[2]??'evidence/wipe-final-r7/mutant');
+const out=assertExternalEvidencePath(resolve(process.argv[2]??evidencePath('evidence/wipe-final-r7/mutant')));
 mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'wipe-stage-mutant-'));
 const source=readFileSync('shared/no-limits-raw-wipe.ts','utf8');

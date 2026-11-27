@@ -163,3 +163,20 @@ it('pi crash mid-turn on a bound turn ends as the lease.ledger refusal, once', a
   expect(x.recorder.events.filter(e => e.type === 'turn.completed' && e.turnId === x.sent.turnId), 'lease mode: the lease owns the terminal').toHaveLength(0);
   expect(unawaitedTeardowns().filter(r => r.threadId === 'nc-pi-l')).toEqual([]);
 });
+
+// 1.0.20 busy-engines (pi family): pi exiting mid-turn on a bound turn is the driver's own refusal; it reaches the lease as
+// ENGINE_OWN_REFUSAL (driverRaised), the verdict the direct turn's lease reads at its seal to end the turn at once, as on 1.0.19, instead of
+// rebuilding it into the same exit (index.ts admitLedgerLease). Before, pi refused with the plain verdict.
+it('busy-engines pi: a crash mid-turn on a bound turn gives the lease the driverRaised verdict, once', async () => {
+  const base = fixtureMountTurn({ cwd: fixtureBotFolder(), threadId: 'be-pi', text: 'go' });
+  const verdicts: LineageVerdict[] = [];
+  const releaseBinding = { ...base.releaseBinding!, onLedgerRefused: (verdict: LineageVerdict) => {
+    verdicts.push(verdict);
+    refusalForVerdict(verdict, 'lease.ledger', { engine: 'lease', threadId: 'be-pi', binding: { identity: base.releaseBinding!.identity } as never, lease: { late: undefined } })?.noClaim();
+    void fencedRefusals().find((r): r is FencedRefusal => r instanceof FencedRefusal && r.threadId === 'be-pi')?.close(async () => ({ confirmed: true }));
+  } };
+  const x = await startPi('be-pi', { releaseBinding }, { FAKE_PI_MODE: 'crash-mid-turn' });
+  for (let i = 0; i < 400 && !verdicts.length; i++) await new Promise(r => setTimeout(r, 25));
+  expect(verdicts, 'the lease is told once, by the driver').toEqual([{ state: 'checking', reason: 'not-built', driverRaised: true }]);
+  expect(x.watch.escaped).toEqual([]);
+});

@@ -11,9 +11,10 @@
 // the answer goes back out through `POST /api/threads/:id/respond` — the same
 // route the card in the conversation posts to. No second answering path, and
 // no second copy of the question.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "@/state/store";
+import { permissionAnswerBody } from "@/state/permission-answer";
 import { decideWithFreshAuth } from "@/lib/fresh-auth";
 import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal } from "@/lib/approval-surface";
 import { inNativeShell } from "@/lib/native-shell";
@@ -25,7 +26,7 @@ import type { Message, OptionCardData } from "@/state/store";
 import { approvalTitle } from "@/lib/pending-approval";
 import { t } from "@/lib/i18n";
 import { answersInOneTap, isQuestionCard, questionsForCard, type QuestionAnswer } from "../../shared/questions";
-import { QuestionCardView, questionDisplayAction } from "./QuestionCard";
+import { QuestionCardView, questionDisplayAction, questionDisplayActionByLabel } from "./QuestionCard";
 
 /** A request that is still open: nothing answered it, dismissed it, and the
  * bot has not stopped waiting. */
@@ -199,6 +200,13 @@ export function quickAnswerChoices(quick: QuickAnswer): Array<{ key: string; lab
 /** Posting an answer to a waiting request, for the open card and the Needs you
  *  row alike: ONE route (`POST /api/threads/:id/respond`), fresh authentication
  *  where the card needs it, held buttons while it is in flight. */
+/** q1022-cards (#19): tells the door once this card's answer is sent. It stays out (accepted, or failed: Approve all
+ *  then leaves it for the owner's own press), and nothing is said on mount or unmount, so a row that comes back never
+ *  clears an answer another copy of it sent. A second Allow while the first is in flight joins it (fresh-auth). */
+function useAnsweringReport(busy: boolean, onAnswering?: (out: boolean) => void) {
+  useEffect(() => { if (busy) onAnswering?.(true); }, [busy, onAnswering]);
+}
+
 function useRequestAnswer(threadId: string, card: OptionCardData, botName: string | undefined, onSettled: () => void) {
   const kind = inlineAnswerKind(card);
   const [busy, setBusy] = useState(false);
@@ -211,6 +219,15 @@ function useRequestAnswer(threadId: string, card: OptionCardData, botName: strin
   // A phone's Allow on a card not rated low may meet fresh authentication, which signs the card's details.
   const reviewFirst = kind === "approval" && desktop !== true && card.lowRisk !== true;
 
+  // Allow and Deny post the chat card's own body (permission-answer.ts, q1022-approvefix): one answer path, never the
+  // display handle sent as a raw request id. A question's one-tap pick posts the chat card's display action for the same
+  // pick (questionDisplayActionByLabel); the open card's answer or skip already names its handle.
+  const wireBody = (body: Record<string, unknown>): Record<string, unknown> => body.requestHandle ? body
+    : body.behavior === "allow" || body.behavior === "deny"
+      ? permissionAnswerBody(card, card.requestId ?? "", body.behavior, { message: typeof body.message === "string" ? body.message : undefined, allowForTask: body.allowForTask === true })
+      : body.behavior === "answer" && card.requestHandle && Array.isArray(body.answers)
+        ? questionDisplayActionByLabel(card, card.requestHandle.slice(2), body.answers as QuestionAnswer[])
+        : { requestId: card.requestId, ...body };
   const respond = async (body: Record<string, unknown>, hooks?: DecisionHooks) => {
     setBusy(true);
     setError(null);
@@ -220,7 +237,7 @@ function useRequestAnswer(threadId: string, card: OptionCardData, botName: strin
     let failed = false;
     let failure = "";
     await decideWithFreshAuth(
-      (extra) => api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify(body.requestHandle ? { ...body, ...extra } : { requestId: card.requestId, ...body, ...extra }) }),
+      (extra) => api(`/api/threads/${threadId}/respond`, { method: "POST", body: JSON.stringify({ ...wireBody(body), ...extra }) }),
       {
         threadId,
         requestId: card.requestId ?? "",
@@ -259,6 +276,7 @@ export function InboxRequestAnswer({
   botName,
   onSettled,
   details = false,
+  onAnswering,
 }: {
   threadId: string;
   card: OptionCardData;
@@ -266,8 +284,11 @@ export function InboxRequestAnswer({
   onSettled: () => void;
   /** Opened from "Show details": show the exact tool and command on every card. */
   details?: boolean;
+  /** q1022-cards (#19): while this card's answer is out (useAnsweringReport) */
+  onAnswering?: (out: boolean) => void;
 }) {
   const { kind, busy, error, setError, feedback, computerOnly, reviewFirst, respond, decide, btn } = useRequestAnswer(threadId, card, botName, onSettled);
+  useAnsweringReport(busy, onAnswering);
   if (!kind) return null;
 
   if (kind === "question") {
@@ -352,6 +373,8 @@ export function InboxQuickAnswer({
   botName,
   labelledBy,
   onSettled,
+  onApprover,
+  onAnswering,
 }: {
   threadId: string;
   card: OptionCardData;
@@ -359,10 +382,30 @@ export function InboxQuickAnswer({
   /** the row's summary line, which names this group for a screen reader */
   labelledBy: string;
   onSettled: () => void;
+  /** q1022-cards (#48): this row's own Approve press, handed to the door's "Approve all from <bot>" (null when the
+   *  row offers no one-click Approve or leaves). It is the button's path exactly, so each card is answered once,
+   *  through the one respond route, as if its Approve had been pressed. */
+  onApprover?: (approve: (() => Promise<void>) | null) => void;
+  /** q1022-cards (#19): while this card's answer is out (useAnsweringReport) */
+  onAnswering?: (out: boolean) => void;
 }) {
   const answer = useRequestAnswer(threadId, card, botName, onSettled);
+  useAnsweringReport(answer.busy, onAnswering);
   const quick = quickAnswerOf(card, answer);
   const { feedback, busy, error, btn, decide, respond } = answer;
+  // The Approve button's own press (decide("allow", ALLOW_ONCE_BODY)), resolved when its answer settles.
+  const approvePress = useRef<(() => Promise<void>) | null>(null);
+  approvePress.current = quick?.kind === "approval" && !busy
+    ? () => new Promise<void>((settled) => {
+      if (!feedback.run("allow", (hooks) => respond(ALLOW_ONCE_BODY, hooks).finally(settled))) settled();
+    })
+    : null;
+  const approvable = approvePress.current !== null;
+  useEffect(() => {
+    if (!onApprover) return;
+    onApprover(approvable ? () => approvePress.current?.() ?? Promise.resolve() : null);
+    return () => onApprover(null);
+  }, [onApprover, approvable]);
   // A refusal can take the buttons away (the server said only the computer may answer): its reason still shows.
   if (!quick) return error ? <p role="alert" className="max-w-xs text-right text-[12px] text-danger">{error}</p> : null;
   const choices = quickAnswerChoices(quick);

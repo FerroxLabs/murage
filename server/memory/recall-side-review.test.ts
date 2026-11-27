@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Recall projection/deletion consumer: c3-memory-side; producer: recall-scope.
 import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DATA_DIR } from '../config.ts';
 import { closeDatabase, database, transaction } from '../database.ts';
@@ -10,6 +12,7 @@ import { removeTempDirSync } from '../testing/cleanup.ts';
 import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from './policy.ts';
 import { prepareRecallContext, maintainRecallViewSlice, stopRecallViewMaintenance, startRecallViewMaintenance, assertRecallView } from './recall-view.ts';
 import { buildMemoryBundle } from './bundle.ts';
+import { BgDeferred } from '../bg-admission.ts';
 import { LineageAllowance } from './lineage-allowance.ts';
 import { advanceRevocationJob, forgetJob } from './memory-revocation.ts';
 import { setMemoryMode } from './repository.ts';
@@ -91,5 +94,24 @@ it('Medium maintenance reports unexpected storage failures once and quietly retr
     await vi.advanceTimersByTimeAsync(150);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain('SQLITE_IOERR');
+  } finally {stopRecallViewMaintenance();spy.mockRestore();warn.mockRestore();vi.useRealTimers();}
+});
+
+it('sweep-1021 B4: maintenance names a real node:sqlite busy failure and a background deferral, not "unexpected storage failure"',async()=>{
+  const {db}=await fixture();vi.useFakeTimers();const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  // The error is a real one from node:sqlite (code ERR_SQLITE_ERROR, the engine's result in errcode), not a hand-built SQLITE_* code.
+  const file=join(DATA_DIR,'b4-lock.db'),holder=new DatabaseSync(file),other=new DatabaseSync(file);holder.exec('BEGIN IMMEDIATE');
+  let busy:unknown;try{other.exec('BEGIN IMMEDIATE');}catch(error){busy=error;}finally{holder.close();other.close();}
+  expect(((busy as {errcode?:number}).errcode??0)&0xff).toBe(5);
+  const prepare=db.prepare.bind(db);let failure:unknown=busy;
+  const spy=vi.spyOn(db,'prepare').mockImplementation(sql=>{if(sql.includes('FROM memory_recall_contexts'))throw failure;return prepare(sql);});
+  try {
+    startRecallViewMaintenance();await vi.advanceTimersByTimeAsync(200);
+    failure=new BgDeferred(1);await vi.advanceTimersByTimeAsync(200);
+    const lines=warn.mock.calls.map(call=>String(call[0]));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('SQLITE_BUSY');
+    expect(lines[1]).toContain('background write deferred');
+    expect(lines.join(' ')).not.toContain('unexpected storage failure');
   } finally {stopRecallViewMaintenance();spy.mockRestore();warn.mockRestore();vi.useRealTimers();}
 });

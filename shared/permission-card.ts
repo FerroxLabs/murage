@@ -18,7 +18,9 @@ export const QUEUE_REF_PATHS = Object.freeze({
 /** The hash excludes mutable presentation fields and itself. Unknown fields
  * remain action-bearing. Canonical serialization and hashing belong to S1. */
 export function actionProjection(card: Readonly<object>): Record<string, unknown> {
-  const omitted = new Set<string>([...CARD_TERMINAL_FIELDS, ...CARD_DISPLAY_FIELDS, 'actionHash', 'held', 'answers', 'expired', 'undone']);
+  const omitted = new Set<string>([...CARD_TERMINAL_FIELDS, ...CARD_DISPLAY_FIELDS, 'actionHash', 'held', 'answers', 'expired', 'undone',
+    // 1021 Retry: the Send again status of a delivery-failed card is presentation, never action authority.
+    'deliveryRetry']);
   const action = Object.fromEntries(Object.entries(card).filter(([key]) => !omitted.has(key)));
   // A question's send receipt is derived from its immutable message id. It is
   // written only with terminal settlement, never used as action authority.

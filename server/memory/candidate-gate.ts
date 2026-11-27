@@ -46,9 +46,19 @@ const ACKNOWLEDGEMENT = /^(?:ok|okay|yes|yep|yeah|no|nope|sure|thanks|thank you|
 /** A digit, or a capital after the first word: a name, a place or a date means the line says something specific. */
 const SPECIFIC = /\d| (?!I(?:'| |$))\p{Lu}/u;
 
+// The whole line must describe bare arithmetic or name a topic. A source prefix can introduce a durable fact.
+const SOURCE = "(?:the|this|that|a|an) (?:source|text|document|doc|passage|article|message|conversation|chat|input|context|transcript|excerpt|content|response|reply|snippet|page)";
+const REPORT = "(?:states?|stated|says?|said|mentions?|mentioned|notes?|noted|indicates?|indicated|shows?|showed|describes?|described|discusses?|discussed|explains?|explained|claims?|claimed|reports?|reported|suggests?|suggested|contains?|contained|refers to)";
+const NUMBER = "[+-]?\\d[\\d.,]*";
+const ARITHMETIC = `${NUMBER}(?: ?[x×*+\\-/=] ?${NUMBER})*`;
+const SUM = `(?:${ARITHMETIC}|'${ARITHMETIC}'|"${ARITHMETIC}"|(?:a|the) (?:calculation|computation|sum|product|multiplication|math) (?:of|for) ${ARITHMETIC})`;
+const WORKED_SUM = new RegExp(`^(?:${SOURCE} ${REPORT}(?: that)? )?${SUM} (?:is|was|are|were) being (?:computed|calculated|worked out|evaluated|performed|multiplied|added)$`, "i");
+const SOURCE_METADATA = new RegExp(`^${SOURCE} (?:${REPORT}(?: that)? the total (?:is|was) ${NUMBER}|(?:mentions?|mentioned|discusses?|discussed|is about|was about) (?:the budget|quarterly review|project [a-z]+))$`, "i");
+const OWNER_REFERENCE = /\b(?:you|your|yours|yourself|yourselves)\b/i;
+
 function plainLine(text: string): string | null {
   if (text.length > MAX_CHARS) return null;
-  const line = text.trim().replace(/[‘’]/g, "'").replace(/\s+/g, " ").replace(/[.!?…,;:]+$/, "");
+  const line = text.trim().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").replace(/[.!?…,;:]+$/, "");
   return line.split(" ").length > MAX_WORDS ? null : line;
 }
 /** A `when` on another day (a plan ahead, a dated past event) means this is not a state of about now. */
@@ -62,7 +72,9 @@ function dayNearNow(when: string | undefined, now: number): boolean {
 export function gateReason(candidate: GateFields, now = Date.now()): GateReason | null {
   if (candidate.update === true || (candidate.claimType !== undefined && EXEMPT_CLAIMS.has(candidate.claimType))) return null;
   const line = plainLine(candidate.text);
-  if (line === null || SPECIFIC.test(line)) return null;
+  if (line === null) return null;
+  if (!OWNER_REFERENCE.test(line) && (WORKED_SUM.test(line) || SOURCE_METADATA.test(line))) return "thin";
+  if (SPECIFIC.test(line)) return null;
   const object = candidate.object?.trim();
   if (PLACEHOLDER.test(line) && (!object || BARE_OBJECT.test(object))) return "placeholder";
   // the whole line decides: the `transient` flag is never read here, so it can drop nothing

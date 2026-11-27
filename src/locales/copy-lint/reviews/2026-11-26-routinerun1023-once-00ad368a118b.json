@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "cl-routine1023d",
+  "date": "2026-11-26",
+  "base": "af9b854ff3",
+  "scope": "routine once-moment strings (4 keys, 8 locales)",
+  "strings": {
+    "en:ux.l5b.once.justPassed": {
+      "text": "That time just passed. Run it now instead?",
+      "en": "That time just passed. Run it now instead?",
+      "verdict": "pass"
+    },
+    "en:ux.l5b.once.runNow": {
+      "text": "Run now",
+      "en": "Run now",
+      "verdict": "pass"
+    },
+    "en:ux.l5b.once.pickTime": {
+      "text": "Pick a new time",
+      "en": "Pick a new time",
+      "verdict": "pass"
+    },
+    "en:ux.l5b.once.inPast": {
+      "text": "That one-time moment has already passed. Choose a time in the future.",
+      "en": "That one-time moment has already passed. Choose a time in the future.",
+      "verdict": "pass"
+    },
+    "de:ux.l5b.once.justPassed": {
+      "text": "Diese Zeit ist gerade vorbei. Stattdessen jetzt ausführen?",
+      "en": "That time just passed. Run it now instead?",
+      "verdict": "pass"
+    },
+    "de:ux.l5b.once.runNow": {
+      "text": "Jetzt ausführen",
+      "en": "Run now",
+      "verdict": "pass"
+    },
+    "de:ux.l5b.once.pickTime": {
+      "text": "Neue Zeit wählen",
+      "en": "Pick a new time",
+      "verdict": "pass"
+    },
+    "de:ux.l5b.once.inPast": {
+      "text": "Dieser einmalige Zeitpunkt ist bereits vorbei. Wähle eine Zeit in der Zukunft.",
+      "en": "That one-time moment has already passed. Choose a time in the future.",
+      "verdict": "pass"
+    },
+    "es:ux.l5b.once.justPassed": {
+      "text": "Esa hora acaba de pasar. ¿Quieres ejecutarla ahora?",
+      "en": "That time just passed. Run it now instead?",
+      "verdict": "pass"
+    },
+    "es:ux.l5b.once.runNow": {
+      "text": "Ejecutar ahora",
+      "en": "Run now",
+      "verdict": "pass"
+    },
+    "es:ux.l5b.once.pickTime": {
+      "text": "Elegir otra hora",
+      "en": "Pick a new time",
+      "verdict": "pass"
+    },
+    "es:ux.l5b.once.inPast": {
+      "text": "Ese momento único ya pasó. Elige una hora en el futuro.",
+      "en": "That one-time moment has already passed. Choose a time in the future.",
+      "verdict": "pass"
+    },
+    "fr:ux.l5b.once.justPassed": {
+      "text": "Cet horaire vient de passer. Veux-tu l'exécuter maintenant ?",
+      "en": "That time just passed. Run it now instead?",
+      "verdict": "pass"
+    },
+    "fr:ux.l5b.once.runNow": {
+      "text": "Exécuter maintenant",
+      "en": "Run now",
+      "verdict": "pass"
+    },
+    "fr:ux.l5b.once.pickTime": {
+      "text": "Choisir une autre heure",
+      "en": "Pick a new time",
+      "verdict": "pass"
+    },
+    "fr:ux.l5b.once.inPast": {
+      "text": "Ce moment unique est déjà passé. Choisis une heure dans le futur.",
+      "en": "That one-time moment has already passed. Choose a time in the future.",
+      "verdict": "pass"
+    },
+    "hi:ux.l5b.once.justPassed": {
+      "text": "वह समय अभी-अभी बीत गया। क्या इसे अभी चलाएँ?",
+      "en": "That time just passed. Run it now instead?",
+      "verdict": "pass"
+    },
+    "hi:ux.l5b.once.runNow": {
+      "text": "अभी चलाएँ",
+      "en": "Run now",
+      "verdict": "pass"
+    },
+    "hi:ux.l5b.once.pickTime": {
+      "text": "नया समय चुनें",
+      "en": "Pick a new time",
+      "verdict": "pass"
+    },
+    "hi:ux.l5b.once.inPast": {
+      "text": "वह एक बार का समय बीत चुका है। भविष्य का कोई समय चुनें।",
+      "en": "That one-time moment has already passed. Choose a time in the future.",
+      "verdict": "pass"
+    },
+    "ja:ux.l5b.once.justPassed": {
+      "text": "その時刻はたった今過ぎました。代わりに今すぐ実行しますか?",
+      "en": "That time just passed. Run it now instead?",
+      "verdict": "pass"
+    },
+    "ja:ux.l5b.once.runNow": {
+      "text": "今すぐ実行",
+      "en": "Run now",
+      "verdict": "pass"
+    },
+    "ja:ux.l5b.once.pickTime": {
+      "text": "新しい時刻を選ぶ",
+      "en": "Pick a new time",
+      "verdict": "pass"
+    },
+    "ja:ux.l5b.once.inPast": {
+      "text": "その1回限りの時刻はすでに過ぎています。未来の時刻を選んでください。",
+      "en": "That one-time moment has already passed. Choose a time in the future.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l5b.once.justPassed": {
+      "text": "Esse horário acabou de passar. Executar agora em vez disso?",
+      "en": "That time just passed. Run it now instead?",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l5b.once.runNow": {
+      "text": "Executar agora",
+      "en": "Run now",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l5b.once.pickTime": {
+      "text": "Escolher outro horário",
+      "en": "Pick a new time",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l5b.once.inPast": {
+      "text": "Esse momento único já passou. Escolha um horário no futuro.",
+      "en": "That one-time moment has already passed. Choose a time in the future.",
+      "verdict": "pass"
+    },
+    "zh:ux.l5b.once.justPassed": {
+      "text": "该时间刚刚过去。要改为现在运行吗?",
+      "en": "That time just passed. Run it now instead?",
+      "verdict": "pass"
+    },
+    "zh:ux.l5b.once.runNow": {
+      "text": "立即运行",
+      "en": "Run now",
+      "verdict": "pass"
+    },
+    "zh:ux.l5b.once.pickTime": {
+      "text": "选择新时间",
+      "en": "Pick a new time",
+      "verdict": "pass"
+    },
+    "zh:ux.l5b.once.inPast": {
+      "text": "该一次性时间已经过去。请选择未来的时间。",
+      "en": "That one-time moment has already passed. Choose a time in the future.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

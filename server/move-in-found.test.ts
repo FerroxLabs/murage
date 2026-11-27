@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-import { convertGrokExports, findMoveIn, forgetGrokCount, grokCountForSetup, readGrokExports, realMoveInFs, type MoveInFs } from "./move-in-found.ts";
+import { convertGrokExports, findMoveIn, forgetGrokCount, grokCountForSetup, grokCountPending, grokCountReading, offMain, PENDING_MAX_MS, stuckProbeCount, readGrokExports, realMoveInFs, type MoveInFs } from "./move-in-found.ts";
 
 const HOME = join("/", "home", "fixture");
 
@@ -34,18 +34,18 @@ describe("F1 and F2 the finder", () => {
     expect(Object.keys(found.grok).sort()).toEqual(["count", "label"]);
     expect(JSON.stringify(found)).not.toContain("/home");
     expect(opened.map((path) => basename(path)).sort()).toEqual(["Grok Helper.json", "grok-bot-export.json"]);
-    expect(readGrokExports(fixtureFs({ "sand-secrets.json": "{}" })).length).toBe(0);
+    expect((await readGrokExports(fixtureFs({ "sand-secrets.json": "{}" }))).length).toBe(0);
   });
 });
 
 describe("F2b names that say chat, cookie or secret are never opened", () => {
-  it("skips them before reading, whatever they hold", () => {
+  it("skips them before reading, whatever they hold", async () => {
     const opened: string[] = [];
     const fs = fixtureFs({ "grok-chat.json": EXPORT, "grok-conversations.json": EXPORT, "grok-cookies.json": EXPORT, "grok-secrets.json": EXPORT, "grok-bot-export.json": EXPORT }, opened);
-    expect(readGrokExports(fs).length).toBe(1);
+    expect((await readGrokExports(fs)).length).toBe(1);
     expect(opened.map((path) => basename(path))).toEqual(["grok-bot-export.json"]);
   });
-  it("the real reader skips a link and does not follow it", () => {
+  it("the real reader skips a link and does not follow it", async () => {
     const root = mkdtempSync(join(tmpdir(), "move-in-"));
     try {
       writeFileSync(join(root, "outside.json"), EXPORT);
@@ -53,8 +53,8 @@ describe("F2b names that say chat, cookie or secret are never opened", () => {
       symlinkSync(join(root, "outside.json"), join(root, "Downloads", "grok-export.json"));
       writeFileSync(join(root, "Downloads", "grok-bot-real.json"), EXPORT);
       const real: MoveInFs = { ...realMoveInFs, home: () => root };
-      expect(readGrokExports(real)).toEqual([EXPORT]);
-      expect(() => realMoveInFs.read(join(root, "Downloads", "grok-export.json"))).toThrow();
+      expect(await readGrokExports(real)).toEqual([EXPORT]);
+      await expect((async () => realMoveInFs.read(join(root, "Downloads", "grok-export.json")))()).rejects.toThrow();
     } finally {
       removeTempDirSync(root);
     }
@@ -62,12 +62,12 @@ describe("F2b names that say chat, cookie or secret are never opened", () => {
 });
 
 describe("F2c only bot-export names, and never through a linked Downloads", () => {
-  it("skips names that are not exports, and a Downloads that is not a real directory", () => {
+  it("skips names that are not exports, and a Downloads that is not a real directory", async () => {
     const opened: string[] = [];
     const fs = fixtureFs({ "grok-config.json": EXPORT, "grok-settings.json": EXPORT, "grok-bot-export (1).json": EXPORT }, opened);
-    expect(readGrokExports(fs).length).toBe(1);
+    expect((await readGrokExports(fs)).length).toBe(1);
     expect(opened.map((path) => basename(path))).toEqual(["grok-bot-export (1).json"]);
-    expect(readGrokExports({ ...fixtureFs({ "grok-bot-export.json": EXPORT }), realDir: () => false })).toEqual([]);
+    expect(await readGrokExports({ ...fixtureFs({ "grok-bot-export.json": EXPORT }), realDir: () => false })).toEqual([]);
   });
 });
 
@@ -76,7 +76,53 @@ describe("F3 a throwing finder", () => {
     const broken: MoveInFs = { home: () => { throw new Error("no home"); }, list: () => [], size: () => 0, read: () => "" };
     expect((await findMoveIn(broken)).grok.count).toBe(0);
     forgetGrokCount();
-    expect(await grokCountForSetup(broken)).toBe(0);
+    expect(grokCountForSetup(broken)).toBe(0);
+    await grokCountReading();
+    expect(grokCountForSetup(broken)).toBe(0);
+  });
+});
+
+describe("F4 a listing the OS holds (1.0.21 row: the macOS Downloads question)", () => {
+  it("the setup count is never waited for: the last count at once, the fresh one once read", async () => {
+    forgetGrokCount();
+    const fs = fixtureFs({ "grok-bot-export.json": EXPORT });
+    expect(grokCountForSetup(fs, 1_000)).toBe(0);
+    await grokCountReading();
+    expect(grokCountForSetup(fs, 2_000)).toBe(1);
+    expect(grokCountReading()).toBeNull();
+  });
+  it("a held listing keeps answering the last count and starts no second listing, whoever asks", async () => {
+    forgetGrokCount();
+    let listings = 0;
+    const held: MoveInFs = { ...fixtureFs({}), list: () => { listings++; return new Promise<string[]>(() => {}); } };
+    expect(grokCountForSetup(held, 1_000)).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(listings).toBe(1);
+    // Polled long after the count went stale, the move-in step asked too, and a move-in reset the count: still one listing.
+    expect(grokCountForSetup(held, 120_000)).toBe(0);
+    void findMoveIn(held);
+    forgetGrokCount();
+    expect(grokCountForSetup(held, 240_000)).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(listings).toBe(1);
+    forgetGrokCount();
+  });
+  it("a reading older than a move-in never writes its count over the reset", async () => {
+    forgetGrokCount();
+    let release!: (names: string[]) => void;
+    const slow: MoveInFs = { ...fixtureFs({ "grok-bot-export.json": EXPORT }), list: () => new Promise<string[]>((resolve) => { release = resolve; }) };
+    expect(grokCountForSetup(slow, 1_000)).toBe(0);
+    const older = grokCountReading();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    forgetGrokCount();
+    release(["grok-bot-export.json"]);
+    await older;
+    expect(grokCountReading()).toBeNull();
+    // The count a fresh reading writes, not the older one's.
+    expect(grokCountForSetup(fixtureFs({}), 2_000)).toBe(0);
+    await grokCountReading();
+    expect(grokCountForSetup(fixtureFs({}), 3_000)).toBe(0);
+    forgetGrokCount();
   });
 });
 
@@ -193,10 +239,66 @@ it("G2 refuses a final-file link even when the OS has no O_NOFOLLOW", async () =
     });
     vi.resetModules();
     const { realMoveInFs: withoutNoFollow } = await import("./move-in-found.ts");
-    expect(() => withoutNoFollow.read(join(root, "roster.blob"))).toThrow();
+    await expect((async () => withoutNoFollow.read(join(root, "roster.blob")))()).rejects.toThrow();
   } finally {
     vi.doUnmock("node:fs");
     vi.resetModules();
     removeTempDirSync(root);
   }
+});
+
+describe("F5 a first reading that never settles cannot hold setup for ever", () => {
+  it("is pending for a bounded time, then released, and the late count still lands", async () => {
+    forgetGrokCount();
+    let release: (names: string[]) => void = () => {};
+    const held: MoveInFs = { ...fixtureFs({ "grok-bot-export.json": EXPORT }), list: () => new Promise<string[]>((resolve) => { release = resolve; }) };
+    expect(grokCountPending(1_000)).toBe(false);
+    grokCountForSetup(held, 1_000);
+    expect(grokCountPending(1_000 + PENDING_MAX_MS - 1)).toBe(true);
+    expect(grokCountPending(1_000 + PENDING_MAX_MS)).toBe(false);
+    release(["grok-bot-export.json"]);
+    await grokCountReading();
+    expect(grokCountForSetup(held, 1_000 + PENDING_MAX_MS + 1)).toBe(1);
+    forgetGrokCount();
+  });
+});
+
+describe("the folder probes run off the main thread", () => {
+  it("a listing the OS never answers is given up on time, holds one worker only, and the main thread keeps ticking", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "move-in-probe-"));
+    const held = join(dir, "Downloads");
+    const release = join(dir, "release");
+    mkdirSync(held);
+    const hook = Symbol.for("murage.moveIn.probePrelude");
+    (globalThis as Record<symbol, unknown>)[hook] = `
+      const heldFs = require("node:fs");
+      const heldList = heldFs.readdirSync;
+      heldFs.readdirSync = function (dir, ...rest) {
+        while (require("node:path").basename(String(dir)) === "Downloads" && !heldFs.existsSync(${JSON.stringify(release)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+        return heldList.call(this, dir, ...rest);
+      };`;
+    try {
+      let ticks = 0;
+      const ticker = setInterval(() => { ticks++; }, 10);
+      const started = performance.now();
+      await expect(offMain("list", held, 300)).rejects.toThrow("held too long");
+      expect(performance.now() - started).toBeLessThan(1500);
+      // The main thread was never blocked while the listing was held.
+      expect(ticks).toBeGreaterThan(10);
+      clearInterval(ticker);
+      expect(stuckProbeCount()).toBe(1);
+      // While that worker is still stuck, a second probe is refused at once rather than taking another thread.
+      const again = performance.now();
+      await expect(offMain("list", held, 300)).rejects.toThrow("still held");
+      expect(performance.now() - again).toBeLessThan(100);
+      // Once the OS lets go, probing works again.
+      writeFileSync(release, "");
+      await vi.waitFor(() => expect(stuckProbeCount()).toBe(0), { timeout: 5000 });
+      expect(existsSync(release)).toBe(true);
+      expect(await offMain<string[]>("list", dir, 5000)).toContain("Downloads");
+    } finally {
+      delete (globalThis as Record<symbol, unknown>)[hook];
+      removeTempDirSync(dir);
+    }
+  });
 });

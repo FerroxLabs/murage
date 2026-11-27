@@ -181,6 +181,16 @@ describe("md-secret-label: clean text passes, a wrapped label masks the rest", (
     expect(raw.slice(0, at)).not.toContain("hunter2");
     expect(raw.slice(at)).toContain("hunter2");
   });
+  // ASTRA gatefix-1021-E ac41f003bb: the turn stream (server/redact-turn.ts latches on any finding) lets a mark before the value
+  // wait for it. A counted marker after the mark is complete; any other value is still the stream's finding.
+  it("turn stream: a mark then a counted marker is not a finding; a mark then a real value is, at every 1-unit delta", () => {
+    const feed = (text: string) => { const st = createLabelStream({ turn: true }); for (let i = 0; i < text.length; i++) if (scanLabelDelta(st, text[i]!) >= 0) return i; return -1; };
+    expect(feed("password: **«redacted 12 chars»**\n"), "wrapped counted marker").toBe(-1);
+    expect(feed("token = `«redacted 40 chars»`\n"), "code-wrapped counted marker").toBe(-1);
+    expect(feed("password: **x"), "mark, then a real value").toBe("password: **".length);
+    expect(feed("password: **\n"), "mark, then the line ends").toBe("password: **".length);
+    expect(feed("password: **«redacted 12 ch x\n"), "mark, then a broken marker").toBeGreaterThanOrEqual(0);
+  });
   it("a new line starts a fresh line state, so clean text after a finished line is not masked", () => {
     const st = createLabelStream();
     expect(scanLabelDelta(st, "ordinary line\nclean text")).toBe(-1);

@@ -18,6 +18,10 @@ export const DEFAULT_INSTANCES: InstanceConfigMap = {
   cline: { driver: "clineAgent" },
   muse: { driver: "museCode" },
   pi: { driver: "piAgent" },
+  commandCode: { driver: "commandCodeAgent" },
+  kiro: { driver: "kiroAgent" },
+  omp: { driver: "ompAgent" },
+  devin: { driver: "devinAgent" },
   // Last on purpose: the person's own Copilot CLI is offered after every other engine, never as a default.
   deepseek: { driver: "deepseekAgent" },
   githubCopilot: { driver: "copilotAgent" },

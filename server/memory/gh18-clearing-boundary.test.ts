@@ -21,7 +21,7 @@ afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
 const readers = [CONTENT, OWNER, MEMBER];
 const defaultBots: RepairBot[] = [{ id: "bot-a", tasks: [{ threadId: "T", resumeCursors: { driver: "native" }, resumeAudiences: { driver: "owner" } }] }];
 const ownerDirect = (thread: string) => thread === "T";
-const tables = ["memory_deny_line", "memory_deny_range", "memory_deny_memory", "memory_deny_session", "memory_deny", "memory_tombstones"] as const;
+const tables = ["memory_deny_point", "memory_deny_range", "memory_deny_object", "memory_deny_session", "memory_deny", "memory_tombstones"] as const;
 const snapshot = (fx: WritetimeFixture, names: readonly string[] = tables) => Object.fromEntries(names.map(table => [table,
   fx.db.prepare(`SELECT * FROM ${table}`).all().sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
 ]));

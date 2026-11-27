@@ -2,9 +2,15 @@
 """Execute mutation tests in an isolated copy, never patch the active server."""
 from pathlib import Path
 import json, os, shutil, subprocess, sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+from evidence_path import evidence_path, external_evidence_path
 root = Path.cwd()
-out = root / os.environ.get('MUTANT_OUTPUT', 'evidence/bld-fts-amend/afix/mutants')
-tree = root / 'evidence/bld-fts-amend/afix/mutant-tree'
+override = os.environ.get('MUTANT_OUTPUT')
+out = external_evidence_path(override) if override else evidence_path('evidence/bld-fts-amend/afix/mutants')
+results_path = external_evidence_path(out / os.environ.get('MUTANT_RESULTS', 'results.json'))
+if results_path.parent != out:
+ raise ValueError('Evidence result must be a direct child of the output directory')
+tree = evidence_path('evidence/bld-fts-amend/afix/mutant-tree')
 main = 'server/message-search-index.ts'
 worker = 'server/search-index-worker.ts'
 rec = 'server/search-index-review-recovery.test.ts'
@@ -67,7 +73,7 @@ try:
    failed = [row for suite in report['testResults'] for row in suite['assertionResults'] if row['status'] == 'failed']
    killed = result.returncode != 0 and bool(failed) and all(row.get('failureMessages') and row['failureMessages'][0].startswith('AssertionError') and 'ORACLE:' + pattern in row['failureMessages'][0] for row in failed)
    results.append({'mutant': name, 'command': command, 'killed': killed, 'exit': result.returncode})
-   (out / os.environ.get('MUTANT_RESULTS', 'results.json')).write_text(json.dumps(results, indent=2) + '\n')
+   results_path.write_text(json.dumps(results, indent=2) + '\n')
    print(name, 'KILLED' if killed else 'SURVIVED/INVALID', flush=True)
   finally: path.write_text(original)
  if not all(row['killed'] for row in results): raise SystemExit(1)

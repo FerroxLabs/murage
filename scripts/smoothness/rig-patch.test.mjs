@@ -9,7 +9,7 @@ import { expect, it } from 'vitest';
 import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 const fixture = resolve('test/fixtures/smooth-triage/rig-32e3a501/smooth.mjs');
-const patch = resolve(process.env.SMOOTH_TRIAGE_PATCH ?? 'evidence/smooth-triage/rig-32e3a501.patch');
+const patch = resolve(process.env.SMOOTH_TRIAGE_PATCH ?? 'test/fixtures/smooth-triage/rig-32e3a501/turns.patch');
 
 it.each([
   { label: 'primary', primary: true, outcome: 'ok' },

@@ -52,9 +52,9 @@ key. In a later release move it to slot 1 and empty slot 2.
 
 ## Rules the app enforces
 
-One fixed URL, `https://updates.ferroxlabs.com/murage/announcements.json`, plus
+One fixed URL, `https://murage.ai/murage/announcements.json`, plus
 `.sig`. No query string, no cookies, no identifying headers. 64 KB at most,
 20 notices at most. Unsigned, badly signed, or older than the copy the app
 already has (`issuedAt`) is ignored. Pictures only from
-`https://updates.ferroxlabs.com/murage/images/`. Security notices show even
+`https://murage.ai/murage/images/`. Security notices show even
 when someone switches announcements off in Settings.

@@ -197,7 +197,7 @@ describe("storage gate (STORAGE-AUDIT section 6)", () => {
       ["file", "live", 1.25], ["slope", null, 1.3], ["events", null, 256 * 1048576]]);
     expect(budgets.storage.groups.receipts).toEqual(["memory_disclosure"]);
     expect(budgets.storage.groups.sources).toEqual(["memory_source"]);
-    for (const t of ["memory_line_lineage", "memory_lineage_carry", "memory_thread_flow", "memory_line_capture", "memory_session_lineage", "memory_deny_line", "memory_root_set_members", "memory_root_sets", "memory_output_roots", "memory_session_roots"])
+    for (const t of ["memory_line_lineage", "memory_lineage_carry", "memory_thread_flow", "memory_line_capture", "memory_session_lineage", "memory_deny_point", "memory_root_set_members", "memory_root_sets", "memory_output_roots", "memory_session_roots"])
       expect(budgets.storage.groups.lineage.some(p => t.startsWith(p)), t).toBe(true);
     // memory_deny itself (receipt revoke) is not lineage; deny_* tables are
     expect(budgets.storage.groups.lineage.some(p => "memory_deny".startsWith(p))).toBe(false);

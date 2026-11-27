@@ -99,6 +99,8 @@ it("the complete worker slot inventory keeps 24-26 reserved and gives only heart
     const slots = new Map<number, Set<string>>();
     for (const [, op, buffer, index] of calls) {
       if (buffer!.endsWith("copied")) { expect(index!.trim()).toBe("0"); continue; }
+      // 1.0.21 W4 (memv2-D): the commit notice (wake.ts commitNotice) is its own one-cell buffer, read and waited on at cell 0 only
+      if (buffer!.trim() === "noticeCells") { expect(index!.trim()).toBe("0"); continue; }
       expect(["shared", "s", "m.shared"], "known worker-state buffer").toContain(buffer!.trim());
       const slot = index!.trim() === "HEARTBEAT_SLOT" ? 27 : Number(index);
       expect(Number.isInteger(slot), "a constant slot").toBe(true);
@@ -111,8 +113,9 @@ it("the complete worker slot inventory keeps 24-26 reserved and gives only heart
     expect(text.match(/const HEARTBEAT_SLOT = 27;/g), "each scope binds the same heartbeat slot").toHaveLength(1);
     return [...slots].sort(([a], [b]) => a - b).map(([slot, ops]) => `${slot}:${[...ops].sort().join(",")}`).join(" ");
   };
-  expect(inventory(worker![1]!)).toBe("0:load 1:add 2:store 3:load,store 4:load 5:load,store 6:add 7:load,store 9:load,store 10:store 12:load,store 13:store 14:load,store 15:add 16:load,store 17:add 18:store 19:store 20:store 21:store 22:store 27:add");
+  // 1.0.21 W4 (memv2-D): slot 11 is the worker's poll count (worker adds, the parent's counters read it); 24-26 stay reserved
+  expect(inventory(worker![1]!)).toBe("0:load 1:add 2:store 3:load,store 4:load 5:load,store 6:add 7:load,store 9:load,store 10:store 11:add 12:load,store 13:store 14:load,store 15:add 16:load,store 17:add 18:store 19:store 20:store 21:store 22:store 27:add");
   const parent = source.replace(worker![0], "");
-  expect(inventory(parent)).toBe("0:load,store 1:load 2:load 3:load 4:load,store 5:load 6:load 7:load,store 9:load 10:load 12:load 13:load 14:load 15:load 16:load 17:load 18:load 19:load 20:load 21:load 22:load 23:load 27:load");
+  expect(inventory(parent)).toBe("0:load,store 1:load 2:load 3:load 4:load,store 5:load 6:load 7:load,store 9:load 10:load 11:load 12:load 13:load 14:load 15:load 16:load 17:load 18:load 19:load 20:load 21:load 22:load 23:load 27:load");
   expect(parent, "the state allocation includes slot 27").toContain("new SharedArrayBuffer((HEARTBEAT_SLOT + 1) * Int32Array.BYTES_PER_ELEMENT)");
 });

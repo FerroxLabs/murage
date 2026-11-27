@@ -15,9 +15,14 @@ import { skillActDigest } from "./cloud-home/owner-code.ts";
 import { deleteCollectionSkill, duplicateIntoCollection, getCollectionSkill, importCollectionSkill, listCollection, prepareCollectionSkillUpdate, updateCollectionSkill, type CollectionSkill } from "./skill-collection.ts";
 import { fetchSkillFromLink, readSkillZip } from "./skill-import-sources.ts";
 import { attachedSkillOn, isChiefForAttached, loadBundledSkills, type BundledSkill } from "./skill-library.ts";
+import { plainMessage } from "./skill-guard/messages.ts";
+import { SKILL_RULES } from "./skill-guard/rules.ts";
+import { skillContentHash } from "./skill-guard/content-hash.ts";
 import { scanSkill } from "./skill-guard/scan.ts";
+import { SPECTOR_PATTERNS } from "./skill-guard/spector-patterns.generated.ts";
 import { browseFacets, librarySkillRows, searchSkillPage, skillIndexStats } from "./skill-search.ts";
-import { checkLibrarySkill, currentSkillScan, installSkill, installSkillFromLibrary, isSkillName, listSkills, readLibraryAssets, removeSkill, setSkillEnabled, SKILL_LIBRARY_ROOT, type SkillListing } from "./skills.ts";
+import { checkLibrarySkill, currentSkillScan, installSkill, installSkillFromLibrary, isSkillName, listSkills, readLibraryAssets, readSkillFile, removeSkill, setSkillEnabled, SKILL_LIBRARY_ROOT, type SkillListing } from "./skills.ts";
+import { readEveryBotMarks, writeEveryBotMarks, type EveryBotMark } from "./skill-every-bot.ts";
 import type { SkillScan, SkillVerdict } from "./skill-guard/types.ts";
 
 export interface SkillsApiBot {
@@ -52,8 +57,25 @@ interface SkillSummary {
   description: string;
   kind: "collection" | "library" | "builtin";
   verdict: SkillVerdict;
+  /** For a skill that needs a look or is blocked: what was found, in words (the first finding), so its row says why. */
+  reason?: string;
   source: string;
   usedBy: Array<{ botId: string; botName: string; enabled: boolean }>;
+}
+
+/** The first finding of a scan that needs a look or blocked, in words; nothing for a clean skill. */
+function scanReason(scan: Pick<SkillScan, "verdict" | "findings">): { reason?: string } {
+  const first = scan.verdict === "clean" ? undefined : scan.findings[0];
+  return first ? { reason: first.message } : {};
+}
+/** The same words from a shipped verdict's rule ids ("skillspector:AR2.1", "SG1"), without scanning again. */
+function shippedReason(rules: string[] | undefined): { reason?: string } {
+  for (const rule of rules ?? []) {
+    const id = rule.startsWith("skillspector:") ? rule.slice("skillspector:".length) : rule;
+    const category = rule.startsWith("skillspector:") ? SPECTOR_PATTERNS.find((pattern) => pattern.id === id)?.category : SKILL_RULES.find((known) => known.id === id)?.category;
+    if (category) return { reason: plainMessage(category) };
+  }
+  return {};
 }
 
 const LIBRARY = "library:";
@@ -65,8 +87,8 @@ export function sourceLabel(source: CollectionSkill["source"]): string {
   return source.kind === "copy" ? `Copied from ${source.label}` : SOURCE_LABEL[source.kind];
 }
 
-let verdictCache: { root: string; skills: Record<string, { verdict: SkillVerdict }> } | null = null;
-function shippedVerdict(id: string): SkillVerdict | null {
+let verdictCache: { root: string; skills: Record<string, { verdict: SkillVerdict; rules?: string[] }> } | null = null;
+function shippedEntry(id: string): { verdict: SkillVerdict; rules?: string[] } | null {
   if (verdictCache?.root !== SKILL_LIBRARY_ROOT) {
     try {
       verdictCache = { root: SKILL_LIBRARY_ROOT, skills: JSON.parse(readFileSync(join(SKILL_LIBRARY_ROOT, "scan-verdicts.json"), "utf8")).skills ?? {} };
@@ -74,7 +96,7 @@ function shippedVerdict(id: string): SkillVerdict | null {
       verdictCache = { root: SKILL_LIBRARY_ROOT, skills: {} };
     }
   }
-  return verdictCache.skills[id]?.verdict ?? null;
+  return verdictCache.skills[id] ?? null;
 }
 
 const nameCache = new Map<string, string>();
@@ -85,7 +107,8 @@ function libraryName(id: string): string {
   let name = id;
   try {
     const manifest = JSON.parse(readFileSync(join(SKILL_LIBRARY_ROOT, id, "manifest.json"), "utf8"));
-    if (typeof manifest?.name === "string" && manifest.name.trim()) name = manifest.name.trim();
+    // A name made from its id title-cases "ai" as "Ai"; the owner reads "AI".
+    if (typeof manifest?.name === "string" && manifest.name.trim()) name = manifest.name.trim().replace(/\bAi\b/g, "AI");
   } catch {
     // no manifest: the id is the name
   }
@@ -124,7 +147,7 @@ function builtinSummary(id: string, bots: SkillsApiBot[]): SkillSummary | null {
   if (!found) return null;
   const words = BUILTIN_WORDS[id]!;
   const usedBy = bots.filter(isChief).map((bot) => ({ botId: bot.id, botName: bot.name, enabled: attachedSkillOn(bot, id) }));
-  return { ref: `${BUILTIN}${id}`, name: words.name, description: words.description, kind: "builtin", verdict: found.scan.verdict, source: "Built-in", usedBy };
+  return { ref: `${BUILTIN}${id}`, name: words.name, description: words.description, kind: "builtin", verdict: found.scan.verdict, ...scanReason(found.scan), source: "Built-in", usedBy };
 }
 
 /** Every bot with this collection skill gets the new files, through the same gate as a first install: a clean
@@ -164,7 +187,7 @@ function usedBy(ref: string, bots: SkillsApiBot[]): SkillSummary["usedBy"] {
 
 function collectionSummary(skill: CollectionSkill, bots: SkillsApiBot[]): SkillSummary {
   const ref = `${COLLECTION}${skill.name}`;
-  return { ref, name: skill.displayName || skill.name, description: skill.description, kind: "collection", verdict: skill.scan.verdict, source: sourceLabel(skill.source), usedBy: usedBy(ref, bots) };
+  return { ref, name: skill.displayName || skill.name, description: skill.description, kind: "collection", verdict: skill.scan.verdict, ...scanReason(skill.scan), source: sourceLabel(skill.source), usedBy: usedBy(ref, bots) };
 }
 
 export interface SkillListItem {
@@ -247,8 +270,11 @@ function detailView(request: SkillsApiRequest, detail: Record<string, unknown>, 
 
 function librarySummary(hit: { id: string; name: string; description: string }, bots: SkillsApiBot[]): SkillSummary {
   const ref = `${LIBRARY}${hit.id}`;
-  const verdict = shippedVerdict(hit.id) ?? libraryScan(hit.id)?.scan.verdict ?? "clean";
-  return { ref, name: libraryName(hit.id), description: hit.description, kind: "library", verdict, source: "Library", usedBy: usedBy(ref, bots) };
+  const shipped = shippedEntry(hit.id);
+  const scan = shipped ? null : libraryScan(hit.id)?.scan;
+  const verdict = shipped?.verdict ?? scan?.verdict ?? "clean";
+  const reason = verdict === "clean" ? {} : shipped ? shippedReason(shipped.rules) : scan ? scanReason(scan) : {};
+  return { ref, name: libraryName(hit.id), description: hit.description, kind: "library", verdict, ...reason, source: "Library", usedBy: usedBy(ref, bots) };
 }
 
 /** The library skills some bot already uses, found from the bots' own lists. */
@@ -437,6 +463,7 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     if (users.length && !(body.success && body.data.fromBots)) {
       return { status: 409, body: { error: `Used by ${users.map((u) => u.botName).join(", ")}.`, code: "in-use", bots: users.map((u) => u.botName) } };
     }
+    if (!clearEveryBotMark(`${COLLECTION}${name}`)) return { status: 409, body: everyBotStateUnavailable };
     for (const user of users) removeSkill(user.botId, name);
     deleteCollectionSkill(name);
     return { status: 200, body: { removedFrom: users.map((u) => u.botName) } };
@@ -460,6 +487,9 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     if (users.some((user) => user.enabled && !request.bots().find((bot) => bot.id === user.botId)?.canUseSkills)) {
       return { status: 409, body: { error: "This bot's engine can't use skills.", code: "engine" } };
     }
+    // Revert ends by forgetting the copy's Every bot ownership. Refuse while
+    // that record is unreadable, before any bot or approval is touched.
+    if (!readEveryBotMarks()) return { status: 409, body: everyBotStateUnavailable };
     if (users.some((user) => user.enabled)) {
       if (library.scan.verdict === "blocked") return { status: 409, body: { error: "The library original was blocked by the skill check.", code: "blocked", scan: library.scan } };
       if (library.scan.verdict === "review" && input.data.acknowledged !== library.scan.contentHash) return { status: 409, body: { error: "The library original needs a look before it can be switched on.", code: "needs-review", scan: library.scan } };
@@ -538,6 +568,7 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
         const removed = removeSkill(user.botId, ref.name);
         if ("error" in removed) return recover(removed);
       }
+      if (!clearEveryBotMark(ref.ref)) return recover(everyBotStateUnavailable);
     } catch (error) {
       return recover({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -561,34 +592,167 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       return { status: 200, body: { skill: builtinSummary(ref.name, request.bots()) } };
     }
     const existing = listSkills(bot.id).find((listing) => listing.name === ref.name);
-    const ours = existing && (ref.kind === "collection" ? existing.source === ref.ref : existing.source.startsWith(`${ref.ref}@`));
+    const ours = existing && ownedBy(existing, ref as SkillRef);
     if (!input.data.on) {
       if (!existing || !ours) return { status: 200, body: { skill: null } };
       const off = setSkillEnabled(bot.id, ref.name, false);
       return "error" in off ? { status: 409, body: off } : { status: 200, body: { skill: off } };
     }
+    let ownerHash: string | undefined;
+    if (request.ownerCode && ref.kind === "collection" && bot.canUseSkills && (!existing || ours)) {
+      const skill = getCollectionSkill(ref.name);
+      const denied = collectionSwitchRefusal(skill, input.data.acknowledged);
+      if (denied || !skill) return denied!;
+      ownerHash = skill.scan.contentHash;
+      const refusal = await request.ownerCode(skillActDigest(request.routeAct ?? "", ownerHash));
+      if (refusal) return refusal;
+    }
+    return switchSkillOn(bot, ref as SkillRef, input.data.acknowledged, ownerHash);
+  }
+
+  const everyBot = /^\/api\/skills\/([^/]+)\/every-bot$/.exec(path);
+  if (everyBot && method === "PUT") {
+    const ref = parseRef(everyBot[1]!);
+    if (!ref) return { status: 404, body: { error: "No such skill." } };
+    if (ref.kind === "builtin") return { status: 409, body: { error: "Only your Chief of Staff uses this guide.", code: "not-chief" } };
+    const input = z.object({ on: z.boolean(), acknowledged: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().safeParse(await request.readBody());
+    if (!input.success) return { status: 400, body: { error: "on must be true or false" } };
+    const marks = readEveryBotMarks();
+    if (!marks) return { status: 409, body: everyBotStateUnavailable };
+    if (!input.data.on) {
+      const mark = marks[ref.ref];
+      if (!mark) return { status: 200, body: { everyBot: false, switchedOff: [] } };
+      mark.turningOff = true;
+      writeEveryBotMarks(marks);
+      const switchedOff: string[] = [];
+      for (const botId of new Set([...mark.appliedTo, ...(mark.pendingTo ?? [])])) {
+        const existing = listSkills(botId).find((listing) => listing.name === ref.name);
+        if (existing && ownedBy(existing, ref as SkillRef) && existing.enabled) {
+          const off = setSkillEnabled(botId, ref.name, false);
+          if ("error" in off) return { status: 409, body: off };
+          switchedOff.push(botId);
+        }
+        mark.appliedTo = mark.appliedTo.filter(id => id !== botId);
+        mark.pendingTo = mark.pendingTo?.filter(id => id !== botId);
+        writeEveryBotMarks(marks);
+      }
+      delete marks[ref.ref];
+      writeEveryBotMarks(marks);
+      return { status: 200, body: { everyBot: false, switchedOff } };
+    }
+    const scan = ref.kind === "collection" ? getCollectionSkill(ref.name)?.scan : libraryScan(ref.name)?.scan;
+    if (!scan) return { status: 404, body: { error: "No such skill." } };
+    if (scan.verdict === "blocked") return { status: 409, body: { error: "This skill was blocked by the skill check and can't be switched on.", code: "blocked", scan } };
+    if (scan.verdict === "review" && input.data.acknowledged !== scan.contentHash) return { status: 409, body: { error: "This skill needs a look before it can be switched on.", code: "needs-review", scan } };
+    const mark: EveryBotMark = { appliedTo: marks[ref.ref]?.appliedTo ?? [], pendingTo: marks[ref.ref]?.pendingTo ?? [], ...(scan.verdict === "review" ? { acknowledged: input.data.acknowledged } : {}) };
+    marks[ref.ref] = mark;
+    writeEveryBotMarks(marks);
+    const result = { applied: [] as string[], needsLook: [] as string[], blocked: [] as string[], skipped: [] as string[] };
+    for (const bot of request.bots()) applyMark(bot, ref as SkillRef, mark, result, () => writeEveryBotMarks(marks));
+    writeEveryBotMarks(marks);
+    return { status: 200, body: { everyBot: true, ...result } };
+  }
+
+  const one = /^\/api\/skills\/([^/]+)$/.exec(path);
+  return oneSkill(request, one);
+}
+
+// A later import with the same name must start without the removed copy's mark.
+function clearEveryBotMark(ref: string): boolean {
+  const marks = readEveryBotMarks();
+  if (!marks) return false;
+  if (Object.hasOwn(marks, ref)) {
+    delete marks[ref];
+    writeEveryBotMarks(marks);
+  }
+  return true;
+}
+
+const everyBotStateUnavailable = { error: "The Every bot settings could not be read. Try again after restoring them.", code: "every-bot-state-unavailable" };
+
+type SkillRef = { kind: "collection" | "library"; name: string; ref: string };
+const ownedBy = (listing: SkillListing, ref: SkillRef) => ref.kind === "collection" ? listing.source === ref.ref : listing.source.startsWith(`${ref.ref}@`);
+type MarkResult = { applied: string[]; needsLook: string[]; blocked: string[]; skipped: string[] };
+
+/** One mark on one bot: the same "Use with" ON path the owner's per-bot switch takes. A bot the mark
+ *  already switched on once is never given it again (the owner may have taken it away since). */
+function applyMark(bot: SkillsApiBot, ref: SkillRef, mark: EveryBotMark, result: MarkResult, persist: () => void): void {
+  if (mark.turningOff) { result.skipped.push(bot.id); return; }
+  if (mark.appliedTo.includes(bot.id)) { result.skipped.push(bot.id); return; }
+  const existing = listSkills(bot.id).find((listing) => listing.name === ref.name);
+  if (existing && ownedBy(existing, ref) && existing.enabled) {
+    if (mark.pendingTo?.includes(bot.id)) {
+      mark.appliedTo.push(bot.id);
+      mark.pendingTo = mark.pendingTo.filter(id => id !== bot.id);
+      persist();
+    }
+    result.skipped.push(bot.id); return;
+  }
+  mark.pendingTo = [...new Set([...(mark.pendingTo ?? []), bot.id])];
+  persist();
+  const answer = switchSkillOn(bot, ref, mark.acknowledged);
+  const code = answer.status === 200 ? "ok" : (answer.body as { code?: string } | null)?.code;
+  if (code === "ok") { mark.appliedTo.push(bot.id); result.applied.push(bot.id); }
+  else if (code === "needs-review") result.needsLook.push(bot.id);
+  else if (code === "blocked") result.blocked.push(bot.id);
+  else result.skipped.push(bot.id);
+  mark.pendingTo = mark.pendingTo.filter(id => id !== bot.id);
+  persist();
+}
+
+/** A bot just made (Store.onBotCreated, after its create committed) gets every marked skill. Never throws. */
+export function applyEveryBotMarks(bot: SkillsApiBot, options: { preserveExisting?: boolean } = {}): MarkResult {
+  const result: MarkResult = { applied: [], needsLook: [], blocked: [], skipped: [] };
+  const marks = readEveryBotMarks();
+  if (!marks) return result;
+  const refs = Object.keys(marks);
+  if (!refs.length) return result;
+  for (const raw of refs) {
+    const ref = parseRef(raw);
+    if (!ref || ref.kind === "builtin") continue;
+    if (options.preserveExisting && listSkills(bot.id).some(skill => skill.name === ref.name)) { result.skipped.push(bot.id); continue; }
+    try { applyMark(bot, ref as SkillRef, marks[raw]!, result, () => writeEveryBotMarks(marks)); } catch { result.skipped.push(bot.id); }
+  }
+  writeEveryBotMarks(marks);
+  return result;
+}
+
+function collectionSwitchRefusal(skill: ReturnType<typeof getCollectionSkill>, acknowledged?: string): SkillsApiResponse | null {
+  if (!skill) return { status: 404, body: { error: "No such skill." } };
+  const scan = skill.scan;
+  if (scan.verdict === "blocked") return { status: 409, body: { error: "This skill was blocked by the skill check and can't be switched on.", code: "blocked", scan } };
+  if (scan.verdict === "review" && acknowledged !== scan.contentHash) return { status: 409, body: { error: "This skill needs a look before it can be switched on.", code: "needs-review", scan } };
+  return null;
+}
+
+/** The per-bot "Use with" ON path shared with durable Every bot marks. */
+function switchSkillOn(bot: SkillsApiBot, ref: SkillRef, acknowledgedInput: string | undefined, ownerHash?: string): SkillsApiResponse {
+  const existing = listSkills(bot.id).find((listing) => listing.name === ref.name);
+  const ours = existing && ownedBy(existing, ref);
+  {
     if (!bot.canUseSkills) return { status: 409, body: { error: "This bot's engine can't use skills.", code: "engine" } };
     if (existing && !ours) return { status: 409, body: { error: `${bot.name} already has a different skill called ${ref.name}.`, code: "name-taken" } };
 
     // What the owner acknowledged is the scan they were shown in the reader.
-    let acknowledged = input.data.acknowledged;
+    let acknowledged = acknowledgedInput;
     if (ref.kind === "collection") {
       const skill = getCollectionSkill(ref.name);
-      if (!skill) return { status: 404, body: { error: "No such skill." } };
-      if (skill.scan.verdict === "blocked") return { status: 409, body: { error: "This skill was blocked by the skill check and can't be switched on.", code: "blocked", scan: skill.scan } };
-      if (skill.scan.verdict === "review" && acknowledged !== skill.scan.contentHash) return { status: 409, body: { error: "This skill needs a look before it can be switched on.", code: "needs-review", scan: skill.scan } };
-      // A browser owner's yes binds the content that was scanned: a skill changed between the code and the retry needs a new code.
-      if (request.ownerCode) {
-        const refusal = await request.ownerCode(skillActDigest(request.routeAct ?? "", skill.scan.contentHash));
-        if (refusal) return refusal;
+      const denied = collectionSwitchRefusal(skill, acknowledged);
+      if (denied || !skill) return denied!;
+      if (ownerHash !== undefined && ownerHash !== skill.scan.contentHash) {
+        return { status: 409, body: { error: "This skill changed. Review it again before switching it on." } };
       }
       if (!existing) {
         const installed = installSkill(bot.id, ref.ref, skill.contents, { assets: skill.assets });
         if ("error" in installed) return { status: 409, body: installed };
       }
-      // The bot keeps the instructions, a part of what was reviewed: the
-      // owner's yes to the whole skill covers it.
-      if (skill.scan.verdict === "review") acknowledged = currentSkillScan(bot.id, ref.name)?.contentHash;
+      if (skill.scan.verdict === "review") {
+        const input = { name: skill.name, description: skill.description, triggerTerms: [] };
+        if (readSkillFile(bot.id, ref.name) !== skill.text || skillContentHash({ ...input, files: skill.contents }) !== skill.scan.contentHash) {
+          return { status: 409, body: { error: "The installed instructions or collection skill changed. Review them before switching on.", code: "needs-review" } };
+        }
+        acknowledged = skillContentHash({ ...input, files: [{ path: "SKILL.md", content: skill.text }] });
+      }
     } else if (!existing) {
       const installed = installSkillFromLibrary(bot.id, ref.name, SKILL_LIBRARY_ROOT);
       if ("error" in installed) return { status: 404, body: { error: installed.error } };
@@ -597,12 +761,14 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     if ("error" in on) return { status: on.code ? 409 : 404, body: on };
     return { status: 200, body: { skill: on } };
   }
+}
 
-  const one = /^\/api\/skills\/([^/]+)$/.exec(path);
-  if (one && method === "GET") {
+function oneSkill(request: SkillsApiRequest, one: RegExpExecArray | null): SkillsApiResponse | null {
+  if (one && request.method === "GET") {
     const ref = parseRef(one[1]!);
     if (!ref) return { status: 404, body: { error: "No such skill." } };
     const bots = request.bots();
+    const everyBot = ref.kind !== "builtin" && Boolean(readEveryBotMarks()?.[ref.ref]);
     // Every bot, for the reader's "Use with" switches.
     const forBots = (users: SkillSummary["usedBy"]) =>
       bots.map((bot) => ({ botId: bot.id, botName: bot.name, canUseSkills: bot.canUseSkills, enabled: users.find((u) => u.botId === bot.id)?.enabled ?? false }));
@@ -610,7 +776,7 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       const skill = getCollectionSkill(ref.name);
       if (!skill) return { status: 404, body: { error: "No such skill." } };
       const summary = collectionSummary(skill, bots);
-      return { status: 200, body: detailView(request, { ...summary, originalRef: skill.source.originalRef, text: skill.text, files: skill.files, skipped: skill.skipped, scan: skill.scan, bots: forBots(summary.usedBy), ...(skill.updatedAt ? { updatedAt: skill.updatedAt } : {}) },
+      return { status: 200, body: detailView(request, { ...summary, originalRef: skill.source.originalRef, text: skill.text, files: skill.files, skipped: skill.skipped, scan: skill.scan, bots: forBots(summary.usedBy), everyBot, ...(skill.updatedAt ? { updatedAt: skill.updatedAt } : {}) },
         [...skill.contents.map((file) => ({ path: file.path, size: Buffer.byteLength(file.content, "utf8") })),
           ...skill.assets.map((file) => ({ path: file.path, size: file.content.length }))], summary.usedBy) };
     }
@@ -632,7 +798,7 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       ...assets.map((file) => ({ path: file.path, size: file.content.length }))];
     return {
       status: 200,
-      body: detailView(request, { ...summary, verdict: library.scan.verdict, text: library.text, files: ["SKILL.md"], skipped: [], scan: library.scan, bots: forBots(summary.usedBy) }, files, summary.usedBy),
+      body: detailView(request, { ...summary, verdict: library.scan.verdict, text: library.text, files: ["SKILL.md"], skipped: [], scan: library.scan, bots: forBots(summary.usedBy), everyBot }, files, summary.usedBy),
     };
   }
 

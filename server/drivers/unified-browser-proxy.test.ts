@@ -4,7 +4,7 @@
 // holding control) and still never forward an arbitrary server error, which
 // could carry text from a page.
 import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
-import { spawnBoundProxy, boundProxyState } from "../testing/bound-proxy-fixture.ts";
+import { spawnBoundProxy, boundProxyState, boundTerminalReason } from "../testing/bound-proxy-fixture.ts";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -15,10 +15,15 @@ const servers: Server[] = [];
 afterEach(async () => { for (const server of servers.splice(0)) await new Promise((resolve) => server.close(resolve)); });
 
 /** A stand-in for the server route: answers every RPC with one fixed reply. */
-async function route(status: number, body: unknown): Promise<string> {
+async function route(status: number, body: unknown, hits?: { n: number }, later?: { status: number; body: unknown }): Promise<string> {
+  let served = 0;
   const server = createServer((req, res) => {
     req.resume();
-    req.on("end", () => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); });
+    req.on("end", () => {
+      if (hits) hits.n++;
+      const reply = served++ > 0 && later ? later : { status, body };
+      res.writeHead(reply.status, { "content-type": "application/json" }); res.end(JSON.stringify(reply.body));
+    });
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -26,7 +31,7 @@ async function route(status: number, body: unknown): Promise<string> {
 }
 
 /** Run the proxy over stdio exactly as an engine does and collect replies. */
-async function exchange(base: string, requests: unknown[], terminal = false): Promise<any[]> {
+async function exchange(base: string, requests: unknown[], terminal = false, reasons: unknown[] = []): Promise<any[]> {
   const child = await spawnBoundProxy("unifiedBrowser", process.execPath, [PROXY], {
     env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "fixture-token", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread" },
     stdio: ["pipe", "pipe", "inherit"],
@@ -42,8 +47,10 @@ async function exchange(base: string, requests: unknown[], terminal = false): Pr
     await new Promise((resolve) => child.once("close", resolve));
     // MAIN RULING INT-CONFLICT-DEFAULT 6a9dfe7db8: require the authenticated terminal refusal as well as zero ordinary output.
     expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: { jsonrpc: "2.0", id: null, error: { code: -32099, message: LEDGER_REFUSAL_LINE, data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true } } } });
+    reasons.push(boundTerminalReason(child));
   } else {
-    await delivered;
+    // A sealed mount closes the child before every reply arrives: fail on the state assertion below, not on a 45 s timeout.
+    await Promise.race([delivered, new Promise(resolve => child.once("close", resolve))]);
     expect(boundProxyState(child)).toEqual({ sealed: false, refusals: 0 });
     const closed = new Promise(resolve => child.once("close", resolve)); child.kill(); await closed;
   }
@@ -67,9 +74,54 @@ it("answers a failed tool listing with an error that says why, not a result with
   expect(listing.error).toMatchObject({ message: "This turn can no longer use the browser." });
 });
 
-it("never forwards a server error Murage did not write for the bot", async () => {
-  const base = await route(500, { error: "strict mode violation: <input value=\"page secret\">" });
-  const replies = await exchange(base, [{ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "agent_browser_snapshot" } }], true);
+it("never forwards a server error Murage did not write for the bot, and keeps the mount for the next request (sweep-1021 B6)", async () => {
+  const hits = { n: 0 };
+  const base = await route(500, { error: "strict mode violation: <input value=\"page secret\">" }, hits);
+  const replies = await exchange(base, [
+    { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "agent_browser_snapshot" } },
+    { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "agent_browser_snapshot" } },
+  ]);
   expect(JSON.stringify(replies)).not.toContain("page secret");
+  // both requests were answered as tool errors the model reads: the first 500 did not seal the second away. A call is never replayed.
+  expect(replies.map(reply => reply.id)).toEqual([3, 4]);
+  expect(replies.every(reply => reply.result?.isError === true && reply.result.code === "browser_route_error")).toBe(true);
+  expect(hits.n).toBe(2);
+});
+
+it("sweep-1021 B6: a tool listing whose first answer is an uncoded 500 is retried and the second answer reaches the bot", async () => {
+  const hits = { n: 0 };
+  const tools = { jsonrpc: "2.0", result: { tools: [{ name: "agent_browser_snapshot" }] } };
+  const base = await route(500, { error: "engine said <secret page text>" }, hits, { status: 200, body: tools.result });
+  const replies = await exchange(base, [{ jsonrpc: "2.0", id: 6, method: "tools/list" }]);
+  expect(hits.n).toBe(2);
+  expect(replies).toHaveLength(1);
+  expect(replies[0].error).toBeUndefined();
+  expect(replies[0].result).toEqual(tools.result);
+});
+
+// MACMOUNTS-1020 (Mac 12:33Z: "type=turn-release-terminal keys=type,instanceId,frame", no cause): the terminal names its first refusing check.
+it("MACMOUNTS-REASON: a tool listing the server answered with an uncoded 502 seals with reason tools-list:http-502", async () => {
+  const base = await route(502, { error: "engine said <secret page text>" });
+  const reasons: unknown[] = [];
+  const replies = await exchange(base, [{ jsonrpc: "2.0", id: 4, method: "tools/list" }], true, reasons);
   expect(replies).toEqual([]);
+  expect(reasons).toEqual(["tools-list:http-502"]);
+});
+
+it("sweep-1021 B6: a tool listing answered with an uncoded 500 is retried once, then fails as an error that keeps the mount", async () => {
+  const hits = { n: 0 };
+  const base = await route(500, { error: "engine said <secret page text>" }, hits);
+  const replies = await exchange(base, [{ jsonrpc: "2.0", id: 4, method: "tools/list" }, { jsonrpc: "2.0", id: 5, method: "ping" }]);
+  expect(JSON.stringify(replies)).not.toContain("secret page text");
+  expect(replies[0].error).toMatchObject({ data: { code: "browser_route_error" } });
+  expect(replies[1].result).toEqual({});
+  expect(hits.n).toBe(2);
+});
+
+it("MACMOUNTS-REASON: a server that is not listening seals with the connection code, before any server log could exist", async () => {
+  const base = await route(200, {});
+  await new Promise((resolve) => servers.pop()!.close(resolve));
+  const reasons: unknown[] = [];
+  await exchange(base, [{ jsonrpc: "2.0", id: 5, method: "tools/list" }], true, reasons);
+  expect(reasons).toEqual(["fetch:econnrefused"]);
 });

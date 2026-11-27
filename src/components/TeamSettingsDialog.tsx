@@ -9,6 +9,7 @@
 // Same modal contract as ChannelDetailsPanel: focus lands on the field the
 // person asked for, Escape closes, Tab stays inside, and focus goes back to
 // whatever opened it. Delete asks inline, never with a browser confirm().
+import { imeComposing } from "@/lib/composer-enter";
 import { useFocusTrap } from "@/lib/focus-trap";
 import { LayerSurface } from "@/components/LayerSurface";
 import type { LoadedLayerProps } from "@/components/LazyOverlay";
@@ -135,6 +136,7 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
               value={name}
               onChange={(event) => props.onName(event.target.value)}
               onKeyDown={(event) => {
+                if (imeComposing(event.nativeEvent)) return;
                 if (event.key === "Enter" && !renameProblem && !busy) props.onSaveName();
               }}
               className={cn(FIELD, "min-w-0 flex-1 basis-48")}

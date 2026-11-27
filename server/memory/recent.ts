@@ -1,4 +1,5 @@
 import { recentViewPage, viewRecordText, RecallWorkBudget } from './recall-view-index.ts';
+import type { RecentCut } from './oneindex.ts';
 import { randomUUID } from "node:crypto";
 import { BACKGROUND_BUSY_MS, database, DatabaseBusyError, isDatabaseBusy, withBusyBudget } from "../database.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
@@ -28,7 +29,7 @@ export function materializeRecentMemory(access: MemoryAccess, signal?: AbortSign
     if(result.status==="complete"){
       const id=work.id;
       const checkpoint=refreshMemoryCheckpoint(id);
-      if(checkpoint.status!=="deferred"&&onCompleted)setImmediate(()=>onCompleted(id));
+      if(checkpoint.status!=="deferred"&&onCompleted)for(const done of [id,...checkpoint.covered??[]])setImmediate(()=>onCompleted(done));
     }
   }
   return completed;
@@ -70,6 +71,8 @@ export async function recentMemoryHitsSliced(query:string,access:MemoryAccess,op
   const terms=keywordTerms(query);if(!terms.length)return {hits:[],complete:true};
   const db=database(),budget=options.workBudget??new RecallWorkBudget(),hits:IndexHit[]=[];
   let before=Number.MAX_SAFE_INTEGER,visited=0,texts=0;
+  // one cut object for the whole walk: each page continues from the rows the last one read and charged (oneindex.ts RecentCut)
+  const cut:RecentCut={};
   const finish=(complete:boolean)=>{
     options.signal?.throwIfAborted();assertMemoryAccess(access);
     return {hits:hits.sort(byScore),complete:complete&&performance.now()<options.deadlineAt};
@@ -78,7 +81,7 @@ export async function recentMemoryHitsSliced(query:string,access:MemoryAccess,op
     options.signal?.throwIfAborted();assertMemoryAccess(access);
     if(performance.now()>=options.deadlineAt || budget.remaining===0)return finish(false);
     const limit=Math.min(RECENT_VIEW_SLICE,RECENT_VISIT_ROWS-visited,budget.remaining);
-    const rows=recentViewPage(db,access.view,before,limit,budget);visited+=rows.length;
+    const rows=recentViewPage(db,access.view,before,limit,budget,cut);visited+=rows.length;
     for(const ref of rows){
       options.signal?.throwIfAborted();
       if(performance.now()>=options.deadlineAt)return finish(false);
@@ -88,6 +91,8 @@ export async function recentMemoryHitsSliced(query:string,access:MemoryAccess,op
       hits.push(...keywordScore([{...ref,text}],terms));
       if(texts>=RECENT_TEXT_ROWS)return finish(false);
     }
+    // MAIN-RULING 2026-11-26T22:06Z (a): a page the raw budget ended (cut) is short without being the end of the reader's records
+    if(cut.before!==undefined)return finish(false);
     if(rows.length<limit)return finish(true);
     before=rows.at(-1)!.rowid;
     await yieldTurn();
@@ -131,12 +136,14 @@ export async function keywordMemoryHits(query:string,access:MemoryAccess,options
   const started=performance.now(),deadline=started+Math.min(KEYWORD_FALLBACK_BUDGET_MS,options.budgetMs??KEYWORD_FALLBACK_BUDGET_MS);
   const budget=options.workBudget??new RecallWorkBudget(),db=database(),terms=keywordTerms(query);
   const scan:KeywordScan={hits:[],visited:0,bytes:0,slices:0,complete:false};let before=Number.MAX_SAFE_INTEGER,window=0;
+  const cut:RecentCut={};
   while(budget.remaining>0 && window<KEYWORD_FALLBACK_WINDOW) {
     assertMemoryAccess(access);
     if(options.signal?.aborted || performance.now()>=deadline)break;
-    const rows=recentViewPage(db,access.view,before,Math.min(KEYWORD_FALLBACK_SLICE,KEYWORD_FALLBACK_MAX_ROWS-scan.visited),budget);
+    const rows=recentViewPage(db,access.view,before,Math.min(KEYWORD_FALLBACK_SLICE,KEYWORD_FALLBACK_MAX_ROWS-scan.visited),budget,cut);
     scan.slices++;scan.visited+=rows.length;
-    if(!rows.length){scan.complete=true;break;}
+    // MAIN-RULING 2026-11-26T22:06Z (a): a cut page (the raw budget ended it) is never the end of the walk, so the scan is not complete
+    if(!rows.length){scan.complete=cut.before===undefined;break;}
     for(const ref of rows) {
       const row=db.prepare('SELECT kind,state FROM memory_records WHERE id=? AND version=?').get(ref.id,ref.version);
       if(!row || row.state!=='active' || isPipKind(String(row.kind)))continue;
@@ -145,6 +152,7 @@ export async function keywordMemoryHits(query:string,access:MemoryAccess,options
       scan.bytes+=budget.bytes-bytesBefore;scan.hits.push(...keywordScore([{...ref,text}],terms));
     }
     before=rows.at(-1)!.rowid;
+    if(cut.before!==undefined)break;
     if(rows.length<KEYWORD_FALLBACK_SLICE){scan.complete=true;break;}
     await yieldTurn();
   }

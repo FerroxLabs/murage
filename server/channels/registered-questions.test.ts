@@ -11,9 +11,10 @@ async function pending(extra:object={}){
  const bot={id:'b',name:'Mira',threadId:'t',modelSelection:{instanceId:'p'}};
  return {...f,ref,bot};
 }
-it('delivers a registered text-row question through the real Telegram manager and answers it once',async()=>{
+it('delivers a registered question through the real Telegram manager and answers it once',async()=>{
  const f=await pending();
- expect(f.store.openRequestCardRows('t')).toHaveLength(0);
+ // Owner report 2026-11-21: a No limits question is its interactive card in the app (was a text row, 0 cards).
+ expect(f.store.openRequestCardRows('t')).toHaveLength(1);
  const actions={pending:()=>registeredChannelQuestions(f.store,f.bot),resolve:vi.fn(async()=>false),answer:(offer:any,reply:any)=>answerRegisteredChannelQuestion('t','b',offer,reply)};
  const sendMessage=vi.fn(async()=>({chatId:'7',messageId:19}));
  const manager=new TelegramApprovals(actions,{sendMessage,answerCallbackQuery:vi.fn(async()=>{})});

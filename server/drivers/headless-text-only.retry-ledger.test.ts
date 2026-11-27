@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
@@ -144,19 +144,25 @@ it.each(["no-scope","outer","write","cap"])("12: journal %s refusal returns firs
   expect(got.verdict).toMatchObject({state:"refused",detail:"no-structured-output"});expect(roots).toHaveLength(1);
   if(mode!=="no-scope")expect(row()).toMatchObject({input:9,output:5});
 });
-it.each([true,false].flatMap(registered=>[true,false].map(stopped=>({registered,stopped}))))("21: real gate COMMIT failure owns its child (registered=$registered, stopped=$stopped)",async({registered,stopped})=>{
+// MAIN-RULING 1.0.22 learning-send-transports :56: the gate commits before the prompt write and the spawn, so a failed gate COMMIT
+// launches nothing (before, the child already ran and was stopped). The gate's own COMMIT is the one inside releaseTransaction.
+const inGateCommit=()=>!!new Error().stack?.includes("releaseTransaction");
+it.each([true,false].flatMap(registered=>[true,false].map(stopped=>({registered,stopped}))))("21: real gate COMMIT failure launches no child (registered=$registered, stopped=$stopped)",async({registered,stopped})=>{
   stub([init+result({input_tokens:9,output_tokens:5})]);if(!registered)vi.mocked(reaper.registerChild).mockResolvedValue(null);
   if(!stopped)vi.mocked(awaitCliTreeStopped).mockResolvedValue(false);
-  const db=database(),exec=db.exec.bind(db);let sent=false;
-  const spawn=vi.mocked(spawnCli).getMockImplementation()!;vi.mocked(spawnCli).mockImplementation((...args)=>{const child=spawn(...args);sent=true;return child;});
-  vi.spyOn(db,"exec").mockImplementation(sql=>{if(sql==="COMMIT"&&sent){sent=false;throw new Error("commit fixture");}return exec(sql);});
-  await expect(turn()).rejects.toMatchObject({name:"memory-send-commit-failed"});expect(awaitCliTreeStopped).toHaveBeenCalled();expect(roots.every(root=>!existsSync(root))).toBe(stopped);
+  const db=database(),exec=db.exec.bind(db);let failed=false;
+  vi.spyOn(db,"exec").mockImplementation(sql=>{if(sql==="COMMIT"&&!failed&&inGateCommit()){failed=true;throw new Error("commit fixture");}return exec(sql);});
+  const spawns=vi.mocked(spawnCli).mock.calls.length,stops=vi.mocked(awaitCliTreeStopped).mock.calls.length;
+  await expect(turn()).rejects.toMatchObject({name:"memory-send-commit-failed"});expect(failed).toBe(true);
+  expect(vi.mocked(spawnCli).mock.calls.length-spawns).toBe(0);expect(vi.mocked(awaitCliTreeStopped).mock.calls.length-stops).toBe(0);expect(roots).toEqual([]);
+  const tmp=join(DATA_DIR,"tmp");expect(existsSync(tmp)?readdirSync(tmp):[]).toEqual([]);
 });
-it("21: failed COMMIT and unconfirmed stop retain the credential root",async()=>{
+it("21: failed gate COMMIT with an unconfirmed stop leaves no credential root: nothing ran with it",async()=>{
   stub([init+result({input_tokens:9,output_tokens:5})]);vi.mocked(awaitCliTreeStopped).mockResolvedValue(false);
   const db=database(),exec=db.exec.bind(db);let once=true;
-  vi.spyOn(db,"exec").mockImplementation(sql=>{if(sql==="COMMIT"&&roots.length&&once){once=false;throw new Error("commit fixture");}return exec(sql);});
-  await expect(turn()).rejects.toMatchObject({name:"memory-send-commit-failed"});expect(existsSync(roots[0])).toBe(true);
+  vi.spyOn(db,"exec").mockImplementation(sql=>{if(sql==="COMMIT"&&once&&inGateCommit()){once=false;throw new Error("commit fixture");}return exec(sql);});
+  await expect(turn()).rejects.toMatchObject({name:"memory-send-commit-failed"});expect(once).toBe(false);expect(roots).toEqual([]);
+  const tmp=join(DATA_DIR,"tmp");expect(existsSync(tmp)?readdirSync(tmp):[]).toEqual([]);
 });
 it("29: estimatedRuns sums independently of missing token totals",()=>{
   const report=sumUsageReports([headlessUsageReport(undefined,true,35000,17500,1),{engineRun:true}]);
@@ -178,11 +184,12 @@ it("29: unknown Flux result plus a released absent result retain the reservation
   expect(reports[0]).toMatchObject({estimatedRuns:2,extraUnseen:2});expect(reports[0].knownFloor).toBeUndefined();expect(row()).toMatchObject({...held,unmetered:2});
 });
 
-it("5: after retry spawn, rollback and reopen retain the independently committed journal",async()=>{
+it("5: at the retry's release, rollback and reopen retain the independently committed journal",async()=>{
   vi.useFakeTimers();stub([init+result({input_tokens:9000,output_tokens:5000})]);
-  const db=database(),exec=db.exec.bind(db),prepare=db.prepare.bind(db);let crashed=false;
+  const db=database(),exec=db.exec.bind(db),prepare=db.prepare.bind(db);let crashed=false,gateCommits=0;
+  // MAIN-RULING 1.0.22 :56: the retry's gate COMMIT now precedes its spawn, so the crash is placed at that COMMIT (the second gate COMMIT)
   const execution=vi.spyOn(db,"exec").mockImplementation(sql=>{
-    if(sql==="COMMIT"&&roots.length===2&&!crashed){exec("ROLLBACK");crashed=true;throw new Error("parent crash after spawn");}return exec(sql);
+    if(sql==="COMMIT"&&!crashed&&inGateCommit()&&++gateCommits===2){exec("ROLLBACK");crashed=true;throw new Error("parent crash at the retry release");}return exec(sql);
   });
   const statements=vi.spyOn(db,"prepare").mockImplementation(((sql:string)=>{
     if(crashed&&sql==="UPDATE memory_scope_bindings SET intent=? WHERE id=?")throw Object.assign(new Error("database is locked"),{code:"SQLITE_BUSY"});return prepare(sql);
@@ -309,14 +316,16 @@ it("A headless empty 0/0 result is unknown on Flux", async () => {
   expect(roots).toHaveLength(1); assertUnknownFluxSettlement();
 });
 
-it.each([false, true])("B: prompt write and spawn stay inside the gate (refuse=%s)", async refuse => {
+it.each([false, true])("B: the gate commits first; the prompt write and spawn follow outside it (refuse=%s)", async refuse => {
   const tmpBase = join(DATA_DIR, "tmp"), temp = createTempRoot(tmpBase, "prepared", 1, "");
   const promptText = "private prompt\n".repeat(1000);
   let prepared = false;
   stub([init + result({ input_tokens: 9, output_tokens: 5 }, '{"ok":true}')], {
     inspect: () => {
       expect(prepared).toBe(true);
-      expect(database().isTransaction).toBe(true);
+      // MAIN-RULING 1.0.22 learning-send-transports :56: the write lock is never held across the launch
+      expect(database().isTransaction).toBe(false);
+      expect(gate.released).toBe(1);
       expect(readFileSync(temp.promptFile, "utf8")).toBe(promptText);
     },
   });

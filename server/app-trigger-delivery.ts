@@ -166,11 +166,13 @@ export function appRunDisplay(run: Pick<AppEventRun, "state" | "waitReason">): s
 const RETRY_SOON_MS = 30_000;
 const GLOBAL_PAUSE_MAX_SEC = 60;
 const PASS_LIMIT = 50;
+const PRUNE_EVERY_MS = 60 * 60 * 1000;
 
 export class AppTriggerDelivery {
   private limits: AppClientLimits | null = null;
   /** A 429 from Flux pauses every control call until this time (README "Rate limit"). */
   private waitUntil = 0;
+  private lastPrune = -Infinity;
   private readonly newId: () => string;
 
   /** `turnAlive` says whether the host still holds a run's root turn (startup reconciliation); absent means none does. */
@@ -304,6 +306,8 @@ export class AppTriggerDelivery {
       }
     }
     this.deps.store.sealDue(now, PASS_LIMIT);
+    // q1022-disk: settled history older than 30 days leaves, checked at most hourly (a full pass of runs each time).
+    if (now - this.lastPrune >= PRUNE_EVERY_MS) { this.lastPrune = now; this.deps.store.pruneSettled(now, PASS_LIMIT); }
   }
 
   // ── runs ──

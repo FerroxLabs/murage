@@ -59,7 +59,17 @@ export class CopilotMcpConfig {
   }
   prepare(threadId: string, servers: readonly AcpLaunchMcpServer[]): string {
     const path = join(this.directory, createHash('sha256').update(threadId).update(randomUUID()).digest('hex') + '.json');
-    const mcpServers = Object.fromEntries(servers.map(server => [server.name, {
+    // Copilot owns these two names. Reserve all supplied names before choosing aliases so order cannot hide a server.
+    const used = new Set(servers.map(server => server.name));
+    const launchName = (name: string): string => {
+      if (name !== 'browser' && name !== 'computer') return name;
+      const prefix = `murage_${name}`;
+      let alias = prefix;
+      for (let suffix = 2; used.has(alias); suffix++) alias = `${prefix}_${suffix}`;
+      used.add(alias);
+      return alias;
+    };
+    const mcpServers = Object.fromEntries(servers.map(server => [launchName(server.name), {
       type: 'local', command: server.command, args: server.args,
       env: Object.fromEntries(server.env.map(({ name, value }) => [name, value])), tools: ['*'],
     }]));

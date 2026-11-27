@@ -230,17 +230,40 @@ describe("applyFluxSurface — responses (codex)", () => {
     expect(result.surface).toBe("responses");
     expect(result.model).toBe("flux-auto");
     expect(env[FLUX_CODEX_ENV_KEY]).toBe(KEY);
-    expect(result.args.slice(0, 8)).toEqual([
+    expect(result.args.slice(0, 12)).toEqual([
       "-c", `model_providers.${FLUX_CODEX_PROVIDER}.name="Flux Router"`,
       "-c", `model_providers.${FLUX_CODEX_PROVIDER}.base_url="https://api.fluxrouter.ai/v1"`,
       "-c", `model_providers.${FLUX_CODEX_PROVIDER}.wire_api="responses"`,
       "-c", `model_providers.${FLUX_CODEX_PROVIDER}.env_key="${FLUX_CODEX_ENV_KEY}"`,
+      // Per-provider keys of codex's ModelProviderInfo (rust-v0.162.1,
+      // model-provider-info/src/lib.rs:181,183); defaults 4 and 5 retried a 503 for ~14.5 min.
+      "-c", `model_providers.${FLUX_CODEX_PROVIDER}.request_max_retries=2`,
+      "-c", `model_providers.${FLUX_CODEX_PROVIDER}.stream_max_retries=2`,
     ]);
     // the memory tables ride the same argv, whatever the audience (flux-memory-headers.test.ts pins their headers)
     expect(result.args.join(" ")).toContain("model_providers.flux-off.http_headers");
     // argv is world-readable in `ps`: the NAME travels, never the value.
     expect(result.args.join(" ")).not.toContain(KEY);
     expect(result.args.join(" ")).toContain(FLUX_CODEX_ENV_KEY);
+  });
+
+  it("caps retries on EVERY provider table that points at a Flux host, whatever the route", () => {
+    const routes = ["flux::flux-auto", "flux-auto", "flux::flux-reasoning", "flux::flux-standard", "flux::flux-fast", "flux-pinned-claude-opus-5"];
+    for (const model of routes) {
+      const { args } = applyFluxSurface("codex", {}, model, KEY);
+      const values = args.filter((_, i) => args[i - 1] === "-c");
+      const tables = new Map<string, string[]>();
+      for (const value of values) {
+        const m = /^model_providers\.([^.=]+)\.(\w+)=(.*)$/.exec(value);
+        if (m) tables.set(m[1], [...(tables.get(m[1]) ?? []), `${m[2]}=${m[3]}`]);
+      }
+      const fluxTables = [...tables].filter(([, keys]) => keys.some((k) => /^base_url="https?:\/\/([^/"]*\.)?fluxrouter\.ai[/"]/.test(k)));
+      expect(fluxTables.map(([id]) => id).sort()).toEqual(["flux", "flux-noinject", "flux-off"]);
+      for (const [id, keys] of fluxTables) {
+        expect(keys, `${model} ${id}`).toContain("request_max_retries=2");
+        expect(keys, `${model} ${id}`).toContain("stream_max_retries=2");
+      }
+    }
   });
 
   it("sets no global model_provider — codex picks it per thread/start", () => {

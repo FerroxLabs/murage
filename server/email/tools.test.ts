@@ -29,7 +29,7 @@ import { FluxEmailClient } from "./flux-email-client.ts";
 import { emailCredentialProvider } from "./email-secrets.ts";
 import { EmailStore } from "./email-store.ts";
 import { EmailSendService } from "./send-service.ts";
-import { EmailTools, EMAIL_LINES, type EmailToolResult } from "./tools.ts";
+import { EmailTools, EMAIL_LINES, type EmailToolDeps, type EmailToolResult } from "./tools.ts";
 import { EMAIL_RULE, EMAIL_RESULT_CAP, EMAIL_TOO_LARGE, emailOrigin } from "./fence.ts";
 import { ATTACHMENT_LINES } from "./attachments.ts";
 import { authorizeEmailCall, emailMounts, EMAIL_DRAFT_ONLY_ABSENT, EMAIL_ENGINE_ABSENT, EMAIL_UNAVAILABLE, type EmailCallLive, type EmailMountInput } from "./admission.ts";
@@ -41,6 +41,10 @@ import { CLAUDE_TOOL_SURFACE, CODEX_TOOL_SURFACE, FUIGO_TOOL_SURFACE, NEUTRAL_TO
 import { FakeFlux, fluxError } from "../testing/fake-flux-email.ts";
 import { sha256Hex } from "./canonical.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { DATA_DIR } from "../config.ts";
+import { database } from "../database.ts";
+import { migrateMailboxMessageBatch } from "../message-db.ts";
+import { Store } from "../store.ts";
 
 const INBOX = "ibx_1";
 const FENCE = /<<page-content id=([0-9a-f]+) origin=(\S+) kind=email>>\n[\s\S]*?\n<<end page-content id=\1>>/g;
@@ -54,6 +58,7 @@ let store: EmailStore;
 let send: EmailSendService;
 let tools: EmailTools;
 let root: string;
+let readPortFor: EmailToolDeps["readPortFor"];
 const record: EmailTurnRecord = { botId: "b1", threadId: "t1", mode: "send", kind: "direct", origin: "desktop" };
 
 async function setup(policy: "ask" | "auto" = "auto") {
@@ -68,11 +73,11 @@ async function setup(policy: "ask" | "auto" = "auto") {
   let n = 0;
   send = new EmailSendService({ store, client, authorityFor: () => authority, installId: "inst", now: () => clock, newId: () => `send-${++n}` });
   root = mkdtempSync(join(tmpdir(), "email-ws-"));
-  tools = new EmailTools({ store, send, client, workspaceRoot: () => root, bot: () => undefined, now: () => clock });
+  tools = new EmailTools({ store, send, client, workspaceRoot: () => root, bot: () => undefined, now: () => clock, readPortFor: botId => readPortFor?.(botId) });
   store.insertBinding({ botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy, failure: null, updatedAt: clock });
   store.addTrusted("b1", "jane@acme.test", "allow", "owner", clock);
 }
-beforeEach(() => setup());
+beforeEach(() => { readPortFor = undefined; return setup(); });
 afterEach(() => { removeTempDirSync(root); forgetAllEmailTurns(); swap.hook = null; });
 
 const call = (tool: Parameters<EmailTools["handle"]>[0], args: unknown, generation = "gen-1"): Promise<EmailToolResult> => tools.handle(tool, record, generation, args);
@@ -81,6 +86,41 @@ const inbound = (patch: Record<string, unknown> = {}) => ({
   object: "email.message", id: "msg_1", inbox_id: INBOX, thread_id: "thr_1", direction: "inbound", from: "alex@example.com", to: ["juniper@murage.email"], cc: [],
   subject: "Thursday", preview: "Works for me", text: "Works for me", received_at: "2026-11-10T10:00:00Z", sender_authenticated: true,
   injection_scan: { status: "complete", verdict: "clear", reason: null }, held_for_owner: false, attachments: [], ...patch,
+});
+
+it("S1b observes the durable seal and reader barrier before consuming a mailbox tool result", async () => {
+  const threadId = "fixture-mailbox-second";
+  const text = "fixture-mailbox-inbound-body";
+  const earlier = "fixture-mailbox-earlier-words";
+  const transcript = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
+  transcript.appendMessage(threadId, { role: "user", kind: "text", text: earlier });
+  expect(transcript.messagesFor(threadId)[0]?.text).toBe(earlier);
+
+  const getMessage = vi.fn(async () => ({ kind: "ok" as const, status: 200, keyId: "fixture", body: inbound({ text, sender_authenticated: undefined }) }));
+  readPortFor = botId => botId === record.botId ? {
+    inboxId: "fixture-mailbox",
+    port: { getMessage, listMessages: vi.fn(), getThread: vi.fn() },
+    seal: id => transcript.beginMailboxSeal(id),
+  } : undefined;
+  const read = () => tools.handle("email_read", { ...record, threadId }, "fixture-generation", { message_id: "msg_1" });
+  function consume(result: EmailToolResult) {
+    using observer = new DatabaseSync(join(DATA_DIR, "messages.db"), { readOnly: true });
+    const mark = observer.prepare("SELECT state FROM mailbox_sealed_threads WHERE thread_id=?").get(threadId);
+    expect(mark?.state).toMatch(/^(pending|complete)$/);
+    expect(transcript.messagesFor(threadId)[0]).toMatchObject({ sealed: true, text: "Email conversation" });
+    return result.text;
+  }
+
+  expect(consume(await read())).toMatch(/conversation is paused/);
+  expect(getMessage).not.toHaveBeenCalled();
+  expect(migrateMailboxMessageBatch(threadId)).toMatchObject({ copied: 1, done: true });
+  database().prepare("UPDATE mailbox_sealed_threads SET state='complete' WHERE thread_id=?").run(threadId);
+  expect(consume(await read())).toContain(text);
+  expect(getMessage).toHaveBeenCalledOnce();
+  const generic = database().prepare("SELECT text,json FROM messages WHERE thread_id=?").all(threadId);
+  expect(JSON.stringify(generic)).not.toContain(earlier);
+  expect(JSON.stringify(generic)).not.toContain(text);
+  expect(fake.requests).toHaveLength(0);
 });
 
 // ---- 3.1 / 3.2: the mount matrix -------------------------------------------------------------------------------------------------
@@ -116,6 +156,14 @@ describe("emailMounts (3.1, 3.2, F17)", () => {
     ["automation thread with no trigger", { automationThread: true }],
   ] as Array<[string, Partial<EmailMountInput>]>)("F17: never on a %s, and the primer says nothing", (_name, patch) => {
     expect(emailMounts({ ...base, ...patch })).toEqual({ mounted: false, line: null });
+  });
+  // PHONEAUD (Astra 5): No limits is an approval level, not an audience. A turn with automation ancestry (automationThread carries it: a
+  // routine's hand-off, ask, wake or retry) mounts nothing; the routine's own scheduled or manual run keeps No limits.
+  it("No limits mounts on the owner's turn and the routine's own run, never on a turn with automation ancestry", () => {
+    expect(emailMounts({ ...base, noLimits: true })).toMatchObject({ mounted: true, turn: { kind: "no-limits" } });
+    expect(emailMounts({ ...base, noLimits: true, origin: undefined, automationSource: "schedule", automationThread: true })).toMatchObject({ mounted: true, turn: { kind: "no-limits" } });
+    expect(emailMounts({ ...base, noLimits: true, automationThread: true, handoffTurn: true, commsDepth: 1, chainRootThreadId: "routine" })).toEqual({ mounted: false, line: null });
+    expect(emailMounts({ ...base, noLimits: true, automationThread: true })).toEqual({ mounted: false, line: null });
   });
   it("binding states: active, paused and billing_hold mount; any other, none, or the probe off do not", () => {
     for (const binding of ["paused", "billing_hold"] as const) expect(emailMounts({ ...base, binding })).toMatchObject({ mounted: true });

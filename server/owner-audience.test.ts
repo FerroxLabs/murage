@@ -8,7 +8,7 @@
 // an owner thread whose chain a channel person started.
 import { sharedLoadPrompt } from "./shared-bots-roster.ts";
 import { emailPrimer, phonePrimer } from "./capabilities-primer.ts";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
 import vm from "node:vm";
@@ -18,6 +18,8 @@ import { wiring } from "./decision-wiring/fixture.ts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { released } from "./testing/released.ts";
 import { saveAboutMe } from "./about-me.ts";
+import { startAdmittedTurn } from "./admitted-turn.ts";
+import { _resetAutomationAncestryForTest, automationAncestry, configureAutomationAncestryFile, phoneAncestry, recordAutomationAncestry, threadAutomationAncestry } from "./automation-ancestry.ts";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { bindHumanThread, humanTask, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding, threadHumanPrincipal } from "./human-principals.ts";
@@ -264,22 +266,118 @@ describe("every registered owner-only surface", () => {
   // MAIN RULING 1115-SOURCE-PINS B: execute the entire spend-to-admission region,
   // using the real Store, busy predicate and run registry. Both waits resolve
   // in the same tick; unrelated synchronous routing services are fixtures.
-  it.each([true, false])("simultaneous starts preserve the admitted audience (first owner=%s)", async firstOwner => {
+  // arbiter3 Astra 1: the region runs on through directRuns.admit into the admitted start's first lines (the ancestry record), closed here by
+  // the real startAdmittedTurn and a give-back that releases the run; `dispatched` marks the work after the record (the engine dispatch).
+  const admittedRegion = () => {
     const source = readFileSync(join(ROOT, "server", "index.ts"), "utf8");
     const fn = source.indexOf("async function startTurnAdmitting(");
     const from = source.indexOf("  const turnSpendKey = ", fn);
     const admitAt = source.indexOf("  const run=directRuns.admit(", from);
-    const end = source.indexOf("\n", admitAt);
+    const startAt = source.indexOf("  void startAdmittedTurn(async () => {", admitAt);
+    const end = source.indexOf("  const attemptSeqs = ", startAt);
     expect(fn).toBeGreaterThan(-1);
     expect(from).toBeGreaterThan(fn);
     expect(admitAt).toBeGreaterThan(from);
+    expect(startAt).toBeGreaterThan(admitAt);
+    expect(end).toBeGreaterThan(startAt);
     const section = source.slice(from, end);
-    const js = ts.transpileModule(`globalThis.section = async function (bot, text, opts, surfacesForOwner) {\n${section}\nreturn run;\n};`, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.None } }).outputText;
+    return ts.transpileModule(`globalThis.section = async function (bot, text, opts, surfacesForOwner) {\n${section}\n  dispatched.push(threadId);\n  }, (error, phase) => giveBack(run, error, phase));\nreturn run;\n};`, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.None } }).outputText;
+  };
+  const admittedContext = (store: unknown, bot: { id: string; threadId: string }, directRuns: IndependentThreadRuns<never>, extra: Record<string, unknown>) => ({
+    Error, Object, Boolean, Set, Map, Promise, structuredClone, process: { platform: "fixture" },
+    rebuildOf: undefined, botId: bot.id, threadId: bot.threadId, humanIsOwner: true, directOwnerAudience: true,
+    profile: bot, store, directRuns, MAX_CONCURRENT_BOT_THREADS, DRAFT_ONLY_HANDOFF_REFUSAL: "fixture draft-only refusal",
+    directThreadBusy: wiring(["directThreadBusy"], { store, directRuns }).directThreadBusy,
+    spendKeyForSelection: () => null, SpendGateRefusal: class extends Error {}, activeGroupTurnForBot: () => false, isOwnerOrigin: () => true,
+    ownerSurfacesByThread: new Map(), unattendedMarkAction: () => "keep",
+    isAutomationThread: () => false, automationAncestry, phoneAncestry, recordAutomationAncestry,
+    admittedRoutineCeilings: new Map(), routinePeerSources: new Map(), conversationCeilings: new Map(),
+    routineConversationMode: () => null, routinePeerSource: () => undefined, draftOnlySenderInChain: () => false,
+    isUnattended: () => false, isCloudHome: () => false,
+    turnRouting: () => ({ instance: { instanceId: "fixture", driverKind: "codex", models: {}, adapter: { capabilities: {} } } }),
+    openTurnLineage: () => ({}), database, memberTurnId: () => "fixture-turn", promoteLineageThread: () => {},
+    staleModelReplacement: () => null, activeProviderSelections: new Map(), fluxSelectionRefusal: () => null,
+    engineCommandForTurn: () => null, turnSelection: {}, codexDefaultLine: undefined, routineOrigin: false,
+    limitTurns: new LimitTurns(), engineNameOf: () => "Fixture",
+    memoryRefusalCauses: new Map(), directTurnRejectionOwner: () => ({ current: () => true, release: () => {} }), startAdmittedTurn,
+    dispatched: [] as string[], giveBack: (run: { threadId: string; generation: string }) => directRuns.release(run),
+    ...extra,
+  });
+  it("a start refused after the ancestry is computed leaves the running record; a failed write gives the admitted run back undispatched", async () => {
+    const { store, bot } = world();
+    const js = admittedRegion();
+    // late refusal (draft-only hand-off, after the old record position): the routine record already on the thread stays the newest
+    _resetAutomationAncestryForTest();
+    recordAutomationAncestry(bot.threadId, true);
+    const refusedRuns = new IndependentThreadRuns<never>();
+    const refused: Record<string, unknown> = admittedContext(store, bot, refusedRuns, { draftOnlySenderInChain: () => true, profile: { ...bot, draftOnly: false } });
+    vm.createContext(refused);
+    vm.runInContext(js, refused);
+    await expect((refused.section as Function)(structuredClone(bot), "fixture turn", { origin: "desktop", userMessage: { id: "source" } }, true)).rejects.toMatchObject({ code: "draft_only_handoff" });
+    expect.soft(threadAutomationAncestry(bot.threadId), "late refusal leaves the routine record").toBe(true);
+    expect.soft(refusedRuns.forBot(bot.id), "late refusal admits nothing").toHaveLength(0);
+    // the accepted owner start writes its record once
+    const writes = vi.fn(recordAutomationAncestry);
+    const okRuns = new IndependentThreadRuns<never>();
+    const accepted: Record<string, unknown> = admittedContext(store, bot, okRuns, { recordAutomationAncestry: writes });
+    vm.createContext(accepted);
+    vm.runInContext(js, accepted);
+    const run = await (accepted.section as Function)(structuredClone(bot), "fixture turn", { origin: "desktop", userMessage: { id: "source" } }, true);
+    expect.soft(writes, "accepted start writes once").toHaveBeenCalledExactlyOnceWith(bot.threadId, false);
+    expect.soft(threadAutomationAncestry(bot.threadId)).toBe(false);
+    expect.soft(accepted.dispatched, "accepted start dispatches").toEqual([bot.threadId]);
+    okRuns.release(run);
+    // a ledger write that throws: the admitted run is given back through startAdmittedTurn, and nothing is dispatched
+    const failRuns = new IndependentThreadRuns<never>();
+    const phases: string[] = [];
+    const failing: Record<string, unknown> = admittedContext(store, bot, failRuns, {
+      recordAutomationAncestry: () => { throw new Error("ledger write failed"); },
+      giveBack: (failed: { threadId: string; generation: string }, _error: unknown, phase: string) => { phases.push(phase); failRuns.release(failed); },
+    });
+    vm.createContext(failing);
+    vm.runInContext(js, failing);
+    await (failing.section as Function)(structuredClone(bot), "fixture turn", { origin: "desktop", userMessage: { id: "source" } }, true).catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect.soft(phases, "write failure gives the run back").toEqual(["setup"]);
+    expect.soft(failRuns.forBot(bot.id), "write failure releases the thread").toHaveLength(0);
+    expect.soft(failing.dispatched, "write failure dispatches nothing").toEqual([]);
+    // Astra 1 (r4): the production ledger itself fails to write (its directory is gone). The owner record the given-back start tried to
+    // write is never visible: the routine turn's record stays the newest, in memory and after a restart
+    _resetAutomationAncestryForTest();
+    const ledgerDir = join(DATA_DIR, "ancestry-write-fails");
+    mkdirSync(ledgerDir, { recursive: true });
+    configureAutomationAncestryFile(join(ledgerDir, "automation-ancestry.json"));
+    recordAutomationAncestry(bot.threadId, true);
+    rmSync(ledgerDir, { recursive: true, force: true });
+    const diskRuns = new IndependentThreadRuns<never>();
+    const diskPhases: string[] = [];
+    const diskFailing: Record<string, unknown> = admittedContext(store, bot, diskRuns, {
+      giveBack: (failed: { threadId: string; generation: string }, _error: unknown, phase: string) => { diskPhases.push(phase); diskRuns.release(failed); },
+    });
+    vm.createContext(diskFailing);
+    vm.runInContext(js, diskFailing);
+    await (diskFailing.section as Function)(structuredClone(bot), "fixture turn", { origin: "desktop", userMessage: { id: "source" } }, true).catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect.soft(diskPhases, "a failed ledger write gives the run back").toEqual(["setup"]);
+    expect.soft(diskFailing.dispatched, "a failed ledger write dispatches nothing").toEqual([]);
+    expect.soft(threadAutomationAncestry(bot.threadId), "the failed owner record is not visible after give-back").toBe(true);
+    mkdirSync(ledgerDir, { recursive: true });
+    recordAutomationAncestry("other-thread", false);
+    _resetAutomationAncestryForTest();
+    configureAutomationAncestryFile(join(ledgerDir, "automation-ancestry.json"));
+    expect.soft(threadAutomationAncestry(bot.threadId), "nor after a restart reloads the ledger").toBe(true);
+    _resetAutomationAncestryForTest();
+  });
+  it.each([true, false])("simultaneous starts preserve the admitted audience (first owner=%s)", async firstOwner => {
+    const js = admittedRegion();
     const { store, bot } = world();
     const directRuns = new IndependentThreadRuns<typeof bot>();
     const admit = vi.spyOn(directRuns, "admit");
     const audience = new Map<string, boolean>();
     const writes = vi.spyOn(audience, "set");
+    // PHONEAUD (Fable H1): the automation-ancestry record follows the same rule, written once, by the admitted start only
+    _resetAutomationAncestryForTest();
+    const ancestryWrites = vi.fn(recordAutomationAncestry);
     const releases: Array<() => void> = [];
     const { directThreadBusy } = wiring(["directThreadBusy"], { store, directRuns });
     const context: Record<string, unknown> = {
@@ -290,6 +388,9 @@ describe("every registered owner-only surface", () => {
       spendGate: { admitStart: () => new Promise(resolve => { releases.push(() => resolve({ ok: true })); }) },
       SpendGateRefusal: class extends Error {}, activeGroupTurnForBot: () => false, isOwnerOrigin: () => true,
       ownerSurfacesByThread: audience, unattendedMarkAction: () => "keep",
+      isAutomationThread: () => false, automationAncestry, phoneAncestry, recordAutomationAncestry: ancestryWrites,
+      memoryRefusalCauses: new Map(), directTurnRejectionOwner: () => ({ current: () => true, release: () => {} }), startAdmittedTurn,
+      dispatched: [] as string[], giveBack: () => {},
       admittedRoutineCeilings: new Map(), routinePeerSources: new Map(), conversationCeilings: new Map(),
       routineConversationMode: () => null, routinePeerSource: () => undefined, draftOnlySenderInChain: () => false,
       isUnattended: () => false, isCloudHome: () => false,
@@ -302,7 +403,7 @@ describe("every registered owner-only surface", () => {
     vm.createContext(context);
     vm.runInContext(js, context);
     const start = context.section as (routingBot: typeof bot, text: string, opts: object, surfaces: boolean) => Promise<unknown>;
-    const run = (surfaces: boolean) => start(structuredClone(bot), "fixture turn", { origin: "desktop", notOwnerAudience: !surfaces, userMessage: { id: "source" } }, surfaces);
+    const run = (surfaces: boolean) => start(structuredClone(bot), "fixture turn", { origin: "desktop", notOwnerAudience: !surfaces, automationAncestry: !surfaces, userMessage: { id: "source" } }, surfaces);
     const first = run(firstOwner), second = run(!firstOwner);
     expect(releases).toHaveLength(2);
     // No yield between these resolutions: both contenders resume together.
@@ -315,6 +416,10 @@ describe("every registered owner-only surface", () => {
     expect(directRuns.get(bot.threadId)).toBe((results[0] as PromiseFulfilledResult<unknown>).value);
     expect(writes).toHaveBeenCalledExactlyOnceWith(bot.threadId, firstOwner);
     expect(audience.get(bot.threadId)).toBe(firstOwner);
+    // the refused contender carried the opposite ancestry; it never reached the record
+    expect(ancestryWrites).toHaveBeenCalledExactlyOnceWith(bot.threadId, !firstOwner);
+    expect(threadAutomationAncestry(bot.threadId)).toBe(!firstOwner);
+    _resetAutomationAncestryForTest();
   });
 
   it("an explicit not-owner start decides its owner-only surfaces, and a refused start leaves the running turn's audience alone", () => {

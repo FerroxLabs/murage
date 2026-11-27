@@ -34,6 +34,8 @@ import {
 import { BUILT_IN_LOCAL_HOST_IDS, localPickerModel } from "../../shared/local-models.ts";
 import { setLocalNameLookupForTests } from "../local-address-guard.ts";
 import { configureLocalServerStore } from "../local-servers.ts";
+import { applyFluxSurface } from "../flux-routing.ts";
+import { applyProviderRoute } from "../provider-routing.ts";
 
 const scratchDirs: string[] = [];
 
@@ -1247,6 +1249,82 @@ describe("codexLocalProviderArgs address guard", () => {
       expect(JSON.stringify(args)).not.toContain("sk-guard-secret");
       expect(env[`MURAGE_LOCAL_${hostId.toUpperCase()}_API_KEY`]).toBe("sk-guard-secret");
     });
+  });
+});
+
+// One decider: every `model_providers.<id>` table Codex can be handed gets both
+// retry caps when its base_url host is Flux, and only then. The sources below are
+// every writer of such a table; a new writer has to be added here.
+describe("codex provider tables: retry caps follow the base_url host", () => {
+  const CAPS = ["request_max_retries=2", "stream_max_retries=2"];
+  const FLUX_URLS = ["https://api.fluxrouter.ai/v1", "https://fluxrouter.ai/v1", "https://eu.api.fluxrouter.ai/v1"];
+  const OTHER_URLS = ["https://notfluxrouter.ai/v1", "https://fluxrouter.ai.example.com/v1", "https://example.com/v1", "http://127.0.0.1:8080/v1"];
+  const ROUTE = { connectionId: "provider-a", preset: "openai" as const, protocol: "openai" as const, apiKey: "fixture-provider-key", model: "fixture-model", revision: "r1" };
+
+  const tables = (args: string[]) => {
+    const out = new Map<string, string[]>();
+    for (const value of args.filter((_, i) => args[i - 1] === "-c")) {
+      const m = /^model_providers\.([^.=]+)\.(\w+)=(.*)$/.exec(value);
+      if (m) out.set(m[1], [...(out.get(m[1]) ?? []), `${m[2]}=${m[3]}`]);
+    }
+    return [...out].map(([id, keys]) => ({ id, keys, baseUrl: JSON.parse(keys.find((k) => k.startsWith("base_url="))?.slice(9) ?? "null") as string | null }));
+  };
+
+  const withServer = async (apiBase: string, run: (hostId: string) => Promise<void>) => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-codex-caps-"));
+    scratchDirs.push(dir);
+    const hostId = "srv_0123456789ab";
+    mkdirSync(join(dir, "local-models"), { recursive: true });
+    writeFileSync(join(dir, "local-models", "local-servers.json"), JSON.stringify({ servers: [{ id: hostId, name: "fixture", kind: "llamacpp", apiBase, createdAt: 1, updatedAt: 1 }] }));
+    configureLocalServerStore(dir);
+    try { await run(hostId); } finally { configureLocalServerStore(null); }
+  };
+
+  const sources: Array<[string, (baseUrl: string | null) => Promise<string[]>]> = [
+    ["built-in Flux tables", async () => applyFluxSurface("codex", {}, "flux::flux-auto", "fixture-flux-key").args],
+    ["saved connection", async (baseUrl) => applyProviderRoute("codex", {}, { ...ROUTE, baseUrl: baseUrl! }).args ?? []],
+    ["Local models server", async (baseUrl) => {
+      let args: string[] = [];
+      await withServer(baseUrl!, async (hostId) => { args = await codexLocalProviderArgs({}, `${hostId}::flux-auto`); });
+      return args;
+    }],
+  ];
+
+  it("Local models server pointed at a Flux host: both caps (the reported fixture)", async () => {
+    await withServer("https://api.fluxrouter.ai/v1", async (hostId) => {
+      const args = await codexLocalProviderArgs({}, `${hostId}::flux-auto`);
+      expect(args).toContain(`model_providers.${hostId}.base_url="https://api.fluxrouter.ai/v1"`);
+      expect(args).toContain(`model_providers.${hostId}.request_max_retries=2`);
+      expect(args).toContain(`model_providers.${hostId}.stream_max_retries=2`);
+    });
+  });
+
+  it("a non-Flux Local models server keeps the exact three-key table", async () => {
+    await withServer("https://example.com/v1", async (hostId) => {
+      const args = await codexLocalProviderArgs({}, `${hostId}::m`);
+      expect(args).toEqual([
+        "-c", `model_providers.${hostId}.name="llama.cpp on fixture"`,
+        "-c", `model_providers.${hostId}.base_url="https://example.com/v1"`,
+        "-c", `model_providers.${hostId}.env_key="MURAGE_LOCAL_SRV_0123456789AB_API_KEY"`,
+      ]);
+    });
+  });
+
+  it.each(sources.filter(([name]) => name !== "built-in Flux tables"))("%s: every table with a Flux host has both caps, every other none", async (_name, emit) => {
+    for (const baseUrl of [...FLUX_URLS, ...OTHER_URLS]) {
+      const flux = FLUX_URLS.includes(baseUrl);
+      const found = tables(await emit(baseUrl));
+      expect(found.length, baseUrl).toBeGreaterThan(0);
+      for (const table of found) {
+        for (const cap of CAPS) expect(table.keys.includes(cap), `${baseUrl} ${table.id} ${cap}`).toBe(flux);
+      }
+    }
+  });
+
+  it("built-in Flux tables: every table has both caps", async () => {
+    const found = tables(await sources[0][1](null));
+    expect(found.map((t) => t.id).sort()).toEqual(["flux", "flux-noinject", "flux-off"]);
+    for (const table of found) for (const cap of CAPS) expect(table.keys, table.id).toContain(cap);
   });
 });
 

@@ -1,0 +1,11 @@
+file:///Volumes/Fixture/workspace/cx-swapfix/server/testing/ports.ts:36
+  throw new Error(`no free port block for offsets ${offsets.join(",")} in ${from}..${from + span}`);
+        ^
+
+Error: no free port block for offsets 0,1 in 19600..22600
+    at freePortBlock (file:///Volumes/Fixture/workspace/cx-swapfix/server/testing/ports.ts:36:9)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async launchVerificationServer (file:///Volumes/Fixture/workspace/cx-swapfix/scripts/control-murage.ts:357:16)
+    at async file:///Volumes/Fixture/workspace/cx-swapfix/[eval1]:1:79
+
+Node.js v24.20.0

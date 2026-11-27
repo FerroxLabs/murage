@@ -3,10 +3,11 @@
 // Owners: mem-r04-1019 mutations/witnesses; tafix-r4a shared verdict; int-train5w integration; trainred-r04 retire-too-late witness.
 // Run inside an isolated test container; reports go to stdout, scratch stays outside the repository.
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyDecisionMutant } from '../test-truth/decision-mutant.test-helper.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 const early = '  // Admission passed the refused-lease guard: receipts must join only this generation.\n  supersedeMemberTurns(turnLineage);\n';
 const late = '        addTurnParents(turnLineage, turnShownRefs);\n';
@@ -48,4 +49,4 @@ try {
     certified &&= result.killed;
   }
   assert.equal(certified, true, 'R04 mutants must die at their intended assertions');
-} finally { rmSync(scratch, { recursive: true }); }
+} finally { safeWipeSync(scratch); }

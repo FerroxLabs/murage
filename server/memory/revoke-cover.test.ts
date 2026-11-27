@@ -154,9 +154,9 @@ function randomStore(seed: number, size = 1): { s: Store; roots: () => FrontierN
 function facts(db: Db) {
   const set = (sql: string) => new Set((db.prepare(sql).all() as Array<{ k: string }>).map(r => r.k));
   return {
-    lines: set("SELECT DISTINCT thread_id||':'||lsn AS k FROM memory_deny_line"),
+    lines: set("SELECT DISTINCT thread_id||':'||lsn AS k FROM memory_deny_point"),
     sessions: set("SELECT DISTINCT thread_id||':'||driver_instance||':'||native_session AS k FROM memory_deny_session"),
-    memory: set("SELECT DISTINCT kind||':'||id||':'||version AS k FROM memory_deny_memory"),
+    memory: set("SELECT DISTINCT kind||':'||id||':'||version AS k FROM memory_deny_object"),
     ranges: db.prepare("SELECT thread_id AS t,from_lsn AS f,until_turn_lsn AS u FROM memory_deny_range").all() as Array<{ t: string; f: number; u: number }>,
   };
 }
@@ -195,8 +195,12 @@ function twin(build: () => Store, setup: (s: Store) => void, run: (s: Store, wit
   return { on, off };
 }
 
-beforeEach(() => { fold.REVOKE_FOLD.enabled = false; cover(true); M.resetCoverProbe?.(); const t = trace(); t.on = true; });
-afterEach(() => { fold.REVOKE_FOLD.enabled = true; cover(true); if (M.REVOKE_COVER) M.REVOKE_COVER.enqueueSkip = true; const t = trace(); t.on = false; });
+// 1.0.23 q1023-denyrule: this suite compares the EXPLICIT rows two walks write (cover on against one walk per job, this marker against the
+// 1.0.3 one), so it runs the marker with every mark written, as 1.0.22 wrote them (MARK_SUPPRESSION, the differential baseline). With the
+// suppression on, which of two equal walks leaves a row and which leaves it to the rule depends on the edge a node was reached by; the
+// verdicts are the same and are witnessed in deny-rule-1023.test.ts (W-A1, W-A2).
+beforeEach(() => { marker.MARK_SUPPRESSION.on = false; fold.REVOKE_FOLD.enabled = false; cover(true); M.resetCoverProbe?.(); const t = trace(); t.on = true; });
+afterEach(() => { marker.MARK_SUPPRESSION.on = true; fold.REVOKE_FOLD.enabled = true; cover(true); if (M.REVOKE_COVER) M.REVOKE_COVER.enqueueSkip = true; const t = trace(); t.on = false; });
 
 describe("1 D: skip only under a coverer whose cap is at or above the job's own (T1)", () => {
   it("a lower-cap coverer that reached hold first does not cover a higher-cap drain; a job below both does skip", () => {
@@ -209,13 +213,13 @@ describe("1 D: skip only under a coverer whose cap is at or above the job's own 
       const lo = job(s.db, 1, 50, [range("T", 10)]);
       drainAll(s.db);
       expect(jobRow(s.db, lo)?.state ?? "done").toBe("done");
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='U'")).toBe(0); // under cap 50 the reply is not reached
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='U'")).toBe(0); // under cap 50 the reply is not reached
       expect(coverCount(s.db)).toBeGreaterThan(0); // the lower cap left its cover
       const hi = job(s.db, 2, 80, [range("T", 10)]);
       const before = probe();
       drainAll(s.db);
       // the later, higher-cap drain walked T itself: the reply begun between the caps is withheld under it
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='U' AND lsn=70 AND revoke_id=?", hi)).toBe(1);
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='U' AND lsn=70 AND revoke_id=?", hi)).toBe(1);
       expect(probe().handlerRuns).toBeGreaterThan(before.handlerRuns);
       expect(trace().coverers).not.toContain(lo);
       // positive control: a job with a cap below both skips its walk of T (a point pass under a coverer)
@@ -244,12 +248,12 @@ describe("2 D: a partly covered thread (T2)", () => {
       const { on, off } = twin(build, s => { job(s.db, K, 300, [range("T", 100)]); job(s.db, R, 250, held ? [range("T", held), range("T", 50)] : [range("T", 50)]); });
       try {
         for (const s of [on, off]) {
-          expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='U' AND lsn IN (201,202) AND revoke_id=?", R)).toBe(2);
-          expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='U' AND lsn IN (203,204) AND revoke_id=?", K)).toBe(2);
+          expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='U' AND lsn IN (201,202) AND revoke_id=?", R)).toBe(2);
+          expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='U' AND lsn IN (203,204) AND revoke_id=?", K)).toBe(2);
           expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_session WHERE native_session='between' AND revoke_id=?", R)).toBe(1);
         }
         // with cover R' never walked from 100 on: no carry ending there was followed under it
-        expect(n(on.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='U' AND lsn=203 AND revoke_id=?", R)).toBe(0);
+        expect(n(on.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='U' AND lsn=203 AND revoke_id=?", R)).toBe(0);
         expect(probe().partial).toBeGreaterThanOrEqual(1);
         if (held) expect(probe().pointPasses).toBeGreaterThanOrEqual(1);
         expectSameFacts(on.db, off.db);
@@ -292,13 +296,13 @@ describe("3 D: the starting line (T3)", () => {
       expect(sawSourceRow).toBe(true); // the covered source was enqueued under R' and popped
       expect(probe().sourceLines).toBeGreaterThanOrEqual(1);
       for (const s of [on, off]) {
-        expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='U' AND lsn=300 AND revoke_id=?", R)).toBe(1);
-        expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='source' AND id='S2' AND revoke_id=?", R)).toBe(1);
-        expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='U' AND lsn=301")).toBe(0);
-        expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='W' AND lsn=302 AND revoke_id=?", K)).toBe(1);
+        expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='U' AND lsn=300 AND revoke_id=?", R)).toBe(1);
+        expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='source' AND id='S2' AND revoke_id=?", R)).toBe(1);
+        expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='U' AND lsn=301")).toBe(0);
+        expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='W' AND lsn=302 AND revoke_id=?", K)).toBe(1);
       }
       // the prefix carry was K's: never re-enqueued under R'; one point pass (at 80), the later entry at 89 the own-walk skip
-      expect(n(on.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='W' AND revoke_id=?", R)).toBe(0);
+      expect(n(on.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='W' AND revoke_id=?", R)).toBe(0);
       expect(probe().pointPasses).toBe(1);
       expectSameFacts(on.db, off.db);
     } finally { on.fx.close(); off.fx.close(); }
@@ -336,7 +340,7 @@ describe("4 + 19 D: a cover row counts only once its job's frontier is empty; th
           if (phase === "hold") usedInHold += by;
           // mid-consumer: the coverer reopened by inheritance (a line written under one of its marks)
           if (!reopenedHere && (withCover ? usedInHold > 0 : phase === "hold") && jobRow(db, R)?.state === "active") {
-            const mark = db.prepare("SELECT thread_id AS t,lsn FROM memory_deny_line WHERE revoke_id=? LIMIT 1").get(K) as { t: string; lsn: number };
+            const mark = db.prepare("SELECT thread_id AS t,lsn FROM memory_deny_point WHERE revoke_id=? LIMIT 1").get(K) as { t: string; lsn: number };
             tx(db, () => commit.inheritMarks(db, { kind: "line", threadId: "late", lsn: 4900 }, [], [{ threadId: mark.t, from: mark.lsn, to: mark.lsn }]));
             expect(jobRow(db, K)!.phase).toBe("mark");
             reopenedHere = true; reopened++;
@@ -375,7 +379,7 @@ describe("5 L: an audience-only revoke is never undone (T5)", () => {
     try {
       s.line("T", 1, true, 0).line("T", 2, false);
       s.receipt("b1", "T", 1, []).head();
-      const snap = () => ["memory_revoke_jobs", "memory_deny_pending", "memory_revoke_frontier", "memory_deny_line"].map(t => n(s.db, `SELECT count(*) AS n FROM ${t}`)).join(",");
+      const snap = () => ["memory_revoke_jobs", "memory_deny_pending", "memory_revoke_frontier", "memory_deny_point"].map(t => n(s.db, `SELECT count(*) AS n FROM ${t}`)).join(",");
       s.db.prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id='b1'").run(); // a flip: the next slice drains it into a bulk
       slice(s.db);
       const drain = Number((s.db.prepare("SELECT revoke_id AS r FROM memory_revoke_jobs WHERE kind='bulk'").get() as { r: number }).r);
@@ -459,7 +463,7 @@ describe("7 D: the reader class differs (T7)", () => {
       drainAll(s.db);
       expect(probe().skips).toBe(0);
       expect((M.coverRows?.(s.db, "r:X:1", true) as Array<{ job: number }> ?? []).map(r => r.job)).toEqual([A]); // content writes no cover
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE id='X' AND revoke_id IN (?,?)", F, A)).toBe(2);
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_object WHERE id='X' AND revoke_id IN (?,?)", F, A)).toBe(2);
       // positive control: a lower audience job does skip under the audience bulk
       job(s.db, 3, 100, [rec("X")]);
       drainAll(s.db);
@@ -468,8 +472,8 @@ describe("7 D: the reader class differs (T7)", () => {
       const ref = (id: string) => [{ kind: "memory" as const, ref: { kind: "record" as const, id, version: 1, scopeId: "s-room" } }];
       expect(refsLookup(s.db, ref("X"), CONTENT).state).toBe("withheld");
       expect(refsLookup(s.db, ref("Y"), CONTENT).state).toBe("shown");
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE id='Y' AND revoke_id=?", A)).toBe(1); // Y is the audience bulk's alone
-      s.db.prepare("DELETE FROM memory_deny_memory WHERE revoke_id=?").run(F); // without the forget's own mark the content reader is shown X
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_object WHERE id='Y' AND revoke_id=?", A)).toBe(1); // Y is the audience bulk's alone
+      s.db.prepare("DELETE FROM memory_deny_object WHERE revoke_id=?").run(F); // without the forget's own mark the content reader is shown X
       expect(refsLookup(s.db, ref("X"), CONTENT).state).toBe("shown");
     } finally { s.fx.close(); }
   });
@@ -491,7 +495,7 @@ describe("9 P: no loop through skips (T9)", () => {
       expect(jobRow(s.db, R)?.state ?? "done").toBe("done");
       expect(probe().pointPasses - before.pointPasses).toBe(2); // T:30 and U:40, each once; the cycle back to T:30 is the own-walk skip
       expect(probe().handlerRuns - before.handlerRuns).toBe(0);
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='U' AND lsn=40")).toBeGreaterThan(0);
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='U' AND lsn=40")).toBeGreaterThan(0);
     } finally { s.fx.close(); }
   });
 });
@@ -654,24 +658,24 @@ describe("12 D: the enqueue-time skip and the covered source (T12)", () => {
       // S, then S again from the point pass's capture at 40 (a covered visit writes nothing, so it is a skip again; R' now holds T at 40,
       // so the line is not enqueued twice)
       expect(probe().skips).toBe(before.skips + 2);
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='T' AND lsn=40 AND revoke_id=?", R)).toBe(1);
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='T' AND lsn=40 AND revoke_id=?", R)).toBe(1);
       expect((M.coverRows?.(s.db, "s:S", true) as Array<{ job: number }>).map(r => r.job)).toEqual([K]); // no cover row of R' for the source
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE id='E' AND revoke_id=?", R)).toBe(0); // its evidence stage did not run
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_object WHERE id='E' AND revoke_id=?", R)).toBe(0); // its evidence stage did not run
       before = probe();
       const R2 = job(s.db, 3, 100, [range("T", 10), src("S")]); // R2 holds T from 10 by the time S pops
       drainAll(s.db);
       expect(probe().sourceLines).toBe(before.sourceLines);
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='T' AND lsn=40 AND revoke_id=?", R2)).toBe(0);
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='T' AND lsn=40 AND revoke_id=?", R2)).toBe(0);
       // an inherited child onto a covered node is enqueued (inheritance is not the walk) and ends marked
       const R3 = job(s.db, 4, 100, [], {});
-      s.db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('record','P0',0,?)").run(R3);
+      s.db.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES('record','P0',0,?)").run(R3);
       s.db.prepare("UPDATE memory_revoke_jobs SET phase='hold' WHERE revoke_id=?").run(R3);
       tx(s.db, () => commit.inheritMarks(s.db, { kind: "record", ref: { kind: "record", id: "E", version: 1 }, lsn: 4000 }, [{ kind: "memory", ref: { kind: "record", id: "P0" } }]));
       expect(n(s.db, "SELECT count(*) AS n FROM memory_revoke_frontier WHERE revoke_id=? AND node LIKE '%\"E\"%'", R3)).toBe(1);
       before = probe();
       drainAll(s.db);
       expect(probe().skips).toBe(before.skips + 1);
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE id='E'")).toBeGreaterThan(0);
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_object WHERE id='E'")).toBeGreaterThan(0);
     } finally { s.fx.close(); }
   });
 });
@@ -800,7 +804,7 @@ describe("16 D: late cap-free fan-out inherits at write (2.11, T15)", () => {
           // K has finished, so each child takes its mark under K at its write and K is not reopened (1.0.3 drain reopen, T20: a just-written
           // child has no consumers; before, K went back to mark with each child in its frontier and its walk ran again)
           expect(jobRow(s.db, K)?.state ?? "done").toBe("done");
-          for (const ref of LATE) expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind=? AND id=? AND revoke_id=?", ref.kind, ref.id, K), `${ref.kind}:${ref.id} marked under K`).toBeGreaterThan(0);
+          for (const ref of LATE) expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind=? AND id=? AND revoke_id=?", ref.kind, ref.id, K), `${ref.kind}:${ref.id} marked under K`).toBeGreaterThan(0);
           if (!audience) for (const ref of LATE) expect(refsLookup(s.db, [{ kind: "memory", ref }], CONTENT).state, `${ref.kind}:${ref.id}`).not.toBe("shown");
           drainAll(s.db);
           job(s.db, 2, 100, [range("T", 10), src("S")]);
@@ -809,8 +813,8 @@ describe("16 D: late cap-free fan-out inherits at write (2.11, T15)", () => {
       try {
         // (refsLookup skips audience-only memory marks for every reader, deny-read.ts NOT_AUDIENCE_ONLY: the audience's marks are the rows)
         if (!audience) for (const s of [on, off]) for (const ref of LATE) expect(refsLookup(s.db, [{ kind: "memory", ref }], CONTENT).state, `${ref.kind}:${ref.id}`).toBe("withheld");
-        for (const s of [on, off]) for (const ref of LATE) expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind=? AND id=?", ref.kind, ref.id), `${ref.kind}:${ref.id} marked`).toBeGreaterThan(0);
-        for (const ref of LATE) expect(n(on.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind=? AND id=? AND revoke_id=?", ref.kind, ref.id, K)).toBeGreaterThan(0);
+        for (const s of [on, off]) for (const ref of LATE) expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind=? AND id=?", ref.kind, ref.id), `${ref.kind}:${ref.id} marked`).toBeGreaterThan(0);
+        for (const ref of LATE) expect(n(on.db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind=? AND id=? AND revoke_id=?", ref.kind, ref.id, K)).toBeGreaterThan(0);
         if (audience) expect(probe().skips + probe().pointPasses).toBeGreaterThan(0);
         expectSameFacts(on.db, off.db);
       } finally { on.fx.close(); off.fx.close(); }
@@ -831,7 +835,8 @@ describe("16 D: late cap-free fan-out inherits at write (2.11, T15)", () => {
     // the 2.11 list (grep at the base): a new site is caught above; a removed one shows here
     const files = [...new Set(sites.map(x => x.split(":")[0]))].sort();
     expect(files).toEqual(["authority.ts", "bring-in.ts", "consolidate.ts", "identity.ts", "import.ts", "jobs.ts", "pip-episodes.ts", "pip-lived.ts", "pip-stance.ts", "reveal-capture.ts", "review.ts", "routes.ts", "settings.ts"]);
-    expect(sites.length).toBe(26);
+    // 27: cause10's kept-version re-insert in import.ts (delete + insert of a kept chunk's evidence row), followed by inheritEdge like the rest
+    expect(sites.length).toBe(27);
     expect(/writeCaptureLineage\([^)]*\);\s*\n?\s*\/\/[^\n]*\n\s*inheritEdge\(/.test(readFileSync(join(dir, "capture.ts"), "utf8"))).toBe(true);
   });
   // 1.0.3 drain reopen (T20): a memory-idle consolidation's late edge under a revoke that has finished marked the child by reopening the
@@ -850,7 +855,7 @@ describe("16 D: late cap-free fan-out inherits at write (2.11, T15)", () => {
         expect(n(s.db, "SELECT count(*) AS n FROM memory_revoke_jobs")).toBe(jobs);
         expect(n(s.db, "SELECT count(*) AS n FROM memory_revoke_audience")).toBe(audiences);
         expect(n(s.db, "SELECT count(*) AS n FROM memory_revoke_frontier WHERE revoke_id=? AND seq>0", K)).toBe(0);
-        for (const ref of LATE) expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind=? AND id=? AND revoke_id=?", ref.kind, ref.id, K), `${ref.kind}:${ref.id} marked under K`).toBeGreaterThan(0);
+        for (const ref of LATE) expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind=? AND id=? AND revoke_id=?", ref.kind, ref.id, K), `${ref.kind}:${ref.id} marked under K`).toBeGreaterThan(0);
         if (!audience) for (const ref of LATE) expect(refsLookup(s.db, [{ kind: "memory", ref }], CONTENT).state, `${ref.kind}:${ref.id}`).toBe("withheld");
         expect(drainAll(s.db)).toBe(0);
       } finally { s.fx.close(); }
@@ -867,7 +872,7 @@ describe("16 D: late cap-free fan-out inherits at write (2.11, T15)", () => {
         (C.inheritEdge as (tx: Db, child: MemoryRef, parent: unknown) => void)(s.db, { kind: "source", id: "S2" }, { threadId: "T", messageId: "T-20" });
       });
       expect(n(s.db, "SELECT count(*) AS n FROM memory_revoke_jobs")).toBe(0);
-      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='source' AND id='S2' AND revoke_id=-2")).toBe(1);
+      expect(n(s.db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='source' AND id='S2' AND revoke_id=-2")).toBe(1);
       expect(refsLookup(s.db, [{ kind: "memory", ref: { kind: "source", id: "S2", scopeId: "s-room" } }], CONTENT).state).toBe("shown");
     } finally { s.fx.close(); }
   });
