@@ -13,6 +13,19 @@ export const RELEASE_ACTIONS = [
   'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
 ];
 export const RELEASE_COMMANDS = ['bootstrap', 'probe-prepared', 'wait-stage', 'download', 'notes-file', 'upload-prepared', 'verify-digests', 'publish-prepared'];
+// Rings (designs/RINGS-DESIGN.md section 5 PUBLISHER HOME; MAIN-RULING 2026-11-27 option A, owner MAIN): the two ring
+// steps follow the release commands as fixed guard commands. Each has its exact condition and its exact env (the
+// guard imports the signing key itself). A ring_op run skips every release barrier and publish-prepared through
+// the one complementary condition RING_OFF, so no release command ever runs without its barriers.
+export const RING_OFF = "needs.prepare.outputs.ring_op == ''";
+const RING_KEY = {GH_TOKEN:'${{ secrets.RELEASES_PAT }}', GPG_PRIVATE_KEY:'${{ secrets.RELEASE_GPG_PRIVATE_KEY }}', GPG_PASSPHRASE:'${{ secrets.RELEASE_GPG_PASSPHRASE }}'};
+export const RING_STEPS = {
+  'ring-publish-internal': {if:`\${{ inputs.publish && ${RING_OFF} }}`, env:{...RING_KEY, VERSION:'${{ needs.prepare.outputs.version }}'}},
+  'ring-op': {if:"needs.prepare.outputs.ring_op != ''", env:{...RING_KEY, RING_OP:'${{ needs.prepare.outputs.ring_op }}', RING_VERSION:'${{ inputs.ring_version }}',
+    RING_ARGS:'${{ inputs.ring_args }}', RING_RECEIPTS:'${{ inputs.ring_receipts }}', RING_RULING:'${{ inputs.ring_ruling }}'}},
+};
+export const RING_COMMANDS = Object.keys(RING_STEPS);
+const ASSEMBLE_COMMANDS = [...RELEASE_COMMANDS, ...RING_COMMANDS];
 // G-A 1116-WINSACD2(2): OIDC class owner win-sac-sign-sa; deployment/admission owner MAIN.
 export const WINDOWS_OIDC_JOBS = new Set([
   '.github/workflows/windows-qualsign.yml:sign-collector',
@@ -27,7 +40,7 @@ export const NON_RELEASE_SECRETS = new Set([
   'MAC_CERT_P12_BASE64', 'MAC_CERT_PASSWORD', 'APPLE_API_KEY_P8_BASE64',
   'APPLE_API_KEY_ID', 'APPLE_API_ISSUER_ID', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID',
   'AZURE_CLIENT_SECRET', 'RELEASE_GPG_PRIVATE_KEY', 'RELEASE_GPG_PASSPHRASE',
-  'BUILD_HOST_SSH_KEY', 'BUILD_HOST_NAME', 'FLUX_CONTRACT_KEY',
+  'HETZNER_SSH_KEY', 'HETZNER_HOST', 'FLUX_CONTRACT_KEY',
 ]);
 
 // GitHub expressions use single-quoted strings with doubled quote escapes.
@@ -187,21 +200,30 @@ export function auditReleaseCapabilities(root, overrides = new Map(), files = tr
             if (JSON.stringify(step.with) !== JSON.stringify(expected)) fail(file, path, 'unexpected release setup inputs');
           } else {
             const command = String(step.run ?? '').trim().replace(/^node scripts\/release-guard\.mjs /, '');
-            if (step.uses || !RELEASE_COMMANDS.includes(command) || step.run?.trim() !== `node scripts/release-guard.mjs ${command}`) fail(file, path, 'release steps must be fixed release-guard commands');
+            if (step.uses || !ASSEMBLE_COMMANDS.includes(command) || step.run?.trim() !== `node scripts/release-guard.mjs ${command}`) fail(file, path, 'release steps must be fixed release-guard commands');
             if (step.shell || step['working-directory']) fail(file, path, 'release shell or directory override');
-            for (const key of Object.keys(step.env ?? {})) if (!['GH_TOKEN','VERSION','SHA','RELEASE_ID','WAIVER_PATH','WAIVER_SHA256','WAIVER_RUN','WAIVER_RUN_URL','WAIVER_APPROVAL','REVIEW_FILE'].includes(key)) fail(file, path, `unexpected release environment: ${key}`);
+            if (RING_STEPS[command]) {
+              if (step.if !== RING_STEPS[command].if) fail(file, path, `ring step ${command} must run on exactly its reviewed condition`);
+              if (!equal(step.env, RING_STEPS[command].env)) fail(file, path, `ring step ${command} must hold exactly its reviewed environment`);
+            } else for (const key of Object.keys(step.env ?? {})) if (!['GH_TOKEN','VERSION','SHA','RELEASE_ID','WAIVER_PATH','WAIVER_SHA256','WAIVER_RUN','WAIVER_RUN_URL','WAIVER_APPROVAL','REVIEW_FILE'].includes(key)) fail(file, path, `unexpected release environment: ${key}`);
           }
           if (step['continue-on-error']) fail(file, path, 'release failures must stop the job');
         }
         if (JSON.stringify(job.needs) !== JSON.stringify(['prepare'])) fail(file, `jobs.${id}.needs`, 'sole writer must start before builds');
-        for (const step of steps.slice(2, -1)) if (step.if) fail(file, `jobs.${id}.steps`, 'release barriers must be unconditional');
+        // bootstrap is unconditional; every later barrier and publish-prepared are skipped only by RING_OFF (a ring_op
+        // run), so a release command never runs while one of its barriers is skipped.
+        if (steps[2]?.if) fail(file, `jobs.${id}.steps`, 'release barriers must be unconditional');
+        for (const step of steps.slice(3, RELEASE_COMMANDS.length + 1)) if (step.if !== RING_OFF) fail(file, `jobs.${id}.steps`, 'release barriers must be unconditional');
+        if (steps[RELEASE_COMMANDS.length + 1]?.if !== `\${{ inputs.publish && ${RING_OFF} }}`) fail(file, `jobs.${id}.steps`, 'publish must run only when asked and never in a ring_op run');
         const probe = steps.find(step => step.run === 'node scripts/release-guard.mjs probe-prepared');
         if (probe?.name !== 'Probe release token before builds' || probe?.env?.GH_TOKEN !== '${{ secrets.RELEASES_PAT }}') fail(file, `jobs.${id}.steps`, 'required early token probe missing');
         if (jobs.preflight?.steps?.at(-1)?.run !== 'node scripts/release-guard.mjs wait-probe' || JSON.stringify(jobs.preflight?.needs) !== JSON.stringify(['prepare'])) fail(file, 'jobs.preflight', 'read-only probe gate required');
-        if (jobs.preflight?.['continue-on-error'] || jobs.preflight?.steps?.some(step => step.if || step['continue-on-error'])) fail(file, 'jobs.preflight', 'probe failures cannot be skipped or ignored');
+        const releaseWriteMode = "needs.prepare.outputs.artifact_only == 'false'";
+        if (job.if !== `(needs.prepare.outputs.should_release == 'true' && ${releaseWriteMode}) || needs.prepare.outputs.ring_op != ''`) fail(file, `jobs.${id}.if`, 'release writer requires explicit write mode');
+        if (jobs.preflight?.['continue-on-error'] || jobs.preflight?.steps?.at(-1)?.if !== releaseWriteMode || jobs.preflight?.steps?.some((step, index, steps) => step['continue-on-error'] || (index < steps.length - 1 && step.if))) fail(file, 'jobs.preflight', 'probe failures cannot be skipped or ignored in release write mode');
         for (const platform of ['mac','mac-x64','windows','linux']) if (![jobs[platform]?.needs].flat().includes('preflight')) fail(file, `jobs.${platform}.needs`, 'build must wait for token probe');
         for (const dependency of ['prepare','ci-gate','mac','mac-x64','windows','linux']) if (![jobs.stage?.needs].flat().includes(dependency)) fail(file, 'jobs.stage.needs', 'staging must wait for CI and every build');
-        if (steps.length !== RELEASE_COMMANDS.length + 2 || RELEASE_COMMANDS.some((command,i) => steps[i+2]?.run?.trim() !== `node scripts/release-guard.mjs ${command}`)) fail(file, `jobs.${id}.steps`, 'release commands must run in the reviewed order');
+        if (steps.length !== ASSEMBLE_COMMANDS.length + 2 || ASSEMBLE_COMMANDS.some((command,i) => steps[i+2]?.run?.trim() !== `node scripts/release-guard.mjs ${command}`)) fail(file, `jobs.${id}.steps`, 'release commands must run in the reviewed order');
       }
       if (job.uses && (job.permissions?.contents === 'write' || job.secrets)) fail(file, `jobs.${id}`, 'reusable calls cannot receive release credentials or inherited secrets');
     }
@@ -240,7 +262,7 @@ export function auditReleaseCapabilities(root, overrides = new Map(), files = tr
           const name = rawName.toUpperCase();
           secrets.push({file, path: location, name});
           const builtin = name === 'GITHUB_TOKEN';
-          const guardedEnv = privileged && path[2] === 'steps' && path[4] === 'env' && path[5] === 'GH_TOKEN' && ['probe-prepared','wait-stage','download','notes-file','upload-prepared','verify-digests','publish-prepared'].some(command => jobs[RELEASE_JOB].steps[Number(path[3])]?.run === `node scripts/release-guard.mjs ${command}`);
+          const guardedEnv = privileged && path[2] === 'steps' && path[4] === 'env' && path[5] === 'GH_TOKEN' && ['probe-prepared','wait-stage','download','notes-file','upload-prepared','verify-digests','publish-prepared',...RING_COMMANDS].some(command => jobs[RELEASE_JOB].steps[Number(path[3])]?.run === `node scripts/release-guard.mjs ${command}`);
           if ((name === 'RELEASES_PAT' || (builtin && privileged)) && !guardedEnv) fail(file, location, 'release credential outside a guarded step env');
           else if (!builtin && name !== 'RELEASES_PAT' && !NON_RELEASE_SECRETS.has(name)) fail(file, location, `unclassified secret: ${name}`);
         }

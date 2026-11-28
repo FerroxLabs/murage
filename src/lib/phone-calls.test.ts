@@ -8,8 +8,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CALL_LANGUAGES as SERVER_CALL_LANGUAGES } from "../../server/phone-calls/tables";
 import {
-  APP_LANGUAGES, cancelScheduledCall, dashboardLink, defaultPhoneSettings, editLanguage, findNumbers, keyErrorKey, lengthText, minutesToSeconds,
+  APP_LANGUAGES, CALL_LANGUAGES, listBots, phoneActionEffect, resultReasonKey, setBotAllowed, cancelScheduledCall, dashboardLink, defaultPhoneSettings, editLanguage, findNumbers, keyErrorKey, lengthText, minutesToSeconds,
   PHONE_PACK_LOADERS, phoneCallsAvailable, phoneErrorKey, phoneText, readPhoneStatus, savePhoneSettings, shareTranscript, withLineWords,
   type PhoneApi, type PhoneCopyKey,
 } from "./phone-calls";
@@ -131,6 +132,7 @@ describe("phone calls owner routes", () => {
     expect(phoneErrorKey(failing(502, "vendor_refused"))).toBe("phoneCalls.error.vendor");
     expect(phoneErrorKey(failing(502, "vendor_unreachable"))).toBe("phoneCalls.error.unreachable");
     expect(phoneErrorKey(failing(502, "settings_pending"))).toBe("phoneCalls.error.pending");
+    expect(phoneErrorKey(failing(503, "store_unavailable"))).toBe("phoneCalls.error.store");
     expect(phoneErrorKey(failing(400, "bad_settings"))).toBe("phoneCalls.error.badSettings");
     expect(phoneErrorKey(failing(409, "not_set_up"))).toBe("phoneCalls.error.notSetUp");
     expect(phoneErrorKey(failing(502, "Vapi says: card declined"))).toBe("phoneCalls.error.generic");
@@ -181,9 +183,10 @@ describe("phone calls and the first paint", () => {
   const src = (file: string) => readFileSync(join(ROOT, "src", file), "utf8");
 
   it("loads the screen only behind import(), and its words only with it", () => {
-    // The screen loads from the Connections page now that the settings pages live outside SettingsModal.
-    expect(src("components/settings/pages/ConnectionsPage.tsx")).toContain('retryableLazy(() => import("../../PhoneCallsSettings"))');
-    for (const file of ["components/SettingsModal.tsx", "components/settings/pages/ConnectionsPage.tsx"]) {
+    // The screen loads from the Calls page, its only home: Connected apps no longer mounts it, only links to it.
+    expect(src("components/settings/pages/CallsPage.tsx")).toContain('retryableLazy(() => import("../../PhoneCallsSettings"))');
+    expect(src("components/settings/pages/ConnectionsPage.tsx")).not.toMatch(/PhoneCallsSettings|["']connections\.phone-calls["']/);
+    for (const file of ["components/SettingsModal.tsx", "components/settings/pages/ConnectionsPage.tsx", "components/settings/pages/CallsPage.tsx"]) {
       const page = src(file);
       expect(page, file).not.toMatch(/^import[^\n]*PhoneCallsSettings/m);
       expect(page, file).not.toMatch(/^import[^\n]*lib\/phone-calls/m);
@@ -225,16 +228,130 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   screenMocks.api.mockReset();
 });
-async function mountPhoneScreen(read: (init?: RequestInit) => Promise<unknown>) {
-  Object.defineProperty(window, "muragebox", { configurable: true, value: { phoneKey: { save: vi.fn(), remove: vi.fn() } } });
+async function mountPhoneScreen(read: (init?: RequestInit) => Promise<unknown>, status = async () => ({ supported: true, keyPresent: true })) {
+  vi.stubGlobal("muragebox", { phoneKey: { save: vi.fn(), remove: vi.fn() } });
+  // the keyed card also reads bots and retention (1.0.23 F4); those answer {} so only the list read is the fixture
   screenMocks.api.mockImplementation((path: string, init?: RequestInit) => path === "/api/phone-calls"
-    ? read(init) : Promise.resolve({ supported: true, keyPresent: true, active: null, olderScheduled: [] }));
+    ? read(init) : path === "/api/phone-calls/status" ? status() : Promise.resolve({}));
   const node = document.createElement("div");
   document.body.append(node);
   screenRoot = createRoot(node);
   await act(async () => screenRoot!.render(createElement(PhoneCallsSettings)));
 }
 const liveCard = { id: "c-1", status: "ringing", to: "+15550123456", dashboard: "https://dashboard.vapi.ai/calls/v-1" };
+
+it("mounted connections carries no phone calls card, only the link to Calls", async () => {
+  const Page = (await import("../components/settings/pages/ConnectionsPage")).default;
+  screenMocks.api.mockImplementation(async () => ({}));
+  const node = document.createElement("div");
+  document.body.append(node);
+  screenRoot = createRoot(node);
+  await act(async () => screenRoot!.render(createElement(Page, { page: "connections", mode: "advanced", desktop: true, cloud: false, anchor: null })));
+  await act(async () => { await vi.dynamicImportSettled(); });
+  expect(node.querySelector("#phone-calls-heading")).toBeNull();
+  expect(node.querySelector('[data-setting-control="phone-calls-heading"]')).toBeNull();
+  expect(screenMocks.api.mock.calls.some(([path]) => String(path).startsWith("/api/phone-calls"))).toBe(false);
+  const mainEn = JSON.parse(readFileSync(join(ROOT, "src", "locales", "en.json"), "utf8")) as Record<string, string>;
+  const link = [...node.querySelectorAll("button")].find(b => b.textContent === mainEn["settings.l1.card.connections.phone-calls"]);
+  screenMocks.dispatch.mockClear();
+  await act(async () => link!.click());
+  expect(screenMocks.dispatch).toHaveBeenCalledWith({ type: "toggleAppSettings", open: true, section: "calls", anchor: "phone-calls-heading" });
+});
+
+it.each(["calls"] as const)("mounted %s offers quiet setup and can reconnect after removing a key", async (page) => {
+  const Page = (await import("../components/settings/pages/CallsPage")).default;
+  let keyPresent = false;
+  const save = vi.fn(async () => { keyPresent = true; return { ok: true }; });
+  const remove = vi.fn(async () => { keyPresent = false; return { ok: true }; });
+  vi.stubGlobal("muragebox", { phoneKey: { save, remove } });
+  screenMocks.api.mockImplementation(async (path: string) => path === "/api/phone-calls/status"
+    ? { supported: true, keyPresent, active: null, olderScheduled: [] }
+    : {});
+  const node = document.createElement("div");
+  document.body.append(node);
+  screenRoot = createRoot(node);
+  await act(async () => screenRoot!.render(createElement(Page, { page, mode: "advanced", desktop: true, cloud: false, anchor: null })));
+  await act(async () => { await vi.dynamicImportSettled(); });
+  const card = () => node.querySelector('[data-setting-control="phone-calls-heading"]');
+  const keyField = () => node.querySelector<HTMLInputElement>('#phone-calls-heading details[open] input[type="password"]');
+  const entry = () => node.querySelector<HTMLElement>("#phone-calls-heading details:not([open]) > summary");
+  const button = (label: string) => [...node.querySelectorAll("button")].find(b => b.textContent === en[label]);
+
+  expect(card()).toBeNull();
+  expect(keyField()).toBeNull();
+  expect(entry()?.textContent).toBe(en["phoneCalls.title"]);
+  await act(async () => entry()!.click());
+  const field = keyField()!;
+  expect(field.getAttribute("aria-label")).toBe(en["phoneCalls.key.label"]);
+  expect(button("phoneCalls.key.save")?.disabled).toBe(true);
+  vi.useFakeTimers();
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "fixture");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(button("phoneCalls.key.save")?.disabled).toBe(false);
+  await act(async () => button("phoneCalls.key.save")!.click());
+  expect(save).toHaveBeenCalledWith("fixture");
+  expect(card()).not.toBeNull();
+  await act(async () => button("phoneCalls.key.remove")!.click());
+  expect(remove).toHaveBeenCalledTimes(1);
+  expect(card()).toBeNull();
+  expect(keyField()).toBeNull();
+  await act(async () => entry()!.click());
+  expect(keyField()).not.toBeNull();
+  expect(button("phoneCalls.key.save")?.disabled).toBe(true);
+});
+
+// 1.0.23 F4 W10 sites (FABLE-DESIGN 2060 H1, ASTRA 335b11b97c PhoneCallsSettings.tsx:43; SITES.md rows S1-S2): through both pages
+// that mount the phone screen, a fresh keyless install (no key, no hasCalls) gets only the compact entry and sends no owner-control
+// read (call list and its 5 s poll, bots, retention); a keyless owner whose store holds calls gets the full card and its reads.
+describe("W10 keyless sites mount owner controls only with a call history", () => {
+  // the Calls page also reads the bot-call routes (/api/calls/*), a different feature; only the phone owner routes count here
+  const ownerReads = (log: string[]) => log.filter((l) => /^\w+ \/api\/phone-calls(\/|$)/.test(l) && l !== "GET /api/phone-calls/status");
+  it.each([
+    ["calls", false], ["calls", true],
+  ] as const)("mounted %s with hasCalls=%s", async (page, hasCalls) => {
+    // dev/1022 moved the card to the Calls page; Connections carries only a link (held by "mounted connections carries no phone calls card")
+    const Page = (await import("../components/settings/pages/CallsPage")).default;
+    vi.stubGlobal("muragebox", { phoneKey: { save: vi.fn(), remove: vi.fn() } });
+    const log: string[] = [];
+    screenMocks.api.mockImplementation(async (path: string, init?: RequestInit) => {
+      log.push(`${init?.method ?? "GET"} ${path.split("?")[0]}`);
+      if (path === "/api/phone-calls/status") return { supported: true, keyPresent: false, active: null, olderScheduled: [], ...(hasCalls ? { hasCalls: true } : {}) };
+      if (path === "/api/phone-calls") return { calls: [] };
+      if (path.startsWith("/api/phone-calls/bots")) return { bots: [] };
+      if (path === "/api/phone-calls/retention") return { days: null };
+      return {};
+    });
+    const node = document.createElement("div");
+    document.body.append(node);
+    screenRoot = createRoot(node);
+    await act(async () => screenRoot!.render(createElement(Page, { page, mode: "advanced", desktop: true, cloud: false, anchor: null })));
+    await act(async () => { await vi.dynamicImportSettled(); });
+    await act(async () => { await vi.dynamicImportSettled(); });
+    const card = node.querySelector('[data-setting-control="phone-calls-heading"]');
+    const entry = node.querySelector<HTMLElement>("#phone-calls-heading details:not([open]) > summary");
+    expect(log, `${page} read the status`).toContain("GET /api/phone-calls/status");
+    if (hasCalls) {
+      expect(card, `${page} keyless with calls shows the card`).not.toBeNull();
+      expect(ownerReads(log).sort(), `${page} keyless with calls reads its controls`).toEqual(["GET /api/phone-calls", "GET /api/phone-calls/bots", "GET /api/phone-calls/retention"]);
+    } else {
+      expect([card, entry?.textContent, ownerReads(log)], `${page} fresh keyless install`).toEqual([null, en["phoneCalls.title"], []]);
+    }
+  });
+});
+
+it("mounted phone setup shows a failed status read and retries without exposing key entry early", async () => {
+  const status = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ supported: true, keyPresent: false });
+  await mountPhoneScreen(vi.fn(), status);
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe(en["phoneCalls.error.generic"]);
+  expect(document.querySelector('input[type="password"]')).toBeNull();
+  const retry = document.querySelector("button")!;
+  await act(async () => retry.click());
+  expect(status).toHaveBeenCalledTimes(2);
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.querySelector("details:not([open]) > summary")?.textContent).toBe(en["phoneCalls.title"]);
+});
 
 it("mounted cards refresh completion and transcript at a bounded cadence", async () => {
   vi.useFakeTimers();
@@ -300,4 +417,63 @@ it("initially mounted cards survive a stalled vendor read and the next poll reco
     screenRoot = undefined;
     expect(vi.getTimerCount()).toBe(0);
   } finally { secrets._resetPhoneSecretsForTest(); }
+});
+
+// ---- 1.0.23 slices F5 (client half): the answer map, the list epoch, the owner calls (design 1023-phone-fslices 3.1, W6, W7a) ----
+const err = (status: number, error: string, extra: Record<string, unknown> = {}) => ({ status, body: { error, ...extra } });
+
+describe("W6 every answer maps to its line and effect", () => {
+  it("never carries vendor text and every line key exists in English", () => {
+    const effect = phoneActionEffect("delete", err(502, "vendor says: secret-token-text"));
+    expect(effect.line).toBe("phoneCalls.error.generic");
+    for (const key of ["phoneCalls.delete.live", "phoneCalls.delete.checking", "phoneCalls.delete.cancelPending", "phoneCalls.delete.needKey", "phoneCalls.error.notConfirmed", "phoneCalls.error.store"]) expect(en[key], key).toBeTruthy();
+  });
+  it("reads each result reason code as its plain line", () => {
+    expect(resultReasonKey("already_started")).toBe("phoneCalls.result.alreadyStarted");
+    expect(resultReasonKey("phone_menu")).toBe("phoneCalls.result.phoneMenu");
+    expect(resultReasonKey("unclear")).toBe("phoneCalls.result.unclear");
+    expect(resultReasonKey("unpageable")).toBe("phoneCalls.result.unpageable");
+    expect(resultReasonKey("they were closed")).toBeNull();
+  });
+});
+
+describe("owner calls", () => {
+  it("pages the bots by cursor and reads the switch back from the server", async () => {
+    const calls: string[] = [];
+    const call: PhoneApi = async (path, init) => {
+      calls.push(`${init?.method ?? "GET"} ${path}`);
+      if (path.startsWith("/api/phone-calls/bots?")) return { bots: [{ id: "b1", name: "One", allowed: true }], next: "b1" };
+      return { allowed: false };
+    };
+    const page = await listBots(call, "b0");
+    expect(page).toEqual({ bots: [{ id: "b1", name: "One", allowed: true }], next: "b1" });
+    expect(calls[0]).toBe("GET /api/phone-calls/bots?limit=200&after=b0");
+    expect(await setBotAllowed(call, "b1", true)).toBe(false);
+    expect(calls[1]).toBe("PUT /api/phone-calls/bots/b1");
+  });
+  it("the 16 call languages are the server's 16", () => {
+    expect([...CALL_LANGUAGES]).toEqual([...SERVER_CALL_LANGUAGES]);
+  });
+  it("carries the new status fields and card state to the screen", async () => {
+    const status = await readPhoneStatus(async () => ({ supported: true, keyPresent: false, olderScheduled: [], olderScheduledCount: "500+", paused: true, storeUnavailable: true }));
+    expect(status).toMatchObject({ olderScheduledCount: "500+", paused: true, storeUnavailable: true });
+  });
+});
+
+describe("pack 5.9 and the delete keys exist in all 8 locales", () => {
+  const KEYS = Object.keys(en).filter((k) => /^phoneCalls\.(refuse|card|result|booking|delete|settings|setup|held)\./.test(k) || k === "phoneCalls.error.upgrade");
+  it("resolves every key in every language, none raw and none left in English", () => {
+    expect(KEYS.length).toBeGreaterThanOrEqual(37);
+    for (const code of LANGS) {
+      const pack = read(`${code}.json`);
+      for (const key of KEYS) {
+        expect(pack[key], `${code} ${key}`).toBeTruthy();
+        expect(pack[key], `${code} ${key} is the key`).not.toMatch(/^phoneCalls\./);
+        expect(pack[key], `${code} ${key} is English`).not.toBe(en[key]);
+      }
+    }
+    for (const key of ["phoneCalls.delete.live", "phoneCalls.delete.checking", "phoneCalls.delete.cancelPending", "phoneCalls.delete.needKey"]) {
+      for (const code of LANGS) expect(read(`${code}.json`)[key], `delete.* ${code} ${key}`).toBeTruthy();
+    }
+  });
 });

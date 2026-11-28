@@ -10,6 +10,10 @@ it('every shipped engine has an explicit routing contract or a visible failure',
   }
   expect(webReadRoutingNotice('future-engine')).toContain('not enforced');
 });
+it('Devin ACP (shipped driver) declares its unverified native reader limitation, not a silent pass', () => {
+  expect(webReadRoutingNotice('devinAgent') ?? '').toContain('Devin ACP has no verified native browser/page-fetch exclusion');
+  expect(engineLimitText('devinAgent', 'settings') ?? '').toContain('Devin can still use its own web reader');
+});
 it('DeepSeek Harness exposes its unverified native reader limitation', () => {
   expect(webReadRoutingNotice('deepseekAgent')).toContain('not enforced');
   expect(webReadRoutingNotice('deepseekAgent')).toContain('DeepSeek Harness');

@@ -6,7 +6,6 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  SseReaderError,
   classifyUnauthorized,
   createSseReader,
   headerHintFrom,
@@ -148,7 +147,7 @@ describe("remoteFailureSentence copy", () => {
 });
 
 describe("createSseReader (review L7: idle timeout and per-event cap)", () => {
-  const read = async (chunks: string[], options = { idleMs: 500, maxEventBytes: 1024 }) => {
+  const read = async (chunks: string[], options = { idleMs: 500 }) => {
     const events: Array<{ event: string; data: string }> = [];
     let failure: unknown;
     try {
@@ -163,20 +162,30 @@ describe("createSseReader (review L7: idle timeout and per-event cap)", () => {
     expect(events).toEqual([{ event: "endpoint", data: "/m?id=1" }, { event: "message", data: "a\nb" }]);
     expect(failure).toMatchObject({ code: "closed" });
   });
-  it("fails event-too-large when one event passes the cap, even in small pieces", async () => {
-    const { failure } = await read(["data: " + "x".repeat(600) + "\n", "data: " + "y".repeat(600) + "\n\n"]);
-    expect(failure).toBeInstanceOf(SseReaderError);
-    expect(failure).toMatchObject({ code: "event-too-large" });
+  it("a CR ending one chunk and the LF opening the next are one line terminator, not a blank line", async () => {
+    const { events, failure } = await read(["data: a\r", "\ndata: b\r\n\r\n"]);
+    expect(events).toEqual([{ event: "message", data: "a\nb" }]);
+    expect(failure).toMatchObject({ code: "closed" });
   });
-  it("fails event-too-large on a line that never ends", async () => {
-    const { failure } = await read(["data: " + "z".repeat(5000)]);
-    expect(failure).toMatchObject({ code: "event-too-large" });
+  it("a last data line with no terminator before the stream ends still reaches its event", async () => {
+    const { events, failure } = await read(["data: first\n\ndata: last"]);
+    expect(events).toEqual([{ event: "message", data: "first" }, { event: "message", data: "last" }]);
+    expect(failure).toMatchObject({ code: "closed" });
+  });
+  // MAIN-RULING cause22-no-transport-caps: no per-event size cap in the reader (these rows used to assert event-too-large at 1024
+  // bytes). Sizes stay under the release budget's own 1 MiB event mark of a non-owner read (memory/upstream-reader.ts, not this lane).
+  it("reads one large event whole, in pieces or as a single long line", async () => {
+    const pieces = await read(["data: " + "x".repeat(300_000) + "\n", "data: " + "y".repeat(300_000) + "\n\n"]);
+    expect(pieces.events.map(event => event.data.length)).toEqual([600_001]);
+    expect(pieces.failure).toMatchObject({ code: "closed" });
+    const line = await read(["data: " + "z".repeat(500_000), "\n\n"]);
+    expect(line.events.map(event => event.data.length)).toEqual([500_000]);
   });
   it("fails idle-timeout when the stream goes quiet", async () => {
     const slow = (async function* () { yield "data: one\n\n"; await new Promise((resolve) => setTimeout(resolve, 400)); yield "data: two\n\n"; })();
     const events: string[] = [];
     let failure: unknown;
-    try { for await (const event of upstreamOwnerFixture().run("sse-reader", () => createSseReader(slow, { idleMs: 80, maxEventBytes: 1024 }))) events.push(event.data); } catch (error) { failure = error; }
+    try { for await (const event of upstreamOwnerFixture().run("sse-reader", () => createSseReader(slow, { idleMs: 80 }))) events.push(event.data); } catch (error) { failure = error; }
     expect(events).toEqual(["one"]);
     expect(failure).toMatchObject({ code: "idle-timeout" });
   });

@@ -30,6 +30,81 @@
       "kind": "agent",
       "name": "g9-ux-fable",
       "account": "Fable copy seat g9-ux-fable, read-only G9 Settings copy review"
+    },
+    {
+      "kind": "agent",
+      "name": "ctxstop-lease-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.20 A-2 refusal line"
+    },
+    {
+      "kind": "agent",
+      "name": "polish-1021-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.21 Settings polish strings"
+    },
+    {
+      "kind": "agent",
+      "name": "held1022-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 held rows 21 (Fuigo Trust) and 29 (Sentinel Health)"
+    },
+    {
+      "kind": "agent",
+      "name": "held1022b2-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 N5 command send notices"
+    },
+    {
+      "kind": "agent",
+      "name": "int1022n2-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 integrator merge of the reviewers list (wave233)"
+    },
+    {
+      "kind": "agent",
+      "name": "settingstruth-1022-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 row 22 settings-truth strings"
+    },
+    {
+      "kind": "agent",
+      "name": "settingstruth1022r2-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 row 22 settings-truth r2 merge of the reviewers list"
+    },
+    {
+      "kind": "agent",
+      "name": "mcpconnect-1022-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 MCP Connect strings"
+    },
+    {
+      "kind": "agent",
+      "name": "botpages-copyrev",
+      "account": "claude subagent, independent read-only copy review of the bot pages Archive or delete strings (not their author)"
+    },
+    {
+      "kind": "agent",
+      "name": "recallperf-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.22 recallperf Memory page capacity line"
+    },
+    {
+      "kind": "agent",
+      "name": "rel1023-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.23 integrator merge of the reviewers list and the phone removal outcome strings"
+    },
+    {
+      "kind": "agent",
+      "name": "cr1023-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.23 CHROME-RESUME-FROM-APP strings"
+    },
+    {
+      "kind": "agent",
+      "name": "int1023n2-copyrev",
+      "account": "claude opus 5.5, independent read-only copy seat for the 1.0.23 integrator merge of dev/1022 into dev/1023 (union of the reviewers list)"
+    },
+    {
+      "kind": "agent",
+      "name": "int1023n5-copyrev",
+      "account": "claude sonnet 5.5, integrator seat int-1023-n5: mechanical union of the dev/1023 and dev/1022 reviewers lists, checked by diff against both sides (not an independent copy review)"
+    },
+    {
+      "kind": "agent",
+      "name": "cifix1024-copyrev",
+      "account": "claude opus 5.5 subagent, independent read-only copy review of the 1.0.24 cifix strings (not their author)"
     }
   ]
 }

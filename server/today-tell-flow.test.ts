@@ -51,8 +51,17 @@ async function makeChief(name: string, instanceId: string): Promise<{ id: string
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   const bot = created.body.bot as { id: string; threadId: string };
   expect((await request("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
-  const promoted = await request("PATCH", `/api/bots/${bot.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
-  expect(promoted.status, JSON.stringify(promoted.body)).toBe(200);
+  // CHIEF-TRANSFER-1023: with a workspace Chief seated the role moves only through the transfer; the first Chief is seated directly
+  const sitting = ((await request("GET", "/api/bots")).body.bots as any[]).find((row) => row.chiefOfStaff && row.chiefScope === "workspace" && !row.hidden);
+  if (sitting) {
+    const preview = await request("GET", `/api/chief-transfer/preview?from=${sitting.id}&to=${bot.id}`);
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    const moved = await request("POST", "/api/chief-transfer", { fence: preview.body.fence, move: [] });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+  } else {
+    const promoted = await request("PATCH", `/api/bots/${bot.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    expect(promoted.status, JSON.stringify(promoted.body)).toBe(200);
+  }
   const chief = await liveBot(bot.id);
   expect(chief.chiefOfStaff).toBe(true);
   expect(chief.chiefScope).toBe("workspace");
@@ -151,5 +160,31 @@ describe.skipIf(process.platform === "win32")("the Today Tell box reaches the Ch
 
   it("Codex: a Tell box send is an owner message in the Chief's current chat", async () => {
     await tell(await makeChief("Codex Chief", "codex"), "Check the invoices");
+  }, 120_000);
+
+  // GH#47: the app hands Today the setup view's Chief (App.tsx passes setupView.chiefBotId), and setup keeps the Chief
+  // it first recorded for as long as that bot exists. Once the owner makes another bot the Chief, the box must follow
+  // the current Chief: never vanish because the first one is now hidden, never write to a bot that is not the Chief.
+  it("follows the current Chief after the owner moves the role and hides the first Chief", async () => {
+    const first = await makeChief("First Chief", "fuigo");
+    const seated = await request("GET", "/api/setup");
+    expect(seated.status, JSON.stringify(seated.body)).toBe(200);
+    expect(seated.body.chiefBotId).toBe(first.id);
+    const now = await makeChief("New Chief", "claude");
+    const pick = async () => {
+      const bots = (await request("GET", "/api/bots")).body.bots as any[];
+      const view = (await request("GET", "/api/setup")).body;
+      return tellChief(bots, todayChiefId(bots, view.chiefBotId ?? null), false);
+    };
+    // the first Chief stepped down but is still in the list
+    expect((await pick())?.id).toBe(now.id);
+    // a bot that still leads can only be hidden with its lead role dropped in the same request
+    const hidden = await request("PATCH", `/api/bots/${first.id}`, { hidden: true, chiefOfStaff: false });
+    expect(hidden.status, JSON.stringify(hidden.body)).toBe(200);
+    expect((await request("GET", "/api/setup")).body.chiefBotId).toBe(first.id);
+    const box = await pick();
+    expect(box?.id).toBe(now.id);
+    expect(box.threadId).toBe(now.threadId);
+    await tell(now, "Plan the offsite");
   }, 120_000);
 });

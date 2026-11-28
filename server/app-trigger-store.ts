@@ -13,6 +13,8 @@
 //   app_event_batches      one open batch per trigger; sealed membership of at most 20
 //   app_event_run_events   batch membership; a delivery belongs to at most one batch
 //   app_event_runs         one run per sealed batch, with its Flux receipts, lineage and the child-refusal receipt
+//   app_origin_threads     L5H: one row per app-origin thread (a run's own thread or an app Results chat); never retired
+//   app_event_turns        L5H: which run owns each (thread, generation) turn; closed when the run settles (P3)
 import type { DatabaseSync } from "node:sqlite";
 import {
   APP_RUN_TERMINAL, appTriggerBindingSchema, appTriggerPolicySchema, type AppClaimItem, type AppInboxDisposition, type AppRunState,
@@ -65,25 +67,46 @@ CREATE TABLE IF NOT EXISTS app_event_runs (
   thread_id TEXT, generation TEXT, renew_due_at INTEGER,
   child_refusal TEXT, child_card TEXT, child_card_written INTEGER NOT NULL DEFAULT 0,
   child_creates INTEGER NOT NULL DEFAULT 0 CHECK (child_creates = 0), child_handoffs INTEGER NOT NULL DEFAULT 0 CHECK (child_handoffs = 0),
-  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, result_state TEXT, result_reason TEXT);
 CREATE INDEX IF NOT EXISTS app_event_runs_active ON app_event_runs(trigger_id, created_at) WHERE state NOT IN ('completed','failed','cancelled','outcome_unknown','refused');
 CREATE INDEX IF NOT EXISTS app_event_runs_due ON app_event_runs(retry_at) WHERE state NOT IN ('completed','failed','cancelled','outcome_unknown','refused');
 CREATE INDEX IF NOT EXISTS app_event_runs_thread ON app_event_runs(thread_id, created_at) WHERE thread_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS app_event_runs_history ON app_event_runs(routine_id, created_at DESC, run_id DESC);
 CREATE INDEX IF NOT EXISTS app_event_runs_card_owed ON app_event_runs(run_id) WHERE child_refusal IS NOT NULL AND child_card_written = 0;
+CREATE TABLE IF NOT EXISTS app_origin_threads (
+  thread_id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('run','results')), trigger_id TEXT, routine_id TEXT NOT NULL,
+  owner_account_id TEXT NOT NULL, home_id TEXT NOT NULL, home_epoch INTEGER NOT NULL, first_run_id TEXT,
+  child_refusal TEXT, child_card TEXT, child_card_written INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS app_origin_threads_card_owed ON app_origin_threads(thread_id) WHERE child_refusal IS NOT NULL AND child_card_written = 0;
+CREATE TABLE IF NOT EXISTS app_event_turns (
+  thread_id TEXT NOT NULL, generation TEXT NOT NULL, run_id TEXT, role TEXT NOT NULL CHECK (role IN ('run','after')),
+  bound_at INTEGER NOT NULL, closed_at INTEGER, PRIMARY KEY (thread_id, generation));
+CREATE INDEX IF NOT EXISTS app_event_turns_run ON app_event_turns(run_id) WHERE run_id IS NOT NULL AND closed_at IS NULL;
 `;
+/** L5H: the result marker's partial index, made after the columns exist (an older store gains them by ALTER first). */
+const RESULT_INDEX_DDL = "CREATE INDEX IF NOT EXISTS app_event_runs_result_owed ON app_event_runs(run_id) WHERE result_state IN ('owed','held')";
+
+/** Settled connected-app event history is kept this long (q1022-disk). */
+export const APP_EVENT_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** The tables this store creates (the snapshot inspector and the restore fence list them). */
-export const APP_TRIGGER_TABLES = ["app_trigger_bindings", "app_trigger_policies", "app_event_inbox", "app_event_tombstones", "app_event_batches", "app_event_run_events", "app_event_runs"] as const;
+export const APP_TRIGGER_TABLES = ["app_trigger_bindings", "app_trigger_policies", "app_event_inbox", "app_event_tombstones", "app_event_batches", "app_event_run_events", "app_event_runs",
+  "app_origin_threads", "app_event_turns"] as const;
 
 const APP_TRIGGER_INDEXES = ["app_trigger_bindings_routine", "app_trigger_bindings_subscription", "app_trigger_bindings_owner", "app_trigger_policies_trigger",
   "app_event_inbox_source", "app_event_inbox_ready", "app_event_inbox_unacked", "app_event_tombstones_unacked", "app_event_tombstones_at", "app_event_batches_open",
   "app_event_batches_due", "app_event_batches_unrun", "app_event_run_events_delivery", "app_event_runs_active", "app_event_runs_due", "app_event_runs_thread",
-  "app_event_runs_history", "app_event_runs_card_owed"] as const;
+  "app_event_runs_history", "app_event_runs_card_owed", "app_origin_threads_card_owed", "app_event_turns_run", "app_event_runs_result_owed"] as const;
 /** Every object this store makes in messages.db, for the downgrade's own frozen checks (pm-sends-102-r22). */
 export const APP_TRIGGER_OBJECTS: readonly string[] = Object.freeze([...APP_TRIGGER_TABLES, ...APP_TRIGGER_INDEXES]);
 
-export function initializeAppTriggers(db: DatabaseSync): void { db.exec(DDL); }
+export function initializeAppTriggers(db: DatabaseSync): void {
+  db.exec(DDL);
+  // L5H: a store made before the result marker gains its two columns; earlier runs keep NULL (no marker, base path).
+  const columns = new Set((db.prepare("SELECT name FROM pragma_table_info('app_event_runs')").all() as Array<{ name: string }>).map(row => row.name));
+  for (const column of ["result_state", "result_reason"]) if (!columns.has(column)) db.exec(`ALTER TABLE app_event_runs ADD COLUMN ${column} TEXT`);
+  db.exec(RESULT_INDEX_DDL);
+}
 
 /** Going back to any build without connected-app triggers: the seven tables leave in one commit, and their indexes with them.
  * Held rows leave too. Nothing writes these tables yet (no AppTriggerDelivery is built outside tests, and no route creates an
@@ -100,6 +123,36 @@ export function downgradeAppTriggers(db: DatabaseSync): { dropped: number } {
     db.exec("COMMIT");
   } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
   return { dropped: tables.length };
+}
+
+/** L5H objects no downgrade target knows (every target, 1.0.17 included: its strict inspector names app_event_runs' exact columns). */
+export const L5H_OBJECTS = Object.freeze(["app_origin_threads", "app_event_turns", "event_result_routes", "app_origin_threads_card_owed", "app_event_turns_run", "app_event_runs_result_owed"] as const);
+
+/** The downgrade's READ-ONLY preflight (Opus r2 H2, house rule installation-memory-downgrade.ts): while an app run is not finished
+ * or a result is still owed or held, the step back refuses on every target and names what clears it. Writes nothing. */
+export function assertNoAppResultsOwedForDowngrade(db: DatabaseSync): void {
+  if (!db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name='app_event_runs'").get()) return;
+  const marked = (db.prepare("SELECT name FROM pragma_table_info('app_event_runs')").all() as Array<{ name: string }>).some(row => row.name === "result_state");
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM app_event_runs WHERE state NOT IN ('completed','failed','cancelled','outcome_unknown','refused')${marked ? " OR result_state IN ('owed','held')" : ""}`).get() as { n: number };
+  if (row.n > 0) throw new Error(`${row.n} ${row.n === 1 ? "result is" : "results are"} waiting. Open the automation to see why, or delete it.`);
+}
+
+/** Every downgrade target lacks the L5H objects: they leave first, whatever the target, in one commit (the result columns by DROP COLUMN
+ * after their index). Idempotent: a stopped run does this again. Runs only after assertNoAppResultsOwedForDowngrade passed. */
+export function downgradeL5hObjects(db: DatabaseSync): { dropped: number } {
+  const object = (name: string) => db.prepare("SELECT type FROM sqlite_schema WHERE name=?").get(name) as { type: string } | undefined;
+  const runsColumns = object("app_event_runs") ? (db.prepare("SELECT name FROM pragma_table_info('app_event_runs')").all() as Array<{ name: string }>).map(row => row.name) : [];
+  const indexes = L5H_OBJECTS.filter(name => object(name)?.type === "index"), tables = L5H_OBJECTS.filter(name => object(name)?.type === "table");
+  const columns = ["result_state", "result_reason"].filter(name => runsColumns.includes(name));
+  if (!indexes.length && !tables.length && !columns.length) return { dropped: 0 };
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const name of indexes) db.exec(`DROP INDEX ${name}`);
+    for (const name of tables) db.exec(`DROP TABLE ${name}`);
+    for (const name of columns) db.exec(`ALTER TABLE app_event_runs DROP COLUMN ${name}`);
+    db.exec("COMMIT");
+  } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
+  return { dropped: indexes.length + tables.length + columns.length };
 }
 
 const sortReceipts = <T extends { deliveryId: string }>(receipts: T[]): T[] => receipts.sort((a, b) => (a.deliveryId < b.deliveryId ? -1 : a.deliveryId > b.deliveryId ? 1 : 0));
@@ -128,7 +181,17 @@ export interface AppEventRun {
   threadId: string | null; generation: string | null; renewDueAt: number | null;
   childRefusal: AppChildRefusalReceipt | null; childCard: AppChildCard | null; childCardWritten: boolean;
   childCreates: 0; childHandoffs: 0; createdAt: number; updatedAt: number;
+  /** L5H 2.2: the result marker, written only by the P3 terminal transaction and clearOwed. NULL = no marker (base path). */
+  resultState: AppResultState | null; resultReason: string | null;
 }
+export type AppResultState = "owed" | "held" | "done";
+/** L5H section 1: an app-origin thread. Never deleted by retention, settlement or restore. */
+export interface AppOriginThread {
+  threadId: string; kind: "run" | "results"; triggerId: string | null; routineId: string; ownerAccountId: string; homeId: string; homeEpoch: number;
+  firstRunId: string | null; childRefusal: AppChildRefusalReceipt | null; childCard: AppChildCard | null; childCardWritten: boolean; createdAt: number;
+}
+/** L5H C1/C2: what host lineage says about one turn. `appOrigin` false = not an app thread; `run` null = app-origin, owned by no run. */
+export interface AppTurnLineage { appOrigin: boolean; run: AppEventRun | null; origin: AppOriginThread | null }
 export interface AppChildCard { id: string; runId: string; routineId: string; text: string; actions: ReadonlyArray<"open_routine" | "ask_my_bot"> }
 
 type RunPatch = Partial<Pick<AppEventRun, "state" | "waitReason" | "retryAt" | "fluxRevision" | "reserveReceipt" | "startReceipt" | "submitted" | "threadId" | "generation" | "renewDueAt">>;
@@ -149,6 +212,11 @@ interface RunRow {
   reserve_receipt: string | null; start_receipt: string | null; submitted: number;
   thread_id: string | null; generation: string | null; renew_due_at: number | null; child_refusal: string | null; child_card: string | null;
   child_card_written: number; child_creates: number; child_handoffs: number; created_at: number; updated_at: number;
+  result_state?: string | null; result_reason?: string | null;
+}
+interface OriginRow {
+  thread_id: string; kind: string; trigger_id: string | null; routine_id: string; owner_account_id: string; home_id: string; home_epoch: number;
+  first_run_id: string | null; child_refusal: string | null; child_card: string | null; child_card_written: number; created_at: number;
 }
 const parseJson = (text: string | null): unknown => (text === null ? null : JSON.parse(text));
 const json = (value: unknown): string | null => (value === null || value === undefined ? null : JSON.stringify(value));
@@ -161,8 +229,19 @@ function toRun(row: RunRow): AppEventRun {
     submitted: row.submitted === 1, threadId: row.thread_id, generation: row.generation,
     renewDueAt: row.renew_due_at, childRefusal: parseJson(row.child_refusal) as AppChildRefusalReceipt | null, childCard: parseJson(row.child_card) as AppChildCard | null,
     childCardWritten: row.child_card_written === 1, childCreates: 0, childHandoffs: 0, createdAt: row.created_at, updatedAt: row.updated_at,
+    resultState: (row.result_state ?? null) as AppResultState | null, resultReason: row.result_reason ?? null,
   };
 }
+function toOrigin(row: OriginRow): AppOriginThread {
+  return {
+    threadId: row.thread_id, kind: row.kind === "results" ? "results" : "run", triggerId: row.trigger_id, routineId: row.routine_id, ownerAccountId: row.owner_account_id,
+    homeId: row.home_id, homeEpoch: row.home_epoch, firstRunId: row.first_run_id, childRefusal: parseJson(row.child_refusal) as AppChildRefusalReceipt | null,
+    childCard: parseJson(row.child_card) as AppChildCard | null, childCardWritten: row.child_card_written === 1, createdAt: row.created_at,
+  };
+}
+/** L5H 2.2: the marker a run gets when it settles. `cancelled` owes no card (initial value done, never through a card write). */
+const resultOnSettle = (state: AppRunState): AppResultState | null =>
+  state === "completed" || state === "failed" || state === "refused" || state === "outcome_unknown" ? "owed" : state === "cancelled" ? "done" : null;
 
 const RUN_COLUMNS: Record<keyof RunPatch, string> = {
   state: "state", waitReason: "wait_reason", retryAt: "retry_at", fluxRevision: "flux_revision", reserveReceipt: "reserve_receipt", startReceipt: "start_receipt",
@@ -194,6 +273,19 @@ export const PER_EVENT_SQL = {
   dueBatches: "SELECT batch_id, trigger_id FROM app_event_batches WHERE state='open' AND seal_due_at<=? ORDER BY seal_due_at LIMIT ?",
   dueRuns: "SELECT * FROM app_event_runs WHERE state NOT IN ('completed','failed','cancelled','outcome_unknown','refused') AND retry_at<=? ORDER BY retry_at LIMIT ?",
   cardsOwed: "SELECT * FROM app_event_runs WHERE child_refusal IS NOT NULL AND child_card_written = 0 LIMIT ?",
+} as const;
+
+/** L5H lineage SQL, each on a key or a partial index. */
+export const LINEAGE_SQL = {
+  origin: "SELECT * FROM app_origin_threads WHERE thread_id=?",
+  runOrigins: "SELECT thread_id, first_run_id FROM app_origin_threads WHERE kind='run' LIMIT ?",
+  turn: "SELECT run_id, role, bound_at, closed_at FROM app_event_turns WHERE thread_id=? AND generation=?",
+  openRunTurns: "SELECT run_id FROM app_event_turns WHERE thread_id=? AND role='run' AND closed_at IS NULL LIMIT 2",
+  runTurns: "SELECT thread_id, bound_at, closed_at FROM app_event_turns WHERE run_id=? AND role='run' ORDER BY bound_at",
+  nextTurn: "SELECT bound_at FROM app_event_turns WHERE thread_id=? AND bound_at>? ORDER BY bound_at LIMIT 1",
+  legacyRuns: "SELECT * FROM app_event_runs WHERE thread_id=? LIMIT 2",
+  threadCardsOwed: "SELECT * FROM app_origin_threads WHERE child_refusal IS NOT NULL AND child_card_written = 0 LIMIT ?",
+  resultsOwed: "SELECT * FROM app_event_runs WHERE result_state IN ('owed','held') LIMIT ?",
 } as const;
 
 export class AppTriggerStore implements AppEventRunStore {
@@ -386,6 +478,31 @@ export class AppTriggerStore implements AppEventRunStore {
     });
   }
 
+  /** q1022-disk: settled app-event history older than APP_EVENT_KEEP_MS leaves, at most `limit` runs a call. A finished run
+   * takes its batch, its batch's member rows and their inbox rows with it; acknowledged tombstones and acknowledged
+   * stale/rejected inbox rows that never joined a batch go at the same age. Kept: anything unacknowledged, any run not
+   * finished, any run still owing its card, and the run row of a run that had a thread (the child guard finds the run by
+   * its thread for every later turn there, app-trigger-zero.ts:57), so only its batch rows go. Returns rows deleted. */
+  pruneSettled(now: number, limit: number): number {
+    const cutoff = now - APP_EVENT_KEEP_MS;
+    return inTx(this.db, () => {
+      let gone = 0;
+      const runs = this.db.prepare(`SELECT run_id, batch_id, thread_id FROM app_event_runs r WHERE state IN ('completed','failed','cancelled','outcome_unknown','refused')
+        AND updated_at<? AND NOT (child_refusal IS NOT NULL AND child_card_written=0)
+        AND (thread_id IS NULL OR EXISTS (SELECT 1 FROM app_event_batches b WHERE b.batch_id=r.batch_id)) LIMIT ?`).all(cutoff, limit) as Array<{ run_id: string; batch_id: string; thread_id: string | null }>;
+      for (const run of runs) {
+        gone += Number(this.db.prepare("DELETE FROM app_event_inbox WHERE acked=1 AND delivery_id IN (SELECT delivery_id FROM app_event_run_events WHERE batch_id=?)").run(run.batch_id).changes);
+        gone += Number(this.db.prepare("DELETE FROM app_event_run_events WHERE batch_id=?").run(run.batch_id).changes);
+        gone += Number(this.db.prepare("DELETE FROM app_event_batches WHERE batch_id=?").run(run.batch_id).changes);
+        if (run.thread_id === null) gone += Number(this.db.prepare("DELETE FROM app_event_runs WHERE run_id=?").run(run.run_id).changes);
+      }
+      gone += Number(this.db.prepare(`DELETE FROM app_event_inbox WHERE rowid IN (SELECT i.rowid FROM app_event_inbox i WHERE i.disposition IN ('stale','rejected') AND i.acked=1
+        AND i.received_at<? AND NOT EXISTS (SELECT 1 FROM app_event_run_events e WHERE e.delivery_id=i.delivery_id) LIMIT ?)`).run(cutoff, limit * 100).changes);
+      gone += Number(this.db.prepare("DELETE FROM app_event_tombstones WHERE rowid IN (SELECT rowid FROM app_event_tombstones WHERE acked=1 AND at<? ORDER BY at LIMIT ?)").run(cutoff, limit * 100).changes);
+      return gone;
+    });
+  }
+
   /** Sealed batches with no run yet, bounded. */
   sealedWithoutRun(limit: number): Array<{ batchId: string; triggerId: string }> {
     return (this.db.prepare(PER_EVENT_SQL.sealedWithoutRun).all(limit) as Array<{ batch_id: string; trigger_id: string }>)
@@ -429,8 +546,17 @@ export class AppTriggerStore implements AppEventRunStore {
     sets.push("updated_at=?"); values.push(now);
     const where = expectedState === undefined ? "run_id=?" : "run_id=? AND state=?";
     const args = expectedState === undefined ? [runId] : [runId, expectedState];
-    const changed = Number(this.db.prepare(`UPDATE app_event_runs SET ${sets.join(", ")} WHERE ${where}`).run(...values, ...args).changes);
-    return changed === 1 ? this.findById(runId) : null;
+    const write = () => Number(this.db.prepare(`UPDATE app_event_runs SET ${sets.join(", ")} WHERE ${where}`).run(...values, ...args).changes);
+    // L5H P3: the single choke point. A move into a terminal state closes the run's turn rows and writes its result marker in
+    // the same transaction, only when the state UPDATE changed exactly this one row (a savepoint inside a caller's tx).
+    if (patch.state === undefined || !APP_RUN_TERMINAL.has(patch.state)) return write() === 1 ? this.findById(runId) : null;
+    const terminal = patch.state;
+    return inTx(this.db, () => {
+      if (write() !== 1) return null;
+      this.db.prepare("UPDATE app_event_turns SET closed_at=? WHERE run_id=? AND closed_at IS NULL").run(now, runId);
+      this.db.prepare("UPDATE app_event_runs SET result_state=?, result_reason=NULL WHERE run_id=? AND result_state IS NULL").run(resultOnSettle(terminal), runId);
+      return this.findById(runId);
+    });
   }
 
   findById(runId: string): AppEventRun | null {
@@ -442,11 +568,151 @@ export class AppTriggerStore implements AppEventRunStore {
     return (this.db.prepare(PER_EVENT_SQL.runsActive).all(triggerId) as unknown as RunRow[]).map(toRun);
   }
 
-  /** The app run that owns this thread (and generation, when given). Host lineage only: never a caller's label. */
-  findByThread(threadId: string, _generation?: string): AppEventRun | null {
-    // any app run of the thread, whatever the turn's generation: the hard zero keys on the thread (GrokBuild r1 H1)
-    const row = this.db.prepare(PER_EVENT_SQL.runByThread).get(threadId) as RunRow | undefined;
-    return row ? toRun(row) : null;
+  /** The app run that owns this thread (and generation, when given). Host lineage only: never a caller's label.
+   * L5H: the credited run of `lineageOf`, never the newest run of the thread. */
+  findByThread(threadId: string, generation?: string): AppEventRun | null {
+    return this.lineageOf(threadId, generation).run;
+  }
+
+  // ── L5H lineage (section 1): origin rows, turn rows, the thread receipt ──
+
+  origin(threadId: string): AppOriginThread | null {
+    const row = this.db.prepare(LINEAGE_SQL.origin).get(threadId) as OriginRow | undefined;
+    return row ? toOrigin(row) : null;
+  }
+
+  /** P1: commit the origin row before the thread's task exists. Idempotent by thread id; an existing row is never rewritten. */
+  putOrigin(input: Omit<AppOriginThread, "childRefusal" | "childCard" | "childCardWritten" | "createdAt"> & { now: number }): AppOriginThread {
+    this.db.prepare(`INSERT INTO app_origin_threads (thread_id, kind, trigger_id, routine_id, owner_account_id, home_id, home_epoch, first_run_id, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(thread_id) DO NOTHING`)
+      .run(input.threadId, input.kind, input.triggerId, input.routineId, input.ownerAccountId, input.homeId, input.homeEpoch, input.kind === "results" ? null : input.firstRunId, input.now);
+    return this.origin(input.threadId)!;
+  }
+
+  /** Lifecycle: the host thread delete removes the origin row and the thread's turn rows together (Fable r2 L2). */
+  deleteThreadLineage(threadId: string): void {
+    inTx(this.db, () => {
+      this.db.prepare("DELETE FROM app_event_turns WHERE thread_id=?").run(threadId);
+      this.db.prepare("DELETE FROM app_origin_threads WHERE thread_id=?").run(threadId);
+    });
+  }
+
+  /** P1 reaper, after recover(): a kind=run origin row whose task is missing and whose run is not running is an orphan.
+   * kind=results rows are never touched (an owed create finishes them with the same prepared thread id). Bounded. */
+  reapOrphanOrigins(taskExists: (threadId: string) => boolean, limit = 1_000): number {
+    const rows = this.db.prepare(LINEAGE_SQL.runOrigins).all(limit) as Array<{ thread_id: string; first_run_id: string | null }>;
+    let reaped = 0;
+    for (const row of rows) {
+      if (taskExists(row.thread_id)) continue;
+      const run = row.first_run_id ? this.findById(row.first_run_id) : null;
+      if (run && !APP_RUN_TERMINAL.has(run.state)) continue;
+      reaped += Number(this.db.prepare("DELETE FROM app_origin_threads WHERE thread_id=? AND kind='run'").run(row.thread_id).changes);
+    }
+    return reaped;
+  }
+
+  /** P2: bind a turn before any engine or tool step. role=run only by CAS on the run running on this thread; else role=after.
+   * A kind=results thread is always role=after. Idempotent for one (thread, generation): the first binding stands. */
+  bindTurn(threadId: string, generation: string, runId: string | null, now: number): { role: "run" | "after"; runId: string | null } {
+    return inTx(this.db, () => {
+      const existing = this.db.prepare(LINEAGE_SQL.turn).get(threadId, generation) as { run_id: string | null; role: string } | undefined;
+      if (existing) return { role: existing.role === "run" ? "run" as const : "after" as const, runId: existing.run_id };
+      const origin = this.origin(threadId);
+      const owns = runId !== null && origin?.kind === "run"
+        && !!this.db.prepare("SELECT 1 AS x FROM app_event_runs WHERE run_id=? AND state='running' AND thread_id=?").get(runId, threadId);
+      this.db.prepare("INSERT INTO app_event_turns (thread_id, generation, run_id, role, bound_at) VALUES (?,?,?,?,?)")
+        .run(threadId, generation, owns ? runId : null, owns ? "run" : "after", now);
+      return owns ? { role: "run" as const, runId } : { role: "after" as const, runId: null };
+    });
+  }
+
+  /** P2 root turn (Opus r2 M1): the root turn row and run.generation in one transaction, before the engine begins. */
+  bindRootTurn(runId: string, threadId: string, generation: string, now: number): boolean {
+    return inTx(this.db, () => {
+      if (this.bindTurn(threadId, generation, runId, now).role !== "run") return false;
+      return Number(this.db.prepare("UPDATE app_event_runs SET generation=?, updated_at=? WHERE run_id=? AND state='running' AND thread_id=?").run(generation, now, runId, threadId).changes) === 1;
+    });
+  }
+
+  /** C2 settlement: the turn-end of (thread, generation) may settle only the run its row names with role=run. */
+  turnOwner(threadId: string, generation: string): { runId: string | null; role: "run" | "after"; boundAt: number; closedAt: number | null } | null {
+    const row = this.db.prepare(LINEAGE_SQL.turn).get(threadId, generation) as { run_id: string | null; role: string; bound_at: number; closed_at: number | null } | undefined;
+    return row ? { runId: row.run_id, role: row.role === "run" ? "run" : "after", boundAt: row.bound_at, closedAt: row.closed_at } : null;
+  }
+
+  /** C2 result files: R's own turn windows, each clipped at the bound_at of the next turn row in the thread (any role). */
+  turnWindows(runId: string, afterMs: number): Array<{ threadId: string; from: number; to: number }> {
+    const rows = this.db.prepare(LINEAGE_SQL.runTurns).all(runId) as Array<{ thread_id: string; bound_at: number; closed_at: number | null }>;
+    return rows.map(row => {
+      const next = this.db.prepare(LINEAGE_SQL.nextTurn).get(row.thread_id, row.bound_at) as { bound_at: number } | undefined;
+      const end = row.closed_at === null ? Number.MAX_SAFE_INTEGER : row.closed_at + afterMs;
+      return { threadId: row.thread_id, from: row.bound_at, to: next ? Math.min(end, next.bound_at) : end };
+    });
+  }
+
+  /**
+   * C1 + C2: host lineage for one turn. An origin row makes the thread app-origin whatever run rows remain. With a generation the
+   * credited run is exactly that turn row's run (role=run, open or closed); a thread-only read credits the single OPEN role=run row.
+   * Never the newest run. A thread with no origin row (made before L5H) keeps its pre-L5H lineage: app-origin when a run row names
+   * it, credited only when exactly one does. Throws on a read failure (the guard treats that as app-origin).
+   */
+  lineageOf(threadId: string, generation?: string): AppTurnLineage {
+    const origin = this.origin(threadId);
+    if (!origin) {
+      const rows = this.db.prepare(LINEAGE_SQL.legacyRuns).all(threadId) as unknown as RunRow[];
+      if (!rows.length) return { appOrigin: false, run: null, origin: null };
+      return { appOrigin: true, run: rows.length === 1 ? toRun(rows[0]!) : null, origin: null };
+    }
+    let runId: string | null = null;
+    if (generation !== undefined) {
+      const row = this.db.prepare(LINEAGE_SQL.turn).get(threadId, generation) as { run_id: string | null; role: string } | undefined;
+      runId = row?.role === "run" ? row.run_id : null;
+    } else {
+      const open = this.db.prepare(LINEAGE_SQL.openRunTurns).all(threadId) as Array<{ run_id: string }>;
+      runId = open.length === 1 ? open[0]!.run_id : null;
+    }
+    return { appOrigin: true, run: runId ? this.findById(runId) : null, origin };
+  }
+
+  /** C2 credit field when no run owns the turn: the receipt on the origin row, once per thread; later refusals only count. */
+  recordThreadRefusal(threadId: string, kind: AppChildRefusalReceipt["kind"], now: number): { first: boolean } {
+    return inTx(this.db, () => {
+      const row = this.db.prepare("SELECT child_refusal FROM app_origin_threads WHERE thread_id=?").get(threadId) as { child_refusal: string | null } | undefined;
+      if (!row) throw new Error("no such app-origin thread");
+      if (row.child_refusal) {
+        const receipt = JSON.parse(row.child_refusal) as AppChildRefusalReceipt;
+        this.db.prepare("UPDATE app_origin_threads SET child_refusal=? WHERE thread_id=?").run(JSON.stringify({ ...receipt, attempts: Math.min(1_000_000, receipt.attempts + 1) }), threadId);
+        return { first: false };
+      }
+      this.db.prepare("UPDATE app_origin_threads SET child_refusal=? WHERE thread_id=?").run(JSON.stringify({ code: "app_child_not_allowed", kind, at: now, attempts: 1 }), threadId);
+      return { first: true };
+    });
+  }
+
+  markThreadCardWritten(threadId: string, card: AppChildCard): boolean {
+    return Number(this.db.prepare("UPDATE app_origin_threads SET child_card=?, child_card_written=1 WHERE thread_id=? AND child_refusal IS NOT NULL AND child_card_written=0").run(JSON.stringify(card), threadId).changes) === 1;
+  }
+
+  threadCardsOwed(limit: number): AppOriginThread[] {
+    return (this.db.prepare(LINEAGE_SQL.threadCardsOwed).all(limit) as unknown as OriginRow[]).map(toOrigin);
+  }
+
+  // ── L5H 2.3: the app result marker ──
+
+  /** App runs whose result is owed or held, bounded, on the partial index. */
+  resultsOwed(limit: number): AppEventRun[] {
+    return (this.db.prepare(LINEAGE_SQL.resultsOwed).all(limit) as unknown as RunRow[]).map(toRun);
+  }
+
+  /** OWED -> HELD(reason) and back; never to done (only clearOwed ends a result). */
+  holdResult(runId: string, reason: string | null): boolean {
+    const state = reason === null ? "owed" : "held";
+    return Number(this.db.prepare("UPDATE app_event_runs SET result_state=?, result_reason=? WHERE run_id=? AND result_state IN ('owed','held')").run(state, reason, runId).changes) === 1;
+  }
+
+  /** The one terminal path of a result (2.3): owed or held -> done with its reason. */
+  clearOwed(runId: string, reason: string): boolean {
+    return Number(this.db.prepare("UPDATE app_event_runs SET result_state='done', result_reason=? WHERE run_id=? AND result_state IN ('owed','held')").run(reason, runId).changes) === 1;
   }
 
   /** Keyset history, newest first: the page after `before`, never an offset over all runs. */
@@ -502,6 +768,7 @@ export type CustodyEntry =
   | { item: AppClaimItem; binding: AppTriggerBinding | null; disposition: "filtered" | "stale" | "rejected" };
 
 const hasTable = (db: DatabaseSync, name: string) => !!db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?").get(name);
+const hasColumn = (db: DatabaseSync, table: string, column: string) => (db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as Array<{ name: string }>).some(row => row.name === column);
 
 /**
  * The restore fence for this store (server/restore-fence.ts): after a restore nothing here runs until the owner reviews
@@ -511,8 +778,12 @@ const hasTable = (db: DatabaseSync, name: string) => !!db.prepare("SELECT 1 AS x
 export function fenceRestoredAppTriggers(db: DatabaseSync): { bindings: number; runs: number; deliveries: number } {
   if (!hasTable(db, "app_trigger_bindings")) return { bindings: 0, runs: 0, deliveries: 0 };
   const bindings = Number(db.prepare("UPDATE app_trigger_bindings SET sync_state='needs_review' WHERE sync_state NOT IN ('deleted','deleting','needs_review')").run().changes);
-  const cancelled = Number(db.prepare("UPDATE app_event_runs SET state='cancelled', wait_reason='restored' WHERE state IN ('sealed','budget_wait','reserved')").run().changes);
-  const uncertain = Number(db.prepare("UPDATE app_event_runs SET state='outcome_unknown', wait_reason='restored' WHERE state IN ('starting','running')").run().changes);
+  // L5H P3 + 2.2: runs the fence terminalizes owe no result card (stale pre-backup work; the outcome stays in run history), and every
+  // open turn row closes. Origin rows are kept, so the guard stays shut. A table from before L5H has no such columns (checked).
+  const marker = hasColumn(db, "app_event_runs", "result_state") ? ", result_state=COALESCE(result_state,'done'), result_reason=COALESCE(result_reason,'restored')" : "";
+  const cancelled = Number(db.prepare(`UPDATE app_event_runs SET state='cancelled', wait_reason='restored'${marker} WHERE state IN ('sealed','budget_wait','reserved')`).run().changes);
+  const uncertain = Number(db.prepare(`UPDATE app_event_runs SET state='outcome_unknown', wait_reason='restored'${marker} WHERE state IN ('starting','running')`).run().changes);
+  if (hasTable(db, "app_event_turns")) db.prepare("UPDATE app_event_turns SET closed_at=? WHERE closed_at IS NULL").run(Date.now());
   db.prepare("UPDATE app_event_batches SET state='closed' WHERE state='open'").run();
   const deliveries = Number(db.prepare("UPDATE app_event_inbox SET disposition='stale', projection=NULL WHERE disposition='ready'").run().changes);
   return { bindings, runs: cancelled + uncertain, deliveries };

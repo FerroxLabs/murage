@@ -18,7 +18,7 @@ async function reportWorkflow(scheduled: boolean) {
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json'); const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     const reportCall=${JSON.stringify(call)};
     reportCall.rawInput.patch=reportCall.rawInput.patch.replace('outputs/gh15-report.md',path.join(process.env.MURAGE_DATA_DIR,'gh15-report.md'));
-    cfg.instances.gh15={driver:'grokAgent',config:{cli:${JSON.stringify(cli)},fullAuto:false},environment:{PATH:path.dirname(process.execPath),FAKE_ACP_MODE:'permission',FAKE_ACP_GH15_REPORT:'1',FAKE_ACP_PERMISSION_TOOLCALL:JSON.stringify(reportCall),FAKE_ACP_DUMP:path.join(process.env.MURAGE_DATA_DIR,'gh15-acp.json')}};
+    cfg.instances.gh15={driver:'grokAgent',config:{cli:${JSON.stringify(cli)},fullAuto:false},environment:{PATH:path.dirname(process.execPath),FAKE_ACP_MODE:'permission',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_GH15_REPORT:'1',FAKE_ACP_PERMISSION_TOOLCALL:JSON.stringify(reportCall),FAKE_ACP_DUMP:path.join(process.env.MURAGE_DATA_DIR,'gh15-acp.json')}};
     fs.writeFileSync(file,JSON.stringify(cfg));
   ` });
   try {

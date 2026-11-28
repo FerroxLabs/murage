@@ -129,7 +129,7 @@ function fakeIo(script: (elapsed: number) => Record<string, McpServerState>, rec
   };
 }
 
-const budgets = { requiredMs: 15_000, optionalMs: 3_000, recoveryMs: 20_000 };
+const budgets = { requiredMs: 15_000, recoveryMs: 20_000 };
 
 describe("required MCP servers", () => {
   it("splits Murage's required servers from optional ones", () => {
@@ -142,7 +142,7 @@ describe("required MCP servers", () => {
 
   // 1.0.3.1: Claude Code ends the turn (exit 1, "mcp__muragebox__approve ... not found") at the first approval when the
   // permission broker has not connected, so it is waited for and reconnected like the other required servers.
-  it("waits for the permission broker past the optional budget and reconnects it when it failed", async () => {
+  it("waits for the permission broker while an optional server is still pending, and reconnects it when it failed", async () => {
     expect(unavailableLabels(["muragebox"])).toEqual(["approvals"]);
     const slow = fakeIo((t) => ({ muragebox: t < 6_000 ? "pending" : "connected", computer: "pending" }));
     const waited = await awaitRequiredMcp(splitMcpServers(["muragebox", "computer"]), slow.io, budgets);
@@ -261,11 +261,14 @@ describe("required MCP servers", () => {
     for (const reply of ["Done.", "I have not done that: x", "Nothing was not done", ""]) expect(startsWithNotDone(reply)).toBe(false);
   });
 
-  it("never holds a turn past the optional budget for an optional server", async () => {
+  // 1.0.24 warmmcprace (FRICTION P7): was "never holds a turn past the optional budget" (<= 3 250 ms). The optional budget is
+  // deleted: an optional server is not waited for at all, and the gate says which ones were still pending.
+  it("never holds a turn for an optional server, and reports it as pending", async () => {
     const { io, reconnected } = fakeIo(() => ({ composio: "connected", browser: "pending" }));
     const result = await awaitRequiredMcp({ required: ["composio"], optional: ["browser"] }, io, budgets);
     expect(result.missing).toEqual([]);
-    expect(result.waitedMs).toBeLessThanOrEqual(3_250);
+    expect(result.waitedMs).toBe(0);
+    expect(result.notConnected).toEqual([{ name: "browser", state: "pending" }]);
     expect(reconnected).toEqual([]);
   });
 
@@ -395,27 +398,28 @@ describe("a failed optional server on a kept process (ENGINE-PERSIST design 10)"
     expect(out.readiness).toBe("ready");
   });
 
-  it("with reconnectOptional it gets one reconnect, bounded by the optional wait, and the turn sees it back", async () => {
-    const asked: Array<[string, number]> = [];
-    const states: Record<string, McpServerState> = { venice: "failed" };
-    const out = await awaitRequiredMcp({ required: [], optional: ["venice"] }, io(states, (name, ms) => { asked.push([name, ms]); states.venice = "connected"; }), { optionalMs: 3_000, reconnectOptional: true });
-    expect(asked).toHaveLength(1);
-    expect(asked[0]![0]).toBe("venice");
-    expect(asked[0]![1]).toBeLessThanOrEqual(3_000);
-    expect(out.reconnected).toEqual(["venice"]);
-    expect(out.notConnected).toEqual([]);
-  });
-
-  it("a reconnect that does not help leaves it failed, and never marks the turn degraded", async () => {
-    const out = await awaitRequiredMcp({ required: [], optional: ["venice"] }, io({ venice: "failed" }), { reconnectOptional: true });
-    expect(out.notConnected).toEqual([{ name: "venice", state: "failed" }]);
+  // 1.0.24 warmmcprace: REPLACES the three `reconnectOptional` rows (one reconnect inside the optional budget). That option is
+  // deleted with the budget: a kept process reconnects every mount at its reuse barrier (claude-s2-barrier.ts) before this gate
+  // runs, and a failure there sends the turn to a new process, so the gate itself never reconnects an optional server.
+  it("the gate never reconnects an optional server, whatever its state", async () => {
+    const asked: string[] = [];
+    const out = await awaitRequiredMcp({ required: [], optional: ["a", "b", "c"] }, io({ a: "failed", b: "needs-auth", c: "pending" }, (name) => asked.push(name)));
+    expect(asked).toEqual([]);
+    expect(out.reconnected).toEqual([]);
     expect(out.missing).toEqual([]);
     expect(out.readiness).toBe("ready");
   });
 
-  it("only a failed optional server gets a reconnect", async () => {
+  // q1024-weakfix (AUDIT-WEAK warmmcprace): the row above passes no budget option at all, so an old gate that only reconnected when the
+  // caller asked would also pass it. The old kept-process caller passed `reconnectOptional: true` (claude.ts, `kept`); that option is
+  // deleted, so it is handed in here exactly as that caller did and must change nothing: no reconnect, no recovered server.
+  it("a caller still passing the deleted reconnectOptional option on a kept process gets no optional reconnect", async () => {
     const asked: string[] = [];
-    await awaitRequiredMcp({ required: [], optional: ["a", "b"] }, io({ a: "connected", b: "needs-auth" }, (name) => asked.push(name)), { reconnectOptional: true });
+    const states: Record<string, McpServerState> = { venice: "failed" };
+    const out = await awaitRequiredMcp({ required: [], optional: ["venice"] }, io(states, (name) => { asked.push(name); states.venice = "connected"; }), { optionalMs: 3_000, reconnectOptional: true } as never);
     expect(asked).toEqual([]);
+    expect(out.reconnected).toEqual([]);
+    expect(out.notConnected).toEqual([{ name: "venice", state: "failed" }]);
+    expect(out.readiness).toBe("ready");
   });
 });

@@ -7,6 +7,8 @@
 // C:\Users\<name>: the same folder that sits above "Murage Backups". The lease
 // was taken inside the private stage, its link failed with EBUSY, and the
 // writer folded that into ENCRYPTED_BACKUP_FAILED.
+// (W-A6 later let the ancestors share write, so links and renames INTO them
+// work during a run; the lease ordering pinned here stays as defence in depth.)
 //
 // This models the helper's pins in the source fixture: while a fake private
 // stage is open, a link or rename into any pinned folder fails with EBUSY, as

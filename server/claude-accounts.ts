@@ -10,6 +10,7 @@ import { rootFor } from "./data-roots.ts";
 import { LocalSetupError } from "./local-setup-failure.ts";
 import type { InstanceConfig,InstanceConfigMap } from "./contracts.ts";
 import { resolveCli } from "./procs.ts";
+import { BEDROCK_PROFILE_RE, BEDROCK_REGION_RE, decodeBedrockBinding, maskAccount } from "./bedrock-env.ts";
 
 export const CLAUDE_ACCOUNT_ENV_KEYS = [
   "CLAUDE_CODE_OAUTH_TOKEN","CLAUDE_CODE_OAUTH_REFRESH_TOKEN","CLAUDE_CODE_OAUTH_SCOPES",
@@ -66,8 +67,10 @@ function relativeInside(root:string,path:string,platform:NodeJS.Platform=process
   return b.startsWith(prefix)?b.slice(prefix.length):undefined;
 }
 export { relativeInside as relativeInsideForTest };
-export const createClaudeAccountSchema=z.object({displayName:text.min(1).max(80),configDir:text.optional()}).strict();
-export const claudeAccountSettingsSchema=z.object({displayName:text.min(1).max(80).optional(),configDir:text.optional()}).strict().refine(value=>Object.keys(value).length>0,"No settings supplied");
+/** M9: the client sends only profile and region; the server writes accountId and epoch. */
+const bedrockInput=z.object({profile:z.string().regex(BEDROCK_PROFILE_RE),region:z.string().regex(BEDROCK_REGION_RE)}).strict();
+export const createClaudeAccountSchema=z.object({displayName:text.min(1).max(80),configDir:text.optional(),bedrock:bedrockInput.optional()}).strict();
+export const claudeAccountSettingsSchema=z.object({displayName:text.min(1).max(80).optional(),configDir:text.optional(),bedrock:bedrockInput.optional()}).strict().refine(value=>Object.keys(value).length>0,"No settings supplied");
 function rawConfig(entry:InstanceConfig):Record<string,unknown>{return entry.config&&typeof entry.config==="object"&&!Array.isArray(entry.config)?entry.config as Record<string,unknown>:{};}
 export function accountDirectory(entry:InstanceConfig):string {
   const value=rawConfig(entry).configDir;if(value!==undefined&&typeof value!=="string")throw new Error("Invalid saved Claude configuration directory.");
@@ -98,7 +101,7 @@ export function newClaudeAccount(instances:InstanceConfigMap,body:unknown,dataDi
   const input=createClaudeAccountSchema.parse(body),next=structuredClone(instances),instanceId=`claude-${randomUUID()}`;
   const installed=Object.values(next).find(entry=>entry.driver==="claudeAgent");
   const cli=installed?rawConfig(installed).cli:undefined;
-  const entry:InstanceConfig={driver:"claudeAgent",displayName:input.displayName,config:{...(typeof cli==="string"&&cli?{cli}:{}),configDir:resolveClaudeConfigDir(input.configDir||join(dataDir,"providers",instanceId))}};
+  const entry:InstanceConfig={driver:"claudeAgent",displayName:input.displayName,config:{...(typeof cli==="string"&&cli?{cli}:{}),configDir:resolveClaudeConfigDir(input.configDir||join(dataDir,"providers",instanceId)),...(input.bedrock?{bedrock:{profile:input.bedrock.profile,region:input.bedrock.region}}:{})}};
   assertSeparateClaudeAccount(next,instanceId,entry);next[instanceId]=entry;return {instanceId,instances:next};
 }
 
@@ -118,11 +121,19 @@ export function claudeSignInCommand(cli:string,directory:string,platform:NodeJS.
   return directory?`(unset ${CLAUDE_ACCOUNT_ENV_KEYS.join(" ")}; export CLAUDE_CONFIG_DIR=${quote(directory)}; ${command})`:command;
 }
 
+/** M9: what Settings shows for a Bedrock account: profile, region and the masked account (the full id only in the Save response). */
+export function bedrockInfo(entry:InstanceConfig){
+  const block=rawConfig(entry).bedrock;if(!block||typeof block!=="object"||Array.isArray(block))return undefined;
+  const b=block as Record<string,unknown>,bound=decodeBedrockBinding(block);
+  const profile=typeof b.profile==="string"?b.profile:"",region=typeof b.region==="string"?b.region:"";
+  return {profile,region,bound:!!bound,...(bound?{accountSuffix:maskAccount(bound.accountId),label:`Claude on Bedrock (AWS ${maskAccount(bound.accountId)}, ${bound.region})`}:{label:"Claude on Bedrock (not set up)"})};
+}
 export function claudeAccountInfo(instanceId:string,entry:InstanceConfig,cli:string){
   const raw=rawConfig(entry).configDir;
   if(raw!==undefined&&typeof raw!=="string")throw new Error("Invalid saved Claude configuration directory.");
   const configDir=typeof raw==="string"&&raw.trim()?accountDirectory(entry):"";
   // RH4: sign-in is disabled for an account whose folder could not be re-homed
   const unavailable=typeof raw==="string"?claudeAccountUnavailable(raw):undefined;
-  return {configDir,managed:!!configDir,isDefault:instanceId==="claude",signInCommand:unavailable?"":claudeSignInCommand(cli,configDir),...(unavailable?{unavailable}:{}),signInShell:process.platform==="win32"?"powershell" as const:"sh" as const};
+  const bedrock=bedrockInfo(entry);
+  return {configDir,managed:!!configDir,isDefault:instanceId==="claude",signInCommand:unavailable||bedrock?"":claudeSignInCommand(cli,configDir),...(bedrock?{bedrock}:{}),...(unavailable?{unavailable}:{}),signInShell:process.platform==="win32"?"powershell" as const:"sh" as const};
 }

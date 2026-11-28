@@ -22,7 +22,7 @@ export const USER_CHROME_ALLOW_REASON = "your Chrome is asking you to allow the 
 /** The reason a Murage for Chrome turn records when the owner's browser is
  * connected but its control is paused (an owner or extension pause, not a
  * hand-off). It is also what the bot reads, so it names the one step. */
-export const BROWSER_EXTENSION_PAUSED_REASON = "Browser control is paused in Murage for Chrome. Ask the owner to open Murage for Chrome and press Resume, then ask again.";
+export const BROWSER_EXTENSION_PAUSED_REASON = "Browser control is paused in Murage for Chrome. Ask the owner to press Resume in Murage or in the Murage for Chrome side panel, then ask again.";
 
 export const BROWSER_HELD_FOR_ANSWER_REASON = "another conversation is using the browser while it waits for your answer";
 

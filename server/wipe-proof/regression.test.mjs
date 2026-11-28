@@ -9,11 +9,12 @@ import vm from 'node:vm';
 import { here, installPosix, psQuote as q } from './adapter.mjs';
 import { execute } from './process.mjs';
 import { assertTempRoot, snapshot } from './safety.mjs';
+import { safeWipe } from '../testing/safe-wipe.mjs';
 
 async function fixture(run) {
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'wipe-proof-'));
   try { return await run(root); }
-  finally { await assertTempRoot(root); await fs.rm(root, { recursive: true, force: true }); }
+  finally { await assertTempRoot(root); await safeWipe(root); }
 }
 
 test('H1: filesystem backends refuse outside removal and both move endpoints', () => fixture(async root => {

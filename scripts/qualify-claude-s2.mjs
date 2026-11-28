@@ -2,11 +2,12 @@
 // Produce reviewable receipts; this script never edits the production allowlist.
 import { spawnSync, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir, release } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { claudeS2NativeBuild } from "../server/drivers/claude-s2-qualification.ts";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -89,6 +90,6 @@ try {
     realQualificationExecuted: mode === "real", productionS2Enabled: false,
     testsSha256: report ? createHash("sha256").update(readFileSync(join(output, "tests.json"))).digest("hex") : null }, null, 2) + "\n");
 } finally {
-  rmSync(home, { recursive: true, force: true });
+  safeWipeSync(home);
 }
 process.exitCode = exitCode;

@@ -9,7 +9,7 @@ import { ownedPath, WorkspaceTreeError, type RootSnapshot } from "./data-roots.t
 import { taskWorkspacePath } from "./workspace.ts";
 import { linkMoves, ownLinkTail, readLinkIdentity, sameLinkIdentity, removeLinkChecked, relinkDirectoryChecked, LinkIdentityError, NotALinkError, type LinkIdentity, removeLinkWithRetry } from "./link-removal.ts";
 import { skillAvailableForAudience, listSkills, snapshotProceduralSkill, assertSkillProcedureEvidence, type SkillProcedureContext, type SkillProcedureEvidence, fitSkillIndex, skillIndexOmissionNotice, nativeLinkPointsToSkill, onSkillsSwitchedOff, sweepBotSkills } from "./skills.ts";
-import { skillFileText, skillsForAudience, type BundledSkill } from "./skill-library.ts";
+import { skillFileText, skillsForAudience, skillsForBot, type BundledSkill, type LiveUserScope } from "./skill-library.ts";
 import type { InstalledPlaybook } from "./store.ts";
 
 export interface ProcedurePin { schema:1; bundleId:string; legacyRoomWorkspace?:true }
@@ -94,6 +94,8 @@ export function createProcedurePin(botId:string,threadId:string,catalogue:Bundle
   // into a pin for a turn that does not answer the owner: the folder on disk follows the prompt's rule.
   // A pin that does not say whom its turn answers is refused, never built from the full catalogue.
   if(!audience||typeof audience.ownerTurn!=="boolean"||typeof audience.shipped!=="function")throw new Error("PROCEDURE_AUDIENCE_REQUIRED");
+  // TEACH-ENTRY D5: a skill recorded for "Only Dax" is never offered to another bot's pin.
+  catalogue=skillsForBot(catalogue,botId,audience.shipped);
   const offered=skillsForAudience(catalogue,audience.ownerTurn,audience.shipped);
   // An owner-only skill (not shipped, not shared with everyone) is filed under `owner/`: its copy lives in
   // app state beside this bundle, never on the desk a turn that does not answer the owner also runs in.
@@ -357,9 +359,25 @@ function revokePinnedMaterialization(botId:string,threadId:string,pin:ProcedureP
  *  A pin written before whom it serves was recorded serves no turn: it may carry the owner's skills under
  *  `catalogue/`, which projects to the desk, so the task pins again instead. One bundle read, whatever the
  *  task's history (OWNER-PIN-AUDIENCE-108.md). */
-export function procedurePinServesTurn(botId:string,threadId:string,pin:ProcedurePin,ownerTurn:boolean):boolean {
-  const recorded=readProcedureBundle(botId,threadId,pin).ownerTurn;
-  return typeof recorded==="boolean"&&recorded===ownerTurn;
+/** TEACH-ENTRY F5: a pin froze a COPY of each manifest, so a later "Only Dax" must be read live. Only a user skill
+ *  (an id the app does not ship, by the id set, never by text) can release the pin: when its folder is gone, or its
+ *  live `bots` no longer includes this bot. Reads one manifest.json per frozen user skill, none for a pin without any. */
+export interface PinLiveScopes { scope: LiveUserScope; bundledIds: ReadonlySet<string> }
+export function isBundledSkillId(id:string,bundledIds:ReadonlySet<string>):boolean {
+  return id.startsWith("library:")||id.startsWith("builtin:")||bundledIds.has(id);
+}
+export function procedurePinServesTurn(botId:string,threadId:string,pin:ProcedurePin,ownerTurn:boolean,live?:PinLiveScopes):boolean {
+  const bundle=readProcedureBundle(botId,threadId,pin);
+  const recorded=bundle.ownerTurn;
+  if(!(typeof recorded==="boolean"&&recorded===ownerTurn))return false;
+  if(!live)return true;
+  for(const skill of bundle.catalogue){
+    const id=skill.manifest.id;
+    if(isBundledSkillId(id,live.bundledIds))continue;
+    const scope=live.scope(id);
+    if(scope==="gone"||(scope!==undefined&&!scope.includes(botId)))return false;
+  }
+  return true;
 }
 
 export function procedurePinFitsAudience(botId: string, threadId: string, pin: ProcedurePin, context?: SkillProcedureContext): boolean {

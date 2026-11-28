@@ -42,7 +42,7 @@ it("fails closed for unknown and dynamic execution, batch smuggling and workbenc
 it("revokes grants durably on role change even when the original role returns",()=>{const f=setup();enable(f);f.store.patchBot(f.bot.id,{title:"Different role"});f.store.patchBot(f.bot.id,{title:""});expect(botAccessPolicy(f.bot).grants).toEqual([]);const restored=new Store(()=>f.bot.modelSelection);expect(()=>assertConnectedAppCall(restored.bot(f.bot.id)!,call())).toThrow("blocked connected-app writes");});
 it("revokes grants on team moves and disabling apps",()=>{const f=setup();enable(f);f.store.setBotsSection([f.bot.id],"Other");f.store.setBotsSection([f.bot.id],"Studio");expect(botAccessPolicy(f.bot).grants).toEqual([]);enable(f);f.store.patchBot(f.bot.id,{composio:false});f.store.patchBot(f.bot.id,{composio:true});expect(()=>assertConnectedAppCall(f.bot,call())).toThrow("blocked connected-app writes");});
 it("rejects pending approvals after manager role changes",()=>{const f=setup();const request=requestBotAccess(f.store,f.lead,{botId:f.bot.id,revision:0,grants:[grant]});f.store.setChiefOfStaff(null,"Studio");expect(()=>reviewBotAccess(f.store,f.bot.id,{action:"approve",requestId:request.requestId,revision:request.revision},[account])).toThrow("stale");expect(permissionStatus(f.store,f.chief,f.bot.id,[]).pending[0]?.blockedReason).toBe("Access request is stale");});
-it("owner revocation changes revision and immediately fences the next dispatch",()=>{const f=setup();enable(f);const before=accessOwnerView(f.bot);reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:before.policy.revision,mode:"restricted",allowWrites:false,grants:[]},[]);expect(()=>assertConnectedAppCall(f.bot,call())).toThrow("blocked connected-app writes");expect(()=>reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:before.policy.revision,mode:"unrestricted",allowWrites:true,grants:[]},[])).toThrow("changed");});
+it("owner revocation changes revision and immediately fences the next dispatch",()=>{const f=setup();enable(f);const before=accessOwnerView(f.store,f.bot);reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:before.policy.revision,mode:"restricted",allowWrites:false,grants:[]},[]);expect(()=>assertConnectedAppCall(f.bot,call())).toThrow("blocked connected-app writes");expect(()=>reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:before.policy.revision,mode:"unrestricted",allowWrites:true,grants:[]},[])).toThrow("changed");});
 it("manager status strips commands, secrets, IDs and approval rights",()=>{const f=setup();const pending=[{kind:"tool" as const,createdAt:1000,command:"SECRET COMMAND",requestId:"SECRET_ID",token:"SECRET_TOKEN"}];const result=permissionStatus(f.store,f.lead,f.bot.id,pending,61000);expect(result.pending).toEqual([{kind:"tool",ageSeconds:60,blockedReason:"Waiting for owner review"}]);expect(result.canApprove).toBe(false);expect(JSON.stringify(result)).not.toContain("SECRET");expect(()=>permissionStatus(f.store,f.lead,f.other.id,pending)).toThrow("not visible");});
 it("preserves unconfigured existing access and fails closed on corrupted policy",()=>{const f=setup();expect(()=>assertConnectedAppCall(f.other,{method:"arbitrary-legacy-method"})).not.toThrow();f.other.connectedAppAccess={invalid:true} as any;expect(()=>assertConnectedAppCall(f.other,call())).toThrow("blocked connected-app writes");});
 it("restricted tool listing exposes only approved concrete accounts and actions",()=>{const f=setup();enable(f,false);const result=restrictedConnectorTools(f.bot,7)!;expect(result.id).toBe(7);const schema=JSON.stringify(result);expect(schema).toContain("ca_fixture_owned");expect(schema).not.toContain("COMPOSIO_SEARCH_TOOLS");expect(result.result.tools[0]?.inputSchema.properties.tools.items.properties.tool_slug.enum).toEqual(["GMAIL_FETCH_EMAILS"]);});
@@ -109,7 +109,7 @@ it("a stored connected-app result is handed back only while the bot's CURRENT gr
  const f=setup();enable(f);
  const used=[{tool:"GMAIL_SEND_EMAIL",account:"ca_fixture_owned"}];
  expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:used,complete:true})).not.toThrow();
- const before=accessOwnerView(f.bot);
+ const before=accessOwnerView(f.store,f.bot);
  reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:before.policy.revision,mode:"restricted",allowWrites:true,grants:[{toolkit:"gmail",accountId:"ca_fixture_owned",tools:["GMAIL_FETCH_EMAILS"]}]},[account]);
  expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:used,complete:true})).toThrow("not been approved");
  expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[{tool:"GMAIL_FETCH_EMAILS",account:"ca_fixture_owned"}],complete:true})).not.toThrow();
@@ -263,8 +263,8 @@ it("rejects metadata on other methods, a write tool and a foreign account with a
 
 it('08:05 connected-app stored denials run at No limits and keep lower-level restrictions',()=>{
  const f=setup();f.store.patchBot(f.bot.id,{composio:true});
- reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:accessOwnerView(f.bot).policy.revision,mode:"restricted",allowWrites:true,grants:[grant]},[account]);
- const before=accessOwnerView(f.bot);
+ reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:accessOwnerView(f.store,f.bot).policy.revision,mode:"restricted",allowWrites:true,grants:[grant]},[account]);
+ const before=accessOwnerView(f.store,f.bot);
  reviewBotAccess(f.store,f.bot.id,{action:'configure',revision:before.policy.revision,mode:'restricted',allowWrites:false,grants:[]},[]);
  expect(readAppAccessDenials(f.bot).length).toBeGreaterThan(0);
  expect(()=>assertConnectedAppCall(f.bot,call(),{noLimits:true})).not.toThrow();
@@ -276,7 +276,7 @@ it('08:05 connected-app stored denials run at No limits and keep lower-level res
 });
 it.each([false,true])('08:05 connected-app feature off remains off and names Settings with noLimits=%s',noLimits=>{
  const f=setup();f.store.patchBot(f.bot.id,{composio:true});
- reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:accessOwnerView(f.bot).policy.revision,mode:"restricted",allowWrites:true,grants:[grant]},[account]);f.bot.composio=false;
+ reviewBotAccess(f.store,f.bot.id,{action:"configure",revision:accessOwnerView(f.store,f.bot).policy.revision,mode:"restricted",allowWrites:true,grants:[grant]},[account]);f.bot.composio=false;
  expect(()=>assertConnectedAppCall(f.bot,call(),{noLimits})).toThrow(/off.*Settings/);
  expect(()=>assertStoredConnectedAppAccess(f.bot,{requirements:[{tool:'GMAIL_SEND_EMAIL',account:account.accountId}],complete:true},{noLimits})).toThrow(/off.*Settings/);
 });

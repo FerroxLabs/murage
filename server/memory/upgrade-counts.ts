@@ -10,6 +10,7 @@ import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // (never in messages.db: writing it there would be a write that invalidates it), keyed on the write revision of messages.db (app-write-revision.ts: an epoch and a counter
 // that every counted write moves), so a launch with no counted write since shows them at once; any write since means a recount.
 import { Worker } from "node:worker_threads";
+import { sealedForShutdown, trackFileWorker } from "../shutdown-seal.ts";
 
 export interface ExactCounts { messages: number; conversations: number; memoryRecords: number; receipts: number; firstMessageAt: number | null }
 export const UPGRADE_COUNTS_FILE = "memory-upgrade-counts.json";
@@ -98,8 +99,10 @@ try { db && db.close(); } catch {}
 /** Starts the counting thread. Never throws; without it the screen simply shows no numbers. `cacheFile` is where the figures are kept between launches. */
 export function startExactCounts(file: string, cacheFile: string, shared: SharedArrayBuffer): { stop(): void } {
   let worker: Worker | null = null;
+  if (sealedForShutdown()) return { stop() { /* nothing started */ } }; // the handover owns the file from the close on
   try {
     worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: { file, cacheFile, shared } });
+    trackFileWorker(worker); // its read transaction on messages.db must be gone before the handover (shutdown ends and joins it)
     worker.on("error", () => { /* counting failed: no numbers are shown */ });
     worker.unref();
   } catch { worker = null; }

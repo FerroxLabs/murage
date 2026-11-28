@@ -1,3 +1,4 @@
+import { evidencePath } from '../scripts/evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterAll, afterEach, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -12,14 +13,14 @@ import { ordinaryBoundaries, symlinkCorpus } from './testing/no-limits-symlink-c
 
 const capture = process.env.NLSYM_CAPTURE_BASE === '1';
 const snapshotPath = 'server/testing/fixtures/no-limits-symlink-full-base.json';
-const baselinePath = 'evidence/nlsym/C0-owner-base.json';
+const baselinePath = evidencePath('evidence/nlsym/C0-owner-base.json');
 const snapshots: Record<string,unknown> = capture ? {} : JSON.parse(readFileSync(snapshotPath,'utf8')).rows;
 const baseline: Record<string,unknown> = {};
 const roots: string[] = [];
 afterEach(()=>{ for(const root of roots.splice(0)) removeTempDirSync(root); });
 afterAll(()=>{ if(capture){
   writeFileSync(snapshotPath,JSON.stringify({commit:'be6823cf1d12e4ce561d8e17cb6fe242315491ad',rows:snapshots},null,2)+'\n');
-  mkdirSync('evidence/nlsym',{recursive:true});
+  mkdirSync(evidencePath('evidence/nlsym'),{recursive:true});
   writeFileSync(baselinePath,JSON.stringify({commit:'be6823cf1d12e4ce561d8e17cb6fe242315491ad',rows:baseline},null,2)+'\n');
 } });
 const bot = {id:'nlsym-fixture',autoApprove:true,fullAccess:true,noLimits:true};
@@ -77,6 +78,17 @@ it.each(symlinkCorpus.flatMap(row=>[false,true].map(safe=>({...row,safe,label:sa
         const frozen=JSON.parse((expected as {bytes:string}).bytes);
         frozen.verdict={approve:null,source:'always-ask',rule:'protected-path',reason:'protected-path',note:'This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.'};
         expected={bytes:JSON.stringify(frozen),actionHash:hash(frozen)};
+      }
+      // OVERREACH #6 (MAIN 2026-11-26): the owner's own Full access turn runs a call the frozen bytes held on one of the three run rules; only
+      // that verdict changes, and only when the frozen verdict is such a card and the live one is the waived run (every action/evidence byte stays).
+      {
+        const frozenNow=JSON.parse((expected as {bytes:string}).bytes);
+        const fv=fullVerdict as {approve?:unknown;source?:unknown;rule?:unknown};
+        const heldRule=frozenNow.verdict?.approve===null&&frozenNow.verdict?.source==='always-ask'&&['unreadable','unknown-target','protected-path'].includes(frozenNow.verdict?.rule);
+        if(heldRule&&typeof fv.approve==='string'&&fv.source==='full-access'&&fv.rule==='held=waived'){
+          frozenNow.verdict=(full as {verdict:unknown}).verdict;
+          expected={bytes:JSON.stringify(frozenNow),actionHash:hash(frozenNow)};
+        }
       }
       expect(snapshot,`${id} Full access bytes`).toEqual(expected);
       if(process.env.NLSYM_FULL_ONLY!=='1'){

@@ -32,4 +32,3 @@ export function staleModelNotice(driverKind: string, old: string, next: string):
   return `${ENGINE_NAME[driverKind] ?? "This engine"} no longer offers ${old}; this bot now uses ${next}. Change it in Settings if you prefer another model.`;
 }
 
-export const LOCAL_CONTROL_OFF_NOTICE = "Local control is off, so this bot can't use the computer yet. Turn it on in Settings > Computer.";

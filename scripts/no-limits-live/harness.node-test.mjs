@@ -7,11 +7,12 @@ import {completeMatrix,releaseVerdict} from './counts.mjs';
 import {mergeRelease} from './merge-release.mjs';
 import {context} from './mandatory-fixture.mjs';
 import {executeReleased} from './fixture-actions.mjs';
-import {mkdtempSync,mkdirSync,readFileSync,existsSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
 import {ProductClient} from './run.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 test('catalogue covers every registered adapter and Sol with native fixture protocols',()=>{
  const catalogue=releaseEngines();assert.deepEqual(Object.keys(catalogue).sort(),engineSpecs.map(e=>e.id).sort());
  assert.match(catalogue.claude.cli,/claude.mjs$/);assert.match(catalogue.codex.cli,/codex.mjs$/);
@@ -67,7 +68,7 @@ test('native release fixture executes only an allowed receipt in its owned works
   assert.equal(existsSync(join(work,'receipt.done')),true);
  }finally{
   process.chdir(cwd);for(const [key,value]of Object.entries(env))if(value===undefined)delete process.env[key];else process.env[key]=value;
-  rmSync(root,{recursive:true,force:true});
+  safeWipeSync(root);
  }
 });
 test('six-shard merge admits every engine once and rejects duplicates, skipped rows and failed engines',()=>{

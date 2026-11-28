@@ -126,7 +126,7 @@ const paths = { memory_search: "search", memory_get: "get", memory_save: "save",
 const requestIdOk = (id: unknown): boolean => id === undefined || (typeof id === "string" && Buffer.byteLength(id, "utf8") <= 256) || (typeof id === "number" && Number.isFinite(id));
 type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json => value !== null && typeof value === "object" && !Array.isArray(value);
-const catalog = createMcpCatalogWriter(process.env, process.stdout, "memory");
+const catalog = NotModelRequest("MCP catalog observer emits local tool discovery metadata to child stdout.", createMcpCatalogWriter(process.env, process.stdout, "memory"));
 const fatal = () => { process.exitCode = 1; process.stdin.destroy(); };
 const send = (req: McpRequest, id: unknown, result: unknown) => { void req.respond({ jsonrpc: "2.0", id, result }).catch(fatal); };
 const rpcError = (req: McpRequest, id: unknown, code: number, message: string) => { void NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond({ jsonrpc: "2.0", id, error: { code, message } })).catch(fatal); };
@@ -136,9 +136,9 @@ const result = (req: McpRequest, id: unknown, value: unknown, isError = false) =
   const text = typeof value === "string" ? value : JSON.stringify(value);
   const envelope = { content: [{ type: "text", text }], isError };
   if (Buffer.byteLength(JSON.stringify({ jsonrpc: "2.0", id, result: envelope })) + 1 > 32768) {
-    return send(req, id, { content: [{ type: "text", text: "MEMORY_RESPONSE_TOO_LARGE" }], isError: true });
+    return NotModelRequest("Oversize memory tool error on the local MCP protocol.", send(req, id, { content: [{ type: "text", text: "MEMORY_RESPONSE_TOO_LARGE" }], isError: true }));
   }
-  return send(req, id, envelope);
+  return NotModelRequest("Memory tool reply on the existing local MCP request.", send(req, id, envelope));
 };
 
 async function readResponse(response: Response): Promise<unknown> {
@@ -176,21 +176,39 @@ async function handleMessage(message: Json, req: McpRequest) {
   // Name the argument and what is wrong with it, from the schema's own
   // message — never the value it was given.
   if (!parsed.success) return result(req, id, `Memory request rejected: ${argumentProblems(parsed.error)}`, true);
-  if (!token()) return proxyTransportLost("memory");
-  const timeoutMs = name === "memory_save" || name === "memory_propose_correction" ? 65000 : 5000;
-  try {
-    const response = await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", proxyFetch("memory", new URL(`/api/internal/memory/${paths[name]}`, HARNESS), {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
-      headers: { "content-type": "application/json", authorization: `Bearer ${token()}` },
-      body: JSON.stringify(parsed.data),
-    }));
-    const body = await readResponse(response);
-    if (!isObject(body) || response.status >= 500) return proxyTransportLost("memory");
-    return result(req, id, body, !response.ok || body.ok === false || body.isError === true || body.error !== undefined);
-  } catch (e) {
-    return proxyTransportLost("memory");
+  // 1.0.24 linuxmem (MAIN-RULING memory): a write whose turn credential cannot be read sends nothing and is a plain tool error; it
+  // never seals the mount (a seal stops the owner's turn). Reads keep the seal.
+  if (!token()) return MEMORY_WRITES.has(name) ? result(req, id, WRITE_NO_CREDENTIAL, true) : proxyTransportLost("memory");
+  // 1.0.24 memhold (MAIN-RULING memory, LINUXMEM-1023): the bot's own memory write is never held, so a lost connection, a 5xx or an
+  // attempt that hangs past WRITE_ATTEMPT_MS (a caller cancel, never a seal) retries the same request until the harness answers (the
+  // server answers a repeated idempotencyKey with the first save, never a second one). An ended turn answers 4xx and ends the loop.
+  // Never a sealed mount, never a stopped turn, never a dropped write. Reads keep their 5 s deadline and seal as before.
+  const write = MEMORY_WRITES.has(name);
+  let answered5xx = 0;
+  for (let attempt = 1; ; attempt++) {
+    const attemptCancel = new AbortController();
+    const timer = write ? setTimeout(() => attemptCancel.abort(new Error("memory write attempt")), WRITE_ATTEMPT_MS) : undefined;
+    try {
+      const response = await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", proxyFetch("memory", new URL(`/api/internal/memory/${paths[name]}`, HARNESS), {
+        method: "POST", redirect: "error", signal: write ? attemptCancel.signal : AbortSignal.timeout(5000),
+        headers: { "content-type": "application/json", authorization: `Bearer ${token()}` },
+        body: JSON.stringify(parsed.data),
+      }, { retryable: write }));
+      const body = await readResponse(response);
+      // MEMSWEEP F/I: the harness answered (a route error such as MEMORY_RECORD_UNAVAILABLE is a 500 with a JSON body): a tool error the
+      // bot reads, never a sealed mount. A write retries a 5xx answer a few times first (a busy store answers 503 and nothing was changed).
+      if (write && response.status >= 500 && ++answered5xx < WRITE_ANSWERED_TRIES) throw new Error("memory upstream");
+      if (!isObject(body)) { if (write) return result(req, id, "MEMORY_UNAVAILABLE", true); return proxyTransportLost("memory"); }
+      return result(req, id, body, !response.ok || body.ok === false || body.isError === true || body.error !== undefined);
+    } catch {
+      if (!write) return proxyTransportLost("memory");
+      await new Promise(resolve => setTimeout(resolve, Math.min(WRITE_RETRY_MS * attempt, 5000)));
+    } finally { clearTimeout(timer); }
   }
 }
+const MEMORY_WRITES: ReadonlySet<string> = new Set(["memory_save", "memory_propose_correction"]);
+const WRITE_NO_CREDENTIAL = "Murage could not write this memory in this turn: nothing was saved. Tell the owner it was not saved and try again in the next turn.";
+const WRITE_RETRY_MS = 1000, WRITE_ATTEMPT_MS = 120_000, WRITE_ANSWERED_TRIES = 4;
 
 /** Which arguments the schema refused, and why, in the schema's own words.
  * Bounded, and values are never repeated back — only paths and reasons. */

@@ -23,22 +23,21 @@ export const engineHoverLabel = (engine: RowEngine, labelFor: (engine: RowEngine
 export const HELD_QUEUE_OPEN = "Open now";
 
 /** Divider text keyed by the id of the bot row that starts a new engine run:
- * between two labelled bot rows whose instances differ, and before the first
- * labelled row that follows unlabelled ones. */
+ * only between two labelled bot rows whose instances differ. Unlabelled rows
+ * (a greeting, older replies) say nothing about the engine, so the first
+ * labelled reply after them is not a change. */
 export function engineDividers(
   rows: readonly EngineRow[],
   labelFor: (engine: RowEngine) => string,
 ): Map<string, string> {
   const out = new Map<string, string>();
   let prev: RowEngine | undefined;
-  let sawBotRow = false;
   for (const row of rows) {
     if (row.role !== "bot" || row.murage) continue;
     if (row.engine) {
-      if (!prev ? sawBotRow : prev.instanceId !== row.engine.instanceId) out.set(row.id, engineChangedLine(labelFor(row.engine)));
+      if (prev && prev.instanceId !== row.engine.instanceId) out.set(row.id, engineChangedLine(labelFor(row.engine)));
       prev = row.engine;
     }
-    sawBotRow = true;
   }
   return out;
 }

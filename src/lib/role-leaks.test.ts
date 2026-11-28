@@ -34,7 +34,7 @@ const ALLOWED: Record<string, string> = {
   "lib/team-map.ts": "reads BOTH flag and scope together to build the chart",
   "lib/group-routing.ts": "picks a default recipient — any leader will do, no role is shown",
   "lib/team-import.ts": "the package wire format, where chiefOfStaff is a member KEY, not a boolean",
-  "components/SettingsPanel.tsx": "a PATCH key in a type union, not a rendered value",
+  "components/bot-pages/context.tsx": "a PATCH key in a type union, not a rendered value (moved out of SettingsPanel.tsx by the B0 split)",
   "lib/team-manage.ts": "folds the harness's team-change record back into the store field for field; every rendered role goes through botRole()",
   "components/TeamLibraryPanel.tsx": "package preview: chiefOfStaff is the lead's NAME, a string",
   "lib/team-import-result.ts":

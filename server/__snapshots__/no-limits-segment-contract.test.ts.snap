@@ -3,12 +3,8 @@
 exports[`contract cwd: owner > 'unknown-cd-ordinary' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -27,12 +23,8 @@ exports[`contract cwd: owner > 'unknown-cd-ordinary' > Full access snapshot 1`] 
 exports[`contract cwd: owner > 'unknown-cd-protected' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -51,12 +43,8 @@ exports[`contract cwd: owner > 'unknown-cd-protected' > Full access snapshot 1`]
 exports[`contract cwd: routine > 'unknown-cd-ordinary' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -76,12 +64,8 @@ exports[`contract cwd: routine > 'unknown-cd-ordinary' > Full access snapshot 1`
 exports[`contract cwd: routine > 'unknown-cd-protected' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,

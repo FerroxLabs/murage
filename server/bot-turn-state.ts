@@ -9,7 +9,7 @@ import { readPersistedJson, readPersistedRecords, PersistedStateRecoveryError } 
 import type { BotRecord, TaskRecord } from "./store.ts";
 
 // Producer owner: recall-scope-c (bounded task deltas). Consumer owner: recall-scope-c (boot, backup and downgrade).
-const taskFields = ["unread", "title", "pinned", "pinnedMessageId", "link", "linkAuto", "lastInstanceId", "resumeCursors", "resumeSeals", "resumeAudiences", "resumeContracts", "resumePlainToolNames", "resumeIncarnations", "resumePolicies", "replayPending", "effortSent", "usage", "usageTurnKeys"] as const;
+const taskFields = ["unread", "title", "pinned", "pinnedMessageId", "link", "linkAuto", "lastInstanceId", "resumeCursors", "resumeSeals", "resumeAudiences", "resumeContracts", "resumePlainToolNames", "resumeIncarnations", "resumePolicies", "replayPending", "effortTouch", "effortSent", "usage", "usageTurnKeys"] as const;
 const taskFile = (bot: string, thread: string) => createHash("sha256").update(JSON.stringify([bot, thread])).digest("hex") + ".json";
 
 /** These cosmetic fields cannot change memory audiences or grants. Month
@@ -86,7 +86,7 @@ export class BotTurnState {
           if (key === "unread" && bot.tasks?.length === 1 && (this.states.get(bot.id)?.writtenAt ?? 0) > (delta.writtenAt ?? 0)) continue;
           delete task[key]; if (Object.hasOwn(delta.state, key)) Object.assign(task, {[key]: delta.state[key]});
         }
-        if (task.threadId === bot.threadId) for (const key of ["resumeCursors", "resumePolicies", "replayPending", "pinnedMessageId"] as const) {
+        if (task.threadId === bot.threadId) for (const key of ["resumeCursors", "resumePolicies", "replayPending", "effortTouch", "pinnedMessageId"] as const) {
           delete bot[key]; if (task[key] !== undefined) Object.assign(bot, {[key]: structuredClone(task[key])});
         }
       }

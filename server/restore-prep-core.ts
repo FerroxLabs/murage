@@ -3,9 +3,11 @@ import { cancelOpenRecords } from "./decision/records.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The restore preparation core, shared by the desktop restore (prepareInstallationRestore, profile "archive", a private staging copy)
-// and a Cloud reset or undo (consumeRestoreMarker at boot, profile "same-home", the home's own data folder). CLOUD-RESET-PREP design
+// and a Cloud reset or undo (profile "same-home", the home's own data folder). CLOUD-RESET-PREP design
 // r1 section 2A: this code was moved out of installation-restore-preparation.ts without changing what a desktop restore does or the
 // order it does it in (the R1 golden in installation-restore-preparation.test.ts pins that).
+// Today the boot's consumeRestoreMarker (email/restore-marker.ts) does not call this core: it prepares the email rows and applies the
+// browser grant rule to the roster itself (browser-grant.ts dropRestoredBrowserGrants), so "same-home" has no production caller yet.
 //
 // What profile "same-home" skips, and nothing else (decision D2): the reserved bot id refusal, the managed-desk cwd drop and the
 // browser transport drop (all three are about a stranger's archive landing on another computer), the integrity proof (nothing
@@ -29,6 +31,7 @@ import { endAllLivePairedRequests } from "./handoff-pair.ts";
 import { reconcileTeamJournalFiles } from "./team-lifecycle.ts";
 import type { BotRecord, GroupRecord, Message } from "./store.ts";
 import { rowToMessage, storedJson } from "./transcript-seq.ts";
+import { attachmentNamesIn } from "./transcript-backfill.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
 import { markIntegrityPassProven } from "./memory/integrity-state.ts";
 import { prepareProjectTablesForRestore } from "./project-tables.ts";
@@ -40,6 +43,7 @@ import { prepareRestoredEmail } from "./email/restore.ts";
 import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { restoredBrowserGrant } from "./browser-grant.ts";
 
 export type RecordValue = Record<string, unknown>;
 export const isRecord = (value: unknown): value is RecordValue => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -200,7 +204,7 @@ export function prepareRestoredRecords(io: RestoreIo, opts: RestorePrepOptions):
           delete (copy as RecordValue).lastInstanceId;
           delete (copy as RecordValue).resumeSeals;
           delete (copy as RecordValue).resumePolicies;
-          delete (copy as RecordValue).replayPending;
+          delete (copy as RecordValue).replayPending; delete (copy as RecordValue).effortTouch;
           // The bot's own working folder for this conversation names the old installation's data directory: the next turn pins this one's.
           // (An archive only: on the same home the folder is this home's own.)
           const deskPath = (task as RecordValue).cwd;
@@ -211,7 +215,7 @@ export function prepareRestoredRecords(io: RestoreIo, opts: RestorePrepOptions):
       delete record.lastInstanceId;
       if (path === "bots.json") {
         Object.assign(record, { busy: false, activity: "idle", autoApprove: false, autoReview: "off", alwaysAllow: [], approvePeerComms: true, computer: "off", autoStartVps: false, ...(archive || !SAME_HOME_KEEPS_BROWSER ? { browser: false, useMyChrome: false } : {}), composio: false, speakReplies: false, resumeCursors: {}, rewound: true });
-        delete record.resumePolicies; delete record.replayPending;
+        delete record.resumePolicies; delete record.replayPending; delete record.effortTouch;
         // The owner's browser connection belongs to the old computer's
         // browser and extension profile; it is chosen again (plan 4.3).
         // (An archive only: on the same home the connection is this home's own.)
@@ -219,6 +223,8 @@ export function prepareRestoredRecords(io: RestoreIo, opts: RestorePrepOptions):
         // Full permissive never comes back from a backup: the owner turns it on again, here, by typing the name.
         // The checker choice (browserActionCheck) is a preference, not authority, and is kept.
         delete record.browserApproval;
+        // DESIGN-JOURNEY-1024 W13: an Off survives a restore; an On and the screen bit are given again by the owner, never by a backup.
+        restoredBrowserGrant(record as Record<string, unknown>);
         // "Make images without asking" is spend authority the old computer
         // granted: a restored bot asks again until the owner chooses it here.
         // "Ask before each image" and the guard only ever ask more, so they stay.
@@ -288,7 +294,8 @@ export function prepareRestoredRecords(io: RestoreIo, opts: RestorePrepOptions):
   }
   for (const path of ["delegations.json", "browser-cleanups.json"]) quarantine(path);
   for (const path of files) {
-    if (/^skill-state\/[^/]+\/staged\.json$/.test(path)) quarantine(path);
+    if (path === "skill-state/every-bot.json") write(path, { version: 1, marks: {} });
+    else if (/^skill-state\/[^/]+\/staged\.json$/.test(path)) quarantine(path);
     else if (/^skill-state\/[^/]+\/skills\.json$/.test(path)) {
       const manifest = read(path);
       if (!object(manifest)) fail("INVALID_RESTORE_SKILLS");
@@ -342,16 +349,23 @@ export function prepareRestoredDatabase(db: DatabaseSync, opts: RestoreDbOptions
   try {
     cancelOpenRecords(db, "Cancelled (restore)");
     db.exec("DROP TABLE IF EXISTS restore_boot_wait; DROP TABLE IF EXISTS restore_job_marks");
+    // Folder-trust activity is never restored (fuigo-trust Q36/Q44): an archive that still carries it loses it here.
+    db.exec("DROP TABLE IF EXISTS thread_folder_trust_activity");
     // A-M2: a home whose database has no messages table yet (a fresh or marker-only file) has nothing to expire.
     const hasMessages = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").get());
     const update = hasMessages ? db.prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?") : undefined;
+    // a row this rewrites is re-serialized (an escaped character comes out literal), so the names it mentions are indexed again: the phone image lookup reads attachment_name, not the rows
+    const named = hasMessages && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='attachment_name'").get() ? db.prepare("INSERT OR IGNORE INTO attachment_name(name, thread_id, id) VALUES (?, ?, ?)") : undefined;
     if (hasMessages) for (const row of db.prepare("SELECT thread_id,id,json FROM messages").iterate()) {
       if (typeof row.json !== "string" || Buffer.byteLength(row.json) > MAX_JSON_BYTES) restoreFail("INVALID_RESTORE_MESSAGE");
       const before = rowToMessage({ json: row.json }); // U4 S3: the one decoder, and storedJson below the one encoder
       const after = expireRestoredMessage(before);
       if (after.id !== row.id) restoreFail("INVALID_RESTORE_MESSAGE");
       const encoded = storedJson(after as unknown as Message);
-      if (encoded !== row.json) update!.run(encoded, row.thread_id, row.id);
+      if (encoded !== row.json) {
+        update!.run(encoded, row.thread_id, row.id);
+        if (named) for (const name of attachmentNamesIn(encoded)) named.run(name, row.thread_id, row.id);
+      }
     }
     // Retain current restore fencing: settled delegation loans do not survive a restore.
     if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='delegation_packs'").get()) db.exec("DELETE FROM delegation_packs");

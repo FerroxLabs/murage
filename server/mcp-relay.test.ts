@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -65,6 +68,50 @@ describe("validateRelayBody", () => {
 });
 
 describe("small rules", () => {
+  it("names the server and the kind of a protocol failure without upstream error text", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none", mcpFailStatus: 418 });
+    const result = await relayMcpCall(context(rpc("tools/call", 1)));
+    expect(result).toMatchObject({ ok: false, body: { code: "wrong-address" } });
+    expect((result as { body: { error: string } }).body.error).toContain(new URL(fake.mcpUrl).hostname);
+    expect((result as { body: { error: string } }).body.error).toContain("answers as an MCP server");
+    expect(JSON.stringify(result)).not.toMatch(/UPSTREAM-BODY-TEXT|UPSTREAM-HEADER-TEXT/);
+  });
+  it("masks server details before returning a named failure", () => {
+    const detail = "password=fixture-private-value";
+    const result = relayFailure("wrong-address", detail);
+    expect(result.body.error).toContain("redacted");
+    expect(result.body.error).not.toContain("fixture-private-value");
+  });
+  it("identifies a host even when its name also occurs in the fixed sentence", () => {
+    expect(relayFailure("wrong-address", "server").body.error).toBe("server: Nothing at this address answers as an MCP server. Check that you copied the whole link.");
+  });
+  it("identifies the configured server when several links use the same host", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none", mcpFailStatus: 418 });
+    const result = await relayMcpCall(context(rpc("tools/call", 1), { name: "fixture-tools" }));
+    expect(result).toMatchObject({ ok: false, body: { code: "wrong-address" } });
+    expect((result as { body: { error: string } }).body.error).toContain("fixture-tools");
+  });
+  it("names the configured server, host and connection failure when a server stops listening", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none" });
+    const server = serverFor();
+    await fake.close();
+    fake = undefined;
+    const result = await relayMcpCall(context(rpc("tools/list", 1), { name: "fixture-tools", server }));
+    expect(result).toMatchObject({ ok: false, body: { code: "unreachable" } });
+    if (result.ok) throw new Error("stopped fixture answered");
+    expect(result.body.error).toContain("fixture-tools");
+    expect(result.body.error).toContain(new URL(server.url).hostname);
+    expect(result.body.error).toContain("did not accept the connection");
+  });
+  it("masks the completed configured name and redirected address before returning a failure", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none", mcpMovedTo: "https://example.test/mcp?password=fixture-private-value" });
+    const result = await relayMcpCall(context(rpc("tools/list", 1), { name: "password=fixture-name-value" }));
+    expect(result).toMatchObject({ ok: false, body: { code: "moved" } });
+    if (result.ok) throw new Error("redirect fixture answered");
+    expect(result.body.error).toContain("redacted");
+    expect(result.body.error).not.toContain("fixture-name-value");
+    expect(result.body.error).not.toContain("fixture-private-value");
+  });
   it("rewrites initialize capabilities on the harness side too", () => {
     expect(rewriteInitializeCapabilities(rpc("initialize", 1, { capabilities: { sampling: {} }, protocolVersion: "x" }))).toMatchObject({ params: { capabilities: {}, protocolVersion: "x" } });
   });
@@ -240,6 +287,77 @@ describe("relayMcpCall over streamable HTTP", () => {
     expect(note).toMatchObject({ ok: true, status: 202 });
   });
 
+  // 1.0.20 owner report: Settings Test passed (it takes any status below 400 for a notification and
+  // reads an answer whatever its type) while every turn's relay answered 502 and the proxy sealed the mount.
+  it("takes what Settings Test takes: a 200 text/plain or 204 notification answer, and a JSON answer labelled text/plain", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none", notificationAnswer: "200-text", answerContentType: "text/plain" });
+    const init = await relayMcpCall(context(rpc("initialize", 1, { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "c", version: "1" } })));
+    expect(init).toMatchObject({ ok: true, status: 200, contentType: "application/json", sessionId: expect.stringMatching(/^sess-/) });
+    if (!init.ok) return;
+    expect(JSON.parse(String(init.body))).toMatchObject({ id: 1, result: { protocolVersion: "2025-06-18" } });
+    for (const answer of ["200-text", "204"] as const) {
+      fake.options.notificationAnswer = answer;
+      const note = await relayMcpCall(context(rpc("notifications/initialized", undefined), { sessionId: init.sessionId }));
+      expect(note, answer).toEqual({ ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0) });
+    }
+    const list = await relayMcpCall(context(rpc("tools/list", 2), { sessionId: init.sessionId, protocolVersion: "2025-06-18" }));
+    expect(list).toMatchObject({ ok: true, status: 200, contentType: "application/json" });
+    if (list.ok) expect(JSON.parse(String(list.body))).toMatchObject({ id: 2, result: { tools: expect.arrayContaining([expect.objectContaining({ name: "echo" })]) } });
+  });
+
+  it("still refuses an answer to a request that is not one JSON object, and a request answered with no content", async () => {
+    let reply: { status: number; type?: string; body: string } = { status: 200, type: "text/html", body: "<html>sign in</html>" };
+    const origin = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => { res.writeHead(reply.status, reply.type ? { "content-type": reply.type } : {}); res.end(reply.body); });
+    });
+    origin.listen(0, "127.0.0.1");
+    await once(origin, "listening");
+    try {
+      const server = { url: `http://127.0.0.1:${(origin.address() as AddressInfo).port}/mcp`, auth: "none", headers: {}, enabled: true, local: "this-computer", transport: "http" } as StoredRemoteMcpServer;
+      expect(await relayMcpCall(context(rpc("tools/list", 1), { server }))).toMatchObject({ ok: false, status: 502, body: { code: "wrong-address" } });
+      for (const body of ["[1]", '{"ok":true}']) {
+        reply = { status: 200, type: "text/plain", body };
+        expect(await relayMcpCall(context(rpc("tools/list", 1), { server })), body).toMatchObject({ ok: false, status: 502, body: { code: "wrong-address" } });
+      }
+      reply = { status: 204, body: "" };
+      expect(await relayMcpCall(context(rpc("tools/call", 1, { name: "echo" }), { server }))).toMatchObject({ ok: false, status: 502, body: { code: "wrong-address" } });
+    } finally {
+      await new Promise<void>((resolve) => origin.close(() => resolve()));
+    }
+  });
+
+  const originReplying = async (reply: { status: number; type?: string; body: string }) => {
+    const origin = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => { res.writeHead(reply.status, reply.type ? { "content-type": reply.type } : {}); res.end(reply.body); });
+    });
+    origin.listen(0, "127.0.0.1");
+    await once(origin, "listening");
+    const server = { url: `http://127.0.0.1:${(origin.address() as AddressInfo).port}/mcp`, auth: "none", headers: {}, enabled: true, local: "this-computer", transport: "http" } as StoredRemoteMcpServer;
+    return { server, close: () => new Promise<void>((resolve) => origin.close(() => resolve())) };
+  };
+  const taken = { ok: true, status: 202, contentType: "application/json", body: Buffer.alloc(0) };
+
+  it("a notification the server takes with a 204 or a 200 text/plain is accepted, not a 502", async () => {
+    for (const reply of [{ status: 204, body: "" }, { status: 200, type: "text/plain", body: "OK" }]) {
+      const origin = await originReplying(reply);
+      try {
+        expect(await relayMcpCall(context(rpc("notifications/initialized", undefined), { server: origin.server })), String(reply.status)).toEqual(taken);
+      } finally { await origin.close(); }
+    }
+  });
+
+  it("the engine's answer to a server request (id, no method) the server takes with a 204 or a 200 text/plain is accepted, not a 502", async () => {
+    const answer = { jsonrpc: "2.0", id: "srv-1", result: { action: "cancel" } };
+    for (const reply of [{ status: 204, body: "" }, { status: 200, type: "text/plain", body: "OK" }]) {
+      const origin = await originReplying(reply);
+      try {
+        expect(await relayMcpCall(context(answer, { server: origin.server })), String(reply.status)).toEqual(taken);
+      } finally { await origin.close(); }
+    }
+  });
+
   it("an SSE framed answer keeps its content type and is streamed through (MCP-ELICITATION-109)", async () => {
     fake = await startFakeRemoteMcp({ auth: "none", respondWith: "sse" });
     const result = await relayMcpCall(context(rpc("tools/list", 1)));
@@ -300,6 +418,18 @@ describe("relayMcpCall over streamable HTTP", () => {
     fake = await startFakeRemoteMcp({ auth: "none" });
     // The fake answers a GET to /mcp with 405; POST a method it answers as text via the failure path is covered above, so use the 404 path.
     expect(await relayMcpCall(context(rpc("tools/list", 1), { server: serverFor({ url: `${fake.origin}/nope` }) }))).toMatchObject({ ok: false, body: { code: "wrong-address" } });
+  });
+
+  // 1.0.21 cause6: a server that no longer holds the session answers 404 (MCP streamable HTTP). The proxy reopens on
+  // "session-gone" alone; as wrong-address (a 502) the proxy sealed the whole server for the turn.
+  it("a 404 to a call that named a session is session-gone; with no session, or on initialize, it stays wrong-address", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none", mcpFailStatus: 404 });
+    expect(await relayMcpCall(context(rpc("tools/list", 1), { sessionId: "sess-expired" }))).toMatchObject({ ok: false, status: 502, body: { code: "session-gone" } });
+    expect(await relayMcpCall(context({ jsonrpc: "2.0", method: "notifications/initialized" }, { sessionId: "sess-expired" }))).toMatchObject({ ok: false, body: { code: "session-gone" } });
+    expect(await relayMcpCall(context(rpc("tools/list", 2)))).toMatchObject({ ok: false, body: { code: "wrong-address" } });
+    // a tool call is never sent twice on a 404: it may have run
+    expect(await relayMcpCall(context(rpc("tools/call", 4, { name: "echo", arguments: {} }), { sessionId: "sess-expired" }))).toMatchObject({ ok: false, body: { code: "wrong-address" } });
+    expect(await relayMcpCall(context(rpc("initialize", 3, {}), { sessionId: "sess-expired", server: serverFor({ transport: "http" }) }))).toMatchObject({ ok: false, body: { code: "wrong-address" } });
   });
 
   it("a cancelled caller aborts the call", async () => {

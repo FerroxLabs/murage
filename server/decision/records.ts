@@ -1,3 +1,6 @@
+import type { Store } from "../store.ts";
+import { mailboxSealed } from "../mailbox/custody.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 import { ownWriteCardAuthorized, sameOwnWriteCard } from "../own-write-holds.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DatabaseSync } from 'node:sqlite';
@@ -6,7 +9,8 @@ import { PERMISSION_CARD_KINDS, PERMISSION_CARD_KEYS, CARD_TERMINAL_FIELDS, CARD
 import { hash, canonical } from './bounds.ts';
 import { afterCommit, onRollback } from '../tx-scope.ts';
 import { BACKGROUND_BUSY_MS, setBusy } from '../db-busy.ts';
-export const APPROVAL_OBJECTS={triggers:['approval_card_insert','approval_card_presented','approval_card_update'],indexes:['approval_request_once','approval_chat_row','approval_records_settled','approval_open_created','approval_open_thread','approval_queue_ref','decision_continuations_shared_peer'],tables:['approval_records','decision_continuations']} as const;
+import { withSecureDelete } from '../secure-delete.ts';
+export const APPROVAL_OBJECTS={triggers:['approval_card_insert','approval_card_presented','approval_card_update'],indexes:['approval_request_once','approval_chat_row','approval_records_settled','approval_open_created','approval_open_thread','approval_queue_ref','decision_continuations_shared_peer','approval_open_bot_base','approval_recovery_state','approval_recovery_open'],tables:['approval_records','decision_continuations']} as const;
 export const SHARED_PEER_PREDICATE = `key GLOB '{"botId":*","id":"shared-peer:*","kind":"background-job","threadId":*'`;
 const sql=(s:string)=>"'"+s.replaceAll("'","''")+"'";
 export const cardClassSql=(x:string)=>`CASE WHEN ${x}.kind IN (${PERMISSION_CARD_KINDS.map(sql)}) THEN CASE WHEN json_valid(${x}.json) THEN CASE WHEN json_extract(${x}.json,'$.card.kind')='own-write' THEN 0 ELSE json_extract(${x}.json,${PERMISSION_CARD_KEYS.map(k=>sql('$.card.'+k)).join(',')}) IS NOT ${sql(JSON.stringify(PERMISSION_CARD_KEYS.map(()=>null)))} END ELSE 0 END ELSE 0 END`;
@@ -14,7 +18,7 @@ const termSql=(x:string)=>`CASE WHEN json_valid(${x}.json) THEN (${CARD_TERMINAL
 const resultFields=['held','answers','expired','folderTrust.late'];
 const sendReceiptSql=(value:string)=>`CASE WHEN json_extract(${value},'$.answerAsSend')=1 THEN json_remove(${value},'$.sendId','$.sentAsMessage') ELSE ${value} END`;
 const resultSql=(value:string)=>`json_remove(${sendReceiptSql(value)},${resultFields.map(k=>sql('$.'+k)).join(',')})`;
-const projectionSql=(x:string,display=false)=>`json_remove(${sendReceiptSql(`json_extract(${x}.json,'$.card')`)},${[...CARD_TERMINAL_FIELDS,'undone','held','answers','expired','folderTrust.late',...(display?CARD_DISPLAY_FIELDS:[])].map(k=>sql('$.'+k)).join(',')})`;
+const projectionSql=(x:string,display=false)=>`json_remove(${sendReceiptSql(`json_extract(${x}.json,'$.card')`)},${[...CARD_TERMINAL_FIELDS,'undone','held','answers','expired','folderTrust.late','deliveryRetry',...(display?CARD_DISPLAY_FIELDS:[])].map(k=>sql('$.'+k)).join(',')})`;
 const invalidSendReceiptSql=(x:string)=>`json_extract(${x}.json,'$.card.answerAsSend')=1 AND (json_extract(${x}.json,'$.card.sendId') IS NOT NULL OR json_extract(${x}.json,'$.card.sentAsMessage') IS NOT NULL) AND
  (NOT (${termSql(x)}) OR json_extract(${x}.json,'$.card.sendId') IS NOT ('ask-'||${x}.id) OR (json_extract(${x}.json,'$.card.sentAsMessage') IS NOT NULL AND (json_extract(${x}.json,'$.card.sentAsMessage') IS NOT 1 OR json_extract(${x}.json,'$.card.expired') IS NOT 1)))`;
 // MAIN RULING 2026-11-17T04:53Z: the one late change a terminal card takes is sentAsMessage absent/false -> true,
@@ -41,11 +45,15 @@ export function initializeApprovals(db:DatabaseSync):void {
  CREATE INDEX IF NOT EXISTS approval_open_created ON approval_records(created_at) WHERE state='open';
  CREATE INDEX IF NOT EXISTS approval_open_thread ON approval_records(thread_id,created_at) WHERE state='open';
  CREATE INDEX IF NOT EXISTS approval_queue_ref ON approval_records(thread_id,queue_kind,queue_ref) WHERE queue_ref IS NOT NULL;
+ CREATE INDEX IF NOT EXISTS approval_open_bot_base ON approval_records(bot_id,id) WHERE state='open' AND why='base';
+ CREATE INDEX IF NOT EXISTS approval_recovery_open ON approval_records(source_kind,id) WHERE state='open';
+ CREATE INDEX IF NOT EXISTS approval_recovery_state ON approval_records(source_kind,state,delivery,id);
  CREATE TABLE IF NOT EXISTS decision_continuations(key TEXT PRIMARY KEY, value TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS decision_continuations_shared_peer ON decision_continuations(key) WHERE ${SHARED_PEER_PREDICATE};`);
  if(!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='approval_card_insert'").get()){
- db.exec(`UPDATE messages SET json=json_set(json,'$.card.emailSend.draft.text','') WHERE kind='options' AND json_valid(json) AND json_extract(json,'$.card.approvalId') IS NULL AND json_type(json,'$.card.emailSend.draft.text') IS NOT NULL AND NOT (${termSql('messages')});`);
- db.exec(`UPDATE messages SET json=json_set(json,'$.card.orphaned',json('true'),'$.card.answered','Expired (upgrade)') WHERE (${cardClassSql('messages')}) AND json_extract(json,'$.card.approvalId') IS NULL AND NOT (${termSql('messages')});`);
+ // 1.0.22 item 1a: the upgrade blanks an unsent email draft's words and replaces old cards' answers: freed pages zeroed (secure_delete=ON)
+ withSecureDelete(db,()=>{db.exec(`UPDATE messages SET json=json_set(json,'$.card.emailSend.draft.text','') WHERE kind='options' AND json_valid(json) AND json_extract(json,'$.card.approvalId') IS NULL AND json_type(json,'$.card.emailSend.draft.text') IS NOT NULL AND NOT (${termSql('messages')});`);
+ db.exec(`UPDATE messages SET json=json_set(json,'$.card.orphaned',json('true'),'$.card.answered','Expired (upgrade)') WHERE (${cardClassSql('messages')}) AND json_extract(json,'$.card.approvalId') IS NULL AND NOT (${termSql('messages')});`);});
  }
  // Refresh older trigger definitions without repeating the legacy migration.
  for(const name of APPROVAL_OBJECTS.triggers){
@@ -88,11 +96,20 @@ function cache(db:DatabaseSync){let c=caches.get(db);if(!c)caches.set(db,c=new M
 export function remember(db:DatabaseSync,r:RecordRow):void{onRollback(()=>cache(db).delete(r.id));afterCommit(()=>{const c=cache(db);c.delete(r.id);c.set(r.id,{...r});let terminal=0;for(const v of c.values())if(v.state!=='open')terminal++;for(const [id,v] of c)if(terminal>1024&&v.state!=='open'){c.delete(id);terminal--;}});}
 export function readRecord(db:DatabaseSync,id:string):RecordRow|undefined{const r=db.prepare('SELECT * FROM approval_records WHERE id=?').get(id) as unknown as RecordRow|undefined;if(r)remember(db,r);return r;}
 export function findRecord(db:DatabaseSync,source:string,thread:string,key:string):RecordRow|undefined{return db.prepare('SELECT * FROM approval_records WHERE source_kind=? AND thread_id=? AND request_key=?').get(source,thread,key) as unknown as RecordRow|undefined;}
+export function openBasePage(db:DatabaseSync,botId:string,after=''):RecordRow[]{
+ return db.prepare("SELECT * FROM approval_records INDEXED BY approval_open_bot_base WHERE state='open' AND why='base' AND bot_id=? AND id>? ORDER BY id LIMIT 17").all(botId,after) as unknown as RecordRow[];
+}
+export function recoveryPage(db:DatabaseSync,source:'engine'|'service',state:'open'|'answered',after=''):RecordRow[]{
+ return (state==='open'
+  ? db.prepare("SELECT * FROM approval_records INDEXED BY approval_recovery_open WHERE state='open' AND source_kind=? AND id>? ORDER BY id LIMIT 17").all(source,after)
+  : db.prepare("SELECT * FROM approval_records INDEXED BY approval_recovery_state WHERE state='answered' AND delivery='pending' AND source_kind=? AND id>? ORDER BY id LIMIT 17").all(source,after)) as unknown as RecordRow[];
+}
 export function openRecords(db:DatabaseSync,thread?:string):RecordRow[]{return db.prepare(`SELECT * FROM approval_records WHERE state='open'${thread?' AND thread_id=?':''} ORDER BY created_at,rowid`).all(...(thread?[thread]:[])) as unknown as RecordRow[];}
 export function lookupRecord(db:DatabaseSync,thread:string,message:string){return db.prepare('SELECT * FROM approval_records WHERE thread_id=? AND chat_message_id=?').get(thread,message) as unknown as RecordRow|undefined;}
 export function insertRecord(db:DatabaseSync,r:RecordRow){const cols=Object.keys(r);db.prepare(`INSERT INTO approval_records(${cols.join(',')}) VALUES(${cols.map(()=>'?').join(',')})`).run(...Object.values(r));remember(db,r);}
 export function updateRecord(db:DatabaseSync,id:string,patch:Partial<RecordRow>){const cols=Object.keys(patch);db.prepare(`UPDATE approval_records SET ${cols.map(k=>k+'=?').join(',')} WHERE id=?`).run(...Object.values(patch),id);const r=readRecord(db,id);if(r)remember(db,r);}
-export function pruneRecords(db:DatabaseSync,now=Date.now()):number{return Number(db.prepare("DELETE FROM approval_records WHERE id IN(SELECT id FROM approval_records INDEXED BY approval_records_settled WHERE state <> 'open' AND settled_at < ? ORDER BY settled_at LIMIT 500)").run(now-30*86400000).changes);}
+// 1.0.22 item 1a: settled approval records hold typed answers and draft text: retention deletes them at secure_delete=ON
+export function pruneRecords(db:DatabaseSync,now=Date.now()):number{return withSecureDelete(db,()=>Number(db.prepare("DELETE FROM approval_records WHERE id IN(SELECT id FROM approval_records INDEXED BY approval_records_settled WHERE state <> 'open' AND settled_at < ? ORDER BY settled_at LIMIT 500)").run(now-30*86400000).changes));}
 export const isPermission=(m:any):boolean=>PERMISSION_CARD_KINDS.includes(m?.kind)&&!!m?.card&&PERMISSION_CARD_KEYS.some(k=>m.card[k]!=null);
 export const isTerminal=(m:any):boolean=>CARD_TERMINAL_FIELDS.some(k=>!!m?.card?.[k]);
 export class CardAuthorizationViolation extends Error {}
@@ -135,6 +152,13 @@ function signedActionMatches(r:RecordRow,card:any):boolean {
   const legacy=Object.fromEntries(Object.entries(original).filter(([key])=>![...CARD_TERMINAL_FIELDS,...CARD_DISPLAY_FIELDS,'actionHash'].includes(key as any)));
   return r.action_hash===hash(legacy)&&canonical(actionProjection(original))===canonical(action);
  }catch{return false;}
+}
+export function decisionMessage(db: DatabaseSync, store: Pick<Store, "messageById">,
+ record: Pick<RecordRow, "thread_id" | "chat_message_id" | "id">, options?: { buildIndex: false }) {
+ if (!mailboxSealed(db, record.thread_id)) return store.messageById(record.thread_id, record.chat_message_id, options);
+ const row = db.prepare("SELECT seq,json FROM messages WHERE thread_id=? AND id=? AND json_extract(json,'$.card.approvalId')=?")
+  .get(record.thread_id, record.chat_message_id, record.id) as { seq: number | null; json: string } | undefined;
+ return row ? rowToMessage(row) : undefined;
 }
 export function assertCardAuthorized(db:DatabaseSync,thread:string,message:any,prior?:any):void{
  if(message?.card?.kind==='own-write'){if(!ownWriteCardAuthorized(db,thread,message))throw new CardAuthorizationViolation('writer-card-without-hold');if(prior)assertCardPatch(prior,message);return;}
@@ -202,6 +226,7 @@ export function readContinuationRecord(db:DatabaseSync,key:string):string|undefi
 export function deleteContinuationRecord(db:DatabaseSync,key:string){db.prepare('DELETE FROM decision_continuations WHERE key=?').run(key);}
 export function recordStats(db:DatabaseSync){const c=cache(db);return {cache:c.size,open:[...c.values()].filter(v=>v.state==='open').length};}
 
+export function failedEngineAnswers(db:DatabaseSync):RecordRow[]{return db.prepare("SELECT * FROM approval_records WHERE state='answered' AND delivery='failed' AND source_kind='engine'").all() as unknown as RecordRow[];}
 export function pendingEngineAnswers(db:DatabaseSync):RecordRow[]{return db.prepare("SELECT * FROM approval_records WHERE state='answered' AND delivery='pending' AND source_kind='engine'").all() as unknown as RecordRow[];}
 
 /** Lazy historical imports are non-actionable before the INSERT seam. */

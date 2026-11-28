@@ -17,6 +17,13 @@ export function emitInboxChanged(next = 1): void {
   for (const listener of [...listeners]) { try { listener(scale); } catch { /* one listener never starves another */ } }
 }
 
+/** A resolve (approve, answer, snooze, keep, dismiss) just changed what is owed: every Inbox number re-reads now, through
+ *  the same listeners the server's `inbox.changed` frame reaches, without waiting for the frame, the slow poll or a focus.
+ *  The poll scale is the server's to say, so it is left as it is. */
+export function refreshInboxCounts(): void {
+  for (const listener of [...listeners]) { try { listener(scale); } catch { /* one listener never starves another */ } }
+}
+
 export function onInboxChanged(listener: Listener): () => void {
   listeners.add(listener);
   return () => { listeners.delete(listener); };

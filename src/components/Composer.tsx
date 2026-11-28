@@ -1,16 +1,14 @@
-import { LearningConsentNotice } from "./LearningConsentNotice";
 import { BotReviewSheet } from './BotReviewSheet';
 import { useSlashSkills } from "@/lib/use-slash-skills";
 import { CallMeWhenDone } from "./CallMeWhenDone";
-import { track } from "@/lib/analytics";
 import { closedComposerLine } from "@/lib/shared-teams";
 import { FOCUS_COMPOSER_EVENT } from "./useTrayIntents";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Clock, ListChecks, Megaphone, Mic, Paperclip, Sparkles, Square, Target, Terminal, Users, X } from "lucide-react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type SetStateAction } from "react";
+import { ArrowUp, BookOpen, ChevronDown, Clock, ListChecks, Megaphone, Mic, Paperclip, Sparkles, Square, Target, Terminal, Users, X } from "lucide-react";
 import { POST_IN_LABEL, postInOffered, postInTooltip, postPickFields, type VenuePickState } from "@/lib/venue-post-pick";
 import { useWarmIntent } from "@/hooks/use-warm-intent";
-import { api, olderOpenCards, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
+import { api, olderOpenCards, openIntakeQuestion, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { ComposerMenuRow } from "./ComposerMenuRow";
 import { mentionRowDescription } from "@/lib/mentions";
@@ -19,7 +17,7 @@ import { enterSends, imeComposing } from "@/lib/composer-enter";
 import { currentSendKey, isMacPlatform, sendKeyName, subscribeSendKey } from "@/lib/send-key";
 import { COARSE_POINTER_QUERY, useCoarsePointer, useNarrowViewport } from "@/lib/media-query";
 import { newSendId } from "@/lib/send-id";
-import { openIntakeCard, replyAlongside } from "@/lib/onboarding-intake";
+import { replyAlongside } from "@/lib/onboarding-intake";
 import { surface } from "@/lib/surface";
 
 /** Shown when a sent message could not also be recorded as the answer to the open setup question. */
@@ -93,8 +91,12 @@ import { inPhoneSheet } from "@/components/phone/sheet-layer";
 import { ComposerReplyStrip } from "./ReplyQuote";
 import { escapeCancelsReply } from "@/lib/replies";
 import { t } from "@/lib/i18n";
+import { fileUploadErrorCopy } from "@/lib/attachment-upload-copy";
+import { fileAttachmentFromFile } from "@/lib/composer-file-upload";
 import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { ComposerPlusMenu } from "./ComposerPlusMenu";
+import { AutomaticModeNotice } from "./AutomaticModeNotice";
+import { hasNativeUserAgent } from "@/lib/native-shell";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import {
   cleanupEnabled,
@@ -123,8 +125,11 @@ import { AudioAttachmentIntake } from "./AudioAttachmentIntake";
 import { ComposerSendNotice, type ComposerSendNoticeState } from "./ComposerSendNotice";
 import { fluxBridge, readFluxStatus, saveFluxKey } from "@/lib/flux-key-paste";
 import { isMessageSizeRefusal, messageIsTooLarge, messageTextBytes } from "../../shared/message-limits";
+import { isFuigoPendingRefusal } from "../../shared/fuigo-pending";
 import { RoutineSavedNotice } from "./RoutineGrantParts";
 import { clearRoutineSaved, useRoutineSaved } from "@/lib/routine-grant-saved";
+import { teachIntent, teachTaskPrefill, type TeachIntent } from "../../shared/teach-intent";
+import { findTask } from "@/lib/task-window";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -159,6 +164,21 @@ const LEARN_COMMAND: ComposerSlashCommand = {
   description: "Teach a reusable workflow from this conversation",
 };
 
+/** TEACH-ENTRY D9.3: listed only in a direct bot chat where the recorder is available. */
+const teachCommand = (botName: string): ComposerSlashCommand => ({
+  id: "teach",
+  label: "/teach",
+  description: `Show ${botName} a task on your screen`,
+});
+
+/** TEACH-ENTRY D9.3: only ChatView passes this. Without it the composer never swallows /teach, never flags a send and never
+ *  draws a card (rooms, Today). `onOffer` draws the card and answers whether it did. */
+export interface ComposerTeachOffer {
+  botName: string;
+  available: boolean;
+  onOffer: (task: string, via: "slash" | "phrase", sendId?: string) => boolean;
+}
+
 // The guided first run, reachable from every composer. It is always offered:
 // on a finished workspace the same list comes back with its ticks already in
 // place and every finished step offering Change, so there is no state in
@@ -169,13 +189,16 @@ const SETUP_COMMAND: ComposerSlashCommand = {
   description: "Walk through setting up your bots, and pick up where you left off",
 };
 
+/** F33: the two names a fresh install's chip uses, the same as the bot settings' two choices (BotPermissionDefault.tsx). */
+const automaticLevelName = (mode: "full" | "ask"): string => mode === "full" ? "Automatic" : "Ask first";
+
 /** Composer chip for the approval level: Ask, Auto, Full access or No
  * limits. The same `autoApprove` bit as the profile switch, plus
  * `fullAccess` and `noLimits` above it. The
  * chip only changes its name, not its color. */
 function PermissionModeSelector({ bot, onSetMode, routine }: {
   bot: Bot;
-  onSetMode: (mode: PermissionMode) => void;
+  onSetMode: (mode: PermissionMode, confirmed?: boolean, oneClick?: boolean) => void;
   /** This is a routine's own conversation: the chip shows, and sets, the
    * level that routine's runs are judged at. */
   routine?: { name: string; mode: PermissionMode };
@@ -202,9 +225,40 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [open]);
 
+  // F33 (MAIN RULINGS, Sean 11-27): a conversation at Automatic (Full access) or Ask first shows that name, and one click switches
+  // between the two (a switch up to Automatic shows the confirm card only for a first acknowledgement or a bot on this computer);
+  // the arrow opens every level.
+  // A routine's own conversation, Auto and No limits keep the menu chip.
+  const toggle = !routine && (current === "full" || current === "ask") ? (current === "full" ? "ask" : "full") : null;
+  const chipClass = "relative flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary after:absolute after:-inset-1.5 after:content-[''] hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent";
+
   return (
     <div className="relative flex items-center" ref={wrapperRef}>
-      <button
+      {toggle ? <>
+        <button
+          type="button"
+          aria-label={`${automaticLevelName(current as "full" | "ask")}. Switch to ${automaticLevelName(toggle)}`}
+          data-level-toggle={current}
+          data-coach="level-chip"
+          disabled={bot.busy}
+          onClick={() => { setOpen(false); onSetMode(toggle, false, true); }}
+          className={cn(chipClass, "rounded-r-none border-r-0 pr-2")}
+        >
+          <PermissionModeIcon mode={current} size={14} className="opacity-70" />
+          {automaticLevelName(current as "full" | "ask")}
+        </button>
+        <button
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="Every approval level"
+          disabled={bot.busy}
+          onClick={() => setOpen((value) => !value)}
+          className={cn(chipClass, "rounded-l-none px-1.5")}
+        >
+          <ChevronDown size={13} aria-hidden="true" />
+        </button>
+      </> : <button
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -214,11 +268,11 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
         data-coach="level-chip"
         disabled={bot.busy}
         onClick={() => setOpen((value) => !value)}
-        className="relative flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary after:absolute after:-inset-1.5 after:content-[''] hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        className={chipClass}
       >
         <PermissionModeIcon mode={current} size={14} className="opacity-70" />
         {currentEntry.chip}
-      </button>
+      </button>}
 
       {open && (
         <PermissionLevelMenu
@@ -319,7 +373,10 @@ export function Composer({
   locked: setupLocked = false,
   compact,
   onSent,
+  teachOffer,
 }: {
+  /** TEACH-ENTRY D9.3: the direct bot chat's Teach card hook (ChatView only). */
+  teachOffer?: ComposerTeachOffer;
   /** Today's Tell box (1.0.18): the same composer and send, drawn small. Its placeholder is the one given here;
    *  no toolbar, no attaching, and no slash menu (so none of the menu's reads). */
   compact?: { placeholder: string; sendLabel: string };
@@ -340,6 +397,12 @@ export function Composer({
   const closedWork = !group && bot ? closedComposerLine(bot) : null;
   const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot) || closedWork !== null;
   const { state, dispatch, refreshAfterKey } = useStore();
+  // TEACH-ENTRY D9.1: with no task in the words, the chat's own task title (never the default "New chat"), else empty.
+  const teachTaskFromChat = (task: string): string => {
+    if (task) return task;
+    const title = bot ? findTask(bot, bot.threadId)?.title?.trim() ?? "" : "";
+    return title && title !== "New chat" ? teachTaskPrefill(title) : "";
+  };
   // The words stay in the box until the server acknowledges the send (they are the
   // person's, and a failed admission must never erase them). While one is out, the box is
   // read-only and a second press cannot start another.
@@ -643,6 +706,7 @@ export function Composer({
     ) {
       available.push(LEARN_COMMAND);
     }
+    if (teachOffer?.available && !group) available.push(teachCommand(teachOffer.botName));
     available.push(SETUP_COMMAND);
     const query = slash.query.toLowerCase();
     return available.filter(
@@ -651,7 +715,7 @@ export function Composer({
         command.id.startsWith(query) ||
         command.description.toLowerCase().includes(query),
     );
-  }, [slash, dismissedSlashAt, group, members, bot, state.config, state.instances]);
+  }, [slash, dismissedSlashAt, group, members, bot, state.config, state.instances, teachOffer?.available, teachOffer?.botName]);
   // The addressed bot's engine commands, read from the harness each time the
   // menu opens (it caches what the engine last reported). One-to-one chats
   // only: in a room the message can go to several bots on different engines.
@@ -779,8 +843,10 @@ export function Composer({
     // /setup is not a message at all. It takes them to their chief of staff,
     // where the first run lives, and shows the progress rail beside it. The
     // draft is left empty, so nothing is ever sent to a bot.
+    // /teach is not a message either: the draft clears and the Teach card appears at the end of the chat (D9.3).
     const replacement = command.id === "learn" ? "/learn " : "";
     if (command.id === "setup") openFirstRun();
+    if (command.id === "teach") teachOffer?.onOffer(teachTaskFromChat(""), "slash");
     const next = replaceComposerSlashTrigger(text, slash, replacement);
     editText(next.text);
     setCaret(next.caret);
@@ -879,6 +945,15 @@ export function Composer({
     else if (bot) dispatch({ type: "cancelQueued", botId: bot.id, queueId });
   };
   const fileInput = useRef<HTMLInputElement>(null);
+  // Android's native chooser ignores the capture attribute.
+  const androidApp = hasNativeUserAgent() && navigator.userAgent.endsWith(" (android)");
+  const cameraInput = useRef<HTMLInputElement>(null);
+  const photosInput = useRef<HTMLInputElement>(null);
+  const pickedFrom = (event: ChangeEvent<HTMLInputElement>) => {
+    void pickFiles(event.currentTarget.files).finally(refocusInput);
+    // Clearing the selection lets a second pick of the same file fire change.
+    event.currentTarget.value = "";
+  };
   // which level the Auto-on-this-computer warning is confirming, if open
   const [autoWarn, setAutoWarn] = useState(false);
   // the one-time Full access warning, and whether it also covers this computer
@@ -906,12 +981,16 @@ export function Composer({
     getPath: pathForFile,
     uploadImage: file => imageAttachmentFromFile(file, threadId),
     queueAudio: queueAudioFile,
+    fileError: fileUploadErrorCopy,
+    uploadFile: fileAttachmentFromFile,
     onAdd: addUploadedAttachments,
     // Keep file-specific failures beside the attachments. A successful
     // overlapping intake must not erase an earlier failure before it is read.
     onNotice: setAttachmentNotice,
   });
-  const setMode = (mode: PermissionMode, confirmed = false) => {
+  /** `oneClick`: the chip's Ask first -> Automatic switch (F33). It skips the confirm card only when that card would warn about
+   *  nothing new: the bot already acknowledged Full access and does not drive this computer. Otherwise the card shows as before. */
+  const setMode = (mode: PermissionMode, confirmed = false, oneClick = false) => {
     if (!autoBot) return;
     const platform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
     // UX-TRUST-MOMENTS-1012 3.3: a higher pick to Full access or No limits is
@@ -924,7 +1003,9 @@ export function Composer({
       setFullWarn({ onThisComputer: autoMountsThisComputer({ platform, computer: autoBot.computer }), level: "unlimited" });
       return;
     }
-    if (!confirmed && (mode === "full" || mode === "unlimited") && needsLevelConfirm(current, mode)) {
+    const acknowledged = oneClick && mode === "full" && !conversationRoutine && autoBot.fullAccessAcknowledgedAt !== undefined
+      && !autoNeedsLocalComputerWarning({ platform, computer: autoBot.computer, autoApprove: autoBot.autoApprove });
+    if (!confirmed && !acknowledged && (mode === "full" || mode === "unlimited") && needsLevelConfirm(current, mode)) {
       setLevelConfirm({ mode, keep: current, routine: conversationRoutine?.name, onThisComputer: autoMountsThisComputer({ platform, computer: autoBot.computer }) });
       return;
     }
@@ -1047,6 +1128,17 @@ export function Composer({
     }
     const t = composeMessage(effectiveText, attachments);
     if (!t) return;
+    // TEACH-ENTRY D9.1-D9.3: one pure read of the message being sent (never the history). A detector failure is no card.
+    let teach: TeachIntent | null = null;
+    if (teachOffer && bot && !group) {
+      try { teach = teachIntent(effectiveText, teachOffer.botName); } catch { teach = null; }
+    }
+    if (teach?.via === "slash" && teachOffer?.available) {
+      // Not sent to the bot (like /setup): the draft clears and the card appears.
+      editText("");
+      teachOffer.onOffer(teachTaskFromChat(teach.task), "slash");
+      return;
+    }
     // Checked here, before any request and before the draft is cleared. An
     // over-limit message used to leave the renderer, come back as a 413 the
     // store showed for six seconds, and land in the box again with nothing
@@ -1088,7 +1180,13 @@ export function Composer({
         }
       }
     });
-    const failedSend = (error: unknown) => refusedForSize(error);
+    // CLOUD-FUIGO-FIRST: a send refused as pending shows the approved ready line; the words stay in the box (its record).
+    const refusedPending = (error: unknown) => {
+      if (!isFuigoPendingRefusal(error)) return false;
+      setSendNotice({ kind: "fuigo-pending" });
+      return true;
+    };
+    const failedSend = (error: unknown) => refusedForSize(error) || refusedPending(error);
     const outboxDraft = {
       draftId,
       attemptId,
@@ -1110,7 +1208,6 @@ export function Composer({
         mode: groupMode,
         onError: failedSend,
       });
-      track("message_sent", { room: true, mode: effectiveChannelMode, queued: busy });
     } else if (bot) {
       // A SETUP QUESTION ON THE TABLE HEARS THE ANSWER. IT DOES NOT TAKE IT.
       //
@@ -1144,12 +1241,15 @@ export function Composer({
       // an error on a message that did. Through the browser door there is no
       // alongside answer at all (PHONE-INTAKE-NOTICE, replyAlongside): the
       // door refuses the intake POST, so it could only fail.
-      const question = openIntakeCard(visibleMessages(bot));
+      const question = openIntakeQuestion(bot);
+      // The card is drawn under this message only on the Mac desktop app; the flag says so, and only when it was drawn.
+      const teachCard = teach?.via === "phrase" && teachOffer?.available === true && teachOffer.onOffer(teachTaskFromChat(teach.task), "phrase", sendId);
       dispatch({
         type: "send",
         botId: bot.id,
         text: requestText,
         sendId,
+        ...(teachCard ? { teachCard: true as const } : {}),
         outboxDraft,
         replyToId,
         ...pickFields,
@@ -1161,7 +1261,6 @@ export function Composer({
           if (outcome === "recorded") setIntakeNotice(null);
           else if (outcome === "refused") setIntakeNotice(INTAKE_NOT_RECORDED);
         });
-      track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer });
     }
     };
     void beginDraftSend(draftId, shown, (sendId, content): DraftOutboxEntry => ({
@@ -1306,7 +1405,6 @@ export function Composer({
     : <BotReviewSheet botIds={[bot.id]} />;
   return (
     <div data-composer className="pointer-events-none relative px-5 pb-3" data-composer-compact={compact ? "" : undefined}>
-      <LearningConsentNotice />
       {bot && <div className="pointer-events-auto mb-2 empty:hidden"><LazyBoundary inline onRetry={SpendPauseChunk.retry}><Suspense fallback={null}><SpendPauseChunk.Component model={bot.modelSelection.model} connectionId={bot.modelSelection.connectionId} onOpenUsage={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })} /></Suspense></LazyBoundary></div>}
       {/* No fill or hairline on this wrapper — those were the black frame
           in the pill's top corners. The dock overlays the transcript. */}
@@ -1348,6 +1446,9 @@ export function Composer({
           className="pointer-events-auto mb-2 w-full"
         />
       )}
+      {/* F33 (MAIN RULINGS, Sean 11-27): a fresh install's one Automatic notice, inline directly above the message box; an
+          upgraded install never has the mark. Today's small Tell box does not carry it. */}
+      {!compact && <AutomaticModeNotice />}
       <div className="pointer-events-auto relative w-full">
         {failedSends.map((failed) => (
           <div
@@ -1540,6 +1641,11 @@ export function Composer({
         <div className={phoneComposer ? "flex items-end gap-2" : "contents"}>
         {!compact && phoneComposer && !locked && !approval && (
           <ComposerPlusMenu
+            sources={{
+              camera: engineSupportsImages && !androidApp ? () => cameraInput.current?.click() : undefined,
+              photos: engineSupportsImages ? () => photosInput.current?.click() : undefined,
+              files: () => fileInput.current?.click(),
+            }}
             onAttach={() => fileInput.current?.click()}
             attachDisabled={sendPending}
             goal={group && !group.dm ? { on: effectiveChannelMode === "goal", disabled: sendPending, onToggle: toggleGoal } : undefined}
@@ -1584,14 +1690,13 @@ export function Composer({
             type="file"
             multiple
             className="hidden"
-            onChange={(e) => {
-              // The picker leaves focus on the attach button; hand it back
-              // to the draft once the files land (upstream #1599).
-              void pickFiles(e.target.files).finally(refocusInput);
-              // same file twice in a row still fires onChange
-              e.target.value = "";
-            }}
+            onChange={pickedFrom}
           />
+          {/* Keep pending picker inputs mounted when the viewport rotates. */}
+          {!compact && desktopSurface === false && <>
+            {!androidApp && <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="hidden" data-composer-camera-input onChange={pickedFrom} />}
+            <input ref={photosInput} type="file" accept="image/*" multiple className="hidden" data-composer-photos-input onChange={pickedFrom} />
+          </>}
           <textarea dir="auto"
           ref={inputRef}
           rows={1}
@@ -1741,11 +1846,11 @@ export function Composer({
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
           aria-invalid={sendNotice ? true : undefined}
           aria-describedby={sendNotice ? sendNoticeId : undefined}
-            className={cn(compact ? "max-h-24" : "max-h-[9rem]", "min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]", approval && "hidden", phoneComposer && !compact && "keep-font-size min-h-11 max-h-[calc(9rem+20px)] self-center py-[10px] text-[16px]")}
+            className={cn(compact ? "max-h-24" : "max-h-[9rem]", "min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]", approval && "hidden", phoneComposer && !compact && "keep-font-size min-h-11 max-h-[calc(9rem+20px)] self-center py-[10px] text-[16px]", phoneComposer && compact && "min-h-11 self-center py-[10px]")}
           />
           {/* One controls row: chips on the left, send and dictation on the
               right, sharing a baseline at every composer height. */}
-          <div data-composer-controls className={cn("flex items-center gap-1", phoneComposer && "contents", approval && "hidden", compact && "max-[760px]:[&_button:not([data-tell-send])]:size-11")}>
+          <div data-composer-controls className={cn("flex items-center gap-1", phoneComposer && "contents", phoneComposer && !compact && "[&_button:not([role=alert]_button)]:mb-1.5", approval && "hidden", compact && "max-[760px]:[&_button:not([data-tell-send])]:size-11")}>
           {/* Compact (Today's Tell box): no toolbar. */}
           {!compact && <>
           {!locked && !phoneComposer && (

@@ -9,8 +9,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
-const settings = readFileSync(fileURLToPath(new URL("./SettingsPanel.tsx", import.meta.url)), "utf8");
+const settings = settingsPanelSource();
 const identityStart = settings.indexOf('<SettingsSection id="identity" active={section}>');
 const identityEnd = settings.indexOf("</SettingsSection>", identityStart);
 const identity = settings.slice(identityStart, identityEnd);
@@ -32,7 +33,9 @@ describe("bot Appearance placement", () => {
   it("is not in Overview any more", () => {
     const overviewAt = settings.indexOf('<SettingsSection id="overview" active={section}>');
     expect(overviewAt).toBeGreaterThan(-1);
-    expect(settings.slice(overviewAt, identityStart)).not.toContain("<BotProfileAvatarCard");
+    const overviewPage = readFileSync(fileURLToPath(new URL("./bot-pages/BotOverviewPage.tsx", import.meta.url)), "utf8");
+    expect(overviewPage).toContain('<SettingsSection id="overview" active={section}>');
+    expect(overviewPage).not.toContain("<BotProfileAvatarCard");
   });
 
   it("makes the avatar viewable through the shared lightbox", () => {

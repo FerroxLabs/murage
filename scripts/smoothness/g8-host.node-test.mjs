@@ -2,17 +2,18 @@
 // command stand-in. Exercise resource cleanup without touching a real daemon.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const host = fileURLToPath(new URL('./g8-host.sh', import.meta.url));
 const digest = value => createHash('sha256').update(value).digest('hex');
 function setup(t) {
   const root = mkdtempSync(join(tmpdir(), 'g8-host-test-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => safeWipeSync(root));
   const label = 'v7-test', lane = join(root, `smooth-${label}`);
   const cache = join(root, 'gp18-nm', digest('lock\n').slice(0, 16));
   const cage = join(root, 'cage/linux-x64');

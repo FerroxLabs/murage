@@ -8,6 +8,8 @@ import { createBrowserExtensionService, handoffContinueText } from "./browser-ex
 import type { BrowserExtensionCommand, BrowserExtensionHello, BrowserExtensionResponse } from "../shared/browser-extension-protocol.ts";
 import { privateTestDirectory, writePrivateTestFile } from "./testing/private-test-dir.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
+import { fixture } from "./decision/fixture.ts";
+import { BrowserExtensionEngine } from "./browser-extension-engine.ts";
 
 const A = "https://fixture.test";
 const cleanup: string[] = [];
@@ -268,6 +270,29 @@ describe("C2b SEC-006: deliver() output goes through OUT's redactor", () => {
   });
 });
 
+// cause22 GROUP E (b) round 3, MAIN-RULING 2026-11-22T21:44:35Z redact-parse-error (a): page text the parser had to recover is the
+// withheld placeholder, never its source after the text cleaner alone (the parser drops a duplicate attribute from the tree that
+// is walked, so the source is not what was cleaned). Entry: service.dispatch -> deliver() (browser-extension-service.ts).
+describe("cause22-E round 3: deliver() withholds page text that does not parse cleanly", () => {
+  const read = async (text: string) => {
+    const w = await world();
+    const service = await w.open({ createEngine: () => ({ resolveTab: async () => undefined, event() {}, async close() {}, async call() { return { content: [{ type: "text", text }] }; } }) as never });
+    const { bindingId } = await w.bind(service);
+    return JSON.stringify(await service.dispatch(bindingId, "agent_browser_snapshot", {}, () => true));
+  };
+  it.each([
+    ["a duplicate event handler", '<p onclick="" onclick="fixtureCanaryHandlerTb48()">Recovered words</p>', "fixtureCanaryHandlerTb48"],
+    ["a duplicate title with a quoted value", '<p title="x" title="password: &quot;fixtureplainvalueRm62Xd&quot;">Recovered words</p>', "fixtureplainvalueRm62Xd"],
+  ])("PE1 %s the parser dropped is never returned: the text is the placeholder", async (_name, page, canary) => {
+    const out = await read(page);
+    expect({ canary: out.includes(canary), words: out.includes("Recovered words"), placeholder: out.includes("[hidden]") }).toEqual({ canary: false, words: false, placeholder: true });
+  });
+  it("PE1 control: markup that parses cleanly keeps its words", async () => {
+    const out = await read('<p title="plain">Shown words</p>');
+    expect({ words: out.includes("Shown words"), placeholder: out.includes("[hidden]") }).toEqual({ words: true, placeholder: false });
+  });
+});
+
 describe("C2b panel phase: waiting for the owner", () => {
   const panelOf = (w: any, op: string) => (w.calls.filter((c: any) => c.operation === op).at(-1)?.params as any)?.panel;
   it("a hand-over reports phase waiting; an active task with no card reports none", async () => {
@@ -286,5 +311,50 @@ describe("C2b panel phase: waiting for the owner", () => {
     expect(panelOf(w, "bind").phase).toBe("waiting");
     waiting = false; await service.stop((await w.bind(service)).bindingId);
     expect(w.calls.filter((c: any) => c.operation === "status" && c.params?.panel).every((c: any) => c.params.panel.phase === undefined)).toBe(true);
+  });
+});
+
+// OVERREACH #4 (MAIN 2026-11-26, Sean: never over-strict on the owner's own turns): the owner's own turn reads their own pages as they
+// are at every access level; another person's thread keeps page-output redaction. Entry: service.dispatch -> deliver() with the real
+// decision authority (readTurnPolicy), browser-extension-service.ts redactPageOutput call.
+describe("OVERREACH #4 owner turns read their own page unredacted", () => {
+  const CARD = "4111 1111 1111 1111";
+  const readAs = async (level: "ask" | "auto" | "full" | "unlimited", owner: boolean) => {
+    const f = fixture(level); f.setOwner(owner);
+    const w = await world();
+    const service = await w.open({
+      authorityFor: () => ({ claim: f.claim, proof: {}, identity: { threadId: "t", generation: "g" } }),
+      createEngine: () => ({ resolveTab: async () => undefined, event() {}, async close() {}, async call() { return { content: [{ type: "text", text: `Card on file: ${CARD}\nOrder 2026 shipped.` }] }; } }) as never,
+    });
+    const { bindingId } = await w.bind(service);
+    return JSON.stringify(await service.dispatch(bindingId, "agent_browser_snapshot", {}, () => true));
+  };
+  it.each(["ask", "auto", "full", "unlimited"] as const)("O4-owner-%s the owner's own turn sees the card number", async level => {
+    expect(await readAs(level, true)).toContain(CARD);
+  });
+  it.each(["ask", "auto", "full"] as const)("O4-wiring-%s the real engine built from the service's options reads unredacted only on the owner turn", async level => {
+    const seen: Record<string, boolean | undefined> = {};
+    for (const owner of [true, false]) {
+      const f = fixture(level); f.setOwner(owner);
+      let real: BrowserExtensionEngine | undefined;
+      const w = await world();
+      const service = await w.open({
+        authorityFor: () => ({ claim: f.claim, proof: {}, identity: { threadId: "t", generation: "g" } }),
+        // The default factory's own expression: the real engine class built from the options the service produced.
+        createEngine: (engineOptions: any) => { real = new BrowserExtensionEngine(engineOptions); return { resolveTab: async () => undefined, event() {}, async close() {}, async call() { return { content: [{ type: "text", text: "ok" }] }; } } as never; },
+      });
+      const { bindingId } = await w.bind(service);
+      await service.dispatch(bindingId, "agent_browser_snapshot", {}, () => true);
+      // The real engine's read layer decides redaction with the callback it was given.
+      const layer = real!.readLayer({ profileId: "profile", tabId: 1, frameId: "main", navigationEpoch: 1, origin: A, url: A + "/" } as never, () => A) as any;
+      seen[String(owner)] = layer.opts.noLimits?.();
+    }
+    expect(seen.true).toBe(true);
+    expect(seen.false).toBe(false);
+  });
+  it.each(["ask", "full"] as const)("O4-other-%s another person's thread still gets the card number hidden", async level => {
+    const out = await readAs(level, false);
+    expect(out).not.toContain("4111");
+    expect(out).toContain("Order 2026 shipped.");
   });
 });

@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Approval HTTP and task allowance producer owner: tri3-g2. Native receipt owner: tri3-g1.
-import { expect, it, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { expect, it, onTestFinished, vi } from 'vitest';
+import { appendDecision, flushDecisionLog, readDecisions } from './decision-log.ts';
 import { wiring } from './decision-wiring/fixture.ts';
+import { removeTempDir } from './testing/cleanup.ts';
 
 it.each(['open-allow', 'replayed-allow', 'open-deny', 'unoffered-scope', 'failed-delivery'])('registered native answers retain only an accepted fresh task allowance: %s', async mode => {
   const card = { taskAllowKey: 'stop:delete:fixture-folder', cardClass: 'stop-line', requestId: 'request' };
@@ -10,7 +15,10 @@ it.each(['open-allow', 'replayed-allow', 'open-deny', 'unoffered-scope', 'failed
   const hits = new Map([['thread:request', { path: 'fixture-folder' }]]);
   const original = hits.get('thread:request');
   const registered = { state: mode === 'replayed-allow' ? 'answered' : 'open', ref: {} };
-  const { deliverAnswer } = wiring(['deliverAnswer'], {
+  const DATA_DIR = mkdtempSync(join(tmpdir(), 'g2-task-allowance-'));
+  onTestFinished(async () => { await flushDecisionLog(DATA_DIR); await removeTempDir(DATA_DIR); });
+  const { deliverAnswer } = wiring(['deliverAnswer', 'noteUnreachableAnswer'], {
+    DATA_DIR, appendDecision,
     HIGHLEVEL_REQUEST_PREFIX: 'highlevel-', RELEASE_SUPERSEDED: 'superseded', publishAnswerAllowed: () => true,
     homeExecutionGate: undefined, assertWorkResume: () => {}, askMessageByRequest: new Map([['thread:request', 'card']]),
     store: { messageById: () => row, patchMessage: vi.fn(), appendMessage: vi.fn() },
@@ -31,4 +39,9 @@ it.each(['open-allow', 'replayed-allow', 'open-deny', 'unoffered-scope', 'failed
     expect(recipients).toHaveBeenCalledExactlyOnceWith('bot', original, 'thread');
     expect(receipt.taskAdded).toEqual([card.taskAllowKey]);
   } else { expect(grant).not.toHaveBeenCalled(); expect(receipt.taskAdded).toBeUndefined(); }
+  await flushDecisionLog(DATA_DIR);
+  const decision = mode === 'open-deny' ? 'user-denied' : 'user-approved';
+  expect(readDecisions(DATA_DIR, 10)).toMatchObject(mode === 'replayed-allow' || mode === 'failed-delivery' ? [] : [
+    { threadId: 'thread', requestId: 'request', botId: 'bot', decision, source: 'user' },
+  ]);
 });

@@ -228,6 +228,9 @@ export interface ClosedOptions {
   ignoreHistoryLock?: boolean;
   /** the real paths of the programs Murage is configured to run for this engine (a renamed copy still counts as the engine) */
   identities?: readonly string[];
+  /** the conversation being deleted (its working folders and session ids): a default-home process that names one in its arguments, or
+   * works in or holds a file of one of the folders, holds the home (homeScope) */
+  conversation?: { folders: readonly string[]; needles: readonly string[] };
 }
 
 /** A process list that is not the whole machine is no answer: it must hold this process and, where a parent always exists, its parent. */
@@ -361,6 +364,9 @@ const scopeKeys = (home: string): string[] => {
 //   codex         CODEX_HOME, else <user home>/.codex; and CODEX_SQLITE_HOME when it is set
 //   fuigo, grok   by the process's own name: fuigo FUIGO_HOME or <user home>/.fuigo, grok GROK_HOME or <user home>/.grok (both when the
 //                 name is neither, or it is the program Murage is configured to run); FUIGO_HOME and GROK_HOME whenever they are set
+// delholder-1024 (MAIN, Sean's 1.0.22 logs 11-25..27): on macOS and Linux a home that comes only from the user's home (HOME: the
+// owner's own CLI in a terminal) holds it only when the process really has it open, its working folder inside it or a file under it
+// open (holdersClearOf). An engine variable that names the home still holds it outright. Windows keeps the rule above (no open-file proof).
 // Fail closed (the process counts, as before this rule): the addon cannot read its environment (another user's, protected, gone, an
 // older build), it has no user home and no engine variable, a variable is a relative path, it was matched as a desktop application
 // (whose engine home is not in its environment), or the engine is not one of these four. Paths are compared as written and by real
@@ -409,7 +415,7 @@ function pathKeys(path: string): string[] {
 const related = (a: string, b: string): boolean => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 
 /** For engineState: does a process that IS the engine use `home` (or the folder of one of `dbs`)? Undefined: every one counts. */
-export function homeScope(engine: string, home: string, dbs: readonly string[] = [], identities: readonly string[] = []): ((proc: NativeProcess) => boolean) | undefined {
+export function homeScope(engine: string, home: string, dbs: readonly string[] = [], identities: readonly string[] = [], conversation?: ClosedOptions["conversation"]): ((proc: NativeProcess) => boolean) | undefined {
   if (!HOME_SCOPED_ENGINES.includes(engine)) return undefined;
   const matcher = MATCHERS[engine]!;
   const api = pathApi();
@@ -426,9 +432,23 @@ export function homeScope(engine: string, home: string, dbs: readonly string[] =
     const configured = [exe, ...(proc.argv ?? []).slice(0, 4)].some((item) => typeof item === "string" && item !== "" && known.some((path) => path === identityKey(item) || (looksLikePath(item) && path === identityKey(exclOps.realpathOf(item) ?? ""))));
     const homes = homesOfProcess(engine, environment, names, configured);
     if (!homes) return true;
-    return homes.flatMap(pathKeys).some((key) => targets.some((target) => related(key, target)));
+    const onHome = (paths: readonly string[]) => paths.flatMap(pathKeys).some((key) => targets.some((target) => related(key, target)));
+    if (!onHome(homes)) return false;
+    // delholder-1024: an engine variable that names the home (Murage's own account folder, CODEX_HOME=<scope>) is using it
+    const named = environment;
+    if (onHome((ENGINE_VARIABLES[engine] ?? []).flatMap((name) => (named[name] ? [named[name]] : [])))) return true;
+    // The home only comes from the user's default (<HOME>/.claude): the owner's own CLI in any terminal, all day. It holds the home only
+    // when it really has it open: its working folder inside it, or a file under it open (holdersClearOf; unreadable counts). Windows
+    // proves the working folder only (its open files are left to the share-none hold at removal), so there it still counts.
+    if (windowsPaths() || exclOps.procView === "win32") return true;
+    // a CLI in the deleted conversation itself (`claude --resume <id>`, `claude -c` in its folder) writes it back at its next append
+    const needles = [...(conversation?.needles ?? []), ...(conversation?.folders ?? [])].filter((needle) => needle.length >= 8);
+    if (needles.length && (proc.argv == null || proc.argv.some((arg) => needles.some((needle) => arg.includes(needle))))) return true;
+    return !holdersClearOf([proc.pid], [home, ...dbs.map((db) => api.dirname(db)), ...(conversation?.folders ?? [])]).proven;
   };
 }
+/** The variables that name an engine's home outright (homesOfProcess), not through the user's home. */
+const ENGINE_VARIABLES: Record<string, readonly string[]> = { claude: ["CLAUDE_CONFIG_DIR"], codex: ["CODEX_HOME", "CODEX_SQLITE_HOME"], fuigo: ["FUIGO_HOME", "GROK_HOME"], grok: ["FUIGO_HOME", "GROK_HOME"] };
 
 /** The processes Murage started itself, at any depth (its own engines and their helpers): this process and every descendant of it in
  * one snapshot of the process list. */
@@ -449,7 +469,7 @@ function ownTree(processes: readonly NativeProcess[], ownPid: number): Set<numbe
  * home or scope gate), minus Murage's own process tree. "open" only when such a process was seen; anything else (closed, unknown, the list
  * could not be read) is "not-seen", and the attempt goes on to the full gate (engineState) as before. It only ever makes an attempt do
  * less: a home it calls open is left exactly as an engineState "open" leaves it. */
-export function foreignEngineHolders(engine: string, home: string, options: Pick<ClosedOptions, "identities"> = {}): { state: "open" | "not-seen"; app?: string; holders?: ProcessVerdict["holders"]; /** no process outside Murage's own tree counts: every one that holds the home (if any) is Murage's own */ ownOnly?: true; /** program|rule of every holder, sorted (holders keeps five) */ kinds?: string[];
+export function foreignEngineHolders(engine: string, home: string, options: Pick<ClosedOptions, "identities" | "conversation"> = {}): { state: "open" | "not-seen"; app?: string; holders?: ProcessVerdict["holders"]; /** no process outside Murage's own tree counts: every one that holds the home (if any) is Murage's own */ ownOnly?: true; /** program|rule of every holder, sorted (holders keeps five) */ kinds?: string[];
   /** DELETION-WHILE-OPEN-107: EVERY process that is the engine on this home (Murage's own and others', uncapped, with each one whose home
    * cannot be told), and every descendant of each (its shells and tool runs): what the open-home pass must prove has nothing of the
    * conversation open (engine-closed.ts holdersClearOf) */ pids?: number[] } {
@@ -459,7 +479,7 @@ export function foreignEngineHolders(engine: string, home: string, options: Pick
     if (!Array.isArray(processes) || !sane(processes)) return { state: "not-seen" };
   } catch { return { state: "not-seen" }; }
   const own = ownTree(processes, exclOps.ownPid());
-  const gate = privateScopeHome(engine, home) ? namesScope(scopeKeys(home)) : homeScope(engine, home, [], options.identities);
+  const gate = privateScopeHome(engine, home) ? namesScope(scopeKeys(home)) : homeScope(engine, home, [], options.identities, options.conversation);
   const engines = new Set<number>();
   const counts = (proc: NativeProcess): boolean | null => {
     const onHome = gate ? gate(proc) : true;
@@ -497,7 +517,7 @@ export function engineState(engine: string, home: string, options: ClosedOptions
   } catch { return { state: "unknown", via: "enumeration" }; }
   // the private gate: only an engine process whose arguments name this scope counts (the stated limit is at the rule above);
   // elsewhere only an engine process on THIS home counts (homeScope, ENGINE-CLOSED-SCOPE.md); one whose home cannot be told counts
-  const counts = privateScopeHome(engine, home) ? namesScope(scopeKeys(home)) : homeScope(engine, home, options.dbs, options.identities);
+  const counts = privateScopeHome(engine, home) ? namesScope(scopeKeys(home)) : homeScope(engine, home, options.dbs, options.identities, options.conversation);
   let seen = processVerdict(engine, processes, exclOps.ownPid(), options.identities, counts);
   // A process that could not be read may be one that was ending as it was looked at (a hook's `node -e`, a dying interpreter): the
   // list is read once more, and only what is still unreadable then counts.
@@ -623,4 +643,39 @@ function windowsHoldersClearOf(pids: readonly number[], targets: readonly string
     if (inside(cwd) || inside(real)) return { proven: false, why: "cwd-inside", pid };
   }
   return { proven: true };
+}
+
+/** The look a deletion retry takes before it plans again (conversation-deletion.ts probeHomes; SELF-OVERLOAD-105 item 2): the process
+ * list alone (no worker, no pause, no plan) says, per home, whether it is open and by which programs. The attempt runs only once that
+ * changes. `nativeDir` is the worker's view of a private scope (engine-history-run.ts), so the probe judges the same way.
+ * DELETE-LOOP-1020: only programs Murage did NOT start count, as in the attempt's own gate (foreignEngineHolders). Murage's own engine is
+ * never a reason to skip: the attempt's hold closes an idle session of its own, and a running own turn wakes the deletion when it ends
+ * (whenEnginesFree). Counting it made a warm session read as "the same program" for good (the attempt that closes it never ran), and
+ * each new own turn process changed the holders, so a full attempt ran at every look. */
+export function probeDeletionHomes(homes: ReadonlyArray<{ engine: string; home: string; identities?: string[]; conversation?: ClosedOptions["conversation"] }>, nativeDir: string): Array<{ key: string; open: boolean; holders: string; /** row 86: the process list could not be read */ unknown?: true }> {
+  return homes.map((home) => {
+    configureScopes(nativeDir);
+    const key = `${home.engine}\0${home.home}`;
+    const identities = home.identities ?? [];
+    // delholder-1024: the deleted conversation, as the attempt's gate has it: a default-home CLI in it holds the home here too
+    const conversation = home.conversation;
+    const verdict = engineState(home.engine, home.home, { identities, conversation });
+    // row 86: an unreadable process list still reads "not open" here (the attempt runs, as before), and says so: a look never stands on it
+    // MUTANT:probe-unknown-dropped (drop the `unknown` part)
+    if (verdict.state !== "open") return { key, open: false, holders: "", ...(verdict.state === "unknown" ? { unknown: true as const } : {}) };
+    // a lock file names no process: it stands as it is (the attempt judges it the same way)
+    if (verdict.via !== "process") return { key, open: true, holders: `via:${verdict.via}` };
+    const foreign = foreignEngineHolders(home.engine, home.home, { identities, conversation });
+    // row 86: only "Murage's own processes alone" (ownOnly) is a known answer here; a second read that failed is unknown, as above
+    // MUTANT:probe-second-read-unknown-dropped (drop the `unknown` part)
+    if (foreign.state !== "open") return { key, open: false, holders: "", ...(foreign.ownOnly ? {} : { unknown: true as const }) };
+    // Open by a program Murage did not start, and no more than that (cause7-1021). The fingerprint was every such holder by pid: the
+    // owner's own Claude Code starts a shell or a search under its own program for every tool call, and each terminal is a new pid, so
+    // it changed at nearly every look and a full attempt (worker jobs, and every sixth one a pause, a hold and Murage's idle sessions
+    // closed) ran at every look of every pending deletion. Which programs hold the home changes nothing an attempt can do: it finishes
+    // the home only once none does, and that reads `open: false` here. A holder the probe misplaces still gets the attempt the looks
+    // force (OPEN_LOOKS_MAX), as before.
+    // MUTANT:probe-holders-by-pid (`holders: (foreign.holders ?? []).map((item) => `${item.pid}:${item.name ?? ""}`).sort().join(",")`)
+    return { key, open: true, holders: "via:other-program" };
+  });
 }

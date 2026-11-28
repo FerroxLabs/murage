@@ -14,6 +14,7 @@ import { initializeOwnWriteHolds } from "../own-write-holds.ts";
 import { initializeArtifacts } from "../artifacts.ts";
 import { initializeTeamIdentityTables } from "../team-identities.ts";
 import { initializeMessageTables } from "../message-tables.ts";
+import { initializeMailboxCustody } from "../mailbox/custody.ts";
 import { initializeInbox } from "../inbox.ts";
 import { initializeProjectTables } from "../project-tables.ts";
 import { initializePendingDelegations } from "../pending-delegations-schema.ts";
@@ -32,6 +33,7 @@ export function initializeInternalFixtureDatabase(db: Parameters<typeof initiali
   // per DDL statement; every production initializer and trigger still runs.
   db.exec("SAVEPOINT internal_fixture_schema");
   try {
+    initializeMailboxCustody(db);
     initializeInbox(db);
     initializeProjectTables(db);
     initializeTeamIdentityTables(db);

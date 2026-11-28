@@ -239,6 +239,7 @@ export type LocalModelsErrorCode =
   | "server-not-found"
   | "server-limit"
   | "not-ollama"
+  | "cloud-model"
   | "busy"
   | "store-unavailable";
 
@@ -257,6 +258,7 @@ export const LOCAL_MODELS_ERROR_STATUS: Record<LocalModelsErrorCode, number> = {
   "server-not-found": 404,
   "server-limit": 409,
   "not-ollama": 409,
+  "cloud-model": 400,
   busy: 409,
   "store-unavailable": 503,
 };
@@ -398,6 +400,7 @@ export type LocalContextSource =
   | "llamacpp-props"
   | "ollama-ps"
   | "ollama-show"
+  | "ollama-cloud"
   | "lmstudio"
   | "models-endpoint"
   | "sglang-server-info"
@@ -411,6 +414,20 @@ export interface LocalContextReading {
   source: LocalContextSource;
   /** The model is in memory right now. */
   loaded?: boolean;
+  /** Ollama runs this model on ollama.com (M10 R2c): its window is its own
+   *  trained length, never a local model's /api/ps window. */
+  cloud?: true;
+}
+
+/**
+ * M10 R1, the single Ollama cloud classifier. True for Ollama's own cloud tag
+ * (`:cloud`, `:120b-cloud`; the same rule upstream uses) or when an `/api/show`
+ * answer names a remote host or model (an untagged `ollama cp` alias). Pure.
+ */
+export function isOllamaCloudModel(model: string, show?: { remote_host?: unknown; remote_model?: unknown } | null): boolean {
+  if (/:(?:[^:/]*-)?cloud$/i.test(model)) return true;
+  const named = (value: unknown) => typeof value === "string" && value.length > 0;
+  return Boolean(show && (named(show.remote_host) || named(show.remote_model)));
 }
 
 /**
@@ -714,7 +731,12 @@ export type OllamaContextCopyResult =
       /** Server-wide alternative: `OLLAMA_CONTEXT_LENGTH=<n>` before starting Ollama. */
       environment: string;
       ollamaVersion?: string;
-    };
+    }
+  /** M10 R3: a cloud model needs no copy; nothing was sent to /api/version or /api/create. */
+  | { status: "refused"; reason: "cloud-model"; model: string };
+
+/** M10 R3: the one sentence for a refused cloud copy (route error and client notice). */
+export const OLLAMA_CLOUD_COPY_REFUSAL = "This model runs on ollama.com at its own context, so it needs no copy.";
 
 export type LocalServerSource = "detected" | "added";
 export type LocalServerStatus = "running" | "not-answering";
@@ -726,6 +748,8 @@ export interface LocalModelView {
   loaded: boolean;
   context?: LocalContextReading;
   test?: LocalToolTestResult;
+  /** Ollama runs this model on ollama.com (M10 R4). Display only: it never authorises or refuses a copy. */
+  cloud?: true;
   /** Engines that can use this model right now (see localEnginesFor). */
   engines: string[];
 }

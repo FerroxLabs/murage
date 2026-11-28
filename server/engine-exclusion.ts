@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isMainThread } from "node:worker_threads";
+import { getEnvironmentData, isMainThread, setEnvironmentData } from "node:worker_threads";
 import { realCleanupHost, removeOwnCopyDir, sweepStaleMeterCopies, writeCopyMarker } from "./meter-copy-cleanup.ts";
 
 import type { HeldFile } from "./engine-plan-core.ts";
@@ -56,6 +56,8 @@ export interface ExclusionAddon {
   /** Renames `from` to `to` atomically and never over an existing name: 0 done, 1 `to` exists, 2 the file system cannot do that.
    * Any other failure throws with the errno name as `code`. */
   renameNoReplace(from: string, to: string): number;
+  /** Windows only, additive (no ADDON_VERSION change, not in WINDOWS_NATIVE_FUNCTIONS): MoveFileExW REPLACE_EXISTING|WRITE_THROUGH. Returns 0 once the move is on disk; throws with an errno code. Absent in an older build and on other systems. */
+  renameDurable?(from: string, to: string): number;
   /** Windows: kind 0 share-none, 1 share-none with the right to delete, 2 shared with every other opener (for a lock), 3 shared and
    * read only (to look at a lock), 4 a plain directory opened writable for a namespace durability barrier. null when something else has the file open. */
   openFile?(path: string, kind: number): NativeHandle | null;
@@ -103,6 +105,8 @@ export interface ExclusionAddon {
   jobStop?(name: string, waitMs: number): Promise<{ state: "absent" } | { state: "present"; activeProcesses: number }>;
   /** The process's creation FILETIME in decimal (.NET StartTime.ToFileTimeUtc()), or null when it cannot be read. */
   processStart?(pid: number): string | null;
+  terminateIfStart?(pid: number, start: string): string;
+  processPresence?(pid: number): string;
   /** The drive type (.NET DriveInfo names: Fixed, Removable, Network, ...) and file system of the volume holding `path`, or null. */
   driveInfo?(path: string): { type: string; format: string } | null;
   /** The owner SID of the file or folder itself (a link is not followed), or null. */
@@ -343,9 +347,38 @@ function sweepOnce(ownCopy: string, addon: Partial<ExclusionAddon>): void {
   } catch { /* a failed sweep leaves folders for the next start */ }
 }
 
+/** METERDL: the one private copy of a process. Every loaded image of the addon keeps its thread-local meter state (meter.c METER_TLS) for the
+ * life of the process, and macOS has a fixed number of thread-local keys: a fresh copy per worker aborted the server near the 498th worker
+ * (_tlv_bootstrap_error in m_read). So only the main thread makes and proves the copy, and publishes its path and identity in the worker
+ * environment data, which every Worker started afterwards (and every Worker those start) inherits. A worker loads that same file: same path,
+ * same image, no new key and no new temporary folder. */
+export const IO_METER_HANDOFF_KEY = "murage.ioMeterCopy";
+interface IoMeterHandoff { path: string; id: IoMeterFileId; override: boolean }
+/** Off the main thread: the main thread's proven copy, re-checked (canonical regular file, same dev/ino/size/sha256) before it executes. No hand-off,
+ * or one that does not check out, leaves this thread unqualified (null); a worker never makes a copy of its own. */
+function loadHandedIoMeter(require: NodeJS.Require):{addon:ExclusionAddon;path:string;id:IoMeterFileId}|null {
+  let handed: Partial<IoMeterHandoff> | undefined;
+  try { handed = getEnvironmentData(IO_METER_HANDOFF_KEY) as Partial<IoMeterHandoff> | undefined; } catch { return null; }
+  const file = handed?.path, id = handed?.id;
+  if (typeof file !== "string" || !path.isAbsolute(file) || !id || !Number.isSafeInteger(id.size) || typeof id.sha256 !== "string") return null;
+  try {
+    if (!lstatSync(file).isFile() || realpathSync(file) !== file) return null;
+    const fd = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    try {
+      const st = fstatSync(fd);
+      if (!st.isFile() || st.dev !== id.dev || st.ino !== id.ino || st.size !== id.size) return null;
+      if (createHash("sha256").update(readFd(fd, st.size)).digest("hex") !== id.sha256) return null;
+    } finally { closeSync(fd); }
+    const addon = require(file) as Partial<ExclusionAddon>;
+    if (!usable(addon, handed!.override === true && overrideAllowed()) || !addon.ioMeterAdd || !addon.ioMeterTotal || !addon.ioMeterBytes) return null;
+    return { addon, path: file, id: { dev: id.dev, ino: id.ino, size: id.size, sha256: id.sha256 } };
+  } catch { return null; }
+}
+
 /** Metering is independent of the engine-lock stand-in: select a qualified binary with a VFS entry point. Only the private copy is executed. */
 export function loadIoMeterAddon():{addon:ExclusionAddon;path:string;id:IoMeterFileId}|null {
   const require=createRequire(moduleFile());
+  if(!isMainThread)return loadHandedIoMeter(require);
   for(const file of candidates()){
     if(!existsSync(file))continue;
     let copyDir:string|null=null;
@@ -357,6 +390,8 @@ export function loadIoMeterAddon():{addon:ExclusionAddon;path:string;id:IoMeterF
       const explicit=explicitOverride();
       if(usable(addon,Boolean(explicit)&&file===explicit)&&addon.ioMeterAdd&&addon.ioMeterTotal&&addon.ioMeterBytes){
         sweepOnce(held.copy,addon);
+        // A hand-off that cannot be published leaves later workers unqualified; it never costs this thread its meter.
+        try{setEnvironmentData(IO_METER_HANDOFF_KEY,{path:held.copy,id:held.id,override:Boolean(explicit)&&file===explicit} satisfies IoMeterHandoff);}catch{/* workers fail closed */}
         return {addon,path:held.copy,id:held.id};
       }
       removeOwnCopyDir(copyDir);

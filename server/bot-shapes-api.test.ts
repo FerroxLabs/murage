@@ -144,6 +144,31 @@ posixOnly("what shapes a bot", () => {
     expect((await directTurn()).systemPrompt).toContain(BRIEF);
   }, 90000);
 
+  it("PC-R2-same-bot-two-thread-prefix-direct: changing available apps leaves the authorized configuration first", async () => {
+    const prefix = (view: any) => {
+      const memory = rowOf(view, "memory").text;
+      expect(memory.length).toBeGreaterThan(0);
+      const end = view.lastTurn.text.indexOf(memory);
+      expect(end).toBeGreaterThanOrEqual(0);
+      return view.lastTurn.text.slice(0, end + memory.length);
+    };
+    const first = await directTurn(), before = await shapes();
+    const stable = prefix(before);
+    expect(stable).toContain(BRIEF);
+    expect(first.systemPrompt!.startsWith(stable)).toBe(true);
+    const sibling = (await api("POST", `/api/bots/${moss.id}/tasks`, { title: "Second thread" })).task;
+    try {
+      await api("PATCH", `/api/bots/${moss.id}`, { composio: true });
+      const tag = `SHAPES_TURN_${++sequence}`;
+      await api("POST", `/api/bots/${moss.id}/messages`, { threadId: sibling.threadId, text: `Please answer briefly. ${tag}` });
+      const second = await captured(tag), after = await shapes();
+      expect(prefix(after)).toBe(stable);
+      expect(second.systemPrompt!.startsWith(stable)).toBe(true);
+      expect(after.lastTurn.text).toBe(second.systemPrompt);
+      expect(second.systemPrompt).not.toBe(first.systemPrompt);
+    } finally { await api("PATCH", `/api/bots/${moss.id}`, { composio: false }); }
+  });
+
   it("shows House Rules switched off and leaves them out of the next turn", async () => {
     await api("PUT", "/api/house-rules", { enabled: false });
     const view = await shapes();

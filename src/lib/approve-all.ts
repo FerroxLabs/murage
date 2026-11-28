@@ -147,6 +147,58 @@ export function previewGate() {
   };
 }
 
+/** T12 (BATCH-APPROVE-REVIEW-1023): the desktop review. The key a card is listed under on screen, and the three pure rules
+ *  the panel needs: what a Refresh list binds, what ticks carry over, what an Approve sends. */
+export const reviewKey = (card: Pick<EligibleCard, "threadId" | "messageId">): string => (card.messageId ? `${card.threadId}\u0000${card.messageId}` : "");
+
+/** Refresh list (D4): the fresh preview bound to the fresh snapshot's ready rows WITHOUT the `changed` outcome. A row no
+ *  longer on screen is simply dropped; none left is "none". */
+export function bindForRefresh(preview: ApproveAllPreview, readyKeys: readonly string[]): EligibleCard[] {
+  if (!preview.batchId) return [];
+  const ready = new Set(readyKeys);
+  return preview.eligible.filter((card) => ready.has(reviewKey(card)));
+}
+
+/** Refresh list (D4): a tick carries only for a card with the same requestId AND the same digest; every other card
+ *  arrives unticked and marked New. */
+export function carryTicks(before: { cards: readonly EligibleCard[]; selection: ReadonlySet<string> }, next: readonly EligibleCard[]): { selection: Set<string>; fresh: Set<string> } {
+  const old = new Map(before.cards.map((card) => [card.requestId, card.digest]));
+  const selection = new Set<string>();
+  const fresh = new Set<string>();
+  for (const card of next) {
+    if (old.get(card.requestId) === card.digest) { if (before.selection.has(card.requestId)) selection.add(card.requestId); } else fresh.add(card.requestId);
+  }
+  return { selection, fresh };
+}
+
+/** D5: exactly the ticked cards that are still on the list, in the preview's order. Read once, synchronously, at the
+ *  Approve activation. */
+export function reviewSent(cards: readonly EligibleCard[], selection: ReadonlySet<string>, gone: ReadonlySet<string>, listed: readonly string[]): string[] {
+  const on = new Set(listed);
+  return cards.filter((card) => selection.has(card.requestId) && !gone.has(reviewKey(card)) && on.has(reviewKey(card))).map((card) => card.requestId);
+}
+
+/** D3 (inverted after Fable A1 / Opus M2): a keyboard click (`detail` 0) is dropped only when the last Enter/Space keydown
+ *  on the panel is still pending and was a repeat or had another target. A click with no pending keydown (a screen
+ *  reader's activate) and a mouse click (`detail` >= 1) go through. */
+export interface PendingKey { repeat: boolean; onApprove: boolean }
+export function approveClickAllowed(detail: number, pending: PendingKey | null): boolean {
+  if (detail >= 1 || pending === null) return true;
+  return !pending.repeat && pending.onApprove;
+}
+
+/** D6: the one plain line per card, as a locale key. */
+export function reviewResultKey(result: Pick<ApplyResult, "result" | "reason">): { key: LocaleKey; reason?: BulkReasonKey } {
+  if (result.result === "approved") return { key: "approveAll.review.result.approved" };
+  const reason = result.reason ?? "";
+  if (result.result === "not-applied" && reason === "batch-changed") return { key: "approveAll.review.result.batchChanged" };
+  if (reason === "not-open" || reason === "fresh_auth_gone") return { key: "approveAll.review.result.stopped" };
+  if (reason === "fresh_auth_changed") return { key: "approveAll.review.result.changed" };
+  const bare = reason.startsWith("not-eligible:") ? reason.slice("not-eligible:".length) : reason;
+  if ((BULK_REASON_KEYS as readonly string[]).includes(bare)) return { key: "approveAll.review.result.still", reason: bare as BulkReasonKey };
+  return { key: "approveAll.review.result.waiting" };
+}
+
 const plural = (n: number): "one" | "other" => (n === 1 ? "one" : "other");
 
 /** Design 5: one line after apply, no undo. Cards whose bot had stopped waiting are named by bot; anything else that was

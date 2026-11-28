@@ -1,9 +1,11 @@
 import { SkillVersionHistory } from "./ProcedureVersionHistory";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { BookOpen, ChevronLeft, Plus, RotateCw, Search, Trash2 } from "lucide-react";
+import { BookOpen, ChevronLeft, Plus, RotateCw, Search, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api, useStore, type Bot } from "@/state/store";
-import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { skillRecorderAvailable, skillRecorderEnabled } from "@/lib/feature-flags";
+import { isCloudOrigin } from "@/lib/cloud-workspace";
+import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
 import { botRole } from "@/lib/bot-role";
 import { invalidateSkillCount } from "@/lib/bot-skill-count";
@@ -11,7 +13,7 @@ import { ChatMarkdown } from "./ChatMarkdown";
 import { SkillPicker } from "./skills/SkillPicker";
 import { SkillReader } from "./skills/SkillReader";
 import { ChiefGuideCard } from "./skills/ChiefGuideCard";
-import { CHIEF_GUIDE_REF } from "@/lib/skills-api";
+import { CHIEF_GUIDE_REF, skillIndexPreview, type SkillIndexPreview } from "@/lib/skills-api";
 import { Switch } from "./SettingsPrimitives";
 
 /** Mirrors SkillListing in server/skills.ts — the exact shape
@@ -53,6 +55,20 @@ export function filterSkills(skills: readonly BotSkill[], query: string): BotSki
   });
 }
 
+/** Settings v10 B6: the skills that ride in every message come first, then the ones looked up when needed, then the ones
+ *  that are off, each group in its own order. With no preview (it did not load) the order is unchanged and no row claims either. */
+export function orderByIndex(skills: readonly BotSkill[], index: SkillIndexPreview | null | undefined): BotSkill[] {
+  if (!index) return [...skills];
+  const inEvery = new Set(index.inEveryMessage.map((entry) => entry.name));
+  const rank = (skill: BotSkill) => (!skill.enabled ? 2 : inEvery.has(skill.name) ? 0 : 1);
+  return skills.map((skill, position) => ({ skill, position })).sort((a, b) => rank(a.skill) - rank(b.skill) || a.position - b.position).map((entry) => entry.skill);
+}
+
+export function indexTag(skill: Pick<BotSkill, "name" | "enabled">, index: SkillIndexPreview | null | undefined): "In every message" | "Looked up when needed" | null {
+  if (!index || !skill.enabled) return null;
+  return index.inEveryMessage.some((entry) => entry.name === skill.name) ? "In every message" : "Looked up when needed";
+}
+
 export function applySkillEnabled(skills: readonly BotSkill[], name: string, enabled: boolean): BotSkill[] {
   return skills.map((skill) => (skill.name === name ? { ...skill, enabled } : skill));
 }
@@ -81,9 +97,19 @@ export function loadFailureMessage(botName: string, detail: string): string {
 /** Where a skill came from, in the words a person used to put it there. */
 export function skillSourceLabel(source: string): string {
   if (source.startsWith("library:")) return `Library · ${source.slice("library:".length)}`;
+  if (source.startsWith("collection:")) return `Your skills · ${source.slice("collection:".length)}`;
   if (source.startsWith("learn:")) return "Learned in chat";
   return source;
 }
+
+export function skillRemoveWords(skill: Pick<BotSkill, "name" | "source">, botName: string): { label: string; title: string; shared: boolean } {
+  const shared = /^(collection|library):/.test(skill.source);
+  return shared
+    ? { label: "Take off", title: `Take ${skill.name} off ${botName}. Your other bots and the shared copy keep it.`, shared }
+    : { label: "Delete", title: `Delete ${skill.name} from ${botName}. This is the only copy and can't be undone.`, shared };
+}
+
+type SkillConfirmation = ({ name: string } & NeedsLook) | { name: string; action: "delete"; lines: string[] };
 
 /** A hand-imported SKILL.md can carry no description at all. A blank second
  * line reads as a rendering bug, so fall back to something true about the
@@ -100,7 +126,7 @@ export function skillFindingLines(scan: { findings: Array<{ message: string }> }
   return [...new Set(scan.findings.map((finding) => finding.message))];
 }
 
-type SkillRefusal = { status?: number; body?: { code?: string; scan?: { contentHash?: string; findings?: Array<{ message: string }> } } };
+type SkillRefusal = { status?: number; body?: { code?: string; error?: string; scan?: { contentHash?: string; findings?: Array<{ message: string }> } } };
 /** A skill Skill Guard says needs a look: what to show, and the content the
  *  owner's yes will cover. */
 export type NeedsLook = { lines: string[]; contentHash: string };
@@ -143,6 +169,10 @@ export async function toggleSkillEnabled({
     if (enabled && (cause as SkillRefusal)?.status === 409 && refusal?.code === "needs-review" && refusal.scan?.contentHash) {
       return { ok: false, needsLook: { lines: skillFindingLines({ findings: refusal.scan.findings ?? [] }), contentHash: refusal.scan.contentHash } };
     }
+    // Settings v10 B6: the ceiling's own sentence is the whole answer, shown on the row that was refused.
+    if (enabled && (cause as SkillRefusal)?.status === 409 && refusal?.code === "SKILL_CEILING") {
+      return { ok: false, error: (refusal.error ?? skillErrorDetail(cause)) || `“${name}” was not turned on: this bot has too many skills on.` };
+    }
     return { ok: false, error: skillErrorMessage(cause, `Could not ${enabled ? "enable" : "disable"} “${name}”.`) };
   }
 }
@@ -171,7 +201,7 @@ export interface SkillsSnapshot {
   rowErrors: ReadonlyMap<string, string>;
   viewing: SkillView | null;
   /** A skill that needs a look, waiting on the owner's "Use it anyway". */
-  confirming: ({ name: string } & NeedsLook) | null;
+  confirming: SkillConfirmation | null;
 }
 
 export const INITIAL_SKILLS_SNAPSHOT: SkillsSnapshot = {
@@ -212,6 +242,7 @@ export function createSkillsStore({
   // A retry fired while an earlier load is still out must win; the loser's
   // answer is thrown away rather than allowed to overwrite it.
   let loadToken = 0;
+  let approvedRemoval: string | null = null;
 
   const set = (patch: Partial<SkillsSnapshot>) => {
     snapshot = { ...snapshot, ...patch };
@@ -318,10 +349,20 @@ export function createSkillsStore({
     set({ confirming: null });
     if (!yes || !asked) return;
     const skill = snapshot.skills.find((entry) => entry.name === asked.name);
-    if (skill) await toggle(skill, asked.contentHash);
+    if (!skill) return;
+    if ("action" in asked && asked.action === "delete") {
+      approvedRemoval = skill.name;
+      await remove(skill);
+    } else if ("contentHash" in asked) await toggle(skill, asked.contentHash);
   };
 
   const remove = async (skill: BotSkill) => {
+    if (snapshot.busy.has(skill.name)) return;
+    if (!skillRemoveWords(skill, "this bot").shared && approvedRemoval !== skill.name) {
+      set({ confirming: { name: skill.name, action: "delete", lines: ["This is the only copy and can't be undone."] } });
+      return;
+    }
+    approvedRemoval = null;
     setBusy(skill.name, true);
     setRowError(skill.name, "");
     try {
@@ -370,6 +411,8 @@ export interface SkillsBodyProps {
   staged: number;
   loadFailure: string;
   authoringEnabled: boolean;
+  /** Built-in skills shown above the list (the Chief of Staff guide); with one, the bot never reads as having none. */
+  builtInSkills?: number;
   query: string;
   onQuery: (value: string) => void;
   visible: number;
@@ -382,14 +425,18 @@ export interface SkillsBodyProps {
   onRetry: () => void;
   onToggle: (skill: BotSkill) => void;
   onRemove: (skill: BotSkill) => void;
+  /** What a new chat carries for this bot (K4); absent when it did not load. */
+  index?: SkillIndexPreview | null;
   /** A skill waiting on "Use it anyway", and the answer. */
-  confirming?: ({ name: string } & NeedsLook) | null;
+  confirming?: SkillConfirmation | null;
   onConfirm?: (yes: boolean) => void;
   /** SEAM — "Add a skill" opens the library browser with THIS agent already
    *  chosen. Assignment is one action, `assign(skillId, botId)`; this end
    *  pre-fills the agent, the library's own row action pre-fills the skill.
    *  Optional so the body still renders in a suite with no store. */
   onBrowse?: () => void;
+  /** TEACH-ENTRY D3: "Teach {bot} a skill", passed only where the recorder is available. */
+  onTeach?: () => void;
 }
 
 const ALERT = "mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger";
@@ -424,6 +471,20 @@ function AddSkillButton({
     >
       <Plus size={13} />
       Add a skill
+    </button>
+  );
+}
+
+/** TEACH-ENTRY D3: record a skill for THIS bot ("Only {bot}" preselected in the recorder). */
+function TeachSkillButton({ botName, onTeach, className }: { botName: string; onTeach: () => void; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onTeach}
+      className={cn("inline-flex items-center gap-1.5 rounded-lg bg-control px-2.5 py-1.5 text-[12px] text-ink hover:bg-control/70", className)}
+    >
+      <Sparkles size={13} />
+      Teach {botName} a skill
     </button>
   );
 }
@@ -485,7 +546,7 @@ export function SkillsBody(props: SkillsBodyProps) {
             <ul className="mt-1 list-disc pl-4">{skillFindingLines(skill.scan).map((line) => <li key={line}>{line}</li>)}</ul>
           </div>
         )}
-        {skill && props.confirming?.name === skill.name && (
+        {skill && props.confirming?.name === skill.name && !("action" in props.confirming) && (
           <div role="alertdialog" data-box-exempt="inline confirm inside a section" aria-label="Use this skill anyway?" className="mt-2 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
             <div className="font-medium">Use {skill.name} anyway?</div>
             <p className="mt-1 text-ink-secondary">The skill check found:</p>
@@ -563,13 +624,18 @@ export function SkillsBody(props: SkillsBodyProps) {
             the moment its proposal is confirmed (applyStagedSkillWrite). There
             is no add control on this panel, so the route has to be named. */}
         <div className="rounded-lg bg-inset px-3 py-2.5 text-[12px] leading-relaxed text-ink-secondary">
-          {botName} has no skills yet. Add one from the library and it arrives switched on.
+          {botName} has no {(props.builtInSkills ?? 0) > 0 ? "other " : ""}skills yet. Add one from the library and it arrives switched on.
           {authoringEnabled
-            ? " A skill you teach with /learn in chat is switched on once you confirm it."
+            ? ` A skill you teach ${botName} in chat is switched on once you confirm it.`
             : ""}{" "}
           Everything that lands here can be read, switched off, or removed.
         </div>
-        {props.onBrowse && <AddSkillButton botName={botName} onBrowse={props.onBrowse} className="mt-2.5" />}
+        {(props.onBrowse || props.onTeach) && (
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            {props.onBrowse && <AddSkillButton botName={botName} onBrowse={props.onBrowse} />}
+            {props.onTeach && <TeachSkillButton botName={botName} onTeach={props.onTeach} />}
+          </div>
+        )}
         {staged > 0 && (
           <div className="mt-2 text-[11.5px] text-warning">
             {staged} proposal{staged === 1 ? " is" : "s are"} waiting for a decision in chat.
@@ -579,7 +645,7 @@ export function SkillsBody(props: SkillsBodyProps) {
     );
   }
 
-  const matches = filterSkills(skills, props.query);
+  const matches = filterSkills(orderByIndex(skills, props.index), props.query);
   const shown = matches.slice(0, props.visible);
   return (
     <div className="mt-3">
@@ -593,7 +659,12 @@ export function SkillsBody(props: SkillsBodyProps) {
           </span>
         )}
       </div>
-      {props.onBrowse && <AddSkillButton botName={botName} onBrowse={props.onBrowse} className="mt-2" />}
+      {(props.onBrowse || props.onTeach) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {props.onBrowse && <AddSkillButton botName={botName} onBrowse={props.onBrowse} />}
+          {props.onTeach && <TeachSkillButton botName={botName} onTeach={props.onTeach} />}
+        </div>
+      )}
       {skills.length > 8 && (
         <div className="mt-2 flex items-center gap-2 rounded-lg bg-inset px-2.5 py-1.5">
           <Search size={13} className="shrink-0 text-ink-secondary" />
@@ -625,6 +696,9 @@ export function SkillsBody(props: SkillsBodyProps) {
                   <div className="mt-0.5 line-clamp-2 text-[11.5px] text-ink-secondary">
                     {skillDescriptionLine(skill)}
                   </div>
+                  {indexTag(skill, props.index) && (
+                    <div data-skill-index={indexTag(skill, props.index) === "In every message" ? "every" : "lookup"} className="mt-0.5 text-[11px] text-ink-secondary">{indexTag(skill, props.index)}</div>
+                  )}
                 </button>
                 {skill.enabled ? (
                   <Switch
@@ -650,17 +724,25 @@ export function SkillsBody(props: SkillsBodyProps) {
                 )}
                 <button
                   type="button"
-                  aria-label={`Remove ${skill.name}`}
-                  // Names the consequence AND the way back, because the click
-                  // is the whole action — there is no dialog behind it.
-                  title={`Remove ${skill.name} from ${botName}. Add it again from the library at any time.`}
+                  aria-label={`${skillRemoveWords(skill, botName).label} ${skill.name}`}
+                  title={skillRemoveWords(skill, botName).title}
                   disabled={props.busy.has(skill.name)}
                   onClick={() => props.onRemove(skill)}
-                  className="flex size-8 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40"
+                  className="flex shrink-0 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40"
                 >
-                  <Trash2 size={15} />
+                  <Trash2 size={15} /> {skillRemoveWords(skill, botName).label}
                 </button>
               </div>
+              {props.confirming?.name === skill.name && "action" in props.confirming && props.confirming.action === "delete" && (
+                <div role="alertdialog" data-box-exempt="inline confirm inside a section" aria-label={`Delete ${skill.name}?`} className="mt-2 rounded-lg border border-danger/40 bg-card p-3 text-[12.5px] text-ink">
+                  <div className="font-medium">Delete {skill.name} from {botName}?</div>
+                  <p className="mt-1 text-ink-secondary">This is the only copy and can't be undone.</p>
+                  <div className="mt-3 flex gap-2">
+                    <button type="button" onClick={() => props.onConfirm?.(true)} disabled={props.busy.has(skill.name)} className="rounded-lg bg-danger px-3 py-1.5 font-medium text-white">Delete</button>
+                    <button type="button" onClick={() => props.onConfirm?.(false)} className="rounded-lg bg-control px-3 py-1.5 font-medium text-ink">Cancel</button>
+                  </div>
+                </div>
+              )}
               {skill.warnings.length > 0 && (
                 <div className="mt-1 text-[10.5px] text-warning">{skill.warnings.join(" · ")}</div>
               )}
@@ -703,8 +785,12 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
     if (intent.addSkill) setAdding(true);
     dispatch({ type: "clearBotSettingsIntent" });
   }, [state.botSettingsIntent, dispatch]);
+  // The "teach in chat" sentence is about /learn, true on every platform; only the recorder button needs the full gate (D3).
   const authoringEnabled = skillRecorderEnabled(state.config);
-  const canEditHistory = useDesktopSurface() === true;
+  const desktop = useDesktopSurface();
+  const canEditHistory = desktop === true;
+  const { capabilities } = useDesktopCapabilities();
+  const teachAvailable = skillRecorderAvailable(state.config, desktop, isCloudOrigin(), capabilities.host?.platform);
   const [query, setQuery] = useState("");
   const [visible, setVisible] = useState(SKILL_PAGE_SIZE);
   // The Chief of Staff guide belongs to the workspace Chief only.
@@ -722,6 +808,16 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
     setVisible(SKILL_PAGE_SIZE);
     void store.load();
   }, [store]);
+
+  // B6: which skills a new chat carries. Read again whenever the set of skills that are on changes; a failed read shows no tag.
+  const [index, setIndex] = useState<SkillIndexPreview | null>(null);
+  const onKey = snapshot.skills.filter((skill) => skill.enabled).map((skill) => skill.name).join("\n");
+  useEffect(() => {
+    let current = true;
+    setIndex(null);
+    if (snapshot.phase === "ready") skillIndexPreview(bot.id).then((next) => { if (current) setIndex(next); }, () => { if (current) setIndex(null); });
+    return () => { current = false; };
+  }, [bot.id, snapshot.phase, onKey]);
 
   return (
     <div className="rounded-xl bg-card p-4">
@@ -754,7 +850,9 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
         staged={snapshot.staged.length}
         loadFailure={snapshot.loadFailure}
         authoringEnabled={authoringEnabled}
+        builtInSkills={isChief ? 1 : 0}
         onBrowse={() => setAdding(true)}
+        onTeach={teachAvailable ? () => dispatch({ type: "showSkillRecorder", via: "entry", forBotId: bot.id }) : undefined}
         query={query}
         onQuery={(value) => {
           setQuery(value);
@@ -769,6 +867,7 @@ export function BotSkillsPanel({ bot }: { bot: Bot }) {
         onBack={() => store.back()}
         onRetry={() => void store.load()}
         onToggle={(skill) => void store.toggle(skill)}
+        index={index}
         confirming={snapshot.confirming}
         onConfirm={(yes) => void store.confirm(yes)}
         // NO NATIVE CONFIRM DIALOG HERE, and that is the fix, not an

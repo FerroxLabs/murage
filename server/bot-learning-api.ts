@@ -9,6 +9,7 @@
 // Settings are real in B0; every other route answers an empty read or
 // "not available yet" until its batch registers a handler
 // (bot-learning-routes.ts).
+import { bumpMessagesVersion } from "./inbox-version.ts";
 import { BOT_LEARNING_SWITCHES, cleanProspectThreadIds, nextBotLearning, readBotLearning, type BotLearning, type BotLearningChange } from "./bot-learning.ts";
 import { LEARNING_ROUTES, learningRouteHandler, type LearningRouteAnswer, type LearningRouteContext } from "./bot-learning-routes.ts";
 
@@ -40,6 +41,13 @@ const bad = (error: string, extra: Record<string, unknown> = {}): LearningRouteA
 
 /** Returns undefined when the path is not a learning route at all. */
 export async function handleBotLearningApi(request: BotLearningApiRequest): Promise<LearningRouteAnswer | undefined> {
+  const answer = await routeBotLearning(request);
+  // A lesson or skill suggestion answered here is owed no more: the Inbox's Needs you count (and the sidebar badge) moves with it, and no message was written to say so: the same bump a message write makes (inbox-version.ts) drops the memoised answer and announces `inbox.changed`.
+  if (answer && request.method !== "GET" && answer.status < 400) bumpMessagesVersion();
+  return answer;
+}
+
+async function routeBotLearning(request: BotLearningApiRequest): Promise<LearningRouteAnswer | undefined> {
   const matches = LEARNING_ROUTES.filter(route => route.pattern.test(request.path));
   if (!matches.length) return undefined;
   const route = matches.find(candidate => candidate.method === request.method);

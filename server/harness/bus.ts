@@ -1,4 +1,5 @@
 import { types } from "node:util";
+import { aliasAsk } from "../../shared/connected-app-aliases.ts";
 import { checkAllHookCanon } from "../hook-safety.ts";
 // Fan-in event bus — port of upstream's ProviderService fan-in +
 // EventNdjsonLogger tee, minus Effect. Every adapter's event stream merges
@@ -17,6 +18,7 @@ import { isPhoneRequest } from "../phones/withhold.ts";
 import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { RuntimeAudienceCollector, attachedEventCharge, chargeExecutionEvent } from "./audience-collector.ts";
+import type { MaskedValueView } from "./masked-values.ts";
 import type { AudienceEmission, SourceContext, TurnTextPolicy, AttachmentCapability } from "../contracts.ts";
 import { boundedEventCharge } from "./event-charge.ts";
 import { IntakeValve } from "./intake.ts";
@@ -51,6 +53,8 @@ export type DeliveryGate = {
 };
 type QueuedDelivery = { event: RuntimeEvent; owed: RuntimeEventListener[]; bytes: number; reserved: boolean };
 export type DeliveryLimits = { maxEvents: number; maxBytes: number; batch: number; retryMinMs: number; retryMaxMs: number };
+/** Text longer than LONG_TEXT characters is taken in as line-safe chunks of about LINE_CHUNK characters (see EventBus.attach). */
+const LONG_TEXT = 262_144, LINE_CHUNK = 32_768;
 const DEFAULT_LIMITS: DeliveryLimits = { maxEvents: 2_000, maxBytes: 32 * 1024 * 1024, batch: 50, retryMinMs: 50, retryMaxMs: 2_000 };
 
 export const PHONE_TEXT_WITHHELD = "[phone turn text withheld]";
@@ -251,8 +255,6 @@ function loggedAudienceInput(event: RuntimeEvent): Record<string, unknown> | und
 }
 
 export class EventBus {
-  /** C4 installs projection before event-log persistence; listeners keep the original. */
-  highlevelProjection(project: (event: RuntimeEvent) => RuntimeEvent | null): void { void project; throw new Error("C4 implements"); }
   private pendingLogWarnings = new Map<string, RuntimeEvent>();
   readonly collector: RuntimeAudienceCollector;
   private attachments = new Map<string, AttachmentCapability>();
@@ -269,8 +271,45 @@ export class EventBus {
   private audienceListeners = new Map<(event: AudienceEmission) => void, { durable?: boolean }>();
   private audienceByExecution = new WeakMap<object, readonly AudienceEmission[]>();
   private maskedByExecution = new WeakMap<object, boolean>();
+  private secretMaskedByExecution = new WeakMap<object, boolean>();
+  private withheldByExecution = new WeakMap<object, boolean>();
+  /** 1.0.22 cause B: the admission's masked-value list as of each execution event's intake (masked-values.ts). */
+  private maskedValuesByExecution = new WeakMap<object, MaskedValueView>();
+  /** The source a refusal ended (refuseTurn drops it from hostSources), per thread, until the thread's next admission: a re-dispatch
+   * of the refused message reads what that attempt had masked (ASTRA N3). */
+  private refusedSources = new Map<string, SourceContext>();
+  /** The last adapter event still being taken in chunk by chunk (see attach); undefined when intake is synchronous. */
+  /** One queue per thread (ASTRA 0489638c7a): events of a thread wait behind that thread's chunked reply, in order, whichever
+   * engine sent them; no other thread waits. `intakeDraining` counts the queued events of an attachment so that a detach or a
+   * replacement in that window ends the attachment only after they were delivered (`detachAfterDrain`). */
+  private intakeTails = new Map<string, Promise<void>>();
+  private intakeDraining = new Map<AttachmentCapability, number>();
+  private detachAfterDrain = new Set<AttachmentCapability>();
+  /** Resolves when no adapter event is waiting behind a chunked intake. */
+  async intakeIdle(): Promise<void> { while (this.intakeTails.size) await Promise.all([...this.intakeTails.values()]); }
+  /** The line-safe content.delta chunks of one long unstreamed reply (then the reply itself follows: final) or of one long
+   * delta (the chunks replace it). Undefined for every other event, including a long text that is a single line. */
+  private lineChunks(event: RuntimeEvent, source?: SourceContext): (RuntimeEvent[] & { final?: boolean }) | undefined {
+    if (!event || typeof event !== "object" || types.isProxy(event)) return undefined;
+    const read = (key: string): unknown => Object.getOwnPropertyDescriptor(event, key)?.value;
+    const type = read("type"), reply = type === "item.completed" && read("itemType") === "assistant_text";
+    const text = reply ? read("text") : type === "content.delta" ? read("delta") : undefined;
+    if (typeof text !== "string" || text.length <= LONG_TEXT) return undefined;
+    if (reply && !this.collector.unstreamedReply(event, source)) return undefined;
+    const cuts: number[] = [];
+    for (let at = 0; at < text.length;) {
+      const nl = text.indexOf("\n", Math.min(text.length, at + LINE_CHUNK) - 1);
+      at = nl < 0 ? text.length : nl + 1; cuts.push(at);
+    }
+    if (cuts.length < 2) return undefined;
+    const base = { provider: read("provider"), threadId: read("threadId"), createdAt: read("createdAt"), ...(typeof read("turnId") === "string" ? { turnId: read("turnId") } : {}), ...(typeof read("itemId") === "string" ? { itemId: read("itemId") } : {}) };
+    const streamKind = reply ? "assistant_text" : read("streamKind");
+    const chunks: RuntimeEvent[] & { final?: boolean } = cuts.map((end, i) => ({ ...base, eventId: `${String(read("eventId"))}.${i}`, type: "content.delta", streamKind, delta: text.slice(i ? cuts[i - 1] : 0, end) }) as RuntimeEvent);
+    chunks.final = reply;
+    return chunks;
+  }
   private listeners = new Set<RuntimeEventListener>();
-  private unsubscribes: Array<{ instanceId: string; unsubscribe: () => void }> = [];
+  private subscriptions = new Map<string, { adapter: ProviderInstance["adapter"]; unsubscribe: () => void }>();
   private readonly appendLog: typeof appendFileSync;
   /** Every listener is durable by default (the fold, terminal cleanup and the waiters all write or follow writes): its
    * deliveries wait out the writer gate and are retried on a locked database, never dropped. `{ durable: false }` opts out. */
@@ -307,18 +346,56 @@ export class EventBus {
     this.appendLog = appendLog;
   }
 
+  /** E15-V3: the instance each delivered event came from (read-only; oversize events carry no providerInstanceId field). */
+  private readonly instanceByEvent = new WeakMap<object, string>();
+  /** E15-V3: events still queued when their instance was detached, with the detach's sequence number. */
+  private readonly detachedByEvent = new WeakMap<object, number>();
+  private detachCounter = 0;
+  /** E15-V3 r3: queue entries a detach stamped, by entry, and how many of each detach's are still queued (released at its last shift). */
+  private readonly detachedEntries = new WeakMap<object, number>();
+  private readonly detachedLeft = new Map<number, number>();
+  private readonly detachDrained = new Set<(seq: number) => void>();
+  /** The instance an event was published for (the object listeners receive). */
+  instanceOf(event: RuntimeEvent): string | undefined { return this.instanceByEvent.get(event); }
+  /** E15-V3: the number of detaches so far that removed an attachment. */
+  detachCount(): number { return this.detachCounter; }
+  /** E15-V3: the detach sequence that cut this event off from its fleet when it was still queued (undefined: not from a detached fleet). */
+  detachedSeq(event: RuntimeEvent): number | undefined { return this.detachedByEvent.get(event); }
+  /** E15-V3 r3: events this detach stamped that are still queued (0 once the last one has been delivered to every listener). */
+  detachedQueued(seq: number): number { return this.detachedLeft.get(seq) ?? 0; }
+  /** E15-V3 r3: called once per detach when the last event it stamped leaves the queue, after every listener ran for it. */
+  onDetachDrained(listener: (seq: number) => void): () => void {
+    this.detachDrained.add(listener);
+    return () => { this.detachDrained.delete(listener); };
+  }
+  private detachedDelivered(entry: object): void {
+    const seq = this.detachedEntries.get(entry);
+    if (seq === undefined) return;
+    this.detachedEntries.delete(entry);
+    const left = (this.detachedLeft.get(seq) ?? 1) - 1;
+    if (left > 0) { this.detachedLeft.set(seq, left); return; }
+    this.detachedLeft.delete(seq);
+    for (const listener of [...this.detachDrained]) {
+      try { listener(seq); } catch { console.error("bus: detach drained listener threw"); }
+    }
+  }
+
   private boundResolution?: (threadId: string, turnId: string) => boolean;
   /** A raw engine resolution needs an immutable dispatch binding before any consumer can use it. */
   bindRequestResolutions(bound: (threadId: string, turnId: string) => boolean): void { this.boundResolution = bound; }
 
   attach(instances: ProviderInstance[]) {
     for (const instance of instances) {
+      if (this.subscriptions.get(instance.instanceId)?.adapter === instance.adapter) continue;
+      this.detach(new Set([instance.instanceId]));
       const attachment = this.collector.attach(instance.instanceId);
       this.hostDriverKinds.set(instance.instanceId, instance.driverKind);
-      const previous = this.attachments.get(instance.instanceId);
-      if (previous) this.collector.detach(previous);
       this.attachments.set(instance.instanceId, attachment);
-      const unsub = instance.adapter.onEvent((event, source) => {
+      // An event belongs to this attachment when the adapter emits it. One that then waits behind a chunked reply was already
+      // accepted: a detach or replacement while it waits must not drop it (the reply and its turn end would be lost).
+      const current = (source?: SourceContext) => this.attachments.get(instance.instanceId) === attachment && (!source || source.attachment === attachment);
+      const deliver = (event: RuntimeEvent, source?: SourceContext, accepted = false) => {
+        if (!accepted && !current(source)) return;
         // hard invariant borrowed from correlateRuntimeEventWithInstance:
         // an adapter may only emit events for its own driver kind
         if (descriptorLogEvent(event).provider !== instance.driverKind) {
@@ -333,9 +410,48 @@ export class EventBus {
           ...Object.getOwnPropertyDescriptors(event), providerInstanceId: { value: instance.instanceId, enumerable: true },
         }) as RuntimeEvent;
         chargeExecutionEvent(stamped, event);
-        this.publish(stamped, source?.attachment === attachment ? source : undefined);
+        // F11-V3: the ONE intake of a plain-name app call. A proven own-connector alias ask is filed as the equal execute call,
+        // before the decision registry, the execution fold or any reader sees it (the engine's own call is untouched).
+        // an oversize graph is handed off untouched; a rewrite that throws leaves the ask as filed (it then stops as unread)
+        const asked = charge.oversize ? stamped : (() => { try { return aliasAsk(stamped as RuntimeEvent & { type: string }); } catch { return stamped; } })();
+        if (asked !== stamped) chargeExecutionEvent(asked, event);
+        // E15-V3: the instance is recorded for every event as published, the oversize ones (handed over unstamped) and an alias rewrite included.
+        this.instanceByEvent.set(asked, instance.instanceId);
+        this.publish(asked as RuntimeEvent, source);
+      };
+      // cause22-E (b) (MAIN-RULING 2026-11-22T17:58:19Z, event loop): the secret scan is synchronous. A reply or delta longer
+      // than LONG_TEXT is handed to the turn policy as content.delta chunks that each end at a line end, and the event loop
+      // runs between two chunks (setImmediate). Order is kept: while such an event is in flight every later event of its thread
+      // waits behind it (other threads do not wait). Nothing is cut and no line is split (a split line could hide a secret), so one line with no line end
+      // is still one scan. Shorter events take the same synchronous path as before.
+      const unsubscribe = instance.adapter.onEvent((event, source) => {
+        if (!current(source)) return;
+        const thread = event && typeof event === "object" && !types.isProxy(event) ? Object.getOwnPropertyDescriptor(event, "threadId")?.value : undefined;
+        const key = typeof thread === "string" ? `t:${thread}` : `i:${instance.instanceId}`;
+        const waiting = this.intakeTails.get(key);
+        const first = waiting ? undefined : this.lineChunks(event, source);
+        if (!first && !waiting) { deliver(event, source); return; }
+        this.intakeDraining.set(attachment, (this.intakeDraining.get(attachment) ?? 0) + 1);
+        const run = async () => {
+          // An event that waited is judged when its turn comes: only then is it known whether its reply was streamed.
+          const chunks = first ?? this.lineChunks(event, source);
+          // A chunk that fails to deliver ends the chunking only: the reply itself is still delivered below and is then
+          // scanned whole by the policy, so nothing is dropped silently.
+          try { if (chunks) for (const chunk of chunks) { deliver(chunk, source, true); await new Promise<void>(resolve => setImmediate(resolve)); } }
+          catch (e) { console.error("bus: chunked intake failed", e instanceof Error ? e.name : "error"); }
+          if (!chunks || chunks.final) deliver(event, source, true);
+        };
+        const tail: Promise<void> = (waiting ?? Promise.resolve()).then(run).catch(e => console.error("bus: chunked intake failed", e instanceof Error ? e.name : "error"))
+          .then(() => {
+            if (this.intakeTails.get(key) === tail) this.intakeTails.delete(key);
+            const left = (this.intakeDraining.get(attachment) ?? 1) - 1;
+            if (left > 0) { this.intakeDraining.set(attachment, left); return; }
+            this.intakeDraining.delete(attachment);
+            if (this.detachAfterDrain.delete(attachment)) this.collector.detach(attachment);
+          });
+        this.intakeTails.set(key, tail);
       });
-      this.unsubscribes.push({ instanceId: instance.instanceId, unsubscribe: unsub });
+      this.subscriptions.set(instance.instanceId, { adapter: instance.adapter, unsubscribe });
     }
   }
 
@@ -349,13 +465,20 @@ export class EventBus {
 
   /** The send fence allocates this before invoking any adapter. The context is
    * host-only and travels as the callback's second argument. */
-  admitNewTurn(instanceId: string, threadId: string): SourceContext {
+  admitNewTurn(instanceId: string, threadId: string, options?: Readonly<{ redispatch?: boolean }>): SourceContext {
     const attachment = this.attachments.get(instanceId);
     if (!attachment) throw new Error("instance_not_attached");
     const previous = this.hostSources.get(threadId);
     if (previous) this.terminatedSources.add(previous);
+    // 1.0.22 cause B (design section 4): the same owner message dispatched again (`redispatch`: a memory context revoked mid-turn,
+    // index.ts admitLedgerLease) while its secret-latched admission is still open. The engine session may still hold what the first
+    // attempt printed, so its masked values carry into the new admission. Read BEFORE the cancel drops them. Any other new turn
+    // starts with an empty list, also when the turn before it never completed (a latch does not outlive its turn).
+    const earlier = previous ?? this.refusedSources.get(threadId);
+    this.refusedSources.delete(threadId);
+    const carried = options?.redispatch && earlier?.admission ? this.collector.carriedValues(earlier.admission) : undefined;
     if (previous?.admission) this.collector.cancel(previous.admission);
-    const source = this.collector.source(this.collector.admitNewTurn({ instanceId, threadId, attachment }));
+    const source = this.collector.source(this.collector.admitNewTurn({ instanceId, threadId, attachment }, carried));
     this.hostSources.set(threadId, source);
     return source;
   }
@@ -365,6 +488,8 @@ export class EventBus {
     if (source) this.stoppedSources.add(source);
     if (source?.admission) this.collector.cancel(source.admission);
     if (source && this.hostSources.get(threadId) === source) this.hostSources.delete(threadId);
+    // 1.0.22 cause B: a Stop ends the message; what its refused attempt masked is not carried into anything after it
+    this.refusedSources.delete(threadId);
   }
 
   /** Host-owned terminal control for a sealed ledger. It carries no provider
@@ -372,7 +497,7 @@ export class EventBus {
   refuseTurn(threadId: string, source: SourceContext): readonly AudienceEmission[] {
     // A source Stop already cancelled still owes its one memory_refused (S1' race); a replaced or terminated source owes nothing.
     if (this.terminatedSources.has(source) || this.hostSources.get(threadId) !== source && !this.stoppedSources.has(source)) return [];
-    if (this.hostSources.get(threadId) === source) this.hostSources.delete(threadId);
+    if (this.hostSources.get(threadId) === source) { this.hostSources.delete(threadId); this.refusedSources.set(threadId, source); }
     this.terminatedSources.add(source);
     const event: RuntimeEvent = { type: "turn.completed", eventId: randomUUID(), provider: "murage",
       threadId, createdAt: new Date().toISOString(), ok: false, stopReason: "memory_refused" };
@@ -383,6 +508,13 @@ export class EventBus {
   }
 
   audienceMaskedFor(event: RuntimeEvent): boolean { return this.maskedByExecution.get(event) ?? true; }
+  /** The mask came from the turn's own secret scan (RuntimeAudienceCollector.maskedBySecret), not a fence. */
+  audienceSecretMaskedFor(event: RuntimeEvent): boolean { return this.secretMaskedByExecution.get(event) === true; }
+  /** The turn withheld some text unscanned (RuntimeAudienceCollector.withheld): its raw text is not proven clean, so a
+   * reader of the RAW event (not the projection) treats this like a mask (cause22-E (b), FABLE design review H1). */
+  audienceWithheldFor(event: RuntimeEvent): boolean { return this.withheldByExecution.get(event) === true; }
+  /** What the event's turn had masked when this event was taken in. Undefined = unavailable: the reader keeps the 1.0.21 outcome. */
+  audienceMaskedValuesFor(event: RuntimeEvent): MaskedValueView | undefined { return this.maskedValuesByExecution.get(event); }
   audienceFor(event: RuntimeEvent): readonly AudienceEmission[] { return this.audienceByExecution.get(event) ?? []; }
 
   publish(event: RuntimeEvent, source?: SourceContext) {
@@ -399,6 +531,10 @@ export class EventBus {
     if (source) this.executionSources.set(event, source);
     this.audienceByExecution.set(event, result.audience);
     this.maskedByExecution.set(event, this.collector.masked(source));
+    if (this.collector.maskedBySecret(source)) this.secretMaskedByExecution.set(event, true);
+    if (this.collector.withheld(source)) this.withheldByExecution.set(event, true);
+    const maskedValues = this.collector.maskedValues(source);
+    if (maskedValues) this.maskedValuesByExecution.set(event, maskedValues);
     if (route.type === "item.completed" && route.itemType === "tool") checkAllHookCanon("V-ANY");
     observeTurnEvent(route);
     const write = !this.omitThread(route.threadId) && persistsEvent(route) && !threadLogClosed(route.threadId);
@@ -578,6 +714,7 @@ export class EventBus {
             break;
           }
           queue.shift(); budget--;
+          this.detachedDelivered(head);
           if (head.reserved) { this.reserveCount--; this.reserveBytes -= head.bytes; }
           else {
             this.pendingCount--; this.pendingBytes -= head.bytes;
@@ -612,20 +749,34 @@ export class EventBus {
   }
 
   detachAll() {
-    for (const attachment of this.attachments.values()) this.collector.detach(attachment);
-    this.attachments.clear();
-    for (const { unsubscribe } of this.unsubscribes.splice(0)) unsubscribe();
+    this.detach(new Set(this.attachments.keys()));
   }
 
   /** Stop delivering only these instances' events; every other engine stays
    * attached (a scoped provider reload, server/index.ts reloadProviders). */
   detach(instanceIds: ReadonlySet<string>) {
-    const kept: Array<{ instanceId: string; unsubscribe: () => void }> = [];
-    for (const entry of this.unsubscribes) {
-      if (instanceIds.has(entry.instanceId)) { const attachment = this.attachments.get(entry.instanceId); if (attachment) this.collector.detach(attachment); this.attachments.delete(entry.instanceId); entry.unsubscribe(); }
-      else kept.push(entry);
+    if ([...instanceIds].some(instanceId => this.attachments.has(instanceId))) {
+      // E15-V3: the queue keeps draining after a detach, so an event queued now is still the old fleet's, and its listeners must be able to tell
+      const seq = ++this.detachCounter;
+      for (const queue of this.pendingByThread.values()) for (const entry of queue) {
+        const from = this.instanceByEvent.get(entry.event);
+        // an event an earlier detach already cut off keeps that detach's sequence: the next fleet reuses the instance id
+        if (from !== undefined && instanceIds.has(from) && this.attachments.has(from) && !this.detachedByEvent.has(entry.event)) {
+          this.detachedByEvent.set(entry.event, seq);
+          this.detachedEntries.set(entry, seq);
+          this.detachedLeft.set(seq, (this.detachedLeft.get(seq) ?? 0) + 1);
+        }
+      }
     }
-    this.unsubscribes = kept;
+    for (const instanceId of instanceIds) {
+      const attachment = this.attachments.get(instanceId);
+      // Events this attachment already handed over may still wait behind a chunked reply: its admissions end after them.
+      if (attachment && this.intakeDraining.get(attachment)) this.detachAfterDrain.add(attachment);
+      else if (attachment) this.collector.detach(attachment);
+      this.attachments.delete(instanceId);
+      this.subscriptions.get(instanceId)?.unsubscribe();
+      this.subscriptions.delete(instanceId);
+    }
   }
 }
 

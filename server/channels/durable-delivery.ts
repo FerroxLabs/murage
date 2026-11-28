@@ -63,7 +63,8 @@ function reclaimed(state: State, now: number) {
 function review(record: State["records"][number]) {
   record.state = "cancelled"; record.error = "reviewed"; record.prompt = ""; delete record.response;
 }
-const contains = (state: State, deliveryId: string) => [...state.records, ...state.tombstones].some(r => r.deliveryId === deliveryId || r.dedupeId === deliveryId);
+const matches = (r: { deliveryId: string; dedupeId?: string }, deliveryId: string) => r.deliveryId === deliveryId || r.dedupeId === deliveryId;
+const contains = (state: State, deliveryId: string) => state.records.some(r => matches(r, deliveryId)) || state.tombstones.some(r => matches(r, deliveryId));
 
 const resendId = (source: string) => createHash("sha256").update(source).update("\0resend").digest("hex");
 type LineageRow = State["tombstones"][number];
@@ -164,6 +165,19 @@ export class DurableDelivery {
         store.commit(state, v1 && v1.row.legacy === "kept" ? { legacy: "kept", sha: v1.row.legacy_sha256, by: store.nonce } : undefined);
       } finally { store.release(); }
     }
+  }
+  /** CHIEF-TRANSFER: a moved pairing keeps its receipts. The key the ledger checks is a digest of the whole binding, which names the Chief, so a move
+   * changes it. This rewrites only that key (records, tombstones and recipient are untouched); a re-run after a crash finds `to` already there. */
+  static rekey(options: { file: string; recipient: string; from: string; to: string; writeFile?: Options["writeFile"] }): void {
+    if (!ledgerExists(options.file)) return;
+    const store = new LedgerStore(options.file, options.writeFile);
+    try {
+      const row = store.row(), found = store.load(20_000, { migrate: false });
+      if (!found) return;
+      if (found.state.bindingKey === options.to && found.state.recipient === options.recipient) return;
+      if (found.state.bindingKey !== options.from || found.state.recipient !== options.recipient) throw new Error("Channel receipt binding mismatch");
+      store.commit({ ...found.state, bindingKey: options.to }, !row && found.row.legacy === "kept" ? { legacy: "kept", sha: found.row.legacy_sha256, by: store.nonce } : undefined);
+    } finally { store.release(); }
   }
   /** True when a store row or a v1 root exists for this ledger. Never creates the store; a read error answers true (the constructor then fails closed). */
   static exists(file: string): boolean { return ledgerExists(file); }
@@ -332,21 +346,28 @@ export class DurableDelivery {
   }
   /** A resend retains its source even after earlier receipts become tombstones. */
   redact(deliveryId: string): { runId?: string; descendantRunIds?: string[] } | null {
-    const result = this.mutate<{ runId?: string; descendantRunIds?: string[] } | null>(s => {
+    const family = (s: State) => {
       const record = s.records.find(r => r.deliveryId === deliveryId);
       const source = record?.sourceDeliveryId ?? deliveryId;
-      const related = s.records.filter(r => r.deliveryId === source || r.sourceDeliveryId === source);
-      if (!related.length) return { commit: false, result: null };
-      let changed = false;
-      for (const row of related) {
-        if (row.error !== "redacted" || row.state !== "cancelled" || row.prompt !== ""
-            || row.response !== undefined || row.quote !== undefined || row.media !== undefined) changed = true;
+      return { record, related: s.records.filter(r => r.deliveryId === source || r.sourceDeliveryId === source) };
+    };
+    const unredacted = (row: State["records"][number]) => row.error !== "redacted" || row.state !== "cancelled" || row.prompt !== ""
+      || row.response !== undefined || row.quote !== undefined || row.media !== undefined;
+    const answer = ({ record, related }: ReturnType<typeof family>) => {
+      const descendantRunIds = [...new Set(related.filter(r => r !== record && r.runId !== undefined).map(r => r.runId!))];
+      return { ...(record?.runId === undefined ? {} : { runId: record.runId }), ...(descendantRunIds.length ? { descendantRunIds } : {}) };
+    };
+    // An already redacted family is answered from the committed state: no copy of the state, no commit, no sweep.
+    const held = family(this.state);
+    if (!held.related.length) { this.cancelAudio(deliveryId); return null; }
+    if (!held.related.some(unredacted)) { this.cancelAudio(deliveryId); return answer(held); }
+    const result = this.mutate<{ runId?: string; descendantRunIds?: string[] } | null>(s => {
+      const found = family(s);
+      for (const row of found.related) {
         row.prompt = ""; delete row.response; delete row.quote; delete row.media;
         row.state = "cancelled"; row.error = "redacted";
       }
-      const descendantRunIds = [...new Set(related.filter(r => r !== record && r.runId !== undefined).map(r => r.runId!))];
-      return { commit: changed, result: { ...(record?.runId === undefined ? {} : { runId: record.runId }),
-        ...(descendantRunIds.length ? { descendantRunIds } : {}) } };
+      return { commit: true, result: answer(found) };
     });
     this.cancelAudio(deliveryId);
     void this.sweepPages();

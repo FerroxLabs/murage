@@ -40,6 +40,37 @@ export async function readHealthIssues(state: "open" | "resolved", signal?: Abor
   }
 }
 
+/** The most pages the snapshot reads: at most 256 issue rows of a few hundred bytes each, so 12 pages of up to 64 KiB hold them; more is read as unavailable, never as a shorter list. */
+export const HEALTH_ISSUE_PAGES = 12;
+
+/** The same read for the Health snapshot: also the store revision, which every page must agree on (a page that moved
+ * on is read again from the top, then fails as a 409, so the snapshot never mixes two moments). */
+export async function readHealthIssuesAt(state: "open" | "resolved", signal?: AbortSignal, read: typeof api = api): Promise<{ items: HealthIssue[]; storeRevision: number }> {
+  for (let attempt = 0; ; attempt++) {
+    const items: HealthIssue[] = [];
+    let after: string | null = null;
+    let storeRevision: number | null = null;
+    try {
+      for (let page = 0; page < HEALTH_ISSUE_PAGES; page++) {
+        const params: URLSearchParams = new URLSearchParams({ state, limit: "50" });
+        if (after) params.set("after", after);
+        const answer = await read(`/api/sentinel/issues?${params}`, { signal }) as HealthIssuesResponse;
+        if (!answer.ok) throw new Error(answer.reason);
+        if (storeRevision !== null && answer.storeRevision !== storeRevision) throw Object.assign(new Error("refresh"), { status: 409 });
+        storeRevision = answer.storeRevision;
+        items.push(...answer.items);
+        after = answer.next;
+        if (!after) break;
+      }
+      // A list that still has a continuation is a prefix, never the whole: the snapshot must not certify an all-clear on it.
+      if (after) throw new Error("incomplete");
+      return { items, storeRevision: storeRevision ?? 0 };
+    } catch (cause) {
+      if ((cause as { status?: number })?.status !== 409 || attempt >= 2) throw cause;
+    }
+  }
+}
+
 /** The issues as the owner sees them: an issue shown under another issue's line (presentedBy) adds no line. */
 export const healthFolds = (issues: readonly HealthIssue[]): HealthFold<HealthIssue>[] => foldHealthRows(issues.filter((issue) => !issue.presentedBy));
 

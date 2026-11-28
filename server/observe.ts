@@ -71,9 +71,12 @@ function addStallStep(name: string, ms: number): void {
   else if (stallSteps.size < 256) stallSteps.set(name, { ms, calls: 1 });
 }
 /** `name:<total>ms` (with `xN` when it ran N > 1 times) for the step that held the loop longest in all,
- *  and the next two as `others=`. */
-export function stallHolderText(steps: ReadonlyMap<string, { ms: number; calls: number }>): string {
+ *  and the next two as `others=`. With `blockedMs`, time no named step accounts for is a holder too (`unnamed:<ms>`): 1.0.22 N3 logged
+ *  `blocked=415653ms holder=memory.pip.threads:8msx8`, a step that held 8 ms of 415 s named as the cause. */
+export function stallHolderText(steps: ReadonlyMap<string, { ms: number; calls: number }>, blockedMs = 0): string {
   const ranked = [...steps].filter(([, step]) => step.ms >= 1).sort((a, b) => b[1].ms - a[1].ms);
+  const unnamed = blockedMs - ranked.reduce((sum, [, step]) => sum + step.ms, 0);
+  if (unnamed >= 1 && (!ranked.length || unnamed > ranked[0]![1].ms)) ranked.unshift(["unnamed", { ms: unnamed, calls: 1 }]);
   if (!ranked.length) return "holder=unknown";
   const one = ([name, step]: [string, { ms: number; calls: number }]) => `${name}:${Math.round(step.ms)}ms${step.calls > 1 ? `x${step.calls}` : ""}`;
   return `holder=${one(ranked[0]!)}${ranked.length > 1 ? ` others=${ranked.slice(1, 3).map(one).join(",")}` : ""}`;
@@ -90,19 +93,35 @@ export function noteActiveTask(name: string): () => void {
 }
 
 let loopMonitor: ReturnType<typeof monitorEventLoopDelay> | undefined;
-let loopTimer: ReturnType<typeof setInterval> | undefined;
+/** 1.0.22 idle burn (HIDDEN-COST row 8): the histogram's own timer fires once per resolution. It was 20 ms (50 wakeups a second, forever);
+ * 200 ms still sees every block the lag line reports (p99 over 100 ms, max over the stall threshold), and it samples only while busy. */
+export const LOOP_DELAY_RESOLUTION_MS = 200;
+/** Whether a turn or job is running (index.ts sets it to the same predicate the io budget uses). Unset: always busy, as before. */
+let loopBusy: () => boolean = () => true;
+export function setLoopWatchBusy(read?: () => boolean): void { loopBusy = read ?? (() => true); }
+function busyNow(): boolean { try { return loopBusy(); } catch { return true; } }
+/** While nothing runs (no turn, no job) the stall watch is parked: no timer and the histogram off, so an idle server is not woken at all.
+ * The sites that start a turn or a job (index.ts: the store's bot/room change stream, the turn owner maps, a routine run going live) call
+ * this; it re-arms the fine tick when the busy predicate now reads busy, and costs one predicate read while parked, nothing while armed. */
+let wakeParked: (() => void) | undefined;
+export function wakeLoopWatch(): void { wakeParked?.(); }
+/** The stall watch's current tick in ms, or undefined when it is parked or stopped (read-only, for the witnesses). */
+let stallPeriod: number | undefined;
+export function stallWatchPeriod(): number | undefined { return stallPeriod; }
 /** `[loop] lag p50= p99= max= topSource=` every 5 minutes while p99 is over 100 ms. */
 export function startLoopLagMonitor(intervalMs = 300_000, thresholdMs = 100): void {
   if (loopMonitor) return;
-  loopMonitor = monitorEventLoopDelay({ resolution: 20 });
-  loopMonitor.enable();
-  loopTimer = setInterval(() => reportLoopLag(thresholdMs), intervalMs);
-  loopTimer.unref();
-  startLoopStallWatch(STALL_THRESHOLD_MS, stallTickFor(STALL_THRESHOLD_MS));
+  loopMonitor = monitorEventLoopDelay({ resolution: LOOP_DELAY_RESOLUTION_MS });
+  // the five-minute line rides the stall watch's tick (no timer of its own)
+  lagReport = { everyMs: intervalMs, thresholdMs, at: performance.now() };
+  startLoopStallWatch(STALL_THRESHOLD_MS, stallTickFor(STALL_THRESHOLD_MS), undefined, true);
 }
+let lagReport: { everyMs: number; thresholdMs: number; at: number } | undefined;
 export function reportLoopLag(thresholdMs = 100): string | undefined {
   if (!loopMonitor) return undefined;
-  const p50 = loopMonitor.percentile(50) / 1e6, p99 = loopMonitor.percentile(99) / 1e6, max = loopMonitor.max / 1e6;
+  // each sample is the whole interval between the histogram's own wakeups: the delay is what exceeds its resolution
+  const late = (ns: number) => Math.max(0, ns / 1e6 - LOOP_DELAY_RESOLUTION_MS);
+  const p50 = late(loopMonitor.percentile(50)), p99 = late(loopMonitor.percentile(99)), max = late(loopMonitor.max);
   loopMonitor.reset();
   const holder = topSource?.name ?? "unknown";
   topSource = undefined;
@@ -114,8 +133,7 @@ export function reportLoopLag(thresholdMs = 100): string | undefined {
   return line;
 }
 export function stopLoopLagMonitor(): void {
-  loopMonitor?.disable(); loopMonitor = undefined;
-  if (loopTimer) clearInterval(loopTimer); loopTimer = undefined;
+  loopMonitor?.disable(); loopMonitor = undefined; lagReport = undefined;
   stopLoopStallWatch();
 }
 
@@ -128,6 +146,9 @@ export const STALL_THRESHOLD_MS = stallThresholdFromEnv(process.env.MURAGE_STALL
 /** The tick must be finer than the threshold, or a 250 ms block cannot be measured. */
 export function stallTickFor(thresholdMs: number): number { return Math.max(25, Math.min(250, Math.floor(thresholdMs / 5))); }
 let stallTimer: ReturnType<typeof setInterval> | undefined;
+/** Process CPU time (user + system) in ms. A stall line's `cpu=` is its share of the block: near the block, the thread computed; near
+ * zero, it waited (a Mac sleep, a privacy prompt, a stuck volume), which no named step can account for (1.0.22 N3). */
+function cpuNowMs(): number { const { user, system } = process.cpuUsage(); return (user + system) / 1000; }
 /** Garbage-collector pauses, so a stall line can say how much of a block was the collector (`gc=<ms>`) and how much was work outside any
  * named step. A buffered observer: the entries are rare and cheap; the last few are kept with their start time. */
 const gcPauses: Array<{ at: number; ms: number }> = [];
@@ -161,28 +182,47 @@ export function gcPauseMs(from: number, to: number): number {
  * over the whole block and the largest three named, the long operations
  * still open, and the task named last (`noteActiveTask`).
  */
-export function startLoopStallWatch(thresholdMs = STALL_THRESHOLD_MS, tickMs = 250, now: () => number = () => performance.now()): void {
-  if (stallTimer) return;
+export function startLoopStallWatch(thresholdMs = STALL_THRESHOLD_MS, tickMs = 250, now: () => number = () => performance.now(), parkWhenIdle = false): void {
+  if (stallTimer || wakeParked) return;
   startGcWatch();
-  let last = now();
+  let last = now(), lastCpu = cpuNowMs();
   stallSteps = new Map();
-  stallTimer = setInterval(() => {
+  // Parking (startLoopLagMonitor): the tick and the histogram run only while busy; the tick that first reads idle parks the watch, and
+  // wakeLoopWatch() re-arms it. Without parking (the tests' direct watch) the tick runs until stopped, as before.
+  const arm = () => {
+    // a reset before enabling: the first sample after an idle stretch would otherwise span the whole stretch (a false lag line)
+    loopMonitor?.reset(); loopMonitor?.enable();
+    // the parked stretch is not a block (nor its steps): measure from the re-arm
+    last = now(); lastCpu = cpuNowMs(); stallSteps = new Map();
+    stallPeriod = tickMs;
+    stallTimer = setInterval(tick, tickMs);
+    stallTimer.unref();
+  };
+  const park = () => {
+    if (stallTimer) clearInterval(stallTimer);
+    stallTimer = undefined; stallPeriod = undefined;
+    loopMonitor?.disable();
+  };
+  const tick = () => {
     const at = now();
     const blocked = at - last - tickMs;
-    const from = last;
-    last = at;
+    const from = last, cpuFrom = lastCpu;
+    last = at; lastCpu = cpuNowMs();
     const steps = stallSteps;
     stallSteps = new Map();
+    if (lagReport && at - lagReport.at >= lagReport.everyMs) { lagReport.at = at; reportLoopLag(lagReport.thresholdMs); }
+    if (parkWhenIdle && !busyNow()) park();
     if (blocked <= thresholdMs) return;
     const running = runningLongOps(), active = activeTask;
-    const line = `[loop] stall blocked=${Math.round(blocked)}ms ${stallHolderText(steps)}${running.length ? ` running=${running.slice(0, 4).join(",")}` : ""}${active ? ` active=${active}` : ""}`;
+    const line = `[loop] stall blocked=${Math.round(blocked)}ms ${stallHolderText(steps, blocked)}${running.length ? ` running=${running.slice(0, 4).join(",")}` : ""}${active ? ` active=${active}` : ""} cpu=${Math.round(lastCpu - cpuFrom)}ms`;
     // the collector's entries for a pause inside the block are delivered after this timer: the line waits one turn for them
     const window = { from: performance.now() - (at - from) - tickMs, to: performance.now() };
     setImmediate(() => { const gc = gcPauseMs(window.from, window.to); observeLine(gc >= 1 ? `${line} gc=${Math.round(gc)}ms` : line); });
-  }, tickMs);
-  stallTimer.unref();
+  };
+  if (parkWhenIdle) wakeParked = () => { if (!stallTimer && busyNow()) arm(); };
+  if (!parkWhenIdle || busyNow()) arm(); else park();
 }
-export function stopLoopStallWatch(): void { if (stallTimer) clearInterval(stallTimer); stallTimer = undefined; stopGcWatch(); }
+export function stopLoopStallWatch(): void { if (stallTimer) clearInterval(stallTimer); stallTimer = undefined; stallPeriod = undefined; wakeParked = undefined; stopGcWatch(); }
 
 /** A statement that held the loop this long is reported (and remembered as the loop's top holder). */
 export const SLOW_SQL_MS = 50;

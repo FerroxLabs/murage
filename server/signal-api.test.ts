@@ -344,6 +344,7 @@ function isolatedSignalStatus(expected: number) {
   const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `
     import { launchVerificationServer, runControlMurage } from './scripts/control-murage.ts';
     import { readMcpAccessKey } from './server/mcp-access.ts';
+    import { evidencePath } from './scripts/evidence-path.mjs';
     import { existsSync, readFileSync, writeFileSync } from 'node:fs';
     const fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: ${JSON.stringify(instrumentation)} });
     try {
@@ -355,8 +356,8 @@ function isolatedSignalStatus(expected: number) {
       const signalSpawned = existsSync(fixture.info.dataDir + '/signal-spawn-count');
       const evidence = { fixture: fixture.info, doctor, status: response.status, signalSpawned };
       console.log(JSON.stringify(evidence));
-      writeFileSync('evidence/signal-a5/isolated-status-${expected}.json', JSON.stringify(evidence, null, 2));
-      writeFileSync('evidence/signal-a5/isolated-server-${expected}.log', readFileSync(fixture.info.logPath));
+      writeFileSync(evidencePath('evidence/signal-a5/isolated-status-${expected}.json'), JSON.stringify(evidence, null, 2));
+      writeFileSync(evidencePath('evidence/signal-a5/isolated-server-${expected}.log'), readFileSync(fixture.info.logPath));
       if (response.status !== ${expected} || (${expected} === 404 && signalSpawned)) process.exitCode = 1;
     } finally { await fixture.close(); }
   `], { cwd: fileURLToPath(new URL("../", import.meta.url)), encoding: "utf8", timeout: 180000 });

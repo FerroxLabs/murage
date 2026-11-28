@@ -384,6 +384,9 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
 /** How long a steer may wait for the engine to be ready (Claude holds a steer until its
  * `init`, which a cold start can delay) before the line is queued for the next turn instead. */
 export const STEER_READY_WAIT_MS = 4000;
+/** Fuigo and Grok take a steer once their prompt is written, which an engine start can delay past STEER_READY_WAIT_MS: their adapters wait
+ * for it (core.ts interject, 7.5 s) and the desk waits a little longer, so the line is steered instead of queued behind the whole turn. */
+export const ACP_STEER_READY_WAIT_MS = 8000;
 
 /** The direct-send route rechecks ownership after this awaited engine call. */
 /** A driver's steer answer in the three-state contract (a boolean is the older shape). */

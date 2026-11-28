@@ -164,6 +164,22 @@ describe("reading the committed issues", () => {
     store.close();
   });
 
+  it("W8 (ALLCLEAR-V3 P3): the summary's view.storeRevision is the issues storeRevision after a publish, and differs after a commit without one", () => {
+    const { location, store } = seeded(2);
+    publishView(location.outputRoot, viewFromStore(store, T0, "running", "complete", T0, T0));
+    const revisions = () => ({
+      view: (read("/api/sentinel/summary", "", owner(location))!.body as { view: { storeRevision: number } }).view.storeRevision,
+      issues: (read("/api/sentinel/issues", "state=open", owner(location))!.body as { storeRevision: number }).storeRevision,
+    });
+    const first = revisions();
+    expect(first.view).toBeGreaterThan(0);
+    expect(first.view).toBe(first.issues);
+    store.commit({ issues: [issueRecord(99)] });
+    const moved = revisions();
+    expect(moved.issues).toBeGreaterThan(moved.view);
+    store.close();
+  });
+
   it("a store of another installation is unavailable, never read", () => {
     const { fx, store } = seeded(2);
     const foreign = { installationId: "f".repeat(32), outputRoot: fx.descriptor.outputRoot };
@@ -204,6 +220,22 @@ describe("locating the scanner output root", () => {
     expect(fx.id).toMatch(/^[0-9a-f]{32}$/);
   });
 
+  for (const state of ["open", "resolved"]) {
+    posixOnly(`retired checks still report ${state} history unavailable without a descriptor`, () => {
+      const fx = install();
+      const opened = SentinelStore.open(fx.outputRoot, { installationId: fx.id });
+      if (opened.status !== "ok") throw new Error(opened.status);
+      try {
+        opened.store.commit({ issues: [issueRecord(1)] });
+      } finally {
+        opened.store.close();
+      }
+      const context = { owner: true, backgroundChecksRetired: true, locate: () => locateSentinel(fx.dataDir, { env: fx.env, home: fx.base }) };
+      expect(context.locate()).toEqual({ ok: false, reason: "descriptor-missing" });
+      expect(handleSentinelRead("GET", "/api/sentinel/issues", new URLSearchParams({ state }), context)).toEqual({ status: 503, body: { ok: false, reason: "unavailable" } });
+    });
+  }
+
   posixOnly("a moved installation is a new namespace, and a missing data dir is refused", () => {
     const fx = install();
     expect(writeDescriptor(fx.descriptor).ok).toBe(true);
@@ -238,6 +270,22 @@ describe("the desktop host's status in the owner summary", () => {
     store.close();
     return location;
   };
+
+  posixOnly("a retired desktop checker marks the owner summary and keeps saved history readable", () => {
+    const { location, store } = seeded(1);
+    publishView(location.outputRoot, viewFromStore(store, T0, "running", "partial", T0, T0));
+    store.close();
+    const context = { ...owner(location), backgroundChecksRetired: true };
+    expect(read("/api/sentinel/summary", "", context)?.body).toMatchObject({ status: "ready", backgroundChecksRetired: true, view: { summary: { openCount: 1 } } });
+    expect(read("/api/sentinel/issues", "state=open", context)?.body).toMatchObject({ ok: true, items: [expect.objectContaining({ severity: "high" })] });
+  });
+
+  it("the owner summary reports retirement while the descriptor is missing", () => {
+    const context = { owner: true, locate: () => ({ ok: false as const, reason: "descriptor-missing" }), backgroundChecksRetired: true };
+    const summary = (owner: boolean) => handleSentinelRead("GET", "/api/sentinel/summary", new URLSearchParams(), { ...context, owner });
+    expect(summary(false)?.status).toBe(404);
+    expect(summary(true)?.body).toEqual({ status: "waiting", view: null, backgroundChecksRetired: true });
+  });
 
   posixOnly("a fresh heartbeat or no host file keeps complete coverage and No issues found", () => {
     const location = setup();

@@ -94,3 +94,25 @@ server/testing/.git-ls-files.fixture
 
 # Generated package qualification receipts, like dist-native build receipts.
 /qualification-evidence/
+
+# Written by every release job before packaging (release-guard.mjs rings-floor): the live ring seq, packaged beside
+# electron/updater.mjs. A per-build output, never source; the Windows provenance gate refused it as untracked input.
+/electron/rings-floor.json
+
+# integrator/test scratch (never tracked)
+__pycache__/
+.sw*.txt
+
+# Qualification captures and lane reports belong outside source checkouts.
+evidence/
+lane-evidence/
+c2-rule-evidence/
+/proof/
+/lanes/*/shots/
+/.vitest-lane.json
+*.pyc
+# W-COMPAT (4): the f6ae52c670 tree compat-v2-oldbuild.test.ts extracts or is given (memv2-I)
+/.memv2-compat-old*/
+
+# test output written into cwd, never evidence in the tree
+.data-fix-evidence/

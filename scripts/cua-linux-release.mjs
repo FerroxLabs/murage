@@ -31,15 +31,15 @@ export const LICENSE_FILES = Object.freeze([
 ]);
 
 export const LINUX_CUA_RELEASE = Object.freeze({
-  version: "0.19.3",
-  archiveName: "cua-driver-rs-0.19.3-linux-x86_64-binary.tar.gz",
-  archiveSize: 27_248_614,
-  archiveSha256: "3db9d4257d84bacaf7eb104d225f85613ce67edbb20d6eeb83c1384b6d8a5b10",
-  driverSha256: "ed5844fadf07b9b72c4a3b3802e1c47233c166d66d6198608d5991f807aab4ac",
-  cursorThemeSha256: "e589b2b7521bbfeaf9e2bfce668a38e80ed1b9790b1327b13d374fc331d8312a",
+  version: "0.55.0",
+  archiveName: "cua-driver-rs-0.55.0-linux-x86_64-binary.tar.gz",
+  archiveSize: 30_235_418,
+  archiveSha256: "1cb8aa6d30e5cdf5bf4d222cb3693a50af2c178073a49dc59e88737c5f7807e6",
+  driverSha256: "5d7ff450488e6a3e796d5c69c6d835dda71933c15c572097bc3bc6707212f826",
+  cursorThemeSha256: "b69b09dc7ab54cba4e565d863f6f03bb30a9af251d538813dd74b11c37089e67",
   url:
-    "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.19.3/" +
-    "cua-driver-rs-0.19.3-linux-x86_64-binary.tar.gz",
+    "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.55.0/" +
+    "cua-driver-rs-0.55.0-linux-x86_64-binary.tar.gz",
   maxArchiveBytes: 64 * MIB,
   maxExpandedBytes: 128 * MIB,
 });
@@ -50,27 +50,27 @@ export const LINUX_CUA_RELEASE = Object.freeze({
 const ARCHIVE_MEMBERS = Object.freeze({
   "cua-driver": Object.freeze({
     kind: "file",
-    size: 42_676_880,
+    size: 37_376_944,
     sha256: LINUX_CUA_RELEASE.driverSha256,
     staged: true,
     mode: 0o755,
   }),
   "cua-cursor-theme": Object.freeze({
     kind: "file",
-    size: 3_160_088,
+    size: 2_167_088,
     sha256: LINUX_CUA_RELEASE.cursorThemeSha256,
     staged: true,
     mode: 0o755,
   }),
   "libcua_driver_sdk.so": Object.freeze({
     kind: "file",
-    size: 37_879_784,
-    sha256: "31c142f5c67443a1fa933160bfa20d93b9914220fb9a47f2884d38df20ab0671",
+    size: 32_343_528,
+    sha256: "dde5fb33b9bf9f9c03300eddc74956f80951dc41d5afafe06d8c3cfd798f7e5c",
   }),
   "cua_driver_node_runtime.node": Object.freeze({
     kind: "file",
-    size: 966_152,
-    sha256: "52b70432d2eb167e69632246a38d895c9e7aa61618a31638d393ad6838117293",
+    size: 972_512,
+    sha256: "1530bd6d1381cb7c2ef238bb4145de8e5b894a9ffbfd643aaee02a1e14ee79dd",
   }),
   "cua_driver_abi.h": Object.freeze({
     kind: "file",
@@ -81,23 +81,23 @@ const ARCHIVE_MEMBERS = Object.freeze({
   "wayland-helper/winrects@cua/": Object.freeze({ kind: "directory", size: 0 }),
   "wayland-helper/winrects@cua/extension.js": Object.freeze({
     kind: "file",
-    size: 30_209,
-    sha256: "27aac56799574ecd201e810d32772d3695d8b6ace5ab4a68d026648009004eed",
+    size: 41_902,
+    sha256: "80903729beb0f4d87fc6e70ee302e969706c70e05ce41e268e5bae87ca43ac4e",
   }),
   "wayland-helper/winrects@cua/metadata.json": Object.freeze({
     kind: "file",
-    size: 236,
-    sha256: "3f6624c882bde9d611848201e2f245c813fbc322a57a003d52847afc8e6f4c50",
+    size: 231,
+    sha256: "1853170d66280f1a096af0e33bb400e3740cddf07bf3e2f1e3bbeaf33550e1d0",
   }),
   "wayland-helper/install.sh": Object.freeze({
     kind: "file",
-    size: 1_201,
-    sha256: "e13fc5700d281fed547fbb529a31bc1a0df250e6f9811c9cdddc99d465e219a0",
+    size: 1_932,
+    sha256: "1f36c163562d8d7a3a711e69625adc33895a511a1ca0f2bb8f516c3aca0906fb",
   }),
   "wayland-helper/README.md": Object.freeze({
     kind: "file",
-    size: 3_841,
-    sha256: "0c38155388bdb5b3a276c4d434fbc5311ed7bb775ae6b04969f50de81c8c2703",
+    size: 8_974,
+    sha256: "359bc52eb9639b7242a05d597e4a2ac6d0ea91622d4d4eed89412b594d5f2e17",
   }),
 });
 
@@ -240,7 +240,7 @@ function releaseManifest() {
       size: LINUX_CUA_RELEASE.archiveSize,
       sha256: LINUX_CUA_RELEASE.archiveSha256,
     },
-    sourceCommit: "a1672e7b11951275ecfba3384264d4530185d0db",
+    sourceCommit: "8f484f30586eef722bede7a5ce315de1148cca96",
     files: {
       "cua-driver": {
         sha256: LINUX_CUA_RELEASE.driverSha256,

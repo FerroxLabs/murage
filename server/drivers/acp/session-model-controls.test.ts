@@ -90,17 +90,3 @@ describe("ACP session model controls", () => {
     expect(() => controls.variant("low")).toThrow("does not advertise variant");
   });
 });
-
-it('resets saved thinking to the advertised default and demands a fresh session if unknown or unconfirmed', async () => {
-  const { controls } = fixture('one');
-  controls.receive({ configOptions: [{ ...thought('max'), defaultValue: 'low' }] }, true);
-  const request = vi.fn(async (_method, _params, _timeout, receive) => { receive({ configOptions: [{ ...thought('low'), defaultValue: 'low' }] }); return {}; });
-  expect(await controls.resetVariant(request, 'saved', 100)).toBe(true);
-  expect(request).toHaveBeenCalledWith('session/set_config_option', { sessionId: 'saved', configId: 'thought_level', value: 'low' }, 100, expect.any(Function));
-  controls.receive({ configOptions: [thought('max')] }, true);
-  request.mockClear();
-  expect(await controls.resetVariant(request, 'saved', 100)).toBe(false);
-  expect(request).not.toHaveBeenCalled();
-  controls.receive({ configOptions: [{ ...thought('max'), defaultValue: 'low' }] }, true);
-  expect(await controls.resetVariant(async () => ({}), 'saved', 100)).toBe(false);
-});

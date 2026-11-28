@@ -112,7 +112,7 @@ describe("MEMSTART B / T10 real direct and room notice paths", () => {
   for (const room of [false, true]) for (const [name, causes, sites, ending, expected] of [
     ["setup to late checking", ["pending", "raw", "session"], ["setup", "late", "setup"], "success", checkingLine],
     ["late to setup checking", ["pending", "frame", "pending"], ["late", "setup", "late"], "success", checkingLine],
-    ["mixed cause", ["withheld", "pending", "pending"], ["late", "setup", "late"], "success", "Memory changed while Claude was starting, so this reply ran without remembered context."],
+    ["mixed cause", ["withheld", "pending", "pending"], ["late", "setup", "late"], "success", "This reply went ahead without remembered context after memory changed."],
     ["unknown cause", ["unknown", "pending", "pending"], ["setup", "late", "setup"], "success", "This reply ran without remembered context."],
     ["failed fallback", ["pending", "pending", "pending"], ["late", "setup", "late"], "failed", undefined],
     ["stopped fallback", ["pending", "pending", "pending"], ["setup", "late", "setup"], "stop", undefined],
@@ -141,7 +141,10 @@ describe("MEMSTART B / T10 real direct and room notice paths", () => {
     const rows = await messages(thread);
     console.warn(`MEMSTART transcript ${JSON.stringify({ room, name, rows })}`);
     const notes = rows.filter(m => m.memoryNote === "without-memory");
-    expect(notes.map(m => m.tool.name)).toEqual(expected ? [checkingLine] : []);
+    // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20): with a reply this asserted the one last-rebuild row (checkingLine). No row is written; the
+    // last rebuild is a log line.
+    expect(notes.map(m => m.tool.name)).toEqual([]);
+    if (expected) expect(readFileSync(fixture.info.logPath, "utf8")).toMatch(new RegExp(`\\[memory\\] (fence recovery tier=2|reply ran without remembered context) thread=${thread} `));
     const attempts = readFileSync(join(fixture.info.dataDir, "attempts"), "utf8").trim().split("\n").map(s => JSON.parse(s)).filter(a => a.thread === thread);
     expect(attempts).toHaveLength(3); expect(attempts.at(-1).memory).toBe(false);
     expect(rows.filter(m => m.role === "bot" && m.kind === "text" && m.text === "Hello from late")).toHaveLength(expected ? 1 : 0);
@@ -151,8 +154,8 @@ describe("MEMSTART B / T10 real direct and room notice paths", () => {
     await api("POST", route, { threadId: thread, text: "a separate request" });
     await expect.poll(async () => (await messages(thread)).filter(m => m.role === "bot" && m.kind === "text" && m.text === "Hello from late").length, { timeout: 30000 }).toBe(expected ? 2 : 1);
     const laterNotes = (await messages(thread)).filter(m => m.memoryNote === "without-memory");
-    expect(laterNotes.slice(notes.length).map(m => m.tool.name)).toEqual(["Murage left remembered details out of this reply."]);
-    expect(laterNotes).toHaveLength(notes.length + 1);
+    // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20): the separate request asserted its own left-out row; it writes none either.
+    expect(laterNotes).toEqual([]);
   }, 90000);
   for (const room of [false, true]) it(`${room ? "room" : "direct"}: cancellation while rebuilding cleans the logical cause`, async () => {
     const bot = (await api("POST", "/api/bots", { name: "Stop during settle", modelSelection: { instanceId: "memstart", model: "late-1" } })).bot;
@@ -184,12 +187,12 @@ describe("MEMSTART B / T10 real direct and room notice paths", () => {
         { kind: i === 0 ? "withheld" : "pending", site: "setup" }, { kind: "pending", site: "late" }, {},
       ] }));
       await api("POST", `/api/groups/${group.id}/messages`, { text: `@${bot.name} answer this request` });
-      await expect.poll(async () => (await messages(group.threadId)).filter(m => m.memoryNote === "without-memory").length, { timeout: 30000 }).toBe(i + 1);
+      // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20): each member's turn was awaited by its note row; it is awaited by its reply now.
+      await expect.poll(async () => (await messages(group.threadId)).filter(m => m.role === "bot" && m.kind === "text" && m.from?.botId === bot.id).length, { timeout: 30000 }).toBeGreaterThan(0);
       await expect.poll(async () => !!(await api("GET", "/api/bots?messages=0")).groups.find((g: any) => g.id === group.id)?.busyBotId, { timeout: 30000 }).toBe(false);
     }
     const notes = (await messages(group.threadId)).filter(m => m.memoryNote === "without-memory");
-    expect(notes.map(n => [n.from.botId, n.tool.name])).toEqual([
-      [bots[0].id, checkingLine], [bots[1].id, checkingLine],
-    ]);
+    expect(notes, "no member's last rebuild writes a note row").toEqual([]);
+    expect(readFileSync(fixture.info.logPath, "utf8").split(`[memory] fence recovery tier=2 thread=${group.threadId} `).length - 1, "each member's last rebuild is logged").toBe(bots.length);
   }, 90000);
 });

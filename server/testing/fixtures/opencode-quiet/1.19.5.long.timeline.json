@@ -1,0 +1,75 @@
+[
+  {
+    "t": 1419,
+    "event": "prompt_sent"
+  },
+  {
+    "t": 1419,
+    "event": "notification",
+    "method": "session/update",
+    "update": "available_commands_update"
+  },
+  {
+    "t": 1471,
+    "event": "request",
+    "kind": "title",
+    "n": 0
+  },
+  {
+    "t": 1777,
+    "event": "request",
+    "kind": "main",
+    "n": 1
+  },
+  {
+    "t": 1778,
+    "event": "stream_error",
+    "small": false
+  },
+  {
+    "t": 2490,
+    "event": "request",
+    "kind": "title",
+    "n": 0
+  },
+  {
+    "t": 2784,
+    "event": "request",
+    "kind": "main",
+    "n": 2
+  },
+  {
+    "t": 3501,
+    "event": "request",
+    "kind": "title",
+    "n": 0
+  },
+  {
+    "t": 3503,
+    "event": "stream_error",
+    "small": true
+  },
+  {
+    "t": 77819,
+    "event": "release",
+    "kind": "main",
+    "n": 2
+  },
+  {
+    "t": 77874,
+    "event": "notification",
+    "method": "session/update",
+    "update": "agent_message_chunk"
+  },
+  {
+    "t": 77880,
+    "event": "notification",
+    "method": "session/update",
+    "update": "usage_update"
+  },
+  {
+    "t": 77880,
+    "event": "prompt_answered",
+    "stopReason": "end_turn"
+  }
+]

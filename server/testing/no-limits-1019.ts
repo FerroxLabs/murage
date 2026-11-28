@@ -27,3 +27,15 @@ export function expectNoLimitsOwnerOutcome(verdict: Verdict, command: string, ru
 export function expectNoLimitsProtectedWrite(verdict: Verdict, label: string): void {
   expect(verdict.approve, `${label}: protected paths do not card at No limits`).toBeTruthy();
 }
+
+/** OVERREACH #6 (MAIN 2026-11-26): the owner's own attended Full access turn on a command whose reader rule is `rule`. A wipe rule keeps its
+ * always-ask card. Any other rule runs, except where Full access keeps a stricter card than No limits (a Windows shell call, a cut or scoped
+ * call, a key guard, an engine pin that cannot hold): that card stays one of the fixed card sources. */
+export function expectFullOwnerOutcome(verdict: Verdict, command: string, rule: string | null | undefined, label = command): void {
+  if (isWipeRule(rule)) {
+    expect(verdict, `${label}: a wipe row still asks`).toMatchObject({ approve: null, source: "always-ask" });
+    return;
+  }
+  if (verdict.approve === null) expect(["always-ask", "sensitive-guard", "unread-call", "stop-line"], `${label}: a kept card has a fixed source`).toContain(verdict.source);
+  else expect(verdict.source, `${label}: Full access runs it`).toBe("full-access");
+}

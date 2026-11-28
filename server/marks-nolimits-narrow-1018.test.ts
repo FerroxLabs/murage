@@ -206,7 +206,9 @@ describe("FIX A: the owner's No limits turn runs what it cannot follow, and keep
   it.each(VALUE_TARGETS)("N-RUNS value target without a delete verb %s", (command) => {
     expect(owner(command)).toMatchObject({ source: "no-limits" });
     expect(owner(command).approve).toBeTruthy();
-    for (const bot of [LEVELS[2]![1], LEVELS[1]![1]]) expect(autoVerdict(bot as never, "Bash", command, ctxOf(command))).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    expect(autoVerdict(LEVELS[1]![1] as never, "Bash", command, ctxOf(command))).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    // OVERREACH #6: the owner's own Full access turn runs an unreadable value target, as No limits does
+    expect(autoVerdict(LEVELS[2]![1] as never, "Bash", command, ctxOf(command))).toMatchObject({ source: "full-access", approve: expect.any(String) });
     expect(owner(command, { fullAccessOrigin: "other" })).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
     expect(owner(command, { channelOwner: true })).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
   });
@@ -268,6 +270,10 @@ describe("FIX A: every level and every other origin read the pinned commands as 
       // work runs; other/unproven work equals the independently pinned Ask cell.
       if (level === "nolimits") expected[key] = provenInitiator(patch)
         ? "RUN:no-limits:" : SNAPSHOT[`${command}|ask|${name}`]!;
+      // MAIN-RULING NOLIMITS-1022 H1: Full access runs a value target that is not wipe-shaped; another person's turn keeps the card
+      if (level === "full" && name !== "other" && VALUE_TARGETS.includes(command)) expected[key] = "RUN:full-access:";
+      // OVERREACH #6: the owner's own Full access turn runs a call the pristine tree held on one of the three run rules
+      else if (level === "full" && provenInitiator(patch) && patch.ownerStarted !== false && patch.routineLevel !== true && /^STOP:always-ask:(unreadable|unknown-target|protected-path)$/.test(SNAPSHOT[key]!)) expected[key] = SNAPSHOT[key]!.endsWith(":unreadable") ? "RUN:full-access:" : "RUN:full-access:held=waived"; // an unreadable hit runs untagged through NOLIMITS-1022 H1
       now[key] = `${verdict.approve ? "RUN" : "STOP"}:${verdict.source}:${verdict.rule ?? ""}`;
     }
     expect(now).toEqual(expected);
@@ -307,7 +313,8 @@ describe("D4: an ambiguous interpreter flag is a could-not-read", () => {
   });
   it("D4-STARTUP an unplaced write before a startup-file reader is the same kind of hit (FIX A ruling 2)", () => {
     const cmd = "f=$(mktemp); echo x > \"$f\"; bash -lc true";
-    nlh0("D4-STARTUP|verdict", autoVerdict(FULL as never, "Bash", cmd, ctxOf(cmd)), undefined, { reason: "value-path" }); // R1: Full access reads as NLH0
+    // OVERREACH #6: the owner's own Full access turn runs it (value-path is not a wipe)
+    expect(autoVerdict(FULL as never, "Bash", cmd, ctxOf(cmd))).toMatchObject({ source: "full-access", approve: expect.any(String) });
     expect(ownerMarks(() => alwaysAskCommand(cmd, "/w"))).toMatchObject({ classification: "ask" });
     expect(owner(cmd).approve).toBeTruthy();
   });

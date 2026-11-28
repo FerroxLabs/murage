@@ -1,3 +1,4 @@
+import { redactConfiguredValues } from "../shared/configured-value-redaction.cjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { NATIVE_DOM_SOURCE } from "./browser-native-dom.ts";
 // Murage for Chrome read layer (spec 6.1). Murage owns the snapshot shape: refs are keyed by
@@ -240,8 +241,7 @@ export function formatDiff(prev: Pick<Snapshot, "url" | "nodes" | "dialogs">, ne
   if (newDialogs.length) body.push(`Dialog opened:\n${newDialogs.map(q).join("\n")}`);
   if (!lead.length && !body.length) return null;
   // Round 10 (R9-02): every diff line is redacted against the field values the page held, whatever node it came from.
-  let bodyText = body.join("\n");
-  for (const v of noLimits ? [] : secrets) if (v.length >= 3) bodyText = bodyText.split(v).join("[hidden]");
+  let bodyText = redactConfiguredValues(body.join("\n"), noLimits ? [] : secrets.filter(value => value.length >= 3), "[hidden]");
   if (!noLimits) bodyText = bodyText.replace(/"([^"\n]*)"/g, (m, inner) => (looksLikeSecretValue(inner) ? '"[hidden]"' : m));
   const fenced = body.length ? "\n" + fencePageText(bodyText, { origin, kind: "diff" }) : "";
   return `What changed:${lead.length ? "\n" + lead.join("\n") : ""}${fenced}`;

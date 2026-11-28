@@ -102,6 +102,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { afterCommit, txScopeBegin, txScopeEnd } from "./tx-scope.ts";
 import { RESTORE_HOLDS_DDL } from "./restore-fence.ts";
 import { deleteSpeechSendMarkers } from "./tts/reply-schema.ts";
+import { withSecureDelete } from "./secure-delete.ts";
 import { groupDeletionKey, ownerDeletedThread, OWNER_DELETIONS_DDL } from "./owner-deletions.ts";
 import { SEND_NOTICE_ENGLISH, sendNoticeActivityName, type SendNoticeCode } from "../shared/send-notice.ts";
 import { askProofRecordSchema, type AskProofRecord } from "../shared/phone-ask-contract.ts";
@@ -398,6 +399,8 @@ export function recoveredSteerLine(row: SendRow, steerId: string) {
     queueId: row.queueId,
     // a phone's line keeps its standing: without `via` the owner could edit it into an owner turn
     ...(row.via ? { via: row.via } : {}),
+    // the live steer line carries the send's origin (index.ts); a recovered one keeps it too, so the owner's words stay the owner's
+    ...(row.origin === "desktop" || row.origin === "companion" || row.origin === "unproven" ? { origin: row.origin as "desktop" | "companion" | "unproven" } : {}),
     steered: true, steerUnconfirmed: true, steerId,
     ...(row.turnId ? { dispatchedIn: row.turnId } : {}),
   };
@@ -541,7 +544,8 @@ export class SendStore {
     const db = this.db();
     const rows = db.prepare("SELECT DISTINCT thread_id AS t, owner_id AS o, kind AS k FROM owner_sends").all() as Array<{ t: string; o: string; k: SendKind }>;
     const touched = new Set<string>();
-    this.atomically((tx) => {
+    // the rows hold the owner's typed words (text, prompt): their pages are zeroed when freed (secure-delete.ts)
+    withSecureDelete(db, () => this.atomically((tx) => {
       for (const { t, o, k } of rows) {
         // The thread's own record, or (for a channel's threads) the channel's: a crash between the registry write and the
         // per-thread cleanup leaves only the channel's record.
@@ -551,7 +555,7 @@ export class SendStore {
         deleteSpeechSendMarkers(tx, t, gone.map((row) => row.send_id as string | null));
         touched.add(t);
       }
-    });
+    }));
     return [...touched];
   }
 
@@ -639,10 +643,11 @@ export class SendStore {
     // Receipt-backed resends have a separate replacement identity. Keep the
     // original chip and receipt so another restore can fence a retried press.
     if (row.messageId || this.attemptFor(row)) return;
-    this.atomically((db) => {
+    // a refused or failed chip still holds the owner's words (text, prompt): its pages are zeroed when freed (secure-delete.ts)
+    withSecureDelete(this.db(), () => this.atomically((db) => {
       db.prepare("DELETE FROM owner_sends WHERE seq=?").run(seq);
       deleteSpeechSendMarkers(db, row.threadId, [row.sendId]);
-    });
+    }));
     this.notify(row.threadId);
   }
 
@@ -713,7 +718,8 @@ export class SendStore {
             // Reserve the new row's order before deleting the old maximum.
             // MAX(rowid) is an indexed right-edge lookup, independent of history.
             legacyNextSeq = Number((db.prepare("SELECT COALESCE(MAX(seq),0)+1 AS next FROM owner_sends").get() as { next: number }).next);
-            db.prepare("DELETE FROM owner_sends WHERE seq=?").run(prior.seq);
+            // the prior chip still holds the owner's words (text, prompt): its pages are zeroed (secure-delete.ts)
+            withSecureDelete(db, () => db.prepare("DELETE FROM owner_sends WHERE seq=?").run(prior.seq));
             priorGone = true;
             typedAt = prior.createdAt;
           } else {
@@ -892,6 +898,18 @@ export class SendStore {
     if (row) this.notify(row.threadId);
   }
 
+  /** A steered line whose running turn ended (stopped or failed) before the engine answered it: back to waiting, running from the
+   * transcript line it already has (never a second copy), with its words kept until it starts. Only a "delivered" row moves. */
+  requeueDelivered(seq: number, messageId: string, text: string): boolean {
+    const info = this.db().prepare("UPDATE owner_sends SET status='queued', dispatched=0, existing_message_id=?, text=?, updated_at=? WHERE seq=? AND status='delivered'")
+      .run(messageId, text, Date.now(), seq);
+    if (Number(info.changes) !== 1) return false;
+    this.lateOpen.delete(seq);
+    const row = this.bySeq(seq);
+    if (row) this.notify(row.threadId);
+    return true;
+  }
+
   /**
    * An outcome. "started" and "delivered" need the id of the transcript line
    * that is the person's receipt: without it the row would hide an accepted
@@ -900,6 +918,11 @@ export class SendStore {
    * are still visible. A finished row also drops its prompt (quoted text).
    */
   settle(seq: number, status: "started" | "delivered" | "unconfirmed" | "failed" | "refused" | "cancelled", messageId?: string, notice?: SendNoticeCode): void {
+    // a settle that ends the row's need for its words blanks text and prompt: those pages are zeroed (secure-delete.ts)
+    withSecureDelete(this.db(), () => this.settleRow(seq, status, messageId, notice));
+  }
+
+  private settleRow(seq: number, status: "started" | "delivered" | "unconfirmed" | "failed" | "refused" | "cancelled", messageId?: string, notice?: SendNoticeCode): void {
     if ((status === "started" || status === "delivered") && !messageId) throw new Error(`a ${status} send needs its transcript line`);
     if (status === "refused" && !notice) throw new Error("a refused send needs its notice");
     this.atomically(() => {
@@ -1000,7 +1023,9 @@ export class SendStore {
 
   /** An unconfirmed row that has its line and can no longer be put back in line holds no words of its own. */
   scrub(seq: number): void {
-    this.db().prepare("UPDATE owner_sends SET text='', prompt=NULL WHERE seq=? AND status='unconfirmed' AND message_id IS NOT NULL").run(seq);
+    const db = this.db();
+    // the words leave the row: their pages are zeroed (secure-delete.ts)
+    withSecureDelete(db, () => db.prepare("UPDATE owner_sends SET text='', prompt=NULL WHERE seq=? AND status='unconfirmed' AND message_id IS NOT NULL").run(seq));
   }
 
   /**
@@ -1100,7 +1125,8 @@ export class SendStore {
    * Runs on EVERY start, so a crash at any point of an earlier run is finished.
    */
   recover(): { requeued: SendRow[]; unresolved: SendRow[] } {
-    return this.atomically((db) => {
+    // the stopped-send rewrite below nulls queued prompts (the owner's words): freed pages are zeroed (secure-delete.ts)
+    return withSecureDelete(this.db(), () => this.atomically((db) => {
       const now = Date.now();
       mintMissingStopTokens(db);
       // Messages that were waiting when the owner pressed Stop never run on their own after a restart: each is held as a chip (Send again / Dismiss),
@@ -1111,7 +1137,7 @@ export class SendStore {
       db.prepare("UPDATE owner_sends SET status='queued', updated_at=? WHERE status='sending' AND dispatched=0").run(now);
       this.lateOpen.clear();
       return { requeued: sending, unresolved };
-    });
+    }));
   }
 
   /**

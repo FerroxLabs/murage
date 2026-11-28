@@ -85,7 +85,7 @@ describe("browser tools only when the owner's browser is ready for this bot", ()
     const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
     expect(error).toMatchObject({ code: "host_offline" });
     expect(error.message).toMatch(PLAIN); expect(error.message).toMatch(/not connected/);
-    expect(extensionBrowserUnavailablePrompt(error.message, true)).not.toContain("host_offline");
+    expect(extensionBrowserUnavailablePrompt(error.message)).not.toContain("host_offline");
   });
   it("owner paused, then browsed in the shared tab: the paused sentence, and Stop still works", async () => {
     const f = await fixture(["profile_a"]);
@@ -121,15 +121,15 @@ describe("browser tools only when the owner's browser is ready for this bot", ()
     const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
     expect(error.message).toMatch(/may not have finished/); expect(error.message).not.toMatch(/^YOUR TURN/);
   });
-  it("the hint is plain text for every engine, and offers the request tool only where it exists", () => {
-    const withTool = extensionBrowserUnavailablePrompt("Browser control is paused.", true);
-    expect(withTool).toContain("Murage for Chrome");
-    expect(withTool).toContain("request_browser_connection");
-    expect(withTool).toContain("Browser control is paused.");
-    const without = extensionBrowserUnavailablePrompt("The browser is not connected.", false);
-    expect(without).not.toContain("request_browser_connection");
-    expect(without).toMatch(/ask the owner/i);
-    for (const text of [withTool, without]) { expect(text).not.toMatch(/—|\bsafe|\bunsafe|safety/i); expect(text.length).toBeLessThan(700); }
+  // W3 (DESIGN-JOURNEY-1024 section 6): FLIPPED. The hint used to offer request_browser_connection + "end your turn" when the
+  // agents server was mounted, else "send the task again"; both were a setup ask inside a job. It now offers neither.
+  it("the hint is plain text for every engine and never asks for setup inside the job", () => {
+    const text = extensionBrowserUnavailablePrompt("Browser control is paused.");
+    expect(text).toContain("Murage for Chrome");
+    expect(text).toContain("Browser control is paused.");
+    expect(text).not.toContain("request_browser_connection");
+    expect(text).not.toMatch(/end your turn|send the task again/i);
+    expect(text).not.toMatch(/—|\bsafe|\bunsafe|safety/i); expect(text.length).toBeLessThan(700);
   });
 });
 

@@ -11,7 +11,7 @@ import { classifyFluxRefusal } from "../../shared/flux-refusal";
 // start to its last Silero speech frame, stamped when the frame was CAPTURED
 // (not when Silero got to it). Provider times only order messages (the spike
 // found them hundreds of ms off).
-import { MAX_SESSION_CLOSE_REASON, type ServerMessage } from "../../shared/flux-stream-contract";
+import { CALL_ADMISSION_UNKNOWN, MAX_SESSION_CLOSE_REASON, type ServerMessage } from "../../shared/flux-stream-contract";
 import { CALL_ENDPOINT_LONG_MS, soundsUnfinished } from "./call-turns";
 import { FluxMic, toInt16, utteranceSpeech, type FrameSource, type FrameSpeech, type MicEnd, type MicLine } from "./call-mic";
 import { StreamUplink, UplinkRefused } from "./stream-uplink";
@@ -265,7 +265,7 @@ export class StreamMic extends FluxMic {
   }
 
   private fromBatchEnd(end: MicEnd) {
-    if (end.reason === "budget") { this.endForBudget(); return; }
+    if (end.reason === "budget") { this.endForRefusal(); return; }
     const line = end.code === 0 ? this.batchLine : null;
     this.batchLine = null;
     const slot = this.adopted;
@@ -716,6 +716,10 @@ export class StreamMic extends FluxMic {
    *  how long to wait; the reconnect that follows the old stream's close honours it. */
   private watchReplacement(next: Uplink) {
     this.hintOffs.set(next, next.onClose(({ error }) => {
+      if (error?.code === CALL_ADMISSION_UNKNOWN) {
+        this.endForRefusal(CALL_ADMISSION_UNKNOWN);
+        return;
+      }
       if (error?.retry_after_ms != null) this.retryUntil = Date.now() + error.retry_after_ms;
     }));
   }
@@ -853,7 +857,11 @@ export class StreamMic extends FluxMic {
 
   // ── stream events ──
   private onStream(m: ServerMessage, from: Uplink) {
-    if (m.type === "error" && classifyFluxRefusal(0, m.error) === "budget") { this.endForBudget(); return; }
+    if (m.type === "error" && m.error.code === CALL_ADMISSION_UNKNOWN && this.states.has(from)) {
+      this.endForRefusal(CALL_ADMISSION_UNKNOWN);
+      return;
+    }
+    if (m.type === "error" && classifyFluxRefusal(0, m.error) === "budget") { this.endForRefusal(); return; }
     const st = this.states.get(from);
     if (!st) return;
     this.lastStreamEvent = Date.now();
@@ -949,14 +957,18 @@ export class StreamMic extends FluxMic {
   }
 
   // ── faults ──
-  private endForBudget() {
+  private endForRefusal(reason = "budget") {
     const listeners = [...this.outEnds];
     this.close();
-    for (const fn of listeners) fn({ code: 1, reason: "budget" });
+    for (const fn of listeners) fn({ code: 1, reason });
   }
 
   private onClosed(code: number, from: Uplink, error: { code?: string; retry_after_ms: number | null } | null = null) {
-    if (classifyFluxRefusal(code, error) === "budget") { this.endForBudget(); return; }
+    if (error?.code === CALL_ADMISSION_UNKNOWN && this.states.has(from)) {
+      this.endForRefusal(CALL_ADMISSION_UNKNOWN);
+      return;
+    }
+    if (classifyFluxRefusal(code, error) === "budget") { this.endForRefusal(); return; }
     const wasDraining = from === this.draining;
     this.detach(from);
     if (wasDraining) {

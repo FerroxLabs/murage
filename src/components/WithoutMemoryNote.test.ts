@@ -15,7 +15,7 @@ import { isWithoutMemoryNote, WithoutMemoryNoteRow } from "./WithoutMemoryNote";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 // memory/dispatch.ts turnRefusedLine("Claude", "without-memory"), checked against its source below
-const line = "Memory changed while Claude was starting, so this reply ran without remembered context.";
+const line = "This reply went ahead without remembered context after memory changed.";
 const note = (id: string, at: number): Message => ({ id, at, role: "bot", kind: "activity", memoryNote: "without-memory", tool: { name: line, ok: true } } as Message);
 const step = (id: string, at: number): Message => ({ id, at, role: "bot", kind: "activity", tool: { name: "Read file", ok: true } } as Message);
 
@@ -24,9 +24,16 @@ describe("the without-memory note", () => {
     const markup = renderToStaticMarkup(createElement(WithoutMemoryNoteRow, { text: line }));
     expect(markup).toContain('role="status"');
     expect(markup).toContain('data-testid="without-memory-note"');
-    expect(markup).toContain("ran without remembered context");
+    expect(markup).toContain(line);
     expect(markup).not.toContain("break-all");
     expect(line).not.toMatch(/[–—]|\bsafe/);
+  });
+
+  it("shows the same copy for an older stored notice", () => {
+    const legacy = "Memory changed while Claude was starting, so this reply ran without remembered context.";
+    const markup = renderToStaticMarkup(createElement(WithoutMemoryNoteRow, { text: legacy }));
+    expect(markup).toContain(line);
+    expect(markup).not.toContain("Claude");
   });
 
   it("is told by its mark, never by a tool row's name", () => {
@@ -55,16 +62,18 @@ describe("the without-memory note", () => {
     expect(source.indexOf("<WithoutMemoryNoteRow", routed)).toBeLessThan(hidden);
   });
 
-  it("both server rows carry the mark", () => {
-    expect(read("../../server/memory/dispatch.ts")).toContain("`Memory changed while ${engine} was starting, so this reply ran without remembered context.`");
+  // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION-1025 F20 + F21): this asserted the two server sites that wrote the marked row (the
+  // last-rebuild refusal note and the revoke-fence notice release). Both are deleted: a memory note is a log line now, and the server
+  // writes the mark in ONE place only, the boot repair of a released message-only note a build through 1.0.23 left behind. The row
+  // component above stays for the rows already stored. (Behaviour: server/memory-notes-log-only-1024.test.ts and the B3 rows of
+  // server/fence-pending-turn-api.test.ts; this is the source inventory.)
+  it("the server writes the mark only in the boot repair of a legacy message-only note", () => {
     const index = read("../../server/index.ts");
-    expect(index).toMatch(/\{ name: line, ok: true \}, \.\.\.\(kind === "without-memory" \? \{ memoryNote: "without-memory" as const \} : \{\}\)/);
-    // Revoke-fence journals both paths through the same marked, idempotent release.
-    const release = index.slice(index.indexOf("function releaseFenceNotice("), index.indexOf("function prepareFenceNotice("));
-    expect(release).toContain('memoryNote: "without-memory"');
-    expect(release).toContain('store.appendMessage(notice.threadId, murageLine(');
-    expect(index).toContain('if (kind === "without-memory" && fenceNote) { fenceNote(providerTurnId);');
-    expect(index).toContain('const roomFenceNote = prepareFenceNotice(threadId,');
-    expect(index).toContain('submissionBoundary.alsoCheck(() => { if (!roomFencePreparing && !roomFencePreflight) roomFenceNote?.(providerTurnId); });');
+    for (const gone of ["function releaseFenceNotice(", "function prepareFenceNotice(", "function noteHeldRecall(", "function writeFenceNotice(", "fenceNote(providerTurnId)", "roomFenceNote"]) expect(index, gone).not.toContain(gone);
+    expect(index.split('memoryNote: "without-memory"')).toHaveLength(2);
+    const repair = index.slice(index.indexOf("const fenceNoticeBoot = setInterval("), index.indexOf("fenceNoticeBoot.unref();"));
+    expect(repair).toContain('memoryNote: "without-memory"');
+    expect(repair).toContain("(notice.line === MESSAGE_ONLY_NOTE || notice.line === NO_HUMAN_NOTE)");
+    expect(index).toContain('if (kind === "without-memory") { console.info(`[memory] reply ran without remembered context');
   });
 });

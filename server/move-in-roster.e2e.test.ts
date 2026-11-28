@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { startDesktopShell } from "./testing/desktop-shell.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
+import { TERMS_VERSION } from "../shared/terms.ts";
 
 it("moves a roster-only bot on the default engine, unpinned, and retains it after restart", async () => {
   const home = mkdtempSync(join(tmpdir(), "murage-roster-import-"));
@@ -24,7 +25,8 @@ it("moves a roster-only bot on the default engine, unpinned, and retains it afte
     }
     if (bits) name += alphabet[(value << (5 - bits)) & 31];
     writeFileSync(join(folder, `${name}.blob`), JSON.stringify({ schemaVersion: 1, value: { rows: [{ id: "b1", name: "Drew" }] } }));
-    shell = await startDesktopShell({ home });
+    // Past the terms screen: Grok Bot data is not looked for before the terms are accepted (1.0.21 row).
+    shell = await startDesktopShell({ home, env: { MURAGE_TERMS_ACCEPTED: TERMS_VERSION } });
     const found = await shell.desktop("GET", "/api/move-in/found");
     expect(found).toMatchObject({ status: 200, body: { grok: { count: 1 } } });
     const moved = await shell.desktop("POST", "/api/move-in/grok", {});

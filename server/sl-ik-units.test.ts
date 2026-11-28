@@ -47,6 +47,13 @@ describe("K2: one resolver for every turn", () => {
   it("a routine reusing a thread the owner pinned still runs on the bot's model (my routine moved when I changed the chat)", () => {
     expect(resolveTurnSelection({ modelSelection: PIN }, bot, { routine: true }, NOW, deps()).selection).toEqual(BOT);
   });
+  it("routine model (item A): a chat-header Flux Fast pick is per chat, so a routine runs on the agent's saved model, and the pick never reaches the routine", () => {
+    const fast: ModelSelection = { instanceId: "flux", model: "flux-fast" };
+    const saved: ModelSelection = { instanceId: "flux", model: "flux-auto" };
+    const chosen = resolveTurnSelection({ modelSelection: fast }, { ...bot, modelSelection: saved }, { routine: true }, NOW, deps()).selection;
+    expect(chosen).toEqual(saved);
+    expect(resolveTurnSelection({ modelSelection: fast }, { ...bot, modelSelection: saved }, { routine: false }, NOW, deps()).selection).toEqual(fast);
+  });
   it("a room member turn (no chat record) uses the bot's model", () => {
     expect(resolveTurnSelection(null, bot, { routine: false }, NOW, deps()).selection).toEqual(BOT);
   });

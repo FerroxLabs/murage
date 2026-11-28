@@ -14,6 +14,7 @@ import { type RoutineRollup, type RoutineRunFact, connectionsToRestore, rollUpRo
 import { bumpMessagesVersion, messagesVersion } from "./inbox-version.ts";
 import { routineNumberKey, type OrderedRoutineFact } from "./inbox-routine-aggregate.ts";
 import { rowToMessage } from "./transcript-seq.ts";
+import { DatabaseShutdownError, sealedForShutdown, trackFileWorker } from "./shutdown-seal.ts";
 
 /** The two status lists as SQL literals. Built from the shared constants so
  *  the query, the counts and the tabs cannot drift: a status added in one
@@ -842,8 +843,9 @@ export function startInboxProjectionFill(db: DatabaseSync, options: { busy?: () 
   const drainDeferred = (priorityOnly: boolean): Promise<void> => new Promise<void>((done, fail) => {
     const file = (db.prepare("PRAGMA database_list").all() as Array<{ name: string; file: string }>).find(row => row.name === "main")?.file;
     if (!file) { try { drainInboxDeferredInline(db, { priorityOnly }); done(); } catch (error) { fail(error); } return; }
+    if (sealedForShutdown()) { fail(new DatabaseShutdownError()); return; } // the worker opens the file by name: not after the shutdown close
     const spawned = new Worker(SPAWNED_PROXIES.inboxFillWorker, { workerData: { kind: "inbox-fill", file, sql: INBOX_DEFERRED_SQL, priorityOnly, maxHoldMs: INBOX_FILL_MAX_HOLD_MS }, resourceLimits: { maxOldGenerationSizeMb: DEFERRED_WORKER_MEMORY_MB } });
-    worker = spawned;
+    worker = spawned; trackFileWorker(spawned);
     spawned.on("message", (message: { type: string; message?: string; ms?: number; size?: number; more?: number }) => {
       // one deferred row's write held the lock past INBOX_FILL_MAX_HOLD_MS (the worker reports at most one per INBOX_SLOW_ROW_REPORT_MS)
       if (message.type === "slow-row") { observeLine(`[inbox] fill slow-row ms=${Math.round(Number(message.ms) || 0)} size=${Math.round(Number(message.size) || 0)}${message.more ? ` more=${message.more}` : ""}`); return; }
@@ -1439,6 +1441,14 @@ export function owedThreadsCached(db: DatabaseSync, access: InboxAccess): Set<st
   let hit = held.entries.get(allowed);
   if (!hit) { hit = owedThreads(db, access, true); if (held.entries.size >= ENTRY_LIMIT) held.entries.clear(); held.entries.set(allowed, hit); }
   return new Set(hit);
+}
+
+/** Point read using the same grouped request identity as the Inbox projection. */
+export function inboxRequestSnoozed(db: DatabaseSync, threadId: string, messageId: string, now: number): boolean {
+  return Boolean(db.prepare(`SELECT 1 FROM inbox_item_state WHERE source_key = (
+    SELECT json_array(thread_id,kind,json_extract(json,'$.card.requestId'))
+    FROM messages WHERE thread_id=? AND id=? AND kind='options'
+  ) AND snoozed_until>?`).get(threadId, messageId, now));
 }
 
 /** State updates cannot change source status, approve requests or run tools. */

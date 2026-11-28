@@ -63,3 +63,12 @@ test.each([
   expect(result.status).toBe(2);
   expect(result.stderr).toContain('required');
 });
+
+test('receipts from the randomized full-shard source root compare by checkout-relative file', () => {
+  const f = fixture(({ phase, shard, receipt, suite }) => {
+    receipt.sourceRoot = `/var/capture/.ask-full-x${shard}/${phase}`;
+    suite.name = `${receipt.sourceRoot}/server/example-${shard}.test.ts`;
+  });
+  expect(f.run().status).toBe(0);
+  expect(Object.keys(JSON.parse(readFileSync(join(f.out, 'head-tests-by-id.json'), 'utf8')))).toContain('server/example-3.test.ts :: approval stays held :: 1');
+});

@@ -8,9 +8,10 @@ hub=${G8_HUB:-$(git -C "$(dirname -- "$0")" rev-parse --absolute-git-dir)}
 product=${1:?product commit}; rig=${2:?rig commit}; job=${3:?job directory}
 fake=fd825341c6cc752318f0433203399db4d434a19c
 here=$(cd -- "$(dirname -- "$0")" && pwd)
+source "$here/../safe-wipe.sh"
 mkdir -p "$job"
 tmp=$(mktemp -d "$job/overlay.XXXXXXXX")
-trap 'rc=$?; rm -rf -- "${tmp:?}" || rc=4; exit "$rc"' EXIT
+trap 'rc=$?; SAFE_WIPE_WITHIN="$job" safe_wipe "${tmp:?}" || rc=4; exit "$rc"' EXIT
 export GIT_INDEX_FILE=$tmp/index
 g() { git --git-dir="$hub" "$@"; }
 product=$(g rev-parse --verify "$product^{commit}")

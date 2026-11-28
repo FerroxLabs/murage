@@ -19,6 +19,7 @@
 //     under is still current.
 //  4. The file holds slugs, account ids, aliases and statuses. Never a token,
 //     key, label or URL.
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -41,7 +42,9 @@ export const INVENTORY_FRESH_MS = 60_000;
 export const INVENTORY_FILE = "connected-apps-inventory.json";
 
 const fileSchema = z.object({
-  v: z.literal(1),
+  // v1 (1.0.22) carries no scope; a v2 file carries the owner incarnation's scope.
+  v: z.union([z.literal(1), z.literal(2)]),
+  scope: z.string().regex(/^[0-9a-f]{16}$/).optional(),
   owner: z.string().min(8).max(128),
   at: z.number(),
   services: z.record(z.string(), z.object({
@@ -54,6 +57,8 @@ const fileSchema = z.object({
 
 interface Entry {
   owner: string;
+  /** Names this owner's incarnation (16 hex, random): minted for a new owner and after a clear, kept by a rekey and an invalidation. */
+  scope: string;
   snapshot?: { services: InventoryServices; at: number };
   dirty: boolean;
   version: number;
@@ -73,6 +78,8 @@ function backsOff(error: unknown): boolean {
 }
 const waiting = (e: Entry, now: number): boolean => e.retryAt !== undefined && now < e.retryAt;
 
+const newScope = (): string => randomBytes(8).toString("hex");
+
 let entry: Entry | null = null;
 let diskChecked = false;
 
@@ -87,7 +94,7 @@ function persist(): void {
       return;
     }
     mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
-    writeFileAtomic(path(), JSON.stringify({ v: 1, owner: entry.owner, at: entry.snapshot.at, services: entry.snapshot.services }), { mode: 0o600 });
+    writeFileAtomic(path(), JSON.stringify({ v: 2, scope: entry.scope, owner: entry.owner, at: entry.snapshot.at, services: entry.snapshot.services }), { mode: 0o600 });
   } catch {
     // The file is only a head start for the next launch.
   }
@@ -100,6 +107,8 @@ function loadFromDisk(owner: string): Entry | null {
     if (!parsed.success || parsed.data.owner !== owner) return null;
     return {
       owner,
+      // A v1 file has no scope: this launch mints one, and the panel shows its remembered list stale until it is confirmed.
+      scope: parsed.data.v === 2 && parsed.data.scope ? parsed.data.scope : newScope(),
       snapshot: { services: parsed.data.services, at: parsed.data.at },
       // Remembered across a launch: usable, but always revalidated.
       dirty: true,
@@ -124,7 +133,7 @@ function entryFor(owner: string): Entry {
     entry = loadFromDisk(owner);
     if (!entry) persistGone();
   }
-  if (!entry) entry = { owner, dirty: false, version: 0, scheduled: false };
+  if (!entry) entry = { owner, scope: newScope(), dirty: false, version: 0, scheduled: false };
   return entry;
 }
 
@@ -150,6 +159,8 @@ export interface InventoryReadOptions {
   waitMs?: number;
   /** Await a fetch when the remembered list is stale or dirty. */
   fresh?: boolean;
+  /** With `fresh` and `waitMs`: the one deadline also covers a remembered list (the fetch and its settle re-fetch); on timeout the remembered list answers with revalidating:true. Without it a fresh read over a remembered list waits for the whole fetch, as before. */
+  boundFresh?: boolean;
 }
 
 function isFresh(e: Entry, now: number): boolean {
@@ -233,20 +244,23 @@ export async function readInventory(
     if (options.fresh) return { services: await startFetch(e, load), at: Date.now(), revalidating: false };
     return { services, at: Date.now(), revalidating: true };
   };
-  if (e.snapshot && options.fresh) return settle(await fetching);
+  const bound = options.boundFresh === true && options.waitMs !== undefined;
+  if (e.snapshot && options.fresh && !bound) return settle(await fetching);
   if (options.waitMs === undefined) return settle(await fetching);
+  // One deadline per bounded read: it covers the fetch AND the settle re-fetch.
+  const work: Promise<InventoryRead | { services: InventoryServices }> = bound ? fetching.then((services) => settle(services)) : fetching.then((services) => ({ services }));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), options.waitMs); });
   try {
-    const result = await Promise.race([fetching.then((services) => ({ services })), timedOut]);
+    const result = await Promise.race([work, timedOut]);
     if (result === "timeout") {
-      fetching.catch(() => {});
+      work.catch(() => {});
       // A forced read over a remembered list still answers with it.
       return e.snapshot
         ? { services: e.snapshot.services, at: e.snapshot.at, revalidating: true }
         : { services: null, at: null, revalidating: true };
     }
-    return await settle(result.services);
+    return bound ? result as InventoryRead : await settle((result as { services: InventoryServices }).services);
   } finally {
     clearTimeout(timer);
   }
@@ -260,6 +274,16 @@ export function hasInventory(owner: string): boolean {
 /** What is remembered for this owner right now, without fetching. */
 export function peekInventory(owner: string): InventoryServices | null {
   return entry && entry.owner === owner && entry.snapshot ? entry.snapshot.services : null;
+}
+
+/** The scope of the list held for `owner`, or null when nothing is held for it. Never mints. */
+export function inventoryScope(owner: string): string | null {
+  return entry && entry.owner === owner && entry.snapshot ? entry.scope : null;
+}
+
+/** Whether the list held for `owner` is fresh (served without a fetch). */
+export function inventoryIsFresh(owner: string): boolean {
+  return entry !== null && entry.owner === owner && isFresh(entry, Date.now());
 }
 
 /** Something happened that may have changed the list. */

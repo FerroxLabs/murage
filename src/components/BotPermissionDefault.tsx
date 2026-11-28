@@ -17,12 +17,17 @@ export const FULL_ACCESS_SETUP_OPTION = "Also approve setup requests: installing
 
 type FullAccessOption = "fullAccessChannelMessages" | "fullAccessSetupRequests";
 
+/** F33 (Sean 2026-11-27): two choices in view, Automatic (Full access, the default) and Ask first. Auto and No limits stay
+ * reachable under Advanced. The stored levels are the same four; only the names and the fold are new. */
 const MODES: ReadonlyArray<{ mode: PermissionMode; label: string }> = [
-  { mode: "ask", label: "Ask" },
+  { mode: "full", label: "Automatic" },
+  { mode: "ask", label: "Ask first" },
+];
+const ADVANCED_MODES: ReadonlyArray<{ mode: PermissionMode; label: string }> = [
   { mode: "auto", label: "Auto" },
-  { mode: "full", label: "Full access" },
   { mode: "unlimited", label: "No limits" },
 ];
+export const ADVANCED_LEVELS_LABEL = "Advanced";
 
 function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
   // UX-TRUST-MOMENTS-1012 section 8 rows 16, 17 and 10: what each level
@@ -81,6 +86,28 @@ export function BotPermissionDefault({
   const full = current === "full" || current === "unlimited";
   const remote = desktop === false;
   const card = change?.card;
+  const modeButton = (mode: PermissionMode, label: string) => {
+    // Not offered where the server would refuse it (server/full-access.ts).
+    const unavailable = remote && isDesktopOnlyMode(mode);
+    return (
+      <button
+        key={mode}
+        type="button"
+        role="radio"
+        aria-checked={current === mode}
+        data-level-option={mode}
+        disabled={unavailable || change?.busy}
+        title={unavailable ? FULL_ACCESS_DESKTOP_ONLY : undefined}
+        onClick={() => current !== mode && onChoose(mode)}
+        className={cn(
+          "min-h-11 flex-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed",
+          current === mode ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink disabled:hover:text-ink-secondary",
+        )}
+      >
+        {label}
+      </button>
+    );
+  };
   const options: ReadonlyArray<{ key: FullAccessOption; label: string; hint: string }> = [
     { key: "fullAccessChannelMessages", label: current === "unlimited" ? t("ux.l1.level.channelNoLimits") : FULL_ACCESS_CHANNEL_OPTION, hint: t("ux.lcopyb.level.channelHint") },
     { key: "fullAccessSetupRequests", label: current === "unlimited" ? t("ux.l1.level.setupNoLimits") : FULL_ACCESS_SETUP_OPTION, hint: current === "unlimited" ? t("ux.l1.level.setupIncluded") : "Connecting an app still asks, because you sign in to it yourself." },
@@ -92,28 +119,17 @@ export function BotPermissionDefault({
         New conversations start at this level. You can change it for one conversation from the message box.
       </div>
       <ApproveAllReminderReset />
-      <div className="mt-3 flex gap-1 rounded-lg bg-inset p-0.5" role="radiogroup" aria-label="Default approval level">
-        {MODES.map(({ mode, label }) => {
-          // Not offered where the server would refuse it (server/full-access.ts).
-          const unavailable = remote && isDesktopOnlyMode(mode);
-          return (
-            <button
-              key={mode}
-              type="button"
-              role="radio"
-              aria-checked={current === mode}
-              disabled={unavailable || change?.busy}
-              title={unavailable ? FULL_ACCESS_DESKTOP_ONLY : undefined}
-              onClick={() => current !== mode && onChoose(mode)}
-              className={cn(
-                "min-h-11 flex-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed",
-                current === mode ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink disabled:hover:text-ink-secondary",
-              )}
-            >
-              {label}
-            </button>
-          );
-        })}
+      <div className="mt-3" role="radiogroup" aria-label="Default approval level">
+        <div className="flex gap-1 rounded-lg bg-inset p-0.5">
+          {MODES.map(({ mode, label }) => modeButton(mode, label))}
+        </div>
+        {/* Open by itself when the bot is already on one of them, so the pressed level is never hidden. */}
+        <details className="mt-2" data-level-advanced open={current === "auto" || current === "unlimited" || undefined}>
+          <summary className="flex min-h-11 cursor-pointer items-center text-[13px] text-ink-secondary hover:text-ink">{ADVANCED_LEVELS_LABEL}</summary>
+          <div className="flex gap-1 rounded-lg bg-inset p-0.5">
+            {ADVANCED_MODES.map(({ mode, label }) => modeButton(mode, label))}
+          </div>
+        </details>
       </div>
       <div className="mt-2 text-[12.5px] text-ink-secondary">{modeDetail(current, onThisComputer)}</div>
       {change?.line && <LevelStatusLine line={change.line} undoing={change.undoing} onUndo={() => void change.undo()} onReview={change.review} />}
@@ -145,7 +161,7 @@ export function BotPermissionDefault({
         </div>
       )}
       <div className="mt-3 flex flex-col gap-2">
-        {!full && <div className="text-[12px] text-ink-secondary">Only used when the default is Full access or No limits.</div>}
+        {!full && <div className="text-[12px] text-ink-secondary">Only used when the default is Automatic or No limits.</div>}
         {options.map(({ key, label, hint }) => (
           <div key={key} className="flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
             <div className="min-w-0">
@@ -217,7 +233,7 @@ export function OpenConversationPermissions({ botId, mode, acknowledged, reviewA
       finally { setBusy(false); }
     });
   };
-  const label = preview && ({ ask: "Ask", auto: "Auto", full: "Full access", "no-limits": "No limits" }[preview.targetLevel]);
+  const label = preview && ({ ask: "Ask first", auto: "Auto", full: "Automatic", "no-limits": "No limits" }[preview.targetLevel]);
   return <div className="mt-3 text-[13px]">
     {!!preview?.eligible.length && !confirm && <button type="button" disabled={busy} onClick={() => void review()}>Apply to my open conversations</button>}
     {confirm && preview && <div role="dialog" data-box-exempt="inline confirm inside a section" aria-label="Apply approval level">

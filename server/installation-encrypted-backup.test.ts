@@ -4,6 +4,8 @@ import { existsSync,mkdirSync,readFileSync,readdirSync,rmSync,writeFileSync } fr
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect,it,vi } from "vitest";
+import { createServer } from "node:http";
+import { launchVerificationServer, seedTermsAccepted } from "../scripts/control-murage.ts";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
 import { inspectEncryptedInstallationBackup,writeEncryptedInstallationBackup,restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
@@ -13,6 +15,8 @@ import * as encryption from "./installation-backup-encryption.ts";
 import { MemoryEligibility } from "./memory/eligibility.ts";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { activateInstallation, reviewInstallation } from "./installation-activation.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
 const selection={scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"} as const;
 it.skipIf(!rawAgeHost)("captures raw fidelity and safe recovery in one encrypted file, then restores a separate paused installation",async()=>{
   const f=backupFixture(),keys=testAgeKeys();
@@ -57,6 +61,95 @@ it.skipIf(!rawAgeHost)("captures raw fidelity and safe recovery in one encrypted
     expect(readdirSync(f.parent).filter(name=>name.startsWith(".murage-encrypted"))).toEqual([]);
   }finally{f.db.close();removeTempDirSync(f.parent);}
 },20000);
+
+it.skipIf(!rawAgeHost).each([
+  { mode: "Search Off", source: { provider: "off", readEnabled: true }, recovered: { webSearch: { provider: "off" }, webRead: { enabled: true } } },
+  { mode: "page reading Off", source: { provider: "engine", readEnabled: false }, recovered: { webSearch: undefined, webRead: { enabled: false } } },
+])("keeps $mode after encrypted restore and engine setup", async ({ source, recovered }) => {
+  const f = backupFixture();
+  const target = join(f.parent, "restored");
+  const archive = join(f.parent, "backup.age");
+  let fixture: Awaited<ReturnType<typeof launchVerificationServer>> | undefined;
+  let hits = 0;
+  const site = createServer((_req, res) => { hits++; res.setHeader("content-type", "text/plain"); res.end("Fixture page"); });
+  try {
+    const keys = testAgeKeys();
+    writeFileSync(join(f.data, "config.json"), JSON.stringify({
+      webSearch: { ...source, tavilyApiKey: "fixture", exaApiKey: "fixture", firecrawlApiKey: "fixture" },
+    }));
+    writeFileSync(join(f.data, "bots.json"), JSON.stringify([
+      { id: "bot", threadId: "thread", name: "Fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5-5" } },
+    ]));
+    const backup = await writeEncryptedInstallationBackup(f.data, archive, { ...keys, selection });
+    await restoreEncryptedInstallationNew(target, archive, backup.sha256, keys);
+    const review = reviewInstallation(target);
+    expect(activateInstallation(target, review.reviewHash).status).toBe("reviewed-engines-disabled");
+    seedTermsAccepted(target);
+    fixture = await launchVerificationServer(process.env, undefined, {
+      separateHome: true,
+      instrumentationSource: `process.env.MURAGE_DATA_DIR = ${JSON.stringify(target)};`,
+    });
+
+    const base = fixture.info.url;
+    const { secret } = await (await fetch(base + "/api/desktop-secret")).json() as { secret: string };
+    const owner = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret, "content-type": "application/json" };
+    const api = (path: string, method: string, body?: unknown) =>
+      fetch(base + path, { method, headers: owner, body: JSON.stringify(body) });
+    const fixtureConfig = JSON.parse(readFileSync(join(fixture.info.dataDir, "config.json"), "utf8"));
+    const { cli } = fixtureConfig.instances.verification.config;
+    const configured = await api("/api/instances/claude", "PATCH", { cli });
+    expect(configured.status, configured.ok ? undefined : await configured.text()).toBe(200);
+    const enabled = await api("/api/instances/claude", "PATCH", { enabled: true });
+    expect(enabled.status, enabled.ok ? undefined : await enabled.text()).toBe(200);
+    const made = await api("/api/bots", "POST", { name: "Restored reader" });
+    expect(made.ok).toBe(true);
+    const { bot } = await made.json() as { bot: { id: string; threadId: string } };
+    expect((await api(`/api/bots/${bot.id}/messages`, "POST", { text: "__fixture_hold_authority__", threadId: bot.threadId })).status).toBe(202);
+    const dumpPath = fixture.fixtureDumpPath;
+    const token = await vi.waitFor(() => {
+      const dump = withTurnSecrets(JSON.parse(readFileSync(dumpPath, "utf8")));
+      const token = dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN;
+      expect(token).toBeTruthy();
+      return token;
+    }, { timeout: 45_000 });
+
+    await new Promise<void>(done => site.listen(0, "127.0.0.1", done));
+    const url = `http://127.0.0.1:${(site.address() as { port: number }).port}/page`;
+    const read = () => fetch(base + "/api/internal/web-read", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ fromBotId: bot.id, fromThreadId: bot.threadId, input: { url } }),
+    });
+    const denied = await read();
+    expect(denied.status, "restored page-reading permission").toBe(409);
+    expect(await denied.json()).toMatchObject({ error: "Web page reading is off in Settings." });
+    expect(hits).toBe(0);
+    const config = await (await api("/api/config", "GET")).json();
+    expect(config).toMatchObject({ webSearch: { readEnabled: false } });
+    // v1.0.20 rollback: nothing but provider and keys may sit in the strict webSearch section; the reading switch is top-level webRead
+    const restored = JSON.parse(readFileSync(join(target, "config.json"), "utf8"));
+    expect(restored.webSearch).toEqual(recovered.webSearch);
+    expect(restored.webRead).toEqual(recovered.webRead);
+    const inspected = await inspectEncryptedInstallationBackup(archive, f.parent, keys);
+    try {
+      const recoveredConfig = JSON.parse(readFileSync(join(inspected.stateDirectory, "recovery", "config.json"), "utf8"));
+      expect(recoveredConfig.webSearch).toEqual(recovered.webSearch);
+      expect(recoveredConfig.webRead).toEqual(recovered.webRead);
+    } finally {
+      removeTempDirSync(inspected.directory);
+    }
+
+    expect((await api("/api/config", "PUT", { webSearch: { provider: "engine", readEnabled: true } })).status).toBe(200);
+    expect(await (await read()).json()).toMatchObject({ text: "Fixture page" });
+    expect(hits).toBe(1);
+  } finally {
+    await fixture?.close();
+    if (site.listening) await new Promise<void>(done => site.close(() => done()));
+    f.db.close();
+    removeTempDirSync(f.parent);
+  }
+}, 180_000);
+
 it.skipIf(!rawAgeHost)("keeps only the encrypted output, never plaintext, when an owned tool close cannot be confirmed",async()=>{
   const f=backupFixture(),keys=testAgeKeys();
   const mocked=vi.spyOn(encryption,"encryptBackupStream").mockImplementationOnce(async(_tool,_recipient,input)=>{input.on("error",()=>{});throw new InstallationSnapshotError("AGE_PROCESS_CLOSE_UNCONFIRMED");});

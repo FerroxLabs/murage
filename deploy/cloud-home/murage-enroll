@@ -535,7 +535,7 @@ def boot(state="/var/lib/murage-home", config="/etc/murage-home", user_data="/va
             if not volume["new"]:
                 raise ValueError("Existing volume has no LUKS header")
             # A signature-free device can still contain data. Sample it before
-            # any irreversible format: any non-zero byte refuses. build host does not
+            # any irreversible format: any non-zero byte refuses. Hetzner does not
             # document new volumes as zeroed (see volume_sample_zero), so this is
             # a tripwire, not a proof; a full scan took 9-20 minutes.
             volume_sample_zero(resolved, home)

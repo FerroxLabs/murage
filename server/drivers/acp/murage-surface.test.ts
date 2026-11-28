@@ -5,7 +5,7 @@ import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { murageToolList } from "../../testing/murage-tool-list.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,9 +27,12 @@ import { TURN_PROMPTS } from "../../bot-shapes.ts";
 import { murageTool } from "../../murage-tool-surface.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
 
-// Keep the short readiness cap; the fake engine now announces readiness only
-// after every real fixture peer has answered its catalog request.
-process.env.MURAGE_ACP_MCP_LISTED_MS ??= "200";
+// Run at the production readiness cap. The fake engine announces readiness
+// only after every real fixture peer has answered its catalog request, and on
+// a loaded host five peers can take longer than a short test cap to start
+// (wave244-246: opencodeGo/gemini/qwen refused at 200 ms). Every peer here
+// starts PEER_START_MS late so a cap shorter than a slow host's start goes red.
+const PEER_START_MS = "300";
 
 beforeEach(() => {
   for (const key of Object.keys(process.env)) if (/KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL/i.test(key)) vi.stubEnv(key, "");
@@ -42,11 +45,14 @@ const openCode = createOpenCodeDriver(async () => catalog);
 const drivers = [GrokAgentDriver, FuigoAgentDriver, KimiAgentDriver, QwenAgentDriver, HermesAgentDriver, GeminiAgentDriver, DroidAgentDriver, CursorAgentDriver, CustomAcpDriver, openCode];
 
 it.each(drivers)("$driverKind resolves references against the real session mounts", async driver => {
+  // Kimi preflights the entire catalog in an additional stdio guard. Keep
+  // this fixture bounded while allowing that child chain to finish listing.
+  if (driver === KimiAgentDriver) vi.stubEnv("MURAGE_ACP_MCP_LISTED_MS", "5000");
   const dir = mkdtempSync(join(tmpdir(), "pf-mcp-surface-"));
   const dump = join(dir, "spawn.json"), prompt = join(dir, "prompt.json");
   const instance = await driver.create({ instanceId: "pf-surface", displayName: "PF fixture", enabled: true,
     config: driver.decodeConfig({ cli, fullAuto: true }), environment: {
-      HOME: dir, USERPROFILE: dir, FAKE_ACP_MODE: "happy", FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_MCP_CONNECT: "1", FAKE_ACP_DUMP: dump, FAKE_ACP_PROMPT_DUMP: prompt,
+      HOME: dir, USERPROFILE: dir, FAKE_ACP_MODE: "happy", FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_MCP_CONNECT: "1", FAKE_ACP_MCP_CONNECT_DELAY_MS: PEER_START_MS, FAKE_ACP_DUMP: dump, FAKE_ACP_PROMPT_DUMP: prompt,
       FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_AFTER_LIST: "1", FAKE_ACP_MCP_READY_METHOD: driver === GrokAgentDriver ? "_x.ai/mcp_initialized" : "_fuigo/mcp_initialized", FAKE_ACP_MODELS: "fixture-model", CURSOR_API_KEY: "fixture-only", XAI_API_KEY: "fixture-only", FUIGO_API_KEY: "sk-flux-fixture-only", OPENCODE_API_KEY: "fixture-only", FACTORY_API_KEY: "fixture-only",
     } });
   bindFixtureAdapter(instance.adapter);
@@ -59,6 +65,7 @@ it.each(drivers)("$driverKind resolves references against the real session mount
   try {
     for (const [index, text] of [ROOM_TOOLS_LINE + goalWakePrompt(true, { action: "start", title: "Ship", hasCriteria: false }), ROOM_TOOLS_LINE, TURN_PROMPTS.sectionPeers, chiefOfStaffSystemPrompt("chief", [{id:"chief",name:"Chief",chiefOfStaff:true,section:"Work"},{id:"worker",name:"Worker",section:"Work"}], true), projectCardPrompt(true,{ask:"Work on card 1: Draft",brief:"Ship"}) + ROOM_TOOLS_LINE].entries()) {
       const threadId = `pf-${index}`;
+      rmSync(prompt, { force: true }); // each turn must write its own prompt
       await instance.adapter.sendTurn({ threadId, text: text + murageTool("memory_search") + `\nOpen it with ${murageTool("agent_browser_open", "browser")}.`, cwd: dir,
         integrations: { agents: { command: process.execPath, args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-agents"], env: {} }, memory: { command: process.execPath, args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-memory"], env: {} }, browser:{command:process.execPath,args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-browser"],env:{}},localComputer:{command:process.execPath,args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-computer"],env:{}},custom:{notes:{command:process.execPath,args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-notes"],env:{}}} } });
       await recorder.until(event => event.threadId === threadId && event.type === "turn.completed", 15000);
@@ -67,13 +74,23 @@ it.each(drivers)("$driverKind resolves references against the real session mount
       // behind each matching name to inspect the original command's markers.
       const relay = relays.at(-1)!;
       const mounted = sessionMounts.map(server => {
-        expect(server.args[0]).toMatch(/cli-mount-shim/);
+        // Kimi's budget guard wraps the same server-owned shim. Verify both
+        // layers, then inspect the relay child as for every other engine.
+        const shimArgs = driver === KimiAgentDriver ? (() => {
+          expect(server.args[0]).toBe("-e");
+          expect(server.args[2]).toBe("--");
+          expect(server.args[3]).toBe(process.execPath);
+          return server.args.slice(4);
+        })() : server.args;
+        expect(shimArgs[0]).toMatch(/cli-mount-shim/);
         const child = relay.mounts.get(server.name)?.child;
         expect(child).toBeDefined();
         return { ...server, args: child!.spawnargs.slice(1) };
       });
       const mounts = { agents: mounted.find(server => server.args.includes("fixture-agents"))?.name, memory: mounted.find(server => server.args.includes("fixture-memory"))?.name };
       expect(mounts.agents).toBeTruthy(); expect(mounts.memory).toBeTruthy();
+      // A turn refused on the MCP-listed cap never reaches the engine prompt.
+      expect(existsSync(prompt), "turn reached the engine (not refused on the MCP-listed cap)").toBe(true);
       const shown = JSON.stringify(JSON.parse(readFileSync(prompt, "utf8")));
       for (const tool of [...text.matchAll(/\{\{murage-tool:[^:}]+:([a-z_]+)\}\}/g)].map(match => match[1]).concat("memory_search")) {
         expect(await murageToolList(tool.startsWith("memory_") ? "memory" : "agents", index === 0 ? "lead" : index === 1 || index === 4 ? "member" : "")).toContain(tool);

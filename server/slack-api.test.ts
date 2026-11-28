@@ -88,7 +88,12 @@ it.each([false, true])("joins owner DM binding, restart and revocation (scripted
     if (withModel) event("EvWORK", "Summarize this synthetic note: the blue fixture is ready.");
     await expect.poll(() => traces.filter(t => t.op === "ack" && t.eventId === "EvOTHERDM").length).toBe(1);
     expect(traces.filter(t => t.op === "send")).toHaveLength(count);
-    expect((await request("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: false })).status).toBe(200);
+    // CHIEF-TRANSFER-1023: the Chief can no longer be demoted by PATCH (409). The owner hands the role to another bot with no app moved, which
+    // pauses this pairing exactly as the old demotion did.
+    const heir = (await request("POST", "/api/bots", { name: "Fictional heir", modelSelection: { instanceId: "fixtureClaude", model: "claude-sonnet-5" } })).body.bot;
+    const preview = await request("GET", `/api/chief-transfer/preview?from=${chief.id}&to=${heir.id}`);
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect((await request("POST", "/api/chief-transfer", { fence: preview.body.fence, move: [] })).status).toBe(200);
     await expect.poll(async () => (await request("GET", "/api/slack/status")).body.state).toBe("blocked");
     expect((await request("POST", "/api/slack/revoke", {})).status).toBe(200);
     expect((await request("GET", "/api/slack/status")).body).toMatchObject({ paired: false, enabled: false, requiresRevoke: false });

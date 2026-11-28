@@ -60,5 +60,16 @@
   "ux.cloud.firstRun.job.business.sub": "I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like.",
   "ux.cloud.firstRun.bookmark": "Bookmark this page so you can come back.",
   "ux.cloud.firstRun.bookmarkDoor": "Bookmark this page so you can come back. You can always return at {site}/home/cloud.",
-  "ux.cloud.firstRun.unreachable": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself."
+  "ux.cloud.firstRun.unreachable": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+  "ux.cloud.mcpConnect.button": "Connect",
+  "ux.cloud.mcpConnect.buttonTip": "Sign in to {host} so your Murage can use it.",
+  "ux.cloud.mcpConnect.connecting": "Getting ready...",
+  "ux.cloud.mcpConnect.waiting": "Finish signing in at {host}. This page updates by itself.",
+  "ux.cloud.mcpConnect.openAgain": "Open {host} again",
+  "ux.cloud.mcpConnect.cancel": "Cancel",
+  "ux.cloud.mcpConnect.connected": "Connected",
+  "ux.cloud.mcpConnect.failedFallback": "That did not work. Try again in a moment.",
+  "ux.cloud.mcpConnect.timedOut": "Still waiting for {host}. If you finished signing in, try again.",
+  "ux.cloud.mcpConnect.retry": "Try again",
+  "ux.cloud.mcpConnect.popupBlocked": "Your browser blocked the sign-in window. Allow pop-ups for this page, then try again."
 }

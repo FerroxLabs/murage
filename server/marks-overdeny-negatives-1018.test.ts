@@ -22,7 +22,11 @@ const noLimitsContext = (patch: Record<string, unknown>): Partial<AutoContext> =
   patch.routineLevel ? { fullAccessOrigin: "routine" }
   : patch.channelOwner ? { fullAccessOrigin: "owner-channel" }
   : patch.unattended ? { fullAccessOrigin: "other" } : {};
+const FULL_RUNS: ReadonlySet<string> = new Set(["source ../../x.sh", ". ../../x.sh"]);
 const assertCell = (command: string, bot: typeof levels[number], patch: Record<string, unknown>, verdict: ReturnType<typeof autoVerdict>) => {
+  // MAIN-RULING NOLIMITS-1022 H1: Full access runs a script outside the folder it cannot read (not wipe-shaped, no protected path);
+  // the /etc/profile.d rows keep their protected-path card
+  if (bot.id === "full" && FULL_RUNS.has(command)) { expect(verdict).toEqual({ approve: "auto-approved Bash (full access)", source: "full-access" }); return; }
   if (!bot.noLimits) { cell(command, bot, patch, verdict, T4[command]!); return; }
   // MAIN RULING 2026-11-13 wipe-only: raw disk writes remain wipe cards; protected writes and source calls run.
   if (!patch.unattended) {

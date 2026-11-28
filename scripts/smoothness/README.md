@@ -345,20 +345,21 @@ the full idle/load release gate still requires both complete legs.
 
 `nightly.yml` builds a packaged Linux app from its exact checkout, with
 `murageSourceSha` in the package metadata, then runs Claude, Codex, Gemini,
-Fuigo and OpenCode in the build host job containers (at most two engine legs at once).
+Fuigo and OpenCode in Hetzner job containers (at most two engine legs at once).
 Dispatch Nightly on the RC branch before release. The release gate requires the
 newest run for that **exact SHA**, all five named engine jobs and their explicit
 verdict steps green, each completed within 72 hours. A newer incomplete or red
 run cannot borrow an older pass. Slow-nightly history retains its existing
 ancestor check; real-engine evidence is checked separately and rechecked after
 waiting for CI.
+The nightly aggregate also requires both the package job and all five engine
+legs to succeed. Skipped jobs and NOT-RUN verdicts make it fail.
 
 The runner must already provide a Node 24 Linux packaging image through
-`MURAGE_REAL_ENGINE_IMAGE` (repository variable), including pnpm build tools,
-Python/native dependencies used by `package:linux:dir`, Electron runtime
-libraries and zsh. Without configuration the job uses `node:24-bookworm` and
-fails closed when prerequisites are unavailable. No host tools or engines are
-installed by these jobs. The existing engine binaries and their runtime
+`MURAGE_REAL_ENGINE_IMAGE` (repository variable) with `zsh` for the verdict,
+`python3` for the GEPA build, pnpm build tools, native packaging dependencies
+and Electron runtime libraries. The `node:24-bookworm` fallback provides
+`python3` and lacks `zsh`. The existing engine binaries and their runtime
 support must be in the image or `MURAGE_REAL_ENGINE_BIN` (default
 `/opt/murage-gate/bin`, mounted read-only as `/engines`).
 

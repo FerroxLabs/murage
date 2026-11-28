@@ -135,13 +135,13 @@ it('C7 close lesson saves a bot-scoped candidate backed by the project, without 
   const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);
   const evidence=[{sourceId:'project-evidence',revision:1,startByte:0,endByte:Buffer.byteLength('Project closed: what I learned')}];
   const body={text:'Project closed: what I learned',evidence,idempotencyKey:'close-lesson',claimType:'owner-statement'};
-  // R7-9: the lesson path refuses evidence whose capture is still pending, as every other save does
-  await expect(memoryAgentRoute('/api/internal/memory/save',body,access,{search:async()=>({hits:[],vectorRows:0})},undefined,null,{executingRequestId:requestId})).rejects.toThrow('Source capture is still pending. Try saving this memory again after capture finishes.');
-  expect(Number(database().prepare("SELECT COUNT(*) AS n FROM memory_records").get()!.n)).toBe(0);
-  for(let job=claimMemoryJob('fixture');job;job=claimMemoryJob('fixture'))publishMemoryWork(job,'fixture',captureWork(job));
+  // MEMSAVE-1024 (was R7-9, which pinned the refusal "Source capture is still pending..." here): the lesson path runs the same
+  // capture step every other save runs, and a capture that is only waiting never refuses the save: the cited source is captured now.
+  expect(database().prepare("SELECT status FROM memory_jobs WHERE source_id='project-evidence' AND stage='capture'").get()).toEqual({status:'pending'});
   const result=await memoryAgentRoute('/api/internal/memory/save',body,access,{search:async()=>({hits:[],vectorRows:0})},undefined,null,{executingRequestId:requestId}) as {candidateId:string};
   expect(database().prepare('SELECT s.kind,s.owner_key,r.state FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE r.id=?').get(result.candidateId)).toEqual({kind:'bot',owner_key:'bot',state:'candidate'});
   expect(database().prepare('SELECT source_id FROM memory_evidence WHERE record_id=?').all(result.candidateId)).toEqual([{source_id:'project-evidence'}]);
+  expect(database().prepare("SELECT status FROM memory_jobs WHERE source_id='project-evidence' AND stage='capture'").get()).toEqual({status:'complete'});
   expect(await memoryAgentRoute('/api/internal/memory/save',body,access,{search:async()=>({hits:[],vectorRows:0})},undefined,null,{executingRequestId:requestId})).toMatchObject({candidateId:result.candidateId,state:'candidate'});
   // R5: a Reopen while the lesson body is read revokes the lesson path; the save never
   // falls through to an ordinary grounded (project-scoped, possibly active) save.
@@ -249,14 +249,16 @@ it.each(["owner-statement","procedure"])("refuses owner invitations on %s saves 
  await expect(memoryAgentRoute("/api/internal/memory/save",{text:"Verified source note",evidence:f.evidence,ownerInvitation:{sourceId:"wrong-invitation",revision:1,startByte:0,endByte:Buffer.byteLength("Please invent a character.")},idempotencyKey:"wrong-invitation",claimType},f.context,f.bridge)).rejects.toThrow("Owner invitations can only support character canon.");
  expect(database().prepare("SELECT count(*) n FROM memory_records WHERE state='candidate'").get()?.n).toBe(0);
 });
-it("refuses a save before capture completes, then activates the same request after capture",async()=>{
+// MEMSAVE-1024: this case pinned the field refusal ("Source capture is still pending. Try saving this memory again after capture
+// finishes.", then a second request). A save never waits on the capture queue now; the full table is memsave-pending-capture-1024.test.ts.
+it("saves on the first request while the cited capture is still pending, and the repeat is the same memory",async()=>{
  const f=fixture(),db=database(),text="I prefer tea.";
  captureSource(db,{id:"pending-capture",threadId:"thread",origin:{kind:"attended"},kind:"text",speaker:"owner",outcome:"recorded",text});
  const input={text,evidence:[{sourceId:"pending-capture",revision:1,startByte:0,endByte:Buffer.byteLength(text)}],claimType:"owner-statement",idempotencyKey:"pending-capture"};
- await expect(memoryAgentRoute("/api/internal/memory/save",input,f.context,f.bridge)).rejects.toThrow("Source capture is still pending. Try saving this memory again after capture finishes.");
- expect(db.prepare("SELECT count(*) n FROM memory_records WHERE state='candidate'").get()?.n).toBe(0);
- for(let job=claimMemoryJob("fixture");job;job=claimMemoryJob("fixture"))publishMemoryWork(job,"fixture",captureWork(job));
- expect(await memoryAgentRoute("/api/internal/memory/save",input,f.context,f.bridge)).toMatchObject({state:"active"});
+ const first=await memoryAgentRoute("/api/internal/memory/save",input,f.context,f.bridge) as {candidateId:string};
+ expect(first).toMatchObject({state:"active"});
+ expect(db.prepare("SELECT status FROM memory_jobs WHERE source_id='pending-capture' AND stage='capture'").get()).toEqual({status:"complete"});
+ expect(await memoryAgentRoute("/api/internal/memory/save",input,f.context,f.bridge)).toMatchObject({candidateId:first.candidateId,state:"active"});
 });
 
 
@@ -310,9 +312,13 @@ it.each(["failed","missing","pending"])("classifies %s capture on save and corre
  for(const path of ["save","propose-correction"]){
  const common={evidence:f.evidence,idempotencyKey:`r6-${path}`};
  const body=path==="save"?{...common,text:"Verified source note",claimType:"owner-statement"}:{...common,id:f.recordId,version:1,replacement:"Verified source note"};
- await expect(memoryAgentRoute(`/api/internal/memory/${path}`,body,f.context,f.bridge)).rejects.toMatchObject({status:status==="pending"?409:400,message:status==="pending"?expect.stringContaining("Try saving"):expect.stringContaining("cannot be used")});
+ // MEMSAVE-1024: the pending row pinned the field refusal (409 "Try saving this memory again"); a capture that is only waiting is
+ // run by the save now and never refuses it. A capture that cannot complete (failed, missing) is refused as before.
+ if(status==="pending"){await expect(memoryAgentRoute(`/api/internal/memory/${path}`,body,f.context,f.bridge)).resolves.toMatchObject({candidateId:expect.any(String)});continue;}
+ await expect(memoryAgentRoute(`/api/internal/memory/${path}`,body,f.context,f.bridge)).rejects.toMatchObject({status:400,message:expect.stringContaining("cannot be used")});
  }
- expect(db.prepare("SELECT count(*) n FROM memory_records WHERE state='candidate'").get()?.n).toBe(0);
+ if(status==="pending")expect(db.prepare("SELECT status FROM memory_jobs WHERE source_id=?").get(f.evidence[0].sourceId)).toEqual({status:"complete"});
+ else expect(db.prepare("SELECT count(*) n FROM memory_records WHERE state='candidate'").get()?.n).toBe(0);
 });
 
 it("rechecks the invitation at activation after grounding",async()=>{
@@ -425,8 +431,8 @@ it.each(["accepted", "record-revoked", "source-revoked", "retired"] as const)("a
     expect(serialized).toContain("Verified source note");
     expect(serialized).not.toContain('"refs"');
     stageResultProvenance(sink.writer,result);
-    if(scenario==="record-revoked")db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('record',?,1,1)").run(f.recordId);
-    if(scenario==="source-revoked")db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('source',?,1,1)").run(f.evidence[0].sourceId);
+    if(scenario==="record-revoked")db.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES('record',?,1,1)").run(f.recordId);
+    if(scenario==="source-revoked")db.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES('source',?,1,1)").run(f.evidence[0].sourceId);
     if(scenario==="retired")bound.replace();
     const release=()=>{sink.writer.writeHead(200,{"content-type":"application/json"});sink.writer.end(serialized);};
     if(scenario==="accepted") {

@@ -3,12 +3,8 @@
 exports[`structured bodies owner > function keyword > Full access snapshot protected=false 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -27,12 +23,8 @@ exports[`structured bodies owner > function keyword > Full access snapshot prote
 exports[`structured bodies owner > function keyword > Full access snapshot protected=true 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -51,12 +43,8 @@ exports[`structured bodies owner > function keyword > Full access snapshot prote
 exports[`structured bodies owner > named coprocess > Full access snapshot protected=false 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -75,12 +63,8 @@ exports[`structured bodies owner > named coprocess > Full access snapshot protec
 exports[`structured bodies owner > named coprocess > Full access snapshot protected=true 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -99,12 +83,8 @@ exports[`structured bodies owner > named coprocess > Full access snapshot protec
 exports[`structured bodies routine > function keyword > Full access snapshot protected=false 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -124,12 +104,8 @@ exports[`structured bodies routine > function keyword > Full access snapshot pro
 exports[`structured bodies routine > function keyword > Full access snapshot protected=true 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -149,12 +125,8 @@ exports[`structured bodies routine > function keyword > Full access snapshot pro
 exports[`structured bodies routine > named coprocess > Full access snapshot protected=false 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -174,12 +146,8 @@ exports[`structured bodies routine > named coprocess > Full access snapshot prot
 exports[`structured bodies routine > named coprocess > Full access snapshot protected=true 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,

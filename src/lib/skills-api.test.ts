@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { deleteCollectionSkill, findingLines, importSkill, listSkills, readSkill, refusalOf, setSkillForBot, verdictLabel } from "./skills-api";
+import { deleteCollectionSkill, findingLines, importSkill, listSkills, readSkill, refusalOf, pairLine, setSkillForBot, verdictLabel } from "./skills-api";
 
 describe("skill verdicts in plain words", () => {
   it("names each verdict", () => {
@@ -38,5 +38,16 @@ describe("the skills client", () => {
   it("reads a refusal's code and scan", () => {
     const error = Object.assign(new Error("needs a look"), { status: 409, body: { code: "needs-review", scan: { verdict: "review", findings: [], contentHash: "x" } } });
     expect(refusalOf(error)).toMatchObject({ code: "needs-review", scan: { contentHash: "x" }, message: "needs a look" });
+  });
+});
+
+describe("Settings v10 bulk pair lines", () => {
+  it("Not saved only from a recorded refusal, with its reason; an unknown pair is Could not check whatever the switch looks like", () => {
+    expect(pairLine({ state: "refused", reason: "Dax already has 40 skills on." }, true)).toEqual({ label: "Not saved", detail: "Dax already has 40 skills on." });
+    expect(pairLine({ state: "unknown" }, true).label).toBe("Could not check");
+    expect(pairLine({ state: "unknown" }, false).label).toBe("Could not check");
+    expect(pairLine({ state: "on" }, true)).toEqual({ label: "Saved", detail: "On." });
+    expect(pairLine({ state: "already-off" }, false)).toEqual({ label: "Saved", detail: "Already off." });
+    expect(pairLine({ state: "kept" }, false).label).toBe("Left as it is");
   });
 });

@@ -37,17 +37,20 @@ function world(dir?: string): World {
     results: new Map(), contexts: [], enqueued: [] };
 }
 
-function build(w: World, over: { people?: Partial<ReturnType<typeof peopleMock>>; receipts?: Map<string, { id: string }> } = {}) {
+function build(w: World, over: { people?: Partial<ReturnType<typeof peopleMock>>; receipts?: Map<string, { id: string }>; target?: string } = {}) {
   let n = 0, rand = 0;
   const reserve = vi.fn(async (_i: { chatId: string; text: string }) => ({ ids: [`WA${++n}`] }));
   const sendText = vi.fn(async (i: { chatId: string; text: string; ids: string[] }) => ({ ids: i.ids }));
   const transportStop = vi.fn(async () => {}), unlink = vi.fn(async () => {}), link = vi.fn(async () => {}), markRead = vi.fn();
+  const transportStart = vi.fn(async (h: TransportHandlers) => {
+    w.handlers = h;
+    const dir = join(w.dir, "whatsapp", "outbound"), file = join(dir, `${connectionId(w)}.json`);
+    mkdirSync(dir, { recursive: true });
+    if (!existsSync(file)) writeFileSync(file, JSON.stringify({ records: [] }));
+  });
   const transport: WhatsAppTransport = {
     capabilities: { linking: "qr-or-code", groups: true, presence: true, readReceipts: true, lidResolution: true, ownSendEcho: true },
-    start: async h => { w.handlers = h;
-      const dir = join(w.dir, "whatsapp", "outbound"), file = join(dir, `${connectionId(w)}.json`);
-      mkdirSync(dir, { recursive: true }); if (!existsSync(file)) writeFileSync(file, JSON.stringify({ records: [] }));
-    }, onLink: l => { w.linkListener = l; }, link, stop: transportStop, unlink, revoke: vi.fn(),
+    start: transportStart, onLink: l => { w.linkListener = l; }, link, stop: transportStop, unlink, revoke: vi.fn(),
     self: () => ({ pn: OWNER }), resolve: { pnForLid: async () => undefined, lidForPn: async () => undefined },
     reserve, sendText: sendText as WhatsAppTransport["sendText"], markRead,
   };
@@ -57,7 +60,7 @@ function build(w: World, over: { people?: Partial<ReturnType<typeof peopleMock>>
   const revokeRuns = vi.fn(async () => {});
   const addAllowFrom = vi.fn((entry: string) => { w.settings = { ...w.settings, allowFrom: [...w.settings.allowFrom, entry] }; });
   const service = new WhatsAppService({
-    dataDir: w.dir, chosen: { chiefBotId: "chief" }, settings: () => w.settings, transport: factory, authKey: { get: async () => KEY },
+    dataDir: w.dir, chosen: { chiefBotId: over.target ?? "chief" }, settings: () => w.settings, transport: factory, authKey: { get: async () => KEY },
     isCurrentChief: () => w.chief, now: () => w.now, random: () => (rand = (rand + 1) % 31), people, wipeData, revokeRuns, addAllowFrom,
     runs: (ctx): ChannelRuns => {
       w.contexts.push(ctx);
@@ -80,7 +83,7 @@ function build(w: World, over: { people?: Partial<ReturnType<typeof peopleMock>>
     await flush(); return ack;
   };
   const toSelf = (messageId: string, text = "hi me") => deliver({ messageId, chatJid: OWNER, fromMe: true, upsertType: "append", text });
-  return { service, transport, factory, reserve, sendText, unlink, link, markRead, transportStop, people, wipeData, revokeRuns, addAllowFrom, health, note, connect, deliver, toSelf };
+  return { service, transport, factory, reserve, sendText, unlink, link, markRead, transportStart, transportStop, people, wipeData, revokeRuns, addAllowFrom, health, note, connect, deliver, toSelf };
 }
 function peopleMock() {
   return {
@@ -94,6 +97,35 @@ const read = (w: World, ...parts: string[]) => readFileSync(join(w.dir, "channel
 /** The ledger file path (the store key) of one chat. */
 const ledgerOf = (w: World, c: string, jid: string) => join(w.dir, "channels", "whatsapp", c, `${chatKeyOf(jid)}.json`);
 const connectionId = (w: World) => JSON.parse(read(w, "connection.json")).connectionId as string;
+
+it("W10b a live WhatsApp move retires the old tick and keeps the owner linked", async () => {
+  vi.useFakeTimers();
+  const from = world(), old = build(from);
+  await old.connect();
+  const file = () => JSON.parse(read(from, "connection.json"));
+  const before = file();
+  from.chief = false;
+  old.service.quiesce?.();
+  await vi.advanceTimersByTimeAsync(2600);
+  expect(file()).toEqual(before);
+  expect(old.revokeRuns).not.toHaveBeenCalled();
+
+  await old.service.stop();
+  old.service.retarget?.("next");
+  expect(file()).toMatchObject({ paused: false, chiefBotId: "next", binding: { chiefBotId: "next", linkedPn: OWNER } });
+  const to = world(from.dir), moved = build(to, { target: "next" });
+  await moved.service.resume();
+  moved.health({ state: "connected", self: { pn: OWNER, lid: OWNER_LID } });
+  await flush();
+  expect(moved.service.status().state).toBe("connected");
+  expect(old.transportStart).toHaveBeenCalledTimes(1);
+  expect(old.transportStop).toHaveBeenCalledTimes(1);
+  expect(moved.transportStart).toHaveBeenCalledTimes(1);
+  expect(moved.transportStop).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(2600);
+  expect(file()).toMatchObject({ paused: false, chiefBotId: "next", binding: { chiefBotId: "next" } });
+  expect(old.revokeRuns).not.toHaveBeenCalled();
+});
 
 it.each([false, true])("dedupes owner aliases without bridge history, LID first %s", async lidFirst => {
   const w = world(), f = build(w); await f.connect();

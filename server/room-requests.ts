@@ -46,6 +46,7 @@ import { writeRequestStatus } from "./room-request-status.ts";
 import type { MurageStatus } from "./murage-status.ts";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { withSecureDelete } from "./secure-delete.ts";
 
 export type RoomRequestVerb = "owner_send" | "room_turn" | "ask" | "assign" | "message" | "review" | "wake" | "routine";
 export type RoomRequestFromKind = "owner" | "bot" | "murage" | "routine";
@@ -304,10 +305,13 @@ export function ownerSendsOwingWords(db: DatabaseSync, _now: number = Date.now()
 export function scrubOwnerSendsOfThread(db: DatabaseSync, threadId: string, now: number = Date.now()): number {
   if (!db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='room_requests'").get()) return 0;
   const where = "verb='owner_send' AND (target_thread_id=?1 OR (target_thread_id IS NULL AND root_thread_id=?1))";
-  db.prepare(`UPDATE room_requests SET state='cancelled', finished_at=?2, waiting_since=NULL, outcome_note=?3 WHERE state='queued' AND ${where}`)
-    .run(threadId, now, OWNER_CANCEL_NOTE);
-  const info = db.prepare(`UPDATE room_requests SET payload_text=NULL WHERE payload_text IS NOT NULL AND ${where}`).run(threadId);
-  return Number(info.changes);
+  // the payload is the owner's typed words: rewritten with secure_delete ON, so no page keeps them (secure-delete.ts)
+  return withSecureDelete(db, () => {
+    db.prepare(`UPDATE room_requests SET state='cancelled', finished_at=?2, waiting_since=NULL, outcome_note=?3 WHERE state='queued' AND ${where}`)
+      .run(threadId, now, OWNER_CANCEL_NOTE);
+    const info = db.prepare(`UPDATE room_requests SET payload_text=NULL WHERE payload_text IS NOT NULL AND ${where}`).run(threadId);
+    return Number(info.changes);
+  });
 }
 
 /** Startup: owner sends whose conversation the owner deleted (a recorded deletion) but whose words survived are scrubbed the same way. */
@@ -1442,7 +1446,8 @@ export function retireSettledRoomRequestHolds(db: DatabaseSync): number {
  * cleared in the same transaction.
  */
 export function pruneTerminalRoomRequests(db: DatabaseSync, now: number): number {
-  return withTx(db, () => {
+  // a closed row can still carry the owner's typed words (payload_text): freed pages are zeroed (secure-delete.ts)
+  return withSecureDelete(db, () => withTx(db, () => {
     retireSettledRoomRequestHolds(db);
     const cutoff = now - ROOM_REQUEST_RETENTION_MS;
     const cards = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='project_work_items'").get());
@@ -1474,7 +1479,7 @@ export function pruneTerminalRoomRequests(db: DatabaseSync, now: number): number
     // rows that belonged to those requests go with them, also on a connection where the cascade does not run
     sweepAddedOrphans(db);
     return Number(result.changes);
-  });
+  }));
 }
 
 /** A dispatched request whose turn could not start after all (the arbiter

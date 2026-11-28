@@ -22,6 +22,7 @@ import { CLOUD_SEED_MAX_PATHS, cloudUnroutedFuigoHome } from "./folder-trust-see
 import { removeTempDir } from "./testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "./testing/events.ts";
 import { folderTrustNotice } from "../shared/folder-trust.ts";
+import { withTrustSnapshot } from "./testing/turn-gate-snapshot.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
 const TRUST_REPLY = '{"jsonrpc":"2.0","id":9006,"result":{"outcome":"trust","scope":"configAndCommands"}}';
@@ -89,7 +90,7 @@ posixOnly("an unrouted turn on the real Fuigo driver", () => {
   const log = () => (existsSync(trustLog) ? readFileSync(trustLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []) as Array<{ event: string; raw?: string }>;
   const replies = () => log().filter((entry) => entry.event === "reply").map((entry) => entry.raw);
   const render = () => JSON.parse((JSON.parse(readFileSync(dump, "utf8")).env as Record<string, string>)[TURN_RENDER] ?? "{}") as { fuigoDeclinedFolders?: string[]; fuigoTrustedFolders?: string[] };
-  const gate = (over: Partial<FolderTrustTurnInput> = {}): FolderTrustTurnInput => ({ key: cwd, folder: cwd, sources: [], ...store.turnRecords(), ...over });
+  const gate = (over: Partial<FolderTrustTurnInput> = {}): FolderTrustTurnInput => withTrustSnapshot({ key: cwd, folder: cwd, sources: [], ...store.turnRecords(), ...over });
   const send = async (threadId: string, input: Partial<SendTurnInput> = {}) => (await instance!.adapter.sendTurn({ threadId, text: "go", cwd, folderTrust: gate(), ...input })).turnId;
   const done = (turnId: string) => recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
   const cards = () => recorder.events.filter((e: RuntimeEvent) => e.type === "request.opened");
@@ -116,7 +117,7 @@ posixOnly("an unrouted turn on the real Fuigo driver", () => {
     await create();
     grant(cwd);
     for (let index = 0; index <= CLOUD_SEED_MAX_PATHS; index += 1) decline(`/w/${index}`);
-    const turnId = await send("cloud-overflow");
+    const turnId = await send("cloud-overflow", { folderTrust: gate({ snapshot: undefined }) }); // the raw-records seed projection
     await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId);
     expect(render().fuigoTrustedFolders).toBeUndefined();
     expect(render().fuigoDeclinedFolders).toHaveLength(CLOUD_SEED_MAX_PATHS);

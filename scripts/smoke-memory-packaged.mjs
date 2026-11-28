@@ -22,46 +22,191 @@ function option(name) {
   if (!value || value.startsWith("--")) throw Error(`Missing ${name} value`);
   return value;
 }
+/** Runs of one message type collapse to one entry (type, first and last index, count) so a retry storm stays readable. */
+const collapse = trail => {
+  const runs = [];
+  for (const entry of trail) {
+    const [type, at] = entry.split("@"), last = runs.at(-1);
+    if (last && last.type === type) { last.count++; last.last = at; } else runs.push({ type, first: at, last: at, count: 1 });
+  }
+  return runs.map(run => run.count === 1 ? `${run.type}@${run.first}` : `${run.type}@${run.first}..${run.last} x${run.count}`).join(", ");
+};
 const digest = path => createHash("sha256").update(readFileSync(path)).digest("hex");
 const inside = (root, path) => { const tail = relative(root, path); return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail); };
 
+/** The parent side of the helper's byte-admission protocol, answered the way server/memory/worker-controller.ts answers it.
+ * Since background byte grants are enforced (b36bf61264) the worker writes its index only under a parent permit: with no
+ * answer, MemoryIndex's first schema transaction is deferred (BG_DEFERRED) and retried forever without a word, so "initialised"
+ * never comes (release rehearsals 44461021954 and 44537735532, macOS Intel). A smoke is the only writer: every request is
+ * granted in full for the current minute, a charge is acknowledged, a drain hold is lifted, a final io report is acknowledged.
+ * Returns true for a protocol message the caller must not treat as a reply. `settled` collects each permit's receipt. */
+export function answerHelperProtocol(child, message, settled = []) {
+  if (!message || typeof message !== "object") return false;
+  if (message.type === "bg-grant-request") {
+    const ceiling = Number(message.ceiling);
+    const now = Date.now(), minute = Math.floor(now / 60000);
+    const ticket = Number.isSafeInteger(ceiling) && ceiling >= 0
+      ? { bytes: ceiling, debtBytes: 0, expiresAt: (minute + 1) * 60000, minute, cls: "BG", observed: 0, id: `smoke-permit-${settled.length}-${now}`, purpose: message.purpose === "owner-delete" ? "owner-delete" : "bg" }
+      : null;
+    child.send({ type: "bg-grant", ticket, retryInMs: 1000 });
+    return true;
+  }
+  if (message.type === "bg-grant-settle") { settled.push({ id: message.id, used: Number(message.used) }); return true; }
+  if (message.type === "charge") { child.send({ type: "charge-ack", helperRunId: message.helperRunId, fileId: message.fileId, attempt: message.attempt, granted: true }); return true; }
+  if (message.type === "wal-drain") { child.send({ type: "wal-drain-ack", requestId: message.requestId }); return true; }
+  if (message.final === true) child.send({ type: "io-final-ack", generation: message.generation, sequence: message.sequence });
+  return message.type === "io";
+}
+
+/** One recall attempt returns { raw, answer }: raw is the worker's own answer, undefined when searchMemory stopped waiting for it.
+ * searchMemory gives its helper only TOOL_SEMANTIC_CUTOFF_MS once the words are in hand; a helper still inside a maintenance step
+ * (worker.ts drain holds queries while maintenanceBusy), as the restarted WebAssembly worker was on release run 44616560307 just after
+ * "model-ready", misses it and the answer is the designed words-only partial. That is not a failed recall, so the smoke asks again,
+ * up to timeoutMs, and returns the first answer the worker did give. Every answer, partial ones included, must hold nothing but gold:
+ * a denied or deleted record fails at once and is never retried. */
+export async function recallUntilAnswered(attempt, { timeoutMs = 60000, pauseMs = 500 } = {}) {
+  const until = Date.now() + timeoutMs;
+  for (let cutoffRetries = 0; ; cutoffRetries++) {
+    const { raw, answer } = await attempt();
+    const leaked = (answer?.hits ?? []).map(hit => hit.id).filter(id => id !== "gold");
+    assert.deepEqual(leaked, [], "A recall answer leaked denied/deleted records");
+    if (raw) return { raw, answer, cutoffRetries };
+    assert(answer?.partial, "searchMemory never asked the packaged worker and did not say its answer was partial");
+    assert(Date.now() + pauseMs < until, `searchMemory never got the packaged worker's answer inside its cutoff in ${timeoutMs} ms (${cutoffRetries + 1} attempts)`);
+    await new Promise(done => setTimeout(done, pauseMs));
+  }
+}
+
+/** The roster the smoke reads as: one reader bot in its direct thread, and another bot whose private thread it must never read. */
+export const probeRoster = () => ({ memoryRosterRevision: 1, bots: [{ id: "reader", threadId: "direct" }, { id: "other", threadId: "private" }], groups: [] });
+
+/** Seeds the authority the way the app holds it and issues the reader's recall view through the production builder.
+ * Since the recall-view work the worker refuses a query that names no view (worker.ts serveQueries: RecallPreparationPending),
+ * so a view-less smoke can never reach its first hit. `api` is the app's own modules (database.ts, memory/policy.ts,
+ * memory/recall-view.ts, internal-capabilities.ts): the scopes come from ensureScope, the view from prepareRecallContextSync
+ * (oracle, scopes, records, verify, publish), the capability from memoryAccess. No view, epoch or membership row is written here.
+ * The records are fixture data: "gold" in the reader's own scope, "denied" in the other bot's private thread (outside the view),
+ * "deleted-record" deleted the way production deletes (source and record state deleted, text scrubbed, indexed deleted:true:
+ * memory-revocation.ts affect, worker-controller.ts) and "deleted-source" whose source is deleted while its record is still
+ * active. That last state is real: memory-revocation.ts endSource ends the source and a later, budgeted expand step of the job
+ * ends its records (affect), so a recall can run in between; it must never come back (recall-view-index.ts LIVE_VIEW_ROW).
+ * The queries go through the app's own searchMemory (server/memory/search.ts: the helper's lists fused and every candidate
+ * hydrated through readable.ts), with the packaged worker as its helper. */
+export function seedRecallFixture(api) {
+  const db = api.database();
+  const roster = probeRoster();
+  api.reconcileMemoryRoster(roster);
+  api.setMemoryMode("active");
+  const allowed = api.ensureScope("bot", "reader"), denied = api.ensureScope("conversation", "private");
+  const records = [
+    { id: "gold", version: 1, scopeId: allowed, text: "Orchidneedle. The vehicle needs gasoline to travel.", deleted: false },
+    { id: "denied", version: 1, scopeId: denied, text: "Orchidneedle car fuel. This private material must never be retrieved.", deleted: false },
+    { id: "deleted-source", version: 1, scopeId: allowed, text: "Orchidneedle car fuel. This source has been deleted.", deleted: false },
+    { id: "deleted-record", version: 1, scopeId: allowed, text: "", deleted: true, wasText: "Orchidneedle car fuel. This record has been deleted." },
+  ];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const record of records) {
+      const text = record.wasText ?? record.text, hash = createHash("sha256").update(text).digest("hex");
+      db.prepare("INSERT INTO memory_sources(id,scope_id,revision,content_hash,kind,speaker,outcome,state) VALUES(?,?,1,?,'text','owner','completed',?)")
+        .run(record.id, record.scopeId, hash, record.id.startsWith("deleted-") ? "deleted" : "active");
+      db.prepare("INSERT INTO memory_source_versions(source_id,revision,content_hash,payload,created_at) VALUES(?,1,?,?,1)")
+        .run(record.id, hash, JSON.stringify({ text }));
+      db.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,valid_from,created_at) VALUES(?,1,?,'statement',?,'owner-statement',?,1,1)")
+        .run(record.id, record.scopeId, record.text, record.deleted ? "deleted" : "active");
+      db.prepare("INSERT INTO memory_evidence(record_id,record_version,source_id,source_revision,start_byte,end_byte) VALUES(?,1,?,1,0,?)")
+        .run(record.id, record.id, Buffer.byteLength(text));
+    }
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+  api.prepareRecallContextSync("reader", "direct", roster);
+  api.stopRecallViewMaintenance();
+  const registry = new api.InternalCapabilities();
+  registry.begin("reader", "direct", "smoke-generation");
+  const token = registry.mint({ botId: "reader", threadId: "direct", generation: "smoke-generation", depth: 0, kind: "memory", skillAuthoring: false });
+  const access = api.memoryAccess(registry, registry.resolve(`Bearer ${token}`), () => roster);
+  assert(access?.view?.viewId, "The production builder issued no recall view");
+  assert.equal(api.recallViewHasScope(db, access.view, allowed), true, "The reader's view lacks its own scope");
+  assert.equal(api.recallViewHasScope(db, access.view, denied), false, "The reader's view admits another bot's private thread");
+  const reader = { botId: access.botId, threadId: access.threadId, humanPrincipal: access.humanPrincipal, notOwnerAudience: api.memoryAccessNotOwnerAudience(access) };
+  return { db, records: records.map(({ wasText, ...record }) => record), allowed, denied, view: access.view, access };
+}
+
+const workerProgress = trail => `Worker messages: ${trail.length ? collapse(trail) : "(none)"}`;
+
+export function startProbeWorker(workerPath, { cwd, env = process.env, execArgv = [], onOutput, output, trail = [], settled = [] }) {
+  const progress = () => workerProgress(trail);
+  const forkedAt = Date.now();
+  const child = fork(workerPath, [], { cwd, execPath: process.execPath, execArgv, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  const mailbox = [];
+  // Each waiting call has its own waker: a recall cut by searchMemory's cutoff may still be waiting when the next one starts.
+  const wakers = new Set();
+  const wake = () => { for (const waker of [...wakers]) waker(); };
+  // Progress for a failure report: every message the worker sent, with the time since the probe forked it.
+  child.on("message", message => {
+    trail.push(`${message?.type ?? "?"}@${Date.now() - forkedAt}ms`);
+    if (trail.length > 400) trail.splice(1, trail.length - 400);
+    try { if (answerHelperProtocol(child, message, settled)) return; } catch (error) { mailbox.push({ type: "spawn-error", reason: `protocol answer failed: ${error.message}` }); }
+    mailbox.push(message); wake();
+  });
+  child.on("exit", () => wake());
+  child.on("error", error => { mailbox.push({ type: "spawn-error", reason: error.message }); wake(); });
+  child.stdout.on("data", onOutput);
+  child.stderr.on("data", onOutput);
+  child.wait = async (type, requestId, timeout = 120000, signal) => {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      if (signal?.aborted) throw Error(`Stopped waiting for ${type}`);
+      const error = mailbox.find(message => ["error", "index-error", "spawn-error"].includes(message.type));
+      if (error) throw Error(`Worker failure: ${JSON.stringify(error)}\n${output()}`);
+      const position = mailbox.findIndex(message => message.type === type && (!requestId || message.requestId === requestId));
+      if (position >= 0) return mailbox.splice(position, 1)[0];
+      if (child.exitCode !== null || child.signalCode !== null) throw Error(`Worker exited waiting for ${type}: ${child.exitCode}/${child.signalCode}\n${output()}`);
+      if (Date.now() >= deadline) throw Error(`Worker timed out waiting for ${type}\n${progress()}\n${output()}`);
+      await new Promise(done => {
+        const waker = () => { clearTimeout(timer); wakers.delete(waker); done(); };
+        const timer = setTimeout(waker, Math.min(250, deadline - Date.now()));
+        wakers.add(waker);
+      });
+    }
+  };
+  return child;
+}
+
+export async function attemptProbeRecall(worker, api, access, nextRequestId, text) {
+  let raw;
+  const bridge = { async search(input, signal) {
+    const requestId = nextRequestId();
+    worker.send({ type: "query", requestId, input });
+    const cut = new Promise((_, reject) => signal?.addEventListener("abort", () => {
+      if (worker?.connected) worker.send({ type: "cancel", requestId });
+      reject(Error("MEMORY_QUERY_DEADLINE"));
+    }, { once: true }));
+    cut.catch(() => {});
+    ({ result: raw } = await Promise.race([worker.wait("query-result", requestId, 120000, signal), cut]));
+    return raw;
+  } };
+  api.clearMemorySearchCache();
+  const answer = await api.searchMemory(text, access, bridge, { allowance: api.LineageAllowance.tool(), caller: "tool" });
+  return { raw, answer };
+}
+
 async function probe(configPath) {
   const config = JSON.parse(readFileSync(configPath, "utf8"));
-  const { DatabaseSync } = await import("node:sqlite");
   const schemaPath = [config.schemaModule, join(config.server, "server/memory/schema.js"), join(config.server, "memory/schema.js")].filter(Boolean).find(existsSync);
   assert(schemaPath, "Packaged authoritative schema module missing; fixture cannot substitute a handwritten schema");
-  const { migrateMemorySchema, validateMemorySchema, BRANCH_TABLES_SQL } = await import(pathToFileURL(schemaPath).href);
-  const authorityPath = join(config.root, "authority.db");
+  // The app's own database opener migrates the authority; it reads MURAGE_DATA_DIR when the module loads.
+  process.env.MURAGE_DATA_DIR = join(config.root, "data");
+  mkdirSync(process.env.MURAGE_DATA_DIR, { recursive: true, mode: 0o700 });
+  const api = await import(pathToFileURL(schemaPath).href);
+  for (const name of ["database", "closeDatabase", "validateMemorySchema", "reconcileMemoryRoster", "setMemoryMode", "ensureScope", "prepareRecallContextSync", "stopRecallViewMaintenance", "InternalCapabilities", "memoryAccess", "memoryAccessNotOwnerAudience", "recallViewHasScope", "searchMemory", "clearMemorySearchCache", "LineageAllowance"]) {
+    assert.equal(typeof api[name], "function", `Fixture module lacks the production ${name}`);
+  }
+  const { db, records, access } = seedRecallFixture(api);
+  assert(api.validateMemorySchema(db).size > 0, "Authoritative schema validation collected no tables");
+  const authorityPath = join(process.env.MURAGE_DATA_DIR, "messages.db");
+  assert(existsSync(authorityPath), "The app database opener wrote no authority file");
   const indexPath = join(config.root, "index.db");
-  const authority = new DatabaseSync(authorityPath);
-  const records = [
-    { id: "gold", version: 1, scopeId: "allowed", text: "Orchidneedle. The vehicle needs gasoline to travel.", deleted: false },
-    { id: "denied", version: 1, scopeId: "denied", text: "Orchidneedle car fuel. This private material must never be retrieved.", deleted: false },
-    { id: "deleted-source", version: 1, scopeId: "allowed", text: "Orchidneedle car fuel. This source has been deleted.", deleted: false },
-  ];
-  try {
-    authority.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
-    migrateMemorySchema(authority);
-    // The worker's eligibility reads the branch index the app keeps in the same database.
-    if (BRANCH_TABLES_SQL) authority.exec(BRANCH_TABLES_SQL);
-    authority.exec("BEGIN IMMEDIATE");
-    for (const scope of ["allowed", "denied"]) {
-      authority.prepare("INSERT INTO memory_scopes(id,kind,owner_key,audience,revision) VALUES(?,'bot',?,'[]',0)").run(scope, scope);
-    }
-    for (const record of records) {
-      const hash = createHash("sha256").update(record.text).digest("hex");
-      authority.prepare("INSERT INTO memory_sources(id,scope_id,revision,content_hash,kind,speaker,outcome,state) VALUES(?,?,1,?,'text','owner','completed',?)")
-        .run(record.id, record.scopeId, hash, record.id === "deleted-source" ? "deleted" : "active");
-      authority.prepare("INSERT INTO memory_source_versions(source_id,revision,content_hash,payload,created_at) VALUES(?,1,?,?,1)")
-        .run(record.id, hash, JSON.stringify({ text: record.text }));
-      authority.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,valid_from,created_at) VALUES(?,1,?,'statement',?,'owner-statement','active',1,1)")
-        .run(record.id, record.scopeId, record.text);
-      authority.prepare("INSERT INTO memory_evidence(record_id,record_version,source_id,source_revision,start_byte,end_byte) VALUES(?,1,?,1,0,?)")
-        .run(record.id, record.id, Buffer.byteLength(record.text));
-    }
-    authority.exec("COMMIT");
-    assert(validateMemorySchema(authority).size > 0, "Authoritative schema validation collected no tables");
-  } finally { authority.close(); }
 
   const manifest = JSON.parse(readFileSync(join(config.server, "memory-model-manifest.json"), "utf8"));
   const runtimeManifest = JSON.parse(readFileSync(join(config.server, "memory-runtime-manifest.json"), "utf8"));
@@ -76,9 +221,13 @@ async function probe(configPath) {
   let workerOutput = "";
   let sequence = 0;
   const checks = [];
+  // Recalls the helper answered only after one or more cutoff misses (recallUntilAnswered), reported with the result.
+  const cutoffs = [];
+  const trail = [], settled = [];
+  const progress = () => workerProgress(trail);
   // On the harness deadline, reap the task-owned worker before the parent removes its fixture.
   const terminate = async () => {
-    console.error(`Probe hit the harness deadline after: ${checks.at(-1) ?? "no check"}\nWorker output:\n${workerOutput || "(none)"}`);
+    console.error(`Probe hit the harness deadline after: ${checks.at(-1) ?? "no check"}\n${progress()}\nWorker output:\n${workerOutput || "(none)"}`);
     if (worker && worker.exitCode === null && worker.signalCode === null) {
       await new Promise(done => { worker.once("exit", done); worker.kill("SIGKILL"); });
     }
@@ -86,34 +235,11 @@ async function probe(configPath) {
   };
   process.once("SIGTERM", terminate);
 
-  function start() {
-    const child = fork(workerPath, [], { cwd: config.root, execPath: process.execPath, execArgv: [], env: process.env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
-    const mailbox = [];
-    let wake;
-    child.on("message", message => { mailbox.push(message); wake?.(); });
-    child.on("exit", () => wake?.());
-    child.on("error", error => { mailbox.push({ type: "spawn-error", reason: error.message }); wake?.(); });
-    child.stdout.on("data", data => { workerOutput = (workerOutput + data).slice(-16000); });
-    child.stderr.on("data", data => { workerOutput = (workerOutput + data).slice(-16000); });
-    child.wait = async (type, requestId, timeout = 120000) => {
-      const deadline = Date.now() + timeout;
-      for (;;) {
-        const error = mailbox.find(message => ["error", "index-error", "spawn-error"].includes(message.type));
-        if (error) throw Error(`Worker failure: ${JSON.stringify(error)}\n${workerOutput}`);
-        const position = mailbox.findIndex(message => message.type === type && (!requestId || message.requestId === requestId));
-        if (position >= 0) return mailbox.splice(position, 1)[0];
-        if (child.exitCode !== null || child.signalCode !== null) throw Error(`Worker exited waiting for ${type}: ${child.exitCode}/${child.signalCode}\n${workerOutput}`);
-        if (Date.now() >= deadline) throw Error(`Worker timed out waiting for ${type}\n${workerOutput}`);
-        await new Promise(done => {
-          const timer = setTimeout(() => { wake = undefined; done(); }, Math.min(250, deadline - Date.now()));
-          wake = () => { clearTimeout(timer); wake = undefined; done(); };
-        });
-      }
-    };
-    return child;
-  }
   async function initialize() {
-    worker = start();
+    worker = startProbeWorker(workerPath, {
+      cwd: config.root, trail, settled, output: () => workerOutput,
+      onOutput: data => { workerOutput = (workerOutput + data).slice(-16000); },
+    });
     await worker.wait("ready");
     worker.send({ type: "init", indexPath, authorityPath, modelDirectory: config.model, manifest });
     return worker.wait("initialised");
@@ -147,13 +273,18 @@ async function probe(configPath) {
     await exited;
     worker = undefined;
   }
-  async function query(text, semantic) {
-    const requestId = `query-${++sequence}`;
-    worker.send({ type: "query", requestId, input: { query: text, scopeIds: ["allowed"], policyRevision: 0, deletionEpoch: 0, historical: false, cursor: "", limit: 20, semantic } });
-    const { result } = await worker.wait("query-result", requestId);
-    assert(!result.degradedReason, `Query degraded: ${result.degradedReason}`);
-    assert.deepEqual(result.hits.map(hit => hit.id), ["gold"], "Missing gold or leaked denied/deleted source");
-    return result;
+  // One recall, the app's way: searchMemory asks the packaged worker (its helper) with the input it builds itself (view, reader,
+  // policy revision, deletion epoch, deadline), fuses the worker's lexical and vector lists and hydrates every candidate through
+  // readable.ts. The answer must be exactly gold: no denied scope, no deleted record, no record of a deleted source.
+  // A helper that misses searchMemory's cutoff is told to drop the query (the worker's "cancel"), and the smoke asks again
+  // (recallUntilAnswered); the answer it finally checks is one the worker gave.
+  async function query(text) {
+    const { raw, answer, cutoffRetries } = await recallUntilAnswered(() => attemptProbeRecall(worker, api, access, () => `query-${++sequence}`, text));
+    cutoffs.push({ text, retries: cutoffRetries });
+    assert(!raw.degradedReason, `Query degraded: ${raw.degradedReason}`);
+    assert(!answer.degradedReason && !answer.partial, `Recall degraded: ${answer.degradedReason ?? "partial"}`);
+    assert.deepEqual(answer.hits.map(hit => hit.id), ["gold"], "Missing gold or leaked denied/deleted source");
+    return { raw, answer };
   }
   try {
     assert.equal((await initialize()).reset, true);
@@ -163,34 +294,67 @@ async function probe(configPath) {
     assert.equal(indexed.embeddingStatus, "indexed", "Real pinned offline model inference failed");
     assert.equal(indexed.records.length, records.length);
     checks.push("pinned-model-offline-inference");
-    await query("Orchidneedle", false);
+    const lexical = await query("Orchidneedle");
+    // Deleted data is not even a candidate: the worker's word list over the view holds neither deleted case nor the denied scope.
+    assert.deepEqual((lexical.raw.lexicalRanked ?? []).map(ref => ref[0]), ["gold"], "A denied or deleted record was a lexical candidate");
     checks.push("lexical-hit-and-denied-source-exclusion");
     // No lexical term occurs in the eligible source; a hit needs independent semantic candidates.
-    const semantic = await query("car fuel", true);
+    const { raw: semantic } = await query("car fuel");
     assert.equal(semantic.vectorRows, 1, "Denied/deleted sources participated in similarity ranking");
-    assert.deepEqual(semantic.unvectored, [], "An eligible source has no vector");
-    assert(Number.isFinite(semantic.hits[0].similarity) && semantic.hits[0].similarity > 0);
+    assert.deepEqual(semantic.unvectored ?? [], [], "An eligible source has no vector");
+    assert.deepEqual(semantic.vectorRanked.map(ref => ref[0]), ["gold"], "A denied or deleted record was a vector candidate");
+    assert(Number.isFinite(semantic.vectorRanked[0][2]) && semantic.vectorRanked[0][2] > 0);
     checks.push("independent-semantic-hit-and-denied-source-exclusion");
     await stop();
-    assert.equal((await initialize()).reset, false, "Restart discarded retained index");
-    await query("Orchidneedle", false);
+    const restarted = await initialize();
+    assert.equal(restarted.reset, false, "Restart discarded retained index");
+    // A WebAssembly helper is warmed before recall asks it, as the app does when a turn starts (worker-controller.ts warmForIntent ->
+    // requestWarm): "warm", then "model-ready". The recall below still runs inside searchMemory's own budget and cutoff.
+    if (restarted.wasm === true) { worker.send({ type: "warm" }); await worker.wait("model-ready"); }
+    await query("Orchidneedle");
+    await query("car fuel");
     await stop();
     checks.push("graceful-disconnect-and-retained-index-restart");
     console.log(JSON.stringify({ ok: true, checks, node: process.version, electron: process.versions.electron ?? null, platform: process.platform, arch: process.arch,
       model: `${manifest.model}@${manifest.revision}`, runtimeVersion: actualPackage.version, schemaSha256: digest(schemaPath), workerSha256: digest(workerPath),
       modelManifestSha256: digest(join(config.server, "memory-model-manifest.json")), runtimeManifestSha256: digest(join(config.server, "memory-runtime-manifest.json")),
-      workerPeakRssBytes: semantic.workerPeakRssBytes, limitation: "Focused worker smoke; not full-service latency, UI, MCP, restore or cross-platform proof" }));
+      workerPeakRssBytes: semantic.workerPeakRssBytes, permits: settled.length, recallCutoffRetries: cutoffs, workerMessages: collapse(trail), limitation: "Focused worker smoke; not full-service latency, UI, MCP, restore or cross-platform proof" }));
   } catch (error) {
     // Every failure path, assertions and the disconnect deadline included: what the worker printed, and the last check it passed.
-    console.error(`Probe failed after: ${checks.at(-1) ?? "no check"}\nWorker output:\n${workerOutput || "(none)"}`);
+    console.error(`Probe failed after: ${checks.at(-1) ?? "no check"}\n${progress()}\nWorker output:\n${workerOutput || "(none)"}`);
     throw error;
   } finally {
     if (worker && worker.exitCode === null && worker.signalCode === null) {
       await new Promise(done => { worker.once("exit", done); worker.kill("SIGKILL"); });
     }
     process.removeListener("SIGTERM", terminate);
+    api.closeDatabase();
   }
 }
+
+/** The environment the probe (and through it the forked worker) runs with. The worker runs from a copy of server/ in a temporary
+ * folder, so its dist-native fallback beside the module never exists: like the app's server (electron/harness-resources.mjs, which
+ * server/memory/worker-controller.ts passes on to the worker), it finds engine-exclusion.node through MURAGE_RESOURCES_PATH, the
+ * real packaged Resources. Without it the worker fails closed with BG_ENFORCEMENT_UNAVAILABLE. */
+export function probeEnvironment({ root, home, resources, backend, systemRoot }) {
+  const env = { HOME: home, USERPROFILE: home, TMPDIR: root, TMP: root, TEMP: root, ELECTRON_RUN_AS_NODE: "1", HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", NODE_PATH: "", XDG_CACHE_HOME: join(home, "cache"), XDG_CONFIG_HOME: join(home, "config") };
+  if (systemRoot) env.SystemRoot = systemRoot;
+  if (resources) env.MURAGE_RESOURCES_PATH = resources;
+  if (backend === "wasm") env.MURAGE_MEMORY_BACKEND = "wasm";
+  return env;
+}
+
+/** The fixture module: the app's own schema, database opener, policy and recall-view builder, bundled from this checkout. */
+const FIXTURE_EXPORTS = [
+  'export { migrateMemorySchema, validateMemorySchema } from "./server/memory/schema.ts";',
+  'export { database, closeDatabase } from "./server/database.ts";',
+  'export { ensureScope, memoryAccess, memoryAccessNotOwnerAudience, reconcileMemoryRoster } from "./server/memory/policy.ts";',
+  'export { setMemoryMode } from "./server/memory/repository.ts";',
+  'export { prepareRecallContextSync, recallViewHasScope, stopRecallViewMaintenance } from "./server/memory/recall-view.ts";',
+  'export { InternalCapabilities } from "./server/internal-capabilities.ts";',
+  'export { searchMemory, clearMemorySearchCache } from "./server/memory/search.ts";',
+  'export { LineageAllowance } from "./server/memory/lineage-allowance.ts";',
+].join(" ");
 
 async function main() {
   if (args.includes("--probe")) return probe(option("--probe"));
@@ -220,10 +384,18 @@ async function main() {
     // Fixture setup only: the authoritative memory schema, bundled from this checkout into one module, creates the
     // authority database. The tsc copy under server/server imports modules the server resources do not carry. The
     // worker under test is still the packaged, bundled one.
-    const schemaModule = join(root, "fixture-schema.mjs");
+    // Built the way scripts/bundle-server.mjs builds the packaged server: schema.ts reaches the sentinel through
+    // ../sqlite-open.ts, so CommonJS leaves read require/__filename/__dirname (banner), the Windows hide installer
+    // stays external and relocatable (plugin), and drivers/murage-exec.ts reads its wrapper beside the bundle at load.
+    const fixtureDir = join(root, "fixture-schema");
+    const schemaModule = join(fixtureDir, "schema.mjs");
     const { build } = await import("esbuild");
-    await build({ stdin: { contents: 'export { migrateMemorySchema, validateMemorySchema } from "./server/memory/schema.ts"; export { BRANCH_TABLES_SQL } from "./server/branch-index.ts";', resolveDir: resolve(dirname(self), ".."), loader: "ts" }, bundle: true, platform: "node", target: "node20", format: "esm", outfile: schemaModule, logLevel: "error",
-      banner: { js: 'import { createRequire as __fixtureRequire } from "node:module"; const require = __fixtureRequire(import.meta.url);' } });
+    const { windowsHideBundlePlugin } = await import(pathToFileURL(join(dirname(self), "windows-hide-bundle-plugin.mjs")).href);
+    const checkout = resolve(dirname(self), "..");
+    await build({ stdin: { contents: FIXTURE_EXPORTS, resolveDir: checkout, loader: "ts" }, bundle: true, platform: "node", target: "node20", format: "esm", outfile: schemaModule, logLevel: "error",
+      banner: { js: 'import { createRequire as __fixtureRequire } from "node:module"; import { fileURLToPath as __fixturePath } from "node:url"; import { dirname as __fixtureDir } from "node:path"; const require = __fixtureRequire(import.meta.url); const __filename = __fixturePath(import.meta.url); const __dirname = __fixtureDir(__filename);' },
+      plugins: [windowsHideBundlePlugin()] });
+    for (const sibling of ["murage-exec", "murage-exec.shapes"]) cpSync(join(checkout, "server/drivers", sibling), join(fixtureDir, sibling));
     const model = join(root, "model");
     for (const asset of manifest.files) {
       const source = resolve(modelArgument, asset.path), target = resolve(model, asset.path);
@@ -239,11 +411,9 @@ async function main() {
     const runner = join(root, "probe.mjs"), config = join(root, "fixture.json");
     cpSync(self, runner);
     writeFileSync(config, JSON.stringify({ root, server, model, schemaModule }), { mode: 0o600 });
-    const env = { HOME: home, USERPROFILE: home, TMPDIR: root, TMP: root, TEMP: root, ELECTRON_RUN_AS_NODE: "1", HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", NODE_PATH: "", XDG_CACHE_HOME: join(home, "cache"), XDG_CONFIG_HOME: join(home, "config") };
-    if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     const backend = option("--backend") ?? "auto";
     assert(["auto", "wasm"].includes(backend), "--backend must be auto or wasm");
-    if (backend === "wasm") env.MURAGE_MEMORY_BACKEND = "wasm";
+    const env = probeEnvironment({ root, home, resources, backend, systemRoot: process.env.SystemRoot });
     child = spawn(runtime, [runner, "--probe", config], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     child.stdout.on("data", data => { stdout = (stdout + data).slice(-64000); });
@@ -265,4 +435,6 @@ async function main() {
     safeWipeSync(root, { maxRetries: 5, retryDelay: 200 });
   }
 }
-main().catch(error => { console.error(error?.stack ?? String(error)); process.exitCode = 1; });
+// Run only as a program (the probe copy runs itself too); a test imports probeEnvironment without starting a smoke.
+const entry = (() => { try { return process.argv[1] ? realpathSync(process.argv[1]) : ""; } catch { return ""; } })();
+if (entry === realpathSync(self)) main().catch(error => { console.error(error?.stack ?? String(error)); process.exitCode = 1; });

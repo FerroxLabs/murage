@@ -58,8 +58,33 @@ it('a proposal turn may call only project_propose; no other turn may call it', (
 });
 
 const valid = {proposal: {members: ['a'], leadBotId: 'a', mode: 'goal' as const, brief: {summary: 's', doneMeans: 'd', rules: 'r'}, budget: {minutes: 120, tokens: 3000000}, planOutline: ['x']}};
+// the bot named 'chief' holds the Chief office, unchanged, for the rows below (propose-500: a turn is held only under its office epoch)
+const office = () => ({holder: 'chief', epoch: 0});
+it('propose-500: a turn is held only while its bot holds the Chief office in the epoch it began under', async () => {
+  let now = {holder: 'chief' as string | null, epoch: 1};
+  const turns = new ChiefProposalTurns(() => now);
+  const waiting = turns.begin('t', 'chief', 'gen', 'inst', () => valid);
+  expect([turns.holds('t', 'gen', 'chief'), turns.holds('t', 'other-gen', 'chief'), turns.holds('t', 'gen', 'other'), turns.holds('u', 'gen', 'chief')]).toEqual([true, false, false, false]);
+  // the office went to another bot
+  now = {holder: 'other', epoch: 2};
+  expect(turns.holds('t', 'gen', 'chief')).toBe(false);
+  expect(turns.submit('t', 'gen', {})).toEqual({status: 403, body: {error: 'This proposal turn has ended.'}});
+  // and came back: the grant does not
+  now = {holder: 'chief', epoch: 3};
+  expect(turns.holds('t', 'gen', 'chief')).toBe(false);
+  expect(turns.submit('t', 'gen', {})).toEqual({status: 403, body: {error: 'This proposal turn has ended.'}});
+  turns.end('t', 'gen');
+  expect(await waiting).toBeNull();
+  // a turn begun in the new epoch is held
+  void turns.begin('v', 'chief', 'gen2', 'inst', () => valid);
+  expect(turns.submit('v', 'gen2', {})).toMatchObject({status: 200});
+  // without an office reader nothing is ever held
+  const none = new ChiefProposalTurns();
+  void none.begin('t', 'chief', 'gen', 'inst', () => valid);
+  expect([none.holds('t', 'gen', 'chief'), none.submit('t', 'gen', {}).status]).toEqual([false, 403]);
+});
 it('a valid submission resolves the waiting proposal once, bound to its generation', async () => {
-  const turns = new ChiefProposalTurns();
+  const turns = new ChiefProposalTurns(office);
   const waiting = turns.begin('t', 'chief', 'gen', 'inst', () => valid);
   expect(turns.owns('t')).toBe(true);
   expect(turns.submit('t', 'other-gen', {})).toMatchObject({status: 403});
@@ -73,7 +98,7 @@ it('a valid submission resolves the waiting proposal once, bound to its generati
   expect(turns.ignores('other')).toBe(false);
 });
 it('an invalid submission is refused with a plain reason and the turn may try again', async () => {
-  const turns = new ChiefProposalTurns();
+  const turns = new ChiefProposalTurns(office);
   let calls = 0;
   const waiting = turns.begin('t', 'chief', 'gen', 'inst', () => { if (calls++ === 0) throw new Error('Check the proposal: mode.'); return valid; });
   expect(turns.submit('t', 'gen', {mode: 'party'})).toEqual({status: 400, body: {error: 'Check the proposal: mode.'}});
@@ -81,14 +106,14 @@ it('an invalid submission is refused with a plain reason and the turn may try ag
   expect(await waiting).toEqual(valid);
 });
 it('a turn that ends without a proposal resolves empty', async () => {
-  const turns = new ChiefProposalTurns();
+  const turns = new ChiefProposalTurns(office);
   const waiting = turns.begin('t', 'chief', 'gen', 'inst', () => valid);
   turns.end('t', 'gen');
   expect(await waiting).toBeNull();
   expect(turns.submit('t', 'gen', {})).toMatchObject({status: 403});
 });
 it('N2 a turn that completes hands back its reply text; a tool proposal sent first wins', async () => {
-  const turns = new ChiefProposalTurns();
+  const turns = new ChiefProposalTurns(office);
   const waiting = turns.begin('t', 'chief', 'gen', 'inst', () => valid);
   turns.end('t', 'other-gen', 'forged');
   turns.end('t', 'gen', 'Here is the draft.');
@@ -99,13 +124,13 @@ it('N2 a turn that completes hands back its reply text; a tool proposal sent fir
   expect(await sent).toEqual(valid);
 });
 it('N2 a turn that did not finish hands back what it wrote, marked partial', async () => {
-  const turns = new ChiefProposalTurns();
+  const turns = new ChiefProposalTurns(office);
   const waiting = turns.begin('t', 'chief', 'gen', 'inst', () => valid);
   turns.end('t', 'gen', 'half', true);
   expect(await waiting).toEqual({text: 'half', partial: true});
 });
 it('R7-6 ending a proposal turn revokes its generation at once, and its thread stays fenced to project_propose', async () => {
-  const turns = new ChiefProposalTurns();
+  const turns = new ChiefProposalTurns(office);
   const revoked: string[] = [];
   const waiting = turns.begin('t', 'chief', 'gen', 'inst', () => valid, () => revoked.push('gen'));
   turns.end('t', 'gen');

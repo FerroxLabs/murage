@@ -1,4 +1,4 @@
-import { noLimitsPowerFallbackActive, takeNoLimitsPowerFallbackNotice } from "../host-power.ts";
+import { noLimitsPowerRetry, SEATBELT_LAUNCH_ATTEMPTS, takeNoLimitsPowerFallbackNotice } from "../host-power.ts";
 import { NotModelRequest } from "../../shared/engine-transport.ts";
 import { registerBusyloopRequestSite, fluxRouteFor } from "../../shared/flux-route.ts";
 import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
@@ -11,7 +11,7 @@ import { engineJsonLine } from "./engine-wire.ts";
 import { fencedSubmit, releaseNativeAnswer, refusalFor, fencedOf, composeClose, type FencedRefusal, type ConfirmedClose } from "./engine-input.ts";
 import { piGateControlAnswer } from "./hook-control.ts";
 export { piGateControlAnswer } from "./hook-control.ts";
-import { refuseConsumingTurn } from "../consuming-turn-response.ts";
+import { refuseEngineOwnTurn } from "../consuming-turn-response.ts";
 import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
 import { mountedTurn } from "./cli-mount-relay.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -79,7 +79,9 @@ import {
   mergeLocalInject,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
-import { createBoundedLineSplitter, FRAME_TOO_LARGE, frameOverflowMessage } from "./bounded-lines.ts";
+import { appendTurnText, createBoundedLineSplitter } from "./bounded-lines.ts";
+import { LINE_FITTED_NOTICE } from "../owner-turn-caps.ts";
+import { markTurnOutside } from "../email/external-marks.ts";
 import { registerIntake } from "../harness/intake.ts";
 import { fromPi, toPiValue, type QuestionAnswer, type QuestionSpec } from "../question-normalize.ts";
 import { QUESTION_TIMEOUT_MS } from "../../shared/questions.ts";
@@ -87,6 +89,7 @@ import { localContextWindow, type LocalHost } from "./local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
 import { approvalSummary } from "../../shared/approval-summary.ts";
+import type { PhoneAskTurn } from "../phone-calls/contracts.ts";
 import { phoneAskLine } from "./phone-tool-schemas.ts";
 import { boundedToolInput } from "../approval-text.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
@@ -167,7 +170,7 @@ const PI_ARGS = ["--mode", "rpc", "--no-session"];
  * --no-context-files 0.67.4. A version below the newest floor, or unknown
  * (the probe is retried once), is rejected: the turn does not start and the
  * owner is told to update pi.
- * Rig (build host, pi 0.73.1, fake model): before = personal extension tool,
+ * Rig (Hetzner, pi 0.73.1, fake model): before = personal extension tool,
  * personal skill and global AGENTS.md in the request; after = none of them,
  * project AGENTS.md and an explicit `-e` extension's tool still present.
  */
@@ -519,22 +522,20 @@ export async function fetchPiModels(
     };
     const timer = setTimeout(() => finish({ default: "", options: [] }), 15_000);
     timer.unref?.();
-    // Byte-bounded framing (A4): an oversized catalog frame is never parsed;
-    // the probe resolves empty, the same as any other failed probe.
-    const stdoutLines = createBoundedLineSplitter({
-      onLine: (line) => {
-        if (done || !line.trim()) return;
-        const parsed = parsePiCatalog(line + "\n", fallbackDefault);
-        if (parsed.options.length || line.includes('"get_available_models"')) {
-          clearTimeout(timer);
-          finish(parsed);
-        }
-      },
-      onOverflow: () => {
+    // Line framing (A4), no frame size limit (MAIN-RULING
+    // cause22-no-transport-caps); a probe that never answers resolves empty
+    // on its timeout, the same as any other failed probe.
+    const onCatalogLine = (line: string) => {
+      if (done || !line.trim()) return;
+      const parsed = parsePiCatalog(line + "\n", fallbackDefault);
+      if (parsed.options.length || line.includes('"get_available_models"')) {
         clearTimeout(timer);
-        finish({ default: "", options: [] });
-      },
-    });
+        finish(parsed);
+      }
+    };
+    // 1.0.21 group B (design3-fable B R2, AMEND X5): `room: 1` keeps a line plus the newline above within the string limit; a
+    // longer line is fitted and read by the same handler (no requests come on this probe).
+    const stdoutLines = createBoundedLineSplitter({ onLine: onCatalogLine, onFit: onCatalogLine, room: 1 });
     child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
     child.on("error", () => finish({ default: "", options: [] }));
     child.on("close", () => finish({ default: "", options: [] }));
@@ -684,15 +685,15 @@ export const PI_UNPROVEN_IDENTITY = { namespace: "", name: "" } as const;
  * is a cut call: it is marked so, and never filed under the engine's own name
  * as if that named the tool (Astra r3).
  */
-export function piGateAsk(message: string, mounts: readonly McpMountRecord[] = []): PiGateAsk {
-  const ask = piGateCall(message, mounts);
+export function piGateAsk(message: string, mounts: readonly McpMountRecord[] = [], phoneTurn?: PhoneAskTurn): PiGateAsk {
+  const ask = piGateCall(message, mounts, phoneTurn);
   // 1.0.4 09-1: the gate's own key-file verdict (it follows links); it can only add a hold
   let hold: unknown;
   try { hold = (registerBusyloopPayloadSite("read", JSON.parse(message)) as { sensitive?: unknown } | null)?.sensitive; } catch { hold = undefined; }
   return typeof hold === "string" && hold ? { ...ask, localHold: hold.slice(0, 80) } : ask;
 }
 
-function piGateCall(message: string, mounts: readonly McpMountRecord[]): PiGateAsk {
+function piGateCall(message: string, mounts: readonly McpMountRecord[], phoneTurn?: PhoneAskTurn): PiGateAsk {
   let parsed: { tool?: unknown; input?: unknown; truncated?: unknown; mount?: unknown; mcpTool?: unknown; note?: unknown } = {};
   let readable = false;
   try {
@@ -719,7 +720,7 @@ function piGateCall(message: string, mounts: readonly McpMountRecord[]): PiGateA
     const identity = { namespace: "mcp", name: `${mount}__${mcpTool}` };
     if (cut) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolIdentity: identity };
     if (!input) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolInputMissing: "input", toolIdentity: identity };
-    return { tool: name, summary: phoneAskLine(name, input) ?? `${mcpTool.slice(0, 300)}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name, input }, toolIdentity: identity, gateInput: input };
+    return { tool: name, summary: phoneAskLine(name, input, phoneTurn) ?? `${mcpTool.slice(0, 300)}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name, input }, toolIdentity: identity, gateInput: input };
   }
   const display = tool === "bash" ? "Bash" : tool === "powershell" ? "PowerShell" : tool === "edit" ? "Edit" : tool === "write" ? "Write" : tool || "pi";
   if (cut) return { tool: display, summary: `${shown} (the call was cut)${note}`, truncated: true };
@@ -906,7 +907,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         return runTurn(turn, entry);
       }, () => null).finally(handedBack);
     };
-    const runTurn = async (turn: SendTurnInput, e: GateEntry, powerRetried = false): Promise<{ turnId: string }> => {
+    const runTurn = async (turn: SendTurnInput, e: GateEntry, powerRetries = 0): Promise<{ turnId: string }> => {
+      const powerRetried = powerRetries > 0, powerRetryLeft = powerRetries < SEATBELT_LAUNCH_ATTEMPTS;
       const originalTurn = turn;
       const { threadId } = turn;
       // A terminal event does not prove the previous process tree is dead.
@@ -1109,7 +1111,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             stdio: ["pipe", "pipe", "pipe"],
             cwd: botFolderOrThrow(turn),
             env: handed.env,
-          }, engineJob({ noLimits: (turn.permissionNow?.() ?? turn).noLimits === true, powerSession }), undefined, threadId);
+          }, engineJob({ noLimits: (turn.permissionNow?.() ?? turn).noLimits === true, powerSession, ownerTurn: turn.hostPowerOwnerTurn === true }), undefined, threadId);
           // Register before any runtime emission can reenter Store. A failed
           // invalidation terminates the exact owned engine without Pi's abort
           // grace period, even when the stale inventory could not be removed.
@@ -1187,9 +1189,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       child.stdin.on("error", () => {
         // EPIPE can arrive before close has classified a Seatbelt refusal.
         // Keep startup pending until that exact child's close confirms the cause.
-        if (!powerRetried && !sessionReady && (turn.permissionNow?.() ?? turn).noLimits === true) {
+        if (powerRetryLeft && !sessionReady && (turn.permissionNow?.() ?? turn).noLimits === true) {
           void teardown.wait(stopBudget(0)).then(() => {
-            if (hostPowerRefused(child) && noLimitsPowerFallbackActive(powerSession)) retryingPower = true;
+            if (hostPowerRefused(child) && noLimitsPowerRetry(powerSession, child.pid)) retryingPower = true;
             rejectWaiters(new Error(`${ENGINE} stopped taking input.`));
           });
         } else rejectWaiters(new Error(`${ENGINE} stopped taking input.`));
@@ -1311,7 +1313,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         // Discard buffered content before the synchronous lease refusal interrupts us.
         assistantText = "";
         todo = createTodoBlockFilter();
-        try { if (turn.releaseBinding) refuseConsumingTurn(turn.releaseBinding); }
+        // 1.0.20 busy-engines: pi itself ended the bound turn (exited, errored, closed its output): ENGINE_OWN_REFUSAL, so a direct turn
+        // whose context is still current ends at once. A lease that refused first keeps its own verdict (the first verdict wins).
+        try { if (turn.releaseBinding) refuseEngineOwnTurn(turn.releaseBinding); }
         catch { /* the lease handler owns its terminal refusal */ }
         finally {
           closeTurn(failed(LEDGER_REFUSAL_LINE, { stopReason: "memory-refused" }));
@@ -1441,7 +1445,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             if (!e) return;
             if (e.type === "text_delta" && typeof e.delta === "string") {
               attemptStreamed = true;
-              assistantText += e.delta;
+              assistantText = appendTurnText(assistantText, e.delta);
               emitTodoOutput(todo.push(e.delta));
             } else if (e.type === "thinking_delta" && typeof e.delta === "string") {
               attemptStreamed = true;
@@ -1537,7 +1541,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               const mountRecords = piMountRecords(turn, mcpServers);
               // Murage's own gate, recognised by this turn's secret: the call it
               // carries is what the stop line and the card read.
-              const gate = isGateAsk ? piGateAsk(typeof evt.prefill === "string" ? evt.prefill : "", mountRecords) : null;
+              const gate = isGateAsk ? piGateAsk(typeof evt.prefill === "string" ? evt.prefill : "", mountRecords, turn.releaseBinding?.identity) : null;
               const slot: NativeAskSlot = {closed:false};
               // PIN: a refused answer write claims BEFORE commit(false) (native-ask runs refused first); the winner's close starts after
               // the commit (microtask) so closeTurn finds no pending entry to deny a second time. `writing` never awaits the close.
@@ -1575,7 +1579,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                 return decision.behavior === 'deny' ? {type:'extension_ui_response',id:reqId,cancelled:true} : {type:'extension_ui_response',id:reqId,confirmed:true};
                 };
                 const frame=response();
-                return deliverNative(slot,mode,JSON.stringify(frame),()=>send(frame),()=>child.stdin.writable && !child.stdin.destroyed,accepted=>{
+                return deliverNative(slot,mode,JSON.stringify(frame),()=>NotModelRequest("Pi extension UI response answers an existing permission request.", send(frame)),()=>child.stdin.writable && !child.stdin.destroyed,accepted=>{
                   pending.delete(reqId); const wasScoped=scopedRequests.delete(reqId);
                   timer?.clear(); if(timer) askTimers.delete(timer);
                   answerTransport.confirm(threadId,reqId,Promise.resolve(accepted));
@@ -1640,29 +1644,49 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
       };
 
-      // Byte-bounded framing (A4): UTF-8 is decoded per complete line, so a
-      // multibyte character split across reads stays intact, and one frame
-      // never holds more than ENGINE_FRAME_MAX_BYTES of the shared process.
+      // Line framing (A4): UTF-8 is decoded per complete line, so a
+      // multibyte character split across reads stays intact. No frame size
+      // limit (MAIN-RULING cause22-no-transport-caps).
+      const onStdoutLine = (line: string) => {
+        if (!line.trim()) return;
+        try {
+          onEvent(registerBusyloopPayloadSite("read", JSON.parse(line)) as PiEvent, line.length);
+        } catch (error) {
+          // a fenced refusal thrown from a handler is the turn's refusal, never a malformed line (PI1+)
+          const R = claimRefusal(error, "pi.stdout");
+          if (R && R.closer === "driver") refusalOwner.closing = finishRefusal(R);
+          /* otherwise: skip non-JSON line */
+        }
+      };
+      let lineFitNoticed = false;
       const stdoutLines = createBoundedLineSplitter({
-        onLine: (line) => {
-          if (!line.trim()) return;
-          try {
-            onEvent(registerBusyloopPayloadSite("read", JSON.parse(line)) as PiEvent, line.length);
-          } catch (error) {
-            // a fenced refusal thrown from a handler is the turn's refusal, never a malformed line (PI1+)
-            const R = claimRefusal(error, "pi.stdout");
-            if (R && R.closer === "driver") refusalOwner.closing = finishRefusal(R);
-            /* otherwise: skip non-JSON line */
+        onLine: onStdoutLine,
+        // 1.0.21 group B (cause22-eng-design3-fable B, AMEND X6): a line past the string limit, fitted. R1 an
+        // extension_ui_request is never shown on cut text: that dialog is cancelled by its id (pi's own negative answer). R2 any
+        // other line (response, message updates, agent_end, agent_settled) goes to the same handler; the live turn is marked and
+        // told once BEFORE it, so a fitted terminal frame still carries the mark. A mark, never a stop.
+        onFit: (line) => {
+          let msg: any;
+          try { msg = JSON.parse(line); } catch { msg = null; }
+          if (msg && typeof msg === "object" && !Array.isArray(msg) && msg.type === "extension_ui_request") {
+            if (msg.id === undefined || msg.id === null) return;
+            try { NotModelRequest("Pi session setup, model/effort selection, abort or extension UI reply; no prompt is submitted", send({ type: "extension_ui_response", id: msg.id, cancelled: true })); }
+            catch (error) {
+              const R = claimRefusal(error, "pi.answer.fit");
+              if (R?.closer === "driver") refusalOwner.closing = finishRefusal(R);
+            }
+            return;
           }
-        },
-        onOverflow: (overflow) => {
-          appendNative(threadId, { dir: "in", source: "pi.rpc", msg: { frameOverflow: overflow } });
-          if (settled) return;
-          const message = frameOverflowMessage("pi", overflow);
-          // closed first so a pending handshake step sees the turn is over
-          // and adds no second failure
-          closeTurn(failed(message, { stopReason: FRAME_TOO_LARGE }));
-          rejectWaiters(new Error(message));
+          if (!settled) {
+            markTurnOutside(threadId, "outside tool", undefined, undefined, "pi-line-fitted");
+            if (!lineFitNoticed) {
+              lineFitNoticed = true;
+              const itemId = `line-fit-${turnId}`;
+              emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId, title: LINE_FITTED_NOTICE, toolKind: "notice" });
+              emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
+            }
+          }
+          onStdoutLine(line);
         },
       });
       // The last words pi wrote, for the line shown if it closes before its turn ended (a missing runtime, a crash).
@@ -1704,7 +1728,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         if ((turn.releaseBinding ?? null) !== null) { refuseBoundExit(); return; }
         // S4 power (design sections 2 and 8): bwrap or sandbox-exec refused before pi ran; nothing it was sent was delivered.
         if (!settled && hostPowerRefused(child)) {
-          if (!sessionReady && !powerRetried && (turn.permissionNow?.() ?? turn).noLimits === true && noLimitsPowerFallbackActive(powerSession)) {
+          if (!sessionReady && powerRetryLeft && (turn.permissionNow?.() ?? turn).noLimits === true && noLimitsPowerRetry(powerSession, child.pid)) {
             retryingPower = true;
             rejectWaiters(new Error("power startup retry"));
             return;
@@ -1766,7 +1790,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           const closed = await stopGate.step(e, teardown.wait(stopBudget(0)));
           if (closed.closeConfirmed) {
             active.delete(threadId); e.live = false; e.stopLive = undefined;
-            return stopGate.step(e, runTurn(originalTurn, e, true));
+            return stopGate.step(e, runTurn(originalTurn, e, powerRetries + 1));
           }
           console.warn(`${ENGINE} power fallback: refused startup could not be stopped`);
         }

@@ -7,6 +7,9 @@ const fencedRefusals = () => ringRefusals() as readonly unknown[] as readonly Fe
 import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
+import { HELD_RELAY_PID, holdBotRelay } from "../testing/held-relay-fixture.ts";
+import { decorateOwnerTurnInstance, setOwnerTurnResolver } from "../harness/power-owner-adapter.ts";
+import { assertRelayAvailable } from "./cli-mount-relay.ts";
 // Hot engine instance, step 1: one warm `claude` process per conversation
 // thread, reused while every spawn input is unchanged, recycled otherwise, with
 // the per-turn capability token delivered through a per-process 0600 file that
@@ -25,8 +28,8 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { CLI_CALLER_DEADLINE_MS } from "../procs.ts";
 import { execFileSync } from "node:child_process";
-import { ClaudeDriver, claudeGitRoots, claudeSettingsRevision, managedClaudeSettingsPaths, type ClaudeConfig } from "./claude.ts";
-import { credentialDigest, diffWarmKey, warmKey } from "./warm-key.ts";
+import { ClaudeDriver, claudeGitRoots, claudeSettingsRevision, managedClaudeSettingsPaths, observeClaudeWarmKeyForTests, overrideManagedClaudeSettingsPathsForTests, type ClaudeConfig } from "./claude.ts";
+import { credentialDigest, diffWarmKey, warmKey, type WarmKey } from "./warm-key.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../connector-cache.ts";
 import { PrewarmRefused, warmPool } from "./warm-pool.ts";
 import { reuseStats } from "./reuse-stats.ts";
@@ -62,6 +65,8 @@ const probe = vi.hoisted(() => ({
   lateSignal: null as null | Promise<true>,
   releaseStops: async () => {},
 }));
+// q1024-steerquar: the held relay's stand-in engine (testing/held-relay-fixture.ts HELD_RELAY_PID; a literal, as a mock factory may not import procs' importers).
+const heldRelayPid = vi.hoisted(() => 2_000_000_017);
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
   const { SPAWNED_PROXIES } = await import("../proxy-paths.ts");
@@ -95,10 +100,12 @@ vi.mock("../procs.ts", async (original) => {
       return actual.spawnCli(...args);
     },
     killCliTree: (...args: Parameters<typeof actual.killCliTree>) => {
+      if (args[0].pid === heldRelayPid) return;
       if (probe.stopFails || probe.forceFails || args[0].pid === probe.forceFailPid) held.add(args[0]);
       else actual.killCliTree(...args);
     },
     cliTreeStoppedSignal: (...args: Parameters<typeof actual.cliTreeStoppedSignal>) => {
+      if (args[0].pid === heldRelayPid) return new Promise<true>(() => {});
       probe.calls.outcome++;
       probe.signalPids.push(args[0].pid);
       if (probe.disagree) return Promise.resolve(true as const);
@@ -125,7 +132,7 @@ vi.mock("../procs.ts", async (original) => {
     cliTreeConfirmedStopped: (...args: Parameters<typeof actual.cliTreeConfirmedStopped>) => (probe.disagree || probe.stopFails || probe.forceFails || (probe.forceFailPid !== null && args[0].pid === probe.forceFailPid)
       ? false
       : actual.cliTreeConfirmedStopped(...args)),
-    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (probe.disagree
+    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (args[0].pid === heldRelayPid ? Promise.resolve(false) : probe.disagree
       ? (probe.calls.await++, Promise.resolve(false))
       : probe.stopFails || probe.forceFails || args[0].pid === probe.forceFailPid
       ? Promise.resolve(false)
@@ -190,7 +197,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     recorder = recordEvents(instance.adapter);
   };
   const agents = (token: string, bot = "b1") => ({
-    agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: bot, MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
+    agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: bot, MURAGE_COMMS_TOKEN: token } },
   });
   let botNamespace = "";
   const identity = (botId = "b1", audience: "owner" | "non-owner" = "owner") => ({ botId: `${botNamespace}:${botId}`, audience });
@@ -380,6 +387,27 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   recycled("a credential kind change (a memory token appears)", "mcp", () => ({ integrations: { ...agents("tok-1"), memory: { command: process.execPath, args: ["m"], env: { MURAGE_MEMORY_TOKEN: "mem-1" } } } }));
   const connectors = (revision: string): Partial<SendTurnInput> => ({ integrations: { ...agents("tok-1"), composio: { command: process.execPath, args: ["c"], env: { MURAGE_CONNECTOR_IDENTITY: "a".repeat(32), MURAGE_CONNECTOR_REVISION: revision } } } });
   recycled("a change of the bot's connected-apps access revision", "connectorScope", () => connectors("rev-2"), {}, { ...base, ...connectors("rev-1") });
+
+  // L2W-1b (#5768) production-key half: the key the driver itself builds (claude.ts warmKey call, `mcp:` field) is what a real
+  // mounted turn is spawned with. Two real turns whose agents mount differ only in the skill switch (what a room hop-1 vs
+  // hop-0 turn differs by) must yield keys that diff as `mcp`; the same mount twice, with the per-turn token set aside, must not.
+  it("L2W-1b: the driver's own warm key names mcp for a skill-switch flip in the agents mount and is stable otherwise", async () => {
+    await create();
+    const keys: WarmKey[] = [];
+    observeClaudeWarmKeyForTests(key => { keys.push(key); });
+    try {
+      const skill = (flag: string, token: string): Partial<SendTurnInput> => ({
+        warmIdentity: base.warmIdentity,
+        integrations: { agents: { ...agents(token).agents, env: { ...agents(token).agents.env, MURAGE_SKILL_AUTHORING_ENABLED: flag } } },
+      });
+      await run("t-l2w-1b", "one", skill("0", "tok-a"));
+      await run("t-l2w-1b", "one", skill("1", "tok-b"));
+      await run("t-l2w-1b", "one", skill("1", "tok-c"));
+    } finally { observeClaudeWarmKeyForTests(null); }
+    expect(keys).toHaveLength(3);
+    expect(diffWarmKey(keys[0]!, keys[1]!)).toBe("mcp");
+    expect(diffWarmKey(keys[1]!, keys[2]!)).toBeNull();
+  });
   it("recycles an engine the bridge handed only the stand-in list (reason=connector-mount-incomplete), then keeps the fresh one", async () => {
     await create();
     const dir = mkdtempSync(join(tmpdir(), "murage-mount-"));
@@ -438,6 +466,39 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(b.pid).not.toBe(a.pid);
     expect(b.trace).toContain("process=spawned reason=no-process");
   });
+
+  // MAIN-RULING warm-active-only through the real send path (OPUS 38cebb4cde High): an owner turn wakes its own bot and maps
+  // its thread on the shared warm pool; a non-owner (channel audience) turn wakes no bot and marks its thread non-owner.
+  it("W-DRV-C: an owner turn wakes its bot on the warm pool and maps its thread; a non-owner turn wakes none", async () => {
+    await create();
+    await run("t-drv-owner", "one", base);
+    expect(warmPool.activityFor("t-drv-owner")).toEqual({ bot: base.warmIdentity.botId, active: true, nonOwner: false }); // W-DRV-C:owner
+    await run("t-drv-guest", "one", { ...base, warmIdentity: identity("b-guest", "non-owner") });
+    expect(warmPool.activityFor("t-drv-guest")).toEqual({ bot: undefined, active: false, nonOwner: true }); // W-DRV-C:non-owner
+  });
+
+  it("q1024-steerquar Claude: the owner's mounted send runs past a held bot relay; a guest send and the held relay stay fenced", async () => {
+    expect(HELD_RELAY_PID, "fixture: the mocked pid is the held engine").toBe(heldRelayPid);
+    await create();
+    const held = await holdBotRelay(base.warmIdentity.botId);
+    // The registry's decorator is the one place a turn is marked the owner's (harness/registry.ts).
+    setOwnerTurnResolver(threadId => threadId.startsWith("owner-"));
+    try {
+      const adapter = decorateOwnerTurnInstance(instance).adapter;
+      const guest = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "guest-quar", text: "one", ...base, warmIdentity: identity("b1", "non-owner") })
+        .then(() => "sent", (error: unknown) => String(error));
+      expect(guest, "a guest send to the held bot is still refused").toContain("MOUNT_RELAY_STOP_UNCONFIRMED");
+      const owner = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "owner-quar", text: "one", ...base })
+        .then(({ turnId }) => turnId, (error: unknown) => `refused: ${String(error)}`);
+      expect(owner, "the owner's send is never refused by the held relay").not.toMatch(/^refused:/);
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === owner, 20_000), "the owner's turn runs to its reply").toMatchObject({ threadId: "owner-quar", ok: true });
+      expect(() => assertRelayAvailable(held), "the held relay stays quarantined").toThrow("MOUNT_RELAY_STOP_UNCONFIRMED");
+      // After the owner's own relay has settled, the earlier hold still fences every other audience.
+      const after = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "guest-quar-2", text: "two", ...base, warmIdentity: identity("b1", "non-owner") })
+        .then(() => "sent", (error: unknown) => String(error));
+      expect(after, "a guest send after the owner's turn is still refused").toContain("MOUNT_RELAY_STOP_UNCONFIRMED");
+    } finally { setOwnerTurnResolver(() => false); }
+  }, 40_000);
 
   it("recycles the process after a Stop", async () => {
     await create();
@@ -1660,7 +1721,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
   let info: ReturnType<typeof vi.spyOn>;
   const sessions = new Map<string, string>();
   const agents = (token: string) => ({
-    agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
+    agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: token } },
   });
   const base = { integrations: agents("tok-1"), warmIdentity: { botId: "b1", audience: "owner" as const } } satisfies Partial<SendTurnInput>;
   // The warm lifecycle and cursor fence apply to a real tool-free draft.
@@ -1737,6 +1798,149 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     await warmPool.tick();
     expect(warmPool.idleCount()).toBe(0);
     expect(lines.filter(l => l.includes("claude close thread=t-pw-release reason=mounted-single-use"))).toHaveLength(1);
+  });
+
+  // L2W-7b (designs/L2W-1023-WARM-MAP.md r3, #6670 (3)): a Claude engine whose owner settings set
+  // CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS is single-use, through the real driver and the real warm pool on an unmounted
+  // (draft) turn, which parks idle without the setting. The user settings file is the one the driver reads (CLAUDE_CONFIG_DIR).
+  describe("L2W-7b: idle-compact setting makes a Claude engine single-use", () => {
+    let configDir = "";
+    const settings = () => join(configDir, "settings.json");
+    const setVar = () => { mkdirSync(configDir, { recursive: true }); writeFileSync(settings(), JSON.stringify({ env: { CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: "150000" } })); };
+    const closedFor = (threadId: string) => lines.filter(l => l.startsWith(`claude close thread=${threadId} reason=`));
+    beforeEach(() => {
+      configDir = join(scratch, "l2w-claude-config");
+      mkdirSync(configDir, { recursive: true });
+      process.env.CLAUDE_CONFIG_DIR = configDir;
+      // the activity window must not close the control engine before the idle assertions
+      process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "600000";
+    });
+    afterEach(() => {
+      for (const key of ["CLAUDE_CONFIG_DIR", "FAKE_CLAUDE_HOLD_MARKER", "FAKE_CLAUDE_HOLD_GATE", "FAKE_CLAUDE_HOLD_SEEN"]) delete process.env[key];
+    });
+    // a turn held in the fake CLI until `during` has run (the settings edit lands after spawn, before settle)
+    const runHeld = async (threadId: string, during: () => void) => {
+      const gate = join(scratch, `${threadId}.gate`), seen = join(scratch, `${threadId}.seen`);
+      process.env.FAKE_CLAUDE_HOLD_MARKER = "__l2w_hold__";
+      process.env.FAKE_CLAUDE_HOLD_GATE = gate;
+      process.env.FAKE_CLAUDE_HOLD_SEEN = seen;
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "__l2w_hold__ one", ...native });
+      await eventually(() => existsSync(seen));
+      during();
+      writeFileSync(gate, "go");
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    };
+
+    it("(i) control: without the setting the settled engine parks idle and the next turn reuses it", async () => {
+      await create();
+      await run("t-l2w-ctl", "one", native);
+      await eventually(() => warmPool.idleCount() === 1);
+      expect(closedFor("t-l2w-ctl")).toEqual([]);
+      await run("t-l2w-ctl", "two", native);
+      expect(dispatches().at(-1)).toContain("process=reused");
+    });
+
+    it("(i) user settings set the var: at settle the engine closes with idle-compact-setting, none idle, next turn spawned", async () => {
+      setVar();
+      await create();
+      await run("t-l2w-set", "one", native);
+      expect(closedFor("t-l2w-set")).toEqual(["claude close thread=t-l2w-set reason=idle-compact-setting"]);
+      expect(warmPool.idleCount()).toBe(0);
+      await run("t-l2w-set", "two", native);
+      expect(dispatches().at(-1)).toContain("process=spawned");
+    });
+
+    it("(ii) prewarm with the var is refused before any spawn; control without the var prewarms", async () => {
+      await create();
+      process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "250";
+      await goColdNative("t-l2w-pw");
+      process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "600000";
+      setVar();
+      const spawnsBefore = dispatches().length;
+      const warmed = await instance.adapter.prewarm!("t-l2w-pw");
+      expect(dispatches()).toHaveLength(spawnsBefore);
+      expect(warmed).toBe(false);
+      expect(warmPool.idleCount()).toBe(0);
+      rmSync(settings());
+      expect(await instance.adapter.prewarm!("t-l2w-pw")).toBe(true);
+      expect(warmPool.idleCount()).toBe(1);
+    });
+
+    it("(iii) var absent at spawn, written into user settings during the turn: closed at settle with idle-compact-setting", async () => {
+      await create();
+      await runHeld("t-l2w-edit", setVar);
+      expect(closedFor("t-l2w-edit")).toEqual(["claude close thread=t-l2w-edit reason=idle-compact-setting"]);
+      expect(warmPool.idleCount()).toBe(0);
+    });
+
+    it("(iii) user settings made unreadable during the turn (a directory, not a mode change): closed at settle with idle-compact-setting", async () => {
+      await create();
+      await runHeld("t-l2w-dir", () => { mkdirSync(settings(), { recursive: true }); });
+      expect(closedFor("t-l2w-dir")).toEqual(["claude close thread=t-l2w-dir reason=idle-compact-setting"]);
+      expect(warmPool.idleCount()).toBe(0);
+    });
+
+    // Astra r3 High / Opus r3 M1: every other source the overlay reads (SITES.md), one row each, through the same real turn.
+    // managed: the policy file and its managed-settings.d drop-in (test seam: the real path is fixed under /etc).
+    // project/local: NOT-APPLICABLE on a parkable turn: an unmounted turn runs in claudeDraftOnlyCwd (claude.ts draftOnly cwd),
+    // never the bot folder, so the bot folder's .claude files never reach an engine that parks; a mounted engine is single-use (S1).
+    const managedRoot = () => join(scratch, "l2w-managed");
+    const sources: Array<[string, () => string]> = [
+      ["managed settings", () => join(managedRoot(), "managed-settings.json")],
+      ["a managed-settings.d drop-in", () => join(managedRoot(), "managed-settings.d", "50-l2w.json")],
+    ];
+    for (const [name, file] of sources) {
+      it(`(i) ${name} set the var: at settle the engine closes with idle-compact-setting, none idle`, async () => {
+        const threadId = `t-l2w-${name.replace(/[^a-z]+/g, "-")}`;
+        rmSync(managedRoot(), { recursive: true, force: true });
+        mkdirSync(managedRoot(), { recursive: true });
+        overrideManagedClaudeSettingsPathsForTests([join(managedRoot(), "managed-settings.json")]);
+        const target = file();
+        const existed = existsSync(target);
+        try {
+          await create();
+          // control first on the same source path: absent, the engine parks
+          await run(`${threadId}-ctl`, "one", native);
+          await eventually(() => warmPool.idleCount() === 1);
+          expect(closedFor(`${threadId}-ctl`)).toEqual([]);
+          mkdirSync(dirname(target), { recursive: true });
+          writeFileSync(target, JSON.stringify({ env: { CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: "150000" } }));
+          await run(threadId, "one", native);
+          expect(closedFor(threadId)).toEqual([`claude close thread=${threadId} reason=idle-compact-setting`]);
+        } finally {
+          overrideManagedClaudeSettingsPathsForTests(null);
+          if (!existed) rmSync(target, { force: true });
+        }
+      });
+    }
+    it("(i) the handed env sets the var: at settle the engine closes with idle-compact-setting; control without it parks", async () => {
+      await create();
+      await run("t-l2w-handed-ctl", "one", native);
+      await eventually(() => warmPool.idleCount() === 1);
+      expect(closedFor("t-l2w-handed-ctl")).toEqual([]);
+      process.env.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS = "150000";
+      try {
+        await run("t-l2w-handed", "one", native);
+        expect(closedFor("t-l2w-handed")).toEqual(["claude close thread=t-l2w-handed reason=idle-compact-setting"]);
+      } finally { delete process.env.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS; }
+    });
+  });
+
+  // L2W-7a (i) driver half (Astra r3 High, design r3 #6670 (2)): a second system/init with a new session id inside one turn
+  // (a compaction under a new id) is adopted: the turn reports session.started with the new id (the server records it by a
+  // non-fresh session start, door_epoch NULL, reset writetime-door-epoch; l2w-compaction-lineage.test.ts), and the live
+  // process now answers for that id, so the next turn's resume cursor is the new id and reuses it instead of a stale one.
+  it("L2W-7a (i): a second init with a new session id is adopted: session.started carries it and the next turn resumes it", async () => {
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "600000";
+    await create();
+    await run("t-l2w-compact", "one", native);
+    await eventually(() => warmPool.idleCount() === 1);
+    const before = recorder.events.length;
+    await run("t-l2w-compact", "__fixture_compact_new_id__ compact now", native);
+    const started = recorder.events.slice(before).filter((e) => e.type === "session.started" && e.threadId === "t-l2w-compact") as Array<{ sessionId?: string }>;
+    expect(started.at(-1)?.sessionId).toBe("fake-compacted-session");
+    await run("t-l2w-compact", "after the compaction", native);
+    expect(dispatches().at(-1)).toContain("process=reused");
   });
 
   // 1.0.3 Windows gate (thread ba2a7f9a): after the engine went away and a fresh one started, an Ask tool call was

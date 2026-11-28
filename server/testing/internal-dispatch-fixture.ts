@@ -59,7 +59,7 @@ export async function completeIndexCallbackFixture(callback:string,scope:Record<
     throw overrideRefused("json",resolveCaseDeclaration(actual,"json"),actual);
   }
   const {ensureDirs}=await import("../config.ts");ensureDirs();
-  if(!scope.dispatchAuthoritySetup && !Object.hasOwn(scope,"fixtureObservers") && !["imageService","imageOperations","publishOperations","highlevel","routines","webhooks","chiefProposals","toolResults"].some(name=>Object.hasOwn(scope,name))) {
+  if(!scope.dispatchAuthoritySetup && !Object.hasOwn(scope,"fixtureObservers") && !["imageService","imageOperations","publishOperations","routines","webhooks","chiefProposals","toolResults"].some(name=>Object.hasOwn(scope,name))) {
 
     const extracted=extractFunction({file:new URL("../index.ts",import.meta.url),text:source.text,select:()=>callback});
     const canonical={...scope},ports=freshIndexPorts();
@@ -204,8 +204,12 @@ export async function internalDispatchAuthorityFixture(
   } satisfies BotRecord;
   store.bots=[bot,...store.bots.filter(bot=>bot.id!==botId)];
   // These are SQLite I/O ports. All policy/roster methods come from Store.
-  store.patchMessage = (thread,id,patch) => {
+  // A row seeded in the consuming database is patched there; a message the Store itself appended (a Results card that
+  // production writeCard replays, HostPorts.writeCard) has no row there and goes through the real Store.patchMessage.
+  const storePatchMessage=store.patchMessage.bind(store);
+  store.patchMessage = (thread,id,patch,...rest) => {
     const row=f.f.db.prepare('SELECT json FROM messages WHERE thread_id=? AND id=?').get(thread,id);
+    if(!row&&store.messageById(thread,id))return storePatchMessage(thread,id,patch,...rest);
     if(!row)throw new Error('dispatch fixture approval message missing');
     const updated={...JSON.parse(String(row.json)),...patch};
     f.f.db.prepare('UPDATE messages SET json=? WHERE thread_id=? AND id=?').run(JSON.stringify(updated),thread,id);
@@ -227,7 +231,7 @@ export async function internalDispatchAuthorityFixture(
 
   const expose=['connectorThread','botForDirectThread','peerContactSettings','decisionNoLimitsOrigin','decisionLiveLevel',
     'ownLaneTurn','ownPermissionFacts','verifyDecisionClaim','inheritedBotPermissionLevel','botEffectiveState','botWriteDecision',
-    'projectGroupForThread','highlevelConnectionActive','issueDecisionAuthority','retainInternalResponseBinding','markUnattended'];
+    'projectGroupForThread','issueDecisionAuthority','retainInternalResponseBinding','markUnattended'];
   const admission:InternalAdmission={botId,threadId,generation,provenanceGeneration:options.generation,
     initiator:options.initiator??{k:'owner-typed'},roomOwnerOnly:options.roomOwnerOnly??true,provenance:options.provenance!==false};
   const registered=await bindInternalDispatch({expression:'async () => {}',scope:environment,admission,preserveCapabilities:true,expose,boxFetch:options.box?.fetch});

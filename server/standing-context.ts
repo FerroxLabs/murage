@@ -69,10 +69,19 @@ export function standingContextSourceIds(bot: StandingBot, ownerAudience: boolea
   if (!ownerAudience) return [];
   const { notebook, brief, general } = notebookSourceIds(bot.id, bot.section, partition);
   // A brief switched off for this bot is not in its prompt: recall may bring it.
-  return [...(partition && general && !loadMemory(bot.id,{kind:"general"})?.truncated ? [general] : []), ...(notebook && !loadMemory(bot.id, partition)?.truncated ? [notebook] : []), ...(brief && bot.teamBrief !== false ? [brief] : [])];
+  return [...(partition && general && generalNotesWhole(bot.id) ? [general] : []), ...(notebook && !loadMemory(bot.id, partition)?.truncated ? [notebook] : []), ...(brief && bot.teamBrief !== false ? [brief] : [])];
+}
+
+/** GENERAL.md is rendered up to this many bytes, below the notebook load cap (workspace.ts MEMORY_MAX_BYTES). */
+const GENERAL_NOTES_RENDER_BYTES = 16000;
+/** q1024-memrecall: the general notes are in the prompt whole only when neither the load cap nor the render cap cut them; a cut
+ * tail stays recallable (judged by the load cap alone, a 16-24 KB tail was in neither the prompt nor recall). */
+function generalNotesWhole(botId: string): boolean {
+  const general = loadMemory(botId, { kind: "general" });
+  return Boolean(general) && !general!.truncated && Buffer.byteLength(general!.text) <= GENERAL_NOTES_RENDER_BYTES;
 }
 
 function generalNotes(botId: string): string {
   const general = loadMemory(botId, { kind: "general" });
-  return general ? `\nNotes that apply to every team:\n${maskFinancialIdentifiers(Buffer.from(general.text).subarray(0, 16000).toString("utf8").replace(/\uFFFD+$/, ""))}` : "";
+  return general ? `\nNotes that apply to every team:\n${maskFinancialIdentifiers(Buffer.from(general.text).subarray(0, GENERAL_NOTES_RENDER_BYTES).toString("utf8").replace(/\uFFFD+$/, ""))}` : "";
 }

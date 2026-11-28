@@ -281,7 +281,7 @@ describe("the app uses these routes", () => {
     expect(src).toContain("/calls/rules`, { method: \"PUT\"");
     expect(src).toMatch(/neededNow: !urgent/);
     expect(src).not.toMatch(/rules: \[/);
-    expect(read("../src/components/SettingsPanel.tsx")).toMatch(/<BotCallsSettings key=\{`calls-\$\{bot\.id\}`\} botId=\{bot\.id\} botName=\{bot\.name\} \/>/);
+    expect(read("../src/components/bot-pages/BotVoicePage.tsx")).toMatch(/<BotCallsSettings key=\{`calls-\$\{bot\.id\}`\} botId=\{bot\.id\} botName=\{bot\.name\} \/>/);
   });
   it("Call me when this finishes sends only the conversation, never a switch change", () => {
     const button = read("../src/components/CallMeWhenDone.tsx");

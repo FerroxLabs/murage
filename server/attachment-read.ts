@@ -69,7 +69,7 @@ export type ReadResult = { ok: true; bytes: Buffer; id: FileIdentity } | { ok: f
 export type ProbeResult = { ok: true; id: FileIdentity } | { ok: false; reason: Refusal; code?: string };
 
 const RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
-const NAME = /^[A-Za-z0-9_-]{1,160}\.[A-Za-z0-9]{1,8}$/;
+const NAME = /^[A-Za-z0-9_-]{1,160}\.(?:[A-Za-z0-9]{1,8}|tar\.(?:gz|bz2|xz|zst))$/;
 
 /** A bare attachment name: no separators, no leading dot, no Windows device
  * name. Checked with no filesystem call. */

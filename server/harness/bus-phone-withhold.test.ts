@@ -74,8 +74,10 @@ describe("the event log and a phone thread (S18)", () => {
     const { bus, log, delivered } = rig(["t-marked"]);
     const event = text("t-marked", "Dr Lee ".repeat(Math.ceil(eventLogLimits.recordBytes / 6)));
     bus.publish(event);
-    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: intake exhaustion precedes phone projection and emits only the fixed omission.
-    expect(JSON.parse(log())).toMatchObject({ type: "audience.omitted", reason: "redacted", text: "«redacted»" });
+    // cause22-E (b), MAIN-RULING 2026-11-22T17:47:36Z ("audience display budgets ... are size cuts on shown text: remove them"): an
+    // event is no longer omitted at intake for its size (that replaced INT-CONFLICT-DEFAULT's fixed omission here), so the row
+    // reaches the phone projection again, which withholds its words as this test is named for.
+    expect(JSON.parse(log())).toMatchObject({ type: "item.completed" });
     expect(delivered.at(-1)).toBe(event);
     expect(log()).not.toContain("Dr Lee");
   });

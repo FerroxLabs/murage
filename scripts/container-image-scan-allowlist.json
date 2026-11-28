@@ -1,0 +1,176 @@
+{
+  "$comment": "SPDX-License-Identifier: AGPL-3.0-or-later",
+  "description": "Exact full gitleaks Match hashes for audited public code expressions. No file, directory, line, or rule exclusions. Any byte change is reviewed again.",
+  "allowances": [
+    {
+      "rule": "private-key",
+      "sha256": "4cfaf747a4db4a4bc887bf4d6ce98d32be789954c9d473d217c60fbe12ca98ed",
+      "reason": "PEM validation, masking pattern, or runtime key assembly expression; no encoded key payload.",
+      "source": "opt/murage/dist-server/backup-restic.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "03143d1db6d8fe2706ddb6c5c1ddc9bf5876c537b89c9fa3a6c540698b73880f",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "usr/include/c++/12/bits/stl_algo.h"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "50a860cc5e4f355946bbc37da4cb8e1b39c5d51c72d69f3b952040fa65467a7d",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "usr/include/sqlite3ext.h"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "670ea96142ab230368b550a5f67c94f40c08d0937598acb24f5643e18e320092",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "usr/include/sqlite3ext.h"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "1740b4a8816638b6abc35feb020bdce5c36c1c5b55bbc06f0cf775ea42ef822d",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "usr/include/sqlite3ext.h"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "5045dc0a86b3589a535f14358886fcd91d21f6fa6f916aeb20059fd6ac30a210",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "usr/local/include/node/v8-internal.h"
+    },
+    {
+      "rule": "private-key",
+      "sha256": "13cdb3b68a7e8f222449ee04dc7fa61af86c7bbd2b6091206aecfaf28b7b0b77",
+      "reason": "PEM validation, masking pattern, or runtime key assembly expression; no encoded key payload.",
+      "source": "opt/murage/dist-server/redact.ts"
+    },
+    {
+      "rule": "private-key",
+      "sha256": "6cb1042a3905b639040264412b9bf93b18485f3651f8b88b789c9d01860fc97b",
+      "reason": "PEM validation, masking pattern, or runtime key assembly expression; no encoded key payload.",
+      "source": "opt/murage/dist-server/backup-remote-host.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "8f8cb3dd531d6f68da552e43c342a80b5a370b8c5032c8d1732d95a1310daaa3",
+      "reason": "Published backup tool integrity checksum, not a credential.",
+      "source": "shared/backup-age-pins.mjs"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "2b7b67f808a675abaf4731c45994e1ccf5ccf12736a57ba74c6a85dc0860b9ee",
+      "reason": "Published backup tool integrity checksum, not a credential.",
+      "source": "shared/backup-age-pins.mjs"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "760c6ec886babb2340ff5049b6445bc4fd8cb945b1190aac41c5b2b4ccf1d41a",
+      "reason": "Published backup tool integrity checksum, not a credential.",
+      "source": "shared/backup-age-pins.mjs"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "efba44001a7a6efb502e7f8d471cf8db4cabe5140cf8856f2786147e46f065b4",
+      "reason": "Published backup tool integrity checksum, not a credential.",
+      "source": "shared/windows-backup-tools.mjs"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "6cec812a628201ba2c27a59bc9290c20ce1b9933019dd32a0274dd986a1ddf15",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "2eaa5fbb168bcc9aaf4fd0a6c2c47c2ef7b6ba892fe2ceb99796600c7b652d81",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "443e28ca40e4ab047d322691a51a08f15f4678b37ea2bb71114a88e2baeeeaa2",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "019986d974890beeee42ccf9961b2d7f308512184a5b8a4aa2fbb389dd915455",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "6147af94d41e82fb178820442d5b9296663516ecc1e2c02f73df0aaa35c7eff1",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "26228773d4f30de04a286b38848f00ffec2d9c0a873d90f35d29fc845782d2de",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "95fbd3d3681e1a5a4373cdc65e37d15aa5c43f188f90339e967978a73a16f387",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "6d4179ed5810e18edbc55329b5678a0934d5b33f2fbec6975e98ec54cddb2918",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "41ea7917735ee173e8a8cd05ba516ade697b020d7a3d1c60cea70c4779f319b3",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "eaea312a2595997a609969e7618a41b43d42716804ec0186882030651987c146",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "6b1636b347d51f266bd5ecc6487f0de6962dd0b8ad23315528eb4189edc72bbc",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "42b71d1dbe5556f9aa8b3200282271637ac6a1670e20adbe6d77c4c75538cc13",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "75e568d12b2c14b2afe881d91c878bdabb3d7057132f350e51dfd78db681694f",
+      "reason": "C, C++, or JavaScript identifier in a source expression, not a credential value.",
+      "source": "opt/murage/dist-server/index.js"
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "3e7662f4b9987ce231cdb2416911e86ed4ee2f34884708b9343b5ef2d376506a",
+      "reason": "Bundled member access from server/peer-approval.ts, with no string literal."
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "493a5b02e82ebfe244e64c659ee7628fc31fa1bd237a7d0ade142108d22f20ca",
+      "reason": "Bundled member access from server/composio-lifecycle.ts, with no string literal."
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "f01c7e978568779a3e4b004611e0afcfa19635ceb2d7b44184a987546fe547fa",
+      "reason": "Bundled member access from server/limit-continuation.ts, with no string literal."
+    },
+    {
+      "rule": "generic-api-key",
+      "sha256": "291edf4d91cea3072b578b2c672deec3d1dd03230a72f084222218b6c12a5ce5",
+      "reason": "Bundled member access from server/plan-usage.ts, with no string literal."
+    }
+  ]
+}

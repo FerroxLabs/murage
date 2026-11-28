@@ -40,6 +40,9 @@ export class ApprovalNoLongerOpenError extends Error {
 }
 
 /** A false write() return means backpressure, not failure. Only its callback confirms delivery. */
+/** The largest ACP line an engine reads (Fuigo 1.0.47+ drops longer client lines); a longer write fails visibly. */
+export const ACP_LINE_MAX_BYTES = 64 * 1024 * 1024;
+export const ACP_LINE_TOO_LARGE = "This message is too large for the engine to read (over 64 MiB), so it was not sent.";
 export function writeAcpResponse(stream: Writable | null | undefined, obj: unknown, done: ApprovalWriteCallback, requestUrl?: string, binding: SendTurnInput["releaseBinding"] | null = null, beforeWrite?: () => void, release?: <T>(wire: string, write: () => T) => T): void {
   if (!stream || stream.destroyed || stream.writableEnded || !stream.writable) {
     done(Object.assign(new Error("Engine input is closed"), { code: "ERR_STREAM_DESTROYED" }), false);
@@ -54,6 +57,9 @@ export function writeAcpResponse(stream: Writable | null | undefined, obj: unkno
   let entered = false;
   try {
     const wire = engineJsonLine(obj, beforeWrite);
+    // Fuigo 1.0.47 drops a client line over 64 MiB unread, so its request would never be answered: refuse it here instead.
+    // The limit counts the line without its trailing newline (engineJsonLine always ends in exactly one).
+    if (Buffer.byteLength(wire) - 1 > ACP_LINE_MAX_BYTES) throw new Error(ACP_LINE_TOO_LARGE);
     const write = () => { entered = true; return registerBusyloopRequestSite(fluxRouteFor(requestUrl), stream.write(wire, error => report(error, true))); };
     if (release) release(wire, write);
     else if (beforeWrite) emitEngineWire(beforeWrite, wire, write);

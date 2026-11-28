@@ -353,12 +353,12 @@ for (const c of GUARD_CASES) {
 
 // CXP: P1 (the first statement of settle) ends a claimed turn memory-refused whichever path settles it. Lease-closer-first schedule: the lease
 // wins the close (settle deferred), a codex claim joins (turnOwner.fenced set, turn unsettled), then each variant ends the turn another way.
-// Production writer per variant: overflow -> conn.onOverflow settle(frame_too_large); dispose / held kill -> stop("closing") -> close handler;
+// (The 'late overflow' variant is gone: MAIN-RULING cause22-no-transport-caps deleted conn.onOverflow.)
+// Production writer per variant: dispose / held kill -> stop("closing") -> close handler;
 // crash -> close handler; unproven hook (Rule 68c dead run) -> refuseUnproven's refused turn/interrupt write joins at codex.rpc, then
 // settle(scope_unavailable). The Stop-after-claim variant runs through the real Stop route in the shared LLS witness, not here.
 type EndCase = { name: string; join: string; cards: number; env?: Record<string, string>; end: (h: { overFile: string; crashFile: string }) => void | Promise<void> };
 const END_CASES: EndCase[] = [
-  { name: 'late overflow', join: 'codex.dispatch.direct', cards: 0, end: h => writeFileSync(h.overFile, 'x') },
   { name: 'dispose', join: 'codex.dispatch.direct', cards: 0, end: async () => { const i = instance!; instance = undefined; await i.dispose(); } },
   { name: 'exit 1', join: 'codex.dispatch.direct', cards: 0, end: h => writeFileSync(h.crashFile, 'fatal') },
   { name: 'held kill (SIGTERM ignored), dispose', join: 'codex.dispatch.direct', cards: 0, env: { FAKE_CODEX_IGNORE_TERM: '1' }, end: async () => { const i = instance!; instance = undefined; await i.dispose(); } },

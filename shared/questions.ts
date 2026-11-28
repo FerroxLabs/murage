@@ -46,6 +46,38 @@ export const QUESTION_LIMITS = {
   headerChars: 40,
 } as const;
 
+/** The counted marker a list folds into past its card contract (MAIN-RULING 2026-11-22T21:44:35Z redact-parse-error (b)):
+ * platform words, no page or engine text. */
+export const foldedMarker = (count: number): string => `«${count} more not shown»`;
+const withFold = (shown: unknown, count: number): string => typeof shown === "string" && shown ? `${shown}\n${foldedMarker(count)}` : foldedMarker(count);
+
+/** The counted fold for a question CARD (the same contract the audience collector shows: MAIN-RULING 2026-11-22T21:44:35Z (b),
+ * ASTRA 635304ab43). A count never throws and never refuses the card: the card keeps its first QUESTION_LIMITS.questions
+ * questions and each question its first QUESTION_LIMITS.options options, so the stored card is the one the answer route can
+ * resolve; everything past the contract folds into ONE counted marker line at the end of a shown question's text (never a list
+ * entry, so the marker has no handle and cannot be picked as an answer). Within the contract the input is returned unchanged. */
+export function foldCardQuestions<Q extends { question?: unknown; options?: unknown }>(questions: readonly Q[]): Q[] {
+  if (!Array.isArray(questions)) return questions as unknown as Q[];
+  const over = questions.length - QUESTION_LIMITS.questions;
+  if (over <= 0 && questions.every(q => !Array.isArray(q?.options) || q.options.length <= QUESTION_LIMITS.options)) return questions as Q[];
+  const shown = questions.slice(0, QUESTION_LIMITS.questions).map(q => {
+    const options = Array.isArray(q?.options) ? q.options : [];
+    return options.length > QUESTION_LIMITS.options
+      ? { ...q, options: options.slice(0, QUESTION_LIMITS.options), question: withFold(q.question, options.length - QUESTION_LIMITS.options) }
+      : q;
+  });
+  if (over > 0) { const last = shown[shown.length - 1]!; shown[shown.length - 1] = { ...last, question: withFold(last.question, over) }; }
+  return shown;
+}
+/** How many one-tap choices a card shows (the collector's `choices` contract). */
+export const CARD_CHOICES_MAX = 10;
+/** The counted fold for a card's one-tap choices: the first CARD_CHOICES_MAX stay, the rest fold into one counted marker line at
+ * the end of the summary. Within the contract both come back unchanged. */
+export function foldCardChoices<S extends string | undefined>(choices: readonly string[] | undefined, summary: S): { choices: string[] | undefined; summary: S | string } {
+  if (!Array.isArray(choices) || choices.length <= CARD_CHOICES_MAX) return { choices: choices as string[] | undefined, summary };
+  return { choices: choices.slice(0, CARD_CHOICES_MAX), summary: withFold(summary, choices.length - CARD_CHOICES_MAX) };
+}
+
 /** How long an engine waits for the owner before it is told, honestly, that
  * nobody answered. Matches Fuigo's own default. */
 export const QUESTION_TIMEOUT_MS = 30 * 60_000;

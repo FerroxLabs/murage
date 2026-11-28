@@ -142,16 +142,21 @@ let keptKeys = 0;
 export function forgetRootSetHandles(cache: HandleCache): void { cache.clear(); keptKeys = 0; partialWalks.delete(cache); handlesForgotten("forget"); }
 /** TURNSTART r14 S6: told whenever stored handles (and their partial walks) are dropped, so the VerdictStore moves memoEpoch without this module
  * importing it. One hook; null removes it. */
-let handlesForgottenHook: ((why: string) => void) | null = null;
+// A `var` with no initializer (as revoke-marker.ts drainFlips): replay-lineage.ts sets it while its module is evaluated, which a process entering
+// this module first does inside the import cycle, before this line runs (a `let` would throw; an initializer would drop the hook).
+// eslint-disable-next-line no-var
+var handlesForgottenHook: ((why: string) => void) | null | undefined;
 export function onHandlesForgotten(hook: ((why: string) => void) | null): void { handlesForgottenHook = hook; }
 function handlesForgotten(why: string): void {
   // MUTANT:handle-epoch-skip
   handlesForgottenHook?.(why);
 }
 /** TURNSTART r14.1 X4 / flagfold F7: a guard asked BEFORE a handle's family grows (a backfill slice past its room: the handle is not kept). */
-let handleGrowthGuard: ((size: number, max: number) => boolean) | null = null;
+// A `var` with no initializer, as the hook above: its setter can run while this module is still being evaluated.
+// eslint-disable-next-line no-var
+var handleGrowthGuard: ((size: number, max: number) => boolean) | null | undefined;
 export function setHandleGrowthGuard(guard: ((size: number, max: number) => boolean) | null): void { handleGrowthGuard = guard; }
-const growthRefused = (cache: HandleCache, added: number): boolean => handleGrowthGuard !== null && (handleGrowthGuard(cache.size, maxHandles) || handleGrowthGuard(keptKeys + added, MAX_KEYS));
+const growthRefused = (cache: HandleCache, added: number): boolean => handleGrowthGuard != null && (handleGrowthGuard(cache.size, maxHandles) || handleGrowthGuard(keptKeys + added, MAX_KEYS));
 
 function hasAt(family: Family | null, key: string, end: number): boolean {
   for (let f = family; f; f = f.parent) {

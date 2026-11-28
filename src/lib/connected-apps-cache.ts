@@ -15,6 +15,8 @@ import type { ConnectorStatus } from "@/components/PluginsPanel";
 
 export interface CachedInventory {
   at: number;
+  /** The server's name for the owner incarnation this list belongs to; null for a 1.0.22 entry that carries none. */
+  scope: string | null;
   services: Record<string, ConnectorStatus>;
 }
 
@@ -76,7 +78,7 @@ export function readCachedInventory(explicit?: Storage): CachedInventory | null 
       if (!status) return null;
       services[slug] = status;
     }
-    return { at: typeof parsed.at === "number" ? parsed.at : 0, services };
+    return { at: typeof parsed.at === "number" ? parsed.at : 0, scope: typeof parsed.scope === "string" && parsed.scope ? parsed.scope : null, services };
   } catch {
     // A cache we cannot read is the same as no cache; it must never be the
     // reason the panel fails to paint.
@@ -88,9 +90,19 @@ export function writeCachedInventory(
   services: Record<string, ConnectorStatus>,
   now: number,
   explicit?: Storage,
+  scope?: string | null,
 ): void {
   try {
-    store(explicit)?.setItem(CONNECTED_APPS_CACHE_KEY, JSON.stringify({ at: now, services }));
+    store(explicit)?.setItem(CONNECTED_APPS_CACHE_KEY, JSON.stringify({ at: now, ...(scope ? { scope } : {}), services }));
+  } catch {
+    /* a cache is never worth a crash */
+  }
+}
+
+/** A different owner incarnation answered: the remembered list is not theirs, so it goes. */
+export function forgetCachedInventory(explicit?: Storage): void {
+  try {
+    store(explicit)?.removeItem(CONNECTED_APPS_CACHE_KEY);
   } catch {
     /* a cache is never worth a crash */
   }

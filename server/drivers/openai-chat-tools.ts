@@ -1,3 +1,4 @@
+import { configuredValueRanges, redactConfiguredValues } from "../../shared/configured-value-redaction.cjs";
 import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Tool calling for the OpenAI-chat engines (OPENAI-TOOLS-109): the pieces of the round loop that hold no runtime state of
 // their own — redaction, the per-turn tool catalog and its caps, provider refusal readers, the remembered text-only models and
@@ -9,9 +10,9 @@ import type { ProviderStopResult } from "../contracts.ts";
 import { object } from "./openai-chat-protocol.ts";
 import type { ChatMcpSession } from "./chat-mcp-client.ts";
 
-export const MAX_CHAT_ROUNDS = 64;
-export const MAX_TURN_TOOL_CALLS = 200;
 export const MAX_ANNOUNCEMENT_NUDGES = 3;
+/** U11 G12: the same call (name and arguments) this many times in a row ends the turn; the run before it was the last. */
+export const MAX_SAME_CALL_RUN = 3;
 /** s4 caps. */
 export const MAX_TURN_TOOLS = 128;
 export const MAX_SERVER_TOOLS = 128;
@@ -23,6 +24,7 @@ export const TOOL_RESULT_MAX_BYTES = 50 * 1024;
 export const NATIVE_TOOL_RESULT_MAX_BYTES = 4 * 1024;
 
 export const STEPS_ALREADY_RAN = "The steps so far already ran, so ask only for what's left.";
+export const STOPPED_REPEATING = `The model asked for the same tool call ${MAX_SAME_CALL_RUN} times in a row, so Murage stopped it. ${STEPS_ALREADY_RAN}`;
 export const stoppedAfter = (count: string) => `Stopped after ${count} without a final answer. ${STEPS_ALREADY_RAN}`;
 export const FENCE_AFTER_TOOLS = `Murage stopped this turn before its next step. ${STEPS_ALREADY_RAN}`;
 export const TEXT_ONLY_NOTICE = "This model cannot use tools, so this bot is answering without them. Choose a model with tool support to let it use its tools.";
@@ -55,11 +57,7 @@ export function secretList(values: Iterable<string | undefined | null>): string[
 const MAX_SCRUB_DEPTH = 64;
 const TOO_DEEP = "[omitted: nested too deep to check]";
 
-const replaceKnown = (text: string, secrets: readonly string[]): string => {
-  let out = text;
-  for (const secret of secrets) if (out.includes(secret)) out = out.split(secret).join("[redacted]");
-  return out;
-};
+const replaceKnown = (text: string, secrets: readonly string[]): string => redactConfiguredValues(text, secrets);
 const scrubString = (text: string, secrets: readonly string[]): string => redactSecretsInText(replaceKnown(text, secrets));
 
 /** s8: a deep copy of `value` with every known secret removed from each COMPLETE string, then the generic shape scrub. It runs
@@ -91,24 +89,19 @@ export function scrubKnownLeaves<T>(value: T, secrets: readonly string[], depth 
 /** True when a known secret (raw or JSON-escaped) appears anywhere in `text`. */
 export const namesSecret = (text: string, secrets: readonly string[]): boolean => secrets.some((secret) => text.includes(secret));
 
-/** s8: the provider-facing copy of a call's JSON arguments. Parsed, scrubbed on its string leaves and serialized again (escaping
- *  inside JSON text would hide a secret from a text split); text that does not parse is scrubbed as text, raw and JSON-escaped.
- *  Arguments holding no known secret are returned byte for byte. The exact arguments that run are never this copy. */
+/** Keeps assistant tool calls valid in the next request and removes known secrets from their JSON. */
 export function providerArguments(text: string, secrets: readonly string[]): string {
-  if (!secrets.length) return text;
+  const trimmed = text.trim() || "{}";
   try {
-    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(text));
-    // a replayed call's keys are the model's own words, never matched on: a secret used as a key is removed too (Astra code-r2)
+    const parsed = object(registerBusyloopPayloadSite("read", JSON.parse(trimmed)));
+    if (!parsed) return "{}";
+    if (!secrets.length) return trimmed;
+    // The tool result carries validation errors while its replayed arguments stay valid.
     const scrubbed = scrubKnownLeaves(parsed, secrets, 0, true);
     const out = JSON.stringify(scrubbed);
-    return out === JSON.stringify(parsed) ? text : out;
+    return out === JSON.stringify(parsed) ? trimmed : out;
   } catch {
-    let out = replaceKnown(text, secrets);
-    for (const secret of secrets) {
-      const escaped = JSON.stringify(secret).slice(1, -1);
-      if (escaped !== secret && out.includes(escaped)) out = out.split(escaped).join("[redacted]");
-    }
-    return out;
+    return "{}";
   }
 }
 
@@ -125,25 +118,47 @@ export function capUtf8(text: string, maxBytes: number, note = "\n[cut: the rest
  *  chunk (or the flush) shows whether it is one, so a key split across deltas never reaches the screen. */
 export class SecretStreamFilter {
   #held = "";
+  #covered = 0;
   private readonly secrets: readonly string[];
   // no parameter properties: the server runs under Node's type stripping, which refuses them
   constructor(secrets: readonly string[]) { this.secrets = secrets; }
   push(delta: string): string {
-    let text = this.#held + delta;
-    for (const secret of this.secrets) if (text.includes(secret)) text = text.split(secret).join("[redacted]");
+    const text = this.#held + delta;
     let hold = 0;
     for (const secret of this.secrets) {
       for (let size = Math.min(secret.length - 1, text.length); size > hold; size--) {
         if (text.endsWith(secret.slice(0, size))) { hold = size; break; }
       }
     }
-    this.#held = hold ? text.slice(text.length - hold) : "";
-    return hold ? text.slice(0, text.length - hold) : text;
+    return this.release(text, text.length - hold);
+  }
+  private release(text: string, end: number): string {
+    const ranges = configuredValueRanges(text, this.secrets);
+    let covered = this.#covered;
+    let first = 0;
+    // A marker already emitted for this prefix also covers any new crossing
+    // match. Keep only the possible secret suffix, even for an endless chain
+    // of overlapping values, and never feed the marker back to the matcher.
+    while (first < ranges.length && ranges[first]![0] < covered) {
+      covered = Math.max(covered, ranges[first++]![1]);
+    }
+    let cursor = Math.min(covered, end);
+    let nextCovered = Math.max(0, covered - end);
+    const parts: string[] = [];
+    for (let i = first; i < ranges.length; i++) {
+      const [start, stop] = ranges[i]!;
+      if (start >= end) break;
+      parts.push(text.slice(cursor, start), "[redacted]");
+      cursor = Math.min(stop, end);
+      nextCovered = Math.max(nextCovered, stop - end);
+    }
+    parts.push(text.slice(cursor, end));
+    this.#held = text.slice(end);
+    this.#covered = nextCovered;
+    return parts.join("");
   }
   flush(): string {
-    const rest = this.#held;
-    this.#held = "";
-    return rest;
+    return this.release(this.#held, this.#held.length);
   }
 }
 
@@ -195,11 +210,11 @@ export function announcesAction(text: string): boolean {
     /^i(?:['’]m| am)\b[^.!?\n]*\band (?:i )?will\s+(?:launch|open|check|pull|look|search|navigate|read|fetch|load|run|inspect)\b/i.test(reply);
 }
 
-/** Loopback, private and tailnet addresses: where small local models live (announcement nudges are on only there). */
+/** Loopback, private and tailnet addresses: where small local models live (announcement nudges are on only there). A bare name is a LAN host; an IPv6 literal is local only in the loopback, or unique-local ranges. */
 export function isLocalModelUrl(url: string): boolean {
   let host: string;
   try { host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, ""); } catch { return false; }
-  return host === "localhost" || host === "::1" || host.endsWith(".local") || host.endsWith(".ts.net") || !host.includes(".") ||
+  return host === "localhost" || host === "::1" || host.endsWith(".local") || host.endsWith(".ts.net") || (!host.includes(".") && !host.includes(":")) ||
     /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
     /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host) || /^f[cd][0-9a-f]{2}:/.test(host);
 }
@@ -332,4 +347,33 @@ export class McpTurnTeardowns {
     const children = this.#children(threadId, turnId);
     return Promise.all(children.map((teardown) => new Promise<void>((resolve) => teardown.onClosed(resolve)))).then(() => undefined);
   }
+}
+
+/** U11 G12: small local models often write a tool call as text instead of the structured field. Only a block naming a tool that is
+ *  mounted this turn counts (anything else stays the answer), each is one JSON object, and the markup leaves the answer text. */
+const TEXT_CALL = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+export const MAX_TEXT_CALLS_PER_REPLY = 8;
+export function parseTextToolCalls(text: string, mounted: ReadonlyMap<string, unknown>): { calls: Array<{ name: string; arguments: string }>; text: string } | null {
+  if (!text.includes("<tool_call>")) return null;
+  const calls: Array<{ name: string; arguments: string }> = [];
+  let ok = true;
+  const rest = text.replace(TEXT_CALL, (_whole, body: string) => {
+    let value: unknown;
+    try { value = JSON.parse(body); } catch { ok = false; return ""; }
+    const record = object(value);
+    const name = record && typeof record.name === "string" ? record.name : "";
+    const args = record ? (record.arguments ?? record.parameters ?? {}) : undefined;
+    if (!name || !mounted.has(name) || !object(args)) { ok = false; return ""; }
+    calls.push({ name, arguments: JSON.stringify(args) });
+    return "";
+  });
+  if (!ok || !calls.length || calls.length > MAX_TEXT_CALLS_PER_REPLY) return null;
+  return { calls, text: rest.trim() };
+}
+
+/** The identity of a call for the loop stop: the name and the arguments with object keys in order. */
+export function callSignature(name: string, rawArguments: string): string {
+  const canon = (value: unknown): unknown => Array.isArray(value) ? value.map(canon)
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : 1).map(([k, v]) => [k, canon(v)])) : value;
+  try { return `${name}\u0000${JSON.stringify(canon(JSON.parse(rawArguments.trim() || "{}")))}`; } catch { return `${name}\u0000${rawArguments.trim()}`; }
 }

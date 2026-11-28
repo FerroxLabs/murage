@@ -7,6 +7,8 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { LOCAL_TOOL_CHECKS } from "../shared/local-models.ts";
+import { clearLocalContextCacheForTests } from "./drivers/local-inject.ts";
+import { readLoadedContext } from "./local-server-probe.ts";
 import { classifyLocalToolTest, runLocalToolProbe } from "./local-tool-probe.ts";
 
 const KEY = "sk-local-probe-key";
@@ -218,5 +220,26 @@ describe("runLocalToolProbe — the seven fixture-server checks", () => {
     expect(ran).toHaveLength(6); // the round trip is skipped: no first call ever came back
     expect(ran.every((check) => check.detail === "redirect-refused")).toBe(true);
     expect(elsewhere.seen.paths).toEqual([]);
+  });
+});
+
+// M10 (1.0.23) P1: a cloud model next to a small local sibling is classified on
+// its own trained window. The reading comes from the real reader with an
+// Ollama-shaped fixture (ShowResponse remote_host + model_info, ps rows).
+describe("M10 Ollama cloud model classification", () => {
+  it("W4 a cloud model whose checks all pass is tools-work, not context-too-small", async () => {
+    clearLocalContextCacheForTests();
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const body = href.endsWith("/api/ps")
+        ? { models: [{ name: "fixture-model:7b", model: "fixture-model:7b", context_length: 4_096 }] }
+        : { remote_host: "https://ollama.com:443", remote_model: "fixture-model:70b", model_info: { "fixture.context_length": 131_072 } };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const host = { id: "fixture-ollama", label: "Ollama", kind: "ollama" as const, baseUrl: "http://127.0.0.1:19879/v1" };
+    const context = await readLoadedContext(host, "fixture-model:70b-cloud", { VITEST: "true" }, fetchImpl);
+    const checks = LOCAL_TOOL_CHECKS.map((name) => ({ name, status: "pass" as const, detail: "ok" as const }));
+    expect(classifyLocalToolTest(checks, "ollama", context).outcome).toBe("tools-work"); // W4-outcome
+    clearLocalContextCacheForTests();
   });
 });

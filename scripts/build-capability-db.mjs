@@ -27,6 +27,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildInventory } from "./build-capabilities.mjs";
+import { settingsPageWords } from "./settings-page-label.mjs";
 import { readPartitions } from "./locale-partitions.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,15 +37,15 @@ export const STATUSES = ["can", "partial", "via-engine", "coming", "cannot"];
 export const PLATFORMS = ["mac", "windows", "linux", "android", "ios", "cloud"];
 const PHONES = ["android", "ios"];
 /** Fuigo first: the order every engine list follows (copy rule). */
-export const ENGINES = ["fuigo", "claude", "codex", "grok", "cursor", "kimi", "droid", "antigravity", "opencode", "qwen", "hermes", "gemini", "cline", "muse", "pi", "openclaw", "openai-compatible", "copilot", "deepseek"];
+export const ENGINES = ["fuigo", "claude", "codex", "grok", "cursor", "kimi", "droid", "antigravity", "opencode", "qwen", "hermes", "gemini", "cline", "muse", "pi", "openclaw", "openai-compatible", "copilot", "deepseek", "commandcode", "kiro", "omp", "devin"];
 /** Every engine driver the primer names (server/capabilities-primer.ts ENGINE_LABELS) maps to one id above, so a new
  *  engine cannot ship without the capability lists being able to name it. customAcp and boxAgent are not one engine. */
 const DRIVER_ENGINES = { fuigoAgent: "fuigo", grokAgent: "grok", geminiAgent: "gemini", kimiAgent: "kimi", droidAgent: "droid", cursorAgent: "cursor",
-  qwenAgent: "qwen", hermesAgent: "hermes", openclawAgent: "openclaw", clineAgent: "cline", museCode: "muse", opencodeGo: "opencode", copilotAgent: "copilot", deepseekAgent: "deepseek" };
+  qwenAgent: "qwen", hermesAgent: "hermes", openclawAgent: "openclaw", clineAgent: "cline", museCode: "muse", opencodeGo: "opencode", copilotAgent: "copilot", deepseekAgent: "deepseek", commandCodeAgent: "commandcode", kiroAgent: "kiro", ompAgent: "omp", devinAgent: "devin" };
 const DRIVER_NOT_ONE_ENGINE = new Set(["customAcp", "boxAgent"]);
 const ENGINE_NAMES = {
   fuigo: "Fuigo", claude: "Claude", codex: "Codex", grok: "Grok", cursor: "Cursor", kimi: "Kimi", droid: "Droid", antigravity: "Antigravity",
-  opencode: "OpenCode", qwen: "Qwen", hermes: "Hermes", gemini: "Gemini", cline: "Cline", muse: "Muse Code", pi: "Pi", openclaw: "OpenClaw", "openai-compatible": "OpenAI-compatible engines", copilot: "GitHub Copilot", deepseek: "DeepSeek Harness",
+  opencode: "OpenCode", qwen: "Qwen", hermes: "Hermes", gemini: "Gemini", cline: "Cline", muse: "Muse Code", pi: "Pi", openclaw: "OpenClaw", "openai-compatible": "OpenAI-compatible engines", copilot: "GitHub Copilot", deepseek: "DeepSeek Harness", commandcode: "Command Code", kiro: "Kiro", omp: "OMP", devin: "Devin",
 };
 const PLATFORM_NAMES = { mac: "Mac", windows: "Windows", linux: "Linux", android: "the Android app", ios: "the iPhone app", cloud: "Murage Cloud" };
 const STATUS_SENTENCES = {
@@ -57,7 +58,7 @@ const STATUS_SENTENCES = {
 /** Backend and vendor names customer text never carries. Seeded with the one
  * src/copy-rules.test.ts refuses (the connection service) and the services
  * behind Murage that a person never picks. */
-const BANNED_NAMES = ["Composio", "AgentMail", "Cua", "Help Scout", "build host", "Vercel", "Supabase", "Cloudflare", "Requesty"];
+const BANNED_NAMES = ["Composio", "AgentMail", "Cua", "Help Scout", "Hetzner", "Vercel", "Supabase", "Cloudflare", "Requesty"];
 const ROOTS = { settings: "Settings", bot: "Bot settings" };
 const ARROW = " → ";
 const ENTRY_KEYS = new Set(["id", "name", "status", "questions", "answer", "limits", "ask_your_bot", "settings_path", "platforms", "engines",
@@ -77,10 +78,10 @@ const PATH_CONTROLS = [
     proof: [["src/components/ModelsSettings.tsx", "<SubscriptionSignIn"], ["src/components/SubscriptionSignIn.tsx", "modelSignIn.heading"]] },
   // The Approvals block (the level new conversations start at) in a bot's Permissions section.
   { id: "permissions/approvals", root: "bot", section: "permissions", label: "Approvals",
-    proof: [["src/components/BotPermissionDefault.tsx", 'text-ink">Approvals</div>'], ["src/components/SettingsPanel.tsx", "<BotPermissionDefault"]] },
+    proof: [["src/components/BotPermissionDefault.tsx", 'text-ink">Approvals</div>'], ["src/components/bot-pages/BotPermissionsPage.tsx", "<BotPermissionDefault"]] },
   // The Name field in a bot's Identity & instructions section.
   { id: "identity/name", root: "bot", section: "identity", labelKey: "settings.bot.identity.name",
-    proof: [["src/components/SettingsPanel.tsx", 't("settings.bot.identity.name")']] },
+    proof: [["src/components/bot-pages/BotIdentityPage.tsx", 't("settings.bot.identity.name")']] },
 ];
 
 function sha256(text) { return createHash("sha256").update(text).digest("hex"); }
@@ -149,9 +150,10 @@ export function buildNavigation() {
   const pagesEnd = pagesSource.indexOf("];", pagesStart);
   if (pagesStart < 0 || pagesEnd < 0) throw new Error("settings-pages.ts: cannot find SECTION_PAGES");
   // Other page metadata (including Simple mode) does not change its address.
+  const words = settingsPageWords(read("src/lib/settings-sections.ts"), en);
   for (const match of pagesSource.slice(pagesStart, pagesEnd).matchAll(/\{ id: "([A-Za-z]+)", group: "[A-Za-z]+"([^{}\n]*)\}/g)) {
-    const label = en[`settings.page.${match[1]}`];
-    if (!label) throw new Error(`settings page ${match[1]} has no settings.page.${match[1]} label`);
+    const label = words.label(match[1]);
+    if (!label) throw new Error(`settings page ${match[1]} has no label: ${words.describe(match[1])}`);
     pages.set(match[1], { id: match[1], label, desktopOnly: /\bdesktopOnly: true\b/.test(match[2]) });
   }
   if (!pages.size) throw new Error("settings-pages.ts: SECTION_PAGES has no readable pages");

@@ -1,0 +1,146 @@
+# Settings v6: lists that are data, not drawings. build.py prints them into the mockups and into IA-PROPOSAL-v5.md.
+
+# ---- Appendix G: the 54 settings with no control. What search and Under the hood may show, per row. ----
+# class V = the value is shown. P = only "Set" or "Not set", and where it is set. N = not indexed and not shown anywhere.
+# surface: 'all' or 'desktop' (a path, port or address of this computer is shown on this computer only).
+XROWS = [
+ ('A3-3', 'modelProviders.bank', 'N', '-', 'A write-only decision key.'),
+ ('A3-8', 'whatsapp.backend', 'V', 'all', 'Which WhatsApp link type is in use.'),
+ ('A3-10', 'spend.refusals / spend.account / spend.membership', 'N', '-', 'Internal bookkeeping.'),
+ ('A3-11', 'xai.url', 'V', 'desktop', 'Host name only. Never a path or query.'),
+ ('A3-12', 'openaiCompat.url / .model / .provider', 'V', 'desktop', 'Host name, model name, provider name.'),
+ ('A3-18', 'flux.memory.enabled / .inject / .owner / .spaces', 'V', 'all', 'On or off, and counts.'),
+ ('A3-19', 'flux.connectionAliases', 'V', 'all', 'Names only.'),
+ ('A3-20', 'decider.byoKey / decider.baseUrl', 'P', 'desktop', 'Key: Set or Not set. Address: host name only.'),
+ ('A3-21', 'settingsDefaultMode', 'N', '-', 'Replaced by the view switch.'),
+ ('A3-23', 'hermesProfilesPinned', 'N', '-', 'Internal.'),
+ ('A3-27', 'instances.<id>.displayName / accentColor / environment / config', 'V', 'all', 'Name and environment only. Never config.'),
+] + [(f'A3-{n}', f'features.{k}', 'V', 'all', 'On or off. View only.') for n, k in [
+ (28, 'botsSharedAcrossTeams'), (29, 'learningDefaultOn'), (30, 'projectsLead'), (31, 'projectsGoals'), (32, 'projectsBudgets'), (33, 'projectsWorkProfile'),
+ (34, 'projectsBoard'), (35, 'projectsDigest'), (36, 'fluxDesktopSignin'), (38, 'catalogFeaturedOnly'), (39, 'roomsThreadAdmission'), (40, 'roomsQueue'),
+ (41, 'roomsMentionChain'), (42, 'projectsAutoWake')]] + [
+ ('A3-46', 'learning-paused-left.json', 'N', '-', 'Internal.'),
+ ('A4-7', 'draftOnly', 'V', 'all', 'Shown as a blocker on What it can reach: "Draft only".'),
+ ('A4-15', 'localControlOffNoted, engineAutoPicked, permissionPrev, grantSchema, *Rev', 'N', '-', 'Internal bookkeeping.'),
+ ('A5-11', 'Native call audio', 'V', 'all', 'On or off.'),
+ ('A5-22', 'Telemetry', 'V', 'all', '"Off. Murage sends no usage data."'),
+ ('A6-1', 'MURAGE_DATA_DIR', 'V', 'desktop', 'The folder path.'),
+ ('A6-2', 'MURAGE_PORT', 'V', 'desktop', 'The number.'),
+ ('A6-3', 'MURAGE_WEBHOOK_PORT', 'V', 'desktop', 'The number.'),
+ ('A6-4', 'MURAGE_SAFE_MODE', 'V', 'all', 'On or off.'),
+ ('A6-5', 'MURAGE_PUBLIC_ORIGIN', 'V', 'desktop', 'Host name only.'),
+ ('A6-6', 'MURAGE_TRUSTED_PROXY', 'V', 'desktop', 'Set or Not set.'),
+ ('A6-7', 'MURAGE_EXTRA_PATH', 'V', 'desktop', 'The folder paths.'),
+ ('A6-8', 'MURAGE_MEMORY_BACKEND', 'V', 'all', 'The backend name.'),
+ ('A6-9', 'MURAGE_TELEGRAM_BOT_TOKEN', 'P', 'all', 'On the Telegram row: "Token set by this computer\'s environment".'),
+ ('A6-10', 'MURAGE_SLACK_APP_TOKEN / _BOT_TOKEN', 'P', 'all', 'On the Slack row, the same way.'),
+ ('A6-11', 'MURAGE_DISCORD_BOT_TOKEN', 'P', 'all', 'On the Discord row, the same way.'),
+ ('A6-12', 'MURAGE_TAVILY_SEARCH_KEY / _EXA_ / _FIRECRAWL_', 'P', 'all', 'On the key row: "Set by this computer\'s environment".'),
+ ('A6-13', 'MURAGE_TTS_KEY', 'P', 'all', 'On the key row, the same way.'),
+ ('A6-14', 'MURAGE_OPENAI_IMAGE_KEY', 'P', 'all', 'On the key row, the same way.'),
+ ('A6-15', 'MURAGE_FLUX_CONNECTION_ALIASES', 'V', 'all', 'Names only.'),
+ ('A6-16', 'MURAGE_BOX_API', 'V', 'desktop', 'Host name only.'),
+ ('A6-17', 'MURAGE_ADB_PATH', 'V', 'desktop', 'The path.'),
+ ('A6-18', 'MURAGE_TURN_STALL_MS', 'V', 'all', 'The number.'),
+ ('A6-19', 'MURAGE_ASK_BOT_TIMEOUT_MS', 'V', 'all', 'The number.'),
+ ('A6-20', 'MURAGE_WIPE_GUARD', 'N', '-', 'Not listed: a row here would only advertise how to weaken the wipe check.'),
+ ('A6-21', 'MURAGE_WIPE_GUARD_OFF', 'N', '-', 'Not listed, for the same reason.'),
+ ('A6-22', 'MURAGE_NO_LIMITS / MURAGE_PI_NO_LIMITS', 'V', 'all', 'On Bot > Approvals: "No limits is switched on by this computer\'s environment".'),
+ ('A6-23', 'MURAGE_SKILL_AUTHORING_ENABLED', 'V', 'all', 'On Skills > Teach a skill: on or off.'),
+ ('A6-24', 'MURAGE_STALL_MS, MURAGE_TURN_SETUP_STALL_MS, MURAGE_TURN_HEARTBEAT_ONLY_MS', 'V', 'all', 'The numbers.'),
+]
+def klass(c): return [r for r in XROWS if r[2] == c]
+def shown(): return len(klass('V')) + len(klass('P'))
+
+# ---- Old names that must still land (Decision 5, Fable 10). Each is a search alias and an old-link alias. ----
+ALIASES = [
+ ('Connected apps & MCP', 'page', 'Connected apps', 'apps.html'),
+ ('Voice & alerts', 'bot page', 'Voice & notifications', 'bot-voice.html'),
+ ('Model', 'bot page', 'Engine & model', 'bot-model.html'),
+ ('Models & providers', 'rail group', 'Keys & engines', 'providers.html'),
+ ('Tools & connections', 'rail group', 'Tools & access', 'tools.html'),
+ ('Channels & phone', 'rail group', 'Phone & messaging', 'messaging.html'),
+ ('Bot defaults', 'rail group', 'Bots', 'bots.html'),
+ ('App', 'rail group', 'This app', 'general.html'),
+ ('Calls off for today', 'control', 'Calls today', 'phone.html#phone.calls.today'),
+ ('Sign out everywhere', 'action', 'Remove all devices', 'phone.html#phone.devices'),
+ ('Signed-in browsers', 'section', 'Devices and browsers', 'phone.html#phone.devices'),
+ ('Hide from the sidebar', 'control', 'Show in the sidebar', 'bot-profile.html#bot.profile.sidebarhidden'),
+ ('Changes to your accounts', 'control', 'Let Dax send, create and delete in your apps', 'bot-tools-apps.html#bot.tools.apps.writes'),
+ ('Allow remote access', 'control', 'Away from home', 'phone.html#phone.away'),
+ ('Revoke (Telegram)', 'action', 'End pairing', 'messaging.html#messaging.telegram.revoke'),
+ ('Export a copy', 'action', 'Export a backup file', 'backups.html#backups.export'),
+ ('Script access', 'section', 'Let other programs use a bot', 'phone.html#phone.scripts'),
+ ('Automations', 'word', 'Routines', 'bot-routines.html'),
+]
+
+# ---- Curated answers for things that are not settings, or that Murage does not have (the honest-absence rows). ----
+ANSWERS = [
+ ('language for one bot; reply language', 'Replies in', 'Profile has Replies in for each bot. Until your version has it, write the language in that bot\'s Instructions.', 'bot-profile.html#bot.profile.replylanguage'),
+ ('cloud; move to cloud; migrate', 'Moving to Murage Cloud', 'Murage has no move-to-Cloud button yet. To move by hand: export a backup file here, with your recovery key. Whether Murage Cloud can restore that file is not confirmed yet, so ask in About & help before you rely on it.', 'backups.html#backups.export'),
+ ('share; invite; teammate; user; member; seat', 'Sharing a bot with another person', 'Murage has no accounts for other people yet. A person can talk to a bot through a messaging app you pair. Teams in Murage are groups of bots.', 'messaging.html#messaging.apps'),
+ ('lock; password; passcode; touch id; shared computer', 'Locking Settings', 'Murage has no lock of its own yet. Use your computer\'s own lock and a separate user account on a shared computer.', 'about.html#about.help'),
+ ('delete account', 'Deleting your account', 'On this computer Murage has no account to delete. Your data is in the data folder. Signing out of FluxRouter is on Providers.', 'backups.html#backups.data'),
+ ('smtp; imap; mail server', 'Your own mail server', 'Murage sends mail through Bot email or Gmail.', 'apps.html#apps.botemail'),
+ ('revoke; disconnect app', 'Removing an app', 'Open the app in Connected apps and use Remove at the foot.', 'apps.html#apps.connected'),
+ ("routine didn't run; routine skipped", 'Why a routine did not run', 'Each routine row says how its last run went. After a restore every routine is off until you turn it on with its own switch.', 'bot-routines.html#bot.routines.list'),
+]
+
+# ---- Help: 24 topics, one short paragraph each (H1). Key = the data-help value on the page's named link. ----
+HELP = [
+ ('start', 'Getting started', 'Murage needs one thing before a bot can work: a way to reach a model. Not sure? Sign in to FluxRouter, Murage\'s own pay-as-you-go service; you add credit when you need it. If you already pay for a Claude or ChatGPT plan, sign in to that instead. If you have an API key, paste it. Then make your first bot.'),
+ ('overview', 'How Settings is laid out', 'Settings has two spaces. The app space holds what is true for everything: keys, engines, tools, phone, backups. A bot\'s space holds what is true for that one bot. Overview is a summary and sets nothing; every row on it takes you to the one place a thing is set. Press &#8984;K (Ctrl K on Windows) anywhere to search every setting in your own words.'),
+ ('providers', 'How providers work', 'A provider is an account, plan or key that gives Murage access to models and services. FluxRouter is Murage\'s own: one sign-in for models, images, voice, search and connected apps, paid as you go. A plan you already pay for, such as Claude or ChatGPT, works too. So does an API key from a maker. Open any row to see what it powers and to remove it.'),
+ ('engines', 'How engines work', 'An engine is the program that runs a bot: Fuigo, Claude Code, Codex and others. Each engine uses one of your providers. An engine that says Needs sign-in names the exact fix. Codex has its own sign-in, usually your ChatGPT plan. The OpenAI key saved in Murage does not sign Codex in. If Codex was signed in with an API key of its own, the row says so, and OpenAI bills that key for each use. Turning an engine off only stops offering it to bots; bots already on it tell you they are waiting.'),
+ ('models', 'How models work', 'Each bot runs on one engine and one model. Models lists every bot in one table. A picker changes that one bot at once. To change several, tick them, choose once and press Apply: each bot is saved by itself and its row says how it went. Choosing an engine opens its models; nothing changes until you pick a model. Auto model means the engine picks the model for each message; it has nothing to do with the Auto approval level. Changing a bot\'s engine, model or thinking effort clears the app choices saved for that bot, and changing it back does not restore them. Murage asks first and names the apps. If Murage has to move a bot to another model itself, Changed recently says so.'),
+ ('usage', 'How spend works', 'Usage & spend shows what ran through FluxRouter this month, by bot and by tool. The monthly limit covers FluxRouter credit only. At the limit, bots that use FluxRouter pause and ask you; bots on your own keys and plans keep working, and their makers bill you directly. Murage never shows a balance it could not check.'),
+ ('tools', 'How tools work', 'A tool is something a bot can use: web search, images, the browser, your connected apps. There are 21. Each has two switches, in order. On Tools: is it on at all? On the bot: may this bot use it? Tools decides what a bot can use. Approvals decides when it must ask you first.'),
+ ('apps', 'How connected apps work', 'A connected app is an account you sign in to once, such as Gmail. Then you choose which bots may use it and how far: No access, Read only, or Read and change. Saved is what you chose. Works now is what the bot can really do after its own switches, with the reason when they differ. A bot with nothing saved is set to Every app. When you add a new app, no bot can use it until you have seen who would get it and said yes. Custom tools you add yourself go to bots set to Every app. On a No limits turn a bot is not held to these choices. A chat or routine you set to a lower level is. In a chat with a guest, bots cannot use your connected apps at all. Changing a bot\'s engine, model, thinking effort, title, role or section clears its saved app choices, and so does archiving it. Approving a request from your Chief of staff replaces the bot\'s app choices with that request and turns Connected apps on for the bot.'),
+ ('computer', 'How computer use works', 'A bot can click and type on a computer: this Mac after you say yes once, a separate virtual desktop, or a Murage Cloud computer. This page sets those up, and the built-in browser. Which bot may use a computer or the browser is set on that bot, under Tools.'),
+ ('messaging', 'How messaging works', 'Pair a messaging app to talk to your bots from Telegram, WhatsApp, Slack, Discord or Signal. Each row says who answers. Telegram always goes to your Chief of staff. To change who answers, make another bot Chief of staff and pair again. Messages sent while you pair again are not answered, so send them again after. A reply that was being sent at that moment may or may not have arrived; Murage marks it Not confirmed and never sends it twice.'),
+ ('phone', 'How phone access works', 'Phone access lets your own paired devices reach Murage on this computer. Away from home lets them connect when they are not on your Wi-Fi, through a private link and never the public internet. Every device and browser is in one list; open one to rename it, choose what it may do, or remove it. Calls today is on unless you turn it off, and turns itself back on at midnight. While it is off, bots message you instead of ringing. A call you marked Emergency still rings.'),
+ ('bots', 'How bots work', 'A bot is one assistant with its own job, tools and memory. Bots lists every one, archived bots too, in one scrolling list. Click a name to open a bot, or use Go to a page to jump to one of its 12 settings pages. New bots start with the approval level, thinking effort and computer you choose here. Changing that level does not move bots you already have. One exception: if you choose No limits there, bots with no level set by you run at No limits right away.'),
+ ('rules', 'How house rules work', 'House rules are read by every bot before it answers. This page also lists what you have said yes to for good: trusted folders and remembered recipients. Remove one and the next use asks again. When one particular bot must ask is set on that bot, under Approvals.'),
+ ('skills', 'How skills work', 'A skill is saved know-how a bot can follow, such as chasing an invoice. Murage comes with a library of more than two thousand, and you can add your own. No skill does anything until you turn it on for a bot: on the skill, or on that bot\'s Skills page. A bot\'s messages carry a short list of its own skills, and that list has a fixed size, so a large library never slows a bot down. When a bot has more skills on than fit, its page says which are in every message and which it looks up when a task needs them. A skill the check flagged needs you to look at the finding before it can be turned on. Teach a skill adds a button in chat that turns what you just did into a new skill.'),
+ ('memory', 'How memory works', 'With Memory on, bots save what you tell them and what they learn, and use it later. You can read every memory: the Memory page lists them all, with a filter by bot, and each bot\'s page lists what that bot can use: its own, its chats\', its team\'s and ones shared with it. Correct changes the words. Archive hides a memory and can be undone. Forget deletes it and every earlier version of it for good, after you confirm; if the memory changed while you were deciding, nothing is deleted and you see the new words first. Start fresh clears everything one bot has learned and shows you what will go first.'),
+ ('general', 'General settings', 'General holds what is about you and this app: your name, how Murage looks, language and time zone, dictation, notifications and startup. Each section says who it changes: Everywhere, This computer, or Only here for this window or phone. Notifications save when you press Save.'),
+ ('backups', 'How backups work', 'Murage backs up every day to a folder you choose, and can keep a second copy off-site. Every backup is locked with your recovery key; keep a copy somewhere that is not this computer, because Murage cannot bring it back. Restore happens in Backup mode: the backup goes into a new copy of Murage, and your current data is kept. You review the restored copy, then press Approve and open. A backup does not hold sign-ins to AI engines or messaging apps. After a restore every engine and every routine is off: turn on the engines you want in Engines and each routine on its bot, and connect your phone and messaging apps again. Export also happens in Backup mode: Make a backup now writes one encrypted file where you choose.'),
+ ('reach', 'How access works', 'What it can reach lists everything a bot can do, in three groups: cannot yet, asks you first, can do now. A blocked line names the first thing in the way and links straight to that control. Fix it and the page shows the next thing, if there is one. The same link is on the error card in chat. For a bot at No limits the page also lists which turns run at No limits.'),
+ ('instructions', 'Writing instructions', 'Instructions tell a bot what its job is. Write them as you would brief a new assistant: what to do, what never to do, and when to check with you. House rules, About you and the team brief can be added on top; each has its own switch.'),
+ ('approvals', 'How approvals work', 'The approval level says when a bot must ask first. Ask: Asks before each action that needs your yes. Writing in its own folder goes ahead. Auto: Asks before paying, emailing someone new, posting in public, or deleting outside its folder. Full access: Still asks before paying, emailing someone new, posting in public, deleting outside its folder, or reading your keys and passwords. No limits: Runs without asking in chats that are yours alone. Only a likely wipe or catastrophe asks first. Each level asks about less than the one before it. Auto also asks before reading your keys. What Full access adds is that a command that looks destructive inside the bot\'s folder goes ahead, and so does contacting another bot. The table on Approvals shows every case. The level on a bot is the one its new chats start with; a chat can have its own, lower or higher. No limits also covers the bot\'s routines, trigger links from other apps and work other bots hand it. A chat with a guest in it stays at Ask. A bot that may only draft never runs at No limits. Some tools have their own asking rule, listed under Also asks.'),
+ ('routines', 'How routines work', 'A routine is work a bot does on a schedule. Each new routine needs your yes. Every row says how its last run went: done, failed with the reason, or skipped. After a restore every routine is off until you turn it on with its own switch, and engines are off until you turn them on in Engines.'),
+ ('teams', 'How teams work', 'A team is a group of bots that work together and share a brief and playbooks. It is not a way to add a person: Murage has no accounts for other people yet.'),
+ ('voice', 'Voice and calls', 'A bot\'s voice is chosen on the bot. The voice service is the app default unless a bot has one of its own; the key for a service is saved once, in Providers. A bot may call you when something is urgent. Calls today off, or quiet hours, turns those rings into messages, except a call you marked Emergency. A call you booked for a set time still rings in quiet hours.'),
+ ('activity', 'Reading activity', 'Activity lists what a bot did, newest first, and what it cost through FluxRouter this month. Open an entry to see its steps. A routine that failed links here from its row.'),
+]
+assert len(HELP) == 24
+
+# ---- One noun per concept (copy contract). (use, never, where) ----
+NOUNS = [
+ ('Its own email address', 'Bot email (for one bot), my email address', 'the per-bot switch and every link to it'),
+ ('Bot email', '', 'only the account switch on Connected apps'),
+ ('Notifications', 'notices, alerts, tips and notices', 'everywhere'),
+ ('Routines', 'automations', 'everywhere'),
+ ('Other programs', 'scripts, script access, outside agents (as a name)', 'Let other programs use a bot; May give other programs access'),
+ ('Phone access; Away from home', 'Allow remote access, remote access (as a switch name)', 'the two switches; the page keeps its name'),
+ ('Remove; Delete; Archive; Turn off; Forget', 'Revoke, Disconnect, Sign out (of a device or app)', 'Remove can come back. Delete cannot. Archive hides and keeps. Forget is for one memory. Sign out is kept only for the FluxRouter account and for a device signing itself out'),
+ ('Read only; Read and change', 'Read and send, Read, Changes to your accounts', 'app access levels'),
+ ("Murage's web search", "Murage web search, Murage's search tool", 'everywhere'),
+ ('Messaging apps', 'channels (for Telegram and the like)', 'Messaging. Channels means shared rooms only'),
+ ('Engine & model (names); engine and model (prose)', '', 'page and column names against sentences'),
+ ('Everywhere; All bots; Only Dax; This computer; Only here', 'All bots on things that are about you', 'scope tags'),
+ ('Last used; Connected now', 'Last seen; Last used: Connected now', 'devices and browsers'),
+ ('Skill (Chief of staff basics); Playbook (a team\'s step list)', 'playbook for a skill', 'Skills against Teams'),
+ ('a new copy of Murage', 'a new installation', 'restore'),
+ ('Auto model (a column or a journal value); model picked for you (prose)', 'Auto, for a model', 'everywhere a model selection is shown: Auto is an approval level only'),
+ ('Write to Chief; Get an answer', 'Ask Chief, Ask someone', 'help buttons and the search heading: Ask is the approval level and the verb asks before'),
+ ('Usual rules', 'Not No limits', 'the pill on turns that do not run at No limits'),
+ ('a bot that may only draft', 'draft only, draft-only bot', 'app copy'),
+ ('In every message; Looked up when needed', 'indexed, listed, in the prompt', 'skills on a bot'),
+ ('At No limits', 'on your own turns', 'every line about a No limits bot: the level covers routines, trigger links and handed-over work too'),
+ ('Not set by you', 'Follows new bots', 'a bot whose approval level the owner never chose'),
+ ('Go to a page', 'Pages', 'the Bots table menu'),
+ ('you', 'me, I', 'every label: Ask you before..., Only you'),
+ ('About you', 'About me', 'the note every bot reads'),
+ ('Connected (messaging app, phone link); Signed in (account or app); Working (key only); Ready (engine or computer); On (a feature)', 'Working for anything but a key', 'status words'),
+]

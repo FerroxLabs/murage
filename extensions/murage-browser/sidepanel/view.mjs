@@ -3,7 +3,7 @@
 // page-derived or bot-derived text (origins, activity lines, names, the handoff line) is set as plain text and
 // marked data-user="true".
 const KEYS = ['spHeaderBrand', 'spHeaderSuffix', 'spConnected', 'spNotConnected', 'spBotLine', 'spStateYourTurn', 'spStatePaused', 'spStateStopped', 'overlayWorking',
-  'spModeStep', 'spModeTask', 'spModeFull', 'spModeTitle', 'spHintStep', 'spHintTask', 'spHintFull', 'spTurnOff', 'spTaskAccess', 'spAllowedForTask',
+  'spModeStep', 'spModeTask', 'spModeFull', 'spModeTitle', 'spHintStep', 'spHintTask', 'spHintFull', 'spTurnOff', 'spGrantTitle', 'spGrantOn', 'spGrantOff', 'spTaskAccess', 'spAllowedForTask',
   'spRevoke', 'spRevokeAria', 'spActivityTitle', 'spActivityEmpty', 'spSitesTitle', 'spSiteAlways', 'spSiteNever', 'spSiteAsks', 'spSharedTitle', 'spNoTabs',
   'spNoSites', 'spNewTab', 'spUnshareAria', 'btnShare', 'btnUnshare', 'btnPause', 'btnStop', 'btnResume', 'btnEndTask', 'btnContinue', 'spDebugNote',
   'spUpdateWaiting', 'spOldExtension', 'spOldApp', 'spShortcutHint', 'spSetupTitle', 'spSetupBody', 'spCheckConnection', 'spProfile', 'spBodyWorking',
@@ -151,6 +151,15 @@ export function renderPanel(doc, root, view, io) {
       }
       sec.append(seg, el('p', 'mode-hint', t(MODE[b.mode][1], [b.botName]))); sec.lastChild.className = 'hint';
       if (full && can('turnoff')) { const row = el('div'); row.className = 'btns'; row.append(button('turnoff', t('spTurnOff'), send('turnoff'), 'sm')); sec.append(row); }
+      main.append(sec);
+    }
+
+    // The owner's one-time OK for this bot (journey 1024, section 3): shown as the app reports it. From here it can only be
+    // turned off; turning it on needs the Murage app on the computer, so there is no button for that.
+    if (b.grant === 'on' || b.grant === 'off') {
+      const sec = el('div'); sec.append(el('h2', 'grant-title', t('spGrantTitle')));
+      sec.append(el('p', 'grant-state', t(b.grant === 'on' ? 'spGrantOn' : 'spGrantOff', [b.botName]))); sec.lastChild.className = 'hint';
+      if (b.grant === 'on' && can('grantoff')) { const row = el('div'); row.className = 'btns'; row.append(button('grantoff', t('spTurnOff'), send('grantoff'), 'sm')); sec.append(row); }
       main.append(sec);
     }
 

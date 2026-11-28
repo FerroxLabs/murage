@@ -95,6 +95,8 @@ let skillsResponse: unknown = {
   ],
   staged: [{ name: "pending-skill", action: "create", gist: "UNREVIEWED GIST", source: "UNREVIEWED SOURCE" }],
 };
+let skillSwitchResponse: { status: number; body: unknown } | undefined;
+let skillSwitchRequest: unknown;
 let skillStageResponse: unknown = { name: "file-expense", action: "create", gist: "Files an expense.", warnings: [] };
 
 let child: ChildProcess;
@@ -233,6 +235,17 @@ beforeAll(async () => {
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify(skillsResponse));
     }
+    if (req.method === "POST" && req.url === "/api/internal/skills/switch" && skillSwitchResponse) {
+      const { status, body } = skillSwitchResponse;
+      let data = "";
+      req.on("data", chunk => { data += chunk; });
+      req.on("end", () => {
+        skillSwitchRequest = JSON.parse(data);
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+      });
+      return;
+    }
     if (req.method === "POST" && req.url === "/api/internal/skills/stage") {
       let data = "";
       req.on("data", (c) => (data += c));
@@ -303,7 +316,7 @@ beforeAll(async () => {
   stubPort = (stub.address() as { port: number }).port;
 });
 
-async function startProxy() {
+async function startProxy(authoring = "1") {
   child = await spawnBoundProxy("agents", process.execPath, [PROXY], {
     env: {
       ...process.env,
@@ -312,7 +325,7 @@ async function startProxy() {
       MURAGE_THREAD_ID: "thread-asker-routine",
       MURAGE_COMMS_TOKEN: TOKEN,
       MURAGE_TURN_DEPTH: "0",
-      MURAGE_SKILL_AUTHORING_ENABLED: "1",
+      MURAGE_SKILL_AUTHORING_ENABLED: authoring,
       MURAGE_GENERATE_IMAGE_WAIT_MS: "2000",
     },
     stdio: ["pipe", "pipe", "inherit"],
@@ -331,7 +344,7 @@ async function startProxy() {
     }
   });
 }
-beforeEach(startProxy);
+beforeEach(() => startProxy());
 afterEach(async () => {
   pending.clear();
   if (child.exitCode === null && child.signalCode === null) {
@@ -394,7 +407,7 @@ describe("agents-proxy MCP surface", () => {
       "move_bot",
       "set_team_lead",
       "create_bot",
-      "request_browser_connection",
+      // W3 (DESIGN-JOURNEY-1024 section 6): request_browser_connection is no longer a bot tool (base: listed here; RED at this toEqual).
       "ask_user",
       "show_widget",
       "update_widget",
@@ -405,6 +418,8 @@ describe("agents-proxy MCP surface", () => {
       "propose_routine_action",
       "propose_outcome",
       "skills_list",
+      // MAIN RULING 1115-SKILLS-GROK c
+      "skill_switch",
       "skill_manage",
       "publish_site",
       "take_down_site",
@@ -415,8 +430,11 @@ describe("agents-proxy MCP surface", () => {
     expect(ask.description).toContain("Brief synchronous consultation");
     expect(ask.description).toContain("slow replies become asynchronous delegations");
     expect(ask.description).toContain("Do not use for assigning work");
-    expect(delegate.description).toContain("DEFAULT FOR ASSIGNING WORK");
-    expect(delegate.description).toContain("delivered automatically");
+    // MAIN RULING INT-CONFLICT-DEFAULT 9b406efb747d / d8358b836083: retain the reviewed delegation copy and all async controls.
+    expect(delegate.description).toContain("Assign work asynchronously");
+    expect(delegate.description).toContain("its result returns here automatically");
+    expect(delegate.description).toContain("the peer starts after your turn ends");
+    expect(delegate.description).toContain("Do not check or wait in this turn");
     expect(wait.description).toContain("Never call it in the same turn as MCP tool \"delegate_bot\" on this server");
     // QW 207/208: the widget tools carry the one shared wording (shared/ask-wording.ts), pinned here and in the rule line
     const byName = (name: string) => list.result.tools.find((tool: { name: string }) => tool.name === name);
@@ -791,7 +809,7 @@ describe("agents-proxy MCP surface", () => {
     expect(lastAuth).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("ask_bot forwards sender + depth and returns the reply", async () => {
+  it("ask_bot forwards the sender (no depth: the harness reads it from the token record) and returns the reply", async () => {
     askResponse = { botName: "Helper", text: "hi from helper" };
     const res = await callTool("ask_bot", { bot_id: "bot-helper", message: "ping" });
     expect(res.result.content[0].text).toContain("Helper replied:");
@@ -801,8 +819,9 @@ describe("agents-proxy MCP surface", () => {
       fromThreadId: "thread-asker-routine",
       toBotId: "bot-helper",
       message: "ping",
-      depth: 0,
     });
+    // depth is read from the token record (L2W #5768): the proxy sends none
+    expect(lastAskBody).not.toHaveProperty("depth");
   });
 
   it("renders a busy peer as a clean answer, not an error", async () => {
@@ -873,8 +892,8 @@ describe("agents-proxy MCP surface", () => {
       toBotId: "bot-helper",
       message: "take this",
       reason: "follow-up",
-      depth: 0,
     });
+    expect(lastDelegateBody).not.toHaveProperty("depth");
   });
 
   it("returns queue refusal guidance to the agent as a tool error", async () => {
@@ -1388,6 +1407,69 @@ describe("agents-proxy MCP surface", () => {
       artifactStatus = 201;
       artifactResponse = { artifact: { id: "verified-fixture", name: "Morning brief" } };
     }
+  });
+
+  it("L1: skill_switch describes the permitted automatic paths", async () => {
+    const list = await rpc("tools/list");
+    const tool = list.result.tools.find((entry: { name: string }) => entry.name === "skill_switch");
+    expect(tool.description).toContain("No limits");
+    expect(tool.description).toContain("Full access");
+    expect(tool.description).not.toContain("Always shows");
+  });
+
+  it("lists and switches skills when skill authoring is unavailable", async () => {
+    const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
+    child.kill();
+    await closed;
+    await startProxy("0");
+    const names = (await rpc("tools/list")).result.tools.map((tool: { name: string }) => tool.name);
+    expect(names).toContain("skills_list");
+    expect(names).toContain("skill_switch");
+    expect(names).not.toContain("skill_manage");
+  });
+
+  it("distinguishes a visible skill card, No limits execution and refusal", async () => {
+    const args = { action: "turn_off", skill_name: "sample-skill" };
+    try {
+      skillSwitchResponse = { status: 201, body: { summary: "A card was sent. Nothing changes until they approve." } };
+      expect((await callTool("skill_switch", args)).result.content[0].text).toContain("Nothing changes until they approve");
+      expect(skillSwitchRequest).toMatchObject(args);
+      const summary = "Done under No limits: skill sample-skill turned off.";
+      skillSwitchResponse = { status: 201, body: { autoApproved: true, summary } };
+      expect((await callTool("skill_switch", args)).result.content[0].text).toBe(summary);
+      skillSwitchResponse = { status: 403, body: { error: "The owner refused this request." } };
+      const refused = await callTool("skill_switch", args);
+      expect(refused.result.isError).toBe(true);
+      expect(refused.result.content[0].text).toContain("The owner refused this request.");
+    } finally {
+      skillSwitchResponse = undefined;
+    }
+  });
+
+  it("offers a strict skill_switch schema and rejects malformed calls before HTTP", async () => {
+    const list = await rpc("tools/list");
+    const tool = list.result.tools.find((entry: { name: string }) => entry.name === "skill_switch");
+    expect(tool).toBeDefined();
+    expect(tool.inputSchema).toMatchObject({ additionalProperties: false, required: ["action", "skill_name"], properties: { action: { enum: ["turn_on", "turn_off", "delete"] } } });
+    for (const args of [{ action: "enable", skill_name: "sample-skill" }, { action: "delete", skill_name: "../escape" }, { action: "turn_off" }]) {
+      const reply = await callTool("skill_switch", args);
+      expect(reply.result.isError).toBe(true);
+      expect(reply.result.content[0].text).toMatch(/action|skill_name/);
+    }
+  });
+
+  it("MAIN b: formats the metadata-only owner skills list", async () => {
+    const previous = skillsResponse;
+    try {
+      skillsResponse = { skills: [{ name: "sample-skill", action: "turn_off", scope: "Only this bot's copy changes.", sha256: "1".repeat(64) }],
+        staged: [{ name: "pending-skill", action: "create", scope: "Waiting for owner review.", sha256: "2".repeat(64) }] };
+      const listed = await callTool("skills_list", {});
+      expect(listed.result.isError).not.toBe(true);
+      expect(listed.result.content[0].text).toContain("sample-skill (enabled)");
+      expect(listed.result.content[0].text).toContain("Only this bot's copy changes.");
+      expect(listed.result.content[0].text).toContain("1".repeat(64));
+      expect(listed.result.content[0].text).toContain("create pending-skill");
+    } finally { skillsResponse = previous; }
   });
 
   it("lists, views, and stages skills without enabling them", async () => {

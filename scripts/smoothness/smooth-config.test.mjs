@@ -29,7 +29,7 @@ import { compileCacheFileCount, importUrl, observedDataDir, observedNativeFiles,
 import { answerCards, botFolder, cardTimings, cardsIn, isQuestionCard, ownerAnswer, permissionWaits, chainFromManager, chainFromServer, heldPrompt, stopAndSettle, REAL_HELD_SECONDS, speakerOf, waitFor, workingDeleteVerdict, contextChangedIn, countSignatures, DEV_COMMANDS, eldStalls, expectedCards, judge, judgeRow, levelPatch, openCards, roomReplies, routineBurst, sampleWindow, withPeak, cgroupPathOf, cgroupCpuUsec, cgroupMemMb, coresBetween, coresFromTopLine, macTable, legRss, leftovers, leftoverNames, winLine, winPeakProcs, rssPeakLine, PEAK_PROCS_MAX, winCores, keptCard, traceLinesOf, realDelegationPrompt, browserHostVerdict, dataDirRealOk, MAX_GAP_MS, WIN_TELEMETRY_PS, isMainModule, dataDirAllowed, osPassThrough, encodedPowerShell, SERVER_START_MARK, startupNotesIn, STARTUP_NOTE_MARK, STOP_COMMANDS, table, verdictOf, withheldIn } from "./smooth-config.mjs";
 
 const LOG = [
-  "[2026-10-24T01:00:00.000Z] [err] [io-budget] writing 19.2 MB/min (budget 1); source: database:/x/messages.db; top statements: 12ms x700 INSERT OR IGNORE INTO memory_deny_memory(kind,id,version,revoke)",
+  "[2026-10-24T01:00:00.000Z] [err] [io-budget] writing 19.2 MB/min (budget 1); source: database:/x/messages.db; top statements: 12ms x700 INSERT OR IGNORE INTO memory_deny_object(kind,id,version,revoke)",
   "[2026-10-24T01:00:01.000Z] [err] [memory] context revoked during dispatch on thread t-1; re-preparing (1 of 3)",
   "[2026-10-24T01:00:02.000Z] [err] [memory] context revoked during dispatch on thread t-1 after 3 rebuilds (Claude); the turn ends with a card",
   "[2026-10-24T01:00:03.000Z] [err] [memory] send fence refused (checking:pending, content reader): 2 of 2 parts",

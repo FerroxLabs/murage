@@ -331,6 +331,32 @@ it("reconciles a shell card committed before its acknowledgement was lost withou
   expect((await recoverShell(f)).map(message => message.id)).toEqual([card!.id]);
   expect(f.receipts()[0]!.messageId).toBe(card!.id);
 });
+it.each([false, true])("q1022-channels: the owner's Release of a retained shell output after a restart finds its card by a keyed read, never a load of the whole thread (card already there=%s)", async (carded) => {
+  const f = fixture();
+  for (let i = 0; i < 1000; i++) f.store.appendMessage(f.bot.threadId, { role: "user", kind: "text", text: `chat line ${i}` });
+  f.dispatch(); f.write("outputs/report.txt", "kept for the owner");
+  await f.complete(false); // a failed turn keeps a verified receipt only
+  const [receipt] = f.receipts();
+  expect(receipt).toMatchObject({ stage: "retained" });
+  const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
+  const publisher = createOutputPublisher({ dataDir: DATA_DIR, database, store, artifactScopes: () => [f.taskScope, f.imageScope] });
+  let card: string | undefined;
+  if (carded) {
+    // the card committed and the receipt's acknowledgement was lost: the Release must reuse it
+    const original = store.appendMessage.bind(store);
+    const append = vi.spyOn(store, "appendMessage").mockImplementationOnce((...args) => { card = original(...args).id; throw new Error("lost acknowledgement"); });
+    await expect(publisher.completeReleased(receipt!.id)).rejects.toThrow();
+    append.mockRestore();
+    expect(f.receipts()[0]!.messageId).toBeUndefined();
+    (store as unknown as { threads: { delete(id: string): boolean } }).threads.delete(f.bot.threadId);
+  }
+  await publisher.completeReleased(receipt!.id);
+  // the restarted store never pulled the 1000-line thread into its cache to look for the card
+  expect((store as unknown as { threads: { has(id: string): boolean } }).threads.has(f.bot.threadId)).toBe(false);
+  const cards = store.messagesFor(f.bot.threadId).filter(message => message.artifactIds?.length);
+  expect(cards.map(message => message.id)).toEqual([f.receipts()[0]!.messageId]);
+  if (carded) expect(f.receipts()[0]!.messageId).toBe(card);
+});
 it.each([false,true])("registered room output recovery respects current membership (removed=%s)",async removed=>{
   const f=fixture(),other=f.store.createBot(),room=f.store.createGroup("Output room",[f.bot.id,other.id]);
   f.store.admitLocalOutputs(f.bot.id,room.threadId);

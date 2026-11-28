@@ -23,7 +23,7 @@ import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fi
 import { readableMemoryRecord } from "./readable.ts";
 import { recentMemoryHits } from "./recent.ts";
 import { setMemoryMode } from "./repository.ts";
-import { clearMemorySearchCache, searchMemory, TOOL_SEARCH_BUDGET_MS, type MemorySearchBridge } from "./search.ts";
+import { clearMemorySearchCache, searchMemory, setAuthorizeSliceMsForTest, TOOL_SEARCH_BUDGET_MS, type MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -294,28 +294,33 @@ describe("P1: an expired revalidation returns nothing it did not read again", ()
     const scope = ensureScope("bot", "a");
     readable("kept", scope); readable("withdrawn", scope);
     (await world(["kept", "withdrawn"].map(id => entry(id, scope, TEXT)))).close();
-    let stamps = 0, skew = 0, forgotten = false;
-    const originalNow = performance.now.bind(performance), db = database(), prepare = db.prepare.bind(db);
-    // The first read of the revision stamp happens when the records are accepted; the second starts the revalidation. Just before
-    // it: a record already accepted is forgotten, and the clock jumps past the hydration limit.
-    db.prepare = ((sql: string) => {
-      if (sql.includes("SELECT data_revision,policy_revision,deletion_epoch FROM memory_meta") && ++stamps === 2) {
+    let skew = 0, forgotten = false;
+    const originalNow = performance.now.bind(performance), originalImmediate = globalThis.setImmediate, db = database(), prepare = db.prepare.bind(db);
+    // q1024-memsearch D: there is no revalidation round any more (capture moves data_revision with every message; re-reading every
+    // accepted record whenever it moved left recall empty). At the first loop release after the search began: a record is forgotten,
+    // and the clock jumps past the hydration limit. The answer is read again just before it is given, so it never carries "withdrawn".
+    setAuthorizeSliceMsForTest(0);
+    (globalThis as { setImmediate: unknown }).setImmediate = ((fn: (...args: unknown[]) => void, ...args: unknown[]) => {
+      if (!forgotten) {
         prepare("UPDATE memory_records SET state='deleted' WHERE id='withdrawn'").run();
         prepare("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1").run();
         forgotten = true; skew = 60_000;
       }
-      return prepare(sql);
-    }) as typeof db.prepare;
+      return originalImmediate(fn, ...args);
+    }) as typeof setImmediate;
     (performance as { now: () => number }).now = () => originalNow() + skew;
     try {
       const answer = await searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
       expect(forgotten).toBe(true);
       expect(answer.hits.map(hit => hit.id)).not.toContain("withdrawn");
-      expect(answer.hits).toEqual([]);
+      // q1024-memsearch D (expectation changed, CHANGED-EXPECTATIONS.md): "kept" is readable throughout and is answered; the deadline no
+      // longer ends a re-read of everything accepted with an empty answer
+      expect(answer.hits.map(hit => hit.id)).toEqual(["kept"]);
       expect(answer.partial).toBe(true);
     } finally {
       (performance as { now: () => number }).now = originalNow;
-      db.prepare = prepare as typeof db.prepare;
+      (globalThis as { setImmediate: unknown }).setImmediate = originalImmediate;
+      setAuthorizeSliceMsForTest(8);
     }
   }, 60_000);
 });

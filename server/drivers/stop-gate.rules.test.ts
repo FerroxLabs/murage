@@ -45,7 +45,7 @@ const ENGINES: EngineRules[] = CONFIG_ENGINES.map(engine => ({ ...engine, fixtur
     if (!inserted || fixture.ordinal < inserted.at) return fixture;
     // MAIN RULING INT-CONFLICT-DEFAULT 628bc2fabe / e572fd9653: Muse carries the same guard environment into its existing host setup.
     const operand = fixture.key === "muse-code>create>ensureSession" && fixture.ordinal === 5
-      ? "startHost(args, cwd, key, mcpServers !== null, (launch) => { launch.owner = active.turnId; launch.state = state; launch....[373]"
+      ? "startHost(args, cwd, key, mcpServers !== null, (launch) => { launch.owner = active.turnId; launch.state = state; launch....[369]"
       : fixture.operand;
     return { ...fixture, ordinal: fixture.ordinal + 1, operand };
   }),
@@ -458,10 +458,10 @@ describe("MS1 fixtures", () => {
         else if (f.wrapper === "step" && notTurn.has(f.key) && !cleanup.has(f.key)) bad.push(`${f.key}: a gate.step in a function the config marks not-turn, close or reap`);
         else if (f.wrapper === "cleanupStep" && !cleanup.has(f.key)) bad.push(`${f.key}: cleanupStep outside the CLEANUP list`);
       }
-      expect(bad).toEqual([]);
+      expect(bad.length, bad.join(" | ")).toBe(0);
       // and none is missing from the list
       const listed = new Set(e.fixtures.map((f) => `${f.key}#${f.ordinal}`));
-      expect(sites.filter((s) => s.wrapper !== "bare" && !listed.has(`${s.key}#${s.ordinal}`)).map((s) => `${s.key} #${s.ordinal}`), "wrapped awaits not listed as fixtures").toEqual([]);
+      expect(sites.filter((s) => s.wrapper !== "bare" && !listed.has(`${s.key}#${s.ordinal}`)).map((s) => `${s.key} #${s.ordinal}`).join(" | "), "wrapped awaits not listed as fixtures").toBe("");
     });
   }
 });
@@ -476,16 +476,19 @@ describe("pending engines", () => {
 
 describe("production scan", () => {
   const scan = (rules: RuleId[]): string => {
-    expect(selfFailed, "the checker self-tests must pass before the scan counts").toEqual([]);
+    expect(selfFailed.join("\n"), "the checker self-tests must pass before the scan counts").toBe("");
     return enforced.map((e) => formatDiagnostics(diagsOf(e.file, e).filter((d) => rules.includes(d.rule)))).filter(Boolean).join("\n");
   };
   it("R1", () => {
-    expect(scan(["R1", "CFG"])).toBe("");
+    const found = scan(["R1", "CFG"]);
+    expect(found.length, found).toBe(0);
   });
   it("R2", () => {
-    expect(scan(["R2"])).toBe("");
+    const found = scan(["R2"]);
+    expect(found.length, found).toBe(0);
   });
   it("R3", () => {
-    expect(scan(["R3"])).toBe("");
+    const found = scan(["R3"]);
+    expect(found.length, found).toBe(0);
   });
 });

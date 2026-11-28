@@ -24,6 +24,7 @@
 import { isPrepared as isThreadPrepared, prepareThread } from "../branch-store.ts";
 import { database } from "../database.ts";
 import { withPreparedStatementReuse } from "../io-budget.ts";
+import { isDatabaseBusy } from "../db-busy.ts";
 import { executionStore } from "../execution-audience.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 import { authorityParts } from "./authority-epoch.ts";
@@ -1137,7 +1138,8 @@ function lineageWarmStepWork(sliceMs: number,yieldNow?: () => boolean): boolean 
     }
     return discovery !== null || queue.length > 0;
   } catch (error) {
-    console.warn(`[memory] lineage warming: ${error instanceof Error ? error.message : String(error)}`);
+    // a deferral (the background budget, a lock wait) is the normal state of a busy machine and is tried again: a note, not a warning
+    (isDatabaseBusy(error) ? console.info : console.warn)(`[memory] lineage warming: ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }

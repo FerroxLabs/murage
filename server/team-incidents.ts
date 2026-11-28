@@ -196,8 +196,10 @@ export function routineIncidentMuteKeys(run: { routineId: string; threadId?: str
  * failure, and the Chief's conclusion once somebody has. That second one
  * carries the diagnosis and is worth having; what it is not is silence.
  * server/team-incidents.test.ts runs buildNotification for both. */
-export function teamIncidentTurnOptions(threadId: string): { threadId: string; unattended: true } {
-  return { threadId, unattended: true };
+export function teamIncidentTurnOptions(threadId: string): { threadId: string; unattended: true; murageTurn: true } {
+  // 1.0.22 q1022-nolimits: Murage starts this turn itself, so its permission is the bot's own level (No limits stays
+  // wipe-only), never the Ask a guest's words get. Its text is still third-party data, marked by teamIncidentText.
+  return { threadId, unattended: true, murageTurn: true };
 }
 
 /** One line, no fences, no newlines, bounded. Everything folded through here

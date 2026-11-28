@@ -12,6 +12,7 @@ import {
   DEFAULT_PROMPT_TOKEN_ESTIMATE,
   ENGINE_PROMPT_TOKEN_ESTIMATE,
   isLocalServerKind,
+  isOllamaCloudModel,
   isValidLocalModelId,
   isValidLocalServerKey,
   isValidLocalServerName,
@@ -22,6 +23,7 @@ import {
   localEnginesFor,
   localServerDisplayLabel,
   normalizeLocalServerAddress,
+  OLLAMA_CLOUD_COPY_REFUSAL,
   USER_LOCAL_SERVER_ID,
   type LocalModelsErrorCode,
   type LocalModelsListResponse,
@@ -43,11 +45,12 @@ import {
   type StoredLocalServer,
 } from "./local-servers.ts";
 import {
-  cachedLocalContext,
+  cachedHostContext,
   cachedLocalTestFor,
   decodeInjectId,
   encodeInjectId,
   hostApiKey,
+  isKnownOllamaCloudHost,
   LOCAL_HOSTS,
   localContextWindow,
   localHost,
@@ -106,13 +109,17 @@ async function readJsonBody(request: DelegatedRequest): Promise<Record<string, u
 
 function modelView(host: LocalHost, page: LocalHostPage, model: string): LocalModelView {
   const test = cachedLocalTestFor(host.id, model);
-  const context = page.contexts.get(model) ?? cachedLocalContext(host.id, model);
+  // A model known as cloud reads its cloud reading, never a page read before its first test.
+  const knownCloud = isKnownOllamaCloudHost(host, model);
+  const context = (knownCloud ? undefined : page.contexts.get(model)) ?? cachedHostContext(host, model);
+  const cloud = knownCloud || (host.kind === "ollama" && context?.cloud === true);
   return {
     id: encodeInjectId(host.id, model),
     model,
     loaded: page.loaded.has(model),
     ...(context ? { context } : {}),
     ...(test ? { test } : {}),
+    ...(cloud ? { cloud: true as const } : {}),
     engines: localEnginesFor(test),
   };
 }
@@ -323,13 +330,22 @@ export function createLocalModelsRoute(options: LocalModelsRouteOptions = {}) {
     if (!body || !isValidOllamaContextRequest(body.model, body.numCtx)) {
       return fail("invalid-model", "Choose the Ollama model to copy.");
     }
+    const model = body.model as string;
+    // M10 R3: decided here, on facts read inside this request, never on the
+    // card's flag. A cloud tag is refused before any request to the host; an
+    // untagged name gets a fresh /api/show, whose cloud reading is stored so
+    // the refreshed card drops the offer.
+    if (isOllamaCloudModel(model)) return fail("cloud-model", OLLAMA_CLOUD_COPY_REFUSAL);
+    const reading = await readLoadedContext(host, model, env(), fetchImpl);
+    if (reading.cloud) return fail("cloud-model", OLLAMA_CLOUD_COPY_REFUSAL);
     const result = await createOllamaContextCopy(
       host,
-      body.model as string,
+      model,
       typeof body.numCtx === "number" ? body.numCtx : undefined,
       env(),
       fetchImpl,
     );
+    if (result.status === "refused") return fail("cloud-model", OLLAMA_CLOUD_COPY_REFUSAL);
     return { status: 200, body: result };
   }
 

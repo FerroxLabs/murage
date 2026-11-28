@@ -17,19 +17,27 @@ import type { AppSettingsSection } from "./settings-sections";
 export type SettingsPageGroup = "you" | "bots" | "allBots" | "ai" | "reach" | "app";
 
 export type SettingsPage =
+  | "overview"
   | "general"
   | "calls"
-  | "botDefaults"
+  | "bots"
+  | "rules"
+  | "tools"
   | "skills"
   | "memory"
   | "models"
   | "webSearch"
   | "connections"
+  | "messaging"
   | "computer"
   | "companion"
   | "backups"
   | "usage"
   | "about";
+
+/** v10 pages whose body is one live list (what changed, every bot, the tool switches), not registry cards: they have no card in
+ *  the card registry or the settings model yet, so the "every page has a card" checks skip them. */
+export const LIST_PAGES: readonly SettingsPage[] = ["overview", "bots", "tools"];
 
 /** The list page past five bots (section 2.1). A route, not one of the 13 pages. */
 export const BROWSE_BOTS_ROUTE = "browseBots" as const;
@@ -50,16 +58,20 @@ export const SETTINGS_PAGE_GROUPS: readonly SettingsPageGroup[] = ["you", "bots"
 /** Sidebar order. Labels: General, Calls; How every bot behaves, Skills, Memory; Models & engines, Search, images and
  *  dictation; Connected apps (including Messaging), Computer & browser, Phone and other devices; Backups, Usage, About & help. */
 export const SECTION_PAGES: readonly SettingsPageEntry[] = [
+  { id: "overview", group: "you", simple: true },
   { id: "general", group: "you", simple: true },
   // LOCKED 2.4: a phone gets Calls (off for today and the history; the bots' own calling setup stays on the computer)
   // and a read-only Models & engines.
   { id: "calls", group: "you", simple: false },
-  { id: "botDefaults", group: "allBots", desktopOnly: true, simple: false },
+  { id: "bots", group: "allBots", desktopOnly: true, simple: false },
+  { id: "rules", group: "allBots", desktopOnly: true, simple: false },
+  { id: "tools", group: "allBots", desktopOnly: true, simple: false },
   { id: "skills", group: "allBots", desktopOnly: true, simple: false },
   { id: "memory", group: "allBots", desktopOnly: true, simple: false },
   { id: "models", group: "ai", simple: true },
   { id: "webSearch", group: "ai", desktopOnly: true, simple: false },
   { id: "connections", group: "reach", simple: true },
+  { id: "messaging", group: "reach", simple: true },
   { id: "computer", group: "reach", desktopOnly: true, simple: true },
   { id: "companion", group: "reach", desktopOnly: true, simple: true },
   { id: "backups", group: "app", desktopOnly: true, simple: true },
@@ -72,10 +84,13 @@ export interface SettingsTarget { section: SettingsPage; anchor: string | null }
 /** An old id to the page and the anchor it lands on. The anchor is a DOM id the target card renders; when that card is
  *  `advanced` (settings-cards.ts) the opener opens the page's Advanced section first, then scrolls and focuses.
  *  `computer` became a page of its own in 1.0.19; `images` and `voice` are sections of Search, images and dictation. */
-export const SECTION_ALIASES: Readonly<Record<SettingsAlias, { section: SettingsPage; anchor: string }>> = {
-  channels: { section: "connections", anchor: "telegram-settings-title" },
+export const SECTION_ALIASES: Readonly<Record<SettingsAlias, { section: SettingsPage; anchor: string | null }>> = {
+  channels: { section: "messaging", anchor: "telegram-settings-title" },
   aboutMe: { section: "general", anchor: "about-me-heading" },
-  houseRules: { section: "botDefaults", anchor: "house-rules-heading" },
+  // v10: Bot defaults is the Rules page; Providers and Engines are the first two cards of Models & engines.
+  botDefaults: { section: "rules", anchor: null },
+  houseRules: { section: "rules", anchor: "house-rules-heading" },
+  providers: { section: "models", anchor: "models-heading" },
   engines: { section: "models", anchor: "engines-heading" },
   images: { section: "webSearch", anchor: "image-settings-heading" },
   voice: { section: "webSearch", anchor: "voice-settings-heading" },

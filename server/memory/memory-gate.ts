@@ -14,7 +14,8 @@
 // The order that keeps an external effect honest, for Apply and Undo: gate, every SQL write that can fail, gate again, and only then the external
 // publish or rollback as the LAST statement of the transaction, so a refusal or a throw leaves the files and the rows exactly as they were.
 import type { DatabaseSync } from "node:sqlite";
-import { integrityFlags, integrityHoldCode } from "./integrity-flags.ts";
+import { connectionHoldCode, integrityFlags, integrityHoldCode } from "./integrity-flags.ts";
+import { MEMORY_OPEN_HOLD } from "./open-set-aside.ts";
 
 export type MemoryUse =
   | "publish-procedure" | "rollback-procedure" | "lesson-write" | "feedback-write" | "ledger-write"
@@ -35,6 +36,10 @@ export const MEMORY_USES: readonly MemoryUse[] = ["publish-procedure", "rollback
 export function memoryGate(db: DatabaseSync | object, use: MemoryUse, options: { eventId?: string } = {}): MemoryGateResult {
   const hold = integrityHoldCode(db);
   if (hold !== null) return `held:${hold}`;
+  // the connection's own hold (the memory wake install failed): everything that reads or acts on memory is refused; capture still records
+  const connection = connectionHoldCode(db);
+  // (memory that could not be opened refuses capture too: the tables capture writes are the ones that failed, memory/open-set-aside.ts)
+  if (connection !== null && (use !== "capture" || connection === MEMORY_OPEN_HOLD)) return `held:${connection}`;
   const flags = integrityFlags(db);
   if (!flags.pending || !WAITS_FOR_PASS.has(use)) return "ok";
   // Undo of a change recorded after the pass began rests only on this session's own rows.
@@ -57,4 +62,4 @@ export function assertMemoryGate(db: DatabaseSync | object, use: MemoryUse, opti
 }
 
 /** The code of a hold, for the status answer and the lineage flag (not a decision: ask memoryGate for those). */
-export function memoryHeldCode(db: object): string | null { return integrityHoldCode(db); }
+export function memoryHeldCode(db: object): string | null { return integrityHoldCode(db) ?? connectionHoldCode(db); }

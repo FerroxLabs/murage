@@ -80,7 +80,7 @@ it("renames, changes members and lead, and deletes a team, and only for the desk
   const listed = await call("GET", "/api/bots?messages=0");
   expect(listed.body.bots.find((bot: any) => bot.id === ben.id).section ?? "").toBe("");
 
-  const deleted = await call("POST", "/api/team-sections/delete", { section: "Ops", revision: changed.body.team.revision, bots: "keep" });
+  const deleted = await call("POST", "/api/team-sections/delete", { section: "Ops", revision: changed.body.team.revision, bots: "keep", accessRevisions: Object.fromEntries(changed.body.team.members.map((bot: any) => [bot.id, bot.accessRevision])) });
   expect(deleted).toMatchObject({ status: 200, body: { ok: true, bots: 2 } });
   expect((await call("GET", "/api/team-sections?section=Ops")).status).toBe(404);
   const after = (await call("GET", "/api/bots?messages=0")).body.bots;

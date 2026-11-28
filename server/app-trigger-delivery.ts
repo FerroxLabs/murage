@@ -8,8 +8,10 @@
 //   -> seal -> run row -> reserve (literal zero child ceilings, the bot's billingRef) -> persist starting -> start
 //   -> first newlyStarted:true submits once -> renew every 30 s
 //
-// Run settlement (finish) is not part of AT-S1: it moved whole to AT-S2 (the run executor), designed lease renewal first.
-// Until then no run is finished from here; every run's Flux lease lapses (runLeaseSec, 90 s) once renewal stops.
+// Run settlement (L5H settleTurn, CONTRACT-REQ noowner-1023 L5H settlement): the host's turn-end hands the root turn's
+// (thread, generation, end) and the run moves to its terminal state locally, through the store's P3 choke point. No Flux
+// finish call is sent: its usage body is a money ruling (MAIN/Sean) and its endpoint has no contract here (FluxMain), so
+// renewal stops and the Flux lease lapses (runLeaseSec, 90 s), as for every other terminal run.
 //
 // Event content is untrusted input. Routing, owner, binding and billing fields come from the home's own binding row,
 // never from the payload; a delivery whose subscription is not this home's live binding is not retained. Nothing here
@@ -145,8 +147,27 @@ export interface AppHome { ownerAccountId: string; homeId: string; homeEpoch: nu
  * `thread` makes the run thread (no turn), which is persisted as the run's lineage; only then `start` begins the
  * one root turn in it. In this slice both are stubs: no engine runs. */
 export interface AppRunSubmit {
-  thread(run: AppEventRun): Promise<string> | string;
+  thread(run: AppEventRun, preparedThreadId?: string): Promise<string> | string;
   start(run: AppEventRun & { threadId: string }, deliveryIds: readonly string[]): Promise<{ generation: string }> | { generation: string };
+  /** L5H P1: a thread id reserved before the task exists, so the origin row commits first (Store.createTask preparedThreadId). */
+  reserveThreadId?(run: AppEventRun): string;
+  /** L5H P2 / Opus r2 M1: the host allocates the root turn's generation before the engine begins, so the root turn row and
+   * run.generation commit before any engine or tool step. Without it the row is bound when start returns (pre-L5H order). */
+  allocateGeneration?(run: AppEventRun & { threadId: string }): string;
+}
+
+/** How a run's root turn ended, as the host saw it at the freeze. `refusalFrozenAt` is when a refusal row froze;
+ * `stopConfirmedAt` is when an owner Stop's close receipt was confirmed (a HELD, unconfirmed Stop is null). */
+export interface AppTurnEnd { failed?: boolean; refusalFrozenAt?: number | null; stopConfirmedAt?: number | null }
+
+/** JOINT RULING STOP-VS-REFUSAL for a settled app run: a confirmed Stop that precedes the refusal's freeze ends the run
+ * cancelled and silent (no result card); a refusal that froze while the Stop was still HELD is the refusal (refused, with
+ * its card). Never neither: every end maps to exactly one terminal state. */
+export function appTurnSettlement(end: AppTurnEnd): { state: "completed" | "failed" | "cancelled" | "refused"; waitReason: string | null } {
+  const stop = end.stopConfirmedAt ?? null, refusal = end.refusalFrozenAt ?? null;
+  if (stop !== null && (refusal === null || stop < refusal)) return { state: "cancelled", waitReason: "owner_stop" };
+  if (refusal !== null) return { state: "refused", waitReason: "app_child_not_allowed" };
+  return end.failed ? { state: "failed", waitReason: "turn_failed" } : { state: "completed", waitReason: null };
 }
 
 /** What the owner sees for a run state (rule 9: say what it waits for). Never an error for capped or over capacity. */
@@ -166,15 +187,17 @@ export function appRunDisplay(run: Pick<AppEventRun, "state" | "waitReason">): s
 const RETRY_SOON_MS = 30_000;
 const GLOBAL_PAUSE_MAX_SEC = 60;
 const PASS_LIMIT = 50;
+const PRUNE_EVERY_MS = 60 * 60 * 1000;
 
 export class AppTriggerDelivery {
   private limits: AppClientLimits | null = null;
   /** A 429 from Flux pauses every control call until this time (README "Rate limit"). */
   private waitUntil = 0;
+  private lastPrune = -Infinity;
   private readonly newId: () => string;
 
   /** `turnAlive` says whether the host still holds a run's root turn (startup reconciliation); absent means none does. */
-  private readonly deps: { store: AppTriggerStore; client: FluxAppEventsClient; home: AppHome; consumerId: string; submit: AppRunSubmit; now: () => number; newId?: () => string; turnAlive?: (run: AppEventRun) => boolean };
+  private readonly deps: { store: AppTriggerStore; client: FluxAppEventsClient; home: AppHome; consumerId: string; submit: AppRunSubmit; now: () => number; newId?: () => string; turnAlive?: (run: AppEventRun) => boolean; taskExists?: (threadId: string) => boolean };
 
   constructor(deps: AppTriggerDelivery["deps"]) {
     this.deps = deps;
@@ -260,6 +283,8 @@ export class AppTriggerDelivery {
       // Its usage is unknown, so no finish is invented: without renewal the Flux lease lapses (runLeaseSec).
       this.deps.store.update(run.runId, { state: "outcome_unknown", waitReason: "restart_unproven", renewDueAt: null, retryAt: null }, this.deps.now(), run.state);
     }
+    // L5H P1 reaper, only after the runs above were settled: kind=run origin rows whose task never came are orphans.
+    if (this.deps.taskExists) this.deps.store.reapOrphanOrigins(this.deps.taskExists);
   }
 
   /** Binding recheck, freshness, bounds and filter, before anything is recorded. No model is involved. */
@@ -304,6 +329,8 @@ export class AppTriggerDelivery {
       }
     }
     this.deps.store.sealDue(now, PASS_LIMIT);
+    // q1022-disk: settled history older than 30 days leaves, checked at most hourly (a full pass of runs each time).
+    if (now - this.lastPrune >= PRUNE_EVERY_MS) { this.lastPrune = now; this.deps.store.pruneSettled(now, PASS_LIMIT); }
   }
 
   // ── runs ──
@@ -392,21 +419,50 @@ export class AppTriggerDelivery {
     if (!running) return;
     try {
       // The run thread is the run's lineage, persisted before its turn starts, so the hard zero sees every turn of it.
-      const threadId = await this.deps.submit.thread(running);
+      // L5H P1: the origin row commits before the task (a reserved id) or, without a reservation, before the root turn.
+      const origin = (threadId: string) => this.deps.store.putOrigin({ threadId, kind: "run", triggerId: running.triggerId, routineId: running.routineId,
+        ownerAccountId: running.ownerAccountId, homeId: this.deps.home.homeId, homeEpoch: this.deps.home.homeEpoch, firstRunId: running.runId, now: this.deps.now() });
+      const reserved = this.deps.submit.reserveThreadId?.(running);
+      if (reserved) origin(reserved);
+      const threadId = await this.deps.submit.thread(running, ...(reserved ? [reserved] : []));
+      if (!reserved || threadId !== reserved) origin(threadId);
       const withThread = this.deps.store.update(run.runId, { threadId }, this.deps.now(), "running");
       if (!withThread) return;
-      const turn = await this.deps.submit.start({ ...withThread, threadId }, this.deps.store.batchMembers(running.batchId));
-      this.deps.store.update(run.runId, { generation: turn.generation }, this.deps.now());
+      const generation = this.deps.submit.allocateGeneration?.({ ...withThread, threadId });
+      if (generation !== undefined && !this.deps.store.bindRootTurn(run.runId, threadId, generation, this.deps.now())) return;
+      const turn = await this.deps.submit.start({ ...withThread, threadId, ...(generation !== undefined ? { generation } : {}) }, this.deps.store.batchMembers(running.batchId));
+      if (generation === undefined && !this.deps.store.bindRootTurn(run.runId, threadId, turn.generation, this.deps.now())) {
+        this.deps.store.update(run.runId, { generation: turn.generation }, this.deps.now());
+      }
     } catch {
       // A turn may have begun, so no zero-usage finish is invented; without renewal the Flux lease lapses.
       this.deps.store.update(run.runId, { state: "outcome_unknown", waitReason: "submission_uncertain", renewDueAt: null, retryAt: null }, this.deps.now(), "running");
     }
   }
 
+  /** L5H settlement. Only the run's own root turn settles it: the turn row must be role=run for the run, the generation must
+   * be the run's root generation and the run must still be running (a CAS, so a replayed turn-end only counts once). Every
+   * other turn (an owner follow-up, a results chat turn, an unknown pair) settles nothing. Returns the settled run or null. */
+  /** The producer's ship gate (Opus self-review M1): settlement is only sound when the root turn is bound before the engine
+   * begins (allocateGeneration). Without it a root turn that ends inside start has no turn row yet and its run never settles. */
+  canSettle(): boolean { return typeof this.deps.submit.allocateGeneration === "function"; }
+
+  settleTurn(threadId: string, generation: string, end: AppTurnEnd): AppEventRun | null {
+    const turn = this.deps.store.turnOwner(threadId, generation);
+    if (!turn || turn.role !== "run" || !turn.runId) return null;
+    const run = this.deps.store.findById(turn.runId);
+    if (!run || run.state !== "running" || run.threadId !== threadId || run.generation !== generation) return null;
+    const settled = appTurnSettlement(end);
+    return this.deps.store.update(run.runId, { state: settled.state, waitReason: settled.waitReason, renewDueAt: null, retryAt: null }, this.deps.now(), "running");
+  }
+
   private renewMs(): number { return (this.limits?.runRenewIntervalSec ?? 30) * 1000; }
 
-  private async renew(run: AppEventRun): Promise<void> {
+  private async renew(candidate: AppEventRun): Promise<void> {
+    // An earlier candidate's request can yield long enough for this run to settle.
+    const run = this.deps.store.findById(candidate.runId);
     const now = this.deps.now();
+    if (run?.state !== "running" || run.retryAt === null || run.retryAt > now) return;
     try {
       const parsed = fluxRunViewSchema.safeParse(await this.deps.client.renew(run.runId, { expectedRevision: run.fluxRevision ?? 0, state: "working" }, operationKey("renew", run.runId, run.fluxRevision ?? 0)));
       if (!parsed.success) { this.deps.store.update(run.runId, { retryAt: now + 5_000 }, now, "running"); return; }

@@ -10,3 +10,8 @@ export function requestFailedSentence(status: number): string {
   if (status >= 500) return "Murage couldn't finish that. Try again in a moment.";
   return "Murage couldn't do that. Try again.";
 }
+
+/** What a desktop request says while the answer comes from anything but this
+ * launch's engine (src/lib/live-events.ts responderIsOurs). The window follows
+ * the engine on its own; nothing here asks the person to do anything. */
+export const RECONNECTING_SENTENCE = "Murage is reconnecting. This will clear on its own in a moment.";

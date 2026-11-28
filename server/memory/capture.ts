@@ -22,18 +22,21 @@ import { withoutImageTags } from "../../src/lib/composer-attachments.ts";
 import { scopeRow } from "./scope-id.ts";
 import { insertScope } from "./scope-insert.ts";
 import { revokeThreadDisclosures } from "./revocation.ts";
-import { commitRevoke, inheritEdge } from "./revoke-commit.ts";
+import { commitRevoke, inheritEdge, replyHiddenFromBots } from "./revoke-commit.ts";
 import { hasWritetime } from "./revoke-marker.ts";
 import { FIRST_LSN } from "./lineage-types.ts";
 import { writeCaptureLineage } from "./lineage-write.ts";
 import { startBranchChange } from "./branch-change.ts";
 import { branchOracle, threadKey } from "../branch-index.ts";
+import { moveSourceDebt, oweThreadCheckpoint } from "./checkpoint-debt.ts";
 import { queueFrontFill, threadIsReady } from "../branch-fill.ts";
-import { threadExcluded, noteThreadDeletion } from "./deny.ts";
+import { sourceDenied, threadExcluded, noteThreadDeletion } from "./deny.ts";
 import { prepareActiveRecallReaders } from "./recall-view.ts";
 import { noteTurnCaptureJob } from "./turn-capture-jobs.ts";
 import { requiredIndexRebuildPending } from "./optional-index.ts";
 import { looksLikeExport } from "../../shared/learn-about-me/detect.ts";
+import { isToolOutcomeWork } from "./jobs.ts";
+import { recordMemoryProcessing } from "./health.ts";
 
 function enabled(db: DatabaseSync) { const mode = db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode as string | undefined; return memoryCaptures(mode, memoryGate(db, "capture") === "ok" ? null : "held"); }
 /** Explicit Flux capture follows the local memory mode, hold, exclusions and deletion denies. */
@@ -82,12 +85,21 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
   const previous = db.prepare("SELECT revision,content_hash,state FROM memory_sources WHERE id=?").get(source.id);
   if (previous?.state === "deleted") return;
   // Idle replay can discover an already captured source has left the branch, even when its content did not change.
-  if (state === "retired" && previous && previous.state !== state)
+  // The flip moves data_revision once (memv2 E5): what is keyed on it judges a source that is no longer active as withdrawn
+  // (lineage-backfill.ts citedMemo), so a stale "still active" verdict must not survive the flip.
+  const retiring = state === "retired" && previous !== undefined && previous.state !== state;
+  if (retiring) {
     db.prepare("UPDATE memory_sources SET state='retired' WHERE id=?").run(source.id);
+    db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
+    // its job's checkpoint can never roll now: a thread marker it held goes to the thread's next owed job (memv2 E3)
+    moveSourceDebt(db, source.id);
+  }
   if (previous?.content_hash === hash) {
     // Metadata changes do not enqueue extraction or duplicate captured text.
     const version = db.prepare("SELECT payload FROM memory_source_versions WHERE source_id=? AND revision=?").get(source.id,previous.revision);
     const merged = JSON.stringify({ ...JSON.parse(String(version?.payload ?? "{}")), ...JSON.parse(payload) });
+    // A patch that changes nothing in what is stored (a streaming patch, a replay) writes nothing (mem-f6): the same bytes were rewritten per patch.
+    if (version && merged === String(version.payload)) return;
     db.prepare("UPDATE memory_source_versions SET payload=? WHERE source_id=? AND revision=?").run(merged,source.id,previous.revision);
     return;
   }
@@ -97,7 +109,12 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
     if(version){const prior=JSON.parse(String(version.payload));delete prior.origin;delete prior.engine;delete prior.actionCheck;if(JSON.stringify(prior)===JSON.stringify(content))return;}
   }
   const revision = previous ? Number(previous.revision)+1 : 1;
-  db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
+  // One data_revision bump per commit, and only where what is keyed on it can read differently (design 4.1 E5). A NEW tool outcome is
+  // never a record (jobs.ts isToolOutcomeWork) and nothing cites it yet: searches, eligibility and the cited memo read the same; the
+  // checkpoint that quotes it bumps when it is rolled. A REVISED source moves on from a revision something may cite (citedMemo marks
+  // the old revision bad), so it bumps, a tool outcome too; a flip above in this capture already bumped.
+  const toolSource = source.kind === "tool-outcome" || source.kind === "activity";
+  if (!retiring && !(toolSource && !previous)) db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
   db.prepare(`INSERT INTO memory_sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
     revision=excluded.revision,content_hash=excluded.content_hash,outcome=excluded.outcome,kind=excluded.kind,state=excluded.state,branch_id=excluded.branch_id`)
     .run(source.id,scope,source.threadId,source.messageId??null,source.turnId??null,revision,hash,source.kind,source.speaker,source.outcome,source.parentId??null,source.excluded?"retired":state);
@@ -107,15 +124,36 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
     // a source captured from a denied line is marked at its write (DRAIN-104 2.11): the walk that passed the line may be done
     inheritEdge(db,{kind:"source",id:source.id},{threadId:source.threadId,messageId:source.messageId});}
   db.prepare("UPDATE memory_jobs SET status='cancelled',lease_generation=lease_generation+1 WHERE source_id=? AND status NOT IN ('complete','cancelled')").run(source.id);
+  // A checkpoint an earlier revision's job still owes can never be rolled once the source has moved on (the debt driver refuses a marker whose
+  // revision is not the source's): it goes with the revision, as that revision's open job does above. The new revision owes its own.
+  // A thread marker it held is handed to the thread's next owed job (memv2 E3, checkpoint-debt.ts).
+  if (previous) moveSourceDebt(db, source.id);
   forgetParkedSource(db,source.id);
   const meta = db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;
   // A turn still running (`working`) can never be claimed at this revision: its settlement is a new revision that cancels this
   // job. The job is born closed (claim-settle.ts), so it never sits in the open statuses, and it is not noted as the thread's
   // newest capture job: that is still the prompt's, which a starting turn claims first (worker-controller claimTurnCritical).
   const jobId = randomUUID(), working = source.outcome === "working", bornComplete = Boolean(source.excluded || failedTool || (emptyTool && !working)), jobDone = bornComplete || working;
-  db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,error,policy_revision,deletion_epoch) VALUES(?,?,?,'capture','1',?,?,?,?)")
+  // What a tool returned and a turn's own settlement row have nothing for the capture stage to write: publishMemoryWork makes no record for
+  // either (jobs.ts isToolOutcomeWork; chunks.ts gives a turn no chunks). Their job is therefore written as that publish would leave it, in
+  // this transaction (mem-f6): whole text covered, complete, and owing the thread checkpoint through the same durable marker
+  // (worker-controller.ts recoverCheckpoints), with no claim, lease, helper round trip or publish. Only where a publish would be accepted
+  // now, by its own fence: the source is on the branch and not denied (the tombstone and place denies were refused above, and the policy
+  // revision and deletion epoch are read in this transaction). Anything else keeps the claimable job, which parks, restores and is fenced
+  // as before. The checkpoint still judges its evidence when it rolls (consolidate.ts checkpointEvidence): a forget or deny after this
+  // write keeps the text out exactly as it does after a publish.
+  const derived = source.kind === "turn" || isToolOutcomeWork(source);
+  const settled = !jobDone && derived && !source.excluded && state === "active" && !sourceDenied(db, source.id);
+  if (settled) {
+    const bytes = Number(db.prepare("SELECT length(CAST(json_extract(payload,'$.text') AS BLOB)) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(source.id,revision)!.bytes);
+    db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,cursor,coverage,policy_revision,deletion_epoch) VALUES(?,?,?,'capture','1','complete',?,?,?,?)")
+      .run(jobId,source.id,revision,bytes,JSON.stringify({throughByte:bytes,totalBytes:bytes}),meta.policy_revision,meta.deletion_epoch);
+    // the thread's one debt marker (memv2 E3): a thread already owed adds no row, its roll covers this job
+    oweThreadCheckpoint(db, {jobId, sourceId: source.id, revision, scopeId: scope});
+    recordMemoryProcessing(Date.now());
+  } else db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,error,policy_revision,deletion_epoch) VALUES(?,?,?,'capture','1',?,?,?,?)")
     .run(jobId,source.id,revision,bornComplete ? "complete" : working ? "cancelled" : "pending",working && !bornComplete ? "settled:working" : null,meta.policy_revision,meta.deletion_epoch);
-  if (!jobDone) noteTurnCaptureJob(source.threadId, jobId); // a starting turn claims its own capture by this id (worker-controller claimTurnCritical)
+  if (!jobDone && !settled) noteTurnCaptureJob(source.threadId, jobId); // a starting turn claims its own capture by this id (worker-controller claimTurnCritical)
   enqueueProcedureSourceReview(db,source.id,revision);
   if(previous){
     // a bot's stance rests on its own scope's sources: only that bot is reconciled (the primary-key lookup); a source of another kind of scope reconciles them all, through the index
@@ -295,6 +333,10 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   // Engine notices and Murage's own status rows (the held queue) are not tool outcomes.
   const tool = message.kind === "activity" && typeof message.tool?.ok === "boolean" && !message.tool.notice && !message.murage && message.actorKind !== "murage";
   if (message.kind === "activity" && (message.tool?.notice || message.murage || message.actorKind === "murage")) return;
+  // A tool call still running has no outcome yet: it is captured once, when the row carries one (mem-f6). Before, the running row was written
+  // as an excluded source with its own version and job, and every progress patch came back through here. A row that already has a source
+  // (written by an earlier build, or an outcome that went back to running) is left to the code below, as before.
+  if (message.kind === "activity" && message.tool && !tool && !db.prepare("SELECT 1 FROM memory_sources WHERE id=?").get(`message:${threadId}:${message.id}`)) return;
   // Streaming text waits for the terminal patch; never snapshot each delta.
   if (message.kind === "text" && !userText && !finalText) return;
   // An export pasted into chat is left out of memory, and so is the bot's answer to it (PASTE-CAPTURE-FIX 3.2): the row keeps its metadata
@@ -303,7 +345,10 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   // empty payload, never a source text and never a tool-observation. HighLevel's reads, changes and status (HL-S2-RO 1.0.18) answer with
   // HighLevel's own records and are left out the same way.
   const leftOut = userText && isExportPaste(message) ? "export-paste" : finalText && answersExportPaste(db, threadId, message) ? "export-paste-reply"
-    : tool && (isEmailReadToolName(message.tool!.name) || isHighLevelChangeToolName(message.tool!.name)) ? "external-mail" : undefined;
+    : tool && (isEmailReadToolName(message.tool!.name) || isHighLevelChangeToolName(message.tool!.name)) ? "external-mail"
+    // CTXREV H2 A-2: a reply kept after an own privacy revoke of what its turn held is hidden from bots (revoke-commit.ts hideReplyLine);
+    // its words may carry the revoked detail, so it is never a source to learn from either
+    : finalText && replyHiddenFromBots(db, threadId, message.id) ? "withheld-reply" : undefined;
   // A completed tool row that carries nothing but the tool's name (read_file with no text) has nothing to learn from (MEMORY-TOOL-NAME-JUNK):
   // its payload text is empty and its job is born complete (captureSource), so no source text is ever just a tool name. It keeps its
   // metadata and its `action` label and stays active, so what the bot did is still admitted as an action (pip-admission.ts actionRow).
@@ -353,7 +398,7 @@ export function captureThreadDeletion(db: DatabaseSync, threadId: string) {
   // unknown phase or format included (memory-revocation.ts stepJobRow, MEMDEL-SIMPLIFY-109). So both standing means the cleanup is
   // finished or still durably owed: a replay of this deletion (the boot reconcile) writes nothing.
   const committed = Boolean(db.prepare("SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(threadId)) && hasWritetime(db)
-    && Boolean(db.prepare("SELECT 1 FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation' LIMIT 1").get(threadId, FIRST_LSN));
+    && Boolean(db.prepare("SELECT 1 FROM memory_deny_point WHERE thread_id=? AND lsn=? AND reason='delete-conversation' LIMIT 1").get(threadId, FIRST_LSN));
   if (committed) return;
   // The deny row is written whatever memory captured from the conversation (revbound r3 A1, Fable P1-2): a line
   // carried out of it, or a lesson citing one of its messages, has no source row to be refused by, only the conversation's deny.

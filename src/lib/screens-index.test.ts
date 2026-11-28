@@ -36,7 +36,10 @@ describe("screens index (House rule 7)", () => {
   });
 
   it("declares every Settings page, bot settings section and first-run step", () => {
-    for (const page of SECTION_PAGES) expect(screenEntry(`settings:${page.id}`), page.id).toBeDefined();
+    // Settings v10 pages whose own help screen is owed: Rules keeps the Bot defaults screen, Messaging the Messaging apps one.
+    const helpOf: Record<string, string> = { rules: "botDefaults", messaging: "channels" };
+    const noOwnHelp = new Set(["overview", "bots", "tools"]);
+    for (const page of SECTION_PAGES) if (!noOwnHelp.has(page.id)) expect(screenEntry(`settings:${helpOf[page.id] ?? page.id}`), page.id).toBeDefined();
     for (const section of BOT_SETTINGS_SECTIONS) expect(screenEntry(`bot:${section.id}`), section.id).toBeDefined();
     for (const step of SETUP_STEPS) expect(screenEntry(`first-run:${step}`), step).toBeDefined();
   });

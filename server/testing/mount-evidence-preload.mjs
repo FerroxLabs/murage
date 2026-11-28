@@ -16,7 +16,7 @@ if (isMainThread) registerHooks({ load(url, context, next) {
   return { ...loaded, source: source.replace(closeAnchor, closeAnchor + `
     try { unlinkSync(this.socketPath + '.fixture-metadata.json'); } catch {}
   `).replace(anchor, anchor + `
-      const fixtureMetadataFields = ['MURAGE_TURN_DEPTH', 'MURAGE_EMAIL', 'MURAGE_VENUE_POST', 'MURAGE_PROJECT_ROLE'];
+      const fixtureMetadataFields = ['MURAGE_EMAIL', 'MURAGE_VENUE_POST', 'MURAGE_PROJECT_ROLE'];
       const fixtureMetadata = Object.fromEntries([...entries].map(([name, entry]) => [name, Object.fromEntries(fixtureMetadataFields.flatMap(key => typeof entry.env?.[key] === 'string' ? [[key, entry.env[key]]] : []))]));
       // Windows relay addresses are named pipes, not filesystem sidecar paths.
       if (process.platform !== 'win32') (await import('node:fs')).writeFileSync(relay.socketPath + '.fixture-metadata.json', JSON.stringify({mounts: fixtureMetadata}), {mode:0o600});

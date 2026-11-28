@@ -69,11 +69,15 @@ describe.skipIf(process.platform === "win32")("mac-minos-report", () => {
 describe("Mac runner pins", () => {
   const read = (path) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), "utf8");
 
+  // explicit allow-list (no prefix match): a moving label such as macos-latest must still fail
+  const MAC_RUNNER_LABELS = ["macos-15", "macos-15-xlarge", "macos-15-intel"];
+
   it("the Mac build jobs use the fixed macos-15 label, never a moving or retired one", () => {
     for (const path of [".github/workflows/release.yml", ".github/workflows/package-mac-qualification.yml", ".github/workflows/mac-notification-authorization-preflight.yml"]) {
-      const labels = [...read(path).matchAll(/^\s*runs-on: (macos-\S+)/gm)].map(match => match[1]);
+      // release.yml reads the label through a repo variable whose fallback is the fixed label
+      const labels = [...read(path).matchAll(/^\s*runs-on: (?:\$\{\{ vars\.MURAGE_MAC_(?:INTEL_)?RELEASE_RUNNER \|\| \')?(macos-[^\s\']+)/gm)].map(match => match[1]);
       expect(labels.length, path).toBeGreaterThan(0);
-      expect(labels.filter(label => label !== "macos-15" && label !== "macos-15-intel"), path).toEqual([]);
+      expect(labels.filter(label => !MAC_RUNNER_LABELS.includes(label)), path).toEqual([]);
     }
   });
 

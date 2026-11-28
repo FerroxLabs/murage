@@ -211,22 +211,27 @@ const NUMERIC_VALUE = /^\d+$/;
  * in the word `Bearer`, and masking that first would hide the token after it
  * from BEARER. JWT stays ahead of the prefixes for the reason above: a `-sk-…`
  * run inside a signature must not split the token. */
-export const TEXT_RULES: readonly (readonly [string, TrackedRule])[] = [
-  ["PEM_BLOCK", redactPemBlocks],
-  ["BEARER", (text, edits) => replaceTracked(text, BEARER, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`, edits)],
+/** The rules that mask the VALUE after a key or label (`api_key=v`, `?token=v`), with the value's mask passed in: `mask` for every
+ * strict reader, the owner-zone floor (ownerZoneMask) for the owner's own direct chat. */
+const labelValueRules = (maskValue: (value: string, key?: string) => string): readonly (readonly [string, TrackedRule])[] => [
   ["KEY_VALUE", (text, edits) => replaceTracked(text,
     KEY_VALUE,
     (_m, _q: string, leadA: string | undefined, keyA: string | undefined, leadB: string | undefined, keyB: string | undefined, sep: string, quote: string, value: string) =>
-      `${leadA ?? leadB}${keyA ?? keyB}${sep}${quote}${mask(value)}${quote}`, edits,
+      `${leadA ?? leadB}${keyA ?? keyB}${sep}${quote}${maskValue(value, keyA ?? keyB)}${quote}`, edits,
   )],
-  ["QUERY_KEY", (text, edits) => replaceTracked(text, QUERY_KEY, (match: string, lead: string, value: string) => (NUMERIC_VALUE.test(value) ? match : `${lead}${mask(value)}`), edits)],
+  ["QUERY_KEY", (text, edits) => replaceTracked(text, QUERY_KEY, (match: string, lead: string, value: string) => (NUMERIC_VALUE.test(value) ? match : `${lead}${maskValue(value)}`), edits)],
+];
+export const TEXT_RULES: readonly (readonly [string, TrackedRule])[] = [
+  ["PEM_BLOCK", redactPemBlocks],
+  ["BEARER", (text, edits) => replaceTracked(text, BEARER, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`, edits)],
+  ...labelValueRules(mask),
   ["JWT", (text, edits) => replaceTracked(text, JWT, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`, edits)],
   ...KEY_PREFIXES.map((re, index) => [`KEY_PREFIXES[${index}]`, (text: string, edits?: EditCollector) => replaceTracked(text, re, (m) => mask(m), edits)] as const),
   // Bank, card, account and personal id numbers keep their shape and lose
   // their digits, byte for byte (shared/financial-ids.ts). Last, so a secret
   // rule above sees the text as typed.
   ["FINANCIAL_ID", (text, edits) => {
-    const shown = maskFinancialIdentifiers(text);
+    const shown = keepDecimalNumbers(text, maskFinancialIdentifiers(text));
     for (let at = 0; at < text.length;) {
       if (text[at] === shown[at]) { at++; continue; }
       const start = at++; while (at < text.length && text[at] !== shown[at]) at++;
@@ -237,11 +242,59 @@ export const TEXT_RULES: readonly (readonly [string, TrackedRule])[] = [
 ];
 
 
+/** A decimal number is not a card. The card rule reads any 13 to 19 digit
+ * Luhn-valid run "wherever it stands" and takes a dot as a group separator, so
+ * about one float in ten with a long fraction (a search score such as
+ * `4.718623638153076` in a tool's JSON result) was masked as a card, and that
+ * one hit latched the whole turn for its audience. Kept as typed: a digit run
+ * that is exactly ONE decimal literal (one to three digits, one dot, ten to
+ * eighteen digits; no digit, letter, `_` or further group joined on either
+ * side) and that the rules mask standing alone, i.e. with no context word. A
+ * card in any real grouping (three or more groups, spaces, dashes, a four
+ * digit first group) and every number beside a bank or id word stay masked. */
+const DECIMAL_LITERAL = /(?<![A-Za-z0-9_])(?<!\d[ \t.\/-]{1,2})\d{1,3}\.\d{10,18}(?![A-Za-z0-9_])(?![ \t.\/-]{1,2}\d)/g;
+function keepDecimalNumbers(text: string, shown: string): string {
+  if (shown === text) return shown;
+  let out = shown;
+  for (const m of text.matchAll(DECIMAL_LITERAL)) {
+    const start = m.index, end = start + m[0].length;
+    if (shown.slice(start, end) === m[0]) continue;
+    // Only the context-free hit: the literal alone masks the same way.
+    if (maskFinancialIdentifiers(m[0]) !== shown.slice(start, end)) continue;
+    out = out.slice(0, start) + m[0] + out.slice(end);
+  }
+  return out;
+}
+
 const USER_TEXT_WORK = 1_048_576;
+/** MAIN-RULING cause22-no-transport-caps (1.0.21): a reply of any size is redacted and shown, never swapped whole for
+ * the marker because it is long. Ordinary text costs about 3 work units a character; the allowance per character keeps
+ * the scan linear in the text, so only work out of proportion to the text (not its size) still fails closed. */
+const USER_TEXT_WORK_PER_CHAR = 64;
 type TextScanResult = ReturnType<typeof scan>;
+/** A long text is scanned whole now (no size cap), and one owner line reaches this pass from several sinks in the same turn (row
+ * store, transcript, search, the engine's copy). The scan is a pure function of the text, so the last few long results are reused:
+ * the same answer, without re-paying a linear scan per sink that pushed a 900 KB steer past its 4 s acknowledgement window. */
+const USER_SCAN_MEMO_MIN = 65_536, USER_SCAN_MEMO_ENTRIES = 4, USER_SCAN_MEMO_CHARS = 16 * 1_048_576;
+const userScanMemo = new Map<string, TextScanResult>();
 function redactUserLabels(text: string): TextScanResult {
-  try { return scan(text, { mode: "user", providers: false, budget: USER_TEXT_WORK }); }
+  const memo = text.length >= USER_SCAN_MEMO_MIN && text.length <= USER_SCAN_MEMO_CHARS;
+  if (memo) {
+    const hit = userScanMemo.get(text);
+    if (hit) { userScanMemo.delete(text); userScanMemo.set(text, hit); return hit; }
+  }
+  let result: TextScanResult;
+  try { result = scan(text, { mode: "user", providers: false, budget: USER_TEXT_WORK, perChar: USER_TEXT_WORK_PER_CHAR }); }
   catch { return { text: "«redacted»", detected: true, exhausted: true, candidates: [], spans: [], workUnits: USER_TEXT_WORK }; }
+  if (memo) {
+    userScanMemo.set(text, Object.freeze(result));
+    let chars = 0; for (const key of userScanMemo.keys()) chars += key.length;
+    for (const key of userScanMemo.keys()) {
+      if (userScanMemo.size <= USER_SCAN_MEMO_ENTRIES && chars <= USER_SCAN_MEMO_CHARS) break;
+      userScanMemo.delete(key); chars -= key.length;
+    }
+  }
+  return result;
 }
 /** Forward the shared scanner's original spans through subsequent Basic masking. */
 const trackedUserLabels: TrackedRule = (text, edits) => {
@@ -274,6 +327,195 @@ const formatDiagnostic:TrackedRule=(text,edits)=>replaceTracked(text,
   (_m,name,mark)=>`${name} ${mark}`,edits);
 export const DIAGNOSTIC_SECRET_STAGES = [basicStage(textRules,textMarker),tracked(formatDiagnostic),...TEXT_SECRET_STAGES];
 export const baseSecretsInText=(text:string)=>runStages(text,TEXT_SECRET_STAGES);
+/** q1023-ownermask (MAIN PREPARED OPTION B, the owner's own private direct chat, as upstream OpenMausBot): only the high-precision
+ * credential SHAPES are masked in place (a PEM private-key block, a Bearer token, a JWT, the vendor-prefix keys of KEY_PREFIXES and
+ * the vendor rules of shared/provider-secret-mask.mjs), each as the same «redacted N chars» marker. Label, key=value, query, financial
+ * and user-label rules are not run: an unsure value is shown. Every other reader keeps redactSecretsInText. */
+const CREDENTIAL_SHAPE_RULES = TEXT_RULES.filter(([name]) => name === "PEM_BLOCK" || name === "BEARER" || name === "JWT" || name.startsWith("KEY_PREFIXES[")).map(([,rule])=>rule);
+export const CREDENTIAL_SHAPE_STAGES = [basicStage(CREDENTIAL_SHAPE_RULES,textMarker)];
+export function redactCredentialShapesInText(text:string):string {
+  if(!text)return text;
+  return maskVendorLast(text,CREDENTIAL_SHAPE_STAGES,textMarker);
+}
+/** q1023-ownershow (MAIN option B + MAIN-RULING 2026-11-27T03:17:37Z labelled-value floor): THE owner-zone rule, the one test every
+ * masker on the owner's own direct-chat path applies to a value after a credential label: it is masked in place only when it is
+ * LABEL_FLOOR (16) or more characters or itself holds a credential shape; a shorter labelled value (`token: D-4821`) is shown.
+ * harness/masked-values.ts grades the turn's recorded values with it; redactOwnerZone masks the owner's reply text with it. */
+export const LABEL_FLOOR = 16;
+/** The value's own characters: the quotes, backticks, brackets and Markdown emphasis around it and the punctuation after it are not
+ * counted (`token: D-4821`, **token:** D-4821). */
+const ownValueOf = (value: string) => {
+  // a bold label's closer before the value (`** D-4821`), then quotes/backticks/brackets and trailing punctuation, then emphasis only
+  // as a matched pair around the value (`**D-4821**`): a lone `_` or `*` at one edge is part of the value and counted
+  const bare = value.trim().replace(/^[*_~]+(?=\s)/, "").trim().replace(/^[`'"([{<]+/, "").replace(/[`'")\]}>.,;:!?]+$/, "");
+  return (/^([*_~]+)(.+?)\1$/.exec(bare)?.[2] ?? bare).trim();
+};
+const credentialShapeIn = (value: string) => { try { return redactCredentialShapesInText(value) !== value; } catch { return true; } };
+/** One token of key characters with letters AND digits at or over the floor: key material, never a word of a sentence, a URL or
+ * another `name=value` pair. */
+const keyLikeToken = (token: string) => /^[A-Za-z0-9+/_-]{16,}={0,2}$/.test(token) && /[A-Za-z]/.test(token) && /\d/.test(token);
+/** The grade of ONE token (a value with no spaces in it): a credential shape, or its own characters at or over the floor. A value
+ * with words in it is never graded here by its length (q1024-ownermaskboot: that cut the owner's reply after a short value); the
+ * owner zone cuts such a value token by token (ownerValueCuts below). */
+export function ownerZoneGrade(value: string): boolean {
+  if (credentialShapeIn(value)) return true;
+  const own = ownValueOf(value);
+  return !/\s/.test(own) && own.length >= LABEL_FLOOR;
+}
+/** MAIN-RULING ownermask 2026-11-27 (H2): the labels whose value is ALWAYS masked in place in the owner's own chat, whatever its
+ * length or shape. Every other label (token, key, authorization, ...) shows its value as typed unless the value itself is key-like. */
+const STRONG_LABEL = /(?:password|passwd|passphrase|pwd|pin|secret|private[ _-]?key)s?$/i;
+export const ownerZoneStrongLabel = (name: string) => STRONG_LABEL.test(name.replace(/[*`~«»"']/g, "").trim());
+const ownerZoneMask = (value: string, key = "") => ownerZoneStrongLabel(key) || ownerZoneGrade(value) ? mask(value) : value;
+/** A label the strict scanner knows (shared/md-secret-label.mjs SECRET_NAME) or one of the strong labels it does not (passphrase,
+ * pwd, pin), with the marks a Markdown label carries (`**Password:**`), ending at its separator. */
+const OWNER_LABEL_END = /(?<![A-Za-z0-9])((?:api[ _-]?key|apikey|secret|token|password|passwd|passphrase|pwd|pin|authorization|auth[ _-]?token|access[ _-]?key|private[ _-]?key)s?)[*`~_ \t]*[=:]$/i;
+const OWNER_EXTRA_LABEL = /(?<![A-Za-z0-9_-])(?:passphrase|pwd|pin)s?[*`~ \t]*[=:]/gi;
+type OwnerCut = { start: number; end: number };
+/** One whitespace token's own characters: the quotes, brackets and emphasis at its edges and the punctuation after it stay in the text. */
+const tokenCore = (token: string): [lead: number, length: number] => {
+  const lead = /^[`'"([{<*_~]*/.exec(token)![0].length, tail = /[`'")\]}>.,;:!?*_~]*$/.exec(token.slice(lead))![0].length;
+  return [lead, token.length - lead - tail];
+};
+/** MAIN-RULING ownermask 2026-11-27 (H1 + H2): what the owner's own chat masks of ONE label's value on one line, as cuts of that
+ * line. Only the secret's own characters are cut; the words after it are never dropped.
+ * The value is what the writer delimited (the inline code the label stands in, or the quotes/backticks around the value); else its
+ * first token. A strong label masks its value whatever it is; an undelimited one is the whole phrase up to
+ * the first punctuation mark, bracket or dash, or the end of its line (`Password: correct horse battery staple`, `Password: summer is
+ * here 2024, as before.` keeps `, as before.`), on a record line or in prose alike. No word ends it: nothing tells a passphrase's word
+ * from a sentence's, so the rule fails closed (H2 ALWAYS, whatever its shape) and words that run on after an undelimited password
+ * with no punctuation between are masked with it; what the writer delimits (quotes, backticks, inline code) loses only itself, and so
+ * does a real key (a key-like first token is the whole value: `password: <16+ letters and digits> and then restart`, H1). The phrase
+ * also ends before the next secret label of the line (`nextLabel`, where that label's name starts, from the label scan's own list:
+ * `DB_PASSWORD=a b API_TOKEN=c`, `Password: a and token = c`, `pin: 1 then private key: d` leave the second label, whole, to its own rule). Any other
+ * label masks its value only when it is key-like: a token at or over the floor, or a delimited value whose joined tokens are key
+ * material. A key-like token later on the line is masked in place too. */
+function ownerValueCuts(line: string, from: number, strong: boolean, inCode: boolean, nextLabel = Infinity): OwnerCut[] {
+  const cuts: OwnerCut[] = [];
+  let at = from + /^\s*(?:[*_~]+(?=\s|$))?\s*/.exec(line.slice(from))![0].length;
+  if (at >= line.length || line.startsWith("«redacted", at)) return cuts;
+  let after = at;
+  const close = inCode ? line.indexOf("`", at) : "`\"'".includes(line[at]!) ? line.indexOf(line[at]!, at + 1) : -1;
+  if (close > (inCode ? at : at + 1)) {
+    let start = inCode ? at : at + 1, end = close;
+    while (start < end && /\s/.test(line[start]!)) start++;
+    while (end > start && /\s/.test(line[end - 1]!)) end--;
+    const value = line.slice(start, end), tokens = value.split(/\s+/).filter(Boolean);
+    if (value && !value.startsWith("«redacted") && (strong || credentialShapeIn(value) || tokens.some(token => tokenCore(token)[1] >= LABEL_FLOOR) || keyLikeToken(tokens.join("")))) cuts.push({ start, end });
+    after = close + 1;
+  } else {
+    const tokens = [...line.slice(at).matchAll(/\S+/g)].map(m => ({ at: at + m.index, text: m[0] }));
+    const first = tokens[0]!, core = tokenCore(first.text);
+    // H2 "whatever its length or shape": a strong value of punctuation only (`pwd: !!!!`) has no core; the token itself is the value
+    const [lead, length] = strong && core[1] === 0 ? [0, first.text.length] : core;
+    after = first.at + first.text.length;
+    if (length > 0 && strong) {
+      let last = 0;
+      // a real key (ruling H1: "a real key with words after it keeps those words"): the key-like token is the whole value
+      const keyFirst = keyLikeToken(first.text.slice(lead, lead + length)) || credentialShapeIn(first.text.slice(lead, lead + length));
+      while (!keyFirst && last + 1 < tokens.length && tokens[last + 1]!.at + tokens[last + 1]!.text.length <= nextLabel && !/[.,;:!?)\]}]$/.test(tokens[last]!.text) && /^[\p{L}\p{N}]/u.test(tokens[last + 1]!.text)) last++;
+      const [endLead, endLength] = tokenCore(tokens[last]!.text);
+      cuts.push({ start: first.at + lead, end: last === 0 ? first.at + lead + length : tokens[last]!.at + endLead + endLength });
+      after = tokens[last]!.at + tokens[last]!.text.length;
+    } else if (length >= LABEL_FLOOR) cuts.push({ start: first.at + lead, end: first.at + lead + length });
+  }
+  for (const m of line.slice(after).matchAll(/\S+/g)) {
+    const [lead, length] = tokenCore(m[0]);
+    if (keyLikeToken(m[0].slice(lead, lead + length))) cuts.push({ start: after + m.index + lead, end: after + m.index + lead + length });
+  }
+  return cuts;
+}
+/** Every cut the owner's own chat makes for the labelled values of a text (absolute offsets, sorted, not overlapping), or undefined
+ * when the label scan ran out of budget (the caller fails closed to the strict text). Walks the text line by line, every label of
+ * every line (the strict scanner stops at the first label it cannot bound and masks to the end of the text: the cut reply of the
+ * field report). A label with nothing after it on its line takes the next non-empty line as its value; after any label, a later
+ * line that is one key-like token (a key wrapped below its label) is masked in place. */
+function ownerLabelCuts(text: string, pem: readonly Readonly<{ from: number; to: number }>[]): OwnerCut[] | undefined {
+  const cuts: OwnerCut[] = pem.map(span => ({ start: span.from, end: span.to }));
+  try {
+    let pending: { strong: boolean } | undefined, seen = false;
+    for (let start = 0; start <= text.length;) {
+      let end = text.indexOf("\n", start); if (end < 0) end = text.length;
+      const line = text.slice(start, end);
+      if (line.trim() && !/^\s*(?:```|~~~)[\w-]*\s*$/.test(line)) {
+        const ends = new Set(secretLabels.findSecretLabels(line).map(label => label.sepEnd));
+        OWNER_EXTRA_LABEL.lastIndex = 0;
+        for (let m; (m = OWNER_EXTRA_LABEL.exec(line));) ends.add(m.index + m[0].length);
+        const labels = [...ends].sort((x, y) => x - y);
+        if (pending && !labels.length) for (const cut of ownerValueCuts(line, 0, pending.strong, false)) cuts.push({ start: start + cut.start, end: start + cut.end });
+        else if (seen && !labels.length) {
+          const own = ownValueOf(line), at = line.indexOf(own);
+          // a UUID line is an ordinary id of a listing, never key material (q1023-heldscan, MAIN-RULING 2026-11-26T17:44Z)
+          if (own && at >= 0 && !/\s/.test(own) && keyLikeToken(own) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(own)) cuts.push({ start: start + at, end: start + at + own.length });
+        }
+        pending = undefined;
+        for (const sepEnd of labels) {
+          seen = true;
+          const head = line.slice(0, sepEnd), name = OWNER_LABEL_END.exec(head), labelAt = name ? name.index : sepEnd;
+          const strong = name ? ownerZoneStrongLabel(name[1]!) : false;
+          const inCode = (line.slice(0, labelAt).match(/`/g)?.length ?? 0) % 2 === 1;
+          if (!/[^\s*_~`]/.test(line.slice(sepEnd))) { if (sepEnd === labels.at(-1)) pending = { strong }; continue; }
+          const next = labels.find(later => later > sepEnd), nextName = next === undefined ? null : OWNER_LABEL_END.exec(line.slice(0, next));
+          const nextLabel = next === undefined ? undefined : nextName ? nextName.index : next - 1;
+          for (const cut of ownerValueCuts(line, sepEnd, strong, inCode, nextLabel)) cuts.push({ start: start + cut.start, end: start + cut.end });
+        }
+      }
+      start = end + 1;
+    }
+  } catch { return undefined; }
+  cuts.sort((x, y) => x.start - y.start || y.end - x.end);
+  const merged: OwnerCut[] = [];
+  for (const cut of cuts) { const last = merged.at(-1); if (last && cut.start < last.end) last.end = Math.max(last.end, cut.end); else if (cut.end > cut.start) merged.push({ ...cut }); }
+  return merged;
+}
+/** The label scan's PEM-body spans (masked as for every reader) and whether the scan ran out of budget. */
+function ownerLabelScan(text: string): { cuts: OwnerCut[]; pem: Set<number> } | undefined {
+  const result = redactUserLabels(text);
+  if (result.exhausted) return undefined;
+  const pem = (result.spans ?? []).filter(span => (span as typeof span & { pem?: boolean }).pem === true && !secretLabels.isExactMarker(text.slice(span.from, span.to).trim()));
+  const cuts = ownerLabelCuts(text, pem);
+  return cuts && { cuts, pem: new Set(pem.map(span => span.from)) };
+}
+/** The labelled values the owner's own chat masks in place in this text, each as written (harness/masked-values.ts marks exactly
+ * these credential grade, never the line they stand on: the words kept after a value must not count as parts of it). */
+export function ownerZoneLabelValues(text: string, joinAt = -1): string[] {
+  const scanned = ownerLabelScan(text);
+  // `joinAt`: the text is two texts read as one (the recorder's reading of a reply after the end of the one before it). A value that
+  // runs across the join is no value either text wrote (`Your password: ab12` + `Short link: ...` is not the password `ab12Short`):
+  // it is not taken, each side's own values are.
+  return scanned ? scanned.cuts.filter(cut => !scanned.pem.has(cut.start) && !(cut.start < joinAt && cut.end > joinAt)).map(cut => text.slice(cut.start, cut.end)) : [];
+}
+/** A strong label stands in the text (MAIN-RULING ownermask H2). The strict projection of such a reply can be clean (passphrase, pwd
+ * and pin are no labels of the strict scanner, and it passes a password of plain words), and the owner's own chat still masks the
+ * value: owner-display.ts ownerMaskedReplyText enters the owner zone on it. */
+const STRONG_LABEL_IN = /(?<![A-Za-z0-9])(?:password|passwd|passphrase|pwd|pin|secret|private[ _-]?key)s?[*`~_ \t]*[=:]/i;
+export function ownerZoneStrongLabelIn(text: string): boolean { return STRONG_LABEL_IN.test(text); }
+/** The owner's own chat, labelled values (MAIN-RULING ownermask 2026-11-27): each secret value is replaced in place by its marker and
+ * nothing else of the text changes. Fail closed to the strict text only when the label scan itself ran out of budget. */
+const ownerZoneUserLabels: TrackedRule = (text, edits) => {
+  const scanned = ownerLabelScan(text);
+  if (!scanned) return trackedUserLabels(text, edits);
+  const parts: string[] = []; let at = 0;
+  for (const cut of scanned.cuts) {
+    const rest = text.slice(cut.start, cut.end);
+    const shown = scanned.pem.has(cut.start) ? `\n«redacted ${rest.trim().length} chars»\n` : `«redacted ${rest.length} chars»`;
+    parts.push(text.slice(at, cut.start), shown); at = cut.end;
+    edits?.({ start: cut.start, end: cut.end, length: shown.length });
+  }
+  parts.push(text.slice(at));
+  return parts.join("");
+};
+const ownerZoneLabelRules = new Map(labelValueRules(ownerZoneMask));
+// the strict chain (TEXT_SECRET_STAGES) rule for rule, in the same order; only the labelled-value rules take the floor
+const OWNER_ZONE_RULES = [ownerZoneUserLabels, ...TEXT_RULES.map(([name, rule]) => ownerZoneLabelRules.get(name) ?? rule)];
+const OWNER_ZONE_STAGES = [basicStage(OWNER_ZONE_RULES, textMarker)];
+/** The owner's own direct chat (owner-display.ts ownerMaskedReplyText, the store's write of an ownerMasked row, the owner's own read
+ * and live frame of it): the strict pass (redactSecretsInText) with every labelled value graded by ownerZoneGrade. Credential shapes,
+ * vendor keys, basic-auth and financial ids are masked as for every reader. Shared rooms, channels, diagnostics and logs never use it. */
+export function redactOwnerZone(text: string): string {
+  if (!text) return text;
+  return maskVendorLast(text, OWNER_ZONE_STAGES, textMarker);
+}
 export const baseSecretsForSink=(text:string)=>runStages(text,SINK_SECRET_STAGES);
 export const baseDiagnosticCredentials=(text:string)=>runStages(text,DIAGNOSTIC_SECRET_STAGES);
 export function redactEngineDiagnosticCredentials(text:string):string {
@@ -423,8 +665,8 @@ function compatibilitySpans(text: string, spend: ScanCharge): SecretSpan[] {
 
 /** The complete turn checker has ONE SSB cap, including all legacy passes.
  * Meter totals are returned by scan(), even when a later pass exhausts. */
-export function scanTurnText(text: string, options: { mode?: "turn"; budget?: number; vendor?: boolean } = {}): SecretScanResult {
-  return scan(text, { mode: "turn", budget: options.budget ?? SECRET_SCAN_BUDGET, vendor: options.vendor, turnComplete: true }, (original, result, spend) => {
+export function scanTurnText(text: string, options: { mode?: "turn"; budget?: number; perChar?: number; vendor?: boolean } = {}): SecretScanResult {
+  return scan(text, { mode: "turn", budget: options.budget ?? SECRET_SCAN_BUDGET, perChar: options.perChar, vendor: options.vendor, turnComplete: true }, (original, result, spend) => {
     const spans = [...(result.spans ?? []), ...compatibilitySpans(original, spend)];
     spend(spans.length * (1 + Math.ceil(Math.log2(spans.length + 1))));
     spans.sort((a, b) => a.from - b.from || b.to - a.to);

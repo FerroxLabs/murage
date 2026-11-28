@@ -226,6 +226,29 @@ describe("connected-app operations", () => {
   });
 });
 
+describe("No limits keeps the one-send guard for writes", () => {
+  it("No limits: a retry made while the send runs joins it; the email is sent once", async () => {
+    mode = "delay"; delayMs = 150;
+    const first = relayConnectedAppCall({}, send(1, sendEmail) as never, undefined, undefined, { botId: "bot-a", waitMs: 1_000, noLimits: true });
+    await settle(20);
+    const retry = await relayConnectedAppCall({}, send(2, sendEmail) as never, undefined, undefined, { botId: "bot-a", waitMs: 1_000, noLimits: true });
+    expect(text(await first)).toBe("sent #1");
+    expect({ reply: text(retry), sends: dispatched.length }).toEqual({ reply: expect.stringContaining("sent #1"), sends: 1 });
+  });
+  it("No limits: after a restart mid-send the same email is not sent again", async () => {
+    mode = "hang";
+    let arrive!: () => void;
+    dispatchGate = new Promise<void>((resolve) => { arrive = resolve; });
+    await relayConnectedAppCall({}, send(1, sendEmail) as never, undefined, undefined, { botId: "bot-a", waitMs: 20, lifetimeMs: 60_000, noLimits: true });
+    arrive();
+    await vi.waitFor(() => expect(dispatched).toHaveLength(1));
+    restartConnectedAppOperations();
+    mode = "answer";
+    const retry = await relayConnectedAppCall({}, send(2, sendEmail) as never, undefined, undefined, { botId: "bot-a", waitMs: 20, noLimits: true });
+    expect({ reply: text(retry), sends: dispatched.length }).toEqual({ reply: expect.stringContaining("It was not run again"), sends: 1 });
+  });
+});
+
 describe("connected-app operation ledger bounds", () => {
   const reply = (size: number): RelayReply => ({ status: 200, bytes: new Uint8Array(size), contentType: "application/json" });
   const never = () => true;

@@ -31,7 +31,7 @@ vi.mock("./cloud-home/turn-process.ts", async (original) => {
 });
 
 import {
-  BWRAP_ARGS_FD, BWRAP_ENVIRONMENT, BWRAP_STATUS_FD, bwrapEngineStarted, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_MESSAGE_LINUX_MAC, HOST_POWER_MESSAGE_WINDOWS, HOST_POWER_TEST_UNWRAPPED, POWER_FILTER_SHA256, SEATBELT_POWER_PROFILE, NO_LIMITS_SEATBELT_POWER_PROFILE,
+  BWRAP_ARGS_FD, BWRAP_ENVIRONMENT, BWRAP_STATUS_FD, bwrapEngineStarted, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_MESSAGE_LINUX_MAC, HOST_POWER_MESSAGE_WINDOWS, HOST_POWER_TEST_UNWRAPPED, POWER_FILTER_SHA256, SEATBELT_POWER_PROFILE, NO_LIMITS_SEATBELT_POWER_PROFILE, resetSeatbeltSelectionsForTests, recordSeatbeltLaunchRefusal,
   bwrapOptions, bwrapEarlyExitMessage, closePowerFilter, HOST_POWER_MESSAGE_LONG_TMPDIR, hostPowerDeps, hostPowerStubBase, openPowerFilter, planHostPower, sessionBusPaths, startHostPowerStub, stopHostPowerStubForTests,
   HOST_POWER_GAP_NOTICE, HOST_POWER_UNWRAPPED_DRIVERS, hostPowerGap, hostPowerGapNoticeDue, hostPowerProbeDeps, markHostPowerGapNoticeShown, noteHostPowerGap, probeHostPowerEnvironment, probeOptions, reprobeHostPowerEnvironment, resetHostPowerGapForTests, usernsDenied, usernsGapCause,
 } from "./host-power.ts";
@@ -89,6 +89,7 @@ afterEach(() => {
   Object.assign(hostPowerDeps, realDeps);
   Object.assign(hostPowerProbeDeps, realProbeDeps);
   resetHostPowerGapForTests();
+  resetSeatbeltSelectionsForTests();
   (globalThis as Record<symbol, unknown>)[HOST_POWER_TEST_UNWRAPPED] = true;
   vi.restoreAllMocks();
 });
@@ -114,22 +115,40 @@ describe("where the block is applied (section 2)", () => {
     });
   });
 
+  it("OVERREACH #5: the owner's own turn is not wrapped on any system, a guest or unattended turn still is", () => {
+    for (const platform of ["linux", "darwin"] as const) asPlatform(platform, () => {
+      expect(engineJob({ ownerTurn: true })).toBeUndefined();
+      expect(engineWrapsHostPower({ ownerTurn: true })).toBe(false);
+      expect(hostPowerKeyField({ ownerTurn: true })).toEqual({});
+      expect(engineJob({ ownerTurn: false })).toEqual({ hostPower: true });
+      expect(hostPowerKeyField({ ownerTurn: false })).toEqual({ hostPower: 1 });
+    });
+    asPlatform("win32", () => {
+      // the containment job stays (U24 R3); only the privilege removal, and with it the EPOWER refusal, is left off the owner's turn
+      expect(engineJob({ ownerTurn: true })).toEqual({ name: expect.stringMatching(/^Local\\murage-pip-eng-/) });
+      expect(engineWrapsHostPower({ ownerTurn: true })).toBe(false);
+      expect(engineJob({ ownerTurn: false })).toMatchObject({ hostPower: true });
+    });
+  });
+
   it("the drivers mark their spawns as the design says", () => {
     const claude = source("drivers/claude.ts"), codex = source("drivers/codex.ts"), acp = source("drivers/acp/core.ts"), antigravity = source("drivers/antigravity.ts"), pi = source("drivers/pi.ts");
     // Claude turn and review spawns: the Windows job, no hostPower on Mac or Linux.
-    expect(claude.match(/engineJob\(\{ posixHostPower: false \}\)/g)).toHaveLength(2);
+    // OVERREACH #5: the turn spawn passes the owner-turn mark (the owner's own turn is not wrapped); the helper spawn has no turn.
+    expect(claude.match(/engineJob\(\{ posixHostPower: false \}\)/g)).toHaveLength(1);
+    expect(claude).toContain("engineJob({ posixHostPower: false, ownerTurn: turn.hostPowerOwnerTurn === true })");
     expect(claude).not.toMatch(/engineJob\(\)\)/);
     // Codex: Windows only (revision 4.1).
     // NOLIMITS 1.0.18 envfix c0f4afed4: spawnCli also takes the thread whose PATH it notes; the job is unchanged
     // STOP-NONACP 628bc2fab: the spawn now sits inside gate.launch(entry, () => spawnCli(...)); the job and thread arguments are unchanged
-    expect(codex).toContain("}, engineJob({ posixHostPower: false }), undefined, threadId));");
+    expect(codex).toContain("}, engineJob({ posixHostPower: false, ownerTurn: turn.hostPowerOwnerTurn === true }), undefined, threadId));");
     // ACP: Fuigo is not wrapped on Mac or Linux, every other ACP engine is.
-    expect(acp).toMatch(/const hostPowerOptions = \{ posixHostPower: support\.driverKind !== "fuigoAgent",\s+noLimits: .*powerSession \};/);
+    expect(acp).toMatch(/const hostPowerOptions = \{ posixHostPower: support\.driverKind !== "fuigoAgent",\s+noLimits: .*powerSession, ownerTurn: turn\.hostPowerOwnerTurn === true \};/);
     expect(acp).toContain("}, engineJob(hostPowerOptions), undefined, threadId);"); // envfix c0f4afed4
     // Antigravity: the turn and the helper prompt pass engineJob() on every OS; Pi's turn too.
-    expect(antigravity).toContain("engineJob({ noLimits: noLimits(), powerSession })");
+    expect(antigravity).toContain("engineJob({ noLimits: noLimits(), powerSession, ownerTurn: turn.hostPowerOwnerTurn === true })");
     expect(antigravity.match(/engineJob\(/g)!.length).toBeGreaterThanOrEqual(2);
-    expect(pi).toContain("}, engineJob({ noLimits: (turn.permissionNow?.() ?? turn).noLimits === true, powerSession }), undefined, threadId);"); // envfix c0f4afed4
+    expect(pi).toContain("}, engineJob({ noLimits: (turn.permissionNow?.() ?? turn).noLimits === true, powerSession, ownerTurn: turn.hostPowerOwnerTurn === true }), undefined, threadId);"); // envfix c0f4afed4
     // The block does not read the channel flag, and this phase does not edit auto-approve.ts.
     expect(source("host-power.ts")).not.toContain("fullAccessChannelMessages");
   });
@@ -171,8 +190,8 @@ describe("reuse (section 7)", () => {
       expect(hostPowerKeyField({ posixHostPower: false })).toEqual({});
       expect(hostPowerKeyField()).toEqual({ hostPower: 1 });
     });
-    expect(source("drivers/claude.ts")).toContain("...hostPowerKeyField({ posixHostPower: false }),");
-    expect(source("drivers/codex.ts")).toContain("...hostPowerKeyField({ posixHostPower: false }),");
+    expect(source("drivers/claude.ts")).toContain("...hostPowerKeyField({ posixHostPower: false, ownerTurn: turn.hostPowerOwnerTurn === true }),");
+    expect(source("drivers/codex.ts")).toContain("...hostPowerKeyField({ posixHostPower: false, ownerTurn: turn.hostPowerOwnerTurn === true }),");
     expect(source("drivers/acp/core.ts")).toContain("...(engineWrapsHostPower(hostPowerOptions) ? [{ hostPower: 1 }] : []),");
   });
 });
@@ -339,7 +358,7 @@ describe("Linux plan (section 4)", () => {
 });
 
 describe("macOS plan (section 5)", () => {
-  it("E2 No limits falls back on a refused macOS profile once per session, lower levels stay wrapped", () => {
+  it("E2 No limits falls back on a refused macOS profile once per session, lower levels stay wrapped or refused", () => {
     const sandboxExec = join(scratch(), "sandbox-exec");
     writeFileSync(sandboxExec, "fixture");
     Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec });
@@ -347,16 +366,71 @@ describe("macOS plan (section 5)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const session = {};
     for (let i = 0; i < 3; i++) expect(planHostPower("muse", ["serve"], {}, scratch(), session)).toMatchObject({ kind: "unwrapped" });
-    expect(probe).toHaveBeenCalledTimes(1);
     expect(probe.mock.calls[0]?.[1]).toEqual(["-p", NO_LIMITS_SEATBELT_POWER_PROFILE, "/usr/bin/true"]);
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(planHostPower("muse", ["serve"], {}, scratch())).toMatchObject({ kind: "seatbelt", args: ["-p", SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    const probes = probe.mock.calls.length;
+    expect(probes).toBe(3);
+    expect(warn.mock.calls.filter((call) => String(call[0]).includes("No limits session runs without")).length).toBe(1);
+    // A level below No limits whose every rule macOS refuses stays refused (GROK-HOLD), never unwrapped.
+    expect(planHostPower("muse", ["serve"], {}, scratch())).toMatchObject({ kind: "refuse" });
+    expect(planHostPower("muse", ["serve"], {}, scratch())).toMatchObject({ kind: "refuse" });
+    expect(probe.mock.calls.length).toBe(probes + 4); // the 3 variants a No limits plan already probed are not probed again
     probe.mockReturnValue({ code: 0, stderr: "" });
-    expect(planHostPower("muse", ["serve"], {}, scratch(), {})).toMatchObject({ kind: "seatbelt", args: ["-p", NO_LIMITS_SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    resetSeatbeltSelectionsForTests();
+    expect(planHostPower("muse", ["serve"], {}, scratch())).toMatchObject({ kind: "seatbelt", args: ["-p", SEATBELT_POWER_PROFILE, "muse", "serve"] });
     expect(NO_LIMITS_SEATBELT_POWER_PROFILE).not.toContain("appleevent-send");
     expect(NO_LIMITS_SEATBELT_POWER_PROFILE).toContain("IOPMrootDomain");
-    expect(warn).toHaveBeenCalledTimes(1);
     probe.mockRestore(); warn.mockRestore();
+  });
+
+  it("W1 a profile-apply failure of only one power rule still launches muse with every other rule in place", () => {
+    const sandboxExec = join(scratch(), "sandbox-exec");
+    writeFileSync(sandboxExec, "fixture");
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec });
+    for (const refused of ["(deny iokit-open", "(deny mach-lookup", "(deny appleevent-send"]) {
+      resetSeatbeltSelectionsForTests();
+      const probe = vi.spyOn(hostPowerProbeDeps, "runSync").mockImplementation((_command, args) => String(args[1]).includes(refused)
+        ? { code: 65, stderr: "sandbox-exec: invalid profile" } : { code: 0, stderr: "" });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const plan = planHostPower("muse", ["serve"], {}, scratch());
+      expect(plan.kind).toBe("seatbelt");
+      const profile = plan.kind === "seatbelt" ? String(plan.args[1]) : "";
+      expect(profile).not.toContain(refused);
+      for (const rule of ["(deny iokit-open", "(deny mach-lookup", "(deny appleevent-send"]) if (rule !== refused) expect(profile).toContain(rule);
+      expect(profile).toContain("(allow default)");
+      expect(plan.kind === "seatbelt" ? plan.args.slice(2) : []).toEqual(["muse", "serve"]);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes(refused.slice(6)))).toBe(true);
+      // The choice is remembered: the next launch does not probe again.
+      const probed = probe.mock.calls.length;
+      planHostPower("muse", ["serve"], {}, scratch());
+      expect(probe.mock.calls.length).toBe(probed);
+      probe.mockRestore(); warn.mockRestore();
+    }
+  });
+
+  it("W2 a launch refused by sandbox-exec skips that profile for the one session; the next launch uses the strongest remaining one", () => {
+    const sandboxExec = join(scratch(), "sandbox-exec");
+    writeFileSync(sandboxExec, "fixture");
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec });
+    vi.spyOn(hostPowerProbeDeps, "runSync").mockReturnValue({ code: 0, stderr: "" });
+    const session = {}, other = {};
+    expect(planHostPower("muse", ["serve"], {}, scratch(), undefined, session)).toMatchObject({ kind: "seatbelt", args: ["-p", SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    expect(recordSeatbeltLaunchRefusal(SEATBELT_POWER_PROFILE, session)).toBe("session");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const second = planHostPower("muse", ["serve"], {}, scratch(), undefined, session);
+    expect(second.kind).toBe("seatbelt");
+    expect(second.kind === "seatbelt" ? second.args[1] : "").not.toBe(SEATBELT_POWER_PROFILE);
+    expect(second.kind === "seatbelt" ? (second.args[1] as string).match(/\(deny /g)?.length : 0).toBe(2);
+    // Every other session, and a launch with no session, still gets the full profile.
+    expect(planHostPower("muse", ["serve"], {}, scratch(), undefined, other)).toMatchObject({ kind: "seatbelt", args: ["-p", SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    expect(planHostPower("muse", ["serve"], {}, scratch())).toMatchObject({ kind: "seatbelt", args: ["-p", SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    // Below No limits, a session every profile of which was refused at launch is refused, never silently unwrapped.
+    for (let n = 0; n < 8; n++) {
+      const plan = planHostPower("muse", ["serve"], {}, scratch(), undefined, session);
+      if (plan.kind !== "seatbelt") { expect(plan.kind).toBe("refuse"); break; }
+      recordSeatbeltLaunchRefusal(String(plan.args[1]), session);
+    }
+    expect(planHostPower("muse", ["serve"], {}, scratch(), undefined, session).kind).toBe("refuse");
+    warn.mockRestore();
   });
 
   it("uses version-1 IOKit operations while retaining both power class filters", () => {
@@ -478,6 +552,137 @@ describe("spawnCli with the block (sections 2 and 8)", () => {
     writeFileSync(wrapper, '#!/bin/sh\nexit 0\n');
     expect(hostPowerRefused(await launch())).toBe(false);
     deny(); await launch();
+    expect(refusals()).toHaveLength(2);
+  });
+
+  /** A shell stand-in for sandbox-exec (never the real one on Linux). argv: -p <profile> <engine> <engine args>. A probe
+   *  (/usr/bin/true) passes; a launch is logged, then refused the way sandbox-exec refuses when its profile holds `refuse`. */
+  const fakeSandboxExec = (refuse: string | null) => {
+    const dir = scratch(), log = join(dir, "launches"), wrapper = join(dir, "sandbox-exec");
+    writeFileSync(wrapper, `#!/bin/sh\n[ "$1" = -p ] || exit 64\nif [ "$3" = /usr/bin/true ]; then exit 0; fi\nprintf '%s\\n--END--\\n' "$2" >> '${log}'\n${refuse === null ? "" : `case "$2" in *'${refuse}'*) echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2; exit 71;; esac\n`}shift 2\nexec "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec: wrapper });
+    return { wrapper, launched: () => (existsSync(log) ? readFileSync(log, "utf8").split("--END--\n").filter(Boolean).map((profile) => profile.trimEnd()) : []) };
+  };
+  const fakeEngine = (body: string) => { const cli = join(scratch(), "fake-engine"); writeFileSync(cli, `#!/bin/sh\n${body}\n`); chmodSync(cli, 0o755); return cli; };
+  const launchIn = async (cli: string, session: object | undefined) => {
+    const child = spawnCli(cli, ["serve"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, engineJob(session ? { powerSession: session } : {}));
+    const result = await collect(child); return { child, ...result };
+  };
+  const rulesIn = (profile: string) => ["mach-lookup", "iokit-open", "appleevent-send"].filter((rule) => profile.includes(`(deny ${rule}`));
+
+  it.skipIf(process.platform === "win32")("H2 W3 sandbox-exec refuses a launch after a passing probe: the same session walks down the rules (spawnCli), one refusal skips none", async () => {
+    const sandbox = fakeSandboxExec("(deny iokit-open"), cli = fakeEngine("echo engine-ran");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const session = {};
+    const results = [];
+    for (let n = 0; n < 8; n++) { results.push(await launchIn(cli, session)); if (!hostPowerRefused(results[n].child)) break; }
+    const launched = sandbox.launched();
+    expect(hostPowerRefused(results[0].child)).toBe(true);
+    const last = results[results.length - 1];
+    expect(last.out).toBe("engine-ran\n");
+    expect(hostPowerRefused(last.child)).toBe(false);
+    // The engine ran under the strongest rule set sandbox-exec takes: the two rules that are not iokit-open, (allow default) kept.
+    expect(rulesIn(launched[launched.length - 1])).toEqual(["mach-lookup", "appleevent-send"]);
+    expect(launched[launched.length - 1]).toContain("(allow default)");
+    expect(launched.length).toBeLessThanOrEqual(4);
+    expect(new Set(launched).size).toBe(launched.length);
+    expect(rulesIn(launched[0])).toEqual(["mach-lookup", "iokit-open", "appleevent-send"]);
+    // The walk is this session's own: another session, and a launch with no session, still start from the full profile.
+    for (const other of [{}, undefined]) expect(planHostPower(cli, ["serve"], {}, scratch(), undefined, other)).toMatchObject({ kind: "seatbelt", args: ["-p", SEATBELT_POWER_PROFILE, cli, "serve"] });
+    warn.mockRestore();
+  });
+
+  it.skipIf(process.platform === "win32")("H3 W1s macOS rejects only one power rule (the probe says so): the engine really launches with every other rule in place (spawnCli)", async () => {
+    const dir = scratch(), log = join(dir, "launches"), wrapper = join(dir, "sandbox-exec");
+    // The probe is the stand-in's own exit: it rejects any profile holding the iokit-open rule, as a macOS that refuses that rule would.
+    writeFileSync(wrapper, `#!/bin/sh\n[ "$1" = -p ] || exit 64\ncase "$2" in *'(deny iokit-open'*) echo "sandbox-exec: invalid profile" >&2; exit 65;; esac\nif [ "$3" = /usr/bin/true ]; then exit 0; fi\nprintf '%s\\n--END--\\n' "$2" >> '${log}'\nshift 2\nexec "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec: wrapper });
+    hostPowerProbeDeps.runSync = realProbeDeps.runSync;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = await launchIn(fakeEngine("echo engine-ran"), undefined);
+    expect(run.out).toBe("engine-ran\n");
+    expect(hostPowerRefused(run.child)).toBe(false);
+    const launched = existsSync(log) ? readFileSync(log, "utf8").split("--END--\n").filter(Boolean).map((profile) => profile.trimEnd()) : [];
+    expect(launched).toHaveLength(1);
+    expect(rulesIn(launched[0])).toEqual(["mach-lookup", "appleevent-send"]);
+    expect(launched[0]).toContain("(allow default)");
+    expect(warn.mock.calls.some((call) => String(call[0]).includes("iokit-open"))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it.skipIf(process.platform === "win32")("H2 W4 a session every rule set of which is refused at launch stays refused below No limits, never unwrapped (spawnCli)", async () => {
+    const sandbox = fakeSandboxExec("(deny "), cli = fakeEngine("echo engine-ran");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const session = {};
+    const outcomes = [];
+    for (let n = 0; n < 9; n++) { const r = await launchIn(cli, session); outcomes.push({ refused: hostPowerRefused(r.child), out: r.out }); }
+    expect(outcomes.every((o) => o.refused && o.out === "")).toBe(true);
+    expect(sandbox.launched()).toHaveLength(7);
+    warn.mockRestore();
+  });
+
+  it.skipIf(process.platform === "win32")("H1 W5 engine stderr that starts with sandbox-exec: never retires a profile for another session (spawnCli)", async () => {
+    const sandbox = fakeSandboxExec(null), cli = fakeEngine('echo "sandbox-exec: injected by the engine" >&2; exit 1');
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const attacker = {};
+    for (let n = 0; n < 12; n++) await launchIn(cli, attacker);
+    expect(sandbox.launched().length).toBeGreaterThanOrEqual(7);
+    // Another session, and a launch with no session, still run under the full profile; so does the engine's own session never go unwrapped.
+    for (const session of [{}, undefined]) expect(planHostPower("muse", ["serve"], {}, scratch(), undefined, session)).toMatchObject({ kind: "seatbelt", args: ["-p", SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    expect(planHostPower("muse", ["serve"], {}, scratch(), undefined, attacker).kind).not.toBe("unwrapped");
+    const noLimits = {};
+    expect(planHostPower("muse", ["serve"], {}, scratch(), noLimits, noLimits)).toMatchObject({ kind: "seatbelt", args: ["-p", NO_LIMITS_SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    warn.mockRestore();
+  });
+
+  it.skipIf(process.platform === "win32")("H1 W6 (guard, green on 75c70cfbf8 by design) a refused launch whose profile a fresh probe now rejects does retire that exact profile for everyone (spawnCli)", async () => {
+    const sandbox = fakeSandboxExec("(deny appleevent-send"), cli = fakeEngine("echo engine-ran");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let rejectAppleEvent = false;
+    vi.spyOn(hostPowerProbeDeps, "runSync").mockImplementation((_command, args) => rejectAppleEvent && String(args[1]).includes("(deny appleevent-send") ? { code: 65, stderr: "sandbox-exec: invalid profile" } : { code: 0, stderr: "" });
+    const refused = spawnCli(cli, ["serve"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    rejectAppleEvent = true; // macOS now says no to the rule the launch was refused for
+    await collect(refused);
+    expect(hostPowerRefused(refused)).toBe(true);
+    const next = await launchIn(cli, undefined);
+    expect(next.out).toBe("engine-ran\n");
+    const launched = sandbox.launched();
+    expect(rulesIn(launched[launched.length - 1])).toEqual(["mach-lookup", "iokit-open"]);
+    warn.mockRestore();
+  });
+
+  it.skipIf(process.platform === "win32")("a --version launch that passes does not re-arm the diagnostic for a refused serve launch (minute poll)", async () => {
+    // A shell stand-in only: never execute sandbox-exec on Linux. Its argv is -p <profile> <engine> <engine args>: it lets
+    // `--version` through and refuses `serve` the way a Mac did for Muse, until the fixture's marker file says otherwise.
+    const wrapper = join(scratch(), "fake-seatbelt");
+    const allowServe = join(scratch(), "allow-serve");
+    writeFileSync(wrapper, `#!/bin/sh\nif [ "$4" = serve ] && [ ! -e '${allowServe}' ]; then echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2; exit 71; fi\nexit 0\n`);
+    chmodSync(wrapper, 0o755);
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec: wrapper });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cli = join(scratch(), "muse-poll-fixture");
+    writeFileSync(cli, "#!/bin/sh\nexit 0\n"); chmodSync(cli, 0o755);
+    const launch = async (args: string[]) => {
+      const child = spawnCli(cli, args, { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+      const result = await collect(child); return { child, code: result.code };
+    };
+    const refusals = () => warn.mock.calls.filter(([line]) => String(line).includes(`engine launch refused for ${cli}`));
+    // Each status poll: the version probe succeeds, then the catalog host is refused again. Polling is not a new incident.
+    for (let n = 0; n < 3; n++) {
+      const version = await launch(["--version"]);
+      expect(version.code).toBe(0);
+      expect(hostPowerRefused(version.child)).toBe(false);
+      expect(hostPowerRefused((await launch(["serve", "--disable-shell"])).child)).toBe(true);
+    }
+    expect(refusals()).toHaveLength(1);
+    expect(refusals()[0][0]).toContain("sandbox_apply: Operation not permitted");
+    // A serve launch that does get through is the recovery; a later serve refusal is reported again.
+    writeFileSync(allowServe, "");
+    expect(hostPowerRefused((await launch(["serve"])).child)).toBe(false);
+    unlinkSync(allowServe);
+    expect(hostPowerRefused((await launch(["serve"])).child)).toBe(true);
     expect(refusals()).toHaveLength(2);
   });
 
@@ -704,6 +909,21 @@ describe("Windows privilege removal (section 6)", () => {
     // The job flags are unchanged and no UI-limited job is made.
     const native = readFileSync(new URL("../native/engine-exclusion/exclusion.c", import.meta.url), "utf8");
     expect(native).not.toContain("JOB_OBJECT_UILIMIT_EXITWINDOWS");
+  });
+
+  it("simulated Windows: the owner's own turn is not refused for a failed drop (OVERREACH #5); a guest's is", async () => {
+    resetShutdownDropForTests();
+    withAddon({ dropShutdownPrivileges: () => ({ ok: false, step: "adjust", error: 5 }) });
+    const errors: NodeJS.ErrnoException[] = [];
+    const owner = asPlatform("win32", () => spawnCli(process.execPath, ["-e", ""], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, engineJob({ ownerTurn: true })));
+    owner.on("error", (error) => errors.push(error));
+    await new Promise((resolve) => owner.on("close", resolve));
+    expect(hostPowerRefused(owner)).toBe(false);
+    expect(errors.map((error) => error.code)).not.toContain(HOST_POWER_CODE);
+    const guest = asPlatform("win32", () => spawnCli(process.execPath, ["-e", ""], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, engineJob()));
+    guest.on("error", () => {});
+    await new Promise((resolve) => guest.on("close", resolve));
+    expect(hostPowerRefused(guest)).toBe(true);
   });
 
   it("simulated Windows: a failed drop refuses the engine launch (no pid, EPOWER, the sentence); non-engine spawns are not refused", async () => {
@@ -1555,8 +1775,8 @@ describe("environment gap: the turn runs without the block (1.0.9)", () => {
 
   it("the drivers the block does not wrap are exactly the ones that pass posixHostPower false", () => {
     expect([...HOST_POWER_UNWRAPPED_DRIVERS].sort()).toEqual(["claudeAgent", "codex", "fuigoAgent"]);
-    expect(source("drivers/claude.ts")).toContain("engineJob({ posixHostPower: false })");
-    expect(source("drivers/codex.ts")).toContain("engineJob({ posixHostPower: false })");
+    expect(source("drivers/claude.ts")).toContain("engineJob({ posixHostPower: false");
+    expect(source("drivers/codex.ts")).toContain("engineJob({ posixHostPower: false");
     expect(source("drivers/acp/core.ts")).toContain('{ posixHostPower: support.driverKind !== "fuigoAgent",');
     expect(source("index.ts")).toContain("!HOST_POWER_UNWRAPPED_DRIVERS.has(instance.driverKind) && hostPowerGapNoticeDue(");
   });

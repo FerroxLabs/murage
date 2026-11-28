@@ -306,7 +306,8 @@ describe("Opus r2 High: Got it approves exactly the rows seen at the click (desi
     // every apply post and the phone's signed retry
     expect(component).toMatch(/\(body\) => \{\s*\/\/[^\n]*\n\s*if \(!stillPressed\(press, live\.current\)\)/);
     // "The list changed" is never a dead end: the note step keeps an enabled Approve all
-    expect(component).toMatch(/\(step\.at === "idle" \|\| step.at === "note" \|\| step\.at === "result"\) && counts.visible && <button/);
+    // T12: the desktop review's per-card result (`done`) keeps the button too
+    expect(component).toMatch(/\(step\.at === "idle" \|\| step.at === "note" \|\| step\.at === "result" \|\| step\.at === "done"\) && counts.visible && <button/);
   });
 });
 

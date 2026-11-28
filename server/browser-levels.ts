@@ -73,6 +73,9 @@ export interface LevelInput {
   facts: LevelFacts;
   /** The floor result for these facts, or null when the floor found nothing. */
   floor: FloorResult | null;
+  /** PAYFULL A6: the one-call pass the owner's approved pay/terms card issued (kind and rule). At exactly the caller's floor, `floor-facts`
+   *  and `floor-label-control`, a sure result of this kind AND rule is no floor; every other floor return is unchanged. */
+  floorPass?: { floor: string; rule: string };
   category: SiteCategory;
   mode: ApprovalMode;
   routine: boolean;
@@ -654,6 +657,9 @@ function canonicalAction(input: LevelInput): Action | null {
  * Which level is this action, and does it need a card? Pure. A missing input,
  * a missing or malformed floor value or a thrown error is floor (unsure means floor).
  */
+/** PAYFULL A6: a pass covers only a sure floor of its own kind and rule. */
+const passCovers = (pass: { floor: string; rule: string } | undefined, result: FloorResult): boolean =>
+  !!pass && result.unsure !== true && typeof result.floor === "string" && result.floor === pass.floor && result.rule === pass.rule;
 export function classifyLevel(input: LevelInput): LevelResult {
   try {
     if (!input || typeof input !== "object" || typeof input.operation !== "string" || !input.facts || typeof input.facts !== "object") {
@@ -664,8 +670,9 @@ export function classifyLevel(input: LevelInput): LevelResult {
     if (given !== null) {
       if (typeof given !== "object" || Array.isArray(given)) return floorResult("The floor value could not be read, so the owner takes this step.", "floor-malformed");
       const kind = (given as { floor?: unknown }).floor;
-      if (typeof kind === "string" && kind) return floorResult((given as FloorResult).reason || "This step needs the owner in person.", "floor");
-      if (kind !== null) return floorResult("The floor value could not be read, so the owner takes this step.", "floor-malformed");
+      const passed = typeof kind === "string" && passCovers(input.floorPass, given as FloorResult);
+      if (typeof kind === "string" && kind && !passed) return floorResult((given as FloorResult).reason || "This step needs the owner in person.", "floor");
+      if (kind !== null && !passed) return floorResult("The floor value could not be read, so the owner takes this step.", "floor-malformed");
     }
 
     const action = canonicalAction(input);
@@ -677,10 +684,10 @@ export function classifyLevel(input: LevelInput): LevelResult {
     const raw: LevelFacts = { ...input.facts, operation: action.operation, key: pressing ? action.key?.floorKey : undefined };
     const merged = mergeLabel(raw);
     const again = classifyFloor(raw);
-    if (again.floor) return floorResult(again.reason, "floor-facts");
+    if (again.floor && !passCovers(input.floorPass, again)) return floorResult(again.reason, "floor-facts");
     if (merged !== raw) {
       const control = classifyFloor(merged);
-      if (control.floor) return floorResult(control.reason, "floor-label-control");
+      if (control.floor && !passCovers(input.floorPass, control)) return floorResult(control.reason, "floor-label-control");
     }
 
     let decision = levelFromEffect(action, merged, input.textHasNewline === true);

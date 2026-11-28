@@ -19,7 +19,10 @@ import { runEngineHistoryJob } from "./engine-history-run.ts";
 import { InstanceHolds } from "./harness/instance-holds.ts";
 import { recordFact } from "./health/counters.ts";
 import { resetDeletionObserverForTests } from "./health/deletion-observer.ts";
+import { assertWalWriteAdmission, setWalRecoveryKnobsForTest } from "./wal-maintenance.ts";
+import { notifyAttachmentIndexComplete, onAttachmentIndexComplete } from "./transcript-backfill.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { probeSecureDelete } from "./testing/secure-delete-probe.ts";
 
 vi.mock("./health/counters.ts", async (original) => ({ ...(await original<typeof import("./health/counters.ts")>()), recordFact: vi.fn() }));
 
@@ -203,6 +206,50 @@ it("a failed prepare arms a retry, and nothing reaches the engine work before th
   deletions.dispose();
 });
 
+it("a first foreground write can commit while legacy pending deletion rows are fenced during boot settling", async () => {
+  let finishBoot!: () => void;
+  const settled = new Promise<void>(resolve => { finishBoot = resolve; });
+  const bootSettled = vi.fn(() => settled);
+  const { dataDir, deletions } = service(
+    [record({ engineHomes: [], deferredAttachments: [FILE] })], { bootSettled },
+  );
+  const file = join(dataDir, "messages.db");
+  using db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; PRAGMA secure_delete=ON");
+  db.prepare("INSERT INTO messages VALUES (?, 'legacy', zeroblob(1048576))").run(THREAD);
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  const ids = deletions.triage(never, threadId => {
+    assertWalWriteAdmission(file);
+    db.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
+  });
+  setWalRecoveryKnobsForTest({ admissionBytes: 64 * 1024 });
+  const pass = deletions.resumeAfterBoot(ids);
+  let deferred: Promise<number> | undefined;
+  const unsubscribe = onAttachmentIndexComplete(() => { setImmediate(() => { deferred = deletions.settleDeferred(never); }); });
+  try {
+    notifyAttachmentIndexComplete();
+    await new Promise<void>(resolve => { setImmediate(resolve); });
+    await new Promise<void>(resolve => { setImmediate(resolve); });
+    expect(deferred).toBeDefined();
+    expect(bootSettled).toHaveBeenCalledTimes(1);
+    expect(() => {
+      assertWalWriteAdmission(file);
+      db.prepare("INSERT INTO messages VALUES ('owner-thread', 'first-send', 'hello')").run();
+    }).not.toThrow();
+    expect(deletions.isDeleting(THREAD)).toBe(true);
+    expect(deletions.pending()).toHaveLength(1);
+  } finally {
+    unsubscribe();
+    setWalRecoveryKnobsForTest();
+    finishBoot();
+    await Promise.all([pass, deferred]);
+  }
+  expect(bootSettled).toHaveBeenCalledTimes(1);
+  expect(db.prepare("SELECT id FROM messages").all()).toEqual([{ id: "first-send" }]);
+  expect(deletions.isDeleting(THREAD)).toBe(false);
+  expect(deletions.pending()).toEqual([]);
+});
+
 it("settleDeferred and Try again now cannot finish a record that was never prepared", async () => {
   const deferred = "1a1b2c3d-1111-4222-8333-444455556666.png";
   for (const act of [(service_: ConversationDeletions) => service_.settleDeferred(never), (service_: ConversationDeletions) => service_.retryNow()]) {
@@ -347,6 +394,18 @@ it("a boot record's saved files leave at triage, before the port opens, and no e
   db.prepare("INSERT INTO artifacts(id,thread_id) VALUES('mine',?),('other','another-thread')").run(THREAD);
   deletions.triage(never, rows);
   expect((db.prepare("SELECT id FROM artifacts").all() as Array<{ id: string }>).map((row) => row.id)).toEqual(["other"]);
+});
+
+// 1.0.22 q1022-sqlite (MAIN-RULING SQLITE-1022 item 1a, witness per site; owner: q1022-sqlite-opus): the deleted chat's artifact rows
+// (names and paths) leave at secure_delete=ON on a connection whose default is FAST (conversation-deletion.ts deleteArtifactRows)
+it("SITE deleted chat's artifact rows (conversation-deletion.ts deleteArtifactRows) leave at secure_delete ON", () => {
+  const { deletions, db } = artifactService();
+  db.exec("PRAGMA secure_delete=FAST");
+  db.prepare("INSERT INTO artifacts(id,thread_id) VALUES('mine',?)").run(THREAD);
+  const probe = probeSecureDelete(db, "artifacts");
+  try { deletions.triage(never, rows); } finally { probe.stop(); }
+  expect(probe.modes.length, "deleteArtifactRows reached its delete").toBeGreaterThan(0);
+  expect(probe.modes, "deleteArtifactRows ran at secure_delete ON (1), not FAST (2)").toEqual(probe.modes.map(() => 1));
 });
 
 it("saved-file rows triage could not remove go in the first attempt", async () => {

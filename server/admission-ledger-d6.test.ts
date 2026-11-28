@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { checkpointLedger } from "./admission-shared.ts";
 import * as budgetModule from "./io-budget.ts";
 import { BLOCK_BYTES, IoBudget, osWriteBlocks } from "./io-budget.ts";
@@ -14,14 +14,14 @@ import { BLOCK_BYTES, IoBudget, osWriteBlocks } from "./io-budget.ts";
 const MIN = 60_000, M0 = 1_000_000 * MIN;
 type Any = any; // the D6 surface is absent on the pre-D6 code: calls are made through `any` so the failure is behavioral
 
-function fx(startAt = M0 - 2 * MIN, realOs = false) {
+function fx(startAt = M0 - 2 * MIN, realOs = false, defaultLog = false) {
   const st = { at: startAt, os: 0, osKnown: true, meter: 0, meterKnown: true };
   const read = () => {
     if (realOs) { const blocks = osWriteBlocks(process.resourceUsage()); return { at: st.at, cpuMicros: 0, fsWriteBlocks: blocks, osKnown: st.osKnown, os: { total: blocks * BLOCK_BYTES, known: st.osKnown } } as never; }
     return { at: st.at, cpuMicros: 0, fsWriteBlocks: st.os / BLOCK_BYTES, osKnown: st.osKnown, meterBytes: st.meter, meter: { total: st.meter, known: st.meterKnown }, os: { total: st.os, known: st.osKnown } } as never;
   };
   const lines: string[] = [];
-  const b = new IoBudget({ read, log: l => lines.push(l), isIdle: () => false });
+  const b = new IoBudget({ read, ...(defaultLog ? {} : { log: (l: string) => lines.push(l) }), isIdle: () => false });
   const buf = b.checkpointAdmissionBuffer(), s = new BigInt64Array(buf);
   return { st, b, a: b as Any, lines, buf, s, n: (i: number) => Number(s[i]), owners: () => [18, 21, 24, 27].map(i => s[i]!).filter(o => o !== 0n) };
 }
@@ -178,6 +178,15 @@ it("D6-R2b a measurement break inside the entry's minute: charge, not release", 
   await r2(f, f => { f.st.meter += 777; f.st.os += 777; }, f => { f.st.at = M0 + 30_000; f.st.meterKnown = false; f.st.osKnown = false; section(f); f.st.meterKnown = true; f.st.osKnown = true; section(f); });
   expect(f.n(8)).toBe(1_000_000); expect(f.n(6)).toBe(0);
 });
+it("sweep-1021 N5: with the default log a measurement break is a console note, never a warning", async () => {
+  const info = vi.spyOn(console, "info").mockImplementation(() => {}), warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const f = fx(M0 - 2 * MIN, false, true);
+    await r2(f, f => { f.st.meter += 777; f.st.os += 777; }, f => { f.st.at = M0 + 30_000; f.st.meterKnown = false; f.st.osKnown = false; section(f); f.st.meterKnown = true; f.st.osKnown = true; section(f); });
+    expect(info.mock.calls.map(call => String(call[0])).filter(line => line.includes("admission measurement break"))).toHaveLength(1);
+    expect(warn.mock.calls.map(call => String(call[0])).filter(line => line.includes("admission measurement break"))).toEqual([]);
+  } finally { info.mockRestore(); warn.mockRestore(); }
+});
 function winFx(snap: () => { total: number; known?: boolean } | null) {
   const st = { at: M0 - 2 * MIN };
   const mod = budgetModule as Any;
@@ -253,20 +262,22 @@ it("D6-R5 a live owner is never released by anyone else, however old; a replacem
 it("D6-R6 cross-minute execution: reserved at m:59.9, executed in m+1, dead before endCopy: never nothing charged", async () => {
   const dir = mkdtempSync(join(tmpdir(), "d6-r6-"));
   try {
+    // 1.0.21 B1/I8 (memv2-D): no OS counter proves coverage any more (admission sees only the application meter, the same on every OS),
+    // so the dead worker's real bytes reach the ledger as the meter counts them; "unmeasured" is the meter not continuously valid.
     const run = async (known: boolean) => {
-      const f = fx(M0 - 2 * MIN, true); f.st.osKnown = true; section(f);
+      const f = fx(M0 - 2 * MIN); section(f);
       f.st.at = M0 + 59_900; section(f);
       const d = await dying(f.buf, 4_000_000, f.st.at, 7, 3 * 1024 * 1024); reg(f, d.id, 7);
       f.st.at = M0 + MIN + 200;
-      await d.write();
-      f.st.osKnown = known;
+      await d.write(); f.st.meter += 3 * 1024 * 1024;
+      f.st.meterKnown = known;
       await exitOf(f, d, 7);
       return f;
     };
     const measured = await run(true);
     expect(measured.n(6)).toBe(0); expect(measured.owners()).toEqual([]);
     expect(measured.n(8), "covered: no charge").toBe(0);
-    expect(measured.n(11), "the real bytes are visible in the new minute's slot 11").toBeGreaterThan(0);
+    expect(measured.n(11), "the meter's bytes (the dead worker's, as the meter counts them) are visible in the new minute's slot 11").toBeGreaterThan(0);
     const unmeasured = await run(false);
     expect(unmeasured.n(8), "unmeasured: the ceiling is in slot 8 of m+1").toBe(4_000_000);
     expect(unmeasured.n(6)).toBe(0);

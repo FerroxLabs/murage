@@ -1,11 +1,13 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import { normalizeProviderModels } from "../../server/provider-connections.ts";
 import type { PublicProviderConnection, ProviderModel } from "../../shared/provider-connections.ts";
-import { lookupModelMetadata, preloadModelMetadata } from "./model-metadata.ts";
+import { lookupModelMetadata, orderedModelMetadata, preloadModelMetadata, subscribeModelMetadata } from "./model-metadata.ts";
 import {
   type PickerEngine,
   type PickerModel,
   PRICE_UNKNOWN,
+  dollarOfTokens,
   isPriceUnknown,
   modelPriceLabel,
   pickerKey,
@@ -55,6 +57,134 @@ const fluxModel = (id: string, label = id): ProviderModel => ({
 });
 
 describe("pickerModels fills what the engine never sent", () => {
+  it("updates both Gemini rates and the picker estimate at midnight UTC", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-30T23:59:59.999Z"));
+    const options: PickerEngine["models"]["options"] = [
+      { id: "gemini-4-argon-high", label: "Argon" },
+      { id: "gemini-4-carbon", label: "Carbon", provider: "google-vertex" },
+    ];
+    const instance = engine(options);
+    const read = () => pickerModels(instance, []).map(row => [
+      row.pricing?.inputPerMillion, row.pricing?.outputPerMillion,
+      modelPriceLabel(row), dollarOfTokens(row.pricing),
+    ]);
+    const refreshed = vi.fn(read);
+    const unsubscribe = subscribeModelMetadata(refreshed);
+    try {
+      expect(read()).toEqual(Array(2).fill([2, 10, "$$$", "$1 ≈ 100K output tokens"]));
+      const sourceDates = pickerModels(instance, []).map(row => row.pricing?.updatedAt);
+      expect(orderedModelMetadata(options).map(row => row.pricing?.outputPerMillion)).toEqual([10, 10]);
+      expect(refreshed).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(read()).toEqual(Array(2).fill([4, 20, "$$$$", "$1 ≈ 50K output tokens"]));
+      expect(orderedModelMetadata(options).map(row => row.pricing?.outputPerMillion)).toEqual([20, 20]);
+      expect(refreshed).toHaveBeenCalledTimes(1);
+      expect(refreshed.mock.results[0]?.value).toEqual(read());
+      expect(pickerModels(instance, []).map(row => row.pricing?.updatedAt)).toEqual(sourceDates);
+      expect(pickerModels(instance, []).map(row => row.pricing?.source)).toEqual([
+        "https://aistudio.google.com/docs/pricing#gemini-4-argon",
+        "https://cloud.google.com/model-garden/pricing?hl=en_GB",
+      ]);
+    } finally {
+      unsubscribe();
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses Google rates for the bundled fallback and keeps reseller quotes route-specific", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-12-01T00:00:00Z"));
+    try {
+      for (const id of ["gemini-4-argon", "gemini-4-carbon"]) {
+        for (const provider of ["google", "google-vertex", undefined]) {
+          expect(lookupModelMetadata(id, provider)?.metadata).toMatchObject({ inputPerMillion: 4, outputPerMillion: 20 });
+        }
+        expect(lookupModelMetadata(id, "venice")?.metadata).toMatchObject({ inputPerMillion: 2.5, outputPerMillion: 12.5 });
+        expect(lookupModelMetadata(`flux-pinned-${id}`)?.metadata).toMatchObject({ inputPerMillion: 4, outputPerMillion: 20 });
+        const live = { ...fluxModel(`google/${id}`), preset: "openrouter" as const,
+          pricing: { inputPerMillion: 3, outputPerMillion: 15, source: "fixture", updatedAt: 1 } };
+        const rows = pickerModels(engine([], { driverKind: "openai-compat" }), [connection([live], { preset: "openrouter" })]);
+        expect(rows[0]?.pricing).toEqual(live.pricing);
+      }
+      expect(lookupModelMetadata("gemini-4-argon-contributor", "opencode-go")?.provider).toBe("opencode-go");
+
+      const pinned = pickerModels(engine([], { driverKind: "openai-compat" }), [
+        connection([{ ...fluxModel("flux-pinned-gemini-4-argon"),
+          pricing: { inputPerMillion: 3, outputPerMillion: 15, source: "fixture", updatedAt: 1 } }]),
+      ]);
+      expect(pinned[0]?.pricing).toEqual({ inputPerMillion: 3, outputPerMillion: 15, source: "fixture", updatedAt: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["2026-11-30T23:59:59.999Z", 2, 10],
+    ["2026-12-01T00:00:00Z", 4, 20],
+  ])("prices qualified Gemini routes from the named provider at %s", (instant, input, output) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(instant));
+    try {
+      const options = [
+        { id: "google/gemini-4-argon", label: "Google Argon" },
+        { id: "google-vertex/gemini-4-carbon", label: "Vertex Carbon", provider: "google-vertex" },
+        { id: "venice/gemini-4-argon", label: "Venice Argon" },
+        { id: "opencode/gemini-4-carbon", label: "OpenCode Carbon" },
+        { id: "openrouter/google/gemini-4-carbon", label: "OpenRouter Carbon" },
+        { id: "google/gemini-4-argon", label: "OpenRouter Argon", provider: "openrouter" },
+        { id: "anthropic/gemini-4-carbon", label: "Unpriced route" },
+      ];
+      const rows = pickerModels(engine(options), []);
+      expect(rows.map(row => [row.pricing?.inputPerMillion, row.pricing?.outputPerMillion])).toEqual([
+        [input, output], [input, output], [2.5, 12.5], [2, 10], [2, 10], [2, 10], [undefined, undefined],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the official Gemini schedule when refreshed snapshot rows agree", async () => {
+    vi.resetModules();
+    const fresh = await import("./model-metadata.ts");
+    const row = { name: "Gemini 4 Argon", inputPerMillion: 4, outputPerMillion: 20, contextWindow: 1_048_576 };
+    const models = { "gemini-4-argon": row };
+    await fresh.preloadModelMetadata(async () => ({ default: JSON.stringify({
+      source: { fetchedAt: "2026-11-20" },
+      providers: { reseller: { models }, google: { models } },
+    }) }));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-30T23:59:59.999Z"));
+    try {
+      const match = fresh.lookupModelMetadata("gemini-4-argon");
+      expect(match?.provider).toBe("google");
+      expect(match?.metadata).toMatchObject({ inputPerMillion: 2, outputPerMillion: 10 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps Requesty Gemini prices scoped to the connection in the picker and ordering", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-12-01T00:00:00Z"));
+    try {
+      const argon = "google/gemini-4-argon";
+      const carbon = "google/gemini-4-carbon";
+      const record = { id: "c1", preset: "requesty" as const, label: "Requesty", enabled: true, revision: "r1", key: "" };
+      const models = normalizeProviderModels(record, { data: [{ id: argon }, { id: carbon }] }, Date.now());
+      const rows = pickerModels(engine([], { driverKind: "openai-compat" }), [connection(models, { preset: "requesty", label: record.label })]);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.pricing).toMatchObject({ inputPerMillion: 2, outputPerMillion: 10 });
+      expect(rows[1]?.pricing).toBeUndefined();
+      for (const ordered of [orderedModelMetadata(models), orderedModelMetadata(rows.map(row => ({ ...row, id: row.selection.model })))]) {
+        expect(ordered.find(row => row.id === argon)?.pricing).toMatchObject({ inputPerMillion: 2, outputPerMillion: 10 });
+        expect(ordered.find(row => row.id === carbon)?.pricing).toBeUndefined();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("gives an engine row a price, a context window and its capabilities", () => {
     // This is the whole bug: a Claude engine row arrives with a label and
     // nothing else, so the picker showed "Price unavailable" for a model whose

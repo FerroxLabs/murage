@@ -10,8 +10,11 @@ import { redactSecrets, redactSecretsForSink } from "./redact.ts";
 
 export const OWN_WRITE_TTL_MS = 24 * 60 * 60_000;
 export const OWN_WRITE_APPLY_MS = 30_000;
+// 1.0.24 memhold (MAIN-RULING memory, LINUXMEM-1023): a bot saving or correcting ITS OWN memory is never an edge, so memory_save and
+// memory_propose_correction are not held here (no card, no wait): they run on the direct memory route. A row an older build already
+// persisted still applies through prepareOwnWrite.
 export const OWN_WRITE_TOOLS = new Set([
-  "update_bot", "create_bot", "memory_save", "memory_propose_correction",
+  "update_bot", "create_bot",
   "phone_calendar_read", "phone_calendar_find_free_time", "phone_calendar_add", "phone_calendar_change",
   "phone_reminders_read", "phone_reminders_add", "phone_reminders_complete", "phone_contacts_search", "phone_contacts_get",
   "phone_location_get", "phone_alarm_set", "phone_timer_set", "phone_text_compose", "phone_call_dial",
@@ -250,9 +253,11 @@ export class OwnWriteHolds {
       let row = decode(raw);
       if (row.state === "waiting" && this.now() - row.createdAt >= OWN_WRITE_TTL_MS) row = this.transition(row, "expired") ?? this.get(row.id)!;
       if (row.state === "approved") await this.apply(row.id);
-      else this.project(row);
+      // 1.0.22 idle: a waiting card already projected at its revision is left as it is (no messages row write, no UI patch every 30 s)
+      else if (row.state !== "waiting" || Number(this.host.db().prepare("SELECT card_projected_revision AS r FROM own_write_holds WHERE hold_id=?").get(row.id)?.r ?? 0) < row.revision) this.project(row);
     }
-    this.host.db().prepare("UPDATE own_write_holds SET body='{}',body_present=0,receipt=NULL WHERE state NOT IN ('waiting','approved','applying') AND updated_at<?").run(this.now() - 30 * 86_400_000);
+    // (only rows not yet blanked: a blanked terminal hold is not rewritten on every tick)
+    this.host.db().prepare("UPDATE own_write_holds SET body='{}',body_present=0,receipt=NULL WHERE state NOT IN ('waiting','approved','applying') AND updated_at<? AND (body_present=1 OR receipt IS NOT NULL OR body<>'{}')").run(this.now() - 30 * 86_400_000);
     this.host.db().prepare("DELETE FROM own_write_holds WHERE state NOT IN ('waiting','approved','applying') AND outcome_delivered=1 AND updated_at<?").run(this.now() - 180 * 86_400_000);
   }
 }

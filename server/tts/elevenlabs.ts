@@ -1,5 +1,6 @@
 import { fluxRouteFor, registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { ProviderBudgetReached, speechFetch, type SpeechPolicy } from "./speech-policy.ts";
+import { MAX_AUDIO_BYTES, TranscriptionUnavailable, UNREADABLE_RECORDING, type Recording, type Transcript, type TranscribeOptions } from "../voice/flux-voice.ts";
 // ElevenLabs, the one voice.
 //
 // Everything about talking to the service lives in this file: verifying a
@@ -20,6 +21,15 @@ import { ProviderBudgetReached, speechFetch, type SpeechPolicy } from "./speech-
 import { RateLimitedError, retryAfterMs } from "./rate-limit.ts";
 const API = process.env.MURAGE_ELEVENLABS_API || "https://api.elevenlabs.io/v1";
 const MODEL = "eleven_flash_v2_5";
+// Flash covers these languages; Thai needs v3. With no hint, the words
+// themselves select v3 so calls and spoken replies need no extra setting.
+const SPEECH_LANGUAGES = new Set("ar bg cs da de el en es fi fil fr he hi hr hu id it ja ko ms nl no pl pt ro ru sk sv ta th tr uk vi zh".split(" "));
+export function speechLanguage(value: unknown): string | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length > 35 || !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(value)) return null;
+  const language = value.split("-")[0].toLowerCase();
+  return SPEECH_LANGUAGES.has(language) ? language : null;
+}
 // 64kbps mono is indistinguishable for speech and a third of the bytes
 const FORMAT = "mp3_44100_64";
 
@@ -213,14 +223,14 @@ export async function synthesize(text: string, voiceId: string, key: string): Pr
 }
 
 /** ElevenLabs' /stream endpoint sends the audio as it is made. */
-export async function synthesizeClip(text: string, voiceId: string, key: string, streamed: boolean, policy: SpeechPolicy = {}): Promise<Clip> {
+export async function synthesizeClip(text: string, voiceId: string, key: string, streamed: boolean, policy: SpeechPolicy & { language?: string } = {}): Promise<Clip> {
   policy.signal?.throwIfAborted();
   const call = speechFetch(fetch, policy);
   const route = streamed ? "/stream" : "";
   const res = await call(`${API}/text-to-speech/${encodeURIComponent(voiceId)}${route}?output_format=${FORMAT}`, {
     method: "POST",
     headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
-    body: JSON.stringify({ text, model_id: MODEL }),
+    body: JSON.stringify({ text, model_id: policy.language === "th" || /\p{Script=Thai}/u.test(text) ? "eleven_v3" : MODEL, ...(policy.language ? { language_code: policy.language } : {}) }),
     redirect: "error",
     signal: AbortSignal.timeout(60_000),
   });
@@ -228,4 +238,49 @@ export async function synthesizeClip(text: string, voiceId: string, key: string,
   if (res.status === 429) throw new RateLimitedError(message(429, "speaking", await safeJson(res)), retryAfterMs(res.headers.get("retry-after")));
   if (!res.ok) throw new Error(message(res.status, "speaking", await safeJson(res)));
   return clipFrom(res, "audio/mpeg", streamed);
+}
+
+/** One recording, on the owner's own key. The existing transcription route
+ * owns upload and concurrency limits; keep the byte cap for other callers too.
+ * Producer owner: up-tts-eleven; classification owner: learning-send-boundary.
+ * This non-learning send is pinned in ci/learning-sinks.json. Only the requested
+ * audio and bounded format/language metadata leave here: never options.prompt,
+ * memory, conversation text, credentials in a URL, or a local filename/path.
+ * Provider error bodies never become displayed text. */
+export async function transcribe(recording: Recording, key: string, options: TranscribeOptions = {}): Promise<Transcript> {
+  if (!key.trim()) throw new TranscriptionUnavailable("key", "Add an ElevenLabs key in Settings on the computer to turn on voice typing.");
+  if (recording.bytes.byteLength > MAX_AUDIO_BYTES) throw new TranscriptionUnavailable("too_large", "That recording is too long. Keep it under 8MB.");
+  if (!recording.bytes.byteLength) throw new TranscriptionUnavailable("format", UNREADABLE_RECORDING);
+  if (options.language !== undefined && !/^[a-z]{2,3}$/i.test(options.language)) throw new TranscriptionUnavailable("format", UNREADABLE_RECORDING);
+  // The service is explicit; the harness override is restricted to a loopback
+  // fixture. Neither caller options nor memory can choose another recipient.
+  let url: URL;
+  try { url = new URL(`${API}/speech-to-text`); }
+  catch { throw new TranscriptionUnavailable("upstream", UNREADABLE_RECORDING); }
+  const provider = url.origin === "https://api.elevenlabs.io";
+  const fixture = url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "[::1]");
+  if ((!provider && !fixture) || url.pathname !== "/v1/speech-to-text" || url.username || url.password || url.search || url.hash) throw new TranscriptionUnavailable("upstream", UNREADABLE_RECORDING);
+  const extension = /\.(ogg|webm|mp4|m4a|mp3|wav|flac)$/i.exec(recording.filename)?.[1].toLowerCase();
+  const mime = recording.mime?.split(";")[0].trim().toLowerCase();
+  const uploadMime = mime && /^audio\/(?:ogg|webm|mp4|x-m4a|m4a|mpeg|mp3|wav|x-wav|wave|flac|x-flac)$/.test(mime) ? mime : "application/octet-stream";
+  const form = new FormData();
+  form.append("file", new Blob([new Uint8Array(recording.bytes)], { type: uploadMime }), extension ? `clip.${extension}` : "clip");
+  form.append("model_id", "scribe_v2");
+  form.append("tag_audio_events", "false");
+  if (options.language) form.append("language_code", options.language.toLowerCase());
+  let res: Response;
+  try {
+    res = await (options.fetchImpl ?? fetch)(fluxRouteFor(url.href).requestUrl, {
+      method: "POST", headers: { "xi-api-key": key }, body: form,
+      redirect: "error", signal: AbortSignal.timeout(60_000),
+    });
+  } catch { throw new TranscriptionUnavailable("upstream", UNREADABLE_RECORDING); }
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    const reason = res.status === 401 || res.status === 403 ? "auth" : res.status === 429 ? "rate_limit" : res.status === 413 ? "too_large" : res.status === 400 || res.status === 415 || res.status === 422 ? "format" : "upstream";
+    throw new TranscriptionUnavailable(reason, UNREADABLE_RECORDING);
+  }
+  const body = await safeJson(res);
+  if (typeof body?.text !== "string") throw new TranscriptionUnavailable("upstream", UNREADABLE_RECORDING);
+  return { text: body.text.trim(), ...(typeof body.language_code === "string" ? { language: body.language_code } : {}) };
 }

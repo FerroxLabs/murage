@@ -30,7 +30,9 @@ export function fuigoCardTitle(version: string | null | undefined): string {
   return bare ? t("ux.l2a.health.fluxCardVersion", { version: bare }) : t("ux.l2a.health.fluxCard");
 }
 
-export function HealthPanel({ answer, folds }: { answer: EngineHealthAnswer | null; folds: readonly HealthFold<HealthIssue>[] }) {
+/** `affirm`: the page holds one finished snapshot (HealthPageBody), so a ready engine may carry its tick; the state word
+ * is said either way. */
+export function HealthPanel({ answer, folds, affirm }: { answer: EngineHealthAnswer | null; folds: readonly HealthFold<HealthIssue>[]; affirm: boolean }) {
   const { dispatch } = useStore();
   const desktop = useDesktopSurface();
   const [othersOpen, setOthersOpen] = useState(false);
@@ -40,8 +42,8 @@ export function HealthPanel({ answer, folds }: { answer: EngineHealthAnswer | nu
   const used = usedEngines(rows, primaryId);
   const others = otherEngines(rows, primaryId);
   const openEngines = settingsPagesHere(desktop) ? () => dispatch({ type: "toggleAppSettings", open: true, section: "engines" }) : null;
-  // Only areas with something open get a line: a per-area "no problem found" tick waits for batch 2 (FIX-LEDGER
-  // HEALTH-DOCTOR-ALLCLEAR), when every read of the refresh is tracked.
+  // Only areas with something open get a line: a per-area "no problem found" tick is a separate feature (ALLCLEAR-V3
+  // parks it). The engine ticks above show only while the page holds one finished snapshot (`affirm`).
   const areaLine = (area: number): string | null => {
     const open = folds.filter((fold) => (fold.level === "act" || fold.level === "watch") && checkArea(fold.titleKey) === area);
     if (open.some((fold) => fold.level === "act")) return t("ux.l2a.health.area.act");
@@ -59,7 +61,7 @@ export function HealthPanel({ answer, folds }: { answer: EngineHealthAnswer | nu
       <p className="text-[12px] text-ink-secondary">{t("ux.l2a.health.enginesUsed")}</p>
       <ul className="mt-1 space-y-1">{used.map((row) => <li key={row.id} className="flex items-center justify-between gap-3">
         <span className="min-w-0 text-ink">{row.label}{botsOf(row.usedBy)}</span>
-        <span className="shrink-0 text-ink-secondary">{engineStateWord(row)} {row.state === "ready" && tick}</span>
+        <span className="shrink-0 text-ink-secondary">{engineStateWord(row)} {affirm && row.state === "ready" && tick}</span>
       </li>)}</ul>
     </div>}
     {others.length > 0 && <div className="border-b border-hairline/40 px-4 py-3">

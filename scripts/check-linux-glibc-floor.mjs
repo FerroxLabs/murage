@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { compareVersions, GLIBC_FLOOR, maxGlibcVersion } from "./linux-floor.mjs";
 import { LINUX_CUA_RELEASE } from "./cua-linux-release.mjs";
 
-// Linux cua-driver-rs 0.19.3 (LINUX_CUA_RELEASE.version) prebuilt: the owner
+// Linux cua-driver-rs 0.55.0 (LINUX_CUA_RELEASE.version) prebuilt: the owner
 // approved this ceiling on 2026-10-26. Only these exact paths and hashes qualify.
 const CUA_REASON = `pinned Linux cua-driver-rs ${LINUX_CUA_RELEASE.version} prebuilt; ceiling approved by owner on 2026-10-26`;
 export const REVIEWED_CEILINGS = Object.freeze({

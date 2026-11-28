@@ -1,4 +1,5 @@
 import { registerBusyloopPayloadSite, fluxRouteFor, registerBusyloopRequestSite } from "../../shared/flux-route.ts";
+import { classifyBedrockName } from "../bedrock-env.ts";
 import { cliRefusal, fluxResponseDecision } from "./flux-busyloop-readers.ts";
 import { isTerminal, type Decision } from "../../shared/flux-busyloop.ts";
 import { botFolderOrThrow } from "../bot-folder.ts";
@@ -49,6 +50,8 @@ export interface HeadlessRunOptions {
   /** Which engine answers: decides the result fallback the gate may use (A.1). */
   engine: PipEngine;
   requestBytes?: number;
+  /** Runs synchronously right before the spawn; a throw ends the run with no process. */
+  beforeSpawn?: () => void;
   maxOutputBytes?: number; maxOutputTokens?: number; firstByteMs?: number; deadlineAt?: number;
   context: { runId: string; family: string; attempt: number; botId?: string };
   bootEpoch?: BootEpoch; history?: MissHistory; hooks?: TransportHooks; binaryIdentity?: string | null;
@@ -60,7 +63,7 @@ export interface HeadlessRunOptions {
   stdinText?: string;
   /** The call's learning gate (TextOnlyTurnInput.transport.gate): the physical write is released through it, under the write lock. */
   gate?: LearningGate;
-  /** Fuigo and Grok: write the prepared prompt and spawn together under the gate lock. */
+  /** Fuigo and Grok: the prepared prompt, written and spawned right after the gate commits its release (never under the lock). */
   promptText?: string;
   cleanup?: () => void; allowedHomeNew?: RegExp[]; allowedRootNew?: RegExp[];
   /** After the result line, the child gets this long to exit on its own before the tree is stopped. */
@@ -115,30 +118,34 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     if (o.signal.aborted) throw cancelled();
     // the last await before the spawn: a read that moved meanwhile throws here, the root is removed and no process ever exists
     if (o.gate) o.gate.check(); else runAdmissionFence(o.fence);
+    // M9 FENCE: the Bedrock epoch checked at launch must still be the binding here, in the same synchronous step as the spawn
+    o.beforeSpawn?.();
   } catch (error) { finish(true); throw error; }
 
   let child: ReturnType<typeof spawnCli>;
-  let spawned: ReturnType<typeof spawnCli> | undefined, commitFailed: MemorySendCommitFailed | undefined;
+  let commitFailed: MemorySendCommitFailed | undefined;
   // The bot this reflection runs for: the launcher refuses a Cloud run that names none.
   const env: Record<string, string | undefined> = { ...o.env };
   cloudTurnBot(env, o.context?.botId);
-  const spawnIt = () => spawned = spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job);
-  // Each attempt owns a unique root. Still keep the prompt write and spawn in the same
-  // admission fence: a refused send must not write the private words. Encoding is done above.
+  const spawnIt = () => spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job);
+  // Each attempt owns a unique root. A refused send must not write the private words: the gate decides and commits the release first
+  // (a refusal, busy lock or failed COMMIT throws and nothing is written or launched), then the prompt file and the spawn follow in the
+  // same synchronous turn, with no await between COMMIT and the launch. The write lock is never held across a file write or a process
+  // launch (MAIN-RULING 1.0.22 learning-send-transports :56). A failed write or spawn after the release still counts as released and
+  // surfaces its own error below, exactly as it did from inside the gate. Encoding is done above.
   const promptText = o.promptText;
   const writeAndSpawn = () => {
     if (promptBytes !== undefined) writeFileSync(o.temp.promptFile, promptBytes, { mode: 0o600 });
     return spawnIt();
   };
-  try { child = o.gate && promptText !== undefined ? o.gate.send(() => writeAndSpawn()) : spawnIt(); }
-  catch (error) {
-    if (spawned && error instanceof MemorySendCommitFailed) { child = spawned; commitFailed = error; }
-    else {
+  try {
+    if (o.gate && promptText !== undefined) { o.gate.send(() => undefined); child = writeAndSpawn(); }
+    else child = spawnIt();
+  } catch (error) {
     finish(true);
     // No job, no CLI: the run is refused for isolation, exactly as a failed assignment is (jobRefusal below).
     if (error instanceof PipJobRefusedError) return settledWithout({ state: "refused", reason: "isolation", detail: "job-assignment-failed", counted: false });
     throw error;
-    }
   }
 
   let exitCode: number | null = null;
@@ -467,6 +474,9 @@ export function claudeAllowlistEnv(full: NodeJS.ProcessEnv, temp: TempRoot, maxO
   };
   for (const key of CLAUDE_ENV_KEEP) if (typeof full[key] === "string" && full[key]) env[key] = full[key] as string;
   if (loginNamespace !== null) env.CLAUDE_SECURESTORAGE_CONFIG_DIR = loginNamespace;
+  // M9: a text-only run on a Bedrock engine keeps the Bedrock Set (the bound profile and its two AWS files) and the proxy, CA and model names, and so
+  // never runs first-party. Its temp HOME hides the SSO token cache, so an SSO profile fails closed here as an expired sign-in, never on another account.
+  if (full.CLAUDE_CODE_USE_BEDROCK === "1") for (const [key, value] of Object.entries(full)) if (typeof value === "string" && ["set", "keep"].includes(classifyBedrockName(key))) env[key] = value;
   return env;
 }
 
@@ -607,6 +617,8 @@ export interface ClaudeTextOnlyConfig {
   platform?: NodeJS.Platform; keychainLookup?: KeychainLookup;
   preflight?: PreflightOptions; binaryIdentity?: string | null;
   firstByteMs?: number; postResultGraceMs?: number; allowedHomeNew?: RegExp[];
+  /** Runs synchronously right before the spawn; a throw ends the run with no process. */
+  beforeSpawn?: () => void;
 }
 
 export async function claudeTextOnlyTurn(input: TextOnlyTurnInput, cfg: ClaudeTextOnlyConfig): Promise<TextOnlyTurnResult> {
@@ -640,7 +652,7 @@ export async function claudeTextOnlyTurn(input: TextOnlyTurnInput, cfg: ClaudeTe
     requestBytes: Buffer.byteLength(input.system)+Buffer.byteLength(input.text),
     requestUrl: fluxRouteFor(cfg.env.ANTHROPIC_BASE_URL).requestUrl,
     fluxUsage: fluxRouteFor(cfg.env.ANTHROPIC_BASE_URL).routed,
-    stdinText: input.text, allowedHomeNew: cfg.allowedHomeNew ?? CLAUDE_ALLOWED_HOME_NEW, postResultGraceMs: cfg.postResultGraceMs,
+    beforeSpawn: cfg.beforeSpawn, stdinText: input.text, allowedHomeNew: cfg.allowedHomeNew ?? CLAUDE_ALLOWED_HOME_NEW, postResultGraceMs: cfg.postResultGraceMs,
   }).then((result) => {
     // a run that did not validate may be a sign-in that moved: the Keychain answer is asked again next time
     if (result.verdict.state !== "validated") forgetClaudeLoginProbes();

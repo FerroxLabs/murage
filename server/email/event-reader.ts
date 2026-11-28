@@ -16,6 +16,7 @@ import type { EmailSendService } from "./send-service.ts";
 import type { EmailBindingService } from "./binding-service.ts";
 import { addrSpec } from "./tools.ts";
 import { isFilteredMail, isHeldForOwner } from "./inbound.ts";
+import { isDatabaseBusy } from "../db-busy.ts";
 
 /** The binding states whose inbox receives mail (closing is owner-only; restored_unverified and account_off never poll, F23). */
 export const RECEIVING_STATES: ReadonlySet<BindingState> = new Set<BindingState>(["active", "paused", "billing_hold", "grace"]);
@@ -30,6 +31,14 @@ const ownerNow = (client: { currentOwnerRef(): string | null }) => ({ kind: "own
 const BACKOFF_BASE_MS = 2_000;
 export const BACKOFF_CEILING_MS = 300_000;
 const IDLE_MS = 30_000;
+/** A local database refusal (busy gate) is not a Flux outage: the batch was not committed, so the same events come again; wait this long, never doubling. */
+export const DB_BUSY_RETRY_MS = 1_000;
+/** The handle under the store was closed (shutdown, restart): nothing here can ever succeed on it, so the loop ends and the runtime's next reader opens on the new handle. */
+export function isClosedDatabase(error: unknown): boolean {
+  const e = error as { code?: unknown; message?: unknown } | null;
+  return !!e && typeof e === "object" && typeof e.message === "string" && /database is not open|database has been closed|database connection is not open/i.test(e.message)
+    && (e.code === undefined || e.code === "ERR_INVALID_STATE");
+}
 const LIFECYCLE = /^email\.(bot\.(paused|resumed)|inbox\.(grace|closing|renewed|restored|credited|deleted|renewal_due)|account\.(enabled|disabled))$/;
 
 /** One inbound email as the owner's notice reads it: the bare sender address and where it goes, never a subject or text. */
@@ -123,6 +132,8 @@ export class EmailEventReader {
   /** Records, applies and acknowledges one batch in one transaction. Returns the fresh lifecycle events, applied after the commit. */
   applyBatch(events: EmailEvent[], nextCursor: string | null): EmailEvent[] {
     const { store, send } = this.options;
+    // 1.0.22 idle: an empty long-poll that names the cursor already stored writes nothing (no transaction, no fresh updated_at)
+    if (!events.length && (!nextCursor || nextCursor === store.getCursor(EVENT_CURSOR_SCOPE))) return [];
     return store.tx(() => {
       const lifecycle: EmailEvent[] = [];
       const arrivals = new Map<string, EmailArrival[]>();
@@ -262,9 +273,15 @@ export class EmailEventReader {
     }));
     while (this.running) {
       let result: PollResult;
-      try { result = await this.pollOnce(); } catch (error) { this.options.log?.(`[email] events: ${(error as Error)?.message ?? error}`); this.failures++; result = "backoff"; }
+      let wait: number | null = null;
+      try { result = await this.pollOnce(); } catch (error) {
+        if (isClosedDatabase(error)) { this.running = false; this.options.log?.("[email] events: the database closed, the reader stops"); break; }
+        if (isDatabaseBusy(error)) { wait = DB_BUSY_RETRY_MS; result = "backoff"; }
+        else { this.options.log?.(`[email] events: ${(error as Error)?.message ?? error}`); this.failures++; result = "backoff"; }
+      }
       if (!this.running) break;
-      if (result === "idle") await sleep(IDLE_MS);
+      if (wait !== null) await sleep(wait);
+      else if (result === "idle") await sleep(IDLE_MS);
       else if (result === "backoff") await sleep(this.backoff());
       this.wakeIdle = null;
     }

@@ -96,6 +96,8 @@ import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 //                     FAKE_ACP_TRUST_DELAY_MS raises the V=2 request that long after
 //                     the session reply: a warm has parked by then.
 //                     FAKE_ACP_TRUST_FORCE_REQUEST=1 asks even with --trust, exercising a late native fallback.
+//                     FAKE_ACP_TRUST_THEN_COMMAND=<cmd> asks to run that command (id 9301) once the
+//                     trust request is answered, logs the reply as "command-reply", then answers.
 //                     FAKE_ACP_TRUST_ON_PROMPT=1 raises the V=2 request only when
 //                     session/prompt arrives, so the prompt is already written:
 //                     with FAKE_ACP_TRUST_PROMPT_FIRST the turn outruns the card.)
@@ -145,6 +147,9 @@ import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 //                   session/load carrying `_meta` fuigo/permissionPolicyPath + Sha256 are checked the same way
 //                   (-32602 with the record as data) and acknowledged in `_meta["fuigo/permissionPolicy"]`.
 //   FAKE_ACP_POLICY_ACK=0  behave like an engine older than 1.0.36: ignore the policy, never acknowledge it
+//   FAKE_ACP_AUTOPILOT=1  session/set_config_option takes Kiro 3.1.0's `autopilot` ("on" or "off")
+//   FAKE_ACP_POLICY_PIN=1  keep the verified policy file open for the life of the process, as Fuigo 1.0.36+ does
+//                   (fuigo-workspace permission/launch_policy.rs keeps a same_file::Handle of it in its static pins)
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_LOAD_ERROR  JSON-RPC error object session/load answers with
@@ -156,11 +161,15 @@ import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 //                        surface: session/new and session/load return
 //                        configOptions, and session/set_config_option switches
 //                        the model (rejecting an unadvertised one with -32602).
+//   FAKE_ACP_THINKING_SETTABLE=1  with FAKE_ACP_VARIANT_WITHOUT_DEFAULT, session/set_config_option
+//                        takes an offered `thinking` value and answers with it as currentValue
 //   FAKE_ACP_MODEL_STICKS  session/set_config_option succeeds but leaves the
 //                        model where it was, so the confirmation guard in
 //                        core.ts has something to catch
 //   FAKE_ACP_USAGE_ROOT  put the prompt result's usage at the root instead of
-//                        under _meta (what opencode 1.18.18 actually does)
+//                        under _meta (what opencode 1.18.18 actually does);
+//                        "fuigo-billed": Fuigo 1.0.47+ _meta with billed* and no usage;
+//                        "fuigo-billed-part": billedOutputTokens only
 //
 // Process pool fixtures (#1575):
 //   FAKE_ACP_SPAWN_LOG   append this child's pid, one line per process start,
@@ -181,6 +190,40 @@ import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 //                        "LATE FRAME FROM THE EARLIER SESSION") and a
 //                        session/request_permission (id 9300) naming it; the
 //                        client's reply is appended to FAKE_ACP_LATE_REPLY_LOG
+//   FAKE_ACP_PROMPT_SCOPE=1  the initialize answer advertises the prompt-scope
+//                        capability (agentCapabilities._meta["fuigo/promptScope"] = 1);
+//                        and (design-1022-grokwarm A, the Fuigo 1.0.48 shape) every
+//                        notification/request the fixture sends without `_meta.promptId`
+//                        is stamped with the prompt id of the session/prompt it is
+//                        answering (null before the first one), and each prompt ends with
+//                        `_fuigo/session_notification` turn_completed {prompt_id, background}
+//   FAKE_ACP_RAW_IN_LOG  append every raw stdin line (JSON-quoted) before any parse
+//   FAKE_ACP_INIT_CAPTURE  a real Fuigo release's captured initialize answer
+//                        (server/drivers/acp/__fixtures__/fuigo-init/initialize-<version>.json):
+//                        its agentCapabilities answer initialize verbatim, and a capture
+//                        that advertises `fuigo/promptScope: 1` turns on that release's
+//                        prompt-scoped frames exactly as FAKE_ACP_PROMPT_SCOPE=1 does
+//   FAKE_ACP_PSCOPE_BACKGROUND  with FAKE_ACP_PROMPT_SCOPE: the turn_completed
+//                        `background` count (default 0; "absent" omits the field)
+//   FAKE_ACP_PSCOPE_TURN2  with FAKE_ACP_PROMPT_SCOPE: on this process's SECOND
+//                        prompt (FAKE_ACP_PSCOPE_AT=n: its n-th), before its own reply, write these comma-separated
+//                        frames: stale-request (request_permission id 9300 stamped
+//                        with prompt 1's id), drain (a drain turn: request_permission
+//                        9300 + a chunk "STALE DRAIN TEXT", promptId "drain-1",
+//                        originPromptId = prompt 1), missing (request 9300, no _meta),
+//                        null (request 9310, promptId null), stale-text (a chunk
+//                        "STALE TURN ONE TEXT" stamped with prompt 1's id), unknown
+//                        (a session/update of an unknown kind, promptId null),
+//                        status (available_commands_update, promptId null); the
+//                        client's answers to 9300/9310 go to FAKE_ACP_LATE_REPLY_LOG
+//   FAKE_ACP_PSCOPE_SPLIT  with FAKE_ACP_PROMPT_SCOPE: after the FIRST prompt's reply,
+//                        write the first third of one frame with no newline; the next
+//                        session/prompt writes its middle (no newline), then 60 ms later
+//                        its end + newline + one chunk "SPLIT CURRENT TEXT" stamped with
+//                        that prompt's id, then answers the prompt (so the frame's first
+//                        byte arrives before the next turn adopts the process and its
+//                        newline after, three reads in all): "request" (request_permission
+//                        id 9300, no _meta) or "status" (available_commands_update, promptId null)
 //   FAKE_ACP_BARE_REJECT_CANCELS=1  Grok Build / Fuigo's rule: a permission
 //                        answered with a reject option and no
 //                        `_meta.followup_message` ends the prompt with
@@ -217,9 +260,16 @@ import { holdFixtureRelayClient } from "./relay-client-lifetime.ts";
 //   FAKE_ACP_MCP_READY_GATE_FILE  also wait for this file before announcing
 //                        readiness, so a test can inspect the real process tree
 //                        before a reused turn reconciles its replacement servers
+//                        (writes `<path>.waiting` while held)
 //   FAKE_ACP_MCP_LIST_READY_AFTER_MS  with FAKE_ACP_MCP_LIST "all:<status>",
 //                        report every server "initializing" until that long
 //                        after the servers were handed over
+//   FAKE_ACP_MCP_LIST_OVERSIZE_AT  "N:ms": that long after list call N, write
+//                        one frame over the limit (the driver's overflow handler)
+//   FAKE_ACP_MCP_LIST_OVERRIDE  JSON {name: status} laid over FAKE_ACP_MCP_LIST "all:<status>"
+//   FAKE_ACP_MCP_LIST_UNANSWERED  1-based list calls this process never answers,
+//                        comma separated; "N+" is call N and every later one
+//                        (a busy engine whose list RPC times out)
 //   FAKE_ACP_MCP_CONNECT=1  connect to every handed server the way a real
 //                        engine does: start it (command, args, env as handed),
 //                        initialize, then tools/list; a session/load with
@@ -333,6 +383,8 @@ import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-c
 import { fixtureRequested } from "./fixture-request.ts";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
+const initCapture = process.env.FAKE_ACP_INIT_CAPTURE ? JSON.parse(readFileSync(process.env.FAKE_ACP_INIT_CAPTURE, "utf8")).result : null;
+if (initCapture?.agentCapabilities?._meta?.["fuigo/promptScope"] === 1) process.env.FAKE_ACP_PROMPT_SCOPE = "1";
 // Separate cages may both call their engine PID 2. Files and session identities
 // must distinguish launches independently of the PID namespace.
 const launchId = randomUUID();
@@ -340,6 +392,13 @@ const launchId = randomUUID();
 const permissionCommand = process.env.FAKE_ACP_PERMISSION_COMMAND || "echo hi";
 // A whole tool call (JSON) for a permission-mode ask, verbatim, so a test can
 // replay the exact shape an engine sent (an MCP tool through use_tool).
+/** Fuigo 1.0.47: the client's initialize said `fuigo/permissionPrompts`. FAKE_ACP_REQUIRE_PERMISSION_PROMPTS=1: an engine that is
+ *  not told denies an outside-workspace change silently (no ask) and ends the turn, as a Generic client got. */
+let permissionPrompts = false;
+type HeldEntry = { name: string; heldReason?: string; heldDigest?: string };
+/** Fuigo 1.0.47 held servers as the engine holds them now (FAKE_ACP_MCP_LIST_HELD, then FAKE_ACP_MCP_LIST_HELD_AFTER_SHOWN). */
+let heldNow: HeldEntry[] | undefined;
+let heldChanged = false;
 const permissionToolCall = process.env.FAKE_ACP_PERMISSION_TOOLCALL ? JSON.parse(process.env.FAKE_ACP_PERMISSION_TOOLCALL) : null;
 // FAKE_ACP_PERMISSION_TOOLCALL_NEXT: the tool call the second ask (FAKE_ACP_PERMISSION_TWICE=1) sends instead,
 // e.g. OpenCode's bash ask under the same toolCallId after its external_directory ask.
@@ -369,6 +428,7 @@ try {
 } catch {}
 
 let currentModel: string | null = models[0] ?? null;
+let currentThinking = "high";
 const configOptions = () =>
   models.length
     ? [
@@ -380,6 +440,10 @@ const configOptions = () =>
           currentValue: currentModel,
           options: models.map((value) => ({ value, name: value })),
         },
+        ...(process.env.FAKE_ACP_VARIANT_WITHOUT_DEFAULT === "1" ? [{
+          id: "thinking", name: "Thinking", category: "thought_level", type: "select", currentValue: currentThinking,
+          options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }],
+        }] : []),
       ]
     : null;
 // cursor-shaped surface: the session advertises `models.availableModels` with
@@ -505,6 +569,12 @@ const dumpEnv = Object.fromEntries(
     "COPILOT_GITHUB_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    // Command Code (acp/command-code.ts): the one key its credentialEnv grants
+    "COMMAND_CODE_API_KEY",
+    // Kiro (acp/kiro.ts): its one key
+    "KIRO_API_KEY",
+    // OMP (acp/omp.ts): the session folder discovery points away from the person's own
+    "PI_CODING_AGENT_SESSION_DIR",
     ...dumpCredentials,
     // engine isolation switches (no secret): compat cells, memory, discovery off
     ...Object.keys(process.env).filter((key) => /^(?:GROK|FUIGO)_[A-Z]+_[A-Z]+_ENABLED$|^(?:GROK|FUIGO)_MEMORY$|^OPENCODE_DISABLE_|^OPENCODE_PURE$|^(?:GEMINI_CLI|QWEN_CODE)_SYSTEM_SETTINGS_PATH$|^GEMINI_CLI_HOME$|^GEMINI_SANDBOX$|^GROK_HOME$|^OPENCODE_CONFIG_DIR$|^FACTORY_HOME_OVERRIDE$/.test(key)),
@@ -580,13 +650,27 @@ if (argv[0] === "models" || argv.includes("--list-models")) {
 }
 
 let outputBatch: unknown[] | undefined;
+/** FAKE_ACP_PSCOPE_SPLIT: the rest of a frame whose first third is already on stdout. The next session/prompt writes it in
+ *  two more reads (the second with no newline); any other write before that leads with it whole, so no frame is torn. */
+let pscopeSplitTail: string | null = null;
 const rawOut = (obj: unknown) => {
+  if (process.env.FAKE_ACP_OUTPUT_LOG) appendFileSync(process.env.FAKE_ACP_OUTPUT_LOG, JSON.stringify(obj) + "\n");
   if (outputBatch) { outputBatch.push(obj); return true; }
-  return process.stdout.write(JSON.stringify(obj) + "\n");
+  const tail = pscopeSplitTail === null ? "" : pscopeSplitTail + "\n";
+  pscopeSplitTail = null;
+  return process.stdout.write(tail + JSON.stringify(obj) + "\n");
 };
 // FAKE_ACP_NAMED_UPDATES=1: every session/update names the live session, as the
 // ACP spec has a real engine do (the fixture's own shorthand frames omit it).
+/** FAKE_ACP_PROMPT_SCOPE: the prompt ids this process was sent, in order, and the one it is answering now. */
+const pscopePrompts: Array<string | null> = [];
+let pscopeCurrent: string | null = null;
 const out = (obj: unknown) => {
+  const scoped = obj as { id?: unknown; method?: unknown; params?: Record<string, any> } | null;
+  if (process.env.FAKE_ACP_PROMPT_SCOPE === "1" && typeof scoped?.method === "string" && scoped.params && typeof scoped.params === "object"
+    && !(scoped.params._meta && typeof scoped.params._meta === "object" && "promptId" in scoped.params._meta)) {
+    obj = { ...scoped, params: { ...scoped.params, _meta: { ...(scoped.params._meta ?? {}), promptId: pscopeCurrent } } };
+  }
   const frame = obj as { method?: unknown; params?: { sessionId?: unknown } } | null;
   if (process.env.FAKE_ACP_NAMED_UPDATES === "1" && frame?.method === "session/update" && frame.params && frame.params.sessionId === undefined && liveSession) {
     return rawOut({ ...frame, params: { sessionId: liveSession, ...frame.params } });
@@ -604,6 +688,8 @@ const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: 
 
 // Fuigo 1.0.36+ launch policy (see FUIGO_POLICY_PATH above). Returns the error record, or null when the bytes match.
 const policyKnown = process.env.FAKE_ACP_POLICY_ACK !== "0";
+/** Open handles of verified policy files, never closed (FAKE_ACP_POLICY_PIN). */
+const policyPins: number[] = [];
 function policyFileError(path: unknown, sha256: unknown): Record<string, unknown> | null {
   if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/.test(sha256)) return { policy_error: "hash_missing", path, line: null, message: "hash missing" };
   if (typeof path !== "string" || !isAbsolute(path)) return { policy_error: "not_absolute", path, line: null, message: "not absolute" };
@@ -612,7 +698,9 @@ function policyFileError(path: unknown, sha256: unknown): Record<string, unknown
     if (lstatSync(path).isSymbolicLink()) return { policy_error: "symlink", path, line: null, message: "symlink" };
     bytes = readFileSync(path);
   } catch { return { policy_error: "not_found", path, line: null, message: "not found" }; }
-  return createHash("sha256").update(bytes).digest("hex") === sha256 ? null : { policy_error: "hash_mismatch", path, line: null, message: "hash mismatch" };
+  if (createHash("sha256").update(bytes).digest("hex") !== sha256) return { policy_error: "hash_mismatch", path, line: null, message: "hash mismatch" };
+  if (process.env.FAKE_ACP_POLICY_PIN === "1") policyPins.push(openSync(path, "r"));
+  return null;
 }
 if (policyKnown && process.env.FUIGO_POLICY_PATH !== undefined) {
   const failed = policyFileError(process.env.FUIGO_POLICY_PATH, process.env.FUIGO_POLICY_SHA256);
@@ -629,9 +717,11 @@ function sessionPolicy(msg: any): { _meta?: Record<string, unknown> } | true {
 }
 // FAKE_ACP_PRE_FRAMES: a JSON list of session/update bodies ({ update, meta? }) sent just before the answer to session/new
 // or session/load, so before any prompt: a load's history replay, or a tool frame an engine sends before it is asked.
-const preFrames = (sid: unknown) => {
+const preFrames = (sid: unknown, mount?: unknown) => {
   for (const frame of JSON.parse(process.env.FAKE_ACP_PRE_FRAMES ?? "[]")) {
-    out({ jsonrpc: "2.0", method: frame.rail ?? "session/update", params: { sessionId: sid, update: frame.update, ...(frame.meta ? { _meta: frame.meta } : {}) } });
+    // a frame with its own `params` (a status notification) is sent as given, naming the session about to be answered; the name
+    // "$agents" becomes the name this session gave Murage's agents server
+    out({ jsonrpc: "2.0", method: frame.rail ?? "session/update", params: frame.params ? { ...frame.params, ...(frame.params.name === "$agents" ? { name: mount } : {}), sessionId: sid } : { sessionId: sid, update: frame.update, ...(frame.meta ? { _meta: frame.meta } : {}) } });
   }
 };
 /** A test's own gate: `then` runs once the file exists. */
@@ -667,17 +757,23 @@ const runStrandedInterjection = () => {
 // session/prompt arrives (or after Murage answers request id `after`), doing one of: `update` (a session update, on
 // `rail`, default session/update, with optional `meta`), `notify` {method, params}, `request` {id, method, params}
 // (an engine request), `result` (the prompt's result; an accepted interjection then runs as a fallback turn) or
-// `error` (the prompt's RPC error); a step with `gate`: <file> waits for the file first. Each answer to a scripted request is appended to FAKE_ACP_SCRIPT_LOG.
+// `error` (the prompt's RPC error); a step with `gate`: <file> waits for the file first. FAKE_ACP_RETRY_DISCARD=1 advertises Fuigo's retryDiscard at initialize (its discards carry streamStartMs). Each answer to a scripted request is appended to FAKE_ACP_SCRIPT_LOG.
 const scriptRequestIds = new Set<unknown>();
 const scriptAnswerWaiters = new Map<unknown, Array<() => void>>();
 let scriptStartedAt = 0;
 const runFuigoScript = (prompt: any) => {
   const sid = prompt.params?.sessionId;
   scriptStartedAt = Date.now();
-  const steps: any[] = JSON.parse(process.env.FAKE_ACP_SCRIPT ?? "[]");
+  // `repeat`: N on a step: that step N times, each copy with every "$i" in it replaced by its index (a script too long to pass in the environment)
+  // FAKE_ACP_SCRIPT_FILE: the same list in a file, for a script past the per-variable environment limit (one 10,000-location call)
+  const steps: any[] = (JSON.parse(process.env.FAKE_ACP_SCRIPT_FILE ? readFileSync(process.env.FAKE_ACP_SCRIPT_FILE, "utf8") : process.env.FAKE_ACP_SCRIPT ?? "[]") as any[]).flatMap((step) => typeof step?.repeat === "number"
+    ? Array.from({ length: step.repeat }, (_v, i) => JSON.parse(JSON.stringify({ ...step, repeat: undefined }).replaceAll("$i", String(i)))) : [step]);
   const run = (step: any) => {
+    // `grow`: {key, char, length}: the update's `key` is that character repeated (a value too long to pass in the environment)
+    if (step.update && step.grow) step.update[step.grow.key] = String(step.grow.char).repeat(step.grow.length);
     if (step.update) out({ jsonrpc: "2.0", method: step.rail ?? "session/update", params: { sessionId: sid, update: step.update, ...(step.meta ? { _meta: step.meta } : {}) } });
-    else if (step.notify) out({ jsonrpc: "2.0", method: step.notify.method, params: step.notify.raw === true ? step.notify.params : { sessionId: sid, ...step.notify.params } });
+    // a raw notification names the live session as the string "$SID" (a test cannot know the id in advance)
+    else if (step.notify) out({ jsonrpc: "2.0", method: step.notify.method, params: step.notify.raw === true ? JSON.parse(JSON.stringify(step.notify.params).replaceAll('"$SID"', JSON.stringify(sid))) : { sessionId: sid, ...step.notify.params } });
     else if (step.request) {
       scriptRequestIds.add(step.request.id);
       out({ jsonrpc: "2.0", id: step.request.id, method: step.request.method, params: { sessionId: sid, ...step.request.params } });
@@ -900,7 +996,9 @@ let agentsMcp: McpEntry | null = null;
 /** memory-search mode: the session's memory MCP server (the memory proxy). */
 let memoryMcp: McpEntry | null = null;
 const memoryServerOf = (servers: unknown): McpEntry | null => Array.isArray(servers)
-  ? (servers.find((s: any) => Array.isArray(s?.args) && s.args.some((arg: unknown) => /memory-proxy/.test(String(arg)))) as McpEntry | undefined) ?? null
+  // the bare memory proxy, or (a bound mount, as Fuigo is handed it) the relay shim named by its per-turn murage-memory-<hex> alias
+  ? (servers.find((s: any) => Array.isArray(s?.args) && s.args.some((arg: unknown) => /memory-proxy/.test(String(arg)))
+    || /^murage-memory-[a-f0-9]{20}$/.test(String(s?.name ?? ""))) as McpEntry | undefined) ?? null
   : null;
 /** The session this process built or loaded, as Fuigo keeps it resident. */
 let liveSession: string | null = null;
@@ -930,6 +1028,8 @@ let lastMcpServerNames: string[] = [];
 /** When those servers were handed over, and whether the list has shown them settled since. */
 let mcpHandedAt = 0;
 let mcpListSettledLogged = false;
+/** FAKE_ACP_MCP_LIST_UNANSWERED: list calls seen by this process. */
+let mcpListCalls = 0;
 const mcpTimeline = (event: "ready" | "listed" | "prompt", name?: string) => {
   const file = process.env.FAKE_ACP_MCP_TIMELINE;
   if (file) appendFileSync(file, `${JSON.stringify({ event, at: Date.now(), ...(name ? { name } : {}) })}\n`);
@@ -947,6 +1047,8 @@ const announceMcpReady = (sessionId: string, servers: unknown) => {
     if (afterListing && (connectionGeneration !== mcpConnectionGeneration || connectedMcp.some(child => child.exitCode !== null || child.signalCode !== null))) return;
     const gate = process.env.FAKE_ACP_MCP_READY_GATE_FILE;
     if (gate && !existsSync(gate)) {
+      // `<gate>.waiting` says the session was answered and the first prompt is held on readiness
+      if (!existsSync(`${gate}.waiting`)) writeFileSync(`${gate}.waiting`, "");
       setTimeout(announce, 10).unref();
       return;
     }
@@ -962,6 +1064,10 @@ const announceMcpReady = (sessionId: string, servers: unknown) => {
   connectMcpServers(servers, afterListing ? schedule : undefined);
   connectionGeneration = mcpConnectionGeneration;
   if (!afterListing) schedule();
+  // FAKE_ACP_MCP_PROGRESS=<n>: report the engine's connect count (n of the servers handed) 100 ms later, under
+  // FAKE_ACP_MCP_PROGRESS_METHOD (default `_fuigo/mcp_progress`), and never announce more.
+  const progress = process.env.FAKE_ACP_MCP_PROGRESS;
+  if (progress !== undefined && serverCount > 0) setTimeout(() => out({ jsonrpc: "2.0", method: process.env.FAKE_ACP_MCP_PROGRESS_METHOD ?? "_fuigo/mcp_progress", params: { sessionId, total: serverCount, connected: Number(progress) } }), 100).unref();
 };
 /** FAKE_ACP_MCP_CONNECT: the servers this engine holds open, as a real engine does. */
 let connectedMcp: Array<ReturnType<typeof spawn>> = [];
@@ -1042,6 +1148,7 @@ const dumpedServers = (servers: unknown): unknown => {
     : server);
 };
 if (process.env.FAKE_ACP_SPAWN_LOG) appendFileSync(process.env.FAKE_ACP_SPAWN_LOG, `${process.pid}\n`);
+if (process.env.FAKE_ACP_PARENT_LOG) appendFileSync(process.env.FAKE_ACP_PARENT_LOG, `${process.ppid}\n`);
 
 /** Minimal one-shot MCP stdio client: initialize, call each tool in
  * sequence, return the text of the last result. Dependency-free. */
@@ -1195,13 +1302,18 @@ function playInterleaveTurn() {
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "after" } } } });
 }
 
-let buf = "";
+// Linear line split: only each new chunk is searched for a newline and the parts of an unfinished line are joined
+// once, so a 64 MiB line arriving in small chunks is read in time (searching the whole buffer per chunk was quadratic).
+let parts: string[] = [];
 process.stdin.on("data", (c) => {
-  buf += c;
+  let rest = String(c);
   let nl;
-  while ((nl = buf.indexOf("\n")) !== -1) {
-    const line = buf.slice(0, nl);
-    buf = buf.slice(nl + 1);
+  while ((nl = rest.indexOf("\n")) !== -1) {
+    const line = parts.join("") + rest.slice(0, nl);
+    parts = [];
+    rest = rest.slice(nl + 1);
+    // FAKE_ACP_RAW_IN_LOG: every raw stdin line exactly as written (JSON-quoted, one per log line), before any parse
+    if (process.env.FAKE_ACP_RAW_IN_LOG) appendFileSync(process.env.FAKE_ACP_RAW_IN_LOG, JSON.stringify(line) + "\n");
     if (!line.trim()) continue;
     let msg: any;
     try {
@@ -1212,6 +1324,7 @@ process.stdin.on("data", (c) => {
     lastInboundLine = line;
     handle(msg);
   }
+  if (rest) parts.push(rest);
 });
 
 // folder-trust mode, after session/new OR session/load: Fuigo's
@@ -1249,6 +1362,10 @@ function afterSessionBuilt() {
     const kinds = process.env.FAKE_ACP_TRUST_KINDS ?? "instructions";
     const params = { sessionId: "fake-acp-session", cwd: process.cwd(), workspace: key, configKinds: kinds ? kinds.split(",") : [], ...(scope === "none" ? {} : { scope }), reason: verdict };
     const raiseNow = () => {
+      // FAKE_ACP_TRUST_DECLINE_FILE + FAKE_ACP_TRUST_DECLINE_KEY: a "no" for that key lands in that trust file just before the ask (a decline
+      // written mid-turn, after the client's own trust step); the key may be several, one per line
+      if (process.env.FAKE_ACP_TRUST_DECLINE_FILE && (process.env.FAKE_ACP_TRUST_DECLINE_KEY ?? "").split("\n").includes(key))
+        appendFileSync(process.env.FAKE_ACP_TRUST_DECLINE_FILE, `[folders.${JSON.stringify(key)}]\ntrusted = false\ndecided_at = ${Math.floor(Date.now() / 1000)}\n`);
       trustLog({ event: "request", params });
       out({ jsonrpc: "2.0", id: pendingPermissionId, method: "_fuigo/folder_trust/request", params });
     };
@@ -1392,7 +1509,7 @@ function handle(msg: any) {
     scriptAnswerWaiters.delete(msg.id);
     return;
   }
-  if (msg.id === 9300 && !msg.method) {
+  if ((msg.id === 9300 || msg.id === 9310) && !msg.method) {
     if (process.env.FAKE_ACP_LATE_REPLY_LOG) appendFileSync(process.env.FAKE_ACP_LATE_REPLY_LOG, JSON.stringify({ result: msg.result, error: msg.error }) + "\n");
     return;
   }
@@ -1412,6 +1529,7 @@ function handle(msg: any) {
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
     pendingPermissionId = null;
     const chosen = msg.result?.outcome?.optionId;
+    if (mode === "folder-trust" && msg.id === 9301) trustLog({ event: "command-reply", raw: lastInboundLine });
     // GH15 qualification: perform the synthetic report only after the real
     // permission reply allows it. Never infer a file write from final prose.
     if (process.env.FAKE_ACP_GH15_REPORT === "1" && process.env.FAKE_ACP_DUMP
@@ -1446,7 +1564,7 @@ function handle(msg: any) {
       out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: "fake-acp-session", update: { sessionUpdate: "config_notice", message: "Folder trust is on. Reopen this session to use it." } } });
       dumpState.reopenNoticeSent = ((dumpState.reopenNoticeSent as number | undefined) ?? 0) + 1;
     }
-    if (process.env.FAKE_ACP_DUMP) {
+    if (process.env.FAKE_ACP_DUMP && msg.id !== 9301) {
       dumpState.decision = msg.result ?? { error: msg.error };
       writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
     }
@@ -1557,6 +1675,7 @@ function handle(msg: any) {
       // FAKE_ACP_AUTH_METHODS: a comma list of method ids to advertise (Cline's
       // provider ids, item 175); unset keeps the one cached_token method.
       const authMethods = mode === "no-auth" ? [] : process.env.FAKE_ACP_AUTH_METHODS ? process.env.FAKE_ACP_AUTH_METHODS.split(",").map((id) => ({ id })) : [{ id: "cached_token" }];
+      permissionPrompts = msg.params?.clientCapabilities?._meta?.["fuigo/permissionPrompts"] === true;
       folderTrustInteractive = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.interactive === true;
       folderTrustClientV2 = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.v2 === true;
       folderTrustReopenNotice = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.reopenNotice === true;
@@ -1565,7 +1684,7 @@ function handle(msg: any) {
         writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
       }
       const initDelay = Number(process.env.FAKE_ACP_INIT_DELAY_MS) || 0;
-      const answer = () => result(msg.id, { protocolVersion: 1, authMethods, ...(process.env.FAKE_ACP_AGENT_VERSION ? { agentInfo: { name: "fixture", version: process.env.FAKE_ACP_AGENT_VERSION } } : {}), ...(mode.startsWith("fuigo-retry:disc-") ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}), _meta: { modelState: { currentModelId: "fake-acp-model" } } });
+      const answer = () => result(msg.id, { protocolVersion: 1, authMethods, ...(process.env.FAKE_ACP_AGENT_VERSION ? { agentInfo: { name: "fixture", version: process.env.FAKE_ACP_AGENT_VERSION } } : {}), ...(mode.startsWith("fuigo-retry:disc-") || process.env.FAKE_ACP_RETRY_DISCARD === "1" ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}), ...(process.env.FAKE_ACP_PROMPT_SCOPE === "1" ? { agentCapabilities: { _meta: { "fuigo/promptScope": 1 } } } : {}), ...(initCapture ? { agentCapabilities: initCapture.agentCapabilities } : {}), _meta: { modelState: { currentModelId: "fake-acp-model" } } });
       if (initDelay > 0) setTimeout(answer, initDelay); else answer();
       break;
     }
@@ -1629,7 +1748,7 @@ function handle(msg: any) {
       liveSession = newSessionId;
       liveServers = JSON.stringify(servers);
       startMcpChild(servers);
-      preFrames(newSessionId);
+      preFrames(newSessionId, agentsMcp?.name);
       result(msg.id, {
         sessionId: newSessionId,
         ...newPolicy,
@@ -1774,6 +1893,25 @@ function handle(msg: any) {
     }
     case "session/set_config_option": {
       const { configId, value } = msg.params ?? {};
+      if (configId === "mode" && process.env.FAKE_ACP_DEVIN_MODE) {
+        configCalls.push({ method: msg.method, params: msg.params });
+        if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.config.json`, JSON.stringify(configCalls));
+        const currentValue = process.env.FAKE_ACP_DEVIN_MODE === "accept" ? value : "plan";
+        result(msg.id, { configOptions: [...(configOptions() ?? []), { id: "mode", currentValue }] });
+        break;
+      }
+      // FAKE_ACP_AUTOPILOT=1: Kiro 3.1.0's `autopilot` ("on" or "off"), recorded with the other config calls
+      if (process.env.FAKE_ACP_AUTOPILOT === "1" && configId === "autopilot" && (value === "on" || value === "off")) {
+        configCalls.push({ method: msg.method, params: msg.params });
+        if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.config.json`, JSON.stringify(configCalls, null, 2));
+        result(msg.id, { configOptions: configOptions() });
+        break;
+      }
+      if (process.env.FAKE_ACP_THINKING_SETTABLE === "1" && process.env.FAKE_ACP_VARIANT_WITHOUT_DEFAULT === "1" && configId === "thinking" && (value === "low" || value === "high")) {
+        currentThinking = value;
+        result(msg.id, { configOptions: configOptions() });
+        break;
+      }
       if (configId !== "model" || !models.includes(value)) {
         out({
           jsonrpc: "2.0",
@@ -1790,6 +1928,43 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      if (process.env.FAKE_ACP_PROMPT_SCOPE === "1" && pscopeSplitTail !== null) {
+        // FAKE_ACP_PSCOPE_SPLIT: the held frame's middle (no newline) in one read, then its end, its newline and one frame
+        // of THIS prompt in a later read; the prompt itself is answered after that
+        const rest = pscopeSplitTail, mid = Math.floor(rest.length / 2);
+        pscopeSplitTail = null;
+        process.stdout.write(rest.slice(0, mid));
+        const current = { jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, _meta: { promptId: msg.params?._meta?.promptId }, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "SPLIT CURRENT TEXT " } } } };
+        setTimeout(() => { process.stdout.write(rest.slice(mid) + "\n" + JSON.stringify(current) + "\n"); handle(msg); }, 60);
+        break;
+      }
+      if (process.env.FAKE_ACP_PROMPT_SCOPE === "1") {
+        const sent = msg.params?._meta?.promptId;
+        pscopeCurrent = typeof sent === "string" ? sent : null;
+        pscopePrompts.push(pscopeCurrent);
+        const script = process.env.FAKE_ACP_PSCOPE_TURN2;
+        if (script && pscopePrompts.length === (Number(process.env.FAKE_ACP_PSCOPE_AT) || 2)) {
+          const sid = msg.params?.sessionId, first = pscopePrompts[0] ?? null;
+          const ask = (id: number, meta: Record<string, unknown> | undefined, title: string) => rawOut({ jsonrpc: "2.0", id, method: "session/request_permission", params: { sessionId: sid, ...(meta ? { _meta: meta } : {}), toolCall: { toolCallId: `pscope-${id}`, title, kind: "execute" }, options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject", kind: "reject_once" }] } });
+          const chunk = (text: string, meta: Record<string, unknown>) => rawOut({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, _meta: meta, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+          for (const step of script.split(",")) {
+            if (step === "stale-request") ask(9300, { promptId: first }, "Stale ask from prompt one");
+            else if (step === "drain") { ask(9300, { promptId: "drain-1", originPromptId: first }, "Drain ask from prompt one"); chunk("STALE DRAIN TEXT", { promptId: "drain-1", originPromptId: first }); }
+            else if (step === "missing") ask(9300, undefined, "Ask with no prompt id");
+            else if (step === "null") ask(9310, { promptId: null }, "Ask with a null prompt id");
+            else if (step === "stale-text") chunk("STALE TURN ONE TEXT", { promptId: first });
+            else if (step === "unknown") rawOut({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, _meta: { promptId: null }, update: { sessionUpdate: "fixture_unknown_kind" } } });
+            else if (step === "status") rawOut({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, _meta: { promptId: null }, update: { sessionUpdate: "available_commands_update", availableCommands: [] } } });
+          }
+          setTimeout(() => {
+            out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "turn two reply" } } } });
+            out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: sid, update: { sessionUpdate: "turn_completed", prompt_id: pscopeCurrent, stop_reason: "end_turn", background: 0 } } });
+            recordMethod("session/prompt.result");
+            result(msg.id, { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } });
+          }, 400);
+          break;
+        }
+      }
       if (r3Root) {
         void (async () => {
           const hook = execFileSync(process.execPath, ["-e", process.env.FAKE_R3_HERMES_HOOK!], { encoding: "utf8" });
@@ -1816,6 +1991,12 @@ function handle(msg: any) {
         });
         return;
       }
+      if (mode === "opencode-quiet-progress") {
+        // OPENCODE-QUIET-1023 W2(b): one owned record, then a reply chunk before 60 s, then silence.
+        process.stderr.write(`timestamp=2026-11-06T14:22:31.873Z level=ERROR run=fixture message="stream error" providerID=fixture modelID=mock session.id=${msg.params?.sessionId} small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"\n`);
+        setTimeout(() => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "partial" } } } }), 1000);
+        return;
+      }
       if (mode === "opencode-quiet") {
         // Captured 1.19.5 grammar; the only substitution is this ACP session id.
         process.stderr.write(`timestamp=2026-11-06T14:22:31.873Z level=ERROR run=fixture message="stream error" providerID=fixture modelID=mock session.id=${msg.params?.sessionId} small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"\n`);
@@ -1824,7 +2005,11 @@ function handle(msg: any) {
       trustLog({ event: "prompt" });
       folderTrustedAtPrompt = folderTrustedAtBuild || trustProcessOnly.has(trustWorkspace());
       mcpTimeline("prompt");
-      if (mode === "fuigo-script") { runFuigoScript(msg); return; }
+      if (mode === "fuigo-script") {
+        if (process.env.FAKE_ACP_PROMPT_DUMP) writeFileSync(process.env.FAKE_ACP_PROMPT_DUMP, JSON.stringify(msg.params?.prompt ?? null));
+        runFuigoScript(msg);
+        return;
+      }
       if (mode === "parallel-card-retry" && process.env.FAKE_ACP_FAIL_ONCE_FILE && !existsSync(process.env.FAKE_ACP_FAIL_ONCE_FILE)) {
         writeFileSync(process.env.FAKE_ACP_FAIL_ONCE_FILE, "failed launch");
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "429 too many requests", data: { http_status: 429, error_kind: "rate_limited" } } });
@@ -2019,6 +2204,17 @@ function handle(msg: any) {
         }
         return;
       }
+      // no-reason:<observed|bare|blank>: the 1.0.19 meetgreet failure. The engine's own retries end (retry_state failed, kind api),
+      // a stop notice says error/api, and session/prompt is rejected with -32603 and nothing that explains it.
+      if (mode.startsWith("no-reason:")) {
+        const variant = mode.slice("no-reason:".length);
+        if (variant === "observed") {
+          out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "retry_state", type: "failed", error_type: "api", creditLimit: false, hold: false }, _meta: { eventId: "fixture-no-reason-1", agentTimestampMs: Date.now() } } });
+          out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params.sessionId, stopReason: "error", errorKind: "api" } });
+        }
+        out({ jsonrpc: "2.0", id: msg.id, error: variant === "bare" ? { code: -32603 } : { code: -32603, message: "Internal error" } });
+        return;
+      }
       if (mode.startsWith("fuigo-diagnostic:")) {
         const variant = mode.slice("fuigo-diagnostic:".length);
         const params: any = {
@@ -2134,9 +2330,10 @@ function handle(msg: any) {
         return;
       }
       if (mode === "fuigo-live-notices") {
-        process.stderr.write("ordinary diagnostic\nfuigo: lowercase log line\nFu");
+        // one diagnostic line over the old 64 KiB notice-line bound comes first: the notices after it are still read
+        process.stderr.write("ordinary diagnostic\n" + "d".repeat(100 * 1024) + "\nfuigo: lowercase log line\nFu");
         setTimeout(() => {
-          process.stderr.write("igo: found memory from an older version at /home/u/.fuigo/memory/old. It belongs to another repository. Memory for this repository now lives at /home/u/.fuigo/memory/new. Nothing was deleted.\r\nFuigo: the feedback session archive was NOT uploaded. token=fixture-secret-canary\nFuigo: " + "x".repeat(1400) + "\nFuigo: fourth omitted\n");
+          process.stderr.write("igo: found memory from an older version at /home/u/.fuigo/memory/old. It belongs to another repository. Memory for this repository now lives at /home/u/.fuigo/memory/new. Nothing was deleted.\r\nFuigo: the feedback session archive was NOT uploaded. token=fixture-secret-canary\nFuigo: " + "x".repeat(1400) + "\nFuigo: fourth shown\n");
           // A live output marker lets tests observe delivery without an exit.
           setTimeout(() => out({ jsonrpc: "2.0", method: "session/update", params: {
             update: { sessionUpdate: "agent_message_chunk", content: { text: "notices written" } },
@@ -2212,6 +2409,8 @@ function handle(msg: any) {
           if (kind === "overflow") { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: fixtureOversizeText() } } } }); return; }
           if (kind === "text") out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "late reply" } } } });
           result(msg.id, { stopReason: kind === "other" ? "max_tokens" : "end_turn" });
+          // a steered line the prompt did not take runs as the engine's own fallback turn after the result (a failed prompt drops it)
+          setImmediate(runStrandedInterjection);
         });
         return;
       }
@@ -2262,6 +2461,10 @@ function handle(msg: any) {
       }
       const complete = () => {
         recordMethod("session/prompt.result");
+        if (process.env.FAKE_ACP_PROMPT_SCOPE === "1") {
+          const bg = process.env.FAKE_ACP_PSCOPE_BACKGROUND;
+          out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "turn_completed", prompt_id: pscopeCurrent, stop_reason: "end_turn", ...(bg === "absent" ? {} : { background: Number(bg ?? 0) }) } } });
+        }
         setImmediate(runStrandedInterjection);
         scheduleLateFrames(msg.params?.sessionId);
         if (process.env.FAKE_ACP_BARE_REJECT_CANCELS && bareRejectAnswered) {
@@ -2279,10 +2482,22 @@ function handle(msg: any) {
           // the result root with an empty _meta, instead of usage under _meta.
           process.env.FAKE_ACP_USAGE_ROOT === "fuigo"
             ? { stopReason: "end_turn", _meta: { inputTokens: 1, outputTokens: 2, usage: { inputTokens: 100, outputTokens: 50, cachedReadTokens: 30, costUsdTicks: 2500000000 } } }
+            // Fuigo 1.0.47+ after a retried call with no whole-prompt usage: last attempt unprefixed, every resend in billed*
+            : process.env.FAKE_ACP_USAGE_ROOT === "fuigo-billed"
+            ? { stopReason: "end_turn", _meta: { totalTokens: 12, inputTokens: 10, outputTokens: 2, billedTotalTokens: 36, billedInputTokens: 30, billedOutputTokens: 6 } }
+            // "fuigo-billed-part": only billedOutputTokens beside the unprefixed counts (the input side was never resent)
+            : process.env.FAKE_ACP_USAGE_ROOT === "fuigo-billed-part"
+            ? { stopReason: "end_turn", _meta: { totalTokens: 12, inputTokens: 10, outputTokens: 2, billedOutputTokens: 6 } }
             // opencode 1.18.25 (upstream #1993): inputTokens is only the
             // uncached share, cache reads sit beside it, totalTokens is the sum.
             : process.env.FAKE_ACP_USAGE_ROOT === "cache-beside"
             ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, cachedReadTokens: 90, totalTokens: 105 }, _meta: {} }
+            // an agent that marks its own usage incomplete
+            : process.env.FAKE_ACP_USAGE_ROOT === "incomplete"
+            ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, cachedReadTokens: 90, usageIsIncomplete: true }, _meta: {} }
+            // cache reads beside a maximal input: the whole prompt is not representable
+            : process.env.FAKE_ACP_USAGE_ROOT === "overflow"
+            ? { stopReason: "end_turn", usage: { inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 0, cachedReadTokens: 1 }, _meta: {} }
             // an agent that counts cache reads inside inputTokens
             : process.env.FAKE_ACP_USAGE_ROOT === "cache-inside"
             ? { stopReason: "end_turn", usage: { inputTokens: 100, outputTokens: 5, cachedReadTokens: 90, totalTokens: 105 }, _meta: {} }
@@ -2290,6 +2505,20 @@ function handle(msg: any) {
             ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5 }, _meta: {} }
             : { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } },
         );
+        const split = process.env.FAKE_ACP_PSCOPE_SPLIT;
+        if (process.env.FAKE_ACP_PROMPT_SCOPE === "1" && split && pscopePrompts.length === 1) {
+          const sid = msg.params?.sessionId;
+          const frame = JSON.stringify(split === "request"
+            ? { jsonrpc: "2.0", id: 9300, method: "session/request_permission", params: { sessionId: sid, toolCall: { toolCallId: "pscope-split-9300", title: "Ask begun before the handoff", kind: "execute" }, options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject", kind: "reject_once" }] } }
+            : { jsonrpc: "2.0", method: "session/update", params: {
+              sessionId: split === "foreign-status" ? "fixture-other-session" : sid,
+              _meta: { promptId: null, ...(split === "replay" ? { isReplay: true } : {}) },
+              update: { sessionUpdate: "available_commands_update", availableCommands: [] },
+            } });
+          const cut = Math.floor(frame.length / 3);
+          process.stdout.write(frame.slice(0, cut));
+          pscopeSplitTail = frame.slice(cut);
+        }
       };
       const promptText = String(msg.params?.prompt?.[0]?.text ?? "");
       // lane review: a review run answers with its verdict (fake-review.ts)
@@ -2354,9 +2583,17 @@ function handle(msg: any) {
         }
         // the reply says what the session was built with, the way a real
         // turn's answer would (or would not) carry an AGENTS.md instruction
-        const answer = () => {
+        const reply = () => {
           out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `agents: ${agentsMdForReply()}` } } } });
           complete();
+        };
+        const thenCommand = process.env.FAKE_ACP_TRUST_THEN_COMMAND;
+        const answer = !thenCommand ? reply : () => {
+          pendingPermissionId = 9301;
+          onPermissionAnswered = reply;
+          out({ jsonrpc: "2.0", id: 9301, method: "session/request_permission", params: { sessionId: msg.params?.sessionId,
+            toolCall: { toolCallId: "t-trust-command", title: thenCommand, kind: "execute", rawInput: { command: thenCommand } },
+            options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: "reject_once" }] } });
         };
         // The real engine's prompt runs gated while its request is open; the
         // fake instead finishes the turn only once the client has answered,
@@ -2615,16 +2852,14 @@ function handle(msg: any) {
         return;
       }
       if ((mode === "ask-peer" || mode === "create-peer") && agentsMcp
-        && (Number(agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value ?? "0") > 0
-          || /^\[(?:Message from|Delegated by) @/m.test(promptText))) {
+        && /^\[(?:Message from|Delegated by) @/m.test(promptText)) {
         // A nested helper answers its assignment, while proving that the
         // actual injected MCP server still supplies its scoped directory.
         // The native relay withholds private depth metadata. Script the peer
         // response from its visible assignment; comms tests independently
         // observe the real server-side depth and its absence on the wire.
-        const depth = agentsMcp.env?.find(entry => entry.name === "MURAGE_TURN_DEPTH")?.value ?? "1";
         void driveMcp(agentsMcp, [{ name: "list_bots", args: () => ({}) }]).then(list => {
-          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `hello from fake acp; agents tools available at depth ${depth}\n${list}` } } } });
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `hello from fake acp; agents tools available\n${list}` } } } });
           complete();
         }).catch(error => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `peer error: ${error.message}` } } } }); complete(); });
         return;
@@ -2795,6 +3030,25 @@ function handle(msg: any) {
           return;
         }
         finish();
+        return;
+      }
+      // FAKE_ACP_CONTINUATION_SILENT=1 (q1022 winproof): the turn that carries a routine run on after the owner answered its card
+      // takes the prompt and then shows nothing at all (no text, no tool), until Murage cancels it
+      if (mode === "project-image" && process.env.FAKE_ACP_CONTINUATION_SILENT === "1" && promptText.includes("this run was waiting on")) {
+        pendingCancelAckPrompt = msg.id; markerCancelAck = true;
+        return;
+      }
+      // room-credential-goal (1.0.23 winproof-fix): a room goal's lead asks the owner for a key through Murage's own request_credential
+      // tool and pauses the goal on the owner (a valid needs-input decision, so the routine run stays live, waiting); the turn that
+      // resumes it after the owner answers the key card takes the prompt and then shows nothing at all, until Murage cancels it
+      if (mode === "room-credential-goal" && promptText.includes("Murage credential update")) {
+        pendingCancelAckPrompt = msg.id; markerCancelAck = true;
+        return;
+      }
+      if (mode === "room-credential-goal" && agentsMcp) {
+        void driveMcp(agentsMcp, [{ name: "request_credential", args: () => ({ credential_id: "boxToken", reason: "The goal needs the Box key" }) }])
+          .then(reply => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `key card: ${reply}\n<murage-goal>${JSON.stringify({ status: "needs-input", detail: "The goal needs the Box key from the owner" })}</murage-goal>` } } } }); complete(); })
+          .catch((e: Error) => { out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `key card error: ${e.message}` } } } }); complete(); });
         return;
       }
       if (mode === "project-image" && agentsMcp) {
@@ -3032,6 +3286,7 @@ function handle(msg: any) {
         // question-tool: the agent routes its AskUserQuestion tool through
         // request_permission (named in the tool call), exactly the shape a
         // question must never be auto-approved from.
+        if (process.env.FAKE_ACP_REQUIRE_PERMISSION_PROMPTS === "1" && !permissionPrompts) { complete(); return; }
         pendingPermissionId = 9001;
         permissionAskedAt = Date.now();
         onPermissionAnswered = complete;
@@ -3113,13 +3368,39 @@ function handle(msg: any) {
       // FAKE_ACP_MCP_LIST: per-server status JSON ({name: "ready" | "initializing"
       // | ...}), answered as Grok Build and Fuigo answer it; unset: method not found.
       if (!process.env.FAKE_ACP_MCP_LIST) { if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } }); break; }
+      const call = ++mcpListCalls;
+      const unanswered = (process.env.FAKE_ACP_MCP_LIST_UNANSWERED ?? "").split(",").filter(Boolean);
+      // FAKE_ACP_MCP_LIST_OVERSIZE_AT "N:ms": ms after list call N, one oversized frame (an overflow while that read is unanswered)
+      const [oversizeAt, oversizeMs] = (process.env.FAKE_ACP_MCP_LIST_OVERSIZE_AT ?? "").split(":").map(Number);
+      if (call === oversizeAt) setTimeout(() => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { text: fixtureOversizeText() } } } }), oversizeMs || 0);
+      if (unanswered.some((spec) => spec.endsWith("+") ? call >= Number(spec.slice(0, -1)) : call === Number(spec))) break;
       const listed = process.env.FAKE_ACP_MCP_LIST;
       const settling = Date.now() - mcpHandedAt < (Number(process.env.FAKE_ACP_MCP_LIST_READY_AFTER_MS) || 0);
       const states = listed.startsWith("all:")
         ? Object.fromEntries(lastMcpServerNames.map((name) => [name, settling ? "initializing" : listed.slice(4)]))
         : JSON.parse(listed) as Record<string, string>;
+      // FAKE_ACP_MCP_LIST_OVERRIDE: JSON {name: status} laid over an "all:<status>" list (one server failed among ready ones).
+      if (process.env.FAKE_ACP_MCP_LIST_OVERRIDE) for (const [name, status] of Object.entries(JSON.parse(process.env.FAKE_ACP_MCP_LIST_OVERRIDE) as Record<string, string>)) if (Object.hasOwn(states, name)) states[name] = status;
       if (!settling && listed.startsWith("all:") && !mcpListSettledLogged) { mcpListSettledLogged = true; mcpTimeline("ready"); }
-      result(msg.id, { servers: Object.entries(states).map(([name, status]) => ({ name, session: { enabled: true, status } })) });
+      // FAKE_ACP_MCP_LIST_HELD: JSON array of Fuigo 1.0.47 held entries ({name, heldReason?, heldDigest?}), listed with no session.
+      // FAKE_ACP_MCP_LIST_HELD_AFTER_SHOWN: the held set once one list has shown it (the owner edits the server after the card).
+      heldNow ??= process.env.FAKE_ACP_MCP_LIST_HELD ? JSON.parse(process.env.FAKE_ACP_MCP_LIST_HELD) as HeldEntry[] : [];
+      const held = heldNow;
+      if (held.length && process.env.FAKE_ACP_MCP_LIST_HELD_AFTER_SHOWN && !heldChanged) { heldChanged = true; heldNow = JSON.parse(process.env.FAKE_ACP_MCP_LIST_HELD_AFTER_SHOWN) as HeldEntry[]; }
+      result(msg.id, { servers: [...Object.entries(states).map(([name, status]) => ({ name, session: { enabled: true, status } })), ...held.map((entry) => ({ ...entry, held: true, session: null }))] });
+      break;
+    }
+    case "_fuigo/mcp/toggle": {
+      // FAKE_ACP_TOGGLE_ERROR: the engine's error text (a corrupt approvals store); unset answers {"ok":true}.
+      if (process.env.FAKE_ACP_TOGGLE_ERROR) { if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: process.env.FAKE_ACP_TOGGLE_ERROR } }); break; }
+      // Fuigo S3 (extensions/mcp.rs DEFINITION_CHANGED_AGAIN): a shown `digest` that is not the held one approves nothing.
+      const current = heldNow?.find((entry) => entry.name === msg.params?.server_name);
+      if (current && typeof msg.params?.digest === "string" && msg.params.digest !== current.heldDigest) {
+        if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `MCP server \`${current.name}\`: definition changed again since it was shown; review it` } });
+        break;
+      }
+      if (current) heldNow = heldNow!.filter((entry) => entry !== current);
+      result(msg.id, { ok: true });
       break;
     }
     case "_fuigo/interject":
@@ -3141,6 +3422,8 @@ function handle(msg: any) {
         const id = pendingCancelAckPrompt;
         pendingCancelAckPrompt = null;
         markerCancelAck = false;
+        // prompt scope (A8): a cancelled turn with no background work still reports itself quiet, so only the Stop keeps it unparked
+        if (process.env.FAKE_ACP_PROMPT_SCOPE === "1") out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "turn_completed", prompt_id: pscopeCurrent, stop_reason: "cancelled", background: 0 } } });
         result(id, { stopReason: "cancelled" });
         break;
       }

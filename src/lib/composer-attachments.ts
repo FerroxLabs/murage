@@ -4,6 +4,7 @@
 import { audioTranscriptionMime, isAudioCandidate } from "./audio-intake.ts";
 import { batchRefusalLine, isDiskSpaceMessage } from "../../shared/attachment-storage.ts";
 import { IMAGE_UPLOAD_MAX_BYTES, TURN_IMAGE_MIMES } from "../../shared/media-assets.ts";
+import { binaryFileType, XMIND_MIME } from "../../shared/attachment-types.ts";
 export type PasteAttachment = {
   kind: "paste";
   id: string;
@@ -177,7 +178,47 @@ export function appendPastedText(text: string, pasted: string): string {
 
 export const INLINE_DROP_LIMIT = 512 * 1024;
 
-export type DroppedFile = Pick<File, "name" | "size" | "type" | "text">;
+export type DroppedFile = Pick<File, "name" | "size" | "type" | "text"> & { arrayBuffer?: () => Promise<ArrayBuffer> };
+export type FileUploadError = "readFailed" | "tooLarge" | "invalidMindMap" | "busy" | "attachFailed";
+export type FileUploadErrorLine = (code: FileUploadError, limit: number) => string;
+const fileUploadErrorLine: FileUploadErrorLine = (code, limit) => ({
+  readFailed: "That file could not be read. Choose it again.",
+  tooLarge: `That file is too large. Files of this type can be up to ${formatSize(limit)}.`,
+  invalidMindMap: "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+  busy: "Murage is still reading other mind maps. Try this one again in a moment.",
+  attachFailed: "That file could not be attached. Try again.",
+})[code];
+
+/** Archives arrive unchanged. XMind uploads return the server's bounded
+ * Markdown conversion, including its new name, path and byte count. */
+export async function binaryAttachmentFromFile(file: DroppedFile, line: FileUploadErrorLine = fileUploadErrorLine, surfaceHeaders: Record<string, string> = {}): Promise<FileAttachment> {
+  const type = binaryFileType(file.name);
+  if (!type || !file.arrayBuffer) throw new Error(line("readFailed", 0));
+  const limit = type.mime === XMIND_MIME ? 8 * 1024 * 1024 : 25 * 1024 * 1024;
+  if (file.size > limit) throw new Error(line("tooLarge", limit));
+  let body: ArrayBuffer;
+  try { body = await file.arrayBuffer(); }
+  catch { throw new Error(line("readFailed", limit)); }
+  let response: Response;
+  try {
+    response = await fetch(`/api/files?name=${encodeURIComponent(file.name)}`, {
+      method: "POST", headers: { ...surfaceHeaders, "content-type": type.mime }, body, redirect: "error",
+    });
+  } catch { throw new Error(line("attachFailed", limit)); }
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({})) as { error?: string };
+    // Only fixed disk sentences or our own localized copy reach the notice.
+    // Never echo an arbitrary response or the untrusted local filename.
+    const code = response.status === 413 ? "tooLarge" : response.status === 503 ? "busy" : response.status === 400 && type.mime === XMIND_MIME ? "invalidMindMap" : "attachFailed";
+    throw new Error(isDiskSpaceMessage(detail.error) ? detail.error : line(code, limit));
+  }
+  let saved: { path: string; name: string; bytes: number };
+  try {
+    saved = await response.json() as typeof saved;
+    if (typeof saved.path !== "string" || typeof saved.name !== "string" || !Number.isSafeInteger(saved.bytes) || saved.bytes < 0) throw new Error();
+  } catch { throw new Error(line("attachFailed", limit)); }
+  return fileAttachment(saved.name, saved.path, saved.bytes);
+}
 
 /** Turn a browser drop into composer attachments. Electron-backed files
  * keep their disk path; small pathless text drops keep their contents.
@@ -497,6 +538,8 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
     getPath: (file: T) => string;
     uploadImage: (file: T) => Promise<Attachment | null>;
     queueAudio?: (file: T) => void;
+    fileError?: FileUploadErrorLine;
+    uploadFile?: (file: T, line: FileUploadErrorLine) => Promise<FileAttachment>;
   },
 ): Promise<{ attachments: Attachment[]; notice: string | null }> {
   const files = [..._files];
@@ -506,9 +549,21 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
   const refusedImageNames: string[] = [];
   const imageErrors: string[] = [];
   const uploadFailures: { name: string; message: string }[] = [];
+  const binaryErrors: string[] = [];
   // Finish each selected file in sequence so the chips retain the order in
   // which the user chose or dropped them.
   for (const file of files) {
+    const binary = binaryFileType(file.name);
+    let path = "";
+    if (binary) { try { path = getPath(file); } catch { /* Browser files have no local path. */ } }
+    // A desktop archive already has a usable path. Mind maps always use the
+    // converter so every engine receives the same readable outline.
+    if (binary && (binary.mime === XMIND_MIME || !path)) {
+      const line = _opts.fileError ?? fileUploadErrorLine;
+      try { attachments.push(await (_opts.uploadFile ?? binaryAttachmentFromFile)(file, line)); }
+      catch (error) { binaryErrors.push(error instanceof Error ? error.message : line("attachFailed", 0)); }
+      continue;
+    }
     if (isAudioCandidate(file)) {
       try {
         audioTranscriptionMime(file);
@@ -549,7 +604,7 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
   const failed = [imageErrors.length ? imageErrors.join("; ") : null, batchRefusalLine(uploadFailures)].filter(Boolean).join(" ") || null;
   return {
     attachments,
-    notice: [refused, pathless, failed].filter(Boolean).join(" ") || null,
+    notice: [refused, pathless, failed, ...new Set(binaryErrors)].filter(Boolean).join(" ") || null,
   };
 }
 

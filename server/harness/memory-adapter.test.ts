@@ -273,6 +273,12 @@ const DISPATCH: Record<string, Dispatch> = {
   droidAgent: acp("droidAgent", { fullAuto: true }),
   cursorAgent: acp("cursorAgent", {}, scratch => ({ HOME: scratch, CURSOR_API_KEY: "cursor-fixture-key" })),
   qwenAgent: acp("qwenAgent"),
+  // 1.0.23 engines (builtIn.ts): each is signed in by its own key variable, the fake ACP CLI stands in for the engine (Kiro's autopilot and Devin's Ask mode are
+  // confirmed by the fake, as in kiro.test.ts / devin.test.ts, or the session never starts).
+  commandCodeAgent: acp("commandCodeAgent", {}, scratch => ({ HOME: scratch, USERPROFILE: scratch, COMMAND_CODE_API_KEY: "command-code-fixture-key" })),
+  kiroAgent: acp("kiroAgent", {}, scratch => ({ HOME: scratch, USERPROFILE: scratch, KIRO_API_KEY: "kiro-fixture-key", FAKE_ACP_AUTOPILOT: "1" })),
+  ompAgent: acp("ompAgent"),
+  devinAgent: acp("devinAgent", {}, scratch => ({ HOME: scratch, USERPROFILE: scratch, WINDSURF_API_KEY: "devin-fixture-key", FAKE_ACP_DEVIN_MODE: "accept" })),
   hermesAgent: acp("hermesAgent", {}, scratch => {
     const dataDir = join(scratch, "state");
     // Match normal startup before registering canonical files under this

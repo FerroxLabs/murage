@@ -95,6 +95,8 @@ describe("T3: fail closed for a reader that is not the owner", () => {
   it("control: a shown line of another thread is shown", () => {
     expect(rule("t3", "shown", big())).toBe(false);
     expect(rule("orig", "o0", big())).toBe(false);
+    exchange("t2", "own-shown");
+    expect(rule("t2", "own-shown", big())).toBe(false);
   });
   it("a line in a thread with no number, and a generated line with no lineage row", () => {
     database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t-nonum','m1',1,'bot','text','x',json_object('id','m1','role','bot','kind','text','text','x','at',1))").run();
@@ -227,22 +229,22 @@ describe("T6: a kept verdict does not outlive a change", () => {
   });
 });
 
-/** Runs `search` with `flips[n]` applied just before the (n+2)th search stamp is read (the first is taken when a record is accepted, the
- * later ones by revalidate, after the loop was released): a change committed while the search is in flight. `deadline`: the hydration
- * limit has passed by the first revalidation. Returns the ids answered and how many stamps were read. */
-async function midFlight<T>(search: () => Promise<T>, flips: ReadonlyArray<() => void>, deadline = false): Promise<{ result: T; stamps: number }> {
-  const db = database(), prepare = db.prepare.bind(db), originalNow = performance.now.bind(performance);
-  let stamps = 0, skew = 0;
-  db.prepare = ((sql: string) => {
-    if (sql.includes("SELECT data_revision,policy_revision,deletion_epoch FROM memory_meta WHERE id=1")) {
-      stamps++;
-      if (stamps >= 2) { flips[stamps - 2]?.(); if (deadline) skew = 600_000; }
-    }
-    return prepare(sql);
-  }) as typeof db.prepare;
+/** Runs `search` with `flips[n]` committed at the (n+1)th time the search releases the loop (setImmediate; authorize slices of 0 ms so
+ * every slice releases it): a change committed while the search is in flight, after records were accepted and before the answer.
+ * `deadline`: the hydration limit has passed by the first flip. q1024-memsearch D: the search no longer reads a revision stamp and re-reads
+ * every accepted record when it moved (capture moves it with every message); it reads what it answers once more, synchronously, just
+ * before answering (search.ts). The flips used to fire at those stamp reads; they now fire at the loop releases. Returns how many ran. */
+async function midFlight<T>(search: () => Promise<T>, flips: ReadonlyArray<() => void>, deadline = false): Promise<{ result: T; flipped: number }> {
+  const originalNow = performance.now.bind(performance), originalImmediate = globalThis.setImmediate;
+  let flipped = 0, skew = 0;
+  setAuthorizeSliceMsForTest(0);
+  (globalThis as { setImmediate: unknown }).setImmediate = ((fn: (...args: unknown[]) => void, ...args: unknown[]) => {
+    if (flipped < flips.length) { flips[flipped++]!(); if (deadline) skew = 600_000; }
+    return originalImmediate(fn, ...args);
+  }) as typeof setImmediate;
   (performance as { now: () => number }).now = () => originalNow() + skew;
-  try { return { result: await search(), stamps }; }
-  finally { db.prepare = prepare as typeof db.prepare; (performance as { now: () => number }).now = originalNow; }
+  try { return { result: await search(), flipped }; }
+  finally { (globalThis as { setImmediate: unknown }).setImmediate = originalImmediate; (performance as { now: () => number }).now = originalNow; }
 }
 
 describe("T7: a search in flight when a flip commits", () => {
@@ -251,18 +253,18 @@ describe("T7: a search in flight when a flip commits", () => {
     const reader = sender(who);
     const flip = () => flipReceipt("K");
     const theirs = await midFlight(() => searchMemory(QUERY, reader, hits([x, ownWords]), { allowance: LineageAllowance.tool(), withheldMessage: readerWithheldMessage(reader) }), [flip]);
-    expect(theirs.stamps).toBeGreaterThanOrEqual(3);
+    expect(theirs.flipped, "the flip committed while the reader's search was in flight").toBe(1);
     expect(ids(theirs.result.hits)).not.toContain(x.id);
     expect(ids(theirs.result.hits)).toContain(ownWords.id);
 
     const again = world({ flipFirst: false });
     const owner = access("finch", "finch-direct");
-    const mine = await midFlight(() => searchMemory(QUERY, owner, hits([again.x]), { allowance: LineageAllowance.tool(), withheldMessage: () => false }), [() => flipReceipt("K")]);
-    expect(mine.stamps).toBe(2);
+    const mine = await midFlight(() => searchMemory(QUERY, owner, hits([again.x, again.ownWords]), { allowance: LineageAllowance.tool(), withheldMessage: () => false }), [() => flipReceipt("K")]);
+    expect(mine.flipped).toBe(1);
     expect(ids(mine.result.hits)).toContain(again.x.id);
   });
 
-  it("two receipt flips in successive rounds: each round reads again, the answer stands inside the round cap", async () => {
+  it("two receipt flips at successive loop releases: the answer leaves both replies out for the reader and keeps them for the owner", async () => {
     const two = () => {
       const w = world({ flipFirst: false });
       // in the person's third conversation, so the first flip does not reach it: each flip withholds its own reply
@@ -273,7 +275,7 @@ describe("T7: a search in flight when a flip commits", () => {
     const { person: who, x, x3, ownWords } = two();
     const reader = sender(who);
     const theirs = await midFlight(() => searchMemory(QUERY, reader, hits([x, x3, ownWords]), { allowance: LineageAllowance.tool(), withheldMessage: readerWithheldMessage(reader) }), [() => flipReceipt("K"), () => flipReceipt("K3")]);
-    expect(theirs.stamps).toBe(4); // accept, moved, moved, still: two rounds read again, under REVALIDATION_ROUNDS
+    expect(theirs.flipped).toBe(2);
     expect(ids(theirs.result.hits)).toContain(ownWords.id);
     expect(ids(theirs.result.hits)).not.toContain(x.id);
     expect(ids(theirs.result.hits)).not.toContain(x3.id);
@@ -281,29 +283,35 @@ describe("T7: a search in flight when a flip commits", () => {
     const again = two();
     const owner = access("finch", "finch-direct");
     const mine = await midFlight(() => searchMemory(QUERY, owner, hits([again.x, again.x3]), { allowance: LineageAllowance.tool(), withheldMessage: () => false }), [() => flipReceipt("K"), () => flipReceipt("K3")]);
-    expect(mine.stamps).toBe(2);
+    expect(mine.flipped).toBe(2);
     expect(ids(mine.result.hits)).toEqual(expect.arrayContaining([again.x.id, again.x3.id]));
   });
 
-  it("a marker that commits at every round: the reader's search reaches the round cap and answers nothing; the owner's is unaffected", async () => {
+  // q1024-memsearch D (expectation changed, CHANGED-EXPECTATIONS.md): there is no round cap any more. A marker that commits at every loop
+  // release used to exhaust the revalidation rounds and the reader got nothing although X was readable to it throughout; that refusal is
+  // the field bug (capture moves data_revision with every message). X is judged once more just before the answer and is answered.
+  it("a marker that commits at every loop release: the reader's search still answers X, which it may read; so does the owner's", async () => {
     const bump = () => database().prepare("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'").run();
-    const { person: who, x } = world({ flipFirst: false });
+    const { person: who, x, ownWords } = world({ flipFirst: false });
     const reader = sender(who);
-    const theirs = await midFlight(() => searchMemory(QUERY, reader, hits([x]), { allowance: LineageAllowance.tool(), withheldMessage: readerWithheldMessage(reader) }), Array.from({ length: 10 }, () => bump));
-    expect(theirs.result.hits).toEqual([]);
-    expect(theirs.result.partial).toBe(true);
+    const theirs = await midFlight(() => searchMemory(QUERY, reader, hits([x, ownWords]), { allowance: LineageAllowance.tool(), withheldMessage: readerWithheldMessage(reader) }), Array.from({ length: 10 }, () => bump));
+    expect(theirs.flipped, "the marker committed while the reader's search was in flight").toBeGreaterThan(0);
+    expect(ids(theirs.result.hits)).toContain(x.id);
     const owner = access("finch", "finch-direct");
-    const mine = await midFlight(() => searchMemory(QUERY, owner, hits([x]), { allowance: LineageAllowance.tool(), withheldMessage: () => false }), Array.from({ length: 10 }, () => bump));
+    const mine = await midFlight(() => searchMemory(QUERY, owner, hits([x, ownWords]), { allowance: LineageAllowance.tool(), withheldMessage: () => false }), Array.from({ length: 10 }, () => bump));
+    expect(mine.flipped).toBeGreaterThan(0);
     expect(ids(mine.result.hits)).toContain(x.id);
   });
 
-  it("a deny generation that cannot be read counts as moved, as in the reader rule: the reader's search never settles on a stamp and fails closed", async () => {
+  // q1024-memsearch D (expectation changed, CHANGED-EXPECTATIONS.md): the search reads no stamp, so there is none to settle on. Each answered
+  // record is judged by the reader rule itself, just before the answer; X, shown to this reader, is answered, and a withheld line is not
+  // (T7 rows above and below).
+  it("a deny generation that cannot be read: the reader's search judges each answered record by the reader rule and answers what it may read", async () => {
     const { person: who, x, ownWords } = world({ flipFirst: false });
     const reader = sender(who);
     database().prepare("DELETE FROM memory_lineage_lsn_meta WHERE key='deny_generation'").run();
     const theirs = await midFlight(() => searchMemory(QUERY, reader, hits([x, ownWords]), { allowance: LineageAllowance.tool(), withheldMessage: readerWithheldMessage(reader) }), []);
-    expect(theirs.result.hits).toEqual([]);
-    expect(theirs.result.partial).toBe(true);
+    expect(ids(theirs.result.hits)).toEqual(expect.arrayContaining([x.id, ownWords.id]));
     const owner = access("finch", "finch-direct");
     const mine = await midFlight(() => searchMemory(QUERY, owner, hits([x]), { allowance: LineageAllowance.tool(), withheldMessage: () => false }), []);
     expect(ids(mine.result.hits)).toContain(x.id);
@@ -312,14 +320,17 @@ describe("T7: a search in flight when a flip commits", () => {
   it("deadline (T2): a receipt-only revoke during the search and the hydration limit passing: the owner keeps X through memory_search and the bundle, the reader drops it", async () => {
     let w = world({ flipFirst: false });
     const owner = () => access("finch", "finch-direct");
-    const viaRoute = await midFlight(() => memoryAgentRoute("/api/internal/memory/search", { query: QUERY }, owner(), hits([w.x])) as Promise<{ hits: Array<{ id: string }> }>, [() => flipReceipt("K")], true);
+    const viaRoute = await midFlight(() => memoryAgentRoute("/api/internal/memory/search", { query: QUERY }, owner(), hits([w.x, w.ownWords])) as Promise<{ hits: Array<{ id: string }> }>, [() => flipReceipt("K")], true);
+    expect(viaRoute.flipped).toBe(1);
     expect(ids(viaRoute.result.hits)).toContain(w.x.id);
     w = world({ flipFirst: false });
-    const viaBundle = await midFlight(() => buildMemoryBundle(QUERY, owner(), hits([w.x]), { allowance: LineageAllowance.tool(), withheldMessage: () => false }), [() => flipReceipt("K")], true);
+    const viaBundle = await midFlight(() => buildMemoryBundle(QUERY, owner(), hits([w.x, w.ownWords]), { allowance: LineageAllowance.tool(), withheldMessage: () => false }), [() => flipReceipt("K")], true);
+    expect(viaBundle.flipped).toBe(1);
     expect(viaBundle.result.text).toContain("GATE-7731");
     w = world({ flipFirst: false });
     const reader = sender(w.person);
-    const theirs = await midFlight(() => memoryAgentRoute("/api/internal/memory/search", { query: QUERY }, reader, hits([w.x])) as Promise<{ hits: Array<{ id: string }> }>, [() => flipReceipt("K")], true);
+    const theirs = await midFlight(() => memoryAgentRoute("/api/internal/memory/search", { query: QUERY }, reader, hits([w.x, w.ownWords])) as Promise<{ hits: Array<{ id: string }> }>, [() => flipReceipt("K")], true);
+    expect(theirs.flipped, "the revoke committed while the reader's search was in flight").toBe(1);
     expect(ids(theirs.result.hits)).not.toContain(w.x.id);
   });
 });

@@ -347,6 +347,7 @@ export const KNOWN_FRAME_KINDS = [
   "project.strip",
   "sidebar.order",
   "inbox.changed",
+  "chief-transfer",
   "emailStatus",
   "learning.flux-sent",
   "learning.remembered",
@@ -451,6 +452,9 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
     // Content-free: tells the owner's desktop the Inbox changed. Nothing to leak,
     // and nothing a phone or browser would use, so it stays off the scoped streams.
     case "inbox.changed":
+      return { scope: "desktop" };
+    // CHIEF-TRANSFER: names the bots and chat apps of a hand-over, so the owner's desktop stream only (never a guest, channel or agent audience).
+    case "chief-transfer":
       return { scope: "desktop" };
     // Content-free ({kind} only): any app reads email status again when it lands; a stream without status access gets a 403 and keeps its last status.
     case "emailStatus":

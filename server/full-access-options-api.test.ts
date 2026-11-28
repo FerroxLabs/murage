@@ -367,7 +367,8 @@ describe("Full access default and its options", () => {
       expect((await api("GET", "/api/routines")).body.routines.some((r: any) => r.name === "Approved brief")).toBe(true);
       await expect.poll(() => decisions().some((row) => row.requestId === approved.body.requestId && row.decision === "auto-approved" && row.source === "full-access"), { timeout: 5_000 }).toBe(true);
       // MAIN RULING INT-CONFLICT-DEFAULT 49a54e2fae6 / 8bfe905cabf: registered skill delivery uses the canonical terminal label; require the accepted result and enabled skill after D6 clean settle.
-      await expect.poll(async () => (await cardFor(bot.threadId, "skillRequest", "approved-skill"))?.answered, { timeout: 5_000 }).toBe("Allowed");
+      // 1.0.23 skill-switch lane (decision/implementation.ts patchTerminal): a switch_skill card now settles with the canonical service value "allow", like routine/peer cards.
+      await expect.poll(async () => (await cardFor(bot.threadId, "skillRequest", "approved-skill"))?.answered, { timeout: 5_000 }).toBe("allow");
       expect((await desktopApi("GET", `/api/bots/${bot.id}/skills`)).body.skills.some((s: any) => s.name === "approved-skill")).toBe(true);
 
       // the option does nothing once this conversation is back on Auto
@@ -434,7 +435,7 @@ describe("Full access default and its options", () => {
   );
 
   it(
-    "a folder's own instructions keep asking under Full access unless setup requests are allowed",
+    "a folder's own instructions stay out under Full access unless setup requests are allowed (no card on the owner's turn)",
     async () => {
       const bot = await makeBot("Folder", "fuigo");
       expect((await raiseLevel(desktopApi, bot.id, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
@@ -446,9 +447,14 @@ describe("Full access default and its options", () => {
       plant(bot.threadId);
       rmSync(acpDump, { force: true });
       expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "go" })).status).toBe(202);
-      const card = await poll(async () => (await threadMessages(bot.threadId)).find((m) => m.card?.folderTrust && !m.card.answered), 20_000);
-      expect(card, "Full access answered a folder-trust card on its own").not.toBeNull();
-      await stopTurn(bot.id, bot.threadId);
+      // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4): was "the card stays open"; the owner's own turn is never carded now, so without
+      // the setup-requests option the folder's own files stay out and the turn still finishes.
+      // a card holds the turn busy: wait for the settle OR a card, then require that none showed
+      await expect.poll(async () => (await threadMessages(bot.threadId)).some((m) => m.card?.folderTrust) || (await taskState(bot.id, bot.threadId))?.busy === false, { timeout: 30_000 }).toBe(true);
+      expect((await threadMessages(bot.threadId)).some((m) => m.card?.folderTrust)).toBe(false);
+      expect(await waitIdle(bot.id, bot.threadId, 30_000)).not.toBeNull();
+      expect(JSON.parse(readFileSync(acpDump, "utf8")).argv).not.toContain("--trust");
+      expect((await threadMessages(bot.threadId)).some((m) => m.role === "bot" && String(m.text ?? "").includes("canary-folder-wren"))).toBe(false);
 
       expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { fullAccessSetupRequests: true })).status).toBe(200);
       const next = await desktopApi("POST", `/api/bots/${bot.id}/tasks`, { title: "trusted" });

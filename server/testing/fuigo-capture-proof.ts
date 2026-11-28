@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { FUIGO_ASSETS } from "../../scripts/prepare-fuigo.mjs";
 import { gatewayBusy, type LimitTurn } from "../limit-continuation.ts";
 
 export type CapturePin = { binary: { version: string; sha256: string } };
@@ -44,10 +43,13 @@ function assertLanePinFilled(assetBinarySha256: string): void {
   assert.match(assetBinarySha256, sha256Hex, "OPEN R3: lane 1.0.43 linux-x64 pin unfilled");
 }
 
+/** The 1.0.43 linux-x64 executable the R3 captures came from: frozen when the bundled pin moved past 1.0.43 (q1024-fuigobump),
+ *  equal to scripts/fuigo-1.0.43-provenance.json and the GitHub v1.0.43 SHA256SUMS row fuigo-1.0.43-linux-x86_64. */
+export const FUIGO_1043_LINUX_X64_BINARY_SHA256 = "d62ea93bc75ed09693e1b085b320c5656bd96429511d5d2f494886ca909861a1";
 /** Authority for R3: read from the repository, never from a capture directory. */
 export function loadLanePin(): LanePin {
   const release = JSON.parse(readFileSync(new URL("../../scripts/fuigo-1.0.43-provenance.json", import.meta.url), "utf8")) as ReleasePin;
-  const assetBinarySha256 = FUIGO_ASSETS["linux-x64"]?.binarySha256 ?? "";
+  const assetBinarySha256 = FUIGO_1043_LINUX_X64_BINARY_SHA256;
   assertLanePinFilled(assetBinarySha256);
   return { release, assetBinarySha256 };
 }

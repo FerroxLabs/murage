@@ -1,0 +1,12 @@
+{
+  "ux.botpages.archive.title": "Archive or delete",
+  "ux.botpages.archive.lead": "Archive {name}.",
+  "ux.botpages.archive.body": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+  "ux.botpages.archive.button": "Archive",
+  "ux.botpages.archive.conflict": "{name}'s apps changed. Nothing was archived.",
+  "ux.botpages.archive.done": "{name} archived. You can bring it back from Bots.",
+  "ux.botpages.delete.lead": "Delete {name}.",
+  "ux.botpages.delete.body": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+  "ux.botpages.delete.button": "Delete this bot",
+  "ux.botpages.delete.failed": "{name} was not deleted."
+}

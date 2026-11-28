@@ -163,6 +163,7 @@ export function ownerIssue(item: IssueDetail): HealthIssue {
 
 export interface SentinelReadContext {
   owner: boolean;
+  backgroundChecksRetired?: boolean;
   /** Located lazily, only for an owner. */
   locate: () => LocateResult;
   /** The latest daily summary (server-host.ts), read only for an owner. */
@@ -199,9 +200,10 @@ export function handleSentinelRead(method: string, path: string, query: URLSearc
     if (path === SENTINEL_SUMMARY_PATH) {
       if ([...query.keys()].length > 0) return { status: 400, body: { error: "bad-request" } };
       const located = ctx.locate();
-      if (!located.ok) return { status: 200, body: { status: located.reason === "descriptor-missing" || located.reason === "output-root" ? "waiting" : "unavailable", view: null } satisfies HealthSummaryResponse };
+      const retirement = ctx.backgroundChecksRetired ? { backgroundChecksRetired: true as const } : {};
+      if (!located.ok) return { status: 200, body: { status: located.reason === "descriptor-missing" || located.reason === "output-root" ? "waiting" : "unavailable", view: null, ...retirement } satisfies HealthSummaryResponse };
       const view = readOwnerView(located.value, ctx.platform);
-      return { status: 200, body: { status: view ? "ready" : "waiting", view, digest: ctx.digest?.() ?? null } satisfies HealthSummaryResponse };
+      return { status: 200, body: { status: view ? "ready" : "waiting", view, digest: ctx.digest?.() ?? null, ...retirement } satisfies HealthSummaryResponse };
     }
     const parsed = parseIssuesQuery(query);
     if (!parsed) return { status: 400, body: { ok: false, reason: "bad-request" } satisfies HealthIssuesResponse };

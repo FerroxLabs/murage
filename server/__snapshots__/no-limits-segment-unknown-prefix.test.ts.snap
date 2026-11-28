@@ -3,12 +3,8 @@
 exports[`unknown word prefix owner > \${!unknown} > Full access snapshot protected=false 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -27,12 +23,9 @@ exports[`unknown word prefix owner > \${!unknown} > Full access snapshot protect
 exports[`unknown word prefix owner > \${!unknown} > Full access snapshot protected=true 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -51,12 +44,8 @@ exports[`unknown word prefix owner > \${!unknown} > Full access snapshot protect
 exports[`unknown word prefix owner > {1..513} > Full access snapshot protected=false 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -75,12 +64,9 @@ exports[`unknown word prefix owner > {1..513} > Full access snapshot protected=f
 exports[`unknown word prefix owner > {1..513} > Full access snapshot protected=true 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -99,12 +85,8 @@ exports[`unknown word prefix owner > {1..513} > Full access snapshot protected=t
 exports[`unknown word prefix routine > \${!unknown} > Full access snapshot protected=false 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -149,12 +131,8 @@ exports[`unknown word prefix routine > \${!unknown} > Full access snapshot prote
 exports[`unknown word prefix routine > {1..513} > Full access snapshot protected=false 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,

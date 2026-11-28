@@ -99,9 +99,13 @@ describe("1D is cut from 1.0.10 (to 1.0.11): a glob in a home dot folder holds a
 describe("1B is cut from 1.0.10: a residual reader failure holds as in 1.0.9", () => {
   const RESIDUAL = `ls ~/Documents/x && echo "done`;
   it("holds at every level, on a routine run and the owner's turn", () => {
-    for (const level of ["Ask", "Auto", "Full access"] as const) {
+    for (const level of ["Ask", "Auto"] as const) {
       for (const origin of ["routine", "owner"] as const) expect(holds(level, RESIDUAL, { origin })).toMatchObject({ source: "always-ask", rule: "unreadable" });
     }
+    // MAIN-RULING NOLIMITS-1022 H1: Full access runs a could-not-read that is not wipe-shaped on a proven origin (the routine);
+    // the owner turn here has no stored origin, so it is unproven and keeps the card
+    expect(holds("Full access", RESIDUAL)).toMatchObject({ source: "always-ask", rule: "unreadable" });
+    passes("Full access", RESIDUAL, { origin: "routine" });
     // No limits: unreadable is not a wipe row: an unproven owner turn keeps the card, the proven owner and a routine run run it
     expect(holds("No limits", RESIDUAL)).toMatchObject({ source: "always-ask", rule: "unreadable" });
     noLimitsRuns(RESIDUAL);

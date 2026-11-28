@@ -256,7 +256,8 @@ describe("the chat header answers to its container, not the window", () => {
     expect(header).not.toContain("@container");
     // What changes the chips' width without changing the header's box —
     // a task switch, a model change — restarts the ladder through the key.
-    expect(header).toMatch(/const contentKey = \[[\s\S]*task\?\.title[\s\S]*bot\.modelSelection\.model[\s\S]*\]\.join/);
+    // TEACH-ENTRY D1: the key is built by chatHeaderContentKey (which adds the Teach term); the same inputs ride it.
+    expect(header).toMatch(/const contentKey = chatHeaderContentKey\(\[[\s\S]*task\?\.title[\s\S]*bot\.modelSelection\.model[\s\S]*\], teachAvailable\)/);
   });
 
   it("keeps identity, Stop, the task/model context and the call button at every width", () => {

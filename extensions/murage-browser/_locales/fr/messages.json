@@ -417,5 +417,24 @@
   },
   "spErrStorageUnavailable": {
     "message": "Le stockage de Chrome n'a pas pu être lu. Redémarre Chrome, puis partage à nouveau tes onglets."
+  },
+  "spGrantTitle": {
+    "message": "Ton navigateur"
+  },
+  "spGrantOn": {
+    "message": "$BOT$ peut utiliser ton navigateur.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spGrantOff": {
+    "message": "$BOT$ ne peut pas utiliser ton navigateur. Pour l'activer, ouvre l'application Murage sur ton ordinateur.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
   }
 }

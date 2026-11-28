@@ -75,7 +75,7 @@ const verdict = (level: Level, cmd: string, at: At = {}, proof: object = OWNER_T
   });
 };
 const read = (cmd: string, at: At = {}) => alwaysAskCommand(cmd, at.cwd ?? CWD, "command", undefined, undefined, at.home === null ? undefined : at.home ?? HOME, options(at));
-const { expectNoLimitsOwnerOutcome } = await import("./testing/no-limits-1019.ts");
+const { expectNoLimitsOwnerOutcome, expectFullOwnerOutcome } = await import("./testing/no-limits-1019.ts");
 /** NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn (OWNER_TURN) runs what the reader names unless it is a wipe row (or the wipe
  * proxy reads a delete word in the text); this cell asserts on the reader's own rule through the shared helper. Ask, Auto and Full
  * access keep the card. */
@@ -84,9 +84,11 @@ const { expectNoLimitsOwnerOutcome } = await import("./testing/no-limits-1019.ts
 const noLimitsRule=(cmd:string,at:At={})=>cmd==='node ~/../../dev/stdin.mjs | head'?null:read(cmd,at)?.rule;
 const heldAt = (level: Level, cmd: string, at: At, label: string) => {
   const v = verdict(level, cmd, at);
-  if (level === "No limits") expectNoLimitsOwnerOutcome(v, cmd, noLimitsRule(cmd,at), label); else expect(v.approve, label).toBeNull();
+  if (level === "No limits") expectNoLimitsOwnerOutcome(v, cmd, noLimitsRule(cmd,at), label); else if (level === "Full access") expectFullOwnerOutcome(v, cmd, noLimitsRule(cmd,at), label); else expect(v.approve, label).toBeNull();
 };
 const noLimitsCell = (cmd: string, at: At = {}) => expectNoLimitsOwnerOutcome(verdict("No limits", cmd, at), cmd, noLimitsRule(cmd,at), `No limits: ${cmd}`);
+/** OVERREACH #6 (MAIN 2026-11-26): the owner's own Full access turn gives the same outcome as No limits for what the reader names. */
+const fullCell = (cmd: string, at: At = {}) => expectFullOwnerOutcome(verdict("Full access", cmd, at), cmd, noLimitsRule(cmd,at), `Full access: ${cmd}`);
 /** Runs at Full access and No limits, asks at Ask and Auto. */
 function runs(cmd: string, at: At = {}): void {
   expect(read(cmd, at), cmd).toMatchObject({ rule: "unreadable", unseenScript: true });
@@ -117,6 +119,7 @@ function asks(cmd: string, why: string | undefined, at: At = {}): void {
   }
   for (const level of ALL) {
     if (level === "No limits") { noLimitsCell(cmd, at); continue; }
+    if (level === "Full access") { fullCell(cmd, at); continue; }
     expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
   }
 }
@@ -263,6 +266,7 @@ describe("section 6: the allow table for Bruce's command family (shape stub)", (
     expect(hit?.unseenScript, cmd).toBeUndefined();
     for (const level of ALL) {
       if (level === "No limits") { noLimitsCell(cmd, at); continue; }
+      if (level === "Full access") { fullCell(cmd, at); continue; }
       expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
     }
   });

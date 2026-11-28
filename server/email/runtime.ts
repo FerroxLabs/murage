@@ -17,11 +17,12 @@ import { adoptLegacyParks } from "./restore.ts";
 import { EmailStore, LIVE_BINDING_STATES, type BindingState } from "./email-store.ts";
 import { EmailSendService, type EmailOutcomeEvent } from "./send-service.ts";
 import { EmailTools, type EmailToolResult } from "./tools.ts";
+import type { MailboxReadBinding } from "../mailbox/contract.ts";
 import { authorizeEmailCall, emailMounts, EMAIL_UNAVAILABLE, EMAIL_OFF, EMAIL_DISCONNECTED, EMAIL_MOUNT_STATES, type EmailCallLive, type EmailMountInput, type EmailMountVerdict } from "./admission.ts";
 import { recordEmailTurn } from "./email-turns.ts";
 import { isEmailToolName } from "../drivers/email-tool-schemas.ts";
 import type { SendRow } from "./email-store.ts";
-import { EmailCards, type EmailCardHost } from "./cards.ts";
+import { EmailCards, fencedEmailHost, type EmailCardHost } from "./cards.ts";
 import { deleteScope, tokensFor, type ParkRecord } from "./owner-view.ts";
 import { isGateRefusal } from "./removal-gate.ts";
 import { EmailBindingService, commitDeletionIntent, recordDeletionIntent, withdrawDeletionIntent } from "./binding-service.ts";
@@ -50,6 +51,10 @@ export interface EmailRuntimeOptions {
   restoreWindow?: () => boolean;
   /** The saved Flux account key (flux-config.ts fluxKey()); only #31 uses it. */
   accountKey: () => string | null;
+  /** fprod3 N5: the server's botFenced; the client refuses a send for such a bot before it leaves */
+  botFenced?: (botId: string) => boolean;
+  /** the bot whose conversation a thread is (the card host's fence resolves a thread call to its bot) */
+  botOfThread?: (threadId: string) => string | undefined;
   /** database.ts database() */
   database: () => DatabaseSync;
   /** database.ts transaction, as fn => transaction(() => fn()) */
@@ -85,6 +90,9 @@ export interface EmailRuntimeOptions {
   onStatus?: () => void;
   /** NOLIMITS v1 V6 (b): a marked No limits lane turn; its sends always wait on the Send / Don't send card. */
   holdForOwner?: (threadId: string, botId: string, generation: string) => boolean;
+  /** W (email design r9 section 8): the bot's local mailbox read binding (mailbox/reader.ts), or undefined. A bot with one reads mail
+   *  only from this computer's mailbox tables, through the same mount and call admission, and never reaches Flux for it. */
+  mailboxRead?: (botId: string) => MailboxReadBinding | undefined;
   /** Crash harness only: named durable boundaries of the removal and Keep paths (binding-service.ts C4..C14). A no-op in production. */
   checkpoint?: (name: string) => void;
 }
@@ -145,6 +153,7 @@ export class EmailRuntime {
       // EMAIL-ACCOUNT-CHANGE r3: a bot key is used only when the database names it (retired-keys.ts) and the shell has it on disk
       credentials: emailCredentialProvider(this.secrets, account, (botId, inboxId) => { const store = this.services()?.store; return store ? expectedBotKey(store, botId, inboxId) : null; }),
       observe: (ref, outcome) => this.health.observe(ref, outcome),
+      ...(options.botFenced ? { botFenced: options.botFenced } : {}),
       // r6 F1b: a charge (send, reply) on an inbox whose owner is unproven is refused here with no request, even if it slipped past the fence
       gate: ref => (ref.kind === "bot" && ref.charge === true && this.current?.bindings.ownerProven(ref.botId) === false ? { kind: "local_refused", code: "owner_unproven" } as const : this.health.gate(ref)),
       restoreOutcomes: {
@@ -213,7 +222,7 @@ export class EmailRuntime {
     const cardsRef: { current: EmailCards | null } = { current: null };
     const bindingsRef: { current: EmailBindingService | null } = { current: null };
     cardsRef.current = this.options.cardHost ? new EmailCards({
-      store, send, host: this.options.cardHost, now: this.options.now,
+      store, send, host: this.options.botFenced ? fencedEmailHost(this.options.cardHost, this.options.botFenced, threadId => this.options.botOfThread?.(threadId)) : this.options.cardHost, now: this.options.now,
       // earned trust (3.5): Add writes the exact address to Flux with the email:owner token, then the local list
       addTrusted: async (botId, address) => {
         const inboxId = store.getBinding(botId)?.inboxId;
@@ -262,6 +271,7 @@ export class EmailRuntime {
   /** 5.2: one owner notice per bot per batch; filtered mail makes none. */
   private arrived(botId: string, arrivals: EmailArrival[]): void {
     const shown = arrivals.filter(item => !item.filtered);
+    if (this.options.botFenced?.(botId)) return;
     const threadId = this.options.bot(botId)?.threadId;
     if (!shown.length || !threadId) return;
     this.options.onArrival?.(botId, threadId, { from: shown[0]!.from, more: shown.length - 1 });
@@ -460,13 +470,36 @@ export class EmailRuntime {
   /** The mount (3.1, 3.2): the verdict, and on a mount the generation-bound record. Off: { mounted: false, line: null } with nothing read. */
   mount(generation: string, input: Omit<EmailMountInput, "enabled" | "binding">): EmailMountVerdict {
     const noLimits = readTurnPolicy({ threadId: input.threadId, generation })?.permission.noLimits === true;
-    if (!this.enabled() || !EMAIL_MOUNT_STATES.has(this.bindingState(input.bot.id) as BindingState)) return { mounted: false, line: EMAIL_OFF };
+    const mailbox = this.mailboxBinding(input.bot.id);
+    if (!mailbox && (!this.enabled() || !EMAIL_MOUNT_STATES.has(this.bindingState(input.bot.id) as BindingState))) return { mounted: false, line: EMAIL_OFF };
     let verdict: EmailMountVerdict;
-    try { verdict = emailMounts({ ...input, noLimits, enabled: true, binding: this.bindingState(input.bot.id) }); } catch (error) { this.options.log?.(`[email] mount: ${String(error)}`); return { mounted: false, line: noLimits ? "Email could not be loaded this time; try again shortly." : null }; }
+    try { verdict = emailMounts({ ...input, noLimits, enabled: true, binding: mailbox ? "active" : this.bindingState(input.bot.id) }); } catch (error) { this.options.log?.(`[email] mount: ${String(error)}`); return { mounted: false, line: noLimits ? "Email could not be loaded this time; try again shortly." : null }; }
+    // A mailbox bot reads only (M4 owns mailbox sends); it holds no Flux key, so the key check below is Flux's alone.
+    if (verdict.mounted && mailbox) verdict = { ...verdict, mode: "read" };
     // G15: a revoked or expired email key unmounts the tools (the owner sees the section 8 line and Reconnect)
-    if (verdict.mounted && (this.keyRejected(input.bot.id) || !this.secrets.botKey(input.bot.id))) return { mounted: false, line: EMAIL_DISCONNECTED };
+    else if (verdict.mounted && (this.keyRejected(input.bot.id) || !this.secrets.botKey(input.bot.id))) return { mounted: false, line: EMAIL_DISCONNECTED };
     if (verdict.mounted) recordEmailTurn(generation, { botId: input.bot.id, threadId: input.threadId, mode: verdict.mode, ...verdict.turn });
     return verdict;
+  }
+
+  /** True when the bot reads a local mailbox (the I-5 ask refusal in index.ts asks before any route runs). */
+  hasMailbox(botId: string): boolean { return this.mailboxBinding(botId) !== undefined; }
+
+  /** The mailbox binding, or undefined (a failed lookup is no mailbox: the Flux path never holds mailbox mail). */
+  private mailboxBinding(botId: string): MailboxReadBinding | undefined {
+    try { return this.options.mailboxRead?.(botId); } catch (error) { this.options.log?.(`[email] mailbox lookup: ${(error as Error)?.message ?? error}`); return undefined; }
+  }
+
+  /** The tools a mailbox bot calls. Only email_list / email_read reach a handler (tools.ts refuses the rest for a mailbox), so the Flux
+   *  store, send service and client are never consulted: each is a stand-in that throws, so a path that did reach one fails closed. */
+  private mailboxToolsRef: EmailTools | null = null;
+  private mailboxTools(): EmailTools {
+    const closed = new Proxy({}, { get: () => { throw new Error("Mailbox tools have no Flux service"); } });
+    return this.mailboxToolsRef ??= new EmailTools({
+      store: closed as EmailStore, send: closed as EmailSendService, client: closed as MailboxReadBinding["port"],
+      readPortFor: botId => this.mailboxBinding(botId),
+      workspaceRoot: this.options.workspaceRoot, bot: this.options.bot, now: this.options.now,
+    });
   }
 
   /** One /api/internal/email/<tool> call: authorised against the record and current state, then handled. Every refusal is 403 with the
@@ -475,6 +508,14 @@ export class EmailRuntime {
     try {
       if (!isEmailToolName(tool)) return { status: 404, body: { error: EMAIL_UNAVAILABLE } };
       const noLimits = readTurnPolicy({ threadId: claim.threadId, generation: claim.generation })?.permission.noLimits === true;
+      const mailbox = this.mailboxBinding(claim.botId);
+      if (mailbox) {
+        const verdict = authorizeEmailCall(claim, tool, { ...live, noLimits: () => noLimits, enabled: () => true, binding: botId => botId === claim.botId ? "active" : null });
+        if (!verdict.ok) return { status: 403, body: { error: verdict.line } };
+        const result = await this.mailboxTools().handle(tool, verdict.record, claim.generation, body);
+        if (tool === "email_read" || tool === "email_list") markTurnEmailDerived(claim.threadId);
+        return { status: 200, body: result };
+      }
       if (!this.enabled() || !EMAIL_MOUNT_STATES.has(this.bindingState(claim.botId) as BindingState)) return { status: 200, body: { text: EMAIL_OFF } };
       if (this.keyRejected(claim.botId) || !this.secrets.botKey(claim.botId)) return { status: 200, body: { text: EMAIL_DISCONNECTED } };
       const verdict = authorizeEmailCall(claim, tool, { ...live, noLimits: () => noLimits, enabled: () => this.enabled(), binding: botId => this.bindingState(botId) });

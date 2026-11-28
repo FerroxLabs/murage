@@ -89,14 +89,14 @@ index is **not** a Mac query key file. Without it the seal records unavailable
 minute matching and an empty match list. Missing times are never invented.
 
 Offline ingestion and replay run inside `it-remote.sh`'s **`--network none`**
-container. Set the job wrapper environment exactly as follows on the build host, using
+container. Set the job wrapper environment exactly as follows on Hetzner, using
 only authorized private copies staged in the worktree's ignored evidence area:
 
 ```sh
 export IT_JOB=bld4-nolimreplay
-export IT_W=/work/build/bld-nolimreplay/wt
-export IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh
-/work/fuigo-builds/tools/it-remote.sh \
+export IT_W=/root/fuigo-builds/swarm-b/bld-nolimreplay/wt
+export IT_ORIG=/root/fuigo-builds/tools/it-local-generic.sh
+/root/fuigo-builds/tools/it-remote.sh \
   'python3 scripts/nolim-replay/extract.py ingest-cards --local-input .nolim-evidence/bld4/mac-select-v2.jsonl --out .nolim-evidence/bld4/display-corpus'
 ```
 
@@ -110,11 +110,11 @@ labelled **DISPLAY-FIDELITY**, `releaseEligible:false`. The runner rechecks the
 seal and redaction. This is separate from the unchanged six-file release gate.
 No input, diagnostic or exception content is printed, only counts and paths.
 
-For a given full toolid tip SHA, prepare immutable git snapshots on the build host:
+For a given full toolid tip SHA, prepare immutable git snapshots on Hetzner:
 
 ```sh
 python3 scripts/nolim-replay/prepare-display-pins.py FULL_TIP_SHA
-/work/fuigo-builds/tools/it-remote.sh \
+/root/fuigo-builds/tools/it-remote.sh \
   'python3 scripts/nolim-replay/replay-display.py --corpus .nolim-evidence/bld4/display-corpus --pins .nolim-evidence/bld4/display-pins --tip FULL_TIP_SHA --out .nolim-evidence/bld4/display-comparison'
 ```
 

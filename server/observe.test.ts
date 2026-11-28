@@ -30,10 +30,12 @@ it("a slow statement is one line per operation per minute, with its source", () 
 
 it("the loop-lag line appears only when p99 is over the threshold and names the biggest holder", async () => {
   startLoopLagMonitor(3_600_000, 100);
-  await new Promise(resolve => setTimeout(resolve, 80));  // the monitor's own timer is running before the block
+  // 1.0.22 idle burn: the histogram samples every LOOP_DELAY_RESOLUTION_MS (200, was 20), so the primes wait past one sample (were 80 ms)
+  await new Promise(resolve => setTimeout(resolve, 450));  // the monitor's own timer is running before the block
   expect(reportLoopLag(100)).toBeUndefined();   // (a reset drops the next sample, so the monitor is primed again before the block)
-  await new Promise(resolve => setTimeout(resolve, 80));
-  const end = performance.now() + 250; while (performance.now() < end) { /* a step that holds the loop */ }
+  await new Promise(resolve => setTimeout(resolve, 450));
+  // 400 ms (was 250): at a 200 ms resolution a block shows as at least block - resolution of delay, always over the 100 ms threshold
+  const end = performance.now() + 400; while (performance.now() < end) { /* a step that holds the loop */ }
   reportSlowSql("INSERT ? INTO memory_records", 250, "memory-worker");
   await new Promise(resolve => setTimeout(resolve, 60));
   const line = reportLoopLag(100);
@@ -58,7 +60,7 @@ it("a main-thread block over the threshold is one stall line at once, naming wha
   restore();
   const stalls = lines.filter(line => line.startsWith("[loop] stall"));
   expect(stalls).toHaveLength(1);
-  expect(stalls[0]).toMatch(/^\[loop\] stall blocked=\d+ms holder=memory\.worker-message\.deferred:390ms active=memory\.publish(?: gc=\d+ms)?$/); // (a collector pause inside the block is named after it)
+  expect(stalls[0]).toMatch(/^\[loop\] stall blocked=\d+ms holder=memory\.worker-message\.deferred:390ms active=memory\.publish cpu=\d+ms(?: gc=\d+ms)?$/); // (a collector pause inside the block is named after it; cpu= is the process CPU spent in the block, 1.0.22 N3)
   expect(Number(/blocked=(\d+)/.exec(stalls[0]!)![1])).toBeGreaterThan(150);
 });
 
@@ -152,7 +154,7 @@ it("a block with forced collections inside it is a stall line that names the col
   expect(garbage).toBeTruthy();
   await new Promise(resolve => setTimeout(resolve, 80));
   const stall = lines.find(line => line.startsWith("[loop] stall"));
-  expect(stall).toMatch(/^\[loop\] stall blocked=\d+ms holder=memory\.pip\.pending:\d+ms gc=\d+ms$/);
+  expect(stall).toMatch(/^\[loop\] stall blocked=\d+ms holder=memory\.pip\.pending:\d+ms cpu=\d+ms gc=\d+ms$/);
 });
 
 it("a block that allocates nothing keeps the holder text as it was (gc, if any, only appended)", async () => {
@@ -161,5 +163,26 @@ it("a block that allocates nothing keeps the holder text as it was (gc, if any, 
   heldStep("memory.publish", () => { const end = performance.now() + 300; while (performance.now() < end) { /* no allocation */ } });
   await new Promise(resolve => setTimeout(resolve, 80));
   const stall = lines.find(line => line.startsWith("[loop] stall"));
-  expect(stall).toMatch(/^\[loop\] stall blocked=\d+ms holder=memory\.publish:\d+ms(?: gc=\d+ms)?$/);
+  expect(stall).toMatch(/^\[loop\] stall blocked=\d+ms holder=memory\.publish:\d+ms cpu=\d+ms(?: gc=\d+ms)?$/);
 });
+
+// 1.0.22 idle burn (q1022-idleburn-opus): the histogram is off while idle and on while a turn runs. The real histogram's first sample after
+// it is enabled again must not span the idle stretch, and its 200 ms resolution must not read as lag on an unblocked loop.
+it("W-OBSERVE-NOLAG an idle stretch followed by a turn reports no lag from the gap, and an unblocked busy loop reports none", async () => {
+  const { setLoopWatchBusy, STALL_THRESHOLD_MS } = await import("./observe.ts") as typeof import("./observe.ts") & { setLoopWatchBusy: (r?: () => boolean) => void };
+  let busy = true;
+  setLoopWatchBusy?.(() => busy);
+  try {
+    // a turn, then three idle seconds (the histogram off), then a turn again
+    startLoopLagMonitor(3_600_000, 100);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    busy = false;
+    await new Promise(resolve => setTimeout(resolve, 3_000));
+    busy = true;
+    // the turn's start wakes the parked watch and enables the histogram again; then over a second of an unblocked loop
+    ((await import("./observe.ts")) as { wakeLoopWatch?: () => void }).wakeLoopWatch?.();
+    await new Promise(resolve => setTimeout(resolve, STALL_THRESHOLD_MS + 1_200));
+    expect(reportLoopLag(100)).toBeUndefined();
+    expect(lines.filter(line => line.startsWith("[loop]"))).toEqual([]);
+  } finally { setLoopWatchBusy?.(); }
+}, 15_000);

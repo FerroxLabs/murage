@@ -7,6 +7,7 @@ import {
   routineDayBuckets,
   routineListModel,
   routineNeedsLook,
+  routineOffLabel,
   routineSheetModel,
   runLimitWords,
   scheduleWords,
@@ -30,6 +31,19 @@ function routine(over: Partial<Routine> = {}): Routine {
 function run(id: string, over: Partial<RoutineRun> = {}): RoutineRun {
   return { id, routineId: "r1", routineName: "Morning brief", target: "bot", botId: "max", runOn: "ember", scheduledFor: at(-1, 8), status: "completed", manual: false, createdAt: 0, ...over };
 }
+
+describe("routineOffLabel (Q2)", () => {
+  const once = (over: Partial<Routine> = {}) => routine({ schedule: { type: "once", at: at(-1, 8) }, enabled: false, ...over });
+  it("a once routine that has fired says it ran once, not paused", () => {
+    expect(routineOffLabel(once(), [run("a")])).toBe("Ran once");
+    expect(routineSheetModel(once(), [run("a")], bots, groups, NOW).offLabel).toBe("Ran once");
+  });
+  it("a once routine that never fired, or a paused repeating one, still says paused; an enabled one says nothing", () => {
+    expect(routineOffLabel(once(), [])).toBe("Paused");
+    expect(routineOffLabel(routine({ enabled: false }), [run("a")])).toBe("Paused");
+    expect(routineOffLabel(routine(), [run("a")])).toBeNull();
+  });
+});
 
 describe("routineSheetModel", () => {
   it("L5B-SHEET-DETAILS: carries the instructions, file names, run limit and health notes", () => {

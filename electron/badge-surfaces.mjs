@@ -9,6 +9,25 @@ const TASKS = Object.freeze([
 ]);
 const knownTask = task => TASKS.some(([id]) => id === task);
 
+export function createUnreadBadgeIcon(nativeImage) {
+  const icon = nativeImage.createEmpty();
+  for (const scaleFactor of [1, 2]) {
+    const width = 16 * scaleFactor;
+    const center = (width - 1) / 2;
+    const radius = 7 * scaleFactor;
+    const buffer = Buffer.alloc(width * width * 4);
+    for (let y = 0; y < width; y++) {
+      for (let x = 0; x < width; x++) {
+        if ((x - center) ** 2 + (y - center) ** 2 <= radius ** 2) {
+          buffer.writeUInt32LE(0xffdc3232, (y * width + x) * 4);
+        }
+      }
+    }
+    icon.addRepresentation({ buffer, width, height: width, scaleFactor });
+  }
+  return icon;
+}
+
 export function badgeCountFor({ mode, unread, needsYou } = {}) {
   const value = mode === "needs-you" ? needsYou : mode === "unread" ? unread : 0;
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
@@ -39,7 +58,7 @@ export function createBadgeSurfaces({ app, Menu, platform, prefs, onTask, t, win
       } else if (platform === "darwin" || platform === "linux") app.setBadgeCount(count);
     },
     refreshMenu() {
-      const enabled = prefs()?.badgeMenu === true;
+      const enabled = prefs()?.surfaces?.badge === true;
       if (platform === "win32") {
         app.setUserTasks(enabled ? TASKS.map(([id, key]) => ({
           program: process.execPath, arguments: `--murage-task=${id}`,

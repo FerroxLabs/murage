@@ -9,7 +9,7 @@ export async function generatePiWipeCheck(root = fileURLToPath(new URL('../', im
  const result = await build({
   absWorkingDir: root,
   stdin: {
-   contents: "export * from './server/wipe-breaker.ts';\nexport {RootRegistry} from './server/wipe/registry.ts';\n",
+   contents: "export * from './server/wipe-breaker.ts';\nexport {RootRegistry} from './server/wipe/registry.ts';\nexport {noLimitsWipe} from './server/no-limits-wipe.ts';\n",
    resolveDir: root,
    sourcefile: 'pi-wipe-check-entry.ts',
    loader: 'ts',

@@ -33,6 +33,47 @@ describe("sessionOwnedBy", () => {
 });
 
 describe("legacy HTTP+SSE sessions held by the harness", () => {
+  it.each(["split-crlf", "unterminated-eof", "empty-event"])("delivers a multiline reply through the guarded legacy transport (%s)", async (framing) => {
+    let stream: http.ServerResponse | undefined;
+    const server = http.createServer(async (req, res) => {
+      if (req.method === "GET") {
+        stream = res;
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("event: endpoint\ndata: /messages\n\n");
+        return;
+      }
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { id } = JSON.parse(body);
+      res.writeHead(202);
+      res.end();
+      const reply = `data: {"jsonrpc":"2.0","id":${JSON.stringify(id)},\r\ndata: "result":{"content":[{"type":"text","text":"reply"}]}}`;
+      if (framing === "unterminated-eof") stream!.end(reply);
+      else if (framing === "empty-event") stream!.write(`event:\r\n${reply}\r\n\r\n`);
+      else {
+        const split = reply.indexOf("\r") + 1;
+        stream!.write(reply.slice(0, split));
+        await new Promise(resolve => setTimeout(resolve, 20));
+        stream!.write(reply.slice(split) + "\r\n\r\n");
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sse`;
+    sessions = new RemoteSseSessions();
+    try {
+      const opened = await openSession({ name: "legacy", generation: "gen-1", url, headers: {}, confirmed: "this-computer" });
+      expect(opened).toMatchObject({ ok: true });
+      if (!opened.ok) throw new Error("fixture session did not open");
+      const result = await sessions.call(opened.sessionId, "legacy", "gen-1", { jsonrpc: "2.0", id: 7, method: "tools/call" }, { headers: {}, timeoutMs: 1_000, dialUrl: url, confirmed: "this-computer" });
+      expect(result).toMatchObject({ ok: true, frame: { id: 7, result: { content: [{ type: "text", text: "reply" }] } } });
+    } finally {
+      sessions.closeAll();
+      stream?.destroy();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it("opens the stream, posts to the announced endpoint, and matches answers by id", async () => {
     fake = await startFakeRemoteMcp({ auth: "none", transport: "sse" });
     sessions = new RemoteSseSessions();
@@ -51,6 +92,42 @@ describe("legacy HTTP+SSE sessions held by the harness", () => {
     expect(a).toMatchObject({ ok: true, frame: { id: 2, result: { tools: [{ name: "echo" }, { name: "sum" }] } } });
     expect(b).toMatchObject({ ok: true, frame: { id: 3, result: { content: [{ text: "9" }] } } });
   });
+
+  // MAIN-RULING cause22-no-transport-caps (lane cause22-main-fable owns this row): the session has no event cap and no stream
+  // byte ceiling. On the owner's own turn (the release budget's own marks on other turns are not a transport cap, and not this
+  // lane's) a 20 MiB tool result arrives whole and the same session serves the next call. RED on c187b11166: event-too-large.
+  it("cause22: a 20 MiB tool result arrives whole over the session's stream and the session serves the next call", async () => {
+    const ITEM = 20 * 1024 * 1024;
+    fake = await startFakeRemoteMcp({ auth: "none", transport: "sse", toolResultPadBytes: ITEM });
+    sessions = new RemoteSseSessions();
+    upstream.budget("gen-1").keepOwner(() => {});
+    const opened = await open();
+    expect(opened).toMatchObject({ ok: true });
+    if (!opened.ok) return;
+    const big = await sessions.call(opened.sessionId, "legacy", "gen-1", { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "echo", arguments: { text: "a" } } }, { ...current(), timeoutMs: 60_000 });
+    expect(big.ok, "the 20 MiB answer is not a failure").toBe(true);
+    const text = big.ok ? (big.frame as { result?: { content?: Array<{ text?: string }> } } | null)?.result?.content?.[0]?.text : undefined;
+    expect(text?.length, "every byte of the result arrived").toBe(ITEM + 1);
+    expect(sessions.size, "the session is still open").toBe(1);
+    const next = await sessions.call(opened.sessionId, "legacy", "gen-1", { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: { text: "b" } } }, { ...current(), timeoutMs: 60_000 });
+    expect(next.ok, "the next call on the same session is answered").toBe(true);
+  }, 120_000);
+
+  // SITES #20, the POST half: the POST's own answer body has no byte ceiling either. A server that acknowledges the POST with a
+  // 24 MiB body still gets its call answered over the stream. RED on c187b11166: the guarded request's default 20 MiB ceiling.
+  it("cause22: a 24 MiB POST acknowledgement is read whole, the call is answered over the stream and the session serves the next call", async () => {
+    fake = await startFakeRemoteMcp({ auth: "none", transport: "sse", messageAckBytes: 24 * 1024 * 1024 });
+    sessions = new RemoteSseSessions();
+    upstream.budget("gen-1").keepOwner(() => {});
+    const opened = await open();
+    expect(opened).toMatchObject({ ok: true });
+    if (!opened.ok) return;
+    const first = await sessions.call(opened.sessionId, "legacy", "gen-1", { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "echo", arguments: { text: "a" } } }, { ...current(), timeoutMs: 60_000 });
+    expect(first, "the call behind a 24 MiB acknowledgement is answered").toMatchObject({ ok: true, frame: { id: 2, result: { content: [{ text: "a" }] } } });
+    expect(sessions.size, "the session is still open").toBe(1);
+    const next = await sessions.call(opened.sessionId, "legacy", "gen-1", { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: { text: "b" } } }, { ...current(), timeoutMs: 60_000 });
+    expect(next, "the next call on the same session is answered").toMatchObject({ ok: true, frame: { id: 3, result: { content: [{ text: "b" }] } } });
+  }, 120_000);
 
   it("another server name or another turn cannot use the session", async () => {
     fake = await startFakeRemoteMcp({ auth: "none", transport: "sse" });
@@ -247,7 +324,9 @@ describe("legacy HTTP+SSE sessions held by the harness", () => {
     if (!opened.ok) throw new Error("open");
     const budget = upstream.budget("gen-1");
     expect(budget.counts.bytes).toBeGreaterThan(0);
-    budget.charge({ attempts: RELEASE_LIMITS.attempts - budget.counts.attempts });
+    // "MAIN-RULING cause22-no-transport-caps (Sean 2026-11-22): no transport size or count cap refuses a turn": before, the opening generation's budget was
+    // exhausted with the 4096 attempt limit; now it is sealed by a work crossing above the whole work limit, which still refuses.
+    expect(() => budget.charge({ work: RELEASE_LIMITS.work + 1 })).toThrow("MEMORY_CONTEXT_REVOKED");
     await expect(sessions.call(opened.sessionId, "legacy", "gen-1", { jsonrpc: "2.0", id: 1, method: "tools/list" }, current()))
       .rejects.toMatchObject({ code: "MEMORY_CONTEXT_REVOKED" });
     expect(sessions.size).toBe(0);

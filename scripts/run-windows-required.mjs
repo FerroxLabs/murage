@@ -3,11 +3,12 @@
 // JSON report exists and parses, it holds no failed test, failed suite, failed file, unhandled error or `success: false`, and the named witness
 // ran and PASSED (skipped, todo, missing or failed all fail). Judging by the named assertions alone let a failing hook or an unhandled error pass.
 // Usage: node scripts/run-windows-required.mjs [--list]   Exit codes: 0 all passed, 1 a row did not pass, 2 not Windows (FAIL windows-required).
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, mkdtempSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 export function parseRows(text) {
   return text.split("\n").filter(l => l && !l.startsWith("#")).map(l => { const [file, os, name, mutants] = l.split("\t"); return { file, os, name, mutants }; });
@@ -49,7 +50,7 @@ export function runRows(rows, { spawn, readReport, log = console.log }) {
     try { run = spawn(r, out); } catch (error) { run = { status: null, signal: null, error }; }
     let text;
     try { text = readReport(out); } catch { /* no result file */ }
-    rmSync(dir, { recursive: true, force: true });
+    safeWipeSync(dir);
     const j = judgeRun(r, run, text);
     log(`${j.ok ? "PASS" : "FAIL"} ${r.name} (${j.status}, vitest exit ${run.status})${j.message ? " MESSAGE: " + j.message : ""}`);
     if (!j.ok) bad++;

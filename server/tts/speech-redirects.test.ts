@@ -93,13 +93,31 @@ describe("OpenAI-shaped speech requests refuse redirects", () => {
   const direct = (): VoiceEndpoint => ({ via: "openai", label: "OpenAI", baseUrl: `${redirectorBase}/v1`, key: "sk-secret", model: "gpt-4o-mini-tts" });
   const viaFlux = (): VoiceEndpoint => ({ via: "flux", label: "Flux", baseUrl: `${redirectorBase}/v1`, key: "flux-secret", model: "gpt-4o-mini-tts" });
 
-  it("does not send the key or the words on when speaking", async () => {
+  it.each(["openai", "flux"])("does not follow or replay a %s speech POST on redirect", async (provider) => {
     fresh();
-    await expect(flux.synthesizeClip("private words", "marin", direct(), false, fetch, 0)).rejects.toThrow();
-    await expect(flux.synthesizeClip("private words", "marin", viaFlux(), false, fetch, 0)).rejects.toThrow();
-    // one fast retry each, and every attempt stops at the redirect
-    expect(redirects).toBeGreaterThanOrEqual(2);
+    const endpoint = provider === "flux" ? viaFlux() : direct();
+    await expect(flux.synthesizeClip("private words", "marin", endpoint, false, fetch, 0)).rejects.toThrow();
+    expect(redirects).toBe(1);
     expect(reached).toEqual([]);
+  });
+
+  it.each(["openai", "flux"])("does not replay a %s speech POST after losing the response", async (provider) => {
+    let received = 0;
+    const upstream = createServer(req => {
+      req.resume();
+      req.once("end", () => {
+        received++;
+        req.socket.destroy();
+      });
+    });
+    const url = await listen(upstream);
+    const endpoint = { ...(provider === "flux" ? viaFlux() : direct()), baseUrl: `${url}/v1` };
+    try {
+      await expect(flux.synthesizeClip("fixture words", "marin", endpoint, false, fetch, 0)).rejects.toThrow("Couldn't reach");
+      expect(received).toBe(1);
+    } finally {
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
   });
 
   it("does not send the key on when reading Flux's ElevenLabs voices", async () => {

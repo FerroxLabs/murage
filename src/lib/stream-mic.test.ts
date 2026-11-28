@@ -1637,3 +1637,29 @@ it("an in-band budget frame stops before the socket close", async () => {
   expect(uplinks).toHaveLength(1);
   mic.close();
 });
+
+it.each(["frame", "close", "replacement"])("unknown stream admission ends the mic on %s without paid fallback", async (signal) => {
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const { mic, source, uplink, uplinks, ends } = await setup({ syncRestart: true });
+  try {
+    source.push(0.2, 5);
+    if (signal === "replacement") {
+      uplink().emit({ type: "session.expiring", closes_in_ms: 5000 });
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    const attempts = signal === "replacement" ? 2 : 1;
+    expect(uplinks).toHaveLength(attempts);
+    const error = { code: "call_admission_unknown", type: "api_error" as const, message: "Couldn't reach Flux", fatal: true, close_code: 4503, retry_after_ms: null };
+    if (signal === "frame") uplink().emit({ type: "error", error });
+    else uplink().drop(4503, error);
+    expect(ends).toEqual([{ code: 1, reason: "call_admission_unknown" }]);
+    expect(source.opened).toBe(false);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(uplinks).toHaveLength(attempts);
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally {
+    mic.close();
+    vi.unstubAllGlobals();
+  }
+});

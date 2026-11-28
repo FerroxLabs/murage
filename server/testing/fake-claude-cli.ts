@@ -6,6 +6,7 @@ import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 // scripted session. Failure modes are toggled by env var, mirroring how
 // the real thing misbehaves:
 //
+//   FAKE_CLAUDE_NO_CACHE=1 happy-path turns report no cache read count in their usage
 //   FAKE_CLAUDE_MODE   happy (default) | exit-early | hang | malformed | final-steer
 //   FAKE_CLAUDE_ELICIT JSON array of control `request` objects the CLI sends the HOST
 //                      before its first turn plays (an MCP elicitation, or any other
@@ -107,11 +108,14 @@ import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { consumePermissionResult } from "./claude-permission-consumer.ts";
 import { fixtureDumpEnvironment } from "./fixture-dump.ts";
+// M9 fixture-only: the Bedrock-relevant env names the CLI was handed (values are fixture values), the model argv and the exec env file path.
+const bedrockEnvDump = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(AWS_|CLAUDE_CODE_USE_|HTTPS_PROXY$|HTTP_PROXY$|NO_PROXY$|NODE_EXTRA_CA_CERTS$|ANTHROPIC_(DEFAULT|MODEL|BASE|API|BEDROCK|SMALL)|MURAGE_EXEC_ENV_FILE$)/.test(k)));
+const execFileText = () => { try { return process.env.MURAGE_EXEC_ENV_FILE ? readFileSync(process.env.MURAGE_EXEC_ENV_FILE, "utf8") : null; } catch { return null; } };
 import { serveToolMailbox } from "../memory/testing/field-tool-mailbox.ts";
 import { fixtureRequested } from "./fixture-request.ts";
 import { fakeReviewReply } from "./fake-review.ts";
-import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv } from "./fake-custom-tool.ts";
-import { spawn, type ChildProcess } from "node:child_process";
+import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv, type CustomToolOutcome } from "./fake-custom-tool.ts";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { replayWebRead } from "./fake-web-read.ts";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
@@ -241,6 +245,10 @@ if (argv[0] === "auth" && argv[1] === "status") {
     process.stderr.write("error: unknown command 'auth'\n");
     process.exit(1);
   }
+  if (auth === "nonboolean") {
+    process.stdout.write('{"loggedIn":"false"}\n');
+    process.exit(0);
+  }
   if (auth === "malformed") {
     process.stdout.write("not json\n");
     process.exit(0);
@@ -268,7 +276,7 @@ if (argAfter("--output-format") === "text" || (argv.includes("-p") && argAfter("
   if (process.env.FAKE_CLAUDE_DUMP) {
     writeFileSync(
       process.env.FAKE_CLAUDE_DUMP,
-      JSON.stringify({ pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, mcpConfig: null, cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()) }, null, 2),
+      JSON.stringify({ pid: process.pid, argv, env: fixtureDumpEnvironment(), bedrockEnv: bedrockEnvDump(), execFile: execFileText(), prompt, mcpConfig: null, cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()) }, null, 2),
     );
   }
   if (process.env.FAKE_CLAUDE_REVIEW_LOG) appendFileSync(process.env.FAKE_CLAUDE_REVIEW_LOG, "one-shot\n");
@@ -320,7 +328,7 @@ if (process.env.FAKE_CLAUDE_LAUNCH_WRITE) writeFileSync(process.env.FAKE_CLAUDE_
 if (process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS && process.env.FAKE_CLAUDE_STATE) {
   const launched = countLaunch();
   if (launched < (Number(process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS) || 0)) {
-    process.stderr.write("claude: API error: read ECONNRESET\n", () => process.exit(5));
+    process.stderr.write(`${process.env.FAKE_CLAUDE_PRE_ACCEPT_STDERR ?? "claude: API error: read ECONNRESET"}\n`, () => process.exit(5));
     await new Promise(() => {});
   }
 }
@@ -683,6 +691,15 @@ const playPermissionTool = async (): Promise<void> => {
       }
       verdict = decision.behavior === "allow" ? "allowed" : "denied";
       resultText = verdict === "denied" && decision.message ? decision.message : verdict;
+      // FAKE_CLAUDE_PERM_DISPATCH=1: an allowed mcp__<server>__<tool> call RUNS: the CLI calls the tool on that mounted server with the
+      // call's own input (the permission prompt's updatedInput, when it returns one, replaces it, as in the real CLI).
+      const mcpTool = /^mcp__(.+?)__(.+)$/.exec(tool);
+      if (decision.behavior === "allow" && process.env.FAKE_CLAUDE_PERM_DISPATCH === "1" && mcpTool) {
+        const target = mcpSession(mcpTool[1]!);
+        if (!target) throw new Error(`Missing MCP server ${mcpTool[1]}`);
+        await target.ready;
+        await target.call(mcpTool[2]!, decision.updatedInput ?? input);
+      }
     }
   } catch (error) {
     verdict = `failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -710,13 +727,23 @@ const playCustomTool = async (name: string, prompt: JsonValue): Promise<void> =>
   } catch {
     server = undefined;
   }
-  const toolUseId = `toolu_fake_custom_${process.pid}_${Date.now()}`;
-  const outcome = server
-    ? await callFirstCustomTool("claude", name, { command: server.command, args: server.args ?? [], env: server.env ?? {} }, promptText(prompt),
-      claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} }), mcpSession(name) ?? undefined)
-    : { tools: [], text: `no ${name} server was mounted`, isError: true };
-  out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: `mcp__${name}__${outcome.tool ?? "unknown"}`, input: {} }] } });
-  out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: outcome.isError, content: outcome.text }] } });
+  // FAKE_CUSTOM_TOOL_REPEAT=N (real-size rig, scripts/rig-realsize): one long multi-step turn, N sequential calls on the
+  // same mounted session, FAKE_CUSTOM_TOOL_STEP_MS apart, each its own tool_use/tool_result as a long No limits turn emits.
+  const steps = Math.min(Math.max(Number(process.env.FAKE_CUSTOM_TOOL_REPEAT) || 1, 1), 500);
+  const stepMs = Math.max(Number(process.env.FAKE_CUSTOM_TOOL_STEP_MS) || 0, 0);
+  let outcome: CustomToolOutcome = { tools: [], text: `no ${name} server was mounted`, isError: true };
+  for (let step = 0; step < steps; step++) {
+    if (step > 0 && stepMs) await new Promise((resolve) => setTimeout(resolve, stepMs));
+    if (step > 0 && !turnRunning) return; // interrupted mid-turn: no more steps
+    const toolUseId = `toolu_fake_custom_${process.pid}_${Date.now()}_${step}`;
+    outcome = server
+      ? await callFirstCustomTool("claude", name, { command: server.command, args: server.args ?? [], env: server.env ?? {} }, promptText(prompt),
+        claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} }), mcpSession(name) ?? undefined)
+      : outcome;
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: `mcp__${name}__${outcome.tool ?? "unknown"}`, input: {} }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: outcome.isError, content: outcome.text }] } });
+    if (steps > 1) out({ type: "assistant", message: { content: [{ type: "text", text: `Step ${step + 1} of ${steps} done.` }] } });
+  }
   out({ type: "assistant", message: { content: [{ type: "text", text: customToolReply(outcome) }] } });
   out({ type: "result", is_error: process.env.FAKE_CUSTOM_TOOL_FAIL_TURN === "1" && outcome.isError, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
   turnRunning = false;
@@ -733,12 +760,20 @@ const playCustomTool = async (name: string, prompt: JsonValue): Promise<void> =>
  *   FAKE_CLAUDE_BG_TASKS  number of tasks (default 3)
  *   FAKE_CLAUDE_BG_ASKS   asks the subagents raise after the first result (default 2)
  *   FAKE_CLAUDE_BG_HOLD   "1": the tasks never finish (Stop and cap tests)
+ *   FAKE_CLAUDE_BG_GATE   file: the turn works silently, with no first result, until it exists
  *   FAKE_CLAUDE_BG_LOG    file that gets one line per ask verdict and per finish
  *   FAKE_CLAUDE_BG_STAGGER_DIR  rendered-proof mode: each helper has its own label and
  *                       reports task_progress (2, 4, 6 tools); helper N then finishes only
  *                       when the file `finish-N` (1-based) appears in this folder (it is consumed), so
  *                       they end at different times, as real ones do. No tool asks. */
 const playBackground = async (): Promise<void> => {
+  // FAKE_CLAUDE_BG_GATE: the turn is still working (nothing sent, no result yet) until this file exists, so a line can be steered into it first
+  const bgGate = process.env.FAKE_CLAUDE_BG_GATE;
+  if (bgGate) {
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu-bg-gate", name: "Bash", input: { command: "echo working" } }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-bg-gate", content: "working" }] } });
+  }
+  while (bgGate && !existsSync(bgGate)) await new Promise((resolve) => setTimeout(resolve, 20));
   const count = Number(process.env.FAKE_CLAUDE_BG_TASKS ?? "3");
   const askCount = Number(process.env.FAKE_CLAUDE_BG_ASKS ?? (process.env.FAKE_CLAUDE_BG_STAGGER_DIR ? "0" : "2"));
   const log = (line: string) => {
@@ -880,6 +915,22 @@ const readCredFile = (): { path: string | null; content: unknown } => {
   } catch { /* no config to read */ }
   try { return { path: credPath, content: credPath ? JSON.parse(readFileSync(credPath, "utf8")) : null }; } catch { return { path: credPath, content: "unreadable" }; }
 };
+/** The depth the server's token record holds for this turn (L2W #5768: the engine env no longer carries it): the body depth the
+ *  real ask-bot route's cross-check accepts (a different one answers 403 "different turn depth"). null when the turn has no agents mount. */
+const claimDepth = (url: string | undefined, token: string | undefined, botId: string | undefined, threadId: string | undefined): number | null => {
+  if (!url || !token) return null;
+  const probe = spawnSync(process.execPath, ["-e", `(async () => { const out = []; for (let d = 0; d <= 3; d++) { const r = await fetch(process.argv[1] + "/api/internal/ask-bot", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + process.argv[2] }, body: JSON.stringify({ fromBotId: process.argv[3], fromThreadId: process.argv[4], depth: d }) }); if (!/different turn depth/.test(await r.text())) out.push(d); } console.log(JSON.stringify(out)); })()`, url, token, botId ?? "", threadId ?? ""], { encoding: "utf8", timeout: 10_000 });
+  try { const accepted = JSON.parse(probe.stdout) as number[]; return accepted.length === 1 ? accepted[0] : null; } catch { return null; }
+};
+/** claimDepth for this turn's agents mount: the url and identity come from the admitted mount the fixture preload records beside the
+ *  credential file, the token from the credential file itself (neither is on the wire config). */
+const claimDepthNow = (wire: Record<string, string>): number | null => {
+  const cred = readCredFile();
+  let mount: Record<string, string> = {};
+  try { mount = (JSON.parse(readFileSync(cred.path + ".fixture-mounts.json", "utf8")) as { agents?: { env?: Record<string, string> } }).agents?.env ?? {}; } catch { /* a fixture without the preload */ }
+  const token = (cred.content as { agents?: { MURAGE_COMMS_TOKEN?: string } } | null)?.agents?.MURAGE_COMMS_TOKEN;
+  return claimDepth(mount.MURAGE_HARNESS_URL ?? wire.MURAGE_HARNESS_URL, token ?? mount.MURAGE_COMMS_TOKEN ?? wire.MURAGE_COMMS_TOKEN, mount.MURAGE_BOT_ID ?? wire.MURAGE_BOT_ID, mount.MURAGE_THREAD_ID ?? wire.MURAGE_THREAD_ID);
+};
 /** The provider turn the server wrote into this turn's credential file (MURAGE_TURN_ID beside the agents token). */
 const credTurnId = (): string | null => {
   const content = readCredFile().content as { agents?: { MURAGE_TURN_ID?: unknown } } | null;
@@ -953,7 +1004,7 @@ const playTurn = (prompt: JsonValue) => {
     let fixtureMounts: unknown;
     const server = Object.values((mcpConfig as {mcpServers?:Record<string,{env?:Record<string,string>}>}|null)?.mcpServers ?? {}).find(server=>server.env?.MURAGE_CRED_FILE);
     try { if (server?.env?.MURAGE_CRED_FILE) fixtureMounts = JSON.parse(readFileSync(server.env.MURAGE_CRED_FILE + '.fixture-mounts.json', 'utf8')); } catch { /* only an instrumented fixture owns this sidecar */ }
-    const dump = { pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, systemPrompt, mcpConfig, fixtureMounts, settingsFiles, credFile: readCredFile(), promptWallMs: Date.now(), cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()), ...(procedureProbe?{procedureProbe}:{}), ...(process.env.FAKE_CLAUDE_MCP_READY_MS ? { mcpAtPrompt: mcpStates(), promptAtMs: Date.now() - mcpStartedAt } : {}) };
+    const dump = { pid: process.pid, argv, env: fixtureDumpEnvironment(), bedrockEnv: bedrockEnvDump(), execFile: execFileText(), prompt, systemPrompt, mcpConfig, fixtureMounts, claimDepth: claimDepthNow((mcpConfig as {mcpServers?:Record<string,{env?:Record<string,string>}>}|null)?.mcpServers?.agents?.env ?? {}), settingsFiles, credFile: readCredFile(), promptWallMs: Date.now(), cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()), ...(procedureProbe?{procedureProbe}:{}), ...(process.env.FAKE_CLAUDE_MCP_READY_MS ? { mcpAtPrompt: mcpStates(), promptAtMs: Date.now() - mcpStartedAt } : {}) };
     writeFileSync(process.env.FAKE_CLAUDE_DUMP, JSON.stringify(dump, null, 2));
     // FAKE_CLAUDE_DUMP_HISTORY: the same dump as one line per dumped turn, so a spec waits for its own turn even when a later
     // turn (another bot's, or a redispatch) has already replaced the single latest-turn file
@@ -974,7 +1025,7 @@ const playTurn = (prompt: JsonValue) => {
     const agents = servers.agents?.env ?? {};
     appendFileSync(process.env.FAKE_CLAUDE_DUMP_LOG, `${JSON.stringify({
       servers: Object.keys(servers).sort(), botId: agents.MURAGE_BOT_ID ?? null, threadId: agents.MURAGE_THREAD_ID ?? null,
-      depth: agents.MURAGE_TURN_DEPTH ?? null, skillAuthoring: agents.MURAGE_SKILL_AUTHORING_ENABLED ?? null, prompt: promptText(prompt), credFile: readCredFile(),
+      depth: claimDepthNow(agents), skillAuthoring: agents.MURAGE_SKILL_AUTHORING_ENABLED ?? null, prompt: promptText(prompt), credFile: readCredFile(),
       turnId: credTurnId(),
     })}\n`);
   }
@@ -1041,6 +1092,38 @@ const playTurn = (prompt: JsonValue) => {
       { type: "image", data: FIXTURE_SCREEN_IMAGE, mimeType: "image/png" },
     ] }] } });
     out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+    turnRunning = false;
+    finishIfDone();
+    return;
+  }
+  // cause22 counts: 513 tool uses still open at once (one over the old 512-entry name table), then the
+  // last one answers with an image; its name is what the driver routes the image by.
+  if (fixtureRequested(promptText(prompt), "__fixture_many_open_tools__")) {
+    out({ type: "system", subtype: "init", session_id: sessionId, model });
+    out({ type: "assistant", message: { content: Array.from({ length: 513 }, (_, i) => ({ type: "tool_use", id: `tu-open-${i + 1}`, name: i === 512 ? "mcp__omarchy__screenshot" : "mcp__omarchy__read", input: { n: i + 1 } })) } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu-open-513", is_error: false, content: [
+      { type: "text", text: "captured" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: FIXTURE_TOOL_IMAGE } },
+    ] }] } });
+    out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+    turnRunning = false;
+    finishIfDone();
+    return;
+  }
+  // cause22 counts: 1,025 background helpers open at once (one over the old 1,024-entry owner table); the
+  // first one then completes, then the rest, then the closing follow-up.
+  if (fixtureRequested(promptText(prompt), "__fixture_many_bg_tasks__")) {
+    const ids = Array.from({ length: 1025 }, (_, i) => `bgmany${i + 1}`);
+    const frames: unknown[] = [{ type: "assistant", message: { content: [{ type: "text", text: "Many helpers are reading." }] } }];
+    for (const id of ids) frames.push({ type: "system", subtype: "task_started", task_id: id, tool_use_id: `toolu_${id}`, description: `Helper ${id}`, subagent_type: "Explore", is_backgrounded: true, spawn_depth: 1, task_type: "local_agent" });
+    frames.push({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", terminal_reason: "completed", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 },
+      subagent_stats: { spawned: ids.length, started_in_background: ids.length, completed: 0, failed: 0 } });
+    for (const id of ids) frames.push({ type: "system", subtype: "task_notification", task_id: id, tool_use_id: `toolu_${id}`, status: "completed", output_file: "", summary: `Helper ${id} done` });
+    frames.push({ type: "system", subtype: "init", session_id: "fake-bg-session", cwd: process.cwd(), tools: [], model: "fake" });
+    frames.push({ type: "assistant", message: { content: [{ type: "text", text: "All 1,025 helpers reported." }] } });
+    frames.push({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", terminal_reason: "completed", total_cost_usd: 0, origin: { kind: "task-notification", producer: "session-task" },
+      usage: { input_tokens: 1, output_tokens: 1 }, subagent_stats: { spawned: ids.length, started_in_background: ids.length, completed: ids.length, failed: 0 } });
+    process.stdout.write(frames.map((frame) => JSON.stringify(frame) + "\n").join(""));
     turnRunning = false;
     finishIfDone();
     return;
@@ -1121,6 +1204,8 @@ const playTurn = (prompt: JsonValue) => {
   // the real CLI re-announces init on every turn of a live process (2.1.310: also only then, after it read the prompt)
   if (!earlyInitOwed && !(process.env.FAKE_CLAUDE_NO_REINIT === "1" && initAnnounced)) out({ type: "system", subtype: "init", session_id: reportedSessionId, model });
   earlyInitOwed = false; initAnnounced = true;
+  // L2W-7a (i): a compaction that reports a NEW native session id: the real CLI sends a second system/init inside the turn
+  if (fixtureRequested(promptText(prompt), "__fixture_compact_new_id__")) out({ type: "system", subtype: "init", session_id: "fake-compacted-session", model });
 
   // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): every turn calls the first
   // tool of that owner server, started from --mcp-config as the CLI would.
@@ -1211,15 +1296,22 @@ const playTurn = (prompt: JsonValue) => {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
     // V5 stall test: write this call's tool_use to stdout once the test touches the file, then note when it was written.
+    // cause22 counts: FAKE_CLAUDE_STARTED_ITEMS=N: N Bash calls (`echo 1` .. `echo N`) are started on stdout, then the turn stays open
+    const startedItems = Number(process.env.FAKE_CLAUDE_STARTED_ITEMS ?? 0);
+    if (startedItems > 0) out({ type: "assistant", message: { content: Array.from({ length: startedItems }, (_, i) => ({ type: "tool_use", id: `toolu_started_${i + 1}`, name: "Bash", input: { command: `echo ${i + 1}` } })) } });
     const itemWhen = process.env.FAKE_CLAUDE_ITEM_WHEN_FILE;
     if (itemWhen) {
       const poll = setInterval(() => {
         if (!existsSync(itemWhen)) return;
         clearInterval(poll);
-        const input = JSON.parse(process.env.FAKE_CLAUDE_PERM_INPUT ?? "{}") as Record<string, unknown>;
+        // q1024-linuxmem: a trigger file holding {"tool","input"} names this call's tool itself (one server, one row per tool)
+        let named: { tool?: unknown; input?: unknown } = {};
+        try { const parsed = JSON.parse(readFileSync(itemWhen, "utf8")) as unknown; if (parsed && typeof parsed === "object") named = parsed as typeof named; } catch { /* plain trigger text: the environment names the tool */ }
+        const input = (named.input && typeof named.input === "object" ? named.input : JSON.parse(process.env.FAKE_CLAUDE_PERM_INPUT ?? "{}")) as Record<string, unknown>;
+        const itemTool = typeof named.tool === "string" ? named.tool : process.env.FAKE_CLAUDE_PERM_TOOL ?? "Bash";
         // FAKE_CLAUDE_ITEM_DELAY_MS: write the item this long after the test touched the file (a CLI that reports late)
         setTimeout(() => {
-          out({ type: "assistant", message: { content: [{ type: "tool_use", id: `toolu_fake_stall_${process.pid}`, name: process.env.FAKE_CLAUDE_PERM_TOOL ?? "Bash", input }] } });
+          out({ type: "assistant", message: { content: [{ type: "tool_use", id: `toolu_fake_stall_${process.pid}`, name: itemTool, input }] } });
           writeFileSync(`${itemWhen}.written`, String(Date.now()));
         }, Number(process.env.FAKE_CLAUDE_ITEM_DELAY_MS ?? 0));
       }, 10);
@@ -1313,6 +1405,11 @@ const playTurn = (prompt: JsonValue) => {
   }
   const resumedError = process.env.FAKE_CLAUDE_RESUMED_API_ERROR === "1" && process.argv.includes("--resume") && !resumedErrorPlayed;
   if (resumedError) resumedErrorPlayed = true;
+  // M9 fixture: an is_error result that carries the provider text (or a runner subtype) and no api-error frame before it
+  if (mode === "result-error") {
+    out({ type: "result", is_error: true, subtype: process.env.FAKE_CLAUDE_RESULT_SUBTYPE ?? "success", result: process.env.FAKE_CLAUDE_API_ERROR ?? "", stop_reason: "stop_sequence", terminal_reason: "api_error" });
+    turnRunning = false; finishIfDone(); return;
+  }
   if (mode === "api-error" || resumedError) {
     out({ type: "assistant", is_api_error_message: true,
       message: { model: "<synthetic>", content: [{ type: "text", text: process.env.FAKE_CLAUDE_API_ERROR ?? "API Error: 400 fixture" }] } });
@@ -1333,10 +1430,44 @@ const playTurn = (prompt: JsonValue) => {
     });
   }
 
+  // FAKE_CLAUDE_SCRIPT (1.0.22 cause B witnesses): a JSON array of turns, each an array of steps played as the real CLI's frames:
+  //   ["text", s]  a completed assistant message        ["delta", s]  a streamed partial-message text delta
+  //   ["tool", s]  a tool call and its tool_result text  ["die", stderr, code]  the process writes stderr and exits before a result
+  //   ["read", path]  a Read of that file, its bytes as the tool_result   ["quote", prefix]  a reply quoting the read line starting with prefix
+  if (process.env.FAKE_CLAUDE_SCRIPT) {
+    const turns = JSON.parse(process.env.FAKE_CLAUDE_SCRIPT) as Array<Array<[string, string?, number?]>>;
+    const index = scriptedReplyIndex++;
+    let tools = 0;
+    let lastRead = "";
+    for (const [kind, text = "", code = 1] of turns[index] ?? [["text", "hello from fake claude"]]) {
+      if (kind === "text") out({ type: "assistant", message: { content: [{ type: "text", text }] } });
+      else if (kind === "delta") out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text } } });
+      else if (kind === "tool") {
+        const id = `tu-script-${index}-${tools++}`;
+        out({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Bash", input: { command: "fixture step" } }] } });
+        out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: false, content: text }] } });
+      } else if (kind === "read") {
+        // a Read of a real workspace file: the tool_result is the file's bytes as they are on disk now
+        const id = `tu-script-${index}-${tools++}`;
+        lastRead = readFileSync(text, "utf8");
+        out({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Read", input: { file_path: text } }] } });
+        out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: false, content: lastRead }] } });
+      } else if (kind === "quote") {
+        // the engine echoes the line of the last read file that starts with `text`, as a model quoting it word for word
+        const lines = lastRead.split("\n"), at = lines.findIndex(line => line.startsWith(text));
+        out({ type: "assistant", message: { content: [{ type: "text", text: `Line ${at + 1} of the file reads:\n\n\`${lines[at] ?? ""}\`` }] } });
+      } else if (kind === "die") { process.stderr.write(text, () => process.exit(code)); return; }
+    }
+    out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0.01, usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 } });
+    turnRunning = false; finishIfDone(); return;
+  }
+
   // lane review: a review run answers with its verdict (fake-review.ts)
   const reviewText = fakeReviewReply(promptText(prompt));
   const mentionMarker = process.env.FAKE_CLAUDE_MENTION_MARKER;
   const mentionReply = mentionMarker && process.env.FAKE_CLAUDE_MENTION_REPLY && promptText(prompt).includes(mentionMarker) ? process.env.FAKE_CLAUDE_MENTION_REPLY : null;
+  // FAKE_CLAUDE_NO_CACHE=1: the CLI reports input and output tokens but no cache read count (an engine that does not report one).
+  const noCacheReport = process.env.FAKE_CLAUDE_NO_CACHE === "1";
   const replyParts = reviewText !== null ? [reviewText] : mentionReply !== null ? [mentionReply] : nextScriptedReply();
   replyParts.forEach((text, index) => {
     const content: Array<
@@ -1347,7 +1478,7 @@ const playTurn = (prompt: JsonValue) => {
       type: "assistant",
       message: {
         content,
-        usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 },
+        usage: noCacheReport ? { input_tokens: 10, output_tokens: 5 } : { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 },
       },
     });
   });
@@ -1371,7 +1502,7 @@ const playTurn = (prompt: JsonValue) => {
       is_error: false,
       stop_reason: "end_turn",
       total_cost_usd: runningCost.total,
-      usage: { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 },
+      usage: noCacheReport ? { input_tokens: 10, output_tokens: 5 } : { input_tokens: 10, cache_read_input_tokens: 2, output_tokens: 5 },
       modelUsage: runningCost.modelUsage,
     });
     // A background task's heartbeat after the turn settled: nothing is open
@@ -1413,8 +1544,20 @@ const playTurn = (prompt: JsonValue) => {
     };
     const gate = process.env.FAKE_CLAUDE_REPLY_GATE;
     const gateSteers = Number(process.env.FAKE_CLAUDE_REPLY_GATE_STEERS ?? 0) || 0;
+    // FAKE_CLAUDE_FAIL_GATE: once this file exists the turn ends without its reply (the file is removed, so a later turn replies):
+    // FAKE_CLAUDE_FAIL_KIND "exit" = the CLI dies mid-turn, anything else = an error result
+    const failGate = process.env.FAKE_CLAUDE_FAIL_GATE;
     if (gate) {
       const timer = setInterval(() => {
+        if (failGate && existsSync(failGate)) {
+          clearInterval(timer);
+          unlinkSync(failGate);
+          if (process.env.FAKE_CLAUDE_FAIL_KIND === "exit") { process.exit(1); }
+          out({ type: "assistant", is_api_error_message: true, message: { model: "<synthetic>", content: [{ type: "text", text: "API Error: 400 fixture" }] } });
+          out({ type: "result", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error" });
+          turnRunning = false; finishIfDone();
+          return;
+        }
         if (!existsSync(gate) || steered.length < gateSteers) return;
         clearInterval(timer);
         finishSlow();
@@ -1456,6 +1599,15 @@ if (wedged) {
   }
 }
 
+// FAKE_CLAUDE_HANG_FILE  path: a CLI started while this file exists hangs at start (reads and writes nothing), appends its pid to
+// FAKE_CLAUDE_HANG_LOG and outlives a SIGTERM by FAKE_CLAUDE_HANG_TERM_MS (a slow shutdown). One started after the file is gone runs normally.
+if (process.env.FAKE_CLAUDE_HANG_FILE && existsSync(process.env.FAKE_CLAUDE_HANG_FILE)) {
+  if (process.env.FAKE_CLAUDE_HANG_LOG) appendFileSync(process.env.FAKE_CLAUDE_HANG_LOG, `${process.pid}\n`);
+  process.stdin.pause();
+  process.on("SIGTERM", () => { setTimeout(() => process.exit(0), Number(process.env.FAKE_CLAUDE_HANG_TERM_MS ?? 0)); });
+  setInterval(() => {}, 60_000);
+  await new Promise<never>(() => {});
+}
 // A slow start (a wrapper, a loaded machine): nothing is read or written for
 // FAKE_CLAUDE_START_DELAY_MS, then the CLI reads its --mcp-config and
 // --append-system-prompt-file, the way the real one does at startup, and

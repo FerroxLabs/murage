@@ -179,6 +179,18 @@ describe("T23W the checker can only tighten", () => {
       }
     }
   });
+  it("OVERREACH #4: three checker outages in a row on the owner's attended turn are three cards, never a pause; a routine still blocks", async () => {
+    for (const bad of [async () => { throw new Error("boom"); }, async () => verdict("block", "checker_unavailable", 1)]) {
+      const tally = new CheckerTally();
+      const base = input(typing, { mode: "task", grants: { l1: true, l2: true } });
+      const out = [];
+      for (let k = 0; k < 4; k++) out.push(await decide({ ...base, checker: { ...base.checker!, tally } }, spies([], bad)));
+      expect(out.map(d => d.outcome)).toEqual(["card", "card", "card", "card"]);
+      expect(tally.needsHuman).toBe(false);
+      const routine = await decide(input(typing, { mode: "task", routine: true, grants: { l1: true, l2: true } }), spies([], bad));
+      expect(["refuse", "skip"]).toContain(routine.outcome);
+    }
+  });
   it("Flux's plan and key refusals keep their own plain copy and are never silent passes", async () => {
     for (const code of ["checker_model_not_allowed", "checker_model_not_permitted"]) {
       const d = await decide(input(typing, { mode: "task", grants: { l1: true, l2: true } }), spies([], async () => verdict("block", code, 1)));

@@ -15,7 +15,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { REMOVED_FOLDER } from "./attachment-read.ts";
 
 /** A stored attachment's name: what uploads write (R1.2). */
-export const MANAGED_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}$/;
+export const MANAGED_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:tar\.(?:gz|bz2|xz|zst)|[a-z0-9]{1,5})$/;
 export const WALK_MAX_ENTRIES = 100_000;
 export const WALK_BATCH = 256;
 export const SNAPSHOT_TTL_MS = 5 * 60 * 1000;

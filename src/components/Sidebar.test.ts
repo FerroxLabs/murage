@@ -9,16 +9,6 @@ vi.mock("@/lib/updater", () => ({ useUpdaterState: () => updaterState.value }));
 
 // posthog-js boots on import and reaches for a real browser. Nothing under
 // test here reports anything, so the module is stubbed rather than shimmed.
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false,
-  optAction: () => "none" as const,
-  setAnalyticsEnabled: () => {},
-  initAnalytics: () => {},
-  track: () => {},
-  identifyEmail: () => {},
-  emailGateDone: () => false,
-  setEmailGateDone: () => {},
-}));
 
 // Sidebar's import graph reads `window` at module scope (DesktopCapabilities
 // asks the desktop shell what it is running on), and this suite runs in node.
@@ -174,6 +164,14 @@ describe("plain-text sidebar message previews", () => {
     for (const text of [rateLimited, sidebarGroupPreview(group, [])]) expect(text).not.toMatch(/\bstatus [45]\d\d\b|api_error|^error:/i);
     // An ordinary tool activity still shows its name.
     expect(sidebarBotPreview(bot([failed({ name: "Bash", ok: true })]))).toBe("Bash");
+  });
+
+  it("keeps the failed step in the sidebar after an earlier reply", () => {
+    const earlier = message("I will check the plan.", { id: "earlier" });
+    const failed = message("", {
+      id: "later", parentId: earlier.id, kind: "activity", tool: { name: "error: Unable to continue", ok: false },
+    });
+    expect(sidebarBotPreview(bot([earlier, failed], { activeLeafId: failed.id }))).toBe("This request hit a problem.");
   });
 
   it("strips team message Markdown while preserving the sender label", () => {

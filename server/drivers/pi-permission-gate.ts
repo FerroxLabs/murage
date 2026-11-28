@@ -29,7 +29,8 @@
 
 import "../../shared/win-hide-child-process.mjs";
 import { PI_CONTROL_FRAMES, preToolCode } from "./hook-control.ts";
-import { wipeBreaker, nativeWipeBreaker, RootRegistry } from "./pi-wipe-check.generated.mjs";
+// noLimitsWipe is the No limits wipe read: the wipe check, then an obfuscated wipe decoded as far as it decodes.
+import { noLimitsWipe, nativeWipeBreaker, RootRegistry } from "./pi-wipe-check.generated.mjs";
 import { lstatSync, readdirSync, realpathSync, statSync, openSync, closeSync, fstatSync, readSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { posix, win32 } from "node:path";
@@ -949,10 +950,6 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "phone_contacts_search", "phone_contacts_get", "phone_location_get",
     "phone_alarm_set", "phone_timer_set", "phone_text_compose", "phone_call_dial",
   ]],
-  // Family calls always reach the HighLevel host for operation-level grant and approval checks.
-  ["own:highlevel", [
-    "HIGHLEVEL_CONTACTS", "HIGHLEVEL_OPPORTUNITIES", "HIGHLEVEL_CONVERSATIONS", "HIGHLEVEL_CALENDARS", "HIGHLEVEL_AUTOMATIONS", "HIGHLEVEL_LOCATION", "HIGHLEVEL_USERS", "HIGHLEVEL_FORMS", "HIGHLEVEL_PAYMENTS", "HIGHLEVEL_SOCIAL", "HIGHLEVEL_BLOGS", "HIGHLEVEL_MEDIA", "HIGHLEVEL_DOCUMENTS", "HIGHLEVEL_FUNNELS", "HIGHLEVEL_COURSES", "HIGHLEVEL_SAAS", "HIGHLEVEL_SNAPSHOTS", "HIGHLEVEL_LIST_CONNECTIONS", "HIGHLEVEL_ACTION_STATUS"
-  ]],
 ];
 function unaskedPair(mountId: string | undefined, tool: string): boolean {
   if (!mountId) return false;
@@ -1245,7 +1242,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
   const offlineContext = (cwd: string) => {
     if (!descriptor) {
       if (!wipeContextFile) throw Error("missing wipe context");
-      const value: unknown = JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(readBounded(wipeContextFile, 64 * 1024).bytes));
+      const value: unknown = registerBusyloopPayloadSite("read", JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(readBounded(wipeContextFile, 64 * 1024).bytes)));
       if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("invalid wipe context");
       const {context: supplied, inventoryPath: path} = value as {context?: unknown; inventoryPath?: unknown};
       if (!supplied || typeof supplied !== "object" || Array.isArray(supplied) || typeof path !== "string" || !path || Buffer.byteLength(path) > MAX_PATH_BYTES || path.includes("\0")) throw Error("invalid wipe context");
@@ -1264,7 +1261,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
       const started = performance.now();
       const full = readInventory(descriptor.path, false);
       if (full.revision !== current.revision) throw Error("wipe inventory changed");
-      const roots: unknown = JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(full.body));
+      const roots: unknown = registerBusyloopPayloadSite("read", JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(full.body)));
       if (!Array.isArray(roots) || roots.length > MAX_ROOT_FORMS) throw Error("invalid wipe inventory roots");
       const registry = new RootRegistry();
       for (const [index, root] of roots.entries()) {
@@ -1292,7 +1289,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
       const input=event.input as Record<string,unknown>|undefined;
       const text=input?.command??input?.code??input?.script;
       const context=offlineContext(_ctx.cwd);
-      const hit=typeof text==='string'?wipeBreaker(text,context):null;
+      const hit=typeof text==='string'?noLimitsWipe(text,context):null;
       if(hit||nativeWipeBreaker(tool,input,context))return block('This action names a wipe target. Ask the owner before running it.');
       confirmInventory();
     }catch{return block(PI_GATE_UNCHECKED); /* Unread input stays held. */}

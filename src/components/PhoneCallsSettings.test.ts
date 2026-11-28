@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 vi.mock("@/state/store", () => ({ api: {}, useStore: () => ({ state: { bots: [] }, dispatch: vi.fn() }) }));
-import { ResultCard, SettingsSteps } from "./PhoneCallsSettings";
+import { phoneCallsCardShown, ResultCard, SettingsSteps } from "./PhoneCallsSettings";
 import { defaultPhoneSettings, type PhoneCallCard, type PhoneCopy } from "@/lib/phone-calls";
 it("renders Cancel on a current-revision scheduled result card, but not an ended card", () => {
   const card = { id: "call", call: "call", status: "scheduled", to: "+15550123456", settings_revision: 1, language: "en", dashboard: "https://dashboard.vapi.ai/calls/vendor" } as PhoneCallCard;
@@ -28,4 +28,23 @@ it("renders the saved call settings without the settings-version counter", () =>
   expect(html).toContain("phoneCalls.form.save");
   expect(html).not.toContain("4242");
   expect(html).not.toContain("phoneCalls.form.inUse");
+});
+
+// 1.0.21 polish (STANDING, Sean's live 1.0.20 walk): Calls and Connected apps both showed the same Vapi setup card for a
+// voice account nobody connected. The card is invisible unless the account is connected (its key is saved).
+it("shows the phone calls card only once a voice account is connected or the owner still holds a call history", () => {
+  const bridge = {} as Parameters<typeof phoneCallsCardShown>[1];
+  const status = (keyPresent: boolean) => ({ supported: true, keyPresent, active: null, olderScheduled: [] });
+  expect(phoneCallsCardShown({ kind: "loading" }, bridge)).toBe(false);
+  expect(phoneCallsCardShown({ kind: "failed" }, bridge)).toBe(false);
+  expect(phoneCallsCardShown({ kind: "ready", status: null }, bridge)).toBe(false);
+  expect(phoneCallsCardShown({ kind: "ready", status: status(false) }, bridge)).toBe(false);
+  // 1.0.23 F4 (FABLE-DESIGN 2060 H1, W10): without a key the card shows only while the store holds calls (hasCalls)
+  expect(phoneCallsCardShown({ kind: "ready", status: { ...status(false), hasCalls: false } }, bridge)).toBe(false);
+  expect(phoneCallsCardShown({ kind: "ready", status: { ...status(false), hasCalls: true } }, bridge)).toBe(true);
+  expect(phoneCallsCardShown({ kind: "ready", status: { ...status(false), hasCalls: true, supported: false } }, bridge)).toBe(false);
+  expect(phoneCallsCardShown({ kind: "ready", status: { ...status(false), hasCalls: true } }, undefined)).toBe(false);
+  expect(phoneCallsCardShown({ kind: "ready", status: { ...status(true), supported: false } }, bridge)).toBe(false);
+  expect(phoneCallsCardShown({ kind: "ready", status: status(true) }, undefined)).toBe(false);
+  expect(phoneCallsCardShown({ kind: "ready", status: status(true) }, bridge)).toBe(true);
 });

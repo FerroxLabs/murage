@@ -14,6 +14,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { activateGroundedMemory } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { threadCheckpointId, unsettledIntention } from "./checkpoints.ts";
+import { THREAD_MARKERS, threadDebtMarker } from "./checkpoint-debt.ts";
 import { LineageAllowance, prepareLineageCache, sourceIsWithheldMessage, sourceAwaitsProof } from "./replay-lineage.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
@@ -44,6 +45,15 @@ export function writetimeSourceState(source:Record<string,unknown>):LineageVerdi
   return state;
 }
 const hash=(text:string)=>createHash("sha256").update(text).digest("hex");
+/** A caller that bounds its synchronous work (maxPayloadBytes: the terminal capture on the serving thread) covers at most this many other
+ * owed jobs of the thread; past it the roll is deferred whole to the controller, whose roll covers them all (E3). */
+const CHECKPOINT_BOUNDED_COVER=64,BOUNDED_RANGE=4096;
+/** The controller's roll covers at most this many owed jobs per transaction (FABLE/ASTRA memv2-E-fable e61c79df49 High, the same roll here:
+ * one transaction over a whole backlog could pass the background write grant, io-budget.ts, roll back in full and be retried for ever).
+ * A larger debt is rolled oldest first, one chunk per pass, the thread's marker kept for the rest (CHECKPOINT_CHUNK_REASON). */
+const CHECKPOINT_ROLL_CHUNK=512;
+/** A roll that covered one chunk of a larger debt: committed, the thread still owes, its marker drives the next pass (worker-controller.ts). */
+export const CHECKPOINT_CHUNK_REASON='checkpoint-chunk';
 function completedSource(jobId:string){
   const row=database().prepare(`SELECT j.status,j.cursor,s.*,length(CAST(json_extract(v.payload,'$.text') AS BLOB)) AS bytes
     FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision
@@ -86,7 +96,7 @@ function checkpointEvidence(handle:Handle,scopeId:string,pending?:{checking:bool
  */
 export function refreshMemoryCheckpoint(completedJobId:string,options:{maxPayloadBytes?:number}={}){ return heldStep("memory.checkpoint", () => refreshMemoryCheckpointUnheld(completedJobId,options.maxPayloadBytes)); }
 function refreshMemoryCheckpointUnheld(completedJobId:string,maxPayloadBytes?:number):
-  {status:'deferred';reason:string;checkpointId?:undefined;version?:undefined}|{status:'updated'|'unchanged';checkpointId:string;version:number;reason?:undefined}{
+  {status:'deferred';reason:string;checkpointId?:undefined;version?:undefined;covered?:string[]}|{status:'updated'|'unchanged';checkpointId:string;version:number;reason?:undefined;covered?:string[]}{
   // its evidence is judged inside the transaction: the lineage verdict cache can serve there once it is current
   prepareLineageCache();
   return transaction(db=>{
@@ -96,8 +106,15 @@ function refreshMemoryCheckpointUnheld(completedJobId:string,maxPayloadBytes?:nu
       if(Number(size?.bytes)>maxPayloadBytes)return {status:'deferred' as const,reason:'evidence-checking'};
     }
     const source=completedSource(completedJobId);
+    // every debt marker of the thread: the roll below covers the jobs from the lowest start on, so each goes once it is done
+    const readThreadMarkers=()=>typeof source.thread_id==='string'&&source.thread_id?db.prepare(`SELECT b.id,CASE WHEN octet_length(b.intent)<=4096 THEN json_extract(b.intent,'$.from') END AS from_at,j.rowid AS at
+      ${THREAD_MARKERS}`).all(String(source.scope_id),source.thread_id,source.thread_id,source.thread_id):[];
+    /** Where a marker's debt starts: its `from`, never past its own job (a marker whose `from` cannot be read starts at its job). */
+    const markerStart=(marker:Record<string,unknown>)=>Number.isSafeInteger(marker.from_at)?Math.min(Number(marker.from_at),Number(marker.at)):Number(marker.at);
+    const threadMarkers=readThreadMarkers();
     const publishedResult=<T extends {status:'updated'|'unchanged'}>(result:T)=>{
       db.prepare('DELETE FROM memory_scope_bindings WHERE id=?').run('checkpoint-debt:'+completedJobId);
+      if(result.status==='updated'||'covered' in result)for(const marker of threadMarkers)db.prepare('DELETE FROM memory_scope_bindings WHERE id=?').run(marker.id);
       return result;
     };
     const noCheckpoint=(reason:string)=>{
@@ -154,14 +171,85 @@ function refreshMemoryCheckpointUnheld(completedJobId:string,maxPayloadBytes?:nu
     const forgotten=previous&&db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(previousId,previous.version);
     const priorHandles=previous&&!forgotten?db.prepare('SELECT handles FROM memory_checkpoint_members WHERE record_id=? AND record_version=?').get(previousId,previous.version):undefined;
     const handles:Handle[]=priorHandles?JSON.parse(String(priorHandles.handles)):previous&&!forgotten?db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=? ORDER BY source_id").all(previousId,previous.version) as unknown as Handle[]:[];
-    if(source.kind!=="turn" && Number(source.bytes)>0){
-      const raw=db.prepare("SELECT substr(CAST(json_extract(payload,'$.text') AS BLOB),1,96) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(source.id,source.revision)!.bytes as Uint8Array;
+    // One roll per thread (memv2 E3): every completed job of this thread since its debt started (the lowest `from` of the thread's markers,
+    // and this job) that has not published to this family is rolled in this same transaction, in job order, exactly as the one-by-one rolls
+    // would have stacked them (each unshifts its own source ahead of the previous members, the first four that pass are kept), so the notes
+    // are the same text over one record instead of one per job. The rowid range is read through the table's own b-tree and each source by
+    // its key: no payload is read here. A job's words are read only if the walk below reaches it, after its payload's size is checked
+    // against a caller's bound; one it never reaches is older than the four kept and can change nothing.
+    const ownRowid=Number(db.prepare('SELECT rowid AS n FROM memory_jobs WHERE id=?').get(completedJobId)!.n);
+    const from=Math.min(ownRowid,...threadMarkers.map(markerStart));
+    // The serving thread's bounded roll reads a bounded range: more than BOUNDED_RANGE jobs written since the debt started (any thread's)
+    // or more than CHECKPOINT_BOUNDED_COVER owed ones and it waits whole; the controller's roll covers them all (E3).
+    if(maxPayloadBytes!==undefined&&Number(db.prepare('SELECT count(*) AS n FROM (SELECT 1 FROM memory_jobs WHERE rowid>=? LIMIT ?)').get(from,BOUNDED_RANGE+1)!.n)>BOUNDED_RANGE)
+      return {status:'deferred' as const,reason:'evidence-checking'};
+    // a job whose capture covered all its words (its coverage reaches its total): a failed or name-only tool row's born-complete job
+    // covered nothing and never owed the checkpoint
+    const covered=db.prepare(`SELECT j.id,j.rowid AS at,s.id AS source_id,s.revision,s.kind FROM memory_jobs j
+      JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision AND s.state='active' AND s.scope_id=? AND s.thread_id=?
+      WHERE j.rowid>=? AND j.stage='capture' AND j.status='complete' AND j.id<>? AND json_extract(j.coverage,'$.totalBytes')=j.cursor
+      AND NOT EXISTS(SELECT 1 FROM memory_checkpoint_publications p WHERE p.family_id=? AND p.job_id=j.id)
+      AND NOT EXISTS(SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=s.id AND (t.revision IS NULL OR t.revision=s.revision))
+      ORDER BY j.rowid LIMIT ?`).all(String(source.scope_id),String(source.thread_id),from,completedJobId,family,maxPayloadBytes===undefined?CHECKPOINT_ROLL_CHUNK+1:CHECKPOINT_BOUNDED_COVER+1);
+    // the serving thread's bounded roll never takes on an unbounded batch: the controller's roll covers it
+    if(maxPayloadBytes!==undefined&&covered.length>CHECKPOINT_BOUNDED_COVER)return {status:'deferred' as const,reason:'evidence-checking'};
+    // The controller's roll of a debt past one chunk: the oldest CHECKPOINT_ROLL_CHUNK owed jobs are rolled as one roll of their own, in job
+    // order, so the notes stack as one-by-one rolls would. The asked-for job is in it only when it is older than the chunk's last job (the
+    // debt driver asks for the marker's job, often the debt's first); otherwise it is newer than all of them and is rolled in a later pass.
+    const chunked=covered.length>CHECKPOINT_ROLL_CHUNK,nextOwed=chunked?covered[CHECKPOINT_ROLL_CHUNK]!:undefined;
+    if(chunked)covered.length=CHECKPOINT_ROLL_CHUNK;
+    const ownRolled=!chunked||ownRowid<Number(covered[covered.length-1]!.at);
+    type Rolled={sourceId:string;revision:number;kind:unknown;rowid:number};
+    const rolled:Rolled[]=covered.map(row=>({sourceId:String(row.source_id),revision:Number(row.revision),kind:row.kind,rowid:Number(row.at)}));
+    if(ownRolled)rolled.push({sourceId:String(source.id),revision:Number(source.revision),kind:source.kind,rowid:ownRowid});
+    rolled.sort((a,b)=>b.rowid-a.rowid);
+    const readCheck={checking:false};
+    /** The handle a rolled job adds (the first 96 bytes of its words, cut at a whole character), read only when the walk reaches it. */
+    const rolledHandle=(row:Rolled):Handle|null=>{
+      if(row.kind==="turn")return null;
+      if(maxPayloadBytes!==undefined){
+        const size=db.prepare('SELECT octet_length(payload) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?').get(row.sourceId,row.revision);
+        if(Number(size?.bytes)>maxPayloadBytes){readCheck.checking=true;return null;}
+      }
+      const words=db.prepare("SELECT length(CAST(json_extract(payload,'$.text') AS BLOB)) AS bytes,substr(CAST(json_extract(payload,'$.text') AS BLOB),1,96) AS head FROM memory_source_versions WHERE source_id=? AND revision=?").get(row.sourceId,row.revision);
+      if(!(Number(words?.bytes)>0))return null;
+      const raw=words!.head as Uint8Array;
       let length=raw.length;
       while(length>0){try{new TextDecoder("utf-8",{fatal:true}).decode(raw.subarray(0,length));break;}catch{length--;}}
-      if(length)handles.unshift({sourceId:String(source.id),revision:Number(source.revision),startByte:0,endByte:length});
+      return length?{sourceId:row.sourceId,revision:row.revision,startByte:0,endByte:length}:null;
+    };
+    function* candidates():Generator<Handle>{
+      for(const row of rolled){const handle=rolledHandle(row);if(handle)yield handle;}
+      yield* handles;
     }
-    const seen=new Set<string>(),items=[],pending={checking:false};
-    for(const handle of handles){
+    const coverIds=covered.map(row=>String(row.id));
+    const publishCovered=(recordId:string,recordVersion:number)=>{for(const id of coverIds){
+      db.prepare('INSERT INTO memory_checkpoint_publications VALUES(?,?,?,?)').run(family,id,recordId,recordVersion);
+      db.prepare('DELETE FROM memory_scope_bindings WHERE id=?').run('checkpoint-debt:'+id);
+    }};
+    /** After a chunk: every owed job up to the chunk's last is settled (published, or passed by a chunk with nothing to quote), so the thread's
+     * markers start after it; if no marker that can roll is left, the next owed job holds one (the asked-for job, or the job after the chunk
+     * when the asked-for job was in it). Committed; the thread still owes. `covered` names the jobs published, for the derived-work hook. */
+    const chunkResult=(published:boolean)=>{
+      const next=Number(covered[covered.length-1]!.at)+1,done=new Set([...coverIds,...ownRolled?[completedJobId]:[]]);
+      if(ownRolled)db.prepare('DELETE FROM memory_scope_bindings WHERE id=?').run('checkpoint-debt:'+completedJobId);
+      if(!published)for(const id of coverIds)db.prepare('DELETE FROM memory_scope_bindings WHERE id=?').run('checkpoint-debt:'+id);
+      db.prepare(`UPDATE memory_scope_bindings SET intent=json_set(intent,'$.from',?) WHERE subject_type='system' AND subject_id='checkpoint-pending' AND id IN (SELECT value FROM json_each(?))`)
+        .run(next,JSON.stringify(threadMarkers.map(marker=>String(marker.id)).filter(id=>!done.has(id.slice(16)))));
+      // No chunk is rolled twice (ASTRA memv2-E 6e1ce27049 High): the next pass must start past this one. Any marker of the thread whose
+      // start still falls inside the settled range is passed with it, whatever its shape: an older build's refused per-job row (no `from`,
+      // so its job's rowid pinned the start), a marker whose own job can never roll (its start is capped at that job), one whose intent is
+      // too long to read its `from` (it starts at its job). Its job is settled here or can never roll; a whole roll deletes it so (publishedResult).
+      for(const marker of readThreadMarkers())if(markerStart(marker)<next)db.prepare('DELETE FROM memory_scope_bindings WHERE id=?').run(marker.id);
+      if(!threadDebtMarker(db,String(source.scope_id),String(source.thread_id))){
+        const holder=ownRolled?{id:String(nextOwed!.id),sourceId:String(nextOwed!.source_id),revision:Number(nextOwed!.revision)}:{id:completedJobId,sourceId:String(source.id),revision:Number(source.revision)};
+        db.prepare("INSERT OR IGNORE INTO memory_scope_bindings VALUES(?,?,'system','checkpoint-pending',0,'granted',?)")
+          .run('checkpoint-debt:'+holder.id,source.scope_id,JSON.stringify({jobId:holder.id,sourceId:holder.sourceId,revision:holder.revision,threadId:String(source.thread_id),from:next}));
+      }
+      return {status:'deferred' as const,reason:CHECKPOINT_CHUNK_REASON,...published?{covered:[...done]}:{}};
+    };
+    const seen=new Set<string>(),items=[],pending=readCheck;
+    for(const handle of candidates()){
       if(seen.has(handle.sourceId))continue;seen.add(handle.sourceId);
       if(db.prepare('SELECT 1 FROM memory_checkpoint_exclusions WHERE family_id=? AND source_id=? AND source_revision=?').get(family,handle.sourceId,handle.revision))continue;
       const item=checkpointEvidence(handle,String(source.scope_id),pending,maxPayloadBytes);if(item)items.push(item);
@@ -173,6 +261,8 @@ function refreshMemoryCheckpointUnheld(completedJobId:string,maxPayloadBytes?:nu
     if(!items.length){
       db.prepare('UPDATE memory_checkpoint_heads SET record_id=NULL,record_version=NULL WHERE family_id=?').run(family);
       retireCandidate();
+      // a chunk with nothing to quote still settles its jobs and moves the debt past them: the asked-for job is judged in a later pass
+      if(chunked)return chunkResult(false);
       return noCheckpoint('no-current-completed-evidence');
     }
     // Built from raw payload excerpts: redacted here so the unchanged test below compares it with the stored (redacted) text.
@@ -181,19 +271,23 @@ function refreshMemoryCheckpointUnheld(completedJobId:string,maxPayloadBytes?:nu
     const ordered=items.map(item=>item.handle);
     const previousHandles=previous?db.prepare('SELECT handles FROM memory_checkpoint_members WHERE record_id=? AND record_version=?').get(previousId,previous.version):undefined;
     if(previous?.state==='active'&&previous.text===text&&previousHandles?.handles===JSON.stringify(ordered)){
+      if(chunked){if(ownRolled)db.prepare('INSERT INTO memory_checkpoint_publications VALUES(?,?,?,?)').run(family,completedJobId,previousId,previous.version);publishCovered(previousId,Number(previous.version));return chunkResult(true);}
       db.prepare('INSERT INTO memory_checkpoint_publications VALUES(?,?,?,?)').run(family,completedJobId,previousId,previous.version);
-      return publishedResult({status:'unchanged' as const,checkpointId:previousId,version:Number(previous.version)});
+      publishCovered(previousId,Number(previous.version));
+      return publishedResult({status:'unchanged' as const,checkpointId:previousId,version:Number(previous.version),covered:coverIds});
     }
     const sequence=Number(head.sequence)+1,id=`${family}:${sequence}`,version=1;
     insertMemoryRecord(db,{id,version,scopeId:String(source.scope_id),kind:"checkpoint",text,assertion:"assistant-inference",state:"active",validFrom:Date.now(),createdAt:Date.now()});
     for(const item of items){db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)").run(id,version,item.handle.sourceId,item.handle.revision,item.handle.startByte,item.handle.endByte);inheritEdge(db,{kind:"record",id,version},{kind:"source",id:item.handle.sourceId});}
     db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL)").run(id,version);
     db.prepare('INSERT INTO memory_checkpoint_members VALUES(?,?,?,?,?)').run(family,sequence,id,version,JSON.stringify(ordered));
-    db.prepare('INSERT INTO memory_checkpoint_publications VALUES(?,?,?,?)').run(family,completedJobId,id,version);
+    if(ownRolled)db.prepare('INSERT INTO memory_checkpoint_publications VALUES(?,?,?,?)').run(family,completedJobId,id,version);
+    publishCovered(id,version);
     db.prepare("UPDATE memory_checkpoint_heads SET sequence=?,record_id=?,record_version=?,state='active' WHERE family_id=?").run(sequence,id,version,family);
     retireCandidate();
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
-    return publishedResult({status:"updated" as const,checkpointId:id,version});
+    if(chunked)return chunkResult(true);
+    return publishedResult({status:"updated" as const,checkpointId:id,version,covered:coverIds});
   });
 }
 

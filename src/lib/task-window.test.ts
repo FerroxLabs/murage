@@ -40,7 +40,8 @@ describe("reading a window", () => {
     const fullList = sumUsage(full.map((row) => row.usage));
     const wire = { tasks: full.slice(-50), tasksTotal: TOTAL, usageTotal: fullList, grantsAll: [...new Set(full.flatMap((row) => row.alwaysAllow ?? []))] };
     // the server's sum is the sum this client made from the whole list
-    expect(sumTaskUsage(full as never)).toEqual(fullList);
+    // these fixture records predate usage accounting, so the server's sum adds only the unknown-coverage mark (tokens-limits)
+    expect(sumTaskUsage(full as never)).toEqual({ ...fullList, usageAccounting: { version: 1, inputComplete: false, cacheComplete: false } });
     expect(taskGrants(full)).toEqual(taskGrantKeys({ tasks: full }));
     expect(botUsage(wire)).toEqual(fullList);
     expect(botUsage({ tasks: full })).toEqual(fullList);

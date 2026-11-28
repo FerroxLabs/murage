@@ -31,6 +31,8 @@ import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 /** The acceptance matrix's container widths. */
 const WIDTHS = [320, 390, 480, 640, 820, 1024] as const;
 const SKINS = ["light", "dark"] as const;
+/** chat-header-layout.ts HEADER_HYSTERESIS_PX, restated so the browser check does not import the thing it checks. */
+const HEADER_BAND_PX = 16;
 
 let server: ViteDevServer, origin: string, cache: string;
 
@@ -404,8 +406,14 @@ test("every width from 320 to 1024, eight pixels at a time: no threshold is a cl
   }
   // eslint-disable-next-line no-console
   console.log(`[chat header] transitions, narrowing → ${transitions.join(" | ")}`);
-  // And the same walk widening: the ladder restarts from the richest layout
-  // on growth, so the picture must be the same in both directions.
+  // And the same walk widening. Hysteresis (TEACH-ENTRY D7c) means the two directions are no longer identical:
+  // growth keeps the leaner layout until HEADER_HYSTERESIS_PX past where a layout last failed. So the invariant is
+  // a band: widening is never RICHER than narrowing at a width, and where it differs it shows exactly the layout
+  // narrowing showed within one band below that width, never an unrelated one.
+  const rank = (cell: string) => {
+    const [, relocated = "0", rows = "1", chips = "full"] = /^\d+:(\d+)\/(\d+)\/(\w+)$/.exec(cell) ?? [];
+    return Number(relocated) * 1000 + Number(rows) * 10 + ["full", "titled", "compact"].indexOf(chips);
+  };
   const widening: string[] = [];
   for (const width of widths) {
     await setWidth(page, width);
@@ -419,7 +427,14 @@ test("every width from 320 to 1024, eight pixels at a time: no threshold is a cl
     const box = await headerBox(page);
     narrowing.push(`${width}:${box.relocated}/${box.rows}/${box.chips}`);
   }
-  expect(widening, "the layout at a width depends on the direction it was reached from").toEqual(narrowing);
+  const layoutOf = (cell: string) => cell.slice(cell.indexOf(":") + 1);
+  widening.forEach((cell, i) => {
+    const width = widths[i]!;
+    expect(rank(cell), `${width}px: widening shows a richer layout than narrowing (${cell} vs ${narrowing[i]})`).toBeGreaterThanOrEqual(rank(narrowing[i]!));
+    if (cell === narrowing[i]) return;
+    const band = narrowing.filter((_, j) => widths[j]! <= width && widths[j]! >= width - HEADER_BAND_PX - 8).map(layoutOf);
+    expect(band, `${width}px: widening shows ${layoutOf(cell)}, which narrowing did not show within one hysteresis band below`).toContain(layoutOf(cell));
+  });
 });
 
 /** Every control, wherever it currently lives: in the header, or by name in
@@ -605,7 +620,7 @@ test("resizing changes no state: not the task, not the turn, not an open memory 
   await open(page, { surface: "remote" });
   // The layout at each width with nothing open, to compare against below.
   const closedLayouts = new Map<number, string>();
-  for (const width of [...[...WIDTHS].reverse(), 280, 240, 200]) {
+  for (const width of [...[...WIDTHS].reverse(), 280]) {
     await setWidth(page, width);
     const box = await headerBox(page);
     closedLayouts.set(width, `${box.rows}/${box.chips}/${box.relocated}`);
@@ -621,19 +636,16 @@ test("resizing changes no state: not the task, not the turn, not an open memory 
   await expect(dialog).toBeVisible();
   const draft = dialog.getByRole("textbox", { name: "Memory draft" });
   await draft.fill("half-written note");
-  // Narrow until the trigger has actually left the header. Memory is one of
-  // the last controls the ladder relocates, so where that happens is a
-  // measurement, not a number to hard-code; what matters is that it did.
-  // Read from the DOM, not a role query: while the modal dialog is open the
-  // rest of the page is inert and a role query would report the trigger gone
-  // at every width, proving nothing.
+  // TEACH-ENTRY D7a: Memory never leaves the row at any desktop-form width, so narrowing the column to the
+  // narrowest desktop column (280 px, content 240) keeps the trigger and the open edit through every relayout.
+  // Read from the DOM, not a role query: while the modal dialog is open the rest of the page is inert and a role
+  // query would report the trigger gone at every width, proving nothing.
   const triggerInHeader = () =>
     page.evaluate(
       () => document.querySelector('[data-chat-header] button[aria-label^="Open memory for"]') !== null,
     );
   expect(await triggerInHeader()).toBe(true);
-  let movedAt = 0;
-  for (const width of [...[...WIDTHS].reverse(), 280, 240, 200]) {
+  for (const width of [...[...WIDTHS].reverse(), 280]) {
     await setWidth(page, width);
     // The open dialog must not change the header's decision: it is not in
     // the row, so the layout at this width is the same as with it closed.
@@ -642,16 +654,18 @@ test("resizing changes no state: not the task, not the turn, not an open memory 
       `${withDialog.rows}/${withDialog.chips}/${withDialog.relocated}`,
       `${width}px: the header laid out differently because a dialog is open`,
     ).toBe(closedLayouts.get(width));
-    if (!(await triggerInHeader())) {
-      movedAt = width;
-      break;
-    }
+    expect(await triggerInHeader(), `${width}px: the memory trigger left the desktop-form row`).toBe(true);
+    await expect(dialog, `${width}px: narrowing the column closed an open memory edit`).toBeVisible();
+    await expect(draft, `${width}px: narrowing the column discarded a memory edit in progress`).toHaveValue("half-written note");
   }
-  expect(movedAt, "the memory trigger never left the header, so nothing was proved").toBeGreaterThan(0);
-  await expect(dialog, "narrowing the column closed an open memory edit").toBeVisible();
-  await expect(draft, "narrowing the column discarded a memory edit in progress").toHaveValue("half-written note");
-  // eslint-disable-next-line no-console
-  console.log(`[chat header] memory trigger moved into the menu at ${movedAt}px; the open edit survived`);
+  // The trigger's "left" half: on the phone viewport its trigger is in the ••• menu, and the launcher (so the
+  // open edit) is still mounted.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await setWidth(page, 390);
+  expect(await triggerInHeader(), "the memory trigger is still in the phone row").toBe(false);
+  await expect(dialog, "the phone relayout closed an open memory edit").toBeVisible();
+  await expect(draft, "the phone relayout discarded a memory edit in progress").toHaveValue("half-written note");
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.keyboard.press("Escape");
   await expect(page.locator("dialog[open]")).toHaveCount(0);
   await setWidth(page, 1024);
@@ -838,4 +852,151 @@ test("no drawer button at md and up, and the desktop row is unchanged", async ({
   await expect(page.getByRole("button", { name: "Open bot list", exact: true })).toBeHidden();
   const padding = await page.evaluate(() => getComputedStyle(document.querySelector("[data-chat-header]")!).paddingLeft);
   expect(padding).toBe("20px");
+});
+
+// ---------------------------------------------------------------------------
+// TEACH-ENTRY W8: the Teach entry and the desktop row, in a real browser. The reference fixture is a Mac desktop
+// (the capability bridge reports darwin, so Teach is available) with the 280 px sidebar, so a 1280 / 1000 window
+// is a 1000 / 720 px column.
+// ---------------------------------------------------------------------------
+async function openTeach(page: Page, options: Parameters<typeof open>[1] = {}) {
+  await page.addInitScript(() => {
+    (window as unknown as { muragebox: { platform: string } }).muragebox = { platform: "darwin" };
+  });
+  await open(page, options);
+}
+
+const teachButton = (page: Page) => page.locator('[data-chat-header] button[aria-label^="Teach "]');
+const memoryTrigger = (page: Page) => page.locator('[data-chat-header] button[aria-label^="Open memory for"]');
+const taskPicker = (page: Page) => page.locator('[data-chat-header] [data-header-labelled="task"]');
+const modelPicker = (page: Page) => page.locator('[data-chat-header] button[aria-label^="Thread model"]');
+
+/** Size the column so the header's CONTENT box (column minus its padding) is `content` px wide. */
+async function setContent(page: Page, content: number) {
+  const box = await headerBox(page);
+  await setWidth(page, content + (box.clientWidth - box.contentWidth));
+}
+
+/** The desktop-form promise at one width: nothing overflows and Memory, the task picker and the model picker are in the row. */
+async function expectDesktopRow(page: Page, label: string) {
+  const box = await headerBox(page);
+  expect(box.scrollWidth, `${label}: the header overflows`).toBeLessThanOrEqual(box.clientWidth + 1);
+  expect(box.escape, `${label}: a control runs past the header's edge`).toBeLessThanOrEqual(1);
+  expect(await page.locator("[data-chat-header][data-chat-header-phone]").count(), `${label}: the phone form took over`).toBe(0);
+  await expect(memoryTrigger(page), `${label}: Memory left the row`).toBeVisible();
+  await expect(taskPicker(page), `${label}: the task picker left the row`).toBeVisible();
+  await expect(modelPicker(page), `${label}: the model picker left the row`).toBeVisible();
+}
+
+test("W8: Teach, Memory, the task picker and the model picker are inline at 1280 and 1000 windows", async ({ page }, info) => {
+  await openTeach(page);
+  for (const [windowWidth, column] of [[1280, 1000], [1000, 720]] as const) {
+    // The window itself is resized (not only the column), so a viewport-keyed rule is exercised at the width the row names.
+    await page.setViewportSize({ width: windowWidth, height: 900 });
+    expect(await page.evaluate(() => window.innerWidth), `${windowWidth}px window: the viewport was not resized`).toBe(windowWidth);
+    await setWidth(page, column);
+    await expectDesktopRow(page, `${windowWidth}px window`);
+    await expect(teachButton(page), `${windowWidth}px window: the Teach button left the row`).toBeVisible();
+    // The word is a recorded snapshot, not a pin (measured fit wins, D7b).
+    const word = await teachButton(page).getByText("Teach", { exact: true }).isVisible();
+    info.annotations.push({ type: "teach-word", description: `${windowWidth}px window: ${word ? "shown" : "folded"}` });
+    // eslint-disable-next-line no-console
+    console.log(`[chat header] W8 ${windowWidth}px window: Teach word ${word ? "shown" : "folded"}`);
+    await page.screenshot({ path: info.outputPath(`header-teach-${windowWidth}.png`) });
+  }
+});
+
+test("W8: the narrowest desktop column overflows nothing, and Memory and both pickers stay in the row at every 8 px step", async ({ page }) => {
+  test.setTimeout(240_000);
+  await openTeach(page);
+  await setContent(page, 1000);
+  for (let content = 1000; content >= 240; content -= 8) {
+    await setContent(page, content);
+    await expectDesktopRow(page, `${content}px content`);
+  }
+  await setContent(page, 280 - 40);
+  await expectDesktopRow(page, "the narrowest desktop column (240 px content)");
+});
+
+test("W8: below the floor the phone form shows, with no back circle beside the visible sidebar", async ({ page }) => {
+  await openTeach(page, { query: "?drawer=1" });
+  await setContent(page, 239);
+  const header = page.locator("[data-chat-header]");
+  await expect(header, "239 px content did not take the phone form").toHaveAttribute("data-chat-header-phone", "");
+  await expect(page.getByRole("button", { name: "Open bot list", exact: true }), "a back circle is drawn beside the visible sidebar").toBeHidden();
+  await expect(more(page)).toBeVisible();
+  const box = await headerBox(page);
+  expect(box.scrollWidth, "239 px content overflows").toBeLessThanOrEqual(box.clientWidth + 1);
+  expect(box.escape, "239 px content: a control runs past the edge").toBeLessThanOrEqual(1);
+  // Back at the floor the desktop form returns, 16 px past it.
+  await setContent(page, 240 + 16);
+  await expect(header).not.toHaveAttribute("data-chat-header-phone", "");
+});
+
+test("W8: a +-4 px wobble 50 times at each recorded threshold changes the relocated count at most once", async ({ page }) => {
+  test.setTimeout(240_000);
+  await openTeach(page);
+  // Record the thresholds: the widths where the relocated count changes while narrowing.
+  await setContent(page, 1000);
+  const thresholds: number[] = [];
+  let previous = (await headerBox(page)).relocated;
+  for (let content = 992; content >= 240; content -= 8) {
+    await setContent(page, content);
+    const now = (await headerBox(page)).relocated;
+    if (now !== previous) thresholds.push(content + 4);
+    previous = now;
+  }
+  expect(thresholds.length, "the header never relocated anything, so nothing was proved").toBeGreaterThan(0);
+  for (const threshold of thresholds) {
+    await setContent(page, threshold + 24);
+    const seen: number[] = [(await headerBox(page)).relocated];
+    for (let i = 0; i < 50; i++) {
+      await setContent(page, threshold - 4);
+      seen.push((await headerBox(page)).relocated);
+      await setContent(page, threshold + 4);
+      seen.push((await headerBox(page)).relocated);
+    }
+    const changes = seen.filter((value, index) => index > 0 && value !== seen[index - 1]).length;
+    expect(changes, `wobbling +-4 px at ${threshold}px changed the relocated count ${changes} times: ${seen.slice(0, 12).join(",")}`).toBeLessThanOrEqual(1);
+  }
+});
+
+test("W8: Teach in the More menu is reachable by keyboard, dispatches the recorder entry, and Escape returns focus to More", async ({ page }) => {
+  await openTeach(page);
+  // Narrow until the Teach button has moved into the menu.
+  let width = 640;
+  await setWidth(page, width);
+  while (await teachButton(page).count()) {
+    width -= 8;
+    expect(width, "Teach never moved into the More menu").toBeGreaterThan(320);
+    await setWidth(page, width);
+  }
+  await expect(more(page)).toBeVisible();
+  const reachMore = async () => {
+    await page.locator("[data-chat-header-name]").first().focus();
+    for (let i = 0; i < 40 && !(await more(page).evaluate((node) => node === document.activeElement)); i++) await page.keyboard.press("Tab");
+    await expect(more(page), "Tab never reached More").toBeFocused();
+  };
+  await reachMore();
+  await page.keyboard.press("Enter");
+  await expect(menu(page)).toBeVisible();
+  const teach = menu(page).getByRole("menuitem", { name: /^Teach /i });
+  await expect(teach, "Teach is not a menuitem in the More menu").toHaveCount(1);
+  const items = menu(page).locator("[data-header-menu-item]");
+  const count = await items.count();
+  for (let i = 0; i < count && !(await teach.evaluate((node) => node === document.activeElement)); i++) await page.keyboard.press("ArrowDown");
+  await expect(teach, "arrows never reached the Teach row").toBeFocused();
+  // Escape first: focus comes back to More.
+  await page.keyboard.press("Escape");
+  await expect(menu(page)).toHaveCount(0);
+  await expect(more(page)).toBeFocused();
+  // Then Enter on the row dispatches the recorder entry. This browser fixture mounts only the header, so what it
+  // proves is the header's dispatch; the reducer that opens the recorder is witnessed by src/state/teach-recorder.test.ts.
+  const before = await page.evaluate(() => (window as unknown as Fixture).actions.length);
+  await page.keyboard.press("Enter");
+  await expect(menu(page)).toBeVisible();
+  for (let i = 0; i < count && !(await teach.evaluate((node) => node === document.activeElement)); i++) await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  const actions = await page.evaluate((from) => (window as unknown as { actions: Array<{ type: string; via?: string; forBotId?: string }> }).actions.slice(from), before);
+  expect(actions, "Enter on Teach did not dispatch the recorder entry for this bot").toContainEqual({ type: "showSkillRecorder", via: "entry", forBotId: "analyst" });
 });

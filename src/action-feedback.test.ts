@@ -143,7 +143,9 @@ export const OPEN_ROWS: Array<{ where: string; severity: "Medium" | "Low"; reaso
   { where: "components/EngineManagement.tsx:61 and the rest of the audit's Medium and Low table", severity: "Low", reason: "Pending, progress and Saved cues for the remaining Medium and Low rows; migrate to useAction opportunistically." },
 ];
 
-const files = readdirSync(componentsDir).filter(name => /\.tsx$/.test(name) && !/\.test\.tsx$/.test(name)).sort();
+const tsxIn = (dir: string) => readdirSync(join(componentsDir, dir)).filter(name => /\.tsx$/.test(name) && !/\.test\.tsx$/.test(name)).map(name => (dir ? `${dir}/${name}` : name));
+// bot-pages/ holds the split bot panel (settings v10 B0); it stays under the same ratchet.
+const files = [...tsxIn(""), ...tsxIn("bot-pages")].sort();
 const found = new Map(files.map(name => [name, scanSource(name, readFileSync(join(componentsDir, name), "utf8"))]));
 const count = (name: string, rule: Finding["rule"]) => (found.get(name) ?? []).filter(item => item.rule === rule).length;
 

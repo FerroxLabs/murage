@@ -14,6 +14,7 @@
 // deletion sweep (section 2), activity pruning (section 2) and the forget
 // purge for derived rows (15.3). Restore preparation and paused validation
 // live here too (15.1), because they are table business and nothing else.
+import { withSecureDelete } from "./secure-delete.ts";
 import { sweepAddedOrphans } from "./added-table-lifecycle.ts";
 import { noteProjectCloseRecords } from "./project-records.ts";
 import { z } from "zod";
@@ -412,7 +413,8 @@ function checkDescriptive(db: DatabaseSync, log: RepairLog, table: string, colum
     const parsed = parseJson(row.v);
     if (parsed !== undefined && bound(parsed)) continue;
     repair(log, table, `${column} of row ${row.k} was unreadable and was reset`, () => {
-      db.prepare(`UPDATE ${table} SET ${column}=? WHERE rowid=?`).run(empty, row.k);
+      // the unreadable value may hold owner-written text: its pages are zeroed (secure-delete.ts)
+      withSecureDelete(db, () => db.prepare(`UPDATE ${table} SET ${column}=? WHERE rowid=?`).run(empty, row.k));
     });
   }
 }
@@ -752,6 +754,10 @@ export function assertProjectTablesPaused(db: DatabaseSync, ctx: ProjectRowConte
  * through completeRequest once it owns dispatch). Runs inside the caller's
  * transaction. */
 export function deleteProjectRows(db: DatabaseSync, groupId: string, now: number): void {
+  // a room request row can carry the owner's typed words (payload_text): freed pages are zeroed (secure-delete.ts)
+  withSecureDelete(db, () => deleteProjectRowsAt(db, groupId, now));
+}
+function deleteProjectRowsAt(db: DatabaseSync, groupId: string, now: number): void {
   if (projectTableExists(db, "room_requests")) {
     db.prepare("UPDATE room_requests SET state='cancelled', finished_at=?, waiting_since=NULL WHERE group_id=? AND state IN ('queued','running','waiting_owner','waiting_bot')").run(now, groupId);
   }

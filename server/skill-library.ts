@@ -16,6 +16,8 @@ export interface SkillManifest {
   /** A built-in that belongs to one bot rather than to any message: it is
    *  never chosen by trigger terms, only by `attachedSkillsFor`. */
   attachedTo?: "workspace-chief";
+  /** TEACH-ENTRY 1.0.23 D5: a user skill limited to these bots ("Only Dax" in the recorder). Absent = every bot. */
+  bots?: string[];
   /** Who an owner's own skill (a recording, or a folder they wrote) serves:
    *  "owner" or absent keeps it to turns that answer the owner; "everyone"
    *  is the owner sharing it with every audience. A skill Murage ships
@@ -56,6 +58,9 @@ export function parseSkillManifest(value: unknown, directory: string): SkillMani
   if (!requiredCapabilities) throw new Error(`${directory}/manifest.json has invalid capabilities`);
   if (raw.attachedTo !== undefined && raw.attachedTo !== "workspace-chief") throw new Error(`${directory}/manifest.json has an invalid attachedTo`);
   if (raw.audience !== undefined && raw.audience !== "owner" && raw.audience !== "everyone") throw new Error(`${directory}/manifest.json has an invalid audience`);
+  // Fail closed, like a bad audience: a hand-edited `bots` that is not a list of bot ids keeps the skill from loading.
+  const bots = manifestBots(raw.bots);
+  if (bots === null) throw new Error(`${directory}/manifest.json has an invalid bots list`);
   return {
     id,
     name: raw.name.trim(),
@@ -66,6 +71,37 @@ export function parseSkillManifest(value: unknown, directory: string): SkillMani
     requiredCapabilities,
     ...(raw.attachedTo === "workspace-chief" ? { attachedTo: "workspace-chief" as const } : {}),
     ...(raw.audience === "owner" || raw.audience === "everyone" ? { audience: raw.audience } : {}),
+    ...(bots ? { bots } : {}),
+  };
+}
+
+const BOT_ID = /^[A-Za-z0-9_-]{1,128}$/;
+/** undefined = absent (every bot); null = invalid. Same rule as the recorder's save (electron/skill-recording-store.mjs). */
+export function manifestBots(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 50 || !value.every((id) => typeof id === "string" && BOT_ID.test(id))) return null;
+  return [...new Set(value as string[])];
+}
+
+/** A user skill limited to some bots (`bots`, Teach a skill "Only …") rides only those bots' turns.
+ *  Absent = every bot (today). A shipped skill ignores it. */
+export function skillsForBot<T extends BundledSkill>(skills: readonly T[], botId: string, shipped: (skill: BundledSkill) => boolean): T[] {
+  return skills.filter((skill) => shipped(skill) || !skill.manifest.bots || skill.manifest.bots.includes(botId));
+}
+
+/** TEACH-ENTRY F5: who may use each user skill NOW, read from `manifest.json` only (never the SKILL.md body), for
+ *  the ids a pin froze. "gone" = the folder or its manifest is missing or no longer valid. */
+export type LiveUserScope = (id: string) => string[] | undefined | "gone";
+export function liveUserScopes(root: string): LiveUserScope {
+  return (id) => {
+    if (!SAFE_ID.test(id)) return "gone";
+    try {
+      const raw = JSON.parse(readFileSync(join(root, id, "manifest.json"), "utf8")) as Record<string, unknown>;
+      const bots = manifestBots(raw?.bots);
+      return bots === null ? "gone" : bots;
+    } catch {
+      return "gone";
+    }
   };
 }
 

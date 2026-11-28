@@ -1,5 +1,7 @@
 import { fixtureEngineFence } from "../../testing/mcp-admission-fixture.ts";
 import { fencedTurnInput } from "../engine-input.ts";
+import { steerBusyDesk } from "../../project-card-executor.ts";
+import { steerReadyWaitMs } from "../../steer-lineage.ts";
 import { buildPrompt, noneRef, promptPart } from "../../memory/prompt-parts.ts";
 
 function steerFence(threadId: string, text: string) {
@@ -259,7 +261,8 @@ process.stdin.on("data", (d) => {
     try { m = JSON.parse(line); } catch { continue; }
     const ok = (r) => send({ jsonrpc: "2.0", id: m.id, result: r });
     if (m.id === "helper-permission" && !m.method) { helperAnswered(m.result); continue; }
-    if (m.method === "initialize") ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }], ...(process.env.FUIGO_FAKE_RETRY_DISCARD ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}) });
+    if (m.method === "initialize" && process.env.FUIGO_FAKE_INIT_DELAY_MS) setTimeout(() => ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }] }), Number(process.env.FUIGO_FAKE_INIT_DELAY_MS));
+    else if (m.method === "initialize") ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }], ...(process.env.FUIGO_FAKE_RETRY_DISCARD ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}) });
     else if (m.method === "authenticate") ok({});
     else if (m.method === "session/new") {
       handedServers = m.params?.mcpServers ?? [];
@@ -1817,6 +1820,35 @@ describe("Fuigo keeps one engine process per thread, opt-in (upstream #1575, MUR
     expect(lines("peer-capabilities.jsonl").map(line => JSON.parse(line)).at(-1).capability).toBe(fixtureCredentialFingerprint("turn-two"));
   });
 
+  // W-W1 (DESIGN 1022-cua-windows R19, warm-active-only): a turn that mounts the Windows host computer never leaves a warm engine
+  // behind. Two layers hold it (core.ts `poolable` excludes integrations.localComputer; mountedTurn counts it as a mount), so the mutant removes
+  // both; the same thread without a computer IS reused (the control). No pool change in this build: green on the base by design (a pin).
+  it.skipIf(process.platform === "win32")("W-W1 a turn holding the win32 host computer is not pooled: its second turn starts a fresh process, the plain thread reuses one", async () => {
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-pool-win-computer",
+      displayName: "Fuigo",
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps },
+      enabled: true,
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    const adapter = instance.adapter;
+    const events = recorder;
+    const spawns = () => readFileSync(join(dumps, "spawns.log"), "utf8").split("\n").filter(Boolean).length;
+    const turn = async (threadId: string, text: string, withComputer: boolean, resumeCursor?: string) => {
+      const sent = await adapter.sendTurn({
+        cwd: fixtureBotFolder(), threadId, text, ...(resumeCursor ? { resumeCursor } : {}),
+        ...(withComputer ? { integrations: { localComputer: { command: process.execPath, args: [IDLE_MCP, "mcp"], env: {}, platform: "win32", scope: "local-computer" } } } : {}),
+      });
+      await events.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+    };
+    await turn("t-pool-plain", "one", false);
+    await turn("t-pool-plain", "two", false, "fake-fuigo-session");
+    expect(spawns(), "control: the plain thread's second turn reuses the warm process").toBe(1);
+    await turn("t-pool-win", "one", true);
+    await turn("t-pool-win", "two", true, "fake-fuigo-session");
+    expect(spawns(), "the win32 computer thread started a process per turn and parked none").toBe(3);
+  });
   it("a warm second turn that picks a different model sends set_model with the new id before its prompt", async () => {
     process.env.MURAGE_ACP_POOL = "1";
     onTestFinished(() => { delete process.env.MURAGE_ACP_POOL; });
@@ -1884,6 +1916,39 @@ describe("steer (fuigo/interject)", () => {
     expect(recorder!.events.filter((e) => /user/i.test(e.type) || JSON.stringify(e).includes("also check the totals"))).toEqual([]);
     expect(recorder!.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
   });
+
+  it("a line sent while the engine is still starting waits for the prompt and is delivered, not queued behind the turn", async () => {
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-test", displayName: "Fuigo", enabled: true,
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_HOLD_MS: "700" },
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo", text: "work" });
+    await recorder.until((e) => e.type === "turn.started");
+    expect(existsSync(join(dumps, "prompts.log"))).toBe(false);
+    expect(await instance.adapter.steer!("t-fuigo", "and end with a haiku", steerFence("t-fuigo", "and end with a haiku"))).toBe("delivered");
+    expect(interjects()).toHaveLength(1);
+    expect(interjects()[0]).toMatchObject({ text: "and end with a haiku" });
+    await recorder.until((e) => e.type === "turn.completed");
+  });
+
+  it("the send route's steer desk (steerBusyDesk with the wait steerWithQuoteLineage gives Fuigo) delivers a line sent during a slow engine start", async () => {
+    instance = await FuigoAgentDriver.create({
+      instanceId: "fuigo-test", displayName: "Fuigo", enabled: true,
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_HOLD_MS: "700", FUIGO_FAKE_INIT_DELAY_MS: "4600" },
+      config: { cli: fakeCli, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo", text: "work" });
+    await recorder.until((e) => e.type === "turn.started");
+    const text = "and end with a haiku";
+    const prompt = buildPrompt(undefined, [promptPart(text, [noneRef("owner-turn")])]);
+    const answer = await steerBusyDesk(instance.adapter, "t-fuigo", prompt, true, undefined, "steer-1", steerReadyWaitMs(instance.adapter), undefined, fixtureEngineFence("t-fuigo"));
+    expect(answer).toBe("steer");
+    expect(interjects()).toHaveLength(1);
+    await recorder.until((e) => e.type === "turn.completed");
+  }, 30_000);
 
   it("runs the steer's fence right before the _fuigo/interject write: a refusal writes nothing and returns rejected", async () => {
     const adapter = await startHeld();

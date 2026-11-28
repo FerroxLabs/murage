@@ -10,9 +10,9 @@ import { en } from "@/locales";
 import { cardForAnchor, cardsForSurface, settingsCardProblems } from "./settings-cards";
 import { ANCHORS_OWED, MERGED_CARD_ANCHORS, SETTINGS_CARDS, cardLabel, resolveSettingsCard } from "./settings-card-registry";
 import { isAdvancedOnlyCard } from "./settings-simple-cards";
-import { SECTION_ALIASES, SECTION_PAGES, resolveSettingsSection } from "./settings-pages";
+import { LIST_PAGES, SECTION_ALIASES, SECTION_PAGES, resolveSettingsSection } from "./settings-pages";
 import { searchSettingsCards } from "./settings-search";
-import { SETTINGS_SECTIONS } from "./settings-sections";
+import { SETTINGS_SECTIONS, settingsPageLabel } from "./settings-sections";
 
 const COMPONENTS = fileURLToPath(new URL("../components", import.meta.url));
 function sources(dir: string, out: string[] = []): string[] {
@@ -42,19 +42,19 @@ describe("the card registry", () => {
     expect(SETTINGS_CARDS.some((card) => card.id === id)).toBe(false);
   });
 
-  it("keeps Messaging card ids and search anchors on Apps", () => {
+  it("keeps Messaging card ids and search anchors, now on the v10 Messaging page", () => {
     const cards = SETTINGS_CARDS.filter((card) => card.id.startsWith("channels."));
     expect(cards).toHaveLength(8);
     for (const card of cards) {
-      expect(card.section).toBe("connections");
+      expect(card.section).toBe("messaging");
       expect(resolveSettingsCard(card.id)).toEqual(card);
     }
-    expect(searchSettingsCards("telegram", true)[0].card).toMatchObject({ id: "channels.telegram", section: "connections", anchor: "telegram-settings-title" });
+    expect(searchSettingsCards("telegram", true)[0].card).toMatchObject({ id: "channels.telegram", section: "messaging", anchor: "telegram-settings-title" });
   });
 
   it("passes the I0 invariants and gives every page at least one card", () => {
     expect(settingsCardProblems(SETTINGS_CARDS)).toEqual([]);
-    for (const page of SECTION_PAGES) expect(SETTINGS_CARDS.some((card) => card.section === page.id), page.id).toBe(true);
+    for (const page of SECTION_PAGES) if (!LIST_PAGES.includes(page.id)) expect(SETTINGS_CARDS.some((card) => card.section === page.id), page.id).toBe(true);
   });
 
   it("names every card in plain English, with no em dash and no safe words", () => {
@@ -67,11 +67,12 @@ describe("the card registry", () => {
 
   it("holds a card for every alias, on the page the alias lands on", () => {
     for (const [alias, target] of Object.entries(SECTION_ALIASES)) {
+      if (target.anchor === null) continue; // a page alias (botDefaults -> rules) names no card
       const card = cardForAnchor(SETTINGS_CARDS, target.anchor);
       expect(card, alias).toBeDefined();
       expect(card!.section, alias).toBe(target.section);
     }
-    expect(cardForAnchor(SETTINGS_CARDS, SECTION_ALIASES.experimental.anchor)).toMatchObject({ section: "skills", advanced: false });
+    expect(cardForAnchor(SETTINGS_CARDS, SECTION_ALIASES.experimental.anchor!)).toMatchObject({ section: "skills", advanced: false });
     expect(SETTINGS_CARDS.some((card) => card.id === "about.experimental")).toBe(false);
   });
 
@@ -154,7 +155,8 @@ describe("search lists cards and rows", () => {
         for (const id of ids) expect(SETTINGS_CARDS.find((card) => card.id === id)!.surface, `${query} ${id}`).toBe("any");
       }
     }
-    expect(searchSettingsCards("analytics", false).map((hit) => hit.card.id)).toEqual(["general.analytics"]);
+    // The usage analytics card is gone on every surface (1.0.20 re-cut, no-telemetry-1020.test.ts).
+    expect(searchSettingsCards("analytics", false).map((hit) => hit.card.id)).toEqual([]);
   });
 
   it("marks what lives under Advanced, so the row can say so and the opener can open it", () => {
@@ -166,6 +168,7 @@ describe("search lists cards and rows", () => {
     for (const card of cardsForSurface(SETTINGS_CARDS, true)) expect(searchSettingsCards(cardLabel(card), true).map((hit) => hit.card.id), card.id).toContain(card.id);
     for (const section of SETTINGS_SECTIONS) {
       const target = resolveSettingsSection(section.id);
+      if (LIST_PAGES.includes(target.section)) continue; // a live list page has no card (settings-pages.ts LIST_PAGES)
       expect(SETTINGS_CARDS.some((card) => card.section === target.section), section.id).toBe(true);
     }
   });
@@ -175,6 +178,6 @@ describe("search lists cards and rows", () => {
   });
 
   it("has labels for the sidebar", () => {
-    for (const page of SECTION_PAGES) expect(en[`settings.page.${page.id}` as keyof typeof en], page.id).toBeTruthy();
+    for (const page of SECTION_PAGES) expect(settingsPageLabel(page.id), page.id).toBeTruthy();
   });
 });

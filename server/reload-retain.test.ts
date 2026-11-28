@@ -11,6 +11,7 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { ENGINE_CLOSED_LATE_NOTE, releaseOnLateClose } from "./direct-late-close.ts";
 import { RetainedCloses, unconfirmedCloses } from "./reload-retain.ts";
+import { ReloadEndedTurns } from "./reload-ended-turns.ts";
 
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>((r) => { resolve = r; }); return { promise, resolve }; };
 const adapterWith = (open: Map<string, Promise<void>>) => ({ adapter: { awaitTurnClose: (threadId: string) => open.get(threadId) ?? Promise.resolve() } }) as never;
@@ -68,7 +69,7 @@ describe("reloadProviders keeps a retained thread's leases until its child close
     slice("async function reloadProviders(", "\n/** The instance a direct run dispatched on"),
   ].join("\n");
 
-  const harness = (open: Map<string, Promise<void>>) => {
+  const harness = (open: Map<string, Promise<void>>, extra: Record<string, unknown> = {}) => {
     const log: string[] = [];
     const runs = new Map<string, { threadId: string; botId: string; generation: string; providerTurnId: string }>([
       ["kept", { threadId: "kept", botId: "bot-1", generation: "g-kept", providerTurnId: "p1" }],
@@ -97,7 +98,9 @@ describe("reloadProviders keeps a retained thread's leases until its child close
         disposed: (generations: string[]) => { for (const generation of generations) { owners.delete(generation); log.push(`lease:${generation}`); } },
         threadIds: () => [...new Set(owners.values())],
       },
-      bus: { detachAll: () => undefined, attach: () => undefined },
+      bus: { detachAll: () => undefined, attach: () => undefined, detachCount: () => 0 },
+      // E15-V3: the reload captures and settles its ended turns (reload-ended-turns.ts; its own witnesses are tool-no-result-reload.test.ts)
+      reloadEnded: { capture: () => ({ turns: [], groups: [] }), settle: async () => undefined },
       registry: { disposeAll: async () => disposals++ === 0 ? [adapterWith(open)] : [], load: async () => undefined, instances: () => [] },
       threadsWithWorkInFlight: () => new Map([["kept", "bot-1"], ["clean", "bot-2"], ["room", "bot-3"]]),
       localVmThreadTargets: new Map([["kept", "t"], ["room", "t"]]),
@@ -106,6 +109,7 @@ describe("reloadProviders keeps a retained thread's leases until its child close
       unconfirmedCloses, reloadRetained: new RetainedCloses(), releaseOnLateClose, ENGINE_CLOSED_LATE_NOTE, murageLine: (line: unknown) => line,
       localVmLeaseFor: () => ({ current: () => undefined }), screenPollers: new Map(), activeVpsThreads: new Map(), coordinationSlots: new Map(), replySpeakerTurns: { ended: () => undefined },
       Set, Map, Promise, Boolean, setImmediate,
+      ...extra,
     };
     const context = new Proxy(given, {
       has: () => true,
@@ -173,5 +177,17 @@ describe("reloadProviders keeps a retained thread's leases until its child close
     expect(held.size).toBe(0);
     expect(owners.size).toBe(0);
     expect(log.filter((entry) => entry.startsWith("unconfirmed:"))).toEqual([]);
+  });
+
+  it("E15-V3: a throw between the capture and the settle (the adapters' close question) still settles every captured turn", async () => {
+    const marked: string[] = [];
+    const ended = new ReloadEndedTurns({ generation: () => 1, mark: (thread, turn) => { marked.push(`${thread}:${turn}`); return 1; }, isBusy: () => false, waitGate: async () => undefined, queued: () => 0 });
+    ended.observe({ type: "turn.started", threadId: "kept", turnId: "T", instanceId: "x" });
+    const { reloadProviders } = harness(new Map(), {
+      reloadEnded: ended, bus: { detachAll: () => undefined, attach: () => undefined, detachCount: () => 1 },
+      unconfirmedCloses: async () => { throw new Error("the adapter threw"); },
+    });
+    await expect(reloadProviders()).rejects.toThrow("the adapter threw");
+    expect(marked).toEqual(["kept:T"]);
   });
 });

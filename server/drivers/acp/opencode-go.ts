@@ -41,6 +41,7 @@ import {
   upsertOpenCodeProvider,
 } from "../../opencode-config.ts";
 import { engineReach } from "../../flux-engine-reach.ts";
+import { openCodeExitNote } from "./opencode-quiet.ts";
 
 const STATIC_MODELS: ModelCatalog = {
   default: "opencode/beam-free",
@@ -556,7 +557,7 @@ export function murageOwnsWorkingFolder(cwd: string): boolean {
  * env they do not know, so there is no version floor; an unreadable config
  * leaves its servers alone (fail open). An explicit value already in the
  * environment wins.
- * Rig (build host, opencode 1.15.11, fake model): before = 109 tools (40 the
+ * Rig (Hetzner, opencode 1.15.11, fake model): before = 109 tools (40 the
  * owner's), personal skill, plugin loaded, 20.6k tokens; after = Murage's 69
  * tools, no skill or plugin, 15.3k tokens.
  * The global ~/.config/opencode/AGENTS.md: isolateOpenCodeGlobalInstructions.
@@ -690,7 +691,7 @@ export function applyOpenCodeTurnPermission(env: Record<string, string | undefin
 
 /** Append catalog permissions from an immutable baseline on every revision. */
 export function applyToolCatalogDenies(env: Record<string, string | undefined>, restrictions: readonly Restriction[], base?: Record<string, unknown>): void {
-  const overlay = base ?? JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? "{}");
+  const overlay = base ?? registerBusyloopPayloadSite("read", JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? "{}"));
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify(applyCatalogRestrictions(overlay, restrictions));
 }
 
@@ -884,6 +885,8 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => {
   // Keep the historical driver kind so existing bots and instance config do
   // not break; only the product name/catalog expand from Go to OpenCode.
   displayName: "OpenCode",
+  // OPENCODE-QUIET-1023 M3: the exit card names the captured category in plain words, never the internal JSON line.
+  exitNote: openCodeExitNote,
   models: STATIC_MODELS,
   defaultCli: "opencode",
   nativeSource: "opencode.acp",
@@ -907,6 +910,8 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => {
   oneShotFolder: openCodeOneShotFolder,
   credentialEnv: ["OPENCODE_API_KEY"],
   selectModel: { configId: "model" },
+  // ACP-EFFORT W9: the thinking level is chosen per model on the live session (confirmed before the prompt, never reset)
+  modelVariants: true,
   /**
    * Flux on OpenCode is a pure ID REWRITE at spawn — it writes nothing.
    *

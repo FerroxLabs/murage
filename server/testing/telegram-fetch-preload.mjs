@@ -25,6 +25,8 @@ globalThis.fetch = async (input, init) => {
   const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
   if (method === "getMe") return Response.json({ ok: true, result: { id: 123, is_bot: true, username: "fixture_bot" } });
   if (method === "getUpdates") {
+    // polls.jsonl: one line per getUpdates (a test that needs "exactly one live receiver" counts them over a window)
+    appendFileSync(join(dir, "polls.jsonl"), JSON.stringify({ at: Date.now() }) + "\n");
     let updates = [];
     try { updates = JSON.parse(readFileSync(join(dir, "updates.json"), "utf8")); } catch { updates = []; }
     const offset = Number(body.offset ?? 0), limit = Number(body.limit ?? 100);

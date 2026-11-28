@@ -8,6 +8,10 @@ import { isClipboardInput, isClipboardKeyName } from "../shared/browser-clipboar
 import { COMPOSED_ACTIVE_SOURCE, COMPOSED_HIT_TEST_SOURCE, DESCRIBE_TARGET_SOURCE, HTML_LENGTH_EXPRESSION, HTML_RELEASE_EXPRESSION, htmlSliceExpression, presentedLinkExpression } from "./browser-extension-page-scripts.ts";
 import { collectFloorFacts, type FloorFactsExtra, type FloorFactsIo, type FloorTarget } from "./browser-floor-facts.ts";
 import { classifyFloor, type FloorFacts, type FloorResult } from "./browser-floor.ts";
+import { PAY_PAGE_EXPRESSION, PAY_TEXT } from "./pay-card.ts";
+import { randomUUID as payNonce } from "node:crypto";
+import { PAY_REPORT_BINDING, PAY_REPORT_WORLD, readPressPush, type PayPressReport, PAY_HOLD_MAX_MS, PAY_HOLD_PATTERNS, PAY_HOLD_READ_MS, PAY_PRESS_ARM, PAY_PRESS_GUARD_SOURCE, PAY_PRESS_REMOVE, PAY_PRESS_REPORT, PAY_PRESS_WINDOW_MS, readPressInstall, readPressReport } from "./pay-press-guard.ts";
+const PAY_ONCE_TEXT = PAY_TEXT.once;
 import { ACCOUNT_OWNER_PHRASE, FLOOR_OWNER_PHRASE } from "../shared/browser-floor-signatures.ts";
 import { withoutSecretValues } from "./browser-recipient-safety.ts";
 import { ReadLayerError, type ReadLayer } from "./browser-extension-snapshot.ts";
@@ -59,6 +63,8 @@ export type ExtensionAction = { name: string; arguments: Json; document: Extensi
   pushSummary?: string;
   /** The facts the floor and the level were judged on, with the target's visibility block (T23W). Absent for actions with no target. */
   facts?: FloorFacts & { visibility?: unknown };
+  /** PAYFULL A6: set by the executor only while this call holds an owner-approved pay/terms card for this floor (kind and rule). */
+  floorPass?: { floor: string; rule: string };
   /** The activity log's target label and whether the page wrote it, and the length (never the text) of what is typed. */
   target?: string; fromPage?: boolean; textLength?: number;
   /** The actual element this step acts on (round 6): the engine's node id and the frame it lives in. Absent for a step with no target. */
@@ -69,6 +75,9 @@ export type ExtensionAction = { name: string; arguments: Json; document: Extensi
 /** SABLE-B 5.1: one call's scope. `fence` is the dispatch's identity (the service owns its shape); `signal` aborts when the call ends;
  * `admitted` and `admittedUrls` are the canonical origins and URLs this call admitted. */
 export type CallScope = { bootstrapOnly?: boolean; fence: unknown; signal: AbortSignal; admitted: Set<string>; admittedUrls: Set<string> };
+/** PAYFULL A6 binding B, read live by the executor: loader id, node identity, control digest, address, and the page read (isolated world). */
+export type ExtensionPayRead = { loader: string | undefined; node: number; control: string; address: string; page: unknown };
+export type ExtensionPayGate = { floor: string; rule: string; commit: (read: ExtensionPayRead) => Promise<{ settle: (outcome: "pressed" | "uncertain" | "not-pressed" | "changed") => void; recheck: (read: ExtensionPayRead) => boolean } | { refuse: string }>; abandon: () => void };
 export type ExtensionFloorHandoff ={ result: FloorResult; operation: string; document: ExtensionDocument; text: string };
 /** What the executor reports to the activity log itself: the decisions the service cannot see. */
 export type ExtensionActivityEvent = { operation: string; document: ExtensionDocument; decision: "your turn" | "not done"; outcome: "handed over" | "failed"; level: 1 | 2 | 3; target?: string; fromPage?: boolean; textLength?: number; id?: string };
@@ -76,6 +85,8 @@ export interface ExtensionExecutorOptions {
   documentOwner?: string;
   /** Live, server-authenticated permission; model arguments cannot set this. */
   noLimits?: () => boolean;
+  /** Page reads come back unredacted (No limits, or the owner's own turn). Falls back to noLimits. */
+  readUnredacted?: () => boolean;
   transport: ExtensionCdpTransport;
   authorize: () => boolean;
   authorizationError?: () => Error;
@@ -96,6 +107,10 @@ export interface ExtensionExecutorOptions {
   collectFacts?: (io: FloorFactsIo, target: FloorTarget | undefined, operation: string, extra?: FloorFactsExtra) => Promise<FloorFacts>;
   /** Called before the refusal when the floor asks for the owner: the service pauses the binding and tells the owner. */
   onFloor?: (info: ExtensionFloorHandoff, scope?: CallScope) => Promise<void> | void;
+  /** PAYFULL A6 (owner q1024-paybuild): the Full-access pay/terms card, asked BEFORE onFloor for a floor result. null = hand-off as today
+   *  (onFloor, YOUR TURN). `refuse` = a NOT DONE line, nothing pressed. A gate = the owner approved; its commit is the final check, run right
+   *  before the input on a live re-read. Never consulted at No limits. */
+  payCard?: (info: { result: FloorResult; operation: string; document: ExtensionDocument; double: boolean; button: string; read: ExtensionPayRead }, scope?: CallScope) => Promise<ExtensionPayGate | { refuse: string } | null>;
   activity?: (event: ExtensionActivityEvent) => void;
   /** T52: phase timestamps of a turn (admitted, first visible content, first input dispatch), in milliseconds on a monotonic clock. */
   phase?: (event: { phase: "admitted" | "first_content" | "first_input"; at: number; sinceAdmitted: number; operation: string }) => void;
@@ -403,7 +418,10 @@ export class BrowserExtensionExecutor {
     return{backendNodeId:described.node.backendNodeId,document:{...document}};
   }
   private async describe(target:EngineObject):Promise<{observed:string;structure:string;bound:string;editable:boolean;detail:Detail;priv:{href?:string|null};macs:string[]|null;skip:number[]}>{
-    const text=String(await this.nodeCall(target,DESCRIBE_TARGET_SOURCE,this.options.noLimits?.()?[true]:[]));
+    return this.shapeOf(String(await this.nodeCall(target,DESCRIBE_TARGET_SOURCE,this.options.noLimits?.()?[true]:[])));
+  }
+  /** The description text (DESCRIBE_TARGET_SOURCE's answer) as the shape the approval is bound to. Also run on the press guard's own held description. */
+  private shapeOf(text:string):{observed:string;structure:string;bound:string;editable:boolean;detail:Detail;priv:{href?:string|null};macs:string[]|null;skip:number[]}{
     // Anything that is not the structured shape is still bound into the digest, and shown as plain text.
     let parsed:any;try{parsed=JSON.parse(text);}catch{parsed=undefined;}
     let values:unknown=null,editable=false,priv:{href?:string|null}={},macs:string[]|null=null,skip:number[]=[];
@@ -432,7 +450,7 @@ export class BrowserExtensionExecutor {
     const same=now.observed===shape.observed&&(now.bound===shape.bound||typingOnly);
     if(!same)refuse("The target changed while the action was running. Inspect it again before continuing.");
     const late=await this.floorCheck(document,target,this.currentOperation,this.currentKey);
-    if(late)await this.handOff(document,late,this.currentOperation,now.detail,scope);
+    if(late&&!this.payCovers(late))await this.handOff(document,late,this.currentOperation,now.detail,scope);
     // The recipients the page is about to send to are the ones the owner approved (changed or unreadable: back to the owner).
     if(recipientKey(this.lastFacts)!==shape.recipients)refuse("The recipients changed while the action was running. Inspect the page again before continuing.");
   }
@@ -473,8 +491,15 @@ export class BrowserExtensionExecutor {
     }
     // An escape (open, a new tab) only moves away: setup and navigation need no look at a page the owner must use directly.
     // The guard ends on a confirmed document; only an escape (which skips it) needs its own look.
-    if(!(this.escaping&&ESCAPE_SETUP.has(method)))await this.guard(document,scope,method.startsWith("Input."));else await this.stable(document);
+    if(!(this.escaping&&ESCAPE_SETUP.has(method))){
+      // Under the pay hold this page read is bounded: a held navigation answers nothing, and the input it precedes is then not sent.
+      try{await this.duringHold(()=>this.guard(document,scope,method.startsWith("Input.")));}
+      catch(error){if((error as {payStall?:boolean}|undefined)?.payStall!==true)throw error;this.floorHandled=true;refuse(this.payPass&&(this.payPass.activations>0||this.payPass.touched)?PAY_TEXT.mayBePressed:PAY_TEXT.notPressed);}
+    }else await this.stable(document);
     if(method.startsWith("Input.")&&this.executing)this.mark("first_input",this.currentOperation||this.callOperation);
+    // FABLE 15482d2311: a function the engine runs under a held pay pass may act on the button without any Input event, so the outcome is never
+    // "nothing was pressed" after it (settled uncertain, never repeated).
+    if(this.payPass&&(method==="Runtime.callFunctionOn"||method==="Runtime.evaluate"))this.payPass.touched=true;
     if(this.options.noLimits?.()||!this.executing||!this.mutation||!this.approvedTarget)return;
     const target=this.approvedTarget;
     // L1: input reaches only the document that was admitted. A navigation can commit between admit and dispatch.
@@ -499,11 +524,101 @@ export class BrowserExtensionExecutor {
     // SEC-02: the semantics digest and the floor, again, right before every activating input (both halves of a click, Enter or Space).
     if((method==="Input.dispatchMouseEvent"&&(params.type==="mousePressed"||params.type==="mouseReleased"))||(method==="Input.dispatchKeyEvent"&&activationKeyEvent(params)))
       await this.revalidate(document,target,method==="Input.dispatchMouseEvent",scope);
+    // PAYFULL A3/A6 (after every other check, so a press is counted only when it is about to be sent): one approval is one activation. A second press (a double click, a repeated Enter) in the same call is refused before it is sent.
+    if(this.payPass&&((method==="Input.dispatchMouseEvent"&&params.type==="mousePressed")||(method==="Input.dispatchKeyEvent"&&params.type!=="keyUp"&&activationKeyEvent(params)))){
+      if(this.payPass.activations>=1||Number(params.clickCount??1)!==1)refuse(PAY_ONCE_TEXT);
+      // ASTRA 052e596996: the approved page (loader, all visible text, the card's rows: total, item, quantity) is read again at the activation
+      // itself, after the commit; a same-document price change in between cancels the press (spent -> changed), nothing reaches the page.
+      const pass=this.payPass;if(!pass.recheck(await this.payRead(document,target,undefined))){pass.changed=true;this.floorHandled=true;refuse(PAY_TEXT.changed);}
+      // PAYFULL "The press itself" d (J16): the LAST thing before the input. A `go` older than 2 s sends nothing; the guard must still stand in
+      // this document; it is armed for what is left of the 2 s on the page's own clock. From here the comparison is the guard's, at the event.
+      const left=PAY_PRESS_WINDOW_MS-(Date.now()-pass.committedAt);
+      let armed:unknown=false;if(left>0){try{armed=await this.duringHold(()=>this.evaluate(document,PAY_PRESS_ARM(left,this.payPush?.nonce)));}catch(error){if(isAuthorityRefusal(error))throw error;armed=false;}}
+      if(armed!==true){this.floorHandled=true;refuse(PAY_TEXT.notPressed);}
+      pass.activations++;}
+    // OPUS fix-check 76228e36c1: the click fires on the release and Space acts on its key-up, several round trips after the press. The approved
+    // page is read again before the release half too; a change refuses the release (the press half went out: the record says uncertain).
+    else if(this.payPass&&this.payPass.activations>=1&&((method==="Input.dispatchMouseEvent"&&params.type==="mouseReleased")||(method==="Input.dispatchKeyEvent"&&params.type==="keyUp"&&activationKeyEvent(params)))){
+      // A navigation the page started is held, and a held page answers no read: the release is not sent (the press half went out: uncertain).
+      let read:ExtensionPayRead;
+      try{read=await this.duringHold(()=>this.payRead(document,target,undefined));}catch(error){if((error as {payStall?:boolean}|undefined)?.payStall!==true)throw error;this.floorHandled=true;return refuse(PAY_TEXT.mayBePressed);}
+      if(!this.payPass.recheck(read)){this.floorHandled=true;refuse(PAY_TEXT.releaseChanged);}}
   }
   /** The main frame's loader id: it changes whenever the frame commits a new document. */
   private async loaderId(document:ExtensionDocument){
     const tree=await this.send(document,"Page.getFrameTree");
     return typeof tree?.frameTree?.frame?.loaderId==="string"?tree.frameTree.frame.loaderId as string:undefined;
+  }
+  /** PAYFULL A6: the owner-approved card waiting for its final check, and the one-call pass the final check issued. */
+  private payGate:ExtensionPayGate|undefined;
+  private payPass:{floor:string;rule:string;activations:number;changed:boolean;touched?:boolean;committedAt:number;settle:(outcome:"pressed"|"uncertain"|"not-pressed"|"changed")=>void;recheck:(read:ExtensionPayRead)=>boolean}|undefined;
+  private payCovers(result:FloorResult){const held=this.payPass??this.payGate;return !!held&&result.unsure!==true&&result.floor===held.floor&&result.rule===held.rule;}
+  /** PAYFULL "The press itself" b: main-frame navigations are held (CDP Fetch on Document requests) from before the guard is installed until
+   *  the press has been reported, so the click cannot land on a new document. Released in the call's `finally`, at most 3 s (timer here; the
+   *  extension keeps its own). */
+  private payHold:{document:ExtensionDocument;timer:ReturnType<typeof setTimeout>}|undefined;
+  /** The guard pushes its final report through a binding of Murage's isolated world (pay-press-guard.ts PAY_REPORT_BINDING): the world and the
+   *  nonce of THIS press, and the report once it came. A push from any other world, tab or press is not a report. */
+  private payPush:{tabId:number;epoch:number;world:number;nonce:string;report?:PayPressReport}|undefined;
+  private async holdNavigation(document:ExtensionDocument){
+    const world=await this.world(document);
+    await this.send(document,"Runtime.addBinding",{name:PAY_REPORT_BINDING,executionContextName:PAY_REPORT_WORLD});
+    this.payPush={tabId:document.tabId,epoch:document.navigationEpoch,world,nonce:payNonce()};
+    await this.send(document,"Fetch.enable",{patterns:PAY_HOLD_PATTERNS.map(pattern=>({...pattern}))});
+    const timer=setTimeout(()=>{void this.releasePress();},PAY_HOLD_MAX_MS);(timer as {unref?:()=>void}).unref?.();
+    this.payHold={document,timer};this.payStalled=false;
+  }
+  /** Guard off, then the hold. Best effort on a page that is gone (the guard removes itself; the extension releases the hold itself). */
+  private async releasePress(){
+    this.payPush=undefined;
+    const hold=this.payHold;if(!hold)return;this.payHold=undefined;clearTimeout(hold.timer);
+    // The hold first: while a navigation is held the page answers nothing, so a guard removal sent before it would wait for the release it precedes.
+    // The guard keeps cancelling until it is removed (or removes itself), so nothing can be pressed in between.
+    try{await this.options.transport.send("Fetch.disable",{},hold.document);}catch{/* the extension's own 3 s timer releases it */}
+    try{await this.bounded((async()=>this.options.transport.send("Runtime.evaluate",{expression:PAY_PRESS_REMOVE,contextId:await this.world(hold.document,false,true),returnByValue:true},hold.document))());}catch{/* the document or the world is gone, and the guard with it */}
+    this.payStalled=false;
+  }
+  /** Real Chromium answers no page-side command (evaluate, frame tree) while a main-frame navigation is held by Fetch: the page's own redirect and
+   *  the pay button's own form post both do this. So every page read made under the hold is bounded; the first one that does not answer marks the
+   *  hold stalled and the later ones fail at once. The caller ends the step as uncertain or not pressed; nothing waits for the 3 s release. */
+  private payStalled=false;
+  private bounded<T>(work:Promise<T>):Promise<T>{
+    work.catch(()=>{/* answered after the bound: nobody is waiting */});
+    return new Promise<T>((resolve,reject)=>{
+      const timer=setTimeout(()=>{this.payStalled=true;reject(Object.assign(new Error("The page did not answer while its navigation was held."),{payStall:true}));},PAY_HOLD_READ_MS);
+      work.then(value=>{clearTimeout(timer);resolve(value);},error=>{clearTimeout(timer);reject(error);});
+    });
+  }
+  private duringHold<T>(work:()=>Promise<T>):Promise<T>{
+    if(!this.payHold)return work();
+    if(this.payStalled)return Promise.reject(Object.assign(new Error("The page did not answer while its navigation was held."),{payStall:true}));
+    return this.bounded(work());
+  }
+  /** What the guard saw, read while the hold still keeps the document in place. undefined: no report could be read. */
+  private async pressReport(document:ExtensionDocument){
+    // The pushed report is final and was made at the event; the read-back is only for a press that pushed nothing (yet).
+    const push=this.payPush;if(push?.report)return push.report;
+    let read:PayPressReport|undefined;
+    try{read=readPressReport(await this.duringHold(()=>this.evaluate(document,PAY_PRESS_REPORT,true)));}catch{read=undefined;}
+    return push?.report??read;
+  }
+  /** B read live: the loader id, the node, a digest of the control's role, tag and name, the address without its fragment, and the page read. */
+  private async payRead(document:ExtensionDocument,target:EngineObject,detail:Detail|undefined,heldPage?:string):Promise<ExtensionPayRead>{
+    const display=detail?.display??({} as Detail["display"]);
+    const control=createHash("sha256").update(JSON.stringify([display.role??"",display.tag??"",display.label??"",display.text??""])).digest("hex");
+    let page:unknown=heldPage;if(heldPage===undefined){try{page=await this.evaluate(document,PAY_PAGE_EXPRESSION);}catch(error){if(isAuthorityRefusal(error))throw error;page=undefined;}}
+    return {loader:await this.loaderId(document),node:target.backendNodeId,control,address:document.url.split("#")[0]!,page};
+  }
+  /** The card instead of the hand-off, when the service offers one. FABLE 15482d2311: a single mouse click only (the press, check, select and
+   *  Enter/Space paths have no witnessed activation count yet, so they hand off as today, fail closed). */
+  private async askPay(document:ExtensionDocument,target:EngineObject|undefined,floor:FloorResult,operation:string,args:Json,detail:Detail|undefined,scope:CallScope|undefined):Promise<ExtensionPayGate|undefined>{
+    if(!this.options.payCard||this.options.noLimits?.()||!target||floor.unsure===true)return undefined;
+    const double=operation==="dblclick"||args.double===true||Number(args.clickCount??1)!==1;
+    if(!double&&operation!=="click")return undefined;
+    const answer=await this.options.payCard({result:floor,operation,document,double,button:String(detail?.display.label??detail?.display.text??""),read:await this.payRead(document,target,detail)},scope);
+    if(!answer)return undefined;
+    if("refuse" in answer){this.live(scope);this.floorHandled=true;refuse(answer.refuse);}
+    return answer as ExtensionPayGate;
   }
   /** The floor, classified on the facts of the moment. Unsure (a collector or classifier that fails) is floor. */
   private async floorCheck(_document:ExtensionDocument,target:EngineObject|undefined,operation:string,extra:FloorFactsExtra={}):Promise<FloorResult|null>{
@@ -635,7 +750,7 @@ export class BrowserExtensionExecutor {
         this.currentRole=String(detail.display.role||detail.display.tag||"element").toLowerCase();
         // Below No limits, the hard floor comes before any card.
         const floor=await this.floorCheck(document,target,operation,typeof call.arguments.key==="string"?{key:call.arguments.key}:{});
-        if(floor)await this.handOff(document,floor,operation,detail,scope);
+        if(floor){this.payGate=await this.askPay(document,target,floor,operation,call.arguments,detail,scope);if(!this.payGate)await this.handOff(document,floor,operation,detail,scope);}
       }
       let shownUrl:string|undefined;
       if(operation==="click"&&detail?.display.href){destination=webDestination(new URL(privHref??detail.display.href,document.url).href);try{shownUrl=new URL(detail.display.href,document.url).href;}catch{shownUrl=undefined;}
@@ -651,6 +766,7 @@ export class BrowserExtensionExecutor {
       const pushSummary=`${operation} on ${document.origin}${detail?.display.fieldCount?`. Fields: ${names} (${detail.display.fieldCount})`:""}`;
       const action:ExtensionAction={...call,arguments:reviewArgs,document,mutation:this.mutation,botCall:true,...(botUrl!==undefined?{botUrl}:{}),...(this.lastFacts?{facts:this.lastFacts}:{}),...(detail?.display.label?{target:String(detail.display.label),fromPage:true}:{}),...(typeof call.arguments.text==="string"?{textLength:call.arguments.text.length}:{}),...(target?{node:{backendNodeId:target.backendNodeId,frameId:target.frameId!==undefined?target.frameId:document.frameId}}:{}),...(presentedLink?{presentedLink}:{}),digest:createHash("sha256").update(JSON.stringify([call,document,target?.backendNodeId,observed,bound,createHmac("sha256",VALUE_KEY).update(recipientKey(this.lastFacts)).digest("hex")])).digest("hex"),summary,pushSummary};
       // Round 10 (R9-01): the recipients the owner approved are the ones scanned at admission. Every later scan is compared with this set and none replaces it.
+      if(this.payGate)action.floorPass={floor:this.payGate.floor,rule:this.payGate.rule};
       const admittedRecipients=recipientKey(this.lastFacts);
       // SABLE-B 7.3: the step's one destination consent (with the action) and its admission run under the binding's step lock.
       this.currentAction=action;
@@ -667,16 +783,34 @@ export class BrowserExtensionExecutor {
         const again=await this.describe(target);if(again.observed!==observed||again.bound!==bound)refuse("The target changed while waiting. Inspect it again before continuing.");
         // A page can change a button after the card: classify again, and drop the approval if it is now floor.
         const late=await this.floorCheck(document,target,operation,typeof call.arguments.key==="string"?{key:call.arguments.key}:{});
-        if(late)await this.handOff(document,late,operation,again.detail,scope);
+        if(late&&!this.payCovers(late))await this.handOff(document,late,operation,again.detail,scope);
         if(recipientKey(this.lastFacts)!==admittedRecipients)refuse("The recipients changed while waiting. Inspect the page again before continuing.");
+        // PAYFULL A6 final check: B' read live right before the input; only `go` (spent saved) issues this call's one-activation pass.
+        // FINAL CHECK, browser guard set first (J16): navigations held, then the press guard installed on the approved node. What the guard holds
+        // (page read, control description) is what the final check compares with the owner's card, and what the guard compares again at the event.
+        if(this.payGate){const gate=this.payGate;
+          await this.holdNavigation(document);
+          const held=readPressInstall(await this.nodeCall(target,PAY_PRESS_GUARD_SOURCE));
+          const shape=held?this.shapeOf(held.shape):undefined;
+          if(!held||!shape||shape.observed!==observed||shape.bound!==bound){this.floorHandled=true;return refuse(PAY_TEXT.changed);}
+          this.payGate=undefined;const sent=Date.now();const answer=await gate.commit(await this.payRead(document,target,again.detail,held.page));
+          if("refuse" in answer){this.floorHandled=true;refuse(answer.refuse);}else this.payPass={floor:gate.floor,rule:gate.rule,activations:0,changed:false,committedAt:sent,settle:answer.settle,recheck:answer.recheck};}
       }
       this.approvedTarget=target;this.executing=true;this.currentOperation=operation;this.currentKey=typeof call.arguments.key==="string"?{key:call.arguments.key}:{};
       this.approvedShape=target?{observed,structure:shapeStructure,bound,editable:shapeEditable,recipients:admittedRecipients,macs:shapeMacs,skip:shapeSkip}:undefined;
       const layer=this.layerOwnsRefs()?this.layerFor(document):undefined;
       const engineArgs=layer&&target&&typeof call.arguments.selector==="string"&&call.arguments.selector.startsWith("@")?{...call.arguments,selector:`node:${target.backendNodeId}`}:call.arguments;
       this.reading=operation==="read";
-      let output=operation==="read"?await routeBrowserRead("extension",call.arguments as EngineReadOptions,{documents:this.readDocuments,noLimits:this.options.noLimits,fenceOrigin:document.origin,currentUrl:document.url,activeHtml:()=>this.activeHtml(document!),authorize:()=>this.options.authorize(),admitUrl:(url,signal)=>this.destination(url,document!,scope?{...scope,signal:signal?AbortSignal.any([scope.signal,signal]):scope.signal}:undefined)}):operation==="snapshot"&&layer?{content:[{type:"text",text:layer.fenced(await layer.snapshot()),murage:true}]}:await this.backend().call(call.name,engineArgs);
+      let output=operation==="read"?await routeBrowserRead("extension",call.arguments as EngineReadOptions,{documents:this.readDocuments,noLimits:this.options.readUnredacted??this.options.noLimits,fenceOrigin:document.origin,currentUrl:document.url,activeHtml:()=>this.activeHtml(document!),authorize:()=>this.options.authorize(),admitUrl:(url,signal)=>this.destination(url,document!,scope?{...scope,signal:signal?AbortSignal.any([scope.signal,signal]):scope.signal}:undefined)}):operation==="snapshot"&&layer?{content:[{type:"text",text:layer.fenced(await layer.snapshot()),murage:true}]}:await this.backend().call(call.name,engineArgs);
       this.reading=false;if(operation==="read")output=markFenced(output);
+      if(this.payPass){const pass=this.payPass;
+        // PAYFULL "The press itself" e: the guard's report decides. `pressed` = it saw the one click with the page as approved. `changed` with nothing
+        // let through = it cancelled the activation, nothing reached the page. Anything else after an input was sent is uncertain (never repeated).
+        const said=pass.activations>0?await this.pressReport(document):undefined;
+        const outcome=pass.activations===0?(pass.touched?"uncertain":"not-pressed"):said?.state==="pressed"?"pressed":said?.state==="changed"&&said.passed===0?"changed":said?.state==="expired"&&said.passed===0?"not-pressed":"uncertain";
+        this.payPass=undefined;pass.settle(outcome);
+        if(pass.activations>0&&outcome!=="pressed"){this.floorHandled=true;refuse(outcome==="changed"?PAY_TEXT.changed:outcome==="not-pressed"?PAY_TEXT.notPressed:said?.state==="changed"?PAY_TEXT.releaseChanged:PAY_TEXT.mayBePressed);}}
+      await this.releasePress();
       this.authorized();
       if(operation==="close"){this.readDocuments.clear();await this.engine?.close();this.engine=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();return output;}
       // After an L2 or L3 action: what changed on the page, fenced, appended to the result.
@@ -697,8 +831,21 @@ export class BrowserExtensionExecutor {
       // already wrote (activityRecorded: a Never-by-default page found after admission) is not counted twice. `recorded` alone is not
       // enough: the waiting and failed-grant refusals carry it and write no line, so they keep this one.
       if(afterAdmit&&document&&!this.floorHandled&&(error as {activityRecorded?:boolean}|undefined)?.activityRecorded!==true)this.options.activity?.({operation,document,decision:"not done",outcome:"failed",level:2,...(typeof (error as {activityId?:unknown}|undefined)?.activityId==="string"?{id:(error as {activityId:string}).activityId}:{}),...(afterAdmit.target?{target:afterAdmit.target,fromPage:true}:{}),...(afterAdmit.textLength!==undefined?{textLength:afterAdmit.textLength}:{})});
+      // OPUS self-review 3efce241d5 H2: once a press half went out (or the engine acted on the button), no refusal or engine error reaches the bot
+      // as "inspect again": every one says the button may have been pressed (the record is uncertain), so nothing asks for a second charge. The two texts that already
+      // say the press happened (the release re-read, a second press in the same call) stand.
+      // J16: a refusal after the press half went out (the release re-read saw the change). The guard's report is read while the hold keeps the
+      // document: when it cancelled everything it saw and let nothing through, nothing reached the page, and the step says so.
+      {const held=this.payPass;if(held&&held.activations>0&&document){const said=await this.pressReport(document);
+        if(said&&said.passed===0&&(said.state==="changed"||said.state==="expired")){held.activations=0;held.changed=said.state==="changed";this.floorHandled=true;
+          if(!held.touched)error=Object.assign(new Error(held.changed?PAY_TEXT.changed:PAY_TEXT.notPressed),{code:"browser_extension_refused",status:409});}}}
+      {const held=this.payPass;if(held&&(held.activations>0||held.touched)&&!([PAY_TEXT.releaseChanged,PAY_ONCE_TEXT] as readonly string[]).includes(String((error as Error|undefined)?.message)))throw Object.assign(new Error(PAY_TEXT.mayBePressed),{code:"browser_extension_refused",status:409});}
       throw error;
     }finally{
+      // PAYFULL A7: a card approved but never committed is closed; a pass whose input may have been sent and gave no result is uncertain (never repeated).
+      if(this.payGate){try{this.payGate.abandon();}catch{/* closed at the next startup */}this.payGate=undefined;}
+      if(this.payPass){const pass=this.payPass;this.payPass=undefined;try{pass.settle(pass.changed?"changed":pass.activations>0||pass.touched?"uncertain":"not-pressed");}catch{/* the startup sweep repairs it */}}
+      await this.releasePress();
       this.scope=undefined;callCancel.abort();this.reading=false;
       this.loaderBase=undefined;
       if(document&&admitted){try{await this.evaluate(document,"globalThis.__murageGuard?.enable(false)");}catch{/* revoked or navigated: no further observation */}}
@@ -724,6 +871,11 @@ export class BrowserExtensionExecutor {
     return lines.join("\n");
   }
   event(tabId:number,epoch:number,method:string,params:Json,sessionId?:string){
+    if(method==="Runtime.bindingCalled"){
+      const push=this.payPush;
+      if(push&&!push.report&&!sessionId&&tabId===push.tabId&&epoch===push.epoch)push.report=readPressPush(params,push.world,push.nonce);
+      return;
+    }
     if(method==="Page.javascriptDialogOpening")this.dialog={tabId,type:String(params.type??"confirm"),message:String(params.message??"")};
     else if(method==="Page.javascriptDialogClosed"&&this.dialog?.tabId===tabId)this.dialog=undefined;
     this.engine?.event(tabId,epoch,method,params,sessionId);

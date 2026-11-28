@@ -73,7 +73,7 @@ export class WritetimeFixture {
   reply(thread: string, id: string, lsn: number, row: Parameters<WritetimeFixture["lineage"]>[3] = {}): this { return this.message(thread, id, "bot").lineage(thread, id, lsn, row); }
   /** An owner line with its lineage row (generated 0). */
   owner(thread: string, id: string, lsn: number, extra: Record<string, unknown> = {}): this { return this.message(thread, id, "user", extra).lineage(thread, id, lsn, { generated: false, turnLsn: null }); }
-  denyLine(thread: string, lsn: number, revoke = 1): this { this.db.prepare("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,?,?,'test')").run(thread, lsn, revoke, lsn); return this; }
+  denyLine(thread: string, lsn: number, revoke = 1): this { this.db.prepare("INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,?,?,'test')").run(thread, lsn, revoke, lsn); return this; }
   audienceFlip(thread: string, lsn: number, revoke = 7): this {
     this.db.prepare("INSERT OR IGNORE INTO memory_revoke_audience(revoke_id) VALUES(?)").run(revoke);
     return this.denyLine(thread, lsn, revoke);
@@ -87,7 +87,7 @@ export class WritetimeFixture {
     return this;
   }
   pendingScope(scope: string, since: number, revoke = 1): this { this.db.prepare("INSERT INTO memory_deny_pending_scope(scope_id,since_lsn,revoke_id) VALUES(?,?,?)").run(scope, since, revoke); return this; }
-  denyMemory(kind: MemoryRefKind, id: string, version = 0, revoke = 1): this { this.db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES(?,?,?,?)").run(kind, id, version, revoke); return this; }
+  denyMemory(kind: MemoryRefKind, id: string, version = 0, revoke = 1): this { this.db.prepare("INSERT INTO memory_deny_object(kind,id,version,revoke_id) VALUES(?,?,?,?)").run(kind, id, version, revoke); return this; }
   denySession(thread: string, instance: string, session: string, revoke = 1): this { this.db.prepare("INSERT INTO memory_deny_session(thread_id,driver_instance,native_session,revoke_id) VALUES(?,?,?,?)").run(thread, instance, session, revoke); return this; }
   deny(kind: "thread" | "scope", id: string): this { this.db.prepare("INSERT INTO memory_deny(kind,id,epoch,created_at) VALUES(?,?,0,0)").run(kind, id); return this; }
   tombstone(type: "source" | "record" | "import", target: string, revision: number | null = null, reason = "owner-forget", hash: string | null = null): this {

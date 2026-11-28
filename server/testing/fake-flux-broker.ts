@@ -21,6 +21,8 @@ export interface FakeBrokerFixture {
   refuseAfterMs?: number;
   /** How long a status read takes before it answers. */
   statusAfterMs?: number;
+  /** Override the response to tools/call at the provider boundary. */
+  replyToMcpCall?: (id: unknown) => unknown;
 }
 
 function servicesFrom(accounts: FakeBrokerAccount[], only?: string[]) {
@@ -59,7 +61,8 @@ export async function handleFakeFluxBroker(req: IncomingMessage, res: ServerResp
   if (path === "/v1/catalog") return send(200, { items: [] });
   if (path === "/v1/mcp") {
     if (body.method === "tools/list") return send(200, { jsonrpc: "2.0", id: body.id, result: { tools: [] } });
-    return send(200, { jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "{}" }] } });
+    const reply = body.method === "tools/call" ? fixture?.replyToMcpCall?.(body.id) : undefined;
+    return send(200, reply ?? { jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "{}" }] } });
   }
   if (fixture) fixture.calls += 1;
   const accounts = fixture?.accounts ?? [];

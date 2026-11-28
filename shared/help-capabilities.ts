@@ -170,12 +170,6 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "tool",
-    "name": "request_browser_connection",
-    "term": "request_browser_connection",
-    "source": "server/drivers/agents-proxy.ts"
-  },
-  {
-    "kind": "tool",
     "name": "ask_user",
     "term": "ask_user",
     "source": "server/drivers/agents-proxy.ts"
@@ -232,6 +226,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "tool",
     "name": "skills_list",
     "term": "skills_list",
+    "source": "server/drivers/agents-proxy.ts"
+  },
+  {
+    "kind": "tool",
+    "name": "skill_switch",
+    "term": "skill_switch",
     "source": "server/drivers/agents-proxy.ts"
   },
   {
@@ -356,6 +356,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
+    "name": "overview",
+    "term": "Overview",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
     "name": "general",
     "term": "General",
     "source": "src/lib/settings-pages.ts"
@@ -368,9 +374,21 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
-    "name": "botDefaults",
+    "name": "bots",
+    "term": "Bots",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "rules",
     "term": "How every bot behaves",
     "alt": "Bot defaults",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "tools",
+    "term": "Tools",
     "source": "src/lib/settings-pages.ts"
   },
   {
@@ -403,6 +421,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "settings-page",
     "name": "connections",
     "term": "Connected apps",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "messaging",
+    "term": "Messaging apps",
     "source": "src/lib/settings-pages.ts"
   },
   {
@@ -450,8 +474,20 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
+    "name": "botDefaults",
+    "term": "Bot defaults",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
     "name": "houseRules",
     "term": "House rules",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "providers",
+    "term": "Models",
     "source": "src/lib/settings-pages.ts"
   },
   {
@@ -590,6 +626,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "place",
     "name": "nav.mapName",
     "term": "Team map",
+    "source": "src/locales/en.json"
+  },
+  {
+    "kind": "place",
+    "name": "nav.teachSkill",
+    "term": "Teach a skill",
     "source": "src/locales/en.json"
   },
   {
@@ -770,12 +812,6 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "route",
     "name": "/api/help",
     "term": "help",
-    "source": "server/index.ts"
-  },
-  {
-    "kind": "route",
-    "name": "/api/highlevel",
-    "term": "HighLevel",
     "source": "server/index.ts"
   },
   {

@@ -37,6 +37,7 @@ export function isolatedConfigFor(file) {
   if (file === "setup-first-run.human.spec.ts") return "src/e2e/setup-first-run.config.ts";
   if (file === "setup-blocked.human.spec.ts") return "src/e2e/setup-blocked.config.ts";
   if (file === "needsyou-fullwidth.human.spec.ts") return "src/e2e/needsyou-fullwidth.config.ts";
+  if (file === "composer-mic-center.human.spec.ts") return "src/e2e/composer-mic-center.config.ts";
   return null;
 }
 

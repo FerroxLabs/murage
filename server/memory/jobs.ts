@@ -1,5 +1,6 @@
 import { catchUpViewPage } from './recall-view-index.ts';
 import { recallViewHasScope, type RecallViewHandle } from './recall-view.ts';
+import { scopeSetOf } from './oneindex.ts';
 import { sourceDenied } from "./deny.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -16,11 +17,17 @@ import { CLAIMABLE_SOURCE, settleRows, TOMBSTONED } from "./claim-settle.ts";
 import { DENIED_PLACE } from "./deny.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 import { insertMemoryRecord } from "./record-write.ts";
+import { oweThreadCheckpoint } from "./checkpoint-debt.ts";
 
 let lastScope = "";
 const workListeners=new Set<()=>void>();
 export function notifyMemoryWork(){for(const listener of workListeners)listener();}
 export function onMemoryWork(listener:()=>void){workListeners.add(listener);return ()=>{workListeners.delete(listener);};}
+/** q1024-memsearch-fable (MAIN-RULING memint-3 (3)): the owner's own saved memory is indexed at save time. The save names its record
+ * here once its transaction has committed; the worker controller sends that one record to the index at once (indexOwnerSave). */
+const ownerSaveListeners=new Set<(id:string,version:number)=>void>();
+export function notifyOwnerSave(id:string,version:number){for(const listener of ownerSaveListeners){try{listener(id,version);}catch{/* the receipt stays pending: the tick's own batch indexes it */}}}
+export function onOwnerSave(listener:(id:string,version:number)=>void){ownerSaveListeners.add(listener);return ()=>{ownerSaveListeners.delete(listener);};}
 
 /** Use the queue index before starting a helper or opening a claim transaction. One index probe: blocked jobs are not in
  * the open statuses (claim-settle.ts), so an open and due job is a claimable one. Before the settle sweep has passed an
@@ -37,6 +44,13 @@ const CAPTURE_PROBE_ROWS=32;
 /** An open and due job is at the capture stage (the work loop's short retry behind a live reservation is for capture only). */
 export function hasClaimableCaptureJob(now=Date.now()):boolean {
   return Boolean(database().prepare("SELECT 1 FROM (SELECT stage FROM memory_jobs INDEXED BY memory_jobs_pending WHERE status IN ('pending','partial','deferred') AND retry_at<=? LIMIT ?) WHERE stage='capture' LIMIT 1").get(now,CAPTURE_PROBE_ROWS));
+}
+
+/** An open and due capture-stage job exists, however many other due rows sit ahead of it in the queue index (no row limit: the
+ * idle start and the idle-exit hold of worker-controller.ts must not take a short probe for "nothing is owed"). Every job the
+ * product enqueues is a capture, so the first index row answers; the scan is only as long as the non-capture rows ahead. */
+export function hasDueCaptureJob(now=Date.now()):boolean {
+  return Boolean(database().prepare("SELECT 1 FROM memory_jobs INDEXED BY memory_jobs_pending WHERE status IN ('pending','partial','deferred') AND retry_at<=? AND stage='capture' LIMIT 1").get(now));
 }
 
 /** Future retries and expiring leases keep their due time between notifications: four index seeks in one statement, no source join. */
@@ -156,6 +170,12 @@ export function claimMemoryJob(worker: string, now = Date.now(), recentScopes?: 
     for (let step = 0; ; step++) {
       try { return claimOnce(worker, now, recentScopes, options.busyMs ?? BACKGROUND_BUSY_MS, options.exclude, options.recentWithinMs, options.jobId); }
       catch (error) {
+        // A claim by id has nothing to step on to: its one job is failed inside what is left of the caller's own lock wait, and
+        // the claim ends (MEMSAVE-1024: a save's capture step never outwaits its bound on a poisoned job).
+        if (error instanceof PoisonedClaim && options.jobId !== undefined) {
+          failPoisonedJob(error, Math.max(0, Math.min(BACKGROUND_BUSY_MS, Math.floor((options.busyMs ?? BACKGROUND_BUSY_MS) - (performance.now() - started)))));
+          return null;
+        }
         if (error instanceof PoisonedClaim && step < POISON_STEP_LIMIT) { failPoisonedJob(error); continue; }
         if (error instanceof PoisonedClaim) { failPoisonedJob(error); return null; }
         // Another connection holds the write lock (DatabaseBusyError): not an error and not an attempt. The caller tries again shortly.
@@ -168,10 +188,10 @@ export function claimMemoryJob(worker: string, now = Date.now(), recentScopes?: 
 function bigStatement(db: DatabaseSync, sql: string) { const statement = db.prepare(sql); statement.setReadBigInts(true); return statement; }
 /** The job could not be read (a resume cursor inside a character, a payload that will not decode): it is failed with
  * its cause so it stops blocking the scope. Permanent: attempts are set to the cap. */
-function failPoisonedJob(poison: PoisonedClaim) {
+function failPoisonedJob(poison: PoisonedClaim, busyMs = BACKGROUND_BUSY_MS) {
   try {
     transaction(db => { db.prepare("UPDATE memory_jobs SET status='failed',attempts=3,lease_owner=NULL,lease_until=0,error=? WHERE id=? AND status IN ('pending','partial','deferred','leased')").run(jobErrorText(poison.cause), poison.jobId); },
-      { op: "claim-poison", busyMs: BACKGROUND_BUSY_MS });
+      { op: "claim-poison", busyMs });
   } catch (error) { if (!isDatabaseBusy(error)) throw error; /* the next claim meets the same job and tries again */ }
   logSwallowed("capture", poison.cause);
 }
@@ -243,6 +263,8 @@ function pickFromWindows(db: DatabaseSync, now: number): bigint | null {
 function claimOnce(worker: string, now: number, recentScopes: readonly string[] | RecallViewHandle | undefined, busyMs: number, exclude?: ClaimOptions["exclude"], recentWithinMs?: number, onlyJobId?: string): MemoryWork | null {
   // Idle guard: with nothing open this is one indexed probe, not a write transaction. A claim by id is its own probe (the primary key).
   if (onlyJobId === undefined && !database().prepare(MEMORY_CLAIM_SQL.anyOpen).get(now,now)) return null;
+  // ONEINDEX: a scope-set reader claims by its scopes (the index path below), never through a built view's job list.
+  if (recentScopes && !Array.isArray(recentScopes)) { const held=scopeSetOf(recentScopes as RecallViewHandle); if (held) recentScopes=held.set.scopes; }
   return transaction(db => {
     const meta = db.prepare("SELECT * FROM memory_meta WHERE id=1").get()!;
     if (!["capture","active"].includes(String(meta.mode))) return null;
@@ -308,6 +330,7 @@ function claimOnce(worker: string, now: number, recentScopes: readonly string[] 
       const generation=Number(row.lease_generation)+1;
       db.prepare("UPDATE memory_jobs SET status='leased',lease_owner=?,lease_generation=?,lease_until=?,policy_revision=?,deletion_epoch=? WHERE id=?")
         .run(worker,generation,now+30000,meta.policy_revision,meta.deletion_epoch,row.id);
+      noteProcessLeaseOwner(db,worker);
       if(!recentScopes || Array.isArray(recentScopes))memoryClaimIndex.leased(rid!, String(row.scope_id), now+30000);
       return {id:jobId,sourceId:String(row.source_id),revision:Number(row.source_revision),leaseGeneration:generation,
         policyRevision:Number(meta.policy_revision),deletionEpoch:Number(meta.deletion_epoch),scopeId:String(row.scope_id),stage:String(row.stage),kind:String(row.kind),speaker:String(row.speaker),outcome:String(row.outcome),cursor,totalBytes,text};
@@ -345,6 +368,39 @@ export function isStaleMemoryPublication(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message === "STALE_MEMORY_SOURCE" || message === "STALE_MEMORY_LEASE";
 }
+
+/** The lease owners of THIS process. One server owns a data folder, so a lease held by any other owner when the memory controller
+ * starts was taken by a process that is gone (a crash, a kill): it is released at once, in bounded pages, instead of after its
+ * lease_until (up to 30 s of a restarted conversation waiting on nothing). A lease this process took is never released here (a live
+ * lease is never stolen), however often the controller restarts. The record stays bounded: past 256 owners it keeps only those that
+ * still hold a lease. Attempts are not counted: the dead holder did not fail the job. The generation is bumped, so a late publication
+ * by the dead holder is fenced as stale. */
+const processLeaseOwners = new Set<string>();
+const LEASE_OWNER_RECORD = 256;
+function noteProcessLeaseOwner(db: DatabaseSync, worker: string): void {
+  if (processLeaseOwners.size >= LEASE_OWNER_RECORD && !processLeaseOwners.has(worker)) {
+    const held = new Set(db.prepare("SELECT DISTINCT lease_owner AS owner FROM memory_jobs INDEXED BY memory_jobs_pending WHERE status='leased'").all().map(row => String(row.owner)));
+    for (const owner of processLeaseOwners) if (!held.has(owner)) processLeaseOwners.delete(owner);
+  }
+  processLeaseOwners.add(worker);
+}
+export const DEAD_LEASE_PAGE = 64;
+export function releaseDeadProcessLeases(page = DEAD_LEASE_PAGE): number {
+  const owners = JSON.stringify([...processLeaseOwners]);
+  let released = 0;
+  for (;;) {
+    const rows = transaction(db => db.prepare(`UPDATE memory_jobs SET status='pending',lease_generation=lease_generation+1,lease_owner=NULL,lease_until=0
+      WHERE rowid IN (SELECT rowid FROM memory_jobs INDEXED BY memory_jobs_pending WHERE status='leased'
+        AND (lease_owner IS NULL OR lease_owner NOT IN (SELECT value FROM json_each(?1))) LIMIT ?2) RETURNING id`).all(owners, page),
+      { op: "release-dead-leases", busyMs: BACKGROUND_BUSY_MS });
+    for (const row of rows) hintClaimIndex(String(row.id));
+    released += rows.length;
+    if (rows.length < page) break;
+  }
+  return released;
+}
+/** Tests: a fresh process's lease-owner record (the boot release has not run). */
+export function resetProcessLeaseOwnersForTests(): void { processLeaseOwners.clear(); }
 
 /** Return a job whose publication was refused as stale to `pending` at once,
  * so the next claim runs it under the current authority. Attempts are not
@@ -452,8 +508,8 @@ export function publishMemoryWork(work: MemoryWork, worker: string, input: Memor
     db.prepare("UPDATE memory_jobs SET status=?,cursor=?,coverage=?,lease_owner=NULL,lease_until=0,error=NULL WHERE id=?")
       .run(result.status,result.nextCursor,JSON.stringify({throughByte:result.nextCursor,totalBytes:work.totalBytes}),work.id);
     if(result.status==="complete"){
-      db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','checkpoint-pending',0,'granted',?)")
-        .run('checkpoint-debt:'+work.id,work.scopeId,JSON.stringify({jobId:work.id,sourceId:work.sourceId,revision:work.revision}));
+      // the thread's one debt marker (memv2 E3, checkpoint-debt.ts): a thread already owed adds no row
+      oweThreadCheckpoint(db,{jobId:work.id,sourceId:work.sourceId,revision:work.revision,scopeId:work.scopeId});
       recordMemoryProcessing(now);
     }
   }, options.busyMs===undefined?{}:{ op: "publish", busyMs: options.busyMs });

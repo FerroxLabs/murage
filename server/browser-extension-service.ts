@@ -1,6 +1,6 @@
 import { writeFile as countedWriteFile } from "./counted-fs-promises.ts";
 import {noLimitsAppliesTo} from './no-limits-origin.ts';
-import { serviceOwnerNoLimits, type ServiceAuthority } from "./narrow-denials.ts";
+import { serviceOwnerNoLimits, serviceUnredactedRead, type ServiceAuthority } from "./narrow-denials.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { redactPageOutput } from "./browser-output-redaction.ts";
 import fs from "node:fs/promises";
@@ -23,6 +23,10 @@ import { recipientUnknown, readEntriesOf, nextTypedHistory, navigationCarriesDat
 import type { ApprovalMode, LevelFacts } from './browser-levels.ts';
 import { fencePageText, fenceToolResult } from './browser-untrusted.ts';
 import type { ApprovalBinding, ApprovalKind } from './browser-extension-approvals.ts';
+import { ownerPayStep } from './pay-owner-step.ts';
+import { readPayPage, type PayCardFlow, type PayBinding } from './pay-card.ts';
+import { PAY_HOLD_CAPABILITY } from './pay-press-guard.ts';
+import type { ExtensionPayRead } from './browser-extension-executor.ts';
 import { BROWSER_APP_PROTOCOL, browserCommandDeadlineMs, type BrowserExtensionCommand, type BrowserExtensionHello, type BrowserExtensionMessage, type BrowserExtensionResponse, type ExtensionObject } from '../shared/browser-extension-protocol.ts';
 
 type Broker = { profiles(): BrowserExtensionHello[]; request(profileId: string, command: BrowserExtensionCommand, timeoutMs?: number): Promise<BrowserExtensionResponse>; /** SABLE-B 5.7: close that profile's connection. Required: fail-closed (5.6) depends on it. */ drop(profileId: string): boolean };
@@ -30,6 +34,11 @@ type StoredBinding = { context: BindingContext; state: 'active' | 'paused' | 'st
 /** State version 2 (T22): the task and its grants survive a restart. A version 1 file has none of these and loads with no task. */
 const STATE_VERSION = 2;
 const MAX_STORED_GRANTS = 64;
+/** CHROME-RESUME-FROM-APP: the capability the extension advertises, the settle bound, and the codes the extension answers before it changes state. */
+const APP_RESUME_CAPABILITY = 'app_resume_v1';
+const APP_RESUME_SETTLE_MS = 5000;
+const APP_RESUME_LOST = ['host_offline', 'host_lost_uncertain', 'reconnect_required'];
+const APP_RESUME_REFUSED = ['stale_generation', 'not_paused', 'binding_inactive', 'binding_stopped', 'handoff_use_continue', 'site_denied', 'incognito_denied', 'owner_action_required'];
 const ALLOW_LIMIT_TEXT = 'This task already has 64 sites allowed always. Remove one, then try again.';
 /** SABLE-B 5.6: the counter behind entry.setOwed (a fresh number per failed grant). */
 let setSeq = 0;
@@ -74,7 +83,9 @@ type Entry = StoredBinding & { runtimeNoLimits?: boolean; avatarBound?: number; 
   /** EXT-RESTART r6 (memory only). resumedGen: the newest resumedAt consumed (consume-once, set before any await). takenInGen: the
    * resumedAt of a Resume actually taken in (the late-event marker). resumeHeard: the newest valid resumedAt heard (3.3b). adoptDue: the
    * next hello or owner action reads again. */
-  resumedGen?: number; takenInGen?: number; resumeHeard?: number; adoptDue?: boolean };
+  resumedGen?: number; takenInGen?: number; resumeHeard?: number; adoptDue?: boolean;
+  /** CHROME-RESUME-FROM-APP: the app's Resume in flight (memory only; set in the press's own tick, cleared in its finally). */
+  appResume?: { gen: number } };
 /** What the decision keeps per task: the I-rules' memory of what was read and typed, the checker's loop guard. */
 /** SABLE-B 4.2: the call's snapshot. Created per dispatch (its identity is the dispatch); mode, freeNavigation and probeFlagged are filled after dispatch's taskOf. */
 type Fence = { generation: number; revision: number; instruction?: { id: string; text: string }; mode: ApprovalMode; freeNavigation?: string; probeFlagged: boolean };
@@ -241,6 +252,8 @@ export async function createBrowserExtensionService(options: {
   /** Test seam: the floor's facts collector (production uses the real one). */
   collectFacts?: ExtensionExecutorOptions['collectFacts'];
   broker: Broker; workspaceId: string; stateFile: string; protectedOrigins?: string[];
+  /** CHROME-RESUME-FROM-APP: how long the app's Resume waits for the extension's `resumed` event to be taken in (default 5000 ms; a test seam). */
+  appResumeSettleMs?: number;
   createEngine?: (options:BrowserExtensionEngineOptions)=>BrowserExtensionEngineBackend;
   /** The name the owner sees for this task in the browser's side panel. */
   botLabel?: (context: BindingContext) => string;
@@ -282,6 +295,12 @@ export async function createBrowserExtensionService(options: {
   reconcilePersistence?: (saved: Promise<unknown>) => Promise<unknown>;
   /** Test seam: the clock for task expiry. */
   now?: () => number;
+  /** PAYFULL A6 (owner q1024-paybuild): the Full-access pay/terms card flow. Without it every pay/terms floor hands off as today. */
+  payFlow?: PayCardFlow;
+  /** PAYFULL E1/E3/E4/E6-mark: what only the app knows about the turn running now. Undefined (no running turn) refuses. */
+  /** PAYFULL A4: shows the pay/terms card through the approvals queue (only the owner response route answers it). */
+  askPay?: (context: BindingContext, card: Parameters<import('./pay-card.ts').PayAsk>[0]) => ReturnType<import('./pay-card.ts').PayAsk>;
+  payTurn?: (context: BindingContext) => { generation: string; ownerTyped: boolean; ownerAudience: boolean; notOwnerAudience: boolean; emailMark: boolean } | undefined;
 }) {
   const { broker, workspaceId, stateFile } = options;
   if (!idPattern.test(workspaceId) || !path.isAbsolute(stateFile)) fail('invalid_service_configuration');
@@ -796,6 +815,26 @@ export async function createBrowserExtensionService(options: {
     } catch { /* no answer: drop */ }
     if (outcome === 'drop' && online(entry)) { try { broker.drop(entry.context.profileId); } catch { /* the server pause already stands */ } }
   };
+  /** CHROME-RESUME-FROM-APP S7 / H1: after a failed app Resume, read the extension. If it is active above the server's generation and that
+   * Resume was not taken in (a failed save: no event), adopt its generation, pause it again, or cut the connection (its disconnect fences
+   * every binding paused). Otherwise a plain read. Returns true when the extension had to be re-paused. Never throws. Runs on the profile chain. */
+  const refenceOrphan = async (entry: Entry): Promise<boolean> => {
+    try {
+      const raw = await request(entry, 'status') as Summary;
+      if (raw?.state === 'active' && raw.generation > entry.context.generation && (entry.takenInGen ?? -1) < raw.generation) {
+        await reconcile(entry, raw);
+        await reconcile(entry, await request(entry, 'pause'), false);
+        return true;
+      }
+    } catch (error) {
+      // A binding Chrome has retired has nothing to fence; anything else that cannot be read is cut off (its disconnect fences every binding paused).
+      if (['unknown_binding', 'binding_retired'].includes(errorCode(error))) return false;
+      if (online(entry)) { try { broker.drop(entry.context.profileId); } catch { /* the server pause already stands */ } }
+      return true;
+    }
+    await adopt(entry).catch(() => {});
+    return false;
+  };
   /** 3.4: the lifecycle events of one binding, on its profile chain. */
   const lifecycle = async (entry: Entry, message: Extract<BrowserExtensionMessage, { type: 'event' }>) => {
     const late = message.generation <= (entry.takenInGen ?? -1);
@@ -1105,7 +1144,9 @@ export async function createBrowserExtensionService(options: {
       for(let offset=0;offset<points.length;offset+=32768)result=await send(entry,method,{...params,text:points.slice(offset,offset+32768).join('')},document,scope);
       return result;
     }
-    return (method==='Page.handleJavaScriptDialog'?(op:()=>Promise<any>)=>op():(op:()=>Promise<any>)=>enqueue(entry,op))(async()=>{
+    // J16: the same holds for the release of the pay hold. A page command sent while a navigation is held is not answered until Fetch.disable arrives,
+    // so the release must never queue behind it.
+    return (method==='Page.handleJavaScriptDialog'||method==='Fetch.disable'?(op:()=>Promise<any>)=>op():(op:()=>Promise<any>)=>enqueue(entry,op))(async()=>{
     // SABLE-B 5.2 (fixer r1): a command that carries its call's scope (newTab's Page.navigate) may wait in the profile queue behind another
     // binding; it is checked live again here, right before it writes navigation or request state, so a call that died meanwhile sends nothing.
     if(scope!==undefined&&!live(entry,scope))throw active(entry)?Object.assign(Error('binding_inactive'),{code:'binding_inactive'}):authorizationError(entry);
@@ -1180,7 +1221,7 @@ export async function createBrowserExtensionService(options: {
     if (!noticed || typeof noticed !== 'object' || !Array.isArray((noticed as { content?: unknown }).content)) return noticed;
     const { structuredContent: _dropped, ...rest } = noticed as { structuredContent?: unknown; content: Record<string, unknown>[] };
     // SEC-006: every text a page could have influenced goes through OUT's redactor before the fence; Murage's own sentences stay as written.
-    const redacted = rest.content.map(item => item && typeof item === 'object' && item.murage !== true && typeof item.text === 'string' ? { ...item, text: redactPageOutput(item.text, serviceOwnerNoLimits(options.authorityFor?.(entry.context))) } : item);
+    const redacted = rest.content.map(item => item && typeof item === 'object' && item.murage !== true && typeof item.text === 'string' ? { ...item, text: redactPageOutput(item.text, serviceUnredactedRead(options.authorityFor?.(entry.context))) } : item);
     const fenced = fenceToolResult({ ...rest, content: redacted.map(item => item && typeof item === 'object' && item.origin === undefined ? { ...item, origin, ...(item.kind === undefined ? { kind: name || 'text' } : {}) } : item) } as never, name || 'text') as { content: Record<string, unknown>[] };
     // Fence bookkeeping never reaches the model.
     return { ...fenced, content: fenced.content.map(item => { if (!item || typeof item !== 'object') return item; const { murage: _m, murageLead: _l, origin: _o, kind: _k, ...plain } = item; return plain; }) };
@@ -1256,7 +1297,7 @@ export async function createBrowserExtensionService(options: {
     const chatFacts = (facts.recipientNoField || facts.recipientComposer) ? { recipientNoField: facts.recipientNoField, recipientComposer: facts.recipientComposer, ...(convo ? { conversationEligible: true } : {}), ...(convo && inputs.conversationApproved ? { conversationApproved: true } : {}) } : {};
     return Object.assign(await decide({
       bindingActive: active(entry), ownerAudience: entry.authorize?.() ?? true, siteAccess: entry.sites[origin] === 'never' || setting?.rule === 'never' ? 'never' : 'allow', category,
-      clipboard: false, floor: floor.floor ? floor : null, operation: name, ...(typeof facts.key === 'string' ? { key: facts.key } : {}), facts,
+      clipboard: false, floor: floor.floor ? floor : null, ...(action.floorPass ? { floorPass: action.floorPass } : {}), operation: name, ...(typeof facts.key === 'string' ? { key: facts.key } : {}), facts,
       ...(typed !== undefined ? { textHasNewline: /[\r\n]/.test(typed) } : {}),
       mode, routine: routineOf(entry), grants: { l1: origin === 'null' || entry.sites[origin] === 'allow' || entry.taskL1.has(origin), l2: entry.taskL2.has(origin) }, siteAllowedAlways: entry.sites[origin] === 'allow',
       probeFlagged: snap.probeFlagged, ...(opts.alive ? { alive: opts.alive } : {}),
@@ -1297,6 +1338,49 @@ export async function createBrowserExtensionService(options: {
   };
   /** SABLE-B 4.1: wouldCard false => under the same live scope the admission's decision is pass, a refusal, the floor or a pause, never a card. */
   const wouldCard = async (entry: Entry, action: ExtensionAction, inputs: StepInputs, scope: Scope) => (await decideFor(entry, action, inputs, scope.fence, { predict: true })).outcome !== 'pass';
+  /** PAYFULL A6: ownerPayStep on the live turn (E1..E9), read at the card and again at the final check. Any doubt refuses. */
+  const payEligible = (entry: Entry, floor: import('./browser-floor.ts').FloorResult, pageUrl: string) => {
+    const context = { ...entry.context };
+    try {
+      // The turn is read first and returned with every answer, so the final check's generation read never stands in for this level read.
+      const turn = options.payTurn?.(context);
+      const text = options.ownerTurnInstruction?.(context)?.text ?? '';
+      if (routineOf(entry) || serviceOwnerNoLimits(options.authorityFor?.(context)) || (options.approvalMode?.(context) ?? 'step') !== 'full') return { answer: { ok: false as const, why: 'level' }, turn, text };
+      const owner = !!turn && turn.ownerAudience === true && turn.notOwnerAudience !== true;
+      return { turn, text, answer: ownerPayStep({ actor: owner ? 'owner' : undefined, initiator: turn?.ownerTyped === true ? 'owner-typed' : undefined, roomOwnerOnly: owner, card: true,
+        ownerText: text || undefined, floor, pageUrl, lineage: { fromSearchResult: false, previous: null }, outsideMark: !turn || turn.emailMark !== false || turn.notOwnerAudience !== false }) };
+    } catch { return { answer: { ok: false as const, why: 'error' }, turn: undefined, text: '' }; }
+  };
+  const payBinding = (entry: Entry, floor: { floor: string | null; rule: string }, document: ExtensionDocument, read: ExtensionPayRead, agreed: string): PayBinding | undefined =>
+    read.loader ? { thread: entry.context.threadId, bot: entry.context.botId, tab: `${document.tabId}:${document.navigationEpoch}:${document.origin}`, loader: read.loader, address: read.address, node: read.node, control: read.control, floor: `${floor.floor}:${floor.rule}`, agreed } : undefined;
+  const payCardFor = async (entry: Entry, info: Parameters<NonNullable<ExtensionExecutorOptions['payCard']>>[0], scope: Scope | undefined) => {
+    const flow = options.payFlow;
+    if (!flow || !live(entry, scope)) return null;
+    // J16 (owner q1024-payguard-fable): no card without the navigation hold. An extension that does not declare it hands off as before.
+    if (broker.profiles().find(profile => profile.profileId === entry.context.profileId)?.capabilities.includes(PAY_HOLD_CAPABILITY) !== true) return null;
+    const first = payEligible(entry, info.result, info.document.url);
+    if (!first.answer.ok || !first.turn) return null;
+    const page = readPayPage(info.read.page);
+    const generation = first.turn.generation;
+    const site = (() => { try { return new URL(info.document.url).host; } catch { return ''; } })();
+    const base = { thread: entry.context.threadId, bot: entry.context.botId, generation, site, ownerText: first.text, button: info.button };
+    const outcome = await flow.confirm({ ...base, floor: info.result, operation: info.operation, double: info.double, eligible: first.answer, binding: payBinding(entry, info.result, info.document, info.read, 'card'), page,
+      ...(options.askPay ? { ask: (card: Parameters<import('./pay-card.ts').PayAsk>[0]) => options.askPay!({ ...entry.context }, card) } : {}) });
+    if (!outcome || 'refuse' in outcome) return outcome;
+    const pending = outcome.pending, kind = first.answer.kind, turnGeneration = first.turn.generation;
+    return { floor: pending.floor, rule: pending.rule, abandon: () => pending.abandon(),
+      commit: async (read: ExtensionPayRead) => {
+        const now = payEligible(entry, info.result, info.document.url);
+        const agreed = flow.liveAgreed(pending.id, readPayPage(read.page), { ...base, kind });
+        const current = await documentFor(entry, info.document.tabId).catch(() => undefined);
+        const answer = pending.commit({ binding: agreed && current ? payBinding(entry, info.result, current, read, agreed) : undefined, eligible: now.answer,
+          stopped: !live(entry, scope), generationActive: now.turn?.generation === turnGeneration });
+        if ('refuse' in answer) return answer;
+        return { settle: (result: 'pressed' | 'uncertain' | 'not-pressed' | 'changed') => flow.settle(answer, result),
+          // At the activation: the same document (loader) and the same agreed digest (all visible text plus the card's rows) as approved.
+          recheck: (again: ExtensionPayRead) => { const now = flow.liveAgreed(pending.id, readPayPage(again.page), { ...base, kind }); return !!now && now === answer.binding.agreed && !!again.loader && again.loader === answer.binding.loader; } };
+      } };
+  };
   const makeExecutor = (entry: Entry) => {
     const transport={document:(tabId?:number)=>documentFor(entry,tabId),send:(method:string,params:Record<string,unknown>,document:ExtensionDocument)=>send(entry,method,params,document),frames:(document:ExtensionDocument)=>send(entry,'Murage.getAllFrames',{},document)};
     const site=activitySite;
@@ -1464,11 +1548,13 @@ export async function createBrowserExtensionService(options: {
     return new BrowserExtensionExecutor({
       documentOwner: entry.context.botId,
       noLimits:()=>serviceOwnerNoLimits(options.authorityFor?.(entry.context)),
+      readUnredacted:()=>serviceUnredactedRead(options.authorityFor?.(entry.context)),
       assertSiteAccess:origin=>assertSiteAccess(entry,origin),
       authorize:()=>active(entry),authorizationError:()=>authorizationError(entry),
       transport:{...transport,frames:document=>transport.send('Murage.getAllFrames',{},document)},
       ...(options.collectFacts?{collectFacts:options.collectFacts}:{}),
       activity:event=>record({name:event.operation,document:event.document,mutation:true,target:event.target,fromPage:event.fromPage,textLength:event.textLength},event.decision,event.decision==='your turn'?'policy':'owner',event.outcome,undefined,undefined,event.id),
+      ...(options.payFlow?{payCard:(info:Parameters<NonNullable<ExtensionExecutorOptions['payCard']>>[0],callScope?:CallScope)=>payCardFor(entry,info,callScope as Scope|undefined)}:{}),
       onFloor:async (info,callScope)=>{const scope=callScope as Scope|undefined;
         // SABLE-B 5.2 (fixer r1): the floor helper carries the scope of the call that looked; a dead one (the read ended while a dialog's floor
         // facts were collected) writes no hand-off and sends no Pause.
@@ -1487,7 +1573,7 @@ export async function createBrowserExtensionService(options: {
         try{options.onHandoff?.({context:{...entry.context},site:host,category,unsure:info.result.unsure===true,text:yourTurnNote(bot,host,category),phrase:category==='account'?ACCOUNT_OWNER_PHRASE:category?FLOOR_OWNER_PHRASE[category]:''});}catch{/* telling the owner is best effort */}
       },
       createEngine:hooks=>(options.createEngine??(engineOptions=>new BrowserExtensionEngine(engineOptions)))({
-        dataDir:path.dirname(parent),realmId:workspaceId,bindingId:entry.context.bindingId,noLimits:()=>serviceOwnerNoLimits(options.authorityFor?.(entry.context)),authorize:()=>active(entry),authorizationError:()=>authorizationError(entry),...hooks,
+        dataDir:path.dirname(parent),realmId:workspaceId,bindingId:entry.context.bindingId,noLimits:()=>serviceOwnerNoLimits(options.authorityFor?.(entry.context)),readUnredacted:()=>serviceUnredactedRead(options.authorityFor?.(entry.context)),authorize:()=>active(entry),authorizationError:()=>authorizationError(entry),...hooks,
         transport:{
           selected:()=>documentFor(entry),
           documents:async()=>{await refresh(entry);if(!active(entry))throw authorizationError(entry);return [...entry.documents.values()].map(doc=>structuredClone(doc));},
@@ -1554,6 +1640,47 @@ export async function createBrowserExtensionService(options: {
     siteOwed(bindingId: string): number | undefined { return entryFor(bindingId).setOwed; },
     /** EXT-RESTART 4.2: the sites Full granted on its own for the current task (read only; for tests and diagnostics). */
     autoGranted(bindingId: string): string[] { return [...(entryFor(bindingId).autoL1 ?? [])].sort(); },
+    /** CHROME-RESUME-FROM-APP (1.0.23, design section 5.1). The owner's Resume at the desktop for a plainly paused task. The ONLY way the task
+     * becomes active is the extension's own `resumed` event (D3): this never writes `active`. `generation` is the one the app displayed. */
+    async resumeFromApp(bindingId: string, generation: number) {
+      const entry = entryFor(bindingId);
+      if (entry.state === 'stopped') fail('binding_stopped');
+      if (entry.state === 'paused' && entry.pausedReason === 'handoff') fail('handoff_use_continue');
+      if (entry.state !== 'paused') fail('not_paused');
+      if (!online(entry)) fail('host_offline');
+      if (!broker.profiles().find(profile => profile.profileId === entry.context.profileId)?.capabilities.includes(APP_RESUME_CAPABILITY)) fail('update_extension');
+      if (entry.appResume) fail('resume_in_flight');
+      if (generation !== entry.context.generation) fail('stale_generation');
+      entry.appResume = { gen: generation };
+      const profileId = entry.context.profileId;
+      try {
+        // U3: the extension must hold the server's current site set before Resume checks the tabs against it. A site the owner took back
+        // while the task was paused may not have reached it (a failed bind); bind first, and a bind that fails leaves the task paused.
+        try {
+          await bind(entry);
+          if (entry.state !== 'paused' || entry.context.generation !== generation) fail('stale_generation');
+          await request(entry, 'resume', { reason: 'app_owner' });
+        }
+        catch (error) {
+          const code = errorCode(error);
+          if (APP_RESUME_LOST.includes(code)) { entry.adoptDue = true; throw error; }
+          if (code === 'deadline_exceeded_uncertain') throw error;          // S8b: nothing here; a later `resumed` event converges it
+          if (APP_RESUME_REFUSED.includes(code) && code !== 'stale_generation') { await onProfile(profileId, () => adopt(entry)); throw error; }
+          // stale_generation (H1: it may be an orphan-active extension) and every other code (S7): look, and never leave Chrome active
+          // while the server shows paused. The recovery runs on the profile chain.
+          const repaused = await onProfile(profileId, () => refenceOrphan(entry));
+          if (repaused) throw Object.assign(Error('resume_failed'), { code: 'resume_failed' });
+          if (code === 'stale_generation') throw error;
+          if (entry.state === 'active') return { state: entry.state, generation: entry.context.generation };   // the `resumed` event was taken in meanwhile
+          throw Object.assign(Error('resume_failed'), { code: 'resume_failed' });
+        }
+        // The extension emits `resumed` before it answers, on one ordered port: its lifecycle link is already queued ahead of this empty link.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([onProfile(profileId, async () => {}), new Promise<void>(resolve => { timer = setTimeout(resolve, options.appResumeSettleMs ?? APP_RESUME_SETTLE_MS); })]);
+        if (timer) clearTimeout(timer);
+        return { state: entry.state, generation: entry.context.generation, ...(entry.state !== 'active' ? { code: 'resume_unconfirmed' } : {}) };
+      } finally { entry.appResume = undefined; }
+    },
     onHello(profileId: string) {
       for (const entry of entries.values()) {
         if (entry.context.profileId !== profileId) continue;

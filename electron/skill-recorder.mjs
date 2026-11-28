@@ -27,7 +27,7 @@ import {
 } from "./build-recorder-helper.mjs";
 import { createHelperExit, stopOwnedHelper } from "./helper-stop.mjs";
 
-export { compileSkillMarkdown, saveSkillRecording, skillSlug } from "./skill-recording-store.mjs";
+export { compileSkillMarkdown, saveSkillRecording, skillRecordingBots, skillSlug } from "./skill-recording-store.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.join(__dirname, "resources", "recorder-helper.swift");

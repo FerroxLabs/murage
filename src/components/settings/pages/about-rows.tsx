@@ -13,8 +13,8 @@ import { useUpdaterState } from "@/lib/updater";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { APP_VERSION, changelogUrl } from "@/lib/whats-new";
 import { useStore } from "@/state/store";
-import { useState } from "react";
-import { Card } from "../../SettingsPrimitives";
+import { useEffect, useState } from "react";
+import { Card, Switch } from "../../SettingsPrimitives";
 import { ComputerOnlyStub } from "../../SettingsStub";
 
 /** Health in Settings: one quiet line to the Health screen, the one place issues are shown. */
@@ -176,6 +176,35 @@ export function ShortcutsRow() {
   );
 }
 
+/** "Get updates early": new versions a day before everyone else (ring beta, designs/RINGS-DESIGN.md section 4). The choice
+ *  stays on this computer; nothing about it is sent. Hidden on builds whose updater has no ring step. */
+export function GetUpdatesEarlyRow() {
+  const updater = typeof window === "undefined" ? undefined : window.muragebox?.updater;
+  const [early, setEarly] = useState<boolean | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void updater?.getUpdatesEarly?.().then((value) => { if (live) setEarly(value === true); }, () => { if (live) setEarly(false); });
+    return () => { live = false; };
+  }, [updater]);
+  if (!updater?.getUpdatesEarly || !updater.setUpdatesEarly) return null;
+  const toggle = async () => {
+    if (early === null) return;
+    setError(false);
+    try { setEarly(await updater.setUpdatesEarly!(!early)); } catch { setError(true); }
+  };
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <div className="text-[13px] text-ink">{t("updates.early.title")}</div>
+        <div className="text-[12px] leading-relaxed text-ink-secondary">{t("updates.early.note")}</div>
+        {error ? <p role="alert" className="mt-1 text-[12px] text-danger">{t("updates.early.saveError")}</p> : null}
+      </div>
+      <Switch checked={early === true} aria-label={t("updates.early.title")} data-setting-control="updates-early" disabled={early === null} onClick={() => void toggle()} />
+    </div>
+  );
+}
+
 /** The update row inside Version and updates: where the update stands and the one action. A Cloud window has no updater, so it
  *  shows the this-computer stub (S1). */
 export function UpdatesCard() {
@@ -184,6 +213,7 @@ export function UpdatesCard() {
     <section className="space-y-3" aria-label={t("settings.l1.card.about.updates")}>
       {typeof window !== "undefined" && window.muragebox?.updater && <p className="text-[13px] text-ink-secondary">{updatesStatusLine(s)}</p>}
       {typeof window === "undefined" || !window.muragebox?.updater ? <ComputerOnlyStub anchor="updates-heading" inline label={t("settings.l1.card.about.updates")} /> : cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" inline label={t("settings.l1.card.about.updates")} /> : <UpdateActionButton state={s} />}
+      {typeof window !== "undefined" && window.muragebox?.updater && !cloudCardHidden("updates-heading") && <GetUpdatesEarlyRow />}
     </section>
   );
 }

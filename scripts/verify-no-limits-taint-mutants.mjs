@@ -1,7 +1,8 @@
+import { evidencePath } from './evidence-path.mjs';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
-const directory='evidence/nlsym-A2/C4-mutants';mkdirSync(directory,{recursive:true});
+const directory=evidencePath('evidence/nlsym-A2/C4-mutants');mkdirSync(directory,{recursive:true});
 const file='server/no-limits-taint.ts',original=readFileSync(file,'utf8');
 const mutants=[
  ['M-NL-taint-removed','if(!hazards.length)continue;','continue;'],

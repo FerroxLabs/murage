@@ -23,7 +23,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: (await response.json().catch(() => null)) as any };
 };
 const dataFile = (name: string) => join(fixture.info.dataDir, name);
-type Turn = { token: string; botId: string; threadId: string; depth: number };
+type Turn = { token: string; botId: string; threadId: string };
 const dumpToken = (tag: string, botId: string, marker: string): Turn | null => {
   let lines: string[];
   try { lines = readFileSync(dataFile(`dumps${tag}.jsonl`), "utf8").split("\n").filter(Boolean); } catch { return null; }
@@ -32,7 +32,7 @@ const dumpToken = (tag: string, botId: string, marker: string): Turn | null => {
       const dump = withTurnSecrets(JSON.parse(line));
       const env = dump.mcpConfig.mcpServers.agents.env;
       if (env.MURAGE_BOT_ID !== botId || !JSON.stringify(dump.prompt ?? "").includes(marker)) continue;
-      return { token: env.MURAGE_COMMS_TOKEN, botId: env.MURAGE_BOT_ID, threadId: env.MURAGE_THREAD_ID, depth: Number(env.MURAGE_TURN_DEPTH ?? 0) };
+      return { token: env.MURAGE_COMMS_TOKEN, botId: env.MURAGE_BOT_ID, threadId: env.MURAGE_THREAD_ID };
     } catch { /* a line being written */ }
   }
   return null;
@@ -48,7 +48,7 @@ async function until<T>(read: () => T | null | undefined | false | Promise<T | n
 }
 const call = (turn: Turn, path: string, body: Record<string, unknown>) => fetch(fixture.info.url + path, { method: "POST",
   headers: { authorization: `Bearer ${turn.token}`, "content-type": "application/json" },
-  body: JSON.stringify({ fromBotId: turn.botId, fromThreadId: turn.threadId, depth: turn.depth, ...body }) });
+  body: JSON.stringify({ fromBotId: turn.botId, fromThreadId: turn.threadId, ...body }) });
 const messages = async (threadId: string) => ((await api("GET", `/api/threads/${threadId}/messages?limit=200`)).body?.messages ?? []) as any[];
 
 beforeAll(async () => {

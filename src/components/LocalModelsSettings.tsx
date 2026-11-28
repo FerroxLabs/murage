@@ -20,6 +20,7 @@ import {
   LOCAL_SERVER_KIND_LABELS,
   LOCAL_SERVER_KINDS,
   LOCAL_MODELS_ROUTES,
+  OLLAMA_CLOUD_COPY_REFUSAL,
   type LocalModelsListResponse,
   type LocalModelView,
   type LocalServerKind,
@@ -37,6 +38,7 @@ import {
   LOCAL_MODELS_TITLE,
   lookedLine,
   nextActionFor,
+  OLLAMA_CLOUD_LINE,
   OPEN_LOCAL_MODELS_EVENT,
   OPEN_MODEL_PICKER_EVENT,
   serverStatusLine,
@@ -193,8 +195,19 @@ function ModelCard({ server, model, label = model.model, onTested, onRefresh }: 
         return;
       }
       if (action.kind === "ollama-context-copy") {
-        const result: OllamaContextCopyResult = await api(LOCAL_MODELS_ROUTES.ollamaContextCopy(server.id), { method: "POST", body: JSON.stringify({ model: model.model }) });
-        setNotice(result.status === "created"
+        let result: OllamaContextCopyResult;
+        try {
+          result = await api(LOCAL_MODELS_ROUTES.ollamaContextCopy(server.id), { method: "POST", body: JSON.stringify({ model: model.model }) });
+        } catch (cause) {
+          // M10 R4: the server found a cloud model. Say why, and refresh so the
+          // stale card loses the copy offer.
+          if ((cause as { body?: { code?: unknown } } | undefined)?.body?.code !== "cloud-model") throw cause;
+          setError(failureMessage(cause, "make the copy"));
+          onRefresh();
+          return;
+        }
+        if (result.status === "refused") setNotice(OLLAMA_CLOUD_COPY_REFUSAL);
+        else setNotice(result.status === "created"
           ? `Created ${result.model} with a ${Math.round(result.numCtx / 1024)}K context. Test it to confirm.`
           : `This Ollama version could not make the copy. Run: ${result.command}`);
         onRefresh();
@@ -212,6 +225,7 @@ function ModelCard({ server, model, label = model.model, onTested, onRefresh }: 
       <p className="min-w-0 break-all text-[13px] text-ink">{label}</p>
       {model.loaded && <span className="text-[11px] text-ink-secondary">In memory now</span>}
     </div>
+    {model.cloud && <p className="mt-1 text-[11px] text-ink-secondary">{OLLAMA_CLOUD_LINE}</p>}
     <p className="mt-1 text-[11px] text-ink-secondary">{contextLine(model)}</p>
     {enginesLine(model) && <p className="mt-1 text-[11px] text-ink-secondary">{enginesLine(model)}</p>}
     {test && <p className={`mt-1 flex items-start gap-1 text-[12px] ${test.outcome === "tools-work" ? "text-success" : test.outcome === "tools-partial" ? "text-warning" : "text-danger"}`}>

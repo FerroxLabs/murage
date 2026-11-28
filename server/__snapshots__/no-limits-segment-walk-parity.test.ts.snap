@@ -1204,11 +1204,9 @@ exports[`readable forms Full access: owner > 'cpio-cwd-RUN' Full access snapshot
 exports[`readable forms Full access: owner > 'cwd-relative-RED' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-    "reason": "protected-path",
-    "rule": "protected-path",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1247,11 +1245,9 @@ exports[`readable forms Full access: owner > 'cwd-relative-RUN' Full access snap
 exports[`readable forms Full access: owner > 'cwd-subshell-RED' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-    "reason": "protected-path",
-    "rule": "protected-path",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1290,11 +1286,9 @@ exports[`readable forms Full access: owner > 'cwd-subshell-RUN' Full access snap
 exports[`readable forms Full access: owner > 'cwd-wrapper-RED' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-    "reason": "protected-path",
-    "rule": "protected-path",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1376,11 +1370,8 @@ exports[`readable forms Full access: owner > 'process-subst-RED' Full access sna
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1399,12 +1390,8 @@ exports[`readable forms Full access: owner > 'process-subst-RED' Full access sna
 exports[`readable forms Full access: owner > 'process-subst-RUN' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1444,11 +1431,9 @@ exports[`readable forms Full access: owner > 'read-0' Full access snapshot 1`] =
 exports[`readable forms Full access: owner > 'read-1' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-    "reason": "protected-path",
-    "rule": "protected-path",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1467,11 +1452,9 @@ exports[`readable forms Full access: owner > 'read-1' Full access snapshot 1`] =
 exports[`readable forms Full access: owner > 'read-2' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-    "reason": "protected-path",
-    "rule": "protected-path",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1490,11 +1473,9 @@ exports[`readable forms Full access: owner > 'read-2' Full access snapshot 1`] =
 exports[`readable forms Full access: owner > 'read-3' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-    "reason": "protected-path",
-    "rule": "protected-path",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1513,11 +1494,9 @@ exports[`readable forms Full access: owner > 'read-3' Full access snapshot 1`] =
 exports[`readable forms Full access: owner > 'read-4' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-    "reason": "protected-path",
-    "rule": "protected-path",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1536,11 +1515,9 @@ exports[`readable forms Full access: owner > 'read-4' Full access snapshot 1`] =
 exports[`readable forms Full access: owner > 'read-5' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-    "reason": "protected-path",
-    "rule": "protected-path",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1709,11 +1686,8 @@ exports[`readable forms Full access: owner > 'read-13' Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -1801,12 +1775,9 @@ exports[`readable forms Full access: owner > 'read-16' Full access snapshot 1`] 
 exports[`readable forms Full access: owner > 'read-17' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1849,12 +1820,8 @@ exports[`readable forms Full access: owner > 'read-18' Full access snapshot 1`] 
 exports[`readable forms Full access: owner > 'read-19' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1873,12 +1840,8 @@ exports[`readable forms Full access: owner > 'read-19' Full access snapshot 1`] 
 exports[`readable forms Full access: owner > 'read-20' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1898,11 +1861,8 @@ exports[`readable forms Full access: owner > 'round2-body-RED' Full access snaps
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1922,11 +1882,8 @@ exports[`readable forms Full access: owner > 'round2-body-RUN' Full access snaps
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1946,11 +1903,8 @@ exports[`readable forms Full access: owner > 'round2-word-RED' Full access snaps
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1970,11 +1924,8 @@ exports[`readable forms Full access: owner > 'round2-word-RUN' Full access snaps
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1994,11 +1945,8 @@ exports[`readable forms Full access: owner > 'round3-body-RED' Full access snaps
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2017,12 +1965,8 @@ exports[`readable forms Full access: owner > 'round3-body-RED' Full access snaps
 exports[`readable forms Full access: owner > 'round3-body-RUN' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2042,11 +1986,8 @@ exports[`readable forms Full access: owner > 'round3-list-RED' Full access snaps
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2065,12 +2006,8 @@ exports[`readable forms Full access: owner > 'round3-list-RED' Full access snaps
 exports[`readable forms Full access: owner > 'round3-list-RUN' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2090,11 +2027,8 @@ exports[`readable forms Full access: owner > 'round3-word-RED' Full access snaps
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2113,12 +2047,8 @@ exports[`readable forms Full access: owner > 'round3-word-RED' Full access snaps
 exports[`readable forms Full access: owner > 'round3-word-RUN' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2138,11 +2068,8 @@ exports[`readable forms Full access: owner > 'round4-opaque-RED' Full access sna
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2161,12 +2088,9 @@ exports[`readable forms Full access: owner > 'round4-opaque-RED' Full access sna
 exports[`readable forms Full access: owner > 'round4-opaque-RUN' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3665,11 +3589,8 @@ exports[`readable forms Full access: routine > 'process-subst-RED' Full access s
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3689,12 +3610,8 @@ exports[`readable forms Full access: routine > 'process-subst-RED' Full access s
 exports[`readable forms Full access: routine > 'process-subst-RUN' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4013,11 +3930,8 @@ exports[`readable forms Full access: routine > 'read-13' Full access snapshot 1`
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -4159,12 +4073,8 @@ exports[`readable forms Full access: routine > 'read-18' Full access snapshot 1`
 exports[`readable forms Full access: routine > 'read-19' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4184,12 +4094,8 @@ exports[`readable forms Full access: routine > 'read-19' Full access snapshot 1`
 exports[`readable forms Full access: routine > 'read-20' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4210,11 +4116,8 @@ exports[`readable forms Full access: routine > 'round2-body-RED' Full access sna
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4235,11 +4138,8 @@ exports[`readable forms Full access: routine > 'round2-body-RUN' Full access sna
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4260,11 +4160,8 @@ exports[`readable forms Full access: routine > 'round2-word-RED' Full access sna
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4285,11 +4182,8 @@ exports[`readable forms Full access: routine > 'round2-word-RUN' Full access sna
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4310,11 +4204,8 @@ exports[`readable forms Full access: routine > 'round3-body-RED' Full access sna
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4334,12 +4225,8 @@ exports[`readable forms Full access: routine > 'round3-body-RED' Full access sna
 exports[`readable forms Full access: routine > 'round3-body-RUN' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4360,11 +4247,8 @@ exports[`readable forms Full access: routine > 'round3-list-RED' Full access sna
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4384,12 +4268,8 @@ exports[`readable forms Full access: routine > 'round3-list-RED' Full access sna
 exports[`readable forms Full access: routine > 'round3-list-RUN' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4410,11 +4290,8 @@ exports[`readable forms Full access: routine > 'round3-word-RED' Full access sna
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4434,12 +4311,8 @@ exports[`readable forms Full access: routine > 'round3-word-RED' Full access sna
 exports[`readable forms Full access: routine > 'round3-word-RUN' Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,

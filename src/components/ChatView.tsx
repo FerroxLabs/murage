@@ -90,6 +90,7 @@ import { toolFailureSummary } from "../../shared/tool-activity";
 import { resourceWaitLabel } from "@/lib/resource-wait";
 import { liveActivityLabel, modelStillThinking, turnStatusLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { RawMarkdownToggle } from "./RawMarkdownToggle";
 import { LiveReplyBubble, useStreamPaint } from "./LiveReplyBubble";
 import { streamPaintText } from "@/lib/stream-paint";
 import { OptionCard, shouldHideOnboardingCard, permissionCardRenderable } from "./OptionCard";
@@ -150,11 +151,11 @@ import { useFocusMessage } from "@/lib/focus-message";
 import { ExportPasteNote } from "./ExportPasteNote";
 import { FromPhoneLine } from "./FromPhoneLine";
 import { canEditLine } from "@/lib/compose-link";
-import { describeRunRaw, groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
+import { describeRunRaw, groupTranscript, interimSteps, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
 import { TranscriptTail } from "./TranscriptTail";
 import { tailOf } from "@/lib/transcript-tail";
 import { VirtualTranscript } from "./VirtualTranscript";
-import { ActivityRun } from "./ActivityRun";
+import { ActivityRun, InterimStepsRow } from "./ActivityRun";
 import { TurnNarrationRun } from "./TurnNarrationRun";
 import { WEBHOOK_LOADING_TEXT, useWebhookDisplayText, useWebhookMessageView } from "@/lib/webhook-message-lazy";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
@@ -205,6 +206,12 @@ import { copyOrReport, useCopyFeedback } from "@/lib/copy-text";
 import { BotSignInOffer, ChatComposerGate, useChatSignIn } from "@/components/cloud/BotSignInOffer";
 import { fluxReadyOf, fuigoPendingHere, ownSignedInOf } from "@/lib/cloud-signin-status";
 import { isCloudHome } from "@/lib/cloud-workspace";
+import { TeachOfferCard, type TeachCardPhase } from "./TeachOfferCard";
+import { skillRecorderAvailable, skillRecorderEnabled } from "@/lib/feature-flags";
+import { isCloudOrigin } from "@/lib/cloud-workspace";
+import { useDesktopSurface } from "@/lib/use-surface";
+import { useDesktopCapabilities } from "./DesktopCapabilities";
+import { setComposerDraftText } from "@/lib/drafts";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -867,7 +874,7 @@ function Bubble({
                   className={text ? "justify-start" : "mb-0 justify-start"}
                 />
               ) : null}
-              {text ? <ChatMarkdown text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
+              {text ? <RawMarkdownToggle text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} voiceNote={message.role === "bot" ? { threadId: bot.threadId, messageId: message.id } : undefined} /> : null}
               {message.kind === "text" && <ServedModelNote served={message.servedModel} />}
               {message.withheldFromBots && (
@@ -984,13 +991,14 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
   // bot⇄bot comm chip: opens the channel where the exchange lives
   const comm = message.comm;
   if (comm) {
+    const commFailed = tool.ok === false;
     if (commChipAction({ phone: isPhoneClient(), groupId: comm.groupId, groups: groupVisible ? [{ id: comm.groupId }] : [] }) === "blocked") {
       return (
         <div className="flex justify-start">
           <div
             aria-disabled="true"
             title={`This conversation between ${botName} and ${comm.withName} is only on your Mac.`}
-            className={cn(CHIP, "cursor-default text-left text-ink-secondary")}
+            className={cn(CHIP, "cursor-default text-left", commFailed ? "text-danger" : "text-ink-secondary")}
           >
             <span className="shrink-0">
               <CommAvatar comm={comm} bots={peer ? [peer] : []} />
@@ -1005,7 +1013,7 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
         <button
           onClick={() => dispatch({ type: "select", id: comm.groupId })}
           title={`Open the conversation with ${comm.withName}`}
-          className={cn(CHIP, "text-left text-ink-secondary hover:bg-raised hover:text-ink")}
+          className={cn(CHIP, "text-left hover:bg-raised", commFailed ? "text-danger" : "text-ink-secondary hover:text-ink")}
         >
           <span className="shrink-0">
             <CommAvatar comm={comm} bots={peer ? [peer] : []} />
@@ -1164,6 +1172,8 @@ export const MessagesList = memo(function MessagesList({
   // becomes one reversible turn row while the terminal answer stays visible.
   const helperRuns = useStreamHelpers().runs[bot.threadId];
   const items = useMemo(() => groupTranscript(messages, helperRuns), [messages, helperRuns]);
+  // 1020: a step between two texts of one turn stays named between them, so they read as one reply
+  const stepsBetween = useMemo(() => interimSteps(messages, showToolCalls), [messages, showToolCalls]);
   // QW Q2: the bot messages whose question fences became cards, read across the whole active branch
   const fenceCards = useMemo(() => questionFenceCards(transcript), [transcript]);
   const instances = state.instances;
@@ -1461,12 +1471,14 @@ export const MessagesList = memo(function MessagesList({
           }
         })();
         if (!row) return divider ? <div key={m.id}>{divider}</div> : null;
+        const between = stepsBetween.get(m.id);
         return (
           <div key={m.id} data-row={m.id} className="transcript-row flex flex-col gap-3" data-mid={m.id}>
             {newDay && <DaySeparator at={m.at} />}
             {dividers.has(m.id) && (
               <div role="separator" data-testid="engine-divider" className="px-2 py-1 text-center text-[11.5px] text-ink-secondary">{dividers.get(m.id)}</div>
             )}
+            {between && <InterimStepsRow messages={between} />}
             {m.role === "bot" && m.engine ? <div className="contents" title={engineHoverLabel(m.engine, engineLabel)}>{row}</div> : row}
           </div>
         );
@@ -1531,9 +1543,31 @@ const editsInFlight = new Map<string, AbortController>();
 const editKey = (botId: string, messageId: string) => `${botId}\u0000${messageId}`;
 const editErrorLine = (error: unknown): string => (error instanceof Error && error.message ? error.message : "That edit did not go through. Try again.");
 
+/** TEACH-ENTRY D9.4: after Not now, phrase cards stop for that chat until the app restarts (/teach still shows one). */
+const teachPhraseMuted = new Set<string>();
+interface TeachCard { key: number; threadId: string; task: string; phase: TeachCardPhase }
+let teachCardSeq = 0;
+
 export function ChatView({ bot:profile }: { bot: Bot }) {
   const bot=viewedTaskBot(profile);
   const { state, dispatch } = useStore();
+  // TEACH-ENTRY D9: the Teach card, gated on every render by the same check as the header button.
+  const teachDesktop = useDesktopSurface();
+  const { capabilities: teachCaps } = useDesktopCapabilities();
+  const teachAvailable = skillRecorderAvailable(state.config, teachDesktop, isCloudOrigin(), teachCaps.host?.platform);
+  const [teachCards, setTeachCards] = useState<TeachCard[]>([]);
+  const teachOffer = {
+    botName: bot.name,
+    available: teachAvailable,
+    onOffer: (task: string, via: "slash" | "phrase") => {
+      if (!teachAvailable) return false;
+      if (via === "phrase" && teachPhraseMuted.has(bot.threadId)) return false;
+      const card: TeachCard = { key: ++teachCardSeq, threadId: bot.threadId, task, phase: "open" };
+      setTeachCards((cards) => [...cards, card]);
+      return true;
+    },
+  };
+  const setTeachPhase = (key: number, phase: TeachCardPhase) => setTeachCards((cards) => cards.map((card) => (card.key === key ? { ...card, phase } : card)));
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad();
@@ -2165,6 +2199,23 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
               </div>
             </div>
           )}
+          {teachAvailable && teachCards.filter((card) => card.threadId === bot.threadId).map((card) => (
+            <div key={`teach-${card.key}`} className="flex justify-start">
+              <TeachOfferCard
+                botName={bot.name}
+                task={card.task}
+                phase={card.phase}
+                describeOn={skillRecorderEnabled(state.config)}
+                onStart={(task) => {
+                  if (card.phase !== "open") return;
+                  setTeachPhase(card.key, "opened");
+                  dispatch({ type: "showSkillRecorder", via: "entry", forBotId: bot.id, task, start: true });
+                }}
+                onNotNow={() => { teachPhraseMuted.add(card.threadId); setTeachPhase(card.key, "dismissed"); }}
+                onDescribe={(task) => { setComposerDraftText(`bot:${bot.id}:${bot.threadId}`, `/learn ${task}`.trimEnd() + " "); setTeachPhase(card.key, "dismissed"); }}
+              />
+            </div>
+          ))}
           {bot.busy && plan?.length ? <LivePlanCard entries={plan} /> : null}
           {/* Everyone sees it, collapsed: a long think must not look like a
               hang. It is not tool detail, so Settings → Tool calls does not
@@ -2237,6 +2288,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
         onConsumeReply={consumeReply}
         onRestoreReply={restoreReply}
         onEditLast={lastUserMessage && canEditLine(lastUserMessage) && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
+        teachOffer={teachOffer}
       />
       </ChatComposerGate>
       </div>

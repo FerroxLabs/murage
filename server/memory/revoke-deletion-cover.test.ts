@@ -107,8 +107,8 @@ const deleteThread = (db: Db, T: string) => tx(db, () => commitRevoke(db, { kind
 function facts(db: Db) {
   const set = (sql: string) => new Set((db.prepare(sql).all() as Array<Record<string, unknown>>).map(r => JSON.stringify(Object.values(r))));
   return {
-    lines: set("SELECT thread_id,lsn FROM memory_deny_line ORDER BY 1,2"),
-    memory: set("SELECT kind,id,version FROM memory_deny_memory ORDER BY 1,2,3"),
+    lines: set("SELECT thread_id,lsn FROM memory_deny_point ORDER BY 1,2"),
+    memory: set("SELECT kind,id,version FROM memory_deny_object ORDER BY 1,2,3"),
     sessions: set("SELECT thread_id,driver_instance,native_session FROM memory_deny_session ORDER BY 1,2,3"),
     ranges: (db.prepare("SELECT thread_id t,from_lsn f,until_turn_lsn u FROM memory_deny_range").all() as Array<{ t: string; f: number; u: number }>),
   };
@@ -135,8 +135,11 @@ function verdicts(db: Db): string {
   return out.join("\n");
 }
 
-beforeEach(() => { fold.REVOKE_FOLD.enabled = false; marker.REVOKE_COVER.enabled = true; deletionCover(true); M.resetCoverProbe?.(); marker.setScopeFlowEdgesRecorded(true); });
-afterEach(() => { fold.REVOKE_FOLD.enabled = true; marker.REVOKE_COVER.enabled = true; deletionCover(true); });
+// 1.0.23 (schema 14, as revoke-cover.test.ts): this suite compares the EXPLICIT rows two walks write, so it runs the marker with every mark
+// written (MARK_SUPPRESSION off, 1.0.22's rows). With the suppression on, which of two equal walks leaves a row and which leaves it to the
+// read-time rule depends on the edge a node was reached by; the "rule on" differential below compares the owner's verdicts instead.
+beforeEach(() => { marker.MARK_SUPPRESSION.on = false; fold.REVOKE_FOLD.enabled = false; marker.REVOKE_COVER.enabled = true; deletionCover(true); M.resetCoverProbe?.(); marker.setScopeFlowEdgesRecorded(true); });
+afterEach(() => { marker.MARK_SUPPRESSION.on = true; fold.REVOKE_FOLD.enabled = true; marker.REVOKE_COVER.enabled = true; deletionCover(true); });
 
 describe("1 D: N deletions cost about one walk, with the per-job walk's facts (fail-before: the knob and the skips)", () => {
   for (const seed of [1, 2, 3]) {
@@ -163,6 +166,25 @@ describe("1 D: N deletions cost about one walk, with the per-job walk's facts (f
       } finally { on.fx.close(); off.fx.close(); }
     });
   }
+  for (const seed of [1, 2, 3]) {
+    it(`differential on a shared store (seed ${seed}), the read-time rule on (schema 14 writer): cover on vs per job, same owner verdicts`, () => {
+      marker.MARK_SUPPRESSION.on = true;
+      const on = sharedStore(seed), off = sharedStore(seed);
+      try {
+        const before = verdicts(on.db);
+        for (const T of ["ta", "tc", "te", "tb"]) { deleteThread(on.db, T); deleteThread(off.db, T); }
+        M.resetCoverProbe?.();
+        deletionCover(true); drainAll(on.db);
+        const p = probe();
+        deletionCover(false); drainAll(off.db); deletionCover(true);
+        expect(p.coverRows, "cover rows written by a deletion walker").toBeGreaterThan(0);
+        // the deletions withheld something, and the owner's reader sees exactly the per-job walk's verdicts
+        expect(verdicts(off.db)).not.toBe(before);
+        expect(verdicts(on.db)).toBe(verdicts(off.db));
+        expect(n(on.db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE state='active'")).toBe(0);
+      } finally { on.fx.close(); off.fx.close(); }
+    });
+  }
   it("four deletions: the handler walks about once (handler runs with cover well below the per-job walk's)", () => {
     const on = sharedStore(5), off = sharedStore(5);
     try {
@@ -170,8 +192,8 @@ describe("1 D: N deletions cost about one walk, with the per-job walk's facts (f
       M.resetCoverProbe?.(); deletionCover(true); drainAll(on.db); const withCover = probe().handlerRuns;
       M.resetCoverProbe?.(); deletionCover(false); drainAll(off.db); deletionCover(true);
       // with the cover off no deletion gets a cover context, so the probe counts nothing: count the per-job walk by its reached rows instead
-      const perJobVisits = n(off.db, "SELECT count(*) AS n FROM memory_revoke_reached WHERE revoke_id>0") + n(off.db, "SELECT count(*) AS n FROM memory_deny_memory");
-      const coveredVisits = n(on.db, `SELECT count(*) AS n FROM memory_revoke_reached WHERE revoke_id>0`) + n(on.db, "SELECT count(*) AS n FROM memory_deny_memory");
+      const perJobVisits = n(off.db, "SELECT count(*) AS n FROM memory_revoke_reached WHERE revoke_id>0") + n(off.db, "SELECT count(*) AS n FROM memory_deny_object");
+      const coveredVisits = n(on.db, `SELECT count(*) AS n FROM memory_revoke_reached WHERE revoke_id>0`) + n(on.db, "SELECT count(*) AS n FROM memory_deny_object");
       expect(withCover).toBeGreaterThan(0);
       expect(coveredVisits, `covered ${coveredVisits} vs per job ${perJobVisits}`).toBeLessThan(perJobVisits);
     } finally { on.fx.close(); off.fx.close(); }
@@ -197,7 +219,7 @@ describe("2 F1: the class rule. A deletion never skips under an audience coverer
       db.prepare("UPDATE memory_revoke_jobs SET phase='done',state='done' WHERE revoke_id=?").run(A);
       // (the deletion's quiet tidy cleans the rows afterwards; the trace records at the skip, so the question is answered before that)
       for (const [kind, id, version] of [["source", "src0", 0], ["record", "rec0", 1]] as const) {
-        db.prepare("INSERT OR IGNORE INTO memory_deny_memory(kind,id,version,revoke_id) VALUES(?,?,?,?)").run(kind, id, version, A);
+        db.prepare("INSERT OR IGNORE INTO memory_deny_object(kind,id,version,revoke_id) VALUES(?,?,?,?)").run(kind, id, version, A);
         const key = kind === "source" ? `s:${id}` : `r:${id}:${version}`;
         db.prepare("INSERT OR IGNORE INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(?,?,?)").run(COVER_REVOKE, M.coverKey(key, 0, A), 9000);
       }
@@ -211,10 +233,10 @@ describe("2 F1: the class rule. A deletion never skips under an audience coverer
       // whatever skipped (the audience follower 901 may, under the deletion's rows), nothing skipped under A's rows
       expect((M.COVER_TRACE.coverers as number[]).includes(A), "no skip was granted by the audience coverer's rows").toBe(false);
       // no skip under the audience coverer: the deletion's own content marks exist for both
-      expect(n(db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='source' AND id='src0' AND revoke_id=?", D)).toBe(1);
-      expect(n(db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='record' AND id='rec0' AND revoke_id=?", D)).toBe(1);
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='source' AND id='src0' AND revoke_id=?", D)).toBe(1);
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='record' AND id='rec0' AND revoke_id=?", D)).toBe(1);
       // and the content reader is withheld on them by a content mark (an audience-only mark would not do)
-      expect(n(db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='source' AND id='src0' AND revoke_id NOT IN (SELECT revoke_id FROM memory_revoke_audience)")).toBeGreaterThan(0);
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='source' AND id='src0' AND revoke_id NOT IN (SELECT revoke_id FROM memory_revoke_audience)")).toBeGreaterThan(0);
     } finally { s.fx.close(); }
   });
   it("a deletion walked to hold; an audience job (lower cap) reaching the same source skips under it", () => {
@@ -229,9 +251,9 @@ describe("2 F1: the class rule. A deletion never skips under an audience coverer
       const A = audienceJob(db, 950, Math.max(1, cap - 1), [{ kind: "source", id: "src1" }]);
       M.resetCoverProbe?.();
       drainAll(db);
-      expect(n(db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='source' AND id='src1' AND revoke_id=?", D)).toBe(1);
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='source' AND id='src1' AND revoke_id=?", D)).toBe(1);
       expect(probe().skips, "the audience follower skipped under the deletion's cover").toBeGreaterThan(0);
-      expect(n(db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='source' AND id='src1' AND revoke_id=?", A)).toBe(0);
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_object WHERE kind='source' AND id='src1' AND revoke_id=?", A)).toBe(0);
       expect(jobRow(db, A)?.state ?? "done").not.toBe("active");
     } finally { s.fx.close(); }
   });

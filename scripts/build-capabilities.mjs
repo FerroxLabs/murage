@@ -19,6 +19,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
+import { settingsPageWords } from "./settings-page-label.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(root, "shared", "help-capabilities.ts");
@@ -53,19 +54,20 @@ for (const match of read("server/drivers/phone-tool-schemas.ts").matchAll(/^ {2}
 // `alt`: the docs may still use it. The 1.0.3 aliases (aboutMe, houseRules,
 // engines, ...) are not pages; each keeps its own settings.section.<id> word.
 const pagesSource = read("src/lib/settings-pages.ts");
+const pageWords = settingsPageWords(read("src/lib/settings-sections.ts"), en);
 const pagesStart = pagesSource.indexOf("export const SECTION_PAGES");
 const aliasesStart = pagesSource.indexOf("export const SECTION_ALIASES");
 if (pagesStart < 0 || aliasesStart < 0) throw new Error("settings-pages.ts: cannot find SECTION_PAGES or SECTION_ALIASES");
 for (const match of pagesSource.slice(pagesStart, aliasesStart).matchAll(/^ {2}\{ id: "([A-Za-z]+)", group:/gm)) {
-  const label = en[`settings.page.${match[1]}`];
-  if (!label) throw new Error(`settings page ${match[1]} has no settings.page.${match[1]} label`);
-  const legacy = en[`settings.section.${match[1]}`];
+  const label = pageWords.label(match[1]);
+  if (!label) throw new Error(`settings page ${match[1]} has no label: ${pageWords.describe(match[1])}`);
+  const legacy = pageWords.legacy(match[1]);
   add("settings-page", match[1], label, "src/lib/settings-pages.ts", legacy && legacy !== label ? legacy : undefined);
 }
 const aliasesEnd = pagesSource.indexOf("\n};", aliasesStart);
 for (const match of pagesSource.slice(aliasesStart, aliasesEnd).matchAll(/^ {2}([A-Za-z]+): \{ section: "/gm)) {
-  const label = en[`settings.section.${match[1]}`];
-  if (!label) throw new Error(`settings alias ${match[1]} has no settings.section.${match[1]} label`);
+  const label = pageWords.section(match[1]);
+  if (!label) throw new Error(`settings alias ${match[1]} has no label: ${pageWords.describeSection(match[1])}`);
   add("settings-page", match[1], label, "src/lib/settings-pages.ts");
 }
 
@@ -81,7 +83,7 @@ for (const match of botSections.matchAll(/\{ id: "([a-z]+)", label: "([^"]+)"/g)
 }
 
 // 4. The places in the sidebar.
-for (const key of ["nav.routines", "nav.files", "nav.apps", "nav.mapName"]) {
+for (const key of ["nav.routines", "nav.files", "nav.apps", "nav.mapName", "nav.teachSkill"]) {
   if (!en[key]) throw new Error(`missing locale key ${key}`);
   add("place", key, en[key], "src/locales/en.json");
 }
@@ -138,8 +140,6 @@ const ROUTE_TERMS = {
   "flux-connection": "Flux",
   "folder-trust": "working folder",
   groups: "channels",
-  // /api/highlevel: Settings > HighLevel token, location and per-bot read access (HL-S2 read only, 1.0.18)
-  highlevel: "HighLevel",
   "house-rules": "house rules",
   images: "image generation",
   inbox: "inbox",
@@ -190,6 +190,16 @@ const ROUTE_PLUMBING = new Set([
   "signal",
   // Owner-authenticated prepared-context inspection; no standalone navigation surface.
   "delegation-packs",
+  // The one-time 1.0.20 line (HighLevel moved to connected apps); the app shows it, no Settings surface.
+  "notices",
+  // The one Automatic-mode notice's Got it / Learn more answer; the app shows it, no Settings surface.
+  "automatic-notice",
+  // Profile names for the Claude account's Bedrock block (a field of the account's own sign-in card), no page of its own.
+  "bedrock",
+  // The sidebar's chief-transfer sheet (preview, outcome, move); desktop only, reached from the sheet, not from navigation.
+  "chief-transfer",
+  // A sealed conversation's rows and media for the owner's own computer; no navigation surface.
+  "mailbox",
   "announcements", "automation-admission", "config", "desktop", "desktop-secret", "deletion-preview", "deletions", "diagnostics",
   "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "owner-prefs", "presence", "restore-holds", "setup", "shared-results", "spend", "subscribe", "terms",
 ]);

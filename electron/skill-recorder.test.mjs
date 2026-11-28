@@ -191,6 +191,34 @@ describe("skill recorder compiler", () => {
     expect(JSON.parse(readFileSync(path.join(result.path, "manifest.json"), "utf8")).audience).toBe("owner");
   });
 
+  // TEACH-ENTRY 1.0.23 D5 ("Only {bot}"): the scoped save, through saveSkillRecording and read back by the library's own scope reader.
+  it("saves \"Only these bots\" into the manifest, deduped, and the library reads the same list back", async () => {
+    const { liveUserScopes } = await import("../server/skill-library.ts");
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "murage-recording-scope-"));
+    const scoped = saveSkillRecording({ name: "Scoped filing", bots: ["bot-a", "bot-b", "bot-a"] }, { dataRoot });
+    const open = saveSkillRecording({ name: "Open filing" }, { dataRoot });
+    expect(JSON.parse(readFileSync(path.join(scoped.path, "manifest.json"), "utf8")).bots).toEqual(["bot-a", "bot-b"]);
+    expect(JSON.parse(readFileSync(path.join(open.path, "manifest.json"), "utf8"))).not.toHaveProperty("bots");
+    const scopeOf = liveUserScopes(path.join(dataRoot, "skills"));
+    expect(scopeOf(scoped.id)).toEqual(["bot-a", "bot-b"]);
+    expect(scopeOf(open.id)).toBeUndefined();
+  });
+
+  it.each([
+    ["an empty list", []],
+    ["51 bots", Array.from({ length: 51 }, (_, i) => `bot-${i}`)],
+    ["a bad id", ["bot a"]],
+    ["a non-string id", [7]],
+    ["a string instead of a list", "bot-a"],
+  ])("refuses a scoped save with %s before creating anything", (_name, bots) => {
+    const dataRoot = mkdtempSync(path.join(tmpdir(), "murage-recording-scope-bad-"));
+    // The save is run first and its outcome kept, so a build that accepts the list still reaches the no-write assertion below.
+    let refusal;
+    try { saveSkillRecording({ name: "Bad scope", bots }, { dataRoot }); } catch (error) { refusal = error; }
+    expect(existsSync(path.join(dataRoot, "skills"))).toBe(false);
+    expect(refusal?.message).toBe("Who can use this skill is not valid.");
+  });
+
   it("refuses a missing, relative or absent data root before creating anything (B1)", () => {
     const parent = mkdtempSync(path.join(tmpdir(), "murage-recording-root-"));
     const missing = path.join(parent, "missing");

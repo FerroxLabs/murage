@@ -890,33 +890,47 @@ def mcp_gate():
     # H1: every MCP request needs a live host; after an idle/cap end the next one starts a proper host first.
     request = {"mode": "browser", "bot": "bot-1", "instance": "i" * 22, "args": ["mcp", "--tools", "core", "--no-webmcp"], "settings": {"AGENT_BROWSER_SESSION": "s1"}}
     state, calls = {"live": True, "start": True}, []
-    live = lambda root, bot, session, owner: state["live"]
+    # Injected delay between frames: a gate that takes time on its second call, so a pump forwarding two queued frames
+    # writes them far apart (a loaded host does this by itself). A reader that returns after one read misses the second.
+    delays = []
+    def live(root, bot, session, owner):
+        if delays: time.sleep(delays.pop(0))
+        return state["live"]
     def ensure(req, home):
         calls.append("ensure")
         state["live"] = state["start"]
     gate = lambda: m.require_host(request, "/h", root="/r", live=live, ensure=ensure)
     r, w = os.pipe(); out_r, out_w = os.pipe(); touches = []
-    def got(timeout=0.3):
-        return os.read(out_r, 1000) if select.select([out_r], [], [], timeout)[0] else b""
+    def got(expect, quiet=0.3, deadline=10):
+        # Read until the expected bytes are all here or the deadline passes (EOF ends early). Nothing expected: wait out a quiet window.
+        buf, end = b"", time.monotonic() + deadline
+        while len(buf) < len(expect) or not expect:
+            wait = (end if expect else time.monotonic() + quiet) - time.monotonic()
+            if wait <= 0 or not select.select([out_r], [], [], wait)[0]: break
+            chunk = os.read(out_r, 1000)
+            if not chunk: break
+            buf += chunk
+        return buf
     pump = threading_pump(r, out_w, gate, lambda: touches.append(1), framed=True)
     os.write(w, b'{"id":1}\n')
-    check(got() == b'{"id":1}\n' and calls == [], "live host: forwarded, nothing started")
+    check(got(b'{"id":1}\n') == b'{"id":1}\n' and calls == [], "live host: forwarded, nothing started")
     state["live"] = False  # the host ended (idle or cap)
     os.write(w, b'{"id":2}\n')
-    check(got() == b'{"id":2}\n' and calls == ["ensure"], "no host: one started before the frame")
+    check(got(b'{"id":2}\n') == b'{"id":2}\n' and calls == ["ensure"], "no host: one started before the frame")
     # A frame is a line: a partial one waits for its newline, nothing is checked or forwarded for it yet.
     state["live"] = True
     os.write(w, b'{"id":3,"x":"ab')
-    check(got() == b"" and len(touches) == 2, "a partial frame is held back")
+    check(got(b"") == b"" and len(touches) == 2, "a partial frame is held back")
     # Two frames arrive in one chunk: each is gated and counted on its own (chunk checks were not request checks).
+    delays[:] = [0, 0.6]
     os.write(w, b'c"}\n{"id":4}\n')
-    check(got() == b'{"id":3,"x":"abc"}\n{"id":4}\n' and len(touches) == 4, "two frames in one chunk: two gates, two stamps: %r" % touches)
+    check(got(b'{"id":3,"x":"abc"}\n{"id":4}\n') == b'{"id":3,"x":"abc"}\n{"id":4}\n' and len(touches) == 4, "two frames in one chunk: two gates, two stamps: %r" % touches)
     # The host ended and none can start: two frames queued in one chunk are BOTH refused. The first gate fails, the
     # pump ends with nothing more forwarded, the command's stdin closes; the second frame never reaches a gate.
     state["live"], state["start"] = False, False
     os.write(w, b'{"id":5}\n{"id":6}\n'); pump.join(5)
     check(not pump.is_alive() and pump.code == 1 and calls == ["ensure", "ensure"], "fail closed, one gate: %r" % calls)
-    check(got() == b"" and len(touches) == 4, "neither queued frame is forwarded or counted; stdin closes")
+    check(got(b"") == b"" and len(touches) == 4, "neither queued frame is forwarded or counted; stdin closes")
     os.close(w); os.close(r); os.close(out_r)
     # A frame without end fails closed at the bound rather than growing root memory.
     r, w = os.pipe(); out_r, out_w = os.pipe()
@@ -933,7 +947,7 @@ def mcp_gate():
     # Relay stdin stays a byte stream: no framing, chunks pass as they come.
     r, w = os.pipe(); out_r, out_w = os.pipe()
     pump = threading_pump(r, out_w, None, lambda: None)
-    os.write(w, b"GET /x\r\n\r\npartial"); check(got() == b"GET /x\r\n\r\npartial", "relay bytes unframed")
+    os.write(w, b"GET /x\r\n\r\npartial"); check(got(b"GET /x\r\n\r\npartial") == b"GET /x\r\n\r\npartial", "relay bytes unframed")
     os.close(w); pump.join(5); os.close(r); os.close(out_r)
     # Session clients never start a host; a missing one is the fixed refusal.
     try: m.require_host({**request, "args": ["--json", "get", "cdp-url"]}, "/h", root="/r", live=lambda *a: False, ensure=ensure, start=False); check(False, "client refused")

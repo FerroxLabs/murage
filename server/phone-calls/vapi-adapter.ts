@@ -5,10 +5,12 @@
 // Every vendor response goes through an allowlist projection at parse time: the `monitor` object (listenUrl, controlUrl) and
 // any unknown field are dropped before anything is stored, logged or returned. Vendor text never leaves this file: errors are
 // a fixed list of codes.
+import { AsyncLocalStorage } from "node:async_hooks";
+import { CALL_LANGUAGES } from "./tables.ts";
 import { PHONE_KEY_ORIGIN, _heldPhoneKeyForSend } from "./phone-secrets.ts";
 import { buildOpening, callTemplate, type PhoneCallSettings, type Revision } from "./settings.ts";
 
-export type PhoneErrorCode = "abandoned" | "not_confirmed" | "not_set_up" | "settings_pending" | "vendor_refused" | "vendor_unreachable" | "not_found" | "cancelled";
+export type PhoneErrorCode = "abandoned" | "not_confirmed" | "not_set_up" | "settings_pending" | "vendor_refused" | "vendor_unreachable" | "not_found" | "cancelled" | "refused" | "number_not_allowed" | "no_such_booking";
 export class PhoneCallError extends Error {
   readonly code: PhoneErrorCode;
   readonly httpStatus?: number;
@@ -16,7 +18,9 @@ export class PhoneCallError extends Error {
   constructor(code: PhoneErrorCode, httpStatus?: number) { super(code); this.code = code; if (httpStatus !== undefined) this.httpStatus = httpStatus; }
 }
 
-export interface CallRequest { operationId?: string; to: string; goal: string; details: string; limits: string; language: string; when?: string }
+export interface CallRequest { operationId?: string; to: string; goal: string; details: string; limits: string; language: string; when?: string;
+  /** A cancel's stored booking reference (I3). Sent only in variableValues; never in a tool argument, result or log. */
+  reference?: string }
 /** The allowlisted shape every adapter returns. Nothing else about a vendor call exists past the adapter. */
 export interface ProjectedCall {
   vendorId: string;
@@ -32,6 +36,8 @@ export interface ProjectedCall {
 export interface PhoneNumberInfo { id: string; number: string; canCallOut: boolean }
 export type SettingKey = "aiLine" | "notice" | "language" | "maxSeconds" | "voice" | "recordAudio" | "schedule" | "monitorOff" | "noWebhook" | "endCallOnly";
 
+export type ReconcilePage = { kind: "full" | "empty" } | { kind: "found"; call: ProjectedCall };
+
 export interface PhoneAdapter {
   readonly vendor: string;
   readonly supportedLanguages: readonly string[];
@@ -42,6 +48,7 @@ export interface PhoneAdapter {
   deleteAssistant(assistantId: string): Promise<void>;
   start(request: CallRequest, revision: Revision): Promise<ProjectedCall>;
   reconcile?(operationId: string): Promise<ProjectedCall | undefined>;
+  reconcilePage?(operationId: string, range: [number, number]): Promise<ReconcilePage>;
   status(vendorId: string): Promise<ProjectedCall>;
   result(vendorId: string): Promise<ProjectedCall>;
   cancel(vendorId: string): Promise<void>;
@@ -58,14 +65,32 @@ export function assertAdapterHonoursAll(adapter: PhoneAdapter): void {
 
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; redirect: "error" }) => Promise<{ status: number; json(): Promise<unknown> }>;
 
-export async function phoneVendorFetch(fetchImpl: FetchLike, method: string, path: string, body?: unknown): Promise<unknown> {
+// D6a 3.3: every actual vendor HTTP request is counted under the tag of the caller that reached it (default "d5"), so the hand-off
+// pass's allowance measures real requests whatever path (refreshOne, reconcile, cleanup) made them.
+const vendorTag = new AsyncLocalStorage<string>();
+const vendorCounts = new Map<string, number>();
+export function withVendorTag<T>(tag: string, run: () => Promise<T>): Promise<T> { return vendorTag.run(tag, run); }
+export function vendorRequestCount(tag: string): number { return vendorCounts.get(tag) ?? 0; }
+
+export async function phoneVendorFetch(fetchImpl: FetchLike, method: string, path: string, body?: unknown, query?: Record<string, string>): Promise<unknown> {
   if (!/^\/[A-Za-z0-9/_-]*$/.test(path) || path.includes("//")) throw new PhoneCallError("vendor_refused");
   const url = new URL(path, PHONE_KEY_ORIGIN);
   if (url.origin !== PHONE_KEY_ORIGIN || url.protocol !== "https:") throw new PhoneCallError("vendor_refused");
+  if (query) {
+    if (method !== "GET" || path !== "/call") throw new PhoneCallError("vendor_refused");
+    for (const [name, value] of Object.entries(query)) {
+      if (!["createdAtGe", "createdAtLe", "limit"].includes(name) || !/^[0-9TZ:.-]{1,40}$/.test(value)) {
+        throw new PhoneCallError("vendor_refused");
+      }
+      url.searchParams.set(name, value);
+    }
+  }
   const key = _heldPhoneKeyForSend(url.origin);
   if (!key) throw new PhoneCallError("not_set_up");
   let res: { status: number; json(): Promise<unknown> };
   try {
+    const tag = vendorTag.getStore() ?? "d5";
+    vendorCounts.set(tag, (vendorCounts.get(tag) ?? 0) + 1);
     res = await fetchImpl(url.href, { method, headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body), redirect: "error" });
   } catch {
     throw new PhoneCallError("vendor_unreachable");
@@ -109,8 +134,9 @@ export function projectVapiCall(raw: unknown): ProjectedCall {
 export const ANALYSIS_SCHEMA = {
   type: "object",
   properties: {
-    outcome: { type: "string", enum: ["done", "not_done", "no_answer", "voicemail", "busy", "failed"] },
-    reason: { type: "string", enum: ["closed", "fully_booked", "needs_owner", "refused", "other"] },
+    outcome: { type: "string", enum: ["done", "not_done", "no_answer", "voicemail", "busy", "failed"],
+      description: "done only if the business clearly confirmed the booking or cancellation in this call" },
+    reason: { type: "string", enum: ["closed", "fully_booked", "needs_owner", "refused", "other", "phone_menu"] },
     reference: { type: "string" },
     time: { type: "string" },
   },
@@ -157,7 +183,7 @@ export function vapiCallBody(request: CallRequest, revision: Revision): Record<s
     voice: voiceFor(s, request.language),
     transcriber: transcriberFor(s, request.language),
     monitorPlan: { ...MONITOR_OFF },
-    variableValues: { goal: request.goal, details: request.details, limits: request.limits, language: request.language },
+    variableValues: { goal: request.goal, details: request.details, limits: request.limits, language: request.language, ...(request.reference ? { reference: request.reference } : {}) },
   };
   if (opening.firstMessage !== undefined) overrides.firstMessage = opening.firstMessage;
   const body: Record<string, unknown> = { assistantId: revision.assistantId, phoneNumberId: s.phoneNumberId, customer: { number: request.to }, assistantOverrides: overrides };
@@ -182,7 +208,7 @@ export function verifyCallBody(body: Record<string, unknown>, request: CallReque
   if (!ok) throw new PhoneCallError("vendor_refused");
 }
 
-export const VAPI_LANGUAGES = ["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh", "it", "nl", "ko", "ru", "pl", "tr", "vi", "id"] as const;
+export const VAPI_LANGUAGES = CALL_LANGUAGES;
 
 export class VapiAdapter implements PhoneAdapter {
   readonly vendor = "vapi";
@@ -231,6 +257,18 @@ export class VapiAdapter implements PhoneAdapter {
     if (!Array.isArray(raw)) return undefined;
     const matches = raw.filter(r => r && typeof r === "object" && r.name === operationId);
     return matches.length === 1 ? projectVapiCall(matches[0]) : undefined;
+  }
+
+  async reconcilePage(operationId: string, [from, to]: [number, number]): Promise<ReconcilePage> {
+    const limit = 100;
+    const raw = await phoneVendorFetch(this.fetchImpl, "GET", "/call", undefined, {
+      createdAtGe: new Date(from).toISOString(), createdAtLe: new Date(to).toISOString(), limit: String(limit),
+    });
+    if (!Array.isArray(raw) || raw.length > limit) throw new PhoneCallError("vendor_refused");
+    if (raw.length === limit) return { kind: "full" };
+    const matches = raw.filter(row => row && typeof row === "object" && row.name === operationId);
+    if (matches.length > 1) throw new PhoneCallError("vendor_refused");
+    return matches.length === 1 ? { kind: "found", call: projectVapiCall(matches[0]) } : { kind: "empty" };
   }
 
   async status(vendorId: string): Promise<ProjectedCall> { return this.result(vendorId); }

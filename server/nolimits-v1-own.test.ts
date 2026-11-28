@@ -90,6 +90,8 @@ const ACTING_ROUTES: readonly string[] = [
 const OWN_ROUTE_ONLY: readonly string[] = [
   // device/call with no known tool in its body: held as a phone writer (outside-own.ts PHONE), never a tool of its own
   "phone",
+  // the proxy's own read of the Settings tool switches (sv10 tools): state report, never a tool a bot calls
+  "tool_switches",
 ];
 /** Writers named by route, not OWN_UNASKED rows: their per-engine asks stay as they were (MurageMain route ruling 11-06). */
 const WRITERS_NOT_UNASKED: readonly string[] = ["ask_owner_to_share", "connectors_request", "needs_owner_now"];

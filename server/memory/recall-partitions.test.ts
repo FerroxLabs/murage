@@ -76,13 +76,26 @@ it('legacy snapshot comparison and migration yield, revoke old receipts and reco
   expect(Number(db.prepare('SELECT policy_revision FROM memory_meta WHERE id=1').get()!.policy_revision)).toBe(before+1);
   expect(db.prepare("SELECT state FROM memory_disclosures WHERE bundle_id='legacy-receipt'").get()!.state).toBe('revoked');
 });
+// 1020 CTXSTOP-ROSTER B: a workspace-owner view no longer walks every binding (recall-membership.ts ownerBindings: it reads the bindings of
+// the threads it names and the grants to its own bot by memory_bindings_subject), so unrelated facts are neither read nor charged and
+// it stays exact (the legacy oracle). 1021 RECALLWALK: a linked person's view no longer walks them either (it reads its named threads, the
+// threads bound to the person and the grants to the person), so 33k unrelated facts leave its answer unchanged; what it must read is still
+// charged, and 33k threads bound to the person keep the refusal: it never truncates.
 it('construction storage accounting includes unrelated binding facts and refuses instead of truncating',()=>{
   const roster:MemoryRoster={memoryRosterRevision:1,bots:[{id:'reader',threadId:'direct'}],groups:[]};reconcileMemoryRoster(roster);
   const db=database(),scope=String(db.prepare("SELECT id FROM memory_scopes WHERE kind='bot'").get()!.id);
-  db.exec('BEGIN');try {const add=db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'unrelated','fixture',1,'granted','{}')");for(let n=0;n<33_000;n++)add.run(`unrelated-${n}`,scope);db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}
-  const steps=recallMembershipSteps(db,{botId:'reader',threadId:'direct',humanPrincipal:OWNER,notOwnerAudience:false},roster,new ConstructionBudget());
-  expect(()=>{while(!steps.next().done){/* explicit offline drain */}}).toThrow('MEMORY_RECALL_STORAGE_LIMIT');
+  const person:HumanPrincipal={personId:'fixture-person',bindingId:'human-binding:fixture',revision:1};
+  const drain=()=>{const steps=recallMembershipSteps(db,{botId:'reader',threadId:'direct',humanPrincipal:person,notOwnerAudience:false},roster,new ConstructionBudget());let step=steps.next();while(!step.done)step=steps.next();return step.value;};
+  const bulk=(sql:string)=>{db.exec('BEGIN');try {const add=db.prepare(sql);for(let n=0;n<33_000;n++)add.run(n,scope);db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}};
+  const without=drain();
+  bulk("INSERT INTO memory_scope_bindings VALUES('unrelated-'||?,?,'unrelated','fixture',1,'granted','{}')");
+  expect(drain()).toEqual(without);
+  bulk(`INSERT INTO memory_scope_bindings VALUES('human-thread:person-'||?1,?2,'human-thread','person-'||?1,1,'granted','${JSON.stringify(person)}')`);
+  expect(()=>drain()).toThrow('MEMORY_RECALL_STORAGE_LIMIT');
   expect(db.prepare("SELECT 1 FROM memory_recall_views WHERE state='ready'").get()).toBeUndefined();
+  const owner=recallMembershipSteps(db,{botId:'reader',threadId:'direct',humanPrincipal:OWNER,notOwnerAudience:false},roster,new ConstructionBudget());
+  let step=owner.next();while(!step.done)step=owner.next();
+  expect([...step.value.scopes].sort()).toEqual([...new Set(legacyRecallScopes('reader','direct',roster))].sort());
 });
 it.each(['group','person','channel-owner'] as const)('F5 %s principals retain exact conversation, grant-kind and paired-DM boundaries',async kind=>{
   const roster:MemoryRoster={memoryRosterRevision:1,bots:[{id:'reader',threadId:'direct',tasks:[{threadId:'direct'}]},{id:'other',threadId:'private'}],groups:[{id:'dm',threadId:'paired',memberIds:['reader'],dm:true}]};

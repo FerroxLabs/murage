@@ -93,6 +93,8 @@ export interface LandingDeps {
 
 function focusControl(control: LandingElement) {
   openFoldsAround(control);
+  // A mark on a heading or a wrapper (About me's title, a section) takes no focus by itself: make it a focus target, as a card is.
+  if (!control.hasAttribute("tabindex") && !/^(?:BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(control.tagName)) control.setAttribute("tabindex", "-1");
   control.focus({ preventScroll: true });
 }
 

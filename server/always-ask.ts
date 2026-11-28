@@ -92,6 +92,9 @@ export interface AlwaysAskHit {
    * only where that is proven, so a new `unreadable` hit stays unmarked until someone marks it. No verdict reads it in
    * 1.0.13: every such hit keeps its card, and the mark is what a later whole-text check tests. The `what` is not read. */
   readerFailed?: true;
+  /** `unreadable` only: the reader could not place where a link write lands (`ln -sf x "$d"/h*`, a `tar -C` list it cannot bound) under a folder it listed. A
+   * protected write nobody placed, so Full access keeps the card (auto-approve.ts fullAccessUnreadableRuns). */
+  unplacedWrite?: true;
   /** NOLIMITS-MEANS-IT 2.1.1 (1.0.20): the reader could not follow this text and found nothing in it. The owner No limits
    * lane waives such a hit on a clean turn when the plain wipe check (outside-scan.ts) also finds nothing. Never set by
    * `unreadableHit()` itself, so a new `unreadable` hit stays unmarked until someone marks it. */
@@ -1685,6 +1688,37 @@ function foreignExecutorIn(text: string, powerShell: boolean): boolean {
  * reader failure and keep asking at every access level. */
 export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "command" | "text" = "command", shell?: "pwsh", windowsBash?: string[], home?: string, options: UnseenOptions = {}): AlwaysAskHit | null {
   if (!text) return null;
+  unplacedAny = false;
+  return withUnplaced(alwaysAskCommandRead(text, cwd, mode, shell, windowsBash, home, options), text, part => readWhole(part, cwd, shell, windowsBash, home, options));
+}
+
+/** The visitor in readWhole sets this whenever the walk met a write it could not place. It outlives a throw and a hit that stops the
+ * walk, so the entry points can carry the mark onto any unreadable answer (Fable q1024-nolimits 558a3017b9 High 1). */
+let unplacedAny = false;
+
+/** An unreadable answer for a text with an unplaced write keeps `unplacedWrite`, whatever else stopped the read (`bash -c "$CMD"`
+ * before or after the link write, a Doubt that threw): the statements are read once more, with the values earlier ones bound,
+ * so a write the walk never reached still sets the flag. */
+function withUnplaced(found: AlwaysAskHit | null, text: string, again: (part: string) => AlwaysAskHit | null): AlwaysAskHit | null {
+  if (!found || found.rule !== "unreadable" || found.unplacedWrite === true) return found;
+  if (!unplacedAny) {
+    // the statements, then the pieces of a group or branch (`bash -c "$CMD"; { d=.; ln ...; }`, `if c; then ...; fi`): one parse of
+    // a fragment that keeps its opening brace or `then` cannot be walked, so each piece is read bare
+    const pieces = [statementsOf(text), text.split(/;|&&|\|\||\n|[{}()]|(?<![\w-])(?:do|then|else|elif|if|while|until|fi|done)(?![\w-])/)];
+    for (const parts of pieces) {
+      let bound = functionDefinitions(text);
+      for (const part of parts) {
+        if (unplacedAny) break;
+        if (!part.trim()) continue;
+        try { withoutDoubts(() => again(bound + part)); } catch { /* the flag is what is wanted */ }
+        if (/^\s*(?:(?:export|read|declare|local|typeset|readonly|unset|set)\b|[A-Za-z_]\w*\+?=)/.test(part)) bound += part + "; ";
+      }
+    }
+  }
+  return unplacedAny ? { ...found, unplacedWrite: true } : found;
+}
+
+function alwaysAskCommandRead(text: string, cwd: string | undefined, mode: "command" | "text", shell: "pwsh" | undefined, windowsBash: string[] | undefined, home: string | undefined, options: UnseenOptions): AlwaysAskHit | null {
   try {
     const found = readWhole(text, cwd, shell, windowsBash, home, options);
     // Keep foreign executors held without mistaking Elixir iex for PowerShell.
@@ -1817,6 +1851,13 @@ function read(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash
 /** Routine reads require the same fixed target evidence as other reads. */
 export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: "pwsh", home?: string, options: UnseenOptions = {}): { hit: AlwaysAskHit | null; valueTarget?: CarvedTarget[] } {
   if (!text) return { hit: null };
+  unplacedAny = false;
+  const result = alwaysAskRoutineRead(text, cwd, shell, home, options);
+  const marked = withUnplaced(result.hit, text, part => readWhole(part, cwd, shell, undefined, home, options));
+  return marked === result.hit ? result : { ...result, hit: marked };
+}
+
+function alwaysAskRoutineRead(text: string, cwd: string | undefined, shell: "pwsh" | undefined, home: string | undefined, options: UnseenOptions): { hit: AlwaysAskHit | null; valueTarget?: CarvedTarget[] } {
   carved = [];
   carveScope = null;
   try {
@@ -1867,7 +1908,7 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
   // writes to that same walk, preserving its cwd, bindings and later wipe
   // precedence. The callback is synchronous and restored with this read.
   const commandVisitor = visitor.command;
-  let projectionUnknown = false;
+  let projectionUnknown = false, placementUnknown = false;
   visitor.command = (cmd, ctx) => {
     const found = commandVisitor(cmd, ctx);
     if (found || ownerDeny() || deferred) return found;
@@ -1875,7 +1916,7 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
     try { archive = boundedLegacyArchiveWrites(cmd.name, cmd.args.map(renderWord), cmd.operands, ctx.cwd); }
     catch (error) {
       if (!(error instanceof Unreadable)) throw error;
-      projectionUnknown = true;
+      projectionUnknown = placementUnknown = unplacedAny = true; // an archive destination the reader cannot bound is an unplaced write too
       return null;
     }
     // Carry values the walk proved, including a function's positional args.
@@ -1886,7 +1927,7 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
       return values?.length === 1 && value?.kind === "literal" && !value.path.startsWith("~")
         ? { parts: [{ kind: "lit", text: value.path, quote: "single" }] } : word;
     }) }, { cwd: ctx.cwd }, ctx) : undefined;
-    if (placement?.unknown) projectionUnknown = true;
+    if (placement?.unknown) projectionUnknown = placementUnknown = unplacedAny = true;
     const writes = archive?.map(path => ({ path, followFinal: true }))
       ?? placement?.destinations.map(destination => destination.effect) ?? [];
     for (const write of writes) {
@@ -1913,7 +1954,7 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
     if (found) return found;
     // Finish the walk so a later named wipe keeps its own card. Uncertainty
     // cannot become the unseen-script relief below, even at Full access.
-    if (projectionUnknown) return unreadableHit();
+    if (projectionUnknown) return placementUnknown ? { ...unreadableHit(), unplacedWrite: true } : unreadableHit();
     // WIN-PWSH-1018 H1: the literal -c payload relief needs the same Git Bash
     // identity proof as a script launch, including at Full access.
     if (shell === "pwsh" && bashShape === undefined && windowsBash?.length && !pwshBashIsGitBash("bash", options)) return unreadableHit();

@@ -59,6 +59,8 @@ export interface WipeContext {
  degraded?:boolean; cwd?: string; cwdOpaque?: boolean; workFolder?: string; project?: string; home?: string; dataDir?: string;
  env?: Readonly<Record<string,string|undefined>>; platform?: NodeJS.Platform;
  shell?: 'pwsh'; lang?: 'sh'|'pwsh'|'py'|'js'; dialect?: Dialect;
+ /** OVERREACH #6: the script files this session wrote and a bounded reader for them. A command that runs one has the body read for the wipe check only. */
+ sessionEdits?: ReadonlySet<string>; sessionFile?: (path:string)=>{text:string}|'unavailable'; scriptDepth?: number;
  /** Test/host ports are injected once; ordinary callers use the singleton. */
  pathPort?: PathPort; mountInventory?:{contains(path:string):boolean;has?(path:string):boolean;add?(path:string):void;drop?(path:string):void};
  registry?: { protectedChildren?(dir:string):string[];contains(path: string): boolean;containsIdentity?(stat:PathStat):boolean };

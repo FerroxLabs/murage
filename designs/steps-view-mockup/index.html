@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en" data-skin="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steps view r3 mockup (Murage 1.0.22)</title>
+<!--
+  Static mockup for designs/STEPS-VIEW-1022.md r3. No build step, no network.
+  - Colour tokens are copied verbatim from src/styles.css ([data-skin="dark"] and [data-skin="light"]) at dev/1022 b45d0259e6.
+  - Sizes follow the app: chat 15px, pill and rows 13px, code 13px, right column 12px, chrome 11px.
+  - Icons are lucide paths (the app uses lucide-react). Code colours are the Shiki themes the app's code block uses
+    (github-dark-default / github-light-default); they are not app tokens.
+  - URL: ?skin=dark|light  &only=<screen id>  shows one screen at real app size (1280x800, or 390 wide for p-* screens).
+  - The app switches to the phone layout with its media query (max-width: 767.98px). This file uses a container query
+    with the same width so a phone frame can sit on a wide page.
+-->
+<style>
+[data-skin="dark"]{
+  --code-color-scheme:dark;
+  --color-app:#0a0a0a;--color-panel:#171717;--color-card:#1f1f1f;--color-inset:#121212;--color-raised:#2a2a2a;--color-raised-hover:#353535;
+  --color-control:#2a2a2a;--color-control-hover:#353535;--color-hairline:#4d4d4d;
+  --color-ink:#f5f5f5;--color-ink-secondary:#a8a8a8;
+  --color-accent:#ff6b35;--color-accent-border:#ff8255;--color-accent-text:#ff8255;--color-focus:#ff8255;--color-accent-ink:#2a1207;--color-bubble-user:#33241a;
+  --color-success:#34d399;--color-danger:#f87171;--color-warning:#fbbf24;
+  --color-accent-soft:#3a2216;--color-success-soft:#123326;--color-warning-soft:#352a0e;--color-danger-soft:#3d1c1c;
+  --color-scrollbar:#5c5c5c;
+  /* Shiki github-dark-default */
+  --sk-kw:#ff7b72;--sk-str:#a5d6ff;--sk-com:#8b949e;--sk-fn:#d2a8ff;--sk-num:#79c0ff;
+}
+[data-skin="light"]{
+  --code-color-scheme:light;
+  --color-app:#f7f7f7;--color-panel:#f0f0f0;--color-card:#ffffff;--color-raised:#ffffff;--color-inset:#eaeaea;--color-raised-hover:#e5e5e5;
+  --color-control:#d4d4d4;--color-control-hover:#c4c4c4;--color-hairline:#bfbfbf;
+  --color-ink:#0d0d0d;--color-ink-secondary:#555555;
+  --color-accent:#b8481f;--color-accent-border:#cc5529;--color-accent-text:#a83c14;--color-focus:#b8481f;--color-accent-ink:#ffffff;--color-bubble-user:#ffe6db;
+  --color-success:#0f7a52;--color-danger:#b3261e;--color-warning:#8a6100;
+  --color-accent-soft:#fbe9e1;--color-success-soft:#e1f2ea;--color-warning-soft:#fbf0d9;--color-danger-soft:#fbe7e6;
+  --color-scrollbar:#b3b3b3;
+  /* Shiki github-light-default */
+  --sk-kw:#cf222e;--sk-str:#0a3069;--sk-com:#6e7781;--sk-fn:#8250df;--sk-num:#0550ae;
+}
+:root{
+  --font-sans:"Inter",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+  --hair40:color-mix(in srgb,var(--color-hairline) 40%,transparent);
+  --hair30:color-mix(in srgb,var(--color-hairline) 30%,transparent);
+  --accent40:color-mix(in srgb,var(--color-accent) 40%,transparent);
+  --danger40:color-mix(in srgb,var(--color-danger) 40%,transparent);
+  --warning40:color-mix(in srgb,var(--color-warning) 40%,transparent);
+  --raised30:color-mix(in srgb,var(--color-raised) 30%,transparent);
+  --raised50:color-mix(in srgb,var(--color-raised) 50%,transparent);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--color-app);color:var(--color-ink);font-family:var(--font-sans);font-size:16px;color-scheme:var(--code-color-scheme)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+:focus-visible,.focus-demo{outline:2px solid var(--color-focus);outline-offset:2px}
+svg.i{flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums}
+
+/* ── mock chrome (not part of the product) ── */
+.mockbar{position:sticky;top:0;z-index:5;display:flex;gap:12px;align-items:center;padding:10px 20px;background:var(--color-panel);border-bottom:1px solid var(--hair40);font-size:13px;color:var(--color-ink-secondary)}
+.mockbar b{color:var(--color-ink)}
+.mockbar button{border:1px solid var(--hair40);border-radius:8px;padding:4px 10px;color:var(--color-ink)}
+.mockbar a{color:var(--color-accent-text)}
+.stage{display:flex;flex-direction:column;gap:36px;padding:28px 20px 80px;align-items:flex-start}
+.cap{font-size:13px;color:var(--color-ink-secondary);margin:0 0 8px;max-width:1280px}
+.cap b{color:var(--color-ink)}
+.phones{display:flex;flex-wrap:wrap;gap:24px}
+body.only .mockbar,body.only .cap{display:none}
+body.only .stage{padding:0;gap:0}
+body.only .win,body.only .phone{border:0;border-radius:0}
+
+/* ── app shell at real size ── */
+.win{width:1280px;height:800px;display:flex;border:1px solid var(--hair40);border-radius:12px;overflow:hidden;background:var(--color-app)}
+.phone{width:390px;height:844px;display:flex;border:1px solid var(--hair40);border-radius:28px;overflow:hidden;background:var(--color-app)}
+.side{width:264px;flex:none;background:var(--color-panel);border-right:1px solid var(--hair40);padding:12px 10px;display:flex;flex-direction:column;gap:2px;font-size:14px}
+.side h4{margin:10px 8px 6px;font-size:11px;font-weight:600;color:var(--color-ink-secondary);letter-spacing:.02em}
+.bot{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:8px;color:var(--color-ink)}
+.bot.on{background:var(--color-raised)}
+.bot small{display:block;font-size:12px;color:var(--color-ink-secondary)}
+.av{flex:none;border-radius:8px;display:grid;place-items:center;font-weight:700;color:var(--color-accent-ink);background:var(--color-accent)}
+.av.s28{width:28px;height:28px;font-size:12px}.av.s36{width:36px;height:36px;font-size:14px}.av.s40{width:40px;height:40px;font-size:15px}
+.av.k{background:#82b5ef;color:#0a1a2c}.av.n{background:var(--color-success);color:var(--color-app)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;container-type:inline-size;container-name:chat}
+.hdr{display:flex;align-items:center;gap:8px;padding:12px 20px;border-bottom:1px solid var(--hair30)}
+.hdr .nm{font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hdr .sub{font-size:12px;color:var(--color-ink-secondary)}
+.hdr .sp{flex:1}
+.stop{display:flex;align-items:center;gap:6px;border-radius:9999px;border:1px solid var(--hair40);background:color-mix(in srgb,var(--color-raised) 60%,transparent);padding:4px 10px;font-size:13px;color:var(--color-ink-secondary)}
+.log{flex:1;min-height:0;overflow:hidden;padding:16px 20px 12px;display:flex;flex-direction:column;justify-content:flex-end;gap:12px}
+.bub{width:fit-content;max-width:min(52rem,84%);border-radius:16px;padding:10px 16px;font-size:15px;line-height:1.625}
+.bub.u{align-self:flex-end;background:var(--color-bubble-user)}
+.bub.a{background:var(--color-card)}
+.speaker{font-size:11px;font-weight:500;color:var(--color-ink-secondary);padding-left:2px;margin-bottom:-6px}
+.dock{padding:0 20px 14px}
+.composer{display:flex;align-items:center;gap:6px;background:var(--color-raised);border-radius:24px;padding:8px 10px 8px 16px;font-size:15px;color:var(--color-ink-secondary)}
+.composer .ph{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.round{width:32px;height:32px;border-radius:9999px;display:grid;place-items:center;flex:none}
+.round.send{background:var(--color-accent);color:var(--color-accent-ink)}
+
+/* ── existing app parts drawn for context (unchanged by this design) ── */
+.waitrow{display:flex;width:100%;max-width:840px;align-items:center;gap:10px;border-radius:12px;border:1px solid var(--accent40);background:var(--color-card);padding:6px 6px 6px 14px;font-size:14px}
+.waitrow .d{width:8px;height:8px;border-radius:9999px;background:var(--color-accent);flex:none}
+.waitrow .t{flex:1;min-width:0}
+.waitrow button{min-height:44px;display:inline-flex;align-items:center;border-radius:8px;border:1px solid var(--accent40);padding:0 12px;color:var(--color-accent)}
+.approval{margin-bottom:8px;border-radius:16px;border:1px solid var(--accent40);background:var(--color-card);overflow:hidden}
+.approval .b{padding:14px 16px 4px}
+.approval h5{margin:0 0 4px;font-size:15px;font-weight:600}
+.approval p{margin:0;font-size:13px;color:var(--color-ink-secondary);line-height:1.5}
+.approval .acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:6px 16px 12px}
+.approval .acts button{min-height:44px;display:inline-flex;align-items:center;justify-content:center;border-radius:9999px;padding:6px 14px;font-size:13.5px}
+.approval .allow{background:var(--color-accent);color:var(--color-accent-ink);font-weight:500}
+.approval .deny{border:1px solid var(--danger40);color:var(--color-danger)}
+.approval .cancel{color:var(--color-ink-secondary)}
+
+/* ══ StepsGroup (the design) ══ */
+.sg{display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;max-width:min(40rem,100%)}
+.sg-head{display:flex;align-items:flex-start;gap:8px;max-width:100%;min-width:0}
+.sg-headcol{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pill{display:inline-flex;align-items:center;gap:8px;max-width:100%;border-radius:9999px;border:1px solid var(--hair40);background:var(--color-panel);padding:6px 12px;font-size:13px;line-height:20px;color:var(--color-ink-secondary)}
+.pill:hover{background:var(--color-control)}
+.pill .segs{display:flex;flex-wrap:wrap;column-gap:6px;min-width:0}
+.pill .seg{white-space:nowrap}
+.pill .phase{color:var(--color-ink)}
+.pill .dots{color:var(--color-accent-text)}
+.pill .ok{color:var(--color-success)}
+.pill .bad{color:var(--color-danger)}
+.pill .chev,.row .chev{transition:transform .12s}
+[aria-expanded="true"]>.chev{transform:rotate(90deg)}
+.pill.waiting{background:var(--color-warning-soft);border-color:var(--warning40);color:var(--color-warning)}
+.pill.waiting .phase{color:var(--color-warning);font-weight:500}
+.dots{display:inline-flex;align-items:center;gap:4px;flex:none}
+.dots i{width:3.5px;height:3.5px;border-radius:9999px;background:currentColor;animation:status-pulse 1.6s steps(2,jump-none) infinite}
+.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
+@keyframes status-pulse{0%,100%{opacity:.25}30%{opacity:1}60%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.dots i{animation:none;opacity:.6}.chev{transition:none}}
+.now{height:20px;line-height:20px;padding-left:13px;font-size:13px;color:var(--color-ink-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.now b,.row b{font-weight:600;color:var(--color-ink)}
+.now.amber{color:var(--color-warning)}.now.amber b{color:var(--color-warning)}
+.list{width:100%;display:flex;flex-direction:column;gap:1px}
+.list[hidden],.detail[hidden],.kids[hidden]{display:none}
+.row{display:grid;grid-template-columns:20px minmax(0,1fr) auto 14px;column-gap:8px;align-items:center;width:100%;padding:5px 8px;border-radius:8px;font-size:13px;line-height:20px;color:var(--color-ink-secondary)}
+button.row:hover{background:var(--raised50)}
+.row .ic{display:grid;place-items:center;height:20px}
+.row .tx{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .rt{font-size:12px;white-space:nowrap}
+.row .stat .p{color:var(--color-success)}.row .stat .m{color:var(--color-danger)}
+.row .sub{grid-column:2/4;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .sub.amber{color:var(--color-warning)}
+.row.run .ic,.row.run .rt{color:var(--color-accent-text)}
+.row.fail .ic,.row.fail .rt{color:var(--color-danger)}.row.fail .rt{font-weight:500}
+.row.wait .ic,.row.wait .rt{color:var(--color-warning)}.row.wait .rt{font-weight:500}
+.row.nochev{grid-template-columns:20px minmax(0,1fr) auto 14px}
+.note{padding:4px 8px 4px 36px;font-size:13px;line-height:20px;color:var(--color-ink-secondary)}
+.more{margin:2px 0 2px 28px;padding:4px 8px;border-radius:8px;font-size:12px;color:var(--color-ink-secondary)}
+.more:hover{background:var(--raised50);color:var(--color-ink)}
+.kids{margin-left:20px;padding-left:8px;border-left:1px solid var(--hair40);display:flex;flex-direction:column;gap:1px}
+.sum{padding:2px 8px 4px 36px;font-size:12px;line-height:18px;color:var(--color-ink-secondary)}
+.row .res{font-size:12px}
+.planline{width:100%}
+.checks{list-style:none;margin:2px 0 6px 36px;padding:0;display:flex;flex-direction:column;gap:4px;font-size:13px;line-height:1.375;color:var(--color-ink-secondary)}
+.checks[hidden]{display:none}
+.checks li{display:flex;gap:8px;align-items:flex-start}.checks li svg{margin-top:3px}
+.checks li.done span{text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--color-ink-secondary) 50%,transparent)}
+.checks li.done svg{color:var(--color-success)}.checks li.cur{color:var(--color-ink)}.checks li.cur svg{color:var(--color-accent)}
+.nl{padding:6px 8px 2px 36px;font-size:12px;line-height:18px;color:var(--color-ink-secondary)}
+.nl a{color:var(--color-accent-text);text-decoration:none}
+.detail{margin:4px 0 8px 36px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:6px;border:1px solid var(--hair40);background:var(--color-raised);padding:1px 6px;font-size:11px;font-weight:500;color:var(--color-ink)}
+.chip span{color:var(--color-ink-secondary);font-weight:400}
+.foot{font-size:11px;line-height:16px;color:var(--color-ink-secondary)}
+/* the app's shared code block (ChatMarkdown) */
+.cb{overflow:hidden;border-radius:8px;border:1px solid var(--hair40);background:var(--color-inset)}
+.cb.err{border-left:3px solid var(--color-danger)}
+.cb-h{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--hair30);background:var(--raised30);padding:6px 12px}
+.cb-h+pre+.cb-h{border-top:1px solid var(--hair30)}
+.cb-l{border-radius:4px;border:1px solid var(--hair40);background:var(--color-raised);padding:2px 6px;font-size:11px;font-weight:500;color:var(--color-ink)}
+.cb-c{font-size:11px;color:var(--color-ink-secondary);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cb-sp{flex:1}
+.cb-b{display:flex;min-height:32px;align-items:center;gap:4px;border-radius:4px;padding:0 8px;font-size:11px;color:var(--color-ink-secondary)}
+.cb-b:hover{background:var(--color-raised);color:var(--color-ink)}
+.cb pre{margin:0;padding:12px;font-family:var(--font-mono);font-size:13px;line-height:1.625;color:var(--color-ink);overflow-x:auto;white-space:pre}
+.cb.wrap pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.cb .kw{color:var(--sk-kw)}.cb .st{color:var(--sk-str)}.cb .cm{color:var(--sk-com)}.cb .fn{color:var(--sk-fn)}.cb .nu{color:var(--sk-num)}
+.cb .dim{color:var(--color-ink-secondary)}
+.cb .mask{background:var(--color-control);border-radius:3px;padding:0 3px;color:var(--color-ink-secondary)}
+.cb-f{display:flex;align-items:center;gap:10px;border-top:1px solid var(--hair30);padding:4px 12px;font-size:11px;color:var(--color-ink-secondary)}
+.cb-f .exit{color:var(--color-danger);font-weight:500}
+.cb-f button{min-height:28px;color:var(--color-accent-text)}
+.diff{padding:8px 0!important}
+.diff span{display:block;padding:0 12px 0 0}
+.diff span::before{content:attr(data-g);display:inline-block;width:28px;text-align:center;color:var(--color-ink-secondary)}
+.diff .add{background:var(--color-success-soft)}.diff .add::before{color:var(--color-success)}
+.diff .del{background:var(--color-danger-soft)}.diff .del::before{color:var(--color-danger)}
+.diff .gap{color:var(--color-ink-secondary);font-family:var(--font-sans);font-size:11px;padding:2px 12px 2px 28px}
+.diff .gap::before{content:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+
+/* ── phone width: the app's breakpoint is max-width 767.98px ── */
+@container chat (max-width:767.98px){
+  .hdr{padding:10px 12px}.log{padding:12px 12px 10px}.dock{padding:0 12px 12px}
+  .bub{max-width:100%}
+  .row{min-height:44px;padding:4px 6px}
+  .row.two{grid-template-rows:auto auto;row-gap:0;align-content:center}
+  .row.two .rt{grid-column:2/3;grid-row:2;justify-self:start}
+  .row.two .chev{grid-column:4;grid-row:1}
+  .pill{min-height:44px;border-radius:22px}
+  .pill .brk{flex-basis:100%;height:0}
+  .detail{margin-left:0}
+  .kids{margin-left:10px}
+  .cb pre{white-space:pre-wrap;overflow-wrap:anywhere}
+  .cb-b .lb{display:none}
+  .composer{border-radius:26px}
+}
+</style>
+</head>
+<body>
+<div class="mockbar">
+  <b>Steps view r3</b><span>Murage 1.0.22 mockup · real app size · tokens from src/styles.css</span>
+  <button type="button" id="skinbtn">Switch to Light</button>
+  <span>Keyboard: Tab to a pill, Enter opens, ↑ ↓ Home End move, Enter opens a row, Esc closes.</span>
+</div>
+<div class="stage" id="stage"></div>
+<div class="sr" aria-live="polite" id="live"></div>
+
+<script>
+/* lucide icon paths (24 x 24, stroke) */
+const P={
+ check:'<path d="M20 6 9 17l-5-5"/>',x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+ pause:'<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+ ban:'<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',chev:'<path d="m9 18 6-6-6-6"/>',
+ terminal:'<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+ file:'<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+ pencil:'<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+ trash:'<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+ search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+ folder:'<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
+ globe:'<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+ plug:'<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+ bot:'<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+ forward:'<path d="m15 17 5-5-5-5"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/>',
+ ask:'<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+ layers:'<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/>',
+ square:'<rect width="18" height="18" x="3" y="3" rx="2"/>',minus:'<path d="M5 12h14"/>',
+ copy:'<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+ wrap:'<path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-4"/><path d="m16 16-2 2 2 2"/><path d="M3 18h7"/>',
+ list:'<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+ okc:'<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',circle:'<circle cx="12" cy="12" r="10"/>',
+ dot:'<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>',
+ up:'<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+ bulb:'<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
+ book:'<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>'
+};
+const I=(n,s=14,fill)=>`<svg class="i" aria-hidden="true" width="${s}" height="${s}" viewBox="0 0 24 24"${fill?' style="fill:currentColor"':''}>${P[n]}</svg>`;
+const dots='<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+const o=t=>`<b><bdi>${t}</bdi></b>`;
+let uid=0;
+
+/* one step row. st: done|run|fail|wait|deny|stop|none ; a11y = status word spoken first */
+function row(st,icon,html,right,detail,opt={}){
+  const id='d'+(++uid);
+  const ic={run:dots,fail:I('x'),wait:I('pause'),deny:I('ban'),stop:I('square'),none:I('minus')}[st]||I(icon);
+  const cls={run:'run',fail:'fail',wait:'wait'}[st]||'';
+  const say={done:'Done',run:'Running',fail:'Failed',wait:(right||'Waiting for your OK'),deny:'Not allowed',stop:'Stopped',none:'No result'}[st];
+  const sub=opt.sub?`<span class="sub ${opt.subAmber?'amber':''}">${opt.sub}</span>`:'';
+  const inner=`<span class="ic">${ic}</span><span class="tx"><span class="sr">${say}. </span>${html}</span><span class="rt num">${right||''}</span>`;
+  if(!detail&&!opt.kids) return `<div class="row nochev ${cls} ${opt.two?'two':''}" role="listitem">${inner}<span></span>${sub}</div>`;
+  return `<div role="listitem"><button type="button" class="row ${cls} ${opt.two?'two':''} ${opt.focus?'focus-demo':''}" aria-expanded="${opt.open?'true':'false'}" aria-controls="${id}" tabindex="${opt.tab?0:-1}">${inner}${I('chev',13).replace('class="i"','class="i chev"')}${sub}</button>
+  <${opt.checks?'ul':'div'} id="${id}" class="${opt.kids?'kids':opt.checks?'checks':'detail'}" ${opt.open?'':'hidden'}>${detail||opt.kids}</${opt.checks?'ul':'div'}></div>`;
+}
+const note=t=>`<div class="note" role="listitem">${t}</div>`;
+const more=t=>`<button type="button" class="more" tabindex="-1">${t}</button>`;
+const foot=t=>`<div class="foot">${t}</div>`;
+
+/* shared code block pieces */
+const cbH=(label,count,wrapBtn=true)=>`<div class="cb-h"><span class="cb-l">${label}</span><span class="cb-c">${count||''}</span><span class="cb-sp"></span>${wrapBtn?`<button type="button" class="cb-b" data-act="wrap">${I('wrap',13)}<span class="lb">Wrap</span></button>`:''}<button type="button" class="cb-b" data-act="copy">${I('copy',13)}<span>Copy</span></button></div>`;
+function terminal({cmd,cwd,out,lines,fail,cut}){
+  return `<div class="cb ${fail?'err':''}">${cbH('Command',cwd?'in '+cwd:'')}<pre><span class="dim">$ </span>${cmd}</pre>${cbH('Output',lines,false)}<pre>${out}</pre>
+  <div class="cb-f">${fail?`<span class="exit">${fail}</span>`:''}${cut?`<button type="button" data-act="all">${cut}</button>`:''}</div></div>`;
+}
+const T_TESTS=terminal({cmd:'<span class="fn">cd</span> ~/proj/exports <span class="kw">&amp;&amp;</span> <span class="fn">npm</span> test',cwd:'~/proj/exports',lines:'240 lines · showing the last 6',cut:'Show all 240 lines',
+ out:` ✓ src/vendors/merge.test.ts (14 tests) 212ms
+ ✓ src/vendors/notes.test.ts (9 tests) 96ms
+ ✓ src/export/csv.test.ts (31 tests) 1.2s
+
+ Test Files  18 passed (18)
+      Tests  212 passed (212)`});
+const T_FAIL=terminal({cmd:'<span class="fn">python3</span> build-report.py --month 2026-10 --token <span class="mask">•••</span>',cwd:'~/proj/exports',lines:'38 lines · showing the last 5',cut:'Show all 38 lines',fail:'Exit code 1',
+ out:`Traceback (most recent call last):
+  File "build-report.py", line 88, in &lt;module&gt;
+    rows = load(month)
+  File "build-report.py", line 41, in load
+FileNotFoundError: exports/2026-10/vendors.csv`});
+const D_EDIT=`<div class="chips"><span class="chip"><span>docs/</span>vendor-notes.md</span></div>
+ <div class="cb"><div class="cb-h"><span class="cb-l">vendor-notes.md</span><span class="cb-c"><span style="color:var(--color-success)">+3</span> <span style="color:var(--color-danger)">−2</span></span><span class="cb-sp"></span><button type="button" class="cb-b" data-act="copy">${I('copy',13)}<span>Copy</span></button></div>
+ <pre class="diff"><span data-g=" ">## Poindexter Supply</span><span class="del" data-g="−">Contact: old-desk@example.com</span><span class="add" data-g="+">Contact: accounts@example.com</span><span class="del" data-g="−">Terms: net 30</span><span class="add" data-g="+">Terms: net 45 (changed in October)</span><span class="add" data-g="+">Last invoice: 2026-10-28</span><span class="gap">40 unchanged lines</span><span data-g=" ">## Kestrel Freight</span></pre></div>`;
+
+function pill(kind,segs,open,controls,extra=''){
+  const lead={live:dots,waiting:I('pause',13),done:`<span class="ok">${I('check',13)}</span>`,plain:''}[kind];
+  return `<button type="button" class="pill ${kind}" aria-expanded="${open?'true':'false'}" aria-controls="${controls}" ${extra}>${lead}<span class="segs">${segs}</span>${I('chev',13).replace('class="i"','class="i chev"')}</button>`;
+}
+const seg=(parts)=>parts.map((p,i)=>(i?'<span class="seg" aria-hidden="true">·</span>':'')+p).join('');
+const S=(t,c='')=>`<span class="seg ${c}">${t}</span>`;
+function group({kind,segs,now,nowAmber,rows,open,mascot,label,plan}){
+  const id='g'+(++uid);
+  const head=`<div class="sg-headcol">${pill(kind,segs,open,id)}${now!==undefined&&!open?`<div class="now ${nowAmber?'amber':''}">${now}</div>`:''}</div>`;
+  return `<section class="sg" aria-label="${label||'Steps'}"><div class="sg-head">${mascot?'<span class="av s36" aria-hidden="true">S</span>':''}${head}</div>${plan?`<div class="planline" role="list">${plan}</div>`:''}
+  <div class="list" id="${id}" role="list" ${open?'':'hidden'}>${rows||''}</div></section>`;
+}
+
+/* ── existing parts for context ── */
+const CHECKS=(n)=>[['List what is in the exports folder',1],['Read the vendor notes',1],['Compare October with September',n>2?1:2],['Update vendor-notes.md',n>3?1:0],['Tell Sean what changed',n>4?1:0]].map(([t,k])=>`<li class="${k===1?'done':k===2?'cur':''}">${I(k===1?'okc':k===2?'dot':'circle')}<span>${t}</span></li>`).join('');
+const planRow=(open,done)=>row('done','list',done?'<span style="color:var(--color-ink);font-weight:500">Plan</span> · all 5 done':'<span style="color:var(--color-ink);font-weight:500">Plan</span> · 2 of 5 done · Compare October with September','',CHECKS(done?5:2),{checks:true,open,tab:!done});
+const USER=`<div class="bub u">Clean up my exports folder and tell me what changed in the vendor notes.</div>`;
+const REPLY=`<div class="bub a">Done. Two vendors changed in October: Poindexter Supply moved to net 45 and has a new accounts address. I updated vendor-notes.md. I did not delete <b>old-exports</b> because you said no; the report script failed because October's vendors.csv is missing.</div>`;
+const composer=(busy)=>`<div class="composer"><span class="ph">${busy?'Sable is working. Sends when this turn finishes':'Message Sable'}</span>${busy?`<span class="round" aria-hidden="true">${I('square',14,true)}</span>`:''}<span class="round send" aria-hidden="true">${I('up',17)}</span></div>`;
+const APPROVAL=`<div class="approval" role="group" aria-label="Request waiting"><div class="b"><h5>Sable wants to delete a folder for good</h5><p>old-exports in ~/proj/exports (214 files). This can't be undone.</p></div><div class="acts"><button type="button" class="cancel">Cancel turn</button><button type="button" class="deny">Don't allow</button><button type="button" class="allow" id="allowbtn">Allow once</button></div></div>`;
+const side=`<aside class="side" aria-hidden="true"><h4>CHATS</h4>
+ <div class="bot on"><span class="av s28">S</span><div>Sable<small>Working</small></div></div>
+ <div class="bot"><span class="av s28 k">K</span><div>Kessler<small>Research</small></div></div>
+ <div class="bot"><span class="av s28 n">N</span><div>Nova<small>Inbox</small></div></div></aside>`;
+function win(id,{busy,body,dock='',name='Sable',sub='No limits'}){
+  return `<div class="win" id="${id}">${side}<div class="main"><div class="hdr"><span class="av s40" aria-hidden="true">S</span><div style="min-width:0"><div class="nm">${name}</div><div class="sub">${sub}</div></div><span class="sp"></span>${busy?`<span class="stop">${I('square',12,true)}Stop</span>`:''}</div>
+  <div class="log">${body}</div><div class="dock">${dock}${composer(busy)}</div></div></div>`;
+}
+function phone(id,{busy,body,dock='',sub='No limits'}){
+  return `<div class="phone" id="${id}"><div class="main"><div class="hdr"><span class="av s36" aria-hidden="true">S</span><div style="min-width:0"><div class="nm">Sable</div><div class="sub">${sub}</div></div><span class="sp"></span>${busy?`<span class="stop">${I('square',12,true)}Stop</span>`:''}</div>
+  <div class="log">${body}</div><div class="dock">${dock}${composer(busy)}</div></div></div>`;
+}
+
+/* ── rows used by several screens ── */
+const DONE_SEGS=seg([S('Worked for 5m 35s'),S('27 steps'),S('1 failed','bad'),S('1 not allowed')]);
+const DONE_SEGS_PHONE=S('Worked for 5m 35s')+'<span class="seg" aria-hidden="true">·</span>'+S('27 steps')+'<span class="brk"></span>'+S('1 failed','bad')+'<span class="seg" aria-hidden="true">·</span>'+S('1 not allowed');
+const NL=`<div class="nl">No limits: 26 of 27 steps ran without asking you. <a href="#">Settings</a></div>`;
+const KIDS=row('done','folder',`Listed ${o('vendors')}`,'')+row('done','layers','Read 9 files','4s','<div class="foot">The nine rows, one per file.</div>')+row('done','search',`Searched files for ${o('"net 45"')}`,'')+row('done','file',`Read ${o('poindexter-2026-10.pdf')}`,'2s');
+const finishedRows=(open)=>[
+ `<div class="sum" role="listitem">Edited 1 file, ran 2 commands, used Gmail once, read 14 files</div>`,
+ planRow(false,true),
+ note('Looking at what is in the exports folder first'),
+ row('done','folder',`Listed ${o('.sable')}`,'','<div class="foot">Request and Response panes open here.</div>'),
+ row('done','layers','Read 11 files, listed 1 folder','6s','<div class="foot">The twelve rows, one per call, each opening to its own detail.</div>'),
+ row('done','search',`Searched files for ${o('"Poindexter"')} <span class="res">· 3 matches</span>`,'','<div class="foot">Pattern and matches.</div>'),
+ note("Comparing the vendor notes with last month's export"),
+ row('done','terminal','Ran tests','42s',T_TESTS+foot('Ran without asking (No limits) · Bash'),{open:open==='tests'}),
+ row('fail','terminal',`Ran ${o('build-report.py')}`,'Failed',T_FAIL+foot('Ran without asking (No limits) · Bash'),{open:open==='fail'}),
+ row('done','pencil',`Edited ${o('vendor-notes.md')} <span class="stat num"><span class="p">+3</span> <span class="m">−2</span></span>`,'',D_EDIT+foot('Ran without asking (No limits) · Edit'),{open:open==='edit'}),
+ row('done','plug',`Used ${o('Gmail')}: Fetch emails`,'3s','<div class="foot">Connected apps: Gmail · Fetch emails</div>'),
+ row('deny','trash',`Wanted to delete ${o('old-exports')}`,'Not allowed',foot("You didn't allow this")),
+ row('done','globe',`Read ${o('example.com')}`,'2s','<div class="foot">The full address is only shown here.</div>'),
+ row('done','bot',`Ran a helper: ${o('Find vendor files')} · 14 steps`,'1m 02s','',{kids:KIDS}),
+].join('');
+
+const SCREENS={
+live:{cap:'<b>1. Live, collapsed (the default).</b> One status block for the turn: the mascot, the pill (phase · step · worked time), the now-line, and the plan row when there is a plan. No second timer or spinner anywhere.',
+ html:()=>win('live',{busy:true,body:USER+group({kind:'live',mascot:true,segs:seg([S('Running commands','phase'),S('step 12'),S('<span class="num" data-clock="72">1m 12s</span>')]),now:`Searching files for ${o('"Poindexter"')}`,plan:planRow(false)})})},
+open:{cap:'<b>2. Finished, opened.</b> Grey kind icons on done rows; colour only where the eye is needed. A run of reads folds into one row. Notes sit between rows. The No limits line ends the list.',
+ html:()=>win('open',{body:USER+group({kind:'done',open:true,segs:DONE_SEGS,rows:finishedRows()+NL})+REPLY})},
+detail:{cap:'<b>3. One click: the real thing.</b> A command opens to a terminal block (command, newest output, Show all). An edit opens to a diff. Copy and Wrap are the shared code block\'s buttons.',
+ html:()=>win('detail',{body:group({kind:'done',open:true,segs:DONE_SEGS,rows:
+   row('done','terminal','Ran tests','42s',T_TESTS+foot('Ran without asking (No limits) · Bash'),{open:true})+
+   row('done','pencil',`Edited ${o('vendor-notes.md')} <span class="stat num"><span class="p">+3</span> <span class="m">−2</span></span>`,'',D_EDIT+foot('Ran without asking (No limits) · Edit'),{open:true})+
+   row('done','plug',`Used ${o('Gmail')}: Fetch emails`,'3s','<div class="foot">Connected apps: Gmail · Fetch emails</div>')})})},
+failed:{cap:'<b>4. A failure.</b> Red X and the word "Failed"; the chain carries on. The pane gets a danger edge and "Exit code 1"; a secret in the command is masked.',
+ html:()=>win('failed',{body:group({kind:'done',open:true,segs:DONE_SEGS,rows:
+   row('done','terminal','Ran tests','42s','<div class="foot">Terminal block.</div>')+
+   row('fail','terminal',`Ran ${o('build-report.py')}`,'Failed',T_FAIL+foot('Ran without asking (No limits) · Bash'),{open:true})+
+   note('The October file is missing, so I will work from the notes instead')+
+   row('done','pencil',`Edited ${o('vendor-notes.md')} <span class="stat num"><span class="p">+3</span> <span class="m">−2</span></span>`,'','<div class="foot">Diff.</div>')+NL})+REPLY})},
+waiting:{cap:'<b>5. Waiting on you.</b> The pill turns amber with no clock. The existing one-line waiting row sits under the group and the existing approval panel stays above the composer. The step row has no buttons; the Answer button on the waiting row leads to the panel.',
+ html:()=>win('waiting',{busy:true,sub:'No limits · asks before deleting for good',dock:APPROVAL,body:USER+group({kind:'waiting',open:true,mascot:true,segs:S('Waiting for your OK','phase'),now:`Wants to delete the folder ${o('old-exports')}`,nowAmber:true,rows:
+   more('Show 9 earlier steps')+row('done','layers','Read 12 files','6s','<div class="foot">Rows.</div>')+row('done','terminal','Ran tests','42s','<div class="foot">Terminal block.</div>')+
+   row('wait','trash',`Wants to delete ${o('old-exports')}`,'Waiting for your OK',`<div class="cb">${cbH('Command','in ~/proj/exports')}<pre><span class="dim">$ </span><span class="fn">rm</span> -rf old-exports</pre></div>`+foot('Output appears when the step finishes'),{two:true})})+
+   `<div class="waitrow"><span class="d"></span><span class="t">Sable is waiting for you.</span><button type="button" data-act="answer">Answer</button></div>`})},
+helpers:{cap:'<b>6. Live and open: helpers, other bots, thinking.</b> Three different delegations read differently. A helper opens to its own steps, one level in. Thinking is a row ("Thinking", then "Thought for 12s"), not a second chip.',
+ html:()=>win('helpers',{busy:true,body:group({kind:'live',open:true,mascot:true,plan:planRow(false),segs:seg([S('Thinking','phase'),S('step 41'),S('<span class="num" data-clock="362">6m 02s</span>')]),now:'Working out which vendors changed their terms',rows:
+   more('Show 28 earlier steps')+
+   row('done','bot',`Ran a helper: ${o('Find vendor files')} · 14 steps`,'1m 02s','',{kids:KIDS,open:true})+
+   row('done','bot',`Asked ${o('Kessler')}`,'still working','<div class="foot">Kessler\'s steps, read-only · Open Kessler\'s conversation</div>',{sub:'Kessler: Searching files'})+
+   row('done','forward',`Handed work to ${o('Kessler')}`,'','<div class="foot">Runs after this turn · Open Kessler\'s conversation</div>')+
+   row('done','globe',`Searched the web for ${o('"net 45 payment terms"')} <span class="res">· 5 results</span>`,'3s','<div class="foot">Query and results.</div>')+
+   row('done','bulb','Thought for 12s','')+
+   row('run','','Thinking','','<div class="foot" style="font-style:italic">The reasoning text streams here, as the Thinking chip shows it today.</div>')})})},
+old:{cap:'<b>7. An old chat, and Steps: Off.</b> Lines stored by older versions were one per approval. They become rows; identical neighbours fold with a count and the list says why. Under Off the only line that still shows is the No limits trace.',
+ html:()=>win('old',{body:`<div class="bub u">Tidy the .sable folder.</div>`+group({kind:'plain',open:true,segs:S('27 steps'),rows:
+   `<div class="note" style="font-size:12px">From an older version: one line per approval, so a step may appear more than once.</div>`+
+   row('done','folder',`Listed ${o('.sable')} <span class="num">×2</span>`,'',`<div class="cb">${cbH('Request','')}<pre>Bash: ls ~/.sable/ | head -120</pre></div>`+foot("Details weren't kept for older steps"),{open:true})+
+   row('done','file',`Read ${o('settings.json')}`,'','<div class="foot">Stored line.</div>')+row('done','terminal','Ran git status <span class="num">×2</span>','','<div class="foot">Stored line.</div>')+more('Show 22 more steps')+
+   `<div class="nl">No limits: all 27 steps ran without asking you.</div>`})+`<div class="bub a">All tidy.</div>`+
+   `<div class="speaker" style="margin-top:14px">With Steps: Off, a turn that ran without asking keeps this one line:</div>`+group({kind:'plain',segs:S('No limits: all 27 steps ran without asking you')})})},
+states:{cap:'<b>8. Every state, as words.</b> Headers (top) and rows (below). The outlined row shows the keyboard focus ring. A long name is cut with an ellipsis and keeps its full text in the tooltip.',
+ html:()=>win('states',{body:`<div style="display:flex;flex-wrap:wrap;gap:8px;max-width:60rem">
+   ${pill('live',seg([S('Reading files','phase'),S('step 3'),S('<span class="num">8s</span>')]),false,'x')}
+   ${pill('live',seg([S('Working in Gmail','phase'),S('step 7'),S('<span class="num">1m 05s</span>')]),false,'x')}
+   ${pill('waiting',S('Waiting for your answer','phase'),false,'x')}
+   ${pill('live',S('Stopping…','phase'),false,'x')}
+   ${pill('plain',seg([S('Stopped after 2m 10s'),S('9 steps')]),false,'x')}
+   ${pill('plain',seg([S('Interrupted after 2m 10s'),S('9 steps')]),false,'x')}
+   ${pill('done',seg([S('Worked for 2h 05m'),S('1 step')]),false,'x')}</div>`+
+  group({kind:'done',open:true,segs:seg([S('Worked for 48s'),S('9 steps'),S('1 failed','bad'),S('1 not allowed')]),rows:
+   row('run','',`Running ${o('report.py')}`,'','<div class="foot">Request only, then: Output appears when the step finishes</div>')+
+   row('done','file',`Read ${o('notes.md')} lines 40-90`,'2s','<div class="foot">Pane.</div>')+
+   row('done','book',`Loaded the ${o('gmail-triage')} skill`,'','<div class="foot">Pane.</div>',{focus:true})+
+   row('fail','terminal','Ran tests','Failed','<div class="foot">Pane.</div>')+
+   row('wait','ask','Wants to ask you a question','Waiting for your answer','<div class="foot">Pane.</div>')+
+   row('deny','plug',`Wanted to use ${o('Gmail')}: Send email`,'Not allowed',foot('Blocked by your rule'))+
+   row('stop','terminal',`Ran ${o('ffmpeg')}`,'Stopped','<div class="foot">Pane.</div>')+
+   row('none','globe',`Read ${o('example.com')}`,'No result','<div class="foot">Pane.</div>')+
+   row('done','file',`<span title="quarterly-vendor-reconciliation-notes-final-v7-reviewed-by-accounts.md">Read ${o('quarterly-vendor-reconciliation-notes-final-v7-reviewed-by-accounts-and-then-re-reviewed-by-ops.md')}</span>`,'3s','<div class="foot">Pane.</div>')+
+   note('A note from the bot reads like this, in grey, on the text column')})})},
+};
+const PHONES={
+'p-live':{html:()=>phone('p-live',{busy:true,body:USER+group({kind:'live',mascot:true,segs:seg([S('Running commands','phase'),S('step 12'),S('<span class="num" data-clock="72">1m 12s</span>')]),now:`Searching files for ${o('"Poindexter"')}`,plan:planRow(true)})})},
+'p-open':{html:()=>phone('p-open',{body:group({kind:'done',open:true,segs:DONE_SEGS_PHONE,rows:finishedRows()+NL})})},
+'p-detail':{html:()=>phone('p-detail',{body:group({kind:'done',open:true,segs:DONE_SEGS_PHONE,rows:
+   row('fail','terminal',`Ran ${o('build-report.py')}`,'Failed',T_FAIL+foot('Ran without asking (No limits) · Bash'),{open:true})+
+   row('done','pencil',`Edited ${o('vendor-notes.md')} <span class="stat num"><span class="p">+3</span> <span class="m">−2</span></span>`,'',D_EDIT,{open:true})})})},
+'p-waiting':{html:()=>phone('p-waiting',{busy:true,dock:APPROVAL,body:group({kind:'waiting',open:true,mascot:true,segs:S('Waiting for your OK','phase'),now:`Wants to delete the folder ${o('old-exports')}`,nowAmber:true,rows:
+   more('Show 11 earlier steps')+row('done','terminal','Ran tests','42s','<div class="foot">Terminal block.</div>')+
+   row('wait','trash',`Wants to delete ${o('old-exports')}`,'Waiting for your OK','<div class="foot">Request pane.</div>',{two:true})})+
+   `<div class="waitrow"><span class="d"></span><span class="t">Sable is waiting for you.</span><button type="button" data-act="answer">Answer</button></div>`})},
+};
+
+/* ── render ── */
+const q=new URLSearchParams(location.search);
+const skin=q.get('skin')==='light'?'light':'dark';
+document.documentElement.dataset.skin=skin;
+const only=q.get('only');
+const stage=document.getElementById('stage');
+if(only){document.body.classList.add('only');stage.innerHTML=(SCREENS[only]||PHONES[only]).html();}
+else{
+  stage.innerHTML=Object.values(SCREENS).map(s=>`<div><p class="cap">${s.cap}</p>${s.html()}</div>`).join('')+
+   `<div><p class="cap"><b>9. Phone width (390).</b> One line per row; only a waiting, failed or not-allowed row may take a second line, on the text column. Header segments never break inside. Panes open full width and wrap. 44 px rows.</p><div class="phones">${Object.values(PHONES).map(s=>s.html()).join('')}</div></div>`;
+}
+const sb=document.getElementById('skinbtn');
+sb.textContent=skin==='dark'?'Switch to Light':'Switch to Dark';
+sb.onclick=()=>{q.set('skin',skin==='dark'?'light':'dark');location.search=q.toString();};
+
+/* ── behaviour: native buttons, roving focus, Esc, Copy, Wrap, live clock ── */
+const say=t=>{document.getElementById('live').textContent=t;};
+function toggle(btn,force){const open=force!==undefined?force:btn.getAttribute('aria-expanded')!=='true';btn.setAttribute('aria-expanded',open);const t=document.getElementById(btn.getAttribute('aria-controls'));if(t)t.hidden=!open;return open;}
+const rowsOf=list=>[...list.querySelectorAll('button.row, button.more')].filter(b=>b.offsetParent!==null);
+function focusRow(list,b){rowsOf(list).forEach(x=>x.tabIndex=-1);if(b){b.tabIndex=0;b.focus();}}
+document.addEventListener('click',e=>{
+  const act=e.target.closest('[data-act]');
+  if(act){const a=act.dataset.act,cb=act.closest('.cb');
+    if(a==='copy'){const h=act.closest('.cb-h');let pre=h&&h.nextElementSibling;const text=pre?pre.innerText:'';(navigator.clipboard?navigator.clipboard.writeText(text).catch(()=>{}):Promise.resolve());const s=act.querySelector('span:last-child');s.textContent='Copied';say('Copied');setTimeout(()=>s.textContent='Copy',1500);}
+    if(a==='wrap'&&cb){cb.classList.toggle('wrap');}
+    if(a==='all'){act.textContent='Showing all lines';}
+    if(a==='answer'){const b=document.getElementById('allowbtn');if(b)b.focus();}
+    return;}
+  const pill=e.target.closest('button.pill');
+  if(pill&&pill.getAttribute('aria-controls')!=='x'){
+    const open=toggle(pill);const list=document.getElementById(pill.getAttribute('aria-controls'));if(open&&list){const r=rowsOf(list);r.forEach((x,i)=>x.tabIndex=i?-1:0);}return;}
+  const r=e.target.closest('button.row');if(r){toggle(r);}
+});
+document.addEventListener('keydown',e=>{
+  const b=e.target.closest&&e.target.closest('button.row, button.more');
+  const list=b&&b.closest('.list');
+  if(b&&list){const all=rowsOf(list),i=all.indexOf(b);
+    const go=n=>{e.preventDefault();focusRow(list,all[Math.max(0,Math.min(all.length-1,n))]);};
+    if(e.key==='ArrowDown')go(i+1);else if(e.key==='ArrowUp')go(i-1);else if(e.key==='Home')go(0);else if(e.key==='End')go(all.length-1);
+    else if(e.key==='ArrowRight'&&b.matches('.row')){e.preventDefault();toggle(b,true);}
+    else if(e.key==='ArrowLeft'&&b.matches('.row')){e.preventDefault();toggle(b,false);}
+    else if(e.key==='Escape'){e.preventDefault();const p=document.querySelector(`button.pill[aria-controls="${list.id}"]`);if(p){toggle(p,false);p.focus();}}
+  }
+  if(e.key==='ArrowDown'&&e.target.matches&&e.target.matches('button.pill[aria-expanded="true"]')){const l=document.getElementById(e.target.getAttribute('aria-controls'));if(l){e.preventDefault();focusRow(l,rowsOf(l)[0]);}}
+});
+document.querySelectorAll('.list:not([hidden])').forEach(l=>{const r=rowsOf(l);if(r[0])r[0].tabIndex=0;});
+/* one shared 1 s ticker; the format is the app's formatElapsed */
+const fmt=s=>s<60?`${s}s`:s<3600?`${Math.floor(s/60)}m ${String(s%60).padStart(2,'0')}s`:`${Math.floor(s/3600)}h ${String(Math.floor(s%3600/60)).padStart(2,'0')}m`;
+if(!q.has('still'))setInterval(()=>document.querySelectorAll('[data-clock]').forEach(n=>{n.dataset.clock=+n.dataset.clock+1;n.textContent=fmt(+n.dataset.clock);}),1000);
+</script>
+</body>
+</html>

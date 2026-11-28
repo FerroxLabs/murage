@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "./sqlite-open.ts";
 import { inspectInstallationArchive, type ArchiveLimits, type InstallationArchiveManifest } from "./installation-archive.ts";
 import { InstallationSnapshotError, inspectInstallationDatabase } from "./installation-database-snapshot.ts";
+import { projectWebReadPermission, projectWebSearchPermission } from "./installation-state-snapshot.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import { RESTORED_CONNECTIONS_FILE } from "../electron/restored-connections.mjs";
 import { RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
@@ -184,6 +185,10 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         safe.engineDiscovery = "explicit";
         const instances: RecordValue = Object.fromEntries(Object.entries(DEFAULT_INSTANCES).map(([key, value]) => [key, { driver: value.driver, enabled: false }]));
         for (const key of ["profile", "language", "rooms", "localVm", "browserProfiles", "notifications"]) if (Object.hasOwn(config, key)) safe[key] = config[key];
+        const webSearch = projectWebSearchPermission(config.webSearch, "INVALID_RESTORE_CONFIG");
+        if (webSearch) safe.webSearch = webSearch;
+        const webRead = projectWebReadPermission(config.webSearch, config.webRead, "INVALID_RESTORE_CONFIG");
+        if (webRead) safe.webRead = webRead;
         // Once 0.1.61 has pinned Hermes profiles, a restore must not pin them
         // again from whatever Hermes' sticky default is on this computer.
         if (config.hermesProfilesPinned === true) safe.hermesProfilesPinned = true;

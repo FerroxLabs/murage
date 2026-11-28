@@ -12,6 +12,9 @@ import type { SpeechPolicy } from "./speech-policy.ts";
 // Nobody picking a voice should have to know which operating system wrote it.
 import type { AppConfig } from "../config.ts";
 import * as elevenlabs from "./elevenlabs.ts";
+import { fluxKey } from "../flux-config.ts";
+import { transcribe as transcribeHosted, type Recording, type Transcript, type TranscribeOptions } from "../voice/flux-voice.ts";
+export { speechLanguage } from "./elevenlabs.ts";
 import * as fluxSpeech from "./flux-speech.ts";
 import * as xaiSpeech from "./xai-speech.ts";
 import { spokenText, voicedText, type VoicedText } from "./speech-source.ts";
@@ -349,13 +352,14 @@ export function voiceReady(cfg: AppConfig, voiceId?: string, own?: VoiceProvider
 /** What the settings panel needs. Never includes the key — same write-only
  * rule as every other credential. */
 export function describeVoice(cfg: AppConfig) {
+  const routes = voiceRoutes();
   return {
     configured: providerConfigured(cfg),
     ready: voiceConfigured(cfg),
     voice: cfg.tts?.voice ?? "",
     provider: voiceProvider(cfg),
     /** Which provider serves each part of a call; never a key. */
-    routes: voiceRoutes(),
+    routes: routes && !routes.transcribe && cfg.tts?.key?.trim() ? { ...routes, transcribe: "elevenlabs" } : routes,
     /** Whether the page may open a streaming transcription call. */
     streamTranscribe: streamRoute(),
     /** Which voice services an agent can pick from here. */
@@ -364,6 +368,14 @@ export function describeVoice(cfg: AppConfig) {
      *  Flux list instead of an engine of their own. */
     xaiKey: xaiRoute() !== null,
   };
+}
+
+/** Existing transcription connections stay first. An own ElevenLabs key
+ * also listens when no hosted transcription connection is configured. */
+export function transcribe(cfg: AppConfig, recording: Recording, options: TranscribeOptions = {}): Promise<Transcript> {
+  const key = cfg.tts?.key?.trim();
+  if (options.endpoint || fluxKey(options.env ?? process.env) || !key) return transcribeHosted(recording, options);
+  return elevenlabs.transcribe(recording, key, options);
 }
 
 export function verifyKey(key: string) {
@@ -427,6 +439,7 @@ export function speakCallClip(cfg: AppConfig, voiced: VoicedText, voiceId: strin
 }
 
 export interface SpeakOptions extends SpeechPolicy {
+  language?: string;
   call?: boolean;
   /** Closing speech uses only the computer voice, never a paid route. */
   budgetClosing?: boolean;

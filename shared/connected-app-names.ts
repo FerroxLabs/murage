@@ -27,6 +27,10 @@ export const LEGACY_CONNECTED_APPS_SERVER = "composio";
 /** Set to "1" on the bridge's environment for a session an earlier release
  * started: the mount keeps its older names (connectedAppsServerName, exposedMessage). */
 export const LEGACY_NAMES_ENV = "MURAGE_CONNECTOR_LEGACY_NAMES";
+/** Set to "1" on a bridge that handles plain-name app calls. */
+export const CONNECTOR_ALIASES_ENV = "MURAGE_CONNECTOR_ALIASES";
+/** A request to include plain-name app rows in tools/list. */
+export const CONNECTOR_ALIASES_HEADER = "x-murage-connector-aliases";
 /** Murage's own connected-apps mounts. Both names are reserved (mcp-registry.ts),
  * so a tool under either is always Murage's, never a user's custom server. */
 const OWN_SERVERS = new Set([CONNECTED_APPS_SERVER, LEGACY_CONNECTED_APPS_SERVER]);

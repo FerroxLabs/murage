@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { checkpointLedger } from "./admission-shared.ts";
-import { ioBudget } from "./io-budget.ts";
+import { ADMISSION_MISS_BACKOFF_MS, ioBudget } from "./io-budget.ts";
 import { JOURNAL_SIZE_LIMIT_BYTES, closeDatabase, database } from "./database.ts";
 import { checkpointPassive, readWalHeader, settleWal, startWalMaintenance, stopWalMaintenance, walMaintenanceCounters, walMaintenanceReady, walResetFence } from "./wal-maintenance.ts";
 import { searchCleanupPending, stopSearchIndex } from "./message-search-index.ts";
@@ -22,20 +22,21 @@ const MB = 1024 * 1024;
 const messagesFile = () => join(DATA_DIR, "messages.db");
 const walFile = () => `${messagesFile()}-wal`;
 
-// ---- constants read from the UNMUTATED source (the runner's `git show HEAD:<file>` copy), by exact anchor ----
-function headSource(): string {
+// The D13 schedule stays independent of the source transformed by the worker.
+const stepBytes = 4 * MB;
+const expectedSchedule = { STEP_BYTES: stepBytes, DUE_MS: 250, threshold: stepBytes };
+
+function scheduleConstants() {
   const dir = process.env.WAL_PROD_HEAD_DIR;
-  expect(dir, "WAL_PROD_HEAD_DIR names the runner's git-HEAD copies").toBeTruthy();
-  return readFileSync(join(dir!, "server/wal-maintenance.ts"), "utf8");
-}
-function headConstants() {
-  const src = headSource();
+  if (!dir) return expectedSchedule;
+  const src = readFileSync(join(dir, "server/wal-maintenance.ts"), "utf8");
   const step = /export const STEP_BYTES = (\d+) \* 1024 \* 1024;/.exec(src);
   const due = /export const DUE_MS = (\d+);/.exec(src);
   const rule = /work = changed && \(saltChanged \|\| h\.logSize - base >= stepBytes( \* (\d+))?\);/.exec(src);
   expect(step && due && rule, "the unmutated source carries the STEP_BYTES, DUE_MS and step-rule anchors").toBeTruthy();
   const STEP_BYTES = Number(step![1]) * MB, DUE_MS = Number(due![1]);
-  return { STEP_BYTES, DUE_MS, threshold: STEP_BYTES * Number(rule![2] ?? 1) };
+  expect(expectedSchedule).toEqual({ STEP_BYTES, DUE_MS, threshold: STEP_BYTES * Number(rule![2] ?? 1) });
+  return expectedSchedule;
 }
 
 // ---- the checkpointer workers this file starts, captured at construction ----
@@ -88,6 +89,7 @@ function stepPorts(db: DatabaseSync) {
     async nudge() { const version = Number(db.prepare("PRAGMA user_version").get()!.user_version); db.exec(`PRAGMA user_version=${version}`); return true; },
     journalSizeLimit: () => Number(db.prepare("PRAGMA journal_size_limit").get()!.journal_size_limit),
     pinJournalSizeLimit: () => { db.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT_BYTES}`); },
+    setJournalSizeLimit: (bytes: number) => { db.exec(`PRAGMA journal_size_limit=${bytes}`); }, // 1.0.22: as the server ports (database.ts)
   };
 }
 function commit(db: DatabaseSync, megabytes: number) {
@@ -123,7 +125,7 @@ const walBytes = () => statSync(walFile()).size;
 
 // ---------------------------------------------------------------- D1
 it("D1 threshold: a commit of at least the step threshold is work on the first tick, and the pass starts", { timeout: 60_000 }, async () => {
-  const { threshold, DUE_MS } = headConstants();
+  const { threshold, DUE_MS } = scheduleConstants();
   const db = await drivenReady();
   const pin = pinReader();
   try {
@@ -143,7 +145,7 @@ it("D1 threshold: a commit of at least the step threshold is work on the first t
 });
 
 it("D1 pass size: ten commits of one step each are copied one step at a time, never as one large pass", { timeout: 120_000 }, async () => {
-  const { STEP_BYTES, DUE_MS, threshold } = headConstants();
+  const { STEP_BYTES, DUE_MS, threshold } = scheduleConstants();
   const db = await drivenReady();
   const pin = pinReader();
   try {
@@ -171,7 +173,7 @@ it("D1 pass size: ten commits of one step each are copied one step at a time, ne
 
 // ---------------------------------------------------------------- D2
 it("D2 stamps: the deferral and the accepted start are on one worker clock, and the accepted start follows the deferral within DUE_MS", { timeout: 60_000 }, async () => {
-  const { DUE_MS } = headConstants();
+  const { DUE_MS } = scheduleConstants();
   const db = await drivenReady();
   const pin = pinReader();
   try {
@@ -193,7 +195,7 @@ it("D2 stamps: the deferral and the accepted start are on one worker clock, and 
 });
 
 it("D2 late poll: a change below the step threshold starts a pass exactly when the worker clock reaches lastAt + DUE_MS", { timeout: 60_000 }, async () => {
-  const { DUE_MS } = headConstants();
+  const { DUE_MS } = scheduleConstants();
   const db = await drivenReady();
   const pin = pinReader();
   try {
@@ -245,8 +247,11 @@ it("D3 recovery: one held 25 ms invocation misses (slot 7 = 1); the next invocat
     // acknowledge the release
     Atomics.store(flag, 0, 1); Atomics.notify(flag, 0);
     await new Promise<void>(resolve => { holder.once("message", () => resolve()); holder.once("exit", () => resolve()); });
-    // Phase 2: the next invocation, asserted BEFORE anything is awaited
+    // Phase 2: the next invocation, asserted BEFORE anything is awaited. CHANGED EXPECTATION (MAIN-RULING 2026-11-25T13:37:06Z IDLECPU-1022 cause 3,
+    // q1022-lockloop-opus): after a miss the refresh backs off ADMISSION_MISS_BACKOFF_MS (250 ms), never a 25 ms re-arm, so the next invocation is at 250 ms.
     vi.advanceTimersByTime(25);
+    expect(publications(), "phase 2: backed off, no invocation 25 ms after the miss").toBe(0);
+    vi.advanceTimersByTime(ADMISSION_MISS_BACKOFF_MS - 25);
     expect(publications(), "phase 2: exactly one successful timer-origin publication").toBe(1);
     expect(slots[7], "phase 2: slot 7 = 0").toBe(0n);
     expect(ioBudget.admissionHealth().lockTimeouts, "no second miss").toBe(missed.lockTimeouts);

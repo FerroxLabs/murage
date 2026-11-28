@@ -6,8 +6,10 @@ import {join} from 'node:path';
 export function writePackageBuildProvenance(repository,resources) {
  const git=args=>execFileSync('git',args,{cwd:repository,encoding:'utf8',windowsHide:true}).trim();
  const commit=git(['rev-parse','HEAD']);assert.match(commit,/^[a-f0-9]{40}$/);
- const status=git(['status','--porcelain','--untracked-files=normal']);
- assert(status.split('\n').filter(Boolean).every(row=>row.trim().match(/^[AM] package\.json$/)),'uncommitted source or untracked input');
+ // Untrimmed: the first row keeps its status columns. Every refused row is printed so the build log names the file.
+ const status=execFileSync('git',['status','--porcelain','--untracked-files=normal'],{cwd:repository,encoding:'utf8',windowsHide:true});
+ const refused=status.split('\n').filter(Boolean).filter(row=>!row.trim().match(/^[AM] package\.json$/));
+ assert(refused.length===0,`uncommitted source or untracked input:\n${refused.slice(0,50).join('\n')}${refused.length>50?`\n... ${refused.length-50} more`:''}`);
  const changed=git(['diff','HEAD','--name-only']).split('\n').filter(Boolean);
  assert(changed.every(p=>p==='package.json'),'package build requires clean source except version');
  const original=JSON.parse(git(['show','HEAD:package.json']));

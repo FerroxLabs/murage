@@ -30,7 +30,7 @@ describe.skipIf(process.platform === "win32")("reuse gate row (fake CLI, real ps
   let admissionChecked = false;
   const sessions = new Map<string, string>();
   const extra = {
-    integrations: { agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok", MURAGE_TURN_DEPTH: "0" } } },
+    integrations: { agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok" } } },
     warmIdentity: { botId: "b1", audience: "owner" as const },
   } satisfies Partial<SendTurnInput>;
   const run = async (threadId: string, text: string, more: Partial<SendTurnInput> = {}) => {

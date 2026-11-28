@@ -52,3 +52,25 @@ export function withAccountTools(grants: readonly AccessGrant[], account: { tool
   const place = at < 0 ? rest.length : grants.slice(0, at).filter((grant) => !mine(grant)).length;
   return [...rest.slice(0, place), row, ...rest.slice(place)];
 }
+/** AG0 per-app levels (design r4 4.1). Sibling fields beside `connectedAppAccess`, never
+ * inside it: an older build drops unknown keys only from that strict record. They apply
+ * only while `atRevision` and `roleBinding` equal the legacy record's (server/bot-access-levels.ts). */
+export const ACCESS_LEVELS = ["none", "read", "full"] as const;
+export type AccessLevel = typeof ACCESS_LEVELS[number];
+const levelTools = z.array(identifier).min(1).max(30).refine((tools) => tools.every((tool, index) => index === 0 || tools[index - 1]! < tool), "tools must be sorted and unique");
+export const levelEntrySchema = z.object({ toolkit: identifier, accountId: identifier, level: z.enum(ACCESS_LEVELS), tools: levelTools.optional() }).strict()
+  .refine((entry) => entry.level !== "none" || entry.tools === undefined, "No access carries no tools");
+export const levelCapSchema = z.object({ level: z.enum(ACCESS_LEVELS), tools: levelTools.optional() }).strict()
+  .refine((cap) => cap.level !== "none" || cap.tools === undefined, "No access carries no tools");
+export const newAccountFloorSchema = z.object({ toolkit: identifier, from: z.array(identifier).min(1).max(5), cap: levelCapSchema, accountKey: z.array(identifier).max(200), applied: z.array(identifier).max(200) }).strict();
+export const connectedAppLevelsSchema = z.object({
+  v: z.literal(1), atRevision: z.number().int().min(1), roleBinding: z.string(), newAccounts: z.enum(["none", "all"]), allowWrites: z.boolean(),
+  accounts: z.array(levelEntrySchema).max(200), newAccountFloors: z.array(newAccountFloorSchema).max(10).optional(),
+}).strict().refine((levels) => new Set(levels.accounts.map((entry) => entry.toolkit + "\0" + entry.accountId)).size === levels.accounts.length, "one entry per account")
+  .refine((levels) => new Set((levels.newAccountFloors ?? []).map((floor) => floor.toolkit)).size === (levels.newAccountFloors ?? []).length, "one floor per app");
+export const connectedAppDecisionSchema = z.object({ requestId: identifier, behavior: z.enum(["allow", "deny"]), revision: z.number().int().nonnegative() }).strict();
+export const connectedAppDecisionsSchema = z.array(connectedAppDecisionSchema).max(24);
+export type ConnectedAppLevels = z.infer<typeof connectedAppLevelsSchema>;
+export type LevelEntry = z.infer<typeof levelEntrySchema>;
+export type LevelCap = z.infer<typeof levelCapSchema>;
+export type ConnectedAppDecision = z.infer<typeof connectedAppDecisionSchema>;

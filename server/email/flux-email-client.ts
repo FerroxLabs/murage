@@ -48,7 +48,7 @@ export type FluxOutcome<T = Record<string, unknown>> = (
   | { kind: "ok"; status: number; body: T; keyId: string; costUsd?: string }
   | { kind: "held"; status: 202; body: T; keyId: string }
   | { kind: "refused"; status: number; code: string; message: string; error: FluxErrorBody; keyId: string }
-  | { kind: "local_refused"; code: "owner_unproven" | "owner_mismatch"; keyId?: undefined }
+  | { kind: "local_refused"; code: "owner_unproven" | "owner_mismatch" | "bot_archived" | "dispatch_cancelled"; keyId?: undefined }
   | { kind: "uncertain"; status?: number; reason: "network" | "timeout" | "server" | "idempotency_in_progress" | "idempotency_mismatch" | "bad_body" | "no_credential" | "owner_changed"; keyId?: string }
 ) & {
   /** r5 F1: on an owner-kind call, the owner ref of the credential that made it (never set when no request was made). */
@@ -70,6 +70,8 @@ export interface FluxEmailClientOptions {
   observe?: (ref: CredentialRef, outcome: FluxOutcome<unknown>) => void;
   /** Section 8 outage backoff: an answer to give instead of calling Flux while that credential waits (null = call). */
   gate?: (ref: CredentialRef) => FluxOutcome<never> | null;
+  /** fprod3 N5: true when the bot the call is made for is archived or being archived; a dispatch-class call is then refused locally, with no request */
+  botFenced?: (botId: string) => boolean;
   /** Accepted restore outcomes survive a client/runtime restart. Keys contain the owner key id, never its token. */
   restoreOutcomes?: { read(id: string): StoredRestoreOutcome | null; write(id: string, value: StoredRestoreOutcome): void };
 }
@@ -156,6 +158,16 @@ interface RestoreRequest {
   delivery?: Promise<FluxOutcome<InboxBody>>;
 }
 
+interface RequestOptions {
+  body?: unknown;
+  idempotencyKey?: string;
+  host?: "api" | "app";
+  query?: Record<string, string | number | undefined>;
+  timeoutMs?: number;
+  botId?: string;
+  canDispatch?: () => boolean;
+}
+
 export class FluxEmailClient {
   private readonly timeoutMs: number;
   private readonly options: FluxEmailClientOptions;
@@ -171,7 +183,7 @@ export class FluxEmailClient {
   /** r6 F1: the ref of the owner credential an owner-kind call would use right now (null with none). Read only at a run's or a call's start. */
   currentOwnerRef(): string | null { return this.options.credentials.ownerRef?.() ?? null; }
 
-  async request<T>(ref: CredentialRef, method: string, path: string, init: { body?: unknown; idempotencyKey?: string; host?: "api" | "app"; query?: Record<string, string | number | undefined>; timeoutMs?: number; botId?: string } = {}): Promise<FluxOutcome<T>> {
+  async request<T>(ref: CredentialRef, method: string, path: string, init: RequestOptions = {}): Promise<FluxOutcome<T>> {
     const credential = this.credential(ref);
     if (!credential) return { kind: "uncertain", reason: "no_credential" };
     // EMAIL-ACCOUNT-CHANGE r6 F1: every owner-kind call names the owner ref its run or binding record started on; a missing or empty value, or an
@@ -191,7 +203,7 @@ export class FluxEmailClient {
     return outcome;
   }
 
-  private async exchange<T>(credential: FluxCredential, method: string, path: string, init: { body?: unknown; idempotencyKey?: string; host?: "api" | "app"; query?: Record<string, string | number | undefined>; timeoutMs?: number; botId?: string; spendKey?: string }): Promise<FluxOutcome<T>> {
+  private async exchange<T>(credential: FluxCredential, method: string, path: string, init: RequestOptions & { spendKey?: string }): Promise<FluxOutcome<T>> {
     const base = (init.host === "app" ? this.options.appBase : this.options.apiBase).replace(/\/+$/, "");
     const url = new URL(base + path);
     for (const [name, value] of Object.entries(init.query ?? {})) if (value !== undefined) url.searchParams.set(name, String(value));
@@ -210,6 +222,9 @@ export class FluxEmailClient {
           (method === "GET" && /\/(?:messages|threads)(?:\/[^/]+)?$/.test(path) && !init.query?.client_reference)) {
         await authorizeFluxDispatch(init.spendKey ?? credential.token);
       }
+      // N5, after the last await (spend authorisation) and immediately before the request: an archived bot's send, approve or reply never leaves
+      if (init.botId && this.options.botFenced?.(init.botId) && method === "POST" && (/\/messages(?:\/[^/]+\/reply)?$/.test(path) || /\/(?:approve|send)$/.test(path))) return { kind: "local_refused", code: "bot_archived" };
+      if (init.canDispatch?.() === false) return { kind: "local_refused", code: "dispatch_cancelled" };
       const response = await this.options.fetch(url.toString(), { method, headers, body: init.body === undefined ? undefined : JSON.stringify(init.body), signal: controller.signal, redirect: "error" });
       let text = "";
       try { text = await response.text(); } catch { return { kind: "uncertain", status: response.status, reason: timedOut ? "timeout" : "network", keyId: credential.keyId }; }
@@ -307,11 +322,11 @@ export class FluxEmailClient {
     return entry.delivery.then(outcome => structuredClone(outcome));
   }
   // #9, #10: Idempotency-Key required, client_reference = send_id (ask 7)
-  send(botId: string, inboxId: string, body: SendRequest, idempotencyKey: string) {
-    return this.request<SendBody>({ kind: "bot", botId, inboxId, charge: true }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/messages`, { idempotencyKey, body: { ...body, html: null, on_new_recipient: "hold" } });
+  send(botId: string, inboxId: string, body: SendRequest, idempotencyKey: string, canDispatch?: () => boolean) {
+    return this.request<SendBody>({ kind: "bot", botId, inboxId, charge: true }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/messages`, { idempotencyKey, canDispatch, body: { ...body, html: null, on_new_recipient: "hold" } });
   }
-  reply(botId: string, inboxId: string, messageId: string, body: ReplyRequest, idempotencyKey: string) {
-    return this.request<SendBody>({ kind: "bot", botId, inboxId, charge: true }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/messages/${encodeURIComponent(messageId)}/reply`, { idempotencyKey, body: { ...body, html: null } });
+  reply(botId: string, inboxId: string, messageId: string, body: ReplyRequest, idempotencyKey: string, canDispatch?: () => boolean) {
+    return this.request<SendBody>({ kind: "bot", botId, inboxId, charge: true }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/messages/${encodeURIComponent(messageId)}/reply`, { idempotencyKey, canDispatch, body: { ...body, html: null } });
   }
   // #11, #12, #14, #15
   listMessages(ref: CredentialRef, inboxId: string, query: { client_reference?: string; direction?: "inbound" | "outbound"; thread_id?: string; since?: string; limit?: number; cursor?: string } = {}) {

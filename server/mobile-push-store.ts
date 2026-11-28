@@ -29,6 +29,12 @@ export const PUSH_TOKEN_TTL_MS = 30 * 24 * 3600_000;
  *  per-device limit. The publisher token is the credential for that DELETE:
  *  never logged, never put in an error. */
 export interface RelayRemoval { bindingId: string; publisherToken: string; attempts: number; nextAttemptAt: number; createdAt: number }
+/** P1 (settings v10): the harness's receipt for one removal of one device, keyed (deviceId, generation). `queued` = the relay removal is
+ *  owed; `confirmed` = the relay deleted the binding; `abandoned` = the sweep gave up. The row outlives the binding, so a lost reply replays it. */
+export type RemovalReceiptState = "queued" | "confirmed" | "abandoned";
+export interface RemovalReceipt { removalId: string; state: RemovalReceiptState }
+/** Receipts that are no longer owed are kept this long, so a Check again after a long absence still reads the end state. */
+const RECEIPT_KEEP_MS = 90 * 24 * 3600_000;
 export type PushEventState = "held" | "pending" | "sent" | "exhausted" | "dropped";
 export interface PushEventRow {
   eventRef: string; bindingId: string; kind: PushKind; category: PushCategory; botId: string; threadId: string;
@@ -70,6 +76,11 @@ export function initializeMobilePush(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS push_relay_removals (
       binding_id TEXT PRIMARY KEY, publisher_token TEXT NOT NULL, attempts INTEGER NOT NULL,
       next_attempt_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS push_removal_receipts (
+      device_id TEXT NOT NULL, generation INTEGER NOT NULL, binding_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('queued','confirmed','abandoned')), created_at INTEGER NOT NULL,
+      PRIMARY KEY (device_id, generation));
+    CREATE INDEX IF NOT EXISTS push_removal_receipts_binding ON push_removal_receipts(binding_id);
   `);
   // H9 fix round 1: a rating belongs to the push revision it was made for.
   // Appended by ALTER, never in the CREATE text, so a database H2 made and a
@@ -245,12 +256,24 @@ export class PushStore {
       if (binding) this.drop(binding, o.now ?? Date.now(), o.atRelay !== false);
     });
   }
-  removeDevice(deviceId: string, now = Date.now()): PushBinding | null {
+  removeDevice(deviceId: string, now = Date.now(), generation?: number): PushBinding | null {
     return this.transaction(() => {
       const previous = this.bindingForDevice(deviceId);
-      if (previous) this.drop(previous, now, true);
+      if (previous) {
+        this.drop(previous, now, true);
+        // The receipt commits with the delete and the owed relay removal, never after them (v8/v9 P1).
+        if (generation !== undefined) {
+          this.db.prepare("INSERT OR IGNORE INTO push_removal_receipts (device_id,generation,binding_id,state,created_at) VALUES (?,?,?,'queued',?)")
+            .run(deviceId, generation, previous.bindingId, now);
+        }
+      }
       return previous;
     });
+  }
+  /** The receipt of one removal generation, or null when none was written for it. */
+  removalReceipt(deviceId: string, generation: number): RemovalReceipt | null {
+    const r = this.db.prepare("SELECT binding_id, state FROM push_removal_receipts WHERE device_id=? AND generation=?").get(deviceId, generation) as Row | undefined;
+    return r ? { removalId: String(r.binding_id), state: r.state as RemovalReceiptState } : null;
   }
 
   /** Idempotent: a binding already owed keeps its place and its backoff. */
@@ -266,7 +289,10 @@ export class PushStore {
       .all(now) as Row[]).filter((row) => !sqlRowRestoreHeld(this.db, "push_relay_removal", String(row.binding_id))).slice(0, limit).map(toRemoval);
   }
   relayRemovalDone(bindingId: string): void {
-    this.db.prepare("DELETE FROM push_relay_removals WHERE binding_id=?").run(bindingId);
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM push_relay_removals WHERE binding_id=?").run(bindingId);
+      this.db.prepare("UPDATE push_removal_receipts SET state='confirmed' WHERE binding_id=? AND state='queued'").run(bindingId);
+    });
   }
   /** Backs off like the outbox (doubling from a second), capped at an hour;
    *  a removal still failing a month after it was queued is given up. */
@@ -274,7 +300,13 @@ export class PushStore {
     const r = this.db.prepare("SELECT * FROM push_relay_removals WHERE binding_id=?").get(bindingId) as Row | undefined;
     if (!r) return "gone";
     const row = toRemoval(r);
-    if (now - row.createdAt >= REMOVAL_GIVE_UP_MS) { this.relayRemovalDone(bindingId); return "abandoned"; }
+    if (now - row.createdAt >= REMOVAL_GIVE_UP_MS) {
+      this.transaction(() => {
+        this.db.prepare("UPDATE push_removal_receipts SET state='abandoned' WHERE binding_id=? AND state='queued'").run(bindingId);
+        this.relayRemovalDone(bindingId);
+      });
+      return "abandoned";
+    }
     const attempts = row.attempts + 1;
     this.db.prepare("UPDATE push_relay_removals SET attempts=?, next_attempt_at=? WHERE binding_id=?")
       .run(attempts, now + Math.min(REMOVAL_MAX_BACKOFF_MS, 1000 * 2 ** Math.min(attempts - 1, 30)), bindingId);
@@ -453,11 +485,12 @@ export class PushStore {
     // One read says whether anything is due; the DELETEs run only then. The flush calls this every few seconds, and a DELETE that
     // matches nothing still takes the write lock. (A read cannot miss a row another writer just added: it sees the committed state.)
     const due = this.db.prepare(
-      "SELECT EXISTS(SELECT 1 FROM push_events WHERE expires_at<=?1) AS e, EXISTS(SELECT 1 FROM push_risk WHERE rated_at<=?2) AS r, EXISTS(SELECT 1 FROM push_decisions WHERE decided_at<=?3) AS d",
-    ).get(now, now - RISK_KEEP_MS, now - DECISION_KEEP_MS) as Row | undefined;
+      "SELECT EXISTS(SELECT 1 FROM push_events WHERE expires_at<=?1) AS e, EXISTS(SELECT 1 FROM push_risk WHERE rated_at<=?2) AS r, EXISTS(SELECT 1 FROM push_decisions WHERE decided_at<=?3) AS d, EXISTS(SELECT 1 FROM push_removal_receipts WHERE state<>'queued' AND created_at<=?4) AS c",
+    ).get(now, now - RISK_KEEP_MS, now - DECISION_KEEP_MS, now - RECEIPT_KEEP_MS) as Row | undefined;
     if (!due) return;
     if (due.e) this.db.prepare("DELETE FROM push_events WHERE expires_at<=?").run(now);
     if (due.r) this.db.prepare("DELETE FROM push_risk WHERE rated_at<=?").run(now - RISK_KEEP_MS);
     if (due.d) this.db.prepare("DELETE FROM push_decisions WHERE decided_at<=?").run(now - DECISION_KEEP_MS);
+    if (due.c) this.db.prepare("DELETE FROM push_removal_receipts WHERE state<>'queued' AND created_at<=?").run(now - RECEIPT_KEEP_MS);
   }
 }

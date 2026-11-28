@@ -6,6 +6,7 @@
 // is older than lines 1.0.2 wrote while its inherit holds were folded into older rows of the same revoke (e66f707e1 revoke-marker.ts:99);
 // at S every stored line under those rows reads checking again, exactly as 1.0.2's uncapped read held it, and the walk caps at S.
 // T1 to T7 are the contract's tests.
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,6 +42,9 @@ function freshFile(): { db: DatabaseSync; path: string } {
   const dir = mkdtempSync(join(tmpdir(), "murage-rw3b-")); dirs.push(dir);
   const path = join(dir, "messages.db");
   const db = new DatabaseSync(path); dbs.push(db);
+  // as database() opens a real file: the app's messages table exists before the memory schema, so the open makes the session proof's
+  // triggers on it (a messages table made after the open, as reply() does, leaves a file the v14 validator rightly refuses)
+  db.exec(MESSAGES_SQL); db.exec(BRANCH_TABLES_SQL);
   migrateMemorySchema(db, "active");
   return { db, path };
 }
@@ -97,7 +101,7 @@ it("T1 Astra's path through the real downgrade: a 1.0.2 copy folded under an act
   write102Copy(raw, "T", "copy", 4); // turn 30, line 31: after bulk 4's cap of 20
   raw.close();
   db = database();
-  expect(version(db)).toBe(13);
+  expect(version(db)).toBe(MEMORY_SCHEMA_VERSION);
   const S = cap(db, 4);
   expect(S).toBe(next(db) - 1);
   expect(highestStored(db)).toBeLessThanOrEqual(S);
@@ -140,7 +144,7 @@ it("T3 opens that run no step: a current file is left as it is; a v10 file with 
   downgradeMemorySchema(other, 10);
   const g = generation(other);
   migrateMemorySchema(other, "active");
-  expect([version(other), next(other), generation(other), cap(other, 5)]).toEqual([13, 60, g, 20]);
+  expect([version(other), next(other), generation(other), cap(other, 5)]).toEqual([MEMORY_SCHEMA_VERSION, 60, g, 20]);
 });
 
 it("T4 a seeding bulk beside an active job: only the active job moves; the seeding bulk keeps its row", () => {
@@ -173,7 +177,7 @@ it("T5 a failure inside the step rolls the whole upgrade back; the next open run
   const again = new DatabaseSync(path); dbs.push(again);
   expect([version(again), next(again), generation(again), ...caps(again)]).toEqual(before);
   migrateMemorySchema(again, "active");
-  expect([version(again), cap(again, 6), next(again)]).toEqual([13, before[1], Number(before[1]) + 1]);
+  expect([version(again), cap(again, 6), next(again)]).toEqual([MEMORY_SCHEMA_VERSION, before[1], Number(before[1]) + 1]);
 });
 
 it("T6 after the step: a pre-step line of a later turn is held, and a card patched after the step keeps its uncapped flow row", () => {

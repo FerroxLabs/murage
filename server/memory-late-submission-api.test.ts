@@ -136,13 +136,15 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     const reply=(message:any)=>message.role==="bot"&&message.kind==="text"&&message.text==="Hello from late";
     // Roster/receipt authority refusals carry no lineage verdict. Their unknown cause gets the neutral sentence, while the
     // exactly-once chip, dispatch count and final write proof below remain the same.
-    const without=(message:any)=>message.role==="bot"&&message.kind==="activity"&&message.memoryNote==="without-memory"&&message.tool?.name==="Murage prepared this reply from your message, with remembered context left out.";
+    // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20): this waited for and counted the message-only note row. The last rebuild's reply is the only
+    // new line now; that it ran without remembered context is the log line asserted below.
+    const without=(message:any)=>message.memoryNote==="without-memory"||/remembered context/.test(String(message.tool?.name??""));
     await expect.poll(async()=>(await messages()).some(reply),{timeout:30000}).toBe(true);
-    await expect.poll(async()=>(await messages()).some(without),{timeout:10000}).toBe(true);
     await new Promise(resolve=>setTimeout(resolve,300));
     const all=await messages();
     expect(all.filter(reply)).toHaveLength(1);
-    expect(all.filter(without)).toHaveLength(1);
+    expect(all.filter(without)).toEqual([]);
+    expect(readFileSync(fixture.info.logPath,"utf8")).toMatch(new RegExp(`\\[memory\\] (fence recovery tier=2|reply ran without remembered context) thread=${threadId} `));
     // no error card, and the raw code never reaches the person
     expect(all.filter(message=>String(message.tool?.name??"").startsWith("error:"))).toEqual([]);
     expect(all.some(message=>/MEMORY_CONTEXT_REVOKED|submission_refused/.test(String(message.tool?.name??"")))).toBe(false);

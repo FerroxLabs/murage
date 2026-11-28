@@ -54,13 +54,13 @@ type McpEntry = {
   env?: Record<string, string>;
 };
 
-function agentsMcpEntry(): McpEntry | null {
+function agentsMcpEntry(serverName = "murage-agents"): McpEntry | null {
   const home = process.env.HOME || process.env.USERPROFILE || "";
   try {
     const config = JSON.parse(
       readFileSync(join(home, ".gemini", "config", "mcp_config.json"), "utf8"),
     );
-    const entry = config.mcpServers?.["murage-agents"];
+    const entry = config.mcpServers?.[serverName];
     if (!entry?.command) return null;
     return {
       command: String(entry.command),
@@ -432,6 +432,14 @@ for (const [index, call] of calls.entries()) {
     // (ComSpec), or the step "ran" without running anything and a test's file never appears.
     const shell = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "/bin/sh";
     try { execSync(call.args.CommandLine, { windowsHide: true, cwd: process.cwd(), stdio: "ignore", shell }); } catch { /* the step still ran */ }
+  }
+  // FAKE_AGY_DISPATCH=1: a call_mcp_tool step that its hooks allowed RUNS: agy's MCP client calls the tool on the mounted server
+  // (config entry ServerName) with the step's own arguments, as the real CLI does after its hooks pass.
+  if (process.env.FAKE_AGY_DISPATCH === "1" && call.name === "call_mcp_tool") {
+    const target = agentsMcpEntry(String(call.args.ServerName));
+    if (!target) { step("ERROR", { error: { type: "TOOL_ERROR", message: "mcp server not mounted" } }); continue; }
+    try { await driveMcp(target, [{ name: String(call.args.ToolName), args: () => (call.args.Arguments ?? {}) as object }]); }
+    catch (error) { step("ERROR", { error: { type: "TOOL_ERROR", message: error instanceof Error ? error.message : String(error) } }); continue; }
   }
   step("DONE");
 }

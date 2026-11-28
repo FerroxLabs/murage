@@ -1,7 +1,8 @@
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {describe,expect,it} from 'vitest';
-const root=new URL('..',import.meta.url).pathname;
+const root=fileURLToPath(new URL('..',import.meta.url));
 const inputs=readFileSync(join(root,'infra/windows-signing/collector/Inputs.ps1'),'utf8');
 const build=readFileSync(join(root,'infra/windows-signing/collector/Build.ps1'),'utf8');
 const body=name=>{const start=inputs.indexOf(`function ${name}(`); const next=inputs.indexOf('\nfunction ',start+1); return inputs.slice(start,next<0?undefined:next);};

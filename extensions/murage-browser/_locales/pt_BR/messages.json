@@ -417,5 +417,24 @@
   },
   "spErrStorageUnavailable": {
     "message": "Não foi possível ler o armazenamento do Chrome. Reinicie o Chrome e compartilhe suas abas novamente."
+  },
+  "spGrantTitle": {
+    "message": "Seu navegador"
+  },
+  "spGrantOn": {
+    "message": "$BOT$ pode usar seu navegador.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spGrantOff": {
+    "message": "$BOT$ não pode usar seu navegador. Para ativar, abra o app Murage no seu computador.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
   }
 }

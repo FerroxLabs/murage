@@ -59,6 +59,8 @@ export function usePhoneCopy(): PhoneCopy {
 // ---- Owner routes (server/phone-calls/owner-routes.ts) ----
 
 export const PHONE_ROUTE = "/api/phone-calls";
+/** The 16 languages a call can be spoken in; the same list as server/phone-calls/tables.ts (a test pins them equal). */
+export const CALL_LANGUAGES = ["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh", "it", "nl", "ko", "ru", "pl", "tr", "vi", "id"] as const;
 export const APP_LANGUAGES = ["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"] as const;
 
 export interface PhoneLine { on: boolean; edits: Record<string, string> }
@@ -73,11 +75,35 @@ export interface PhoneSettings {
   ownerName: string;
 }
 export interface OlderScheduled { id: string; revision: number; to: string; when?: string }
-export interface PhoneStatus { supported: boolean; keyPresent: boolean; active: { revision: number; settings: PhoneSettings } | null; olderScheduled: OlderScheduled[] }
+export interface PhoneStatus {
+  supported: boolean;
+  keyPresent: boolean;
+  active: { revision: number; settings: PhoneSettings } | null;
+  olderScheduled: OlderScheduled[];
+  /** Whole-store count past the page; "500+" when it stops counting (F5 status, with or without a key). */
+  olderScheduledCount?: number | "500+";
+  /** The call settings upgrade at the vendor is pending: calls are paused (`phoneCalls.error.upgrade`). */
+  paused?: boolean;
+  /** The call history could not be opened (`phoneCalls.error.store`). */
+  storeUnavailable?: boolean;
+  /** The store holds calls (F5 status, store-derived; read keyless only when the db file exists). Absent = false: without a key
+   *  and without it the page stays the compact connection entry (FABLE-DESIGN 2060 H1). */
+  hasCalls?: boolean;
+}
 export interface PhoneNumberInfo { id: string; number: string; canCallOut: boolean }
+/** The owner-visible state of one call, derived on the server and sent on every card (section 2 of the design). */
+export type PhoneCallState = "checking" | "live" | "held" | "cancelling" | "settled";
 export interface PhoneCallCard {
   id: string;
   status: string;
+  /** Only the server decides it; the screen draws its controls from this and never from `status` or `held`. */
+  state?: PhoneCallState;
+  held?: "held" | "kept" | "cancelled";
+  /** A held call may be Kept (no Keep is in flight and none was recorded). */
+  canKeep?: boolean;
+  bookingState?: "booked" | "cancelling" | "cancelled" | "unclear";
+  /** Set only when the owner's wish was a language the voice account cannot speak (the call is in `language`). */
+  languageFallback?: { wanted: string; language: string };
   outcome?: string;
   reason?: string;
   time?: string;
@@ -102,7 +128,12 @@ export async function readPhoneStatus(call: PhoneApi): Promise<PhoneStatus | nul
   try {
     const body = await call(`${PHONE_ROUTE}/status`) as Partial<PhoneStatus> | null;
     if (!body || typeof body.supported !== "boolean") return null;
-    return { supported: body.supported, keyPresent: body.keyPresent === true, active: body.active ?? null, olderScheduled: Array.isArray(body.olderScheduled) ? body.olderScheduled : [] };
+    const status: PhoneStatus = { supported: body.supported, keyPresent: body.keyPresent === true, active: body.active ?? null, olderScheduled: Array.isArray(body.olderScheduled) ? body.olderScheduled : [] };
+    if (typeof body.olderScheduledCount === "number" || body.olderScheduledCount === "500+") status.olderScheduledCount = body.olderScheduledCount;
+    if (body.paused === true) status.paused = true;
+    if (body.storeUnavailable === true) status.storeUnavailable = true;
+    if (body.hasCalls === true) status.hasCalls = true;
+    return status;
   } catch (error) {
     if (statusOf(error) === 404) return null;
     throw error;
@@ -125,26 +156,80 @@ export async function recentCalls(call: PhoneApi, signal?: AbortSignal): Promise
   return Array.isArray(body?.calls) ? body.calls : [];
 }
 
-/** Refresh while Settings is mounted. One request at a time, at most once every five seconds. */
-export function watchRecentCalls(call: PhoneApi, onCalls: (calls: PhoneCallCard[]) => void): () => void {
+/** The stop function of a watcher, which also carries `refreshNow`: one fresh list read, fenced like the periodic ones. */
+export type RecentCallsWatch = (() => void) & { refreshNow(): void };
+
+/** Refresh while Settings is mounted. One request at a time, at most once every five seconds.
+ *  Every list read takes `++listEpoch` before it sends and delivers only while that is still the newest read, so an older
+ *  answer can never bring back a row that a newer answer (or a Delete) removed. The fence covers list reads only: an action's
+ *  own answer sets its row's line and then calls `refreshNow()`; the fresh list decides whether the row exists. */
+export function watchRecentCalls(call: PhoneApi, onCalls: (calls: PhoneCallCard[]) => void, onError?: (error: unknown) => void): RecentCallsWatch {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let loaded = false;
+  let listEpoch = 0;
+  let inFlight = 0;
+  const schedule = () => { clearTimeout(timer); if (!controller.signal.aborted) timer = setTimeout(() => { void refresh(); }, 5000); };
   const refresh = async () => {
+    const mine = ++listEpoch;
+    inFlight += 1;
     try {
       const calls = await recentCalls(call, controller.signal);
-      if (!controller.signal.aborted) { loaded = true; onCalls(calls); }
-    } catch {
-      if (!controller.signal.aborted && !loaded) onCalls([]);
+      if (!controller.signal.aborted && mine === listEpoch) { loaded = true; onCalls(calls); }
+    } catch (error) {
+      if (!controller.signal.aborted && mine === listEpoch) { if (!loaded) onCalls([]); onError?.(error); }
     } finally {
-      if (!controller.signal.aborted) timer = setTimeout(() => { void refresh(); }, 5000);
+      inFlight -= 1;
+      if (inFlight === 0) schedule();
     }
   };
   void refresh();
-  return () => { controller.abort(); clearTimeout(timer); };
+  const stop = (() => { controller.abort(); clearTimeout(timer); }) as RecentCallsWatch;
+  stop.refreshNow = () => { if (!controller.signal.aborted) void refresh(); };
+  return stop;
 }
 
 export async function cancelScheduledCall(call: PhoneApi, id: string): Promise<void> {
+  await call(`${PHONE_ROUTE}/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" });
+}
+
+export interface PhoneBotRow { id: string; name: string; allowed: boolean }
+export type PhoneRetention = 30 | 90 | null;
+const PAGE = 200;
+
+/** One page of the per-bot switch list. A bot deleted between pages answers 400 `bad_cursor`; the caller restarts from page 1. */
+export async function listBots(call: PhoneApi, after?: string): Promise<{ bots: PhoneBotRow[]; next?: string }> {
+  const query = new URLSearchParams({ limit: String(PAGE) });
+  if (after) query.set("after", after);
+  const body = await call(`${PHONE_ROUTE}/bots?${query}`) as { bots?: PhoneBotRow[]; next?: unknown } | null;
+  return { bots: Array.isArray(body?.bots) ? body.bots : [], ...(typeof body?.next === "string" ? { next: body.next } : {}) };
+}
+
+/** The switch shows the server's answer, never its own value. */
+export async function setBotAllowed(call: PhoneApi, botId: string, on: boolean): Promise<boolean> {
+  const body = await call(`${PHONE_ROUTE}/bots/${encodeURIComponent(botId)}`, { method: "PUT", body: JSON.stringify({ on }) }) as { allowed?: unknown } | null;
+  return body?.allowed === true;
+}
+
+export async function deleteCall(call: PhoneApi, id: string): Promise<void> {
+  await call(`${PHONE_ROUTE}/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function getRetention(call: PhoneApi): Promise<PhoneRetention> {
+  const body = await call(`${PHONE_ROUTE}/retention`) as { days?: unknown } | null;
+  return body?.days === 30 || body?.days === 90 ? body.days : null;
+}
+
+export async function setRetention(call: PhoneApi, days: PhoneRetention): Promise<PhoneRetention> {
+  const body = await call(`${PHONE_ROUTE}/retention`, { method: "PUT", body: JSON.stringify({ days }) }) as { days?: unknown } | null;
+  return body?.days === 30 || body?.days === 90 ? body.days : null;
+}
+
+export async function keepHeldCall(call: PhoneApi, id: string): Promise<void> {
+  await call(`${PHONE_ROUTE}/${encodeURIComponent(id)}/keep`, { method: "POST", body: "{}" });
+}
+
+export async function cancelHeldCall(call: PhoneApi, id: string): Promise<void> {
   await call(`${PHONE_ROUTE}/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" });
 }
 
@@ -182,10 +267,43 @@ export function phoneErrorKey(error: unknown): PhoneCopyKey {
     case "not_confirmed": return "phoneCalls.error.notConfirmed";
     case "vendor_unreachable": case "vendor_unavailable": return "phoneCalls.error.unreachable";
     case "settings_pending": return "phoneCalls.error.pending";
+    case "store_unavailable": return "phoneCalls.error.store";
     case "bad_settings": return "phoneCalls.error.badSettings";
     case "not_set_up": return "phoneCalls.error.notSetUp";
     default: return "phoneCalls.error.generic";
   }
+}
+
+/** The plain line for a result `reason` code of pack 5.9, or null for any other (free) reason. */
+export function resultReasonKey(reason: string | undefined): PhoneCopyKey | null {
+  switch (reason) {
+    case "already_started": return "phoneCalls.result.alreadyStarted";
+    case "phone_menu": return "phoneCalls.result.phoneMenu";
+    case "unclear": return "phoneCalls.result.unclear";
+    case "unpageable": return "phoneCalls.result.unpageable";
+    default: return null;
+  }
+}
+
+export type PhoneAction = "delete" | "cancel" | "keep" | "other";
+/** What one refused owner action shows and does (design 3.1): an owner line or none, and whether the list is read again. */
+export interface PhoneActionEffect { line: PhoneCopyKey | null; refresh: boolean; restartBots?: boolean }
+
+/** Every answer to an owner action as its line and effect. Never vendor text; a 404 only re-reads, so no client code drops a row. */
+export function phoneActionEffect(action: PhoneAction, error: unknown): PhoneActionEffect {
+  const code = codeOf(error);
+  const needKey = (error as { body?: { needKey?: unknown } } | null)?.body?.needKey === true;
+  if (code === "bad_cursor") return { line: null, refresh: false, restartBots: true };
+  if (statusOf(error) === 404 || code === "not_found") {
+    return action === "keep" ? { line: "phoneCalls.error.notConfirmed", refresh: true } : { line: null, refresh: true };
+  }
+  if (code === "live" || code === "checking" || code === "cancel_pending") {
+    if (needKey) return { line: "phoneCalls.delete.needKey", refresh: true };
+    return { line: code === "live" ? "phoneCalls.delete.live" : code === "checking" ? "phoneCalls.delete.checking" : "phoneCalls.delete.cancelPending", refresh: true };
+  }
+  if (code === "not_confirmed") return { line: needKey ? "phoneCalls.delete.needKey" : "phoneCalls.error.notConfirmed", refresh: true };
+  if (code === "cancelled") return { line: null, refresh: true };
+  return { line: phoneErrorKey(error), refresh: false };
 }
 
 // ---- The key box (electron/main.mjs phone-key:save / phone-key:remove) ----

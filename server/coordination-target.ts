@@ -7,6 +7,13 @@ export function outOfReachLine(fromName: string, toName: string): string {
   return `${toName} isn't in ${fromName}'s team. To let ${fromName} talk to ${toName}, open ${fromName}'s settings, Permissions, Can talk to, and add ${toName}. Or put them in a project together.`;
 }
 
+/** Whether `selector` can name this bot for resolveCoordinationTarget, whatever the reach or ambiguity: its id, its exact name or
+ *  the "<name> (" prefix of a longer name. A gate that must refuse every bot an ask could land on asks this, not a narrower match. */
+export function selectorMayName(bot: { id: string; name: string }, selector: string): boolean {
+  const name = selector.trim().toLocaleLowerCase(), own = bot.name.trim().toLocaleLowerCase();
+  return bot.id === selector || (!!name && (own === name || own.startsWith(name + " (")));
+}
+
 export function resolveCoordinationTarget<T extends ReachableBot & { id: string; name: string; hidden?: boolean }>(
   from: T, roster: T[], selector: string,
   /** Who `from` may reach; `canReach` unless the caller widens it (messageAllow, project membership). */

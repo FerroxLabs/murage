@@ -12,6 +12,7 @@ import { FUIGO_ASSETS, FUIGO_VERSION, FUIGO_REGISTRY } from "./prepare-fuigo.mjs
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const RECEIPT = `scripts/fuigo-${FUIGO_VERSION}-provenance.json`;
 const PENDING = "FILL\x2dAT-NPM";
+const VERSION_RE = FUIGO_VERSION.replace(/\./g, "\\.");
 const sha = (algorithm, bytes, encoding = "hex") => createHash(algorithm).update(bytes).digest(encoding);
 
 export function reviewedHashes(args) {
@@ -143,8 +144,8 @@ export async function fillFuigoPin(args, {
   const proof = { ...current, status: "filled", source, verificationBasis: "Exact-version npm integrity, shasum and package identity verified; three reviewed executable digests matched. No native execution; release qualification remains owed.", packages };
   writes.set(RECEIPT, `${JSON.stringify(proof, null, 2)}\n`);
   const licenses = readFileSync(join(root, "deploy/cloud-home/LICENSES.md"), "utf8")
-    .replace(/source and receipts pending in scripts\/fuigo-1\.0\.43-provenance\.json \(FILL\x2dAT-NPM\)/, `release source ${source}; receipts in scripts/fuigo-1.0.43-provenance.json`)
-    .replace(/(\| Fuigo 1\.0\.43 \| @fuigo\/linux-arm64 tarball )\S+(; executable )\S+/, (_, a, b) => {
+    .replace(new RegExp(`source and receipts pending in scripts/fuigo-${VERSION_RE}-provenance\\.json \\(FILL\\x2dAT-NPM\\)`), `release source ${source}; receipts in ${RECEIPT}`)
+    .replace(new RegExp(`(\\| Fuigo ${VERSION_RE} \\| @fuigo/linux-arm64 tarball )\\S+(; executable )\\S+`), (_, a, b) => {
       const row = packages.find(item => item.target === "linux-arm64");
       return `${a}${row.tarballSha256}${b}${row.binarySha256}`;
     });

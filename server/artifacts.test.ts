@@ -46,6 +46,16 @@ it("reports only a recognized trusted producer on saved rows", () => {
   f.db.prepare("UPDATE artifacts SET producer='invented' WHERE id=?").run(saved.id);
   expect(describeArtifact(f.db, f.storage, saved.id, f.access).producer).toBeUndefined();
 });
+it.each(["bundle.zip", "bundle.tar.gz", "bundle.7z", "plan.xmind"])("registers and downloads a bot's %s without unpacking or changing it", name => {
+  const f = fixture();
+  const bytes = Buffer.from("PK opaque fixture ../private.txt");
+  writeFileSync(join(f.workspace, name), bytes);
+  const saved = registerArtifact(f.db, f.storage, { ...f.input, name, relativePath: name }, f.access);
+  expect(saved.filename).toBe(name);
+  expect(saved.kind).toBe("other");
+  expect(readArtifact(f.db, f.storage, saved.id, f.access).bytes).toEqual(bytes);
+  expect(readdirSync(f.storage)).toHaveLength(1);
+});
 it("verifies real bytes, stores one immutable copy and returns the same identity on duplicate registration", () => {
   const f = fixture(), saved = registerArtifact(f.db, f.storage, f.input, f.access);
   expect(saved).toMatchObject({ name: "Weekly report", filename: "Weekly report.html", botId: "bot", threadId: "thread", runId: "run", sourceState: "current", savedState: "available" });

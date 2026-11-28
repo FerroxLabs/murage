@@ -29,7 +29,7 @@ export const STATIC_CODEX_MODELS: ModelCatalog = {
     // Program and most keys cannot run it yet -- a default that 404s is worse
     // than one that is merely a version behind.
     { id: "gpt-6-astra", label: "GPT-6 Astra" },
-    // Verified in Cloud home's pinned Codex 0.162.1 and public 0.167.0 catalogs.
+    // Verified in the Codex 0.162.1 (the support floor) and public 0.167.0 catalogs.
     // Desktop installs Codex separately; a live CLI catalog remains authoritative.
     { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
     // https://developers.openai.com/codex/models/ publishes this exact CLI id.

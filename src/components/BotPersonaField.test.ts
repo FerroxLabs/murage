@@ -11,17 +11,15 @@
 // pinned here: that the panel now says what the field is, and that the voice
 // note has its own small field, so voice is not written into the one field a
 // Chief of Staff reads when it decides who does the work.
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { en } from "@/locales";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
-const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
-const settings = read("./SettingsPanel.tsx");
+const settings = settingsPanelSource();
 
 /** The Personality field alone, so a Description assertion cannot satisfy it. */
 const personaField = (() => {

@@ -6,19 +6,22 @@
 // conversation" over "Bots > Advanced". A plain switch changes right in the
 // results; anything else is "Open": the page, Advanced first if it lives
 // there, scrolled to and highlighted (SettingsModal.tsx owns the opening).
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { api, useStore, type ConfigStatus } from "@/state/store";
-import { ANALYTICS_NOT_SAVED, analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { askBotTarget, askYourBot } from "@/lib/health-actions";
 import { DISCARD_SETTINGS_CHANGES, settingsDrafts } from "@/lib/settings-drafts";
+import { settingsPageLabel } from "@/lib/settings-sections";
 import { openHelp } from "./help/HelpHost";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
-import { inNativeShell } from "@/lib/native-shell";
 import { t } from "@/lib/i18n";
 import type { SettingsCard } from "@/lib/settings-cards";
 import { searchSettingsIndex, type SettingsIndexHit } from "@/lib/settings-search";
 import { openSettingsAddress } from "@/lib/open-settings-address";
+import { findRows, skillOpenTarget } from "@/lib/settings-find-rows";
+import { requestSkillSheet } from "@/lib/skill-sheet-request";
+import { querySkills } from "@/lib/skills-api";
+import type { SkillSearchResult } from "../../shared/settings-v10/skill-search";
 import { useApproveAllSurface } from "./ApproveAll";
 import { Switch } from "./SettingsPrimitives";
 
@@ -75,14 +78,35 @@ function ApproveAllWhere() {
 const rowClass = "flex min-h-11 w-full items-center justify-between gap-4 rounded-xl border border-hairline/40 bg-card px-4 py-3 text-left";
 const keyOf = (hit: SettingsIndexHit) => (hit.bot ? `${hit.entry.id}@${hit.bot.id}` : hit.entry.id);
 
+/** Skills the typed words find, from the Skills page's own query (a skill's title and words). An error or an empty answer
+ *  shows no skill rows and no error line: the settings rows stand alone. */
+function useSkillResults(query: string): SkillSearchResult[] {
+  const [found, setFound] = useState<{ query: string; rows: SkillSearchResult[] }>({ query: "", rows: [] });
+  const typed = query.trim();
+  useEffect(() => {
+    if (!typed) return;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      querySkills({ q: typed, show: "all" }).then((answer) => {
+        if (!live) return;
+        const rows = answer.rows.slice(0, 5).map((row): SkillSearchResult => {
+          const bot = row.usedBy.find((use) => use.enabled)?.botId;
+          return { kind: "skill", ref: { skillId: row.ref, ...(bot ? { botId: bot } : {}) }, title: row.name, description: row.description };
+        });
+        setFound({ query: typed, rows });
+      }, () => { if (live) setFound({ query: typed, rows: [] }); });
+    }, 250);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [typed]);
+  return found.query === typed ? found.rows : [];
+}
+
 /** SETTINGS-LOCKED-1019 section 6: one search over the app's cards, every bot's rows and the Approve all entry. Every
  *  Open goes by the entry's existing anchor (app card anchor, `bot-setting-*` row, Needs you tab), so a later layout
  *  change keeps every result working. 12 rows, then "More results (N)" expands in place. */
 export function SettingsSearchResults({ query, desktop, onOpen, onLeave, currentBotId }: { query: string; desktop: boolean | undefined; onOpen: (card: SettingsCard) => void; onLeave?: () => void; currentBotId?: string }) {
   const { state, dispatch } = useStore();
   const toolCalls = useShowToolCalls();
-  const [analytics, setAnalytics] = useState(analyticsEnabled);
-  const [analyticsUnsaved, setAnalyticsUnsaved] = useState(false);
   const [expandedFor, setExpandedFor] = useState<string | null>(null);
   const bots = useMemo(() => {
     const visible = state.bots.filter((bot) => !bot.hidden);
@@ -93,6 +117,18 @@ export function SettingsSearchResults({ query, desktop, onOpen, onLeave, current
   const found = useMemo(() => searchSettingsIndex(query, { desktop, bots, ...(currentBotId ? { currentBotId } : {}) }), [query, desktop, bots, currentBotId]);
   const expanded = expandedFor === query;
   const hits = expanded ? [...found.hits, ...found.more] : found.hits;
+  // The Skills page is desktop-only (settings-sections.ts), so a phone shows no skill row it could not open.
+  const skills = useSkillResults(desktop === true ? query : "");
+  // Settings rows first, then skill rows (lib/settings-find-rows.ts).
+  const skillRows = findRows([], skills).flatMap((row) => (row.kind === "skill" ? [row.result] : []));
+  const openSkill = (result: SkillSearchResult) => {
+    const target = skillOpenTarget(result);
+    leaveFor(() => {
+      requestSkillSheet(target.sheet.skillId, target.bot);
+      dispatch({ type: "toggleAppSettings", open: true, section: target.page });
+      onLeave?.();
+    });
+  };
   const leaveFor = (go: () => void) => {
     if (settingsDrafts.anyUnsaved() && !window.confirm(DISCARD_SETTINGS_CHANGES)) return;
     settingsDrafts.clear();
@@ -108,16 +144,14 @@ export function SettingsSearchResults({ query, desktop, onOpen, onLeave, current
   };
   const toggles: Readonly<Record<string, ToggleRow | undefined>> = {
     "botDefaults.tool-calls": { checked: toolCalls.enabled, busy: toolCalls.saving, onToggle: () => void toolCalls.toggle(), error: toolCalls.error },
-    // The phone apps never send usage analytics and show no switch for it, so their results do not either.
-    ...(inNativeShell() ? {} : { "general.analytics": { checked: analytics, onToggle: () => { const next = !analytics; setAnalyticsUnsaved(!setAnalyticsEnabled(next)); setAnalytics(next); }, error: analyticsUnsaved ? ANALYTICS_NOT_SAVED : undefined } }),
   };
 
   return (
     <>
     {/* One live line that only says the count (zero too), so a screen reader hears what typing found without leaving
         the box, and hears nothing new while the count stays the same. */}
-    <p role="status" data-settings-result-count className="sr-only">{t("ux.l8.results.count", { count: String(hits.length) })}</p>
-    {hits.length === 0 ? <SettingsNoResults query={query.trim()} /> : <ul aria-label={t("settings.l1.resultsFor", { query: query.trim() })} className="flex flex-col gap-2.5">
+    <p role="status" data-settings-result-count className="sr-only">{t("ux.l8.results.count", { count: String(hits.length + skillRows.length) })}</p>
+    {hits.length === 0 && skillRows.length === 0 ? <SettingsNoResults query={query.trim()} /> : <ul aria-label={t("settings.l1.resultsFor", { query: query.trim() })} className="flex flex-col gap-2.5">
       {hits.map((hit) => {
         const toggle = hit.entry.scope === "app" ? toggles[hit.entry.id] : undefined;
         const label = <div className="text-[14.5px] text-ink"><ResultLabel label={hit.label} query={query} /></div>;
@@ -139,6 +173,17 @@ export function SettingsSearchResults({ query, desktop, onOpen, onLeave, current
           </li>
         );
       })}
+      {skillRows.map((result) => (
+        <li key={`skill:${result.ref.skillId}`}>
+          <button type="button" data-settings-result-skill={result.ref.skillId} onClick={() => openSkill(result)} className={`${rowClass} hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus`}>
+            <div className="min-w-0">
+              <div className="text-[14.5px] text-ink"><ResultLabel label={result.title} query={query} /></div>
+              <div className="text-[12.5px] text-ink-secondary">{settingsPageLabel("skills")}</div>
+            </div>
+            <span className="shrink-0 text-[12.5px] text-ink-secondary">{t("settings.l1.open")}</span>
+          </button>
+        </li>
+      ))}
       {!expanded && found.more.length > 0 && (
         <li>
           <button type="button" data-settings-more-results onClick={() => setExpandedFor(query)} className={`${rowClass} justify-center text-[13px] text-ink-secondary hover:border-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus`}>

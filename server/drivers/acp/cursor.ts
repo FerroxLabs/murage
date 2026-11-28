@@ -1,4 +1,3 @@
-import { highlevelHandlerTools } from "../../highlevel/engine-policy.ts";
 import { NotModelRequest } from "../../../shared/engine-transport.ts";
 import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Cursor Agent CLI harness support — Anysphere's `cursor-agent acp` over ACP
@@ -567,9 +566,6 @@ export function cursorOwnReadAllow(turn: Pick<SendTurnInput, "integrations">): s
   }
   // VENUE-POST-1017: a handler-carded tool with its own mount key is allowed only on a turn whose agents mount carries that key
   for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents" && row.mountEnv && agents?.env?.[row.mountEnv] === "1") allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
-  if (turn.integrations?.highlevel) {
-    for (const tool of highlevelHandlerTools) allow.push(`Mcp(${OWN_BUILTINS.highlevel}:${tool})`);
-  }
   return allow;
 }
 

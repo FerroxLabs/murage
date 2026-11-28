@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LOCAL_CONTROL_OFF_NOTICE, staleModelNotice, staleModelReplacement } from "./stale-engine-model.ts";
+import { staleModelNotice, staleModelReplacement } from "./stale-engine-model.ts";
 
 import { readFileSync } from "node:fs";
 const catalog = { source: "live" as const, default: "gemini-4-argon-high", options: [{ id: "gemini-4-argon-high" }, { id: "gpt-oss-120b-medium" }] };
@@ -38,8 +38,7 @@ describe("notices", () => {
   it("say what changed and where to change it, without banned words", () => {
     const a = staleModelNotice("antigravity", "gemini-3.1-pro-high", "gemini-4-argon-high");
     expect(a).toBe("Antigravity no longer offers gemini-3.1-pro-high; this bot now uses gemini-4-argon-high. Change it in Settings if you prefer another model.");
-    for (const t of [a, LOCAL_CONTROL_OFF_NOTICE]) expect(t).not.toMatch(/—|\bsafe|safety|unsafe/i);
-    expect(LOCAL_CONTROL_OFF_NOTICE).toContain("Settings > Computer");
+    expect(a).not.toMatch(/—|\bsafe|safety|unsafe/i);
   });
 });
 
@@ -47,10 +46,10 @@ describe("wiring in index.ts", () => {
   const src = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   // 1.0.14 FIRST-ENGINE-REPICK section 4 (design R3b:94): the swap is a compare and set on the selection that owns this chat (the thread's
   // own pick, else the bot's), model only; store-engine-cas.test.ts proves what repairStaleModel writes. Here: the turn still repairs it.
-  it("repairs the selection that owns the chat with a compare and set, and clears the local-control note when the destination leaves local", () => {
+  it("repairs the selection that owns the chat with a compare and set, and no longer keeps a local-control note flag", () => {
     expect(src).toMatch(/const owning = store\.taskByThread\(bot\.id, threadId\)\?\.modelSelection \?\? store\.bot\(bot\.id\)\?\.modelSelection;\s*if \(owning && owning\.instanceId === bot\.modelSelection\.instanceId && owning\.model === old\) store\.repairStaleModel\(bot\.id, threadId, owning, replacement\);\s*model = replacement;/);
     expect(src).not.toMatch(/store\.patchBot\(bot\.id, \{ modelSelection: switched \}\)/);
-    expect(src).toMatch(/existingBot\?\.computer === "local" && body\.computer !== undefined && body\.computer !== "local"\) \{\s*if \(existingBot\.localControlOffNoted\) patch\.localControlOffNoted = false;/);
+    expect(src).not.toContain("localControlOffNoted");
   });
 });
 

@@ -13,6 +13,12 @@ afterEach(()=>removeTempDirSync(dir));
 const make=(kind:any='memory')=>new MemoryApprovalQueue(kind,join(dir,`${kind}.json`));
 const ref={approvalId:'approval-1'} as any;
 const spec=()=>({authority:{claim:{} as any,proof:{origin:'server-reference'}},ref:'request-1',epoch:'epoch-1',tool:'memory_save',input:{target:'bot',message:'rm -rf ~'},action:{requestId:'request-1',tool:'memory_save',options:['Allow','Deny']},view:{title:'Review memory',subtitle:'rm -rf ~'},base:{approve:null,source:'no-grant'} as any});
+it('continuation proof occupancy remains indexed after acceptance and restart',async()=>{
+ const queue=make(),input=spec();core.decide.mockReturnValue({kind:'card',ref});await queue.present(queue.open(input),ref,()=>{});
+ expect(queue.hasPendingProof(input.authority.proof)).toBe(true);const item=queue.pendingApprovals()[0];await queue.respond(item,{behavior:'allow'},{answerId:'fixture-answer'});
+ const restored=make();vi.spyOn((restored as unknown as {entries:Map<string,unknown>}).entries,'values').mockImplementation(()=>{throw Error('unbounded proof scan');});
+ expect(restored.hasPendingProof(input.authority.proof)).toBe(false);
+});
 it('A1/A2/A4a: freezes the exact call, writes queue before attach/present, and enumerates after restart',async()=>{
  const queue=make();core.decide.mockReturnValue({kind:'card',ref});
  const input=spec();const pending=queue.open(input);input.action.options.push('substituted');

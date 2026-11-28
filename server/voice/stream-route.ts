@@ -15,7 +15,8 @@ import { WebSocketServer, type WebSocket } from "ws";
 
 import { createTicketStore as createSingleUseTicketStore, type TicketStore } from "../single-use-ticket.ts";
 
-import { LEASE_MS, LIMITS, SLOW_CONSUMER_BYTES, SUBPROTOCOL, fatal, parseClientMessage, type ClientMessage, type StreamError } from "../../shared/flux-stream-contract.ts";
+import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
+import { CALL_ADMISSION_UNKNOWN, DEFAULT_MODEL, LEASE_MS, LIMITS, MAX_SESSION_CLOSE_REASON, SLOW_CONSUMER_BYTES, SUBPROTOCOL, fatal, isStreamErrorCode, parseClientMessage, projectStreamConfig, type ClientMessage, type ServerMessage, type StreamError } from "../../shared/flux-stream-contract.ts";
 import { FluxStreamRefused, failureForClose, openFluxStream, type FluxStream } from "./flux-stream.ts";
 
 /** A WebSocket close reason must fit 123 bytes of UTF-8; ws throws a RangeError past it. Cuts on a character boundary. */
@@ -195,24 +196,81 @@ export interface StreamRouteDeps {
   log?: (line: string) => void;
 }
 
+const STREAM_ERROR_TEXT: Record<string, string> = {
+  unauthorized: "Flux did not accept the workspace key",
+  key_budget_reached: "This Flux key has reached its budget",
+  premium_locked: "streaming voice needs a paid Flux plan",
+  rate_limit_error: "Flux is rate limiting; try again shortly",
+  invalid_param: "Flux refused the audio format",
+};
+const STREAM_UNAVAILABLE = "Couldn't reach Flux";
+
+function retryTiming(value?: number | null) {
+  return value != null && Number.isSafeInteger(value) && value >= 0 ? { retry_after_ms: value } : {};
+}
+
 /** What the page is told when the Flux handshake itself fails. The decision
- *  keys on closeCode (4000 plus the HTTP status), never on error.close_code,
- *  which is 4502 for every non-503 handshake failure. */
+ *  normally keys on closeCode (4000 plus the HTTP status). An uncertain
+ *  402 carries a distinct terminal error so the page cannot fall back. */
 function pageErrorFor(e: FluxStreamRefused | null): StreamError {
-  if (!e) return fatal("capability_unavailable", "Couldn't reach Flux");
+  if (!e) return fatal("capability_unavailable", STREAM_UNAVAILABLE);
+  if (e.error?.code === CALL_ADMISSION_UNKNOWN) return fatal(CALL_ADMISSION_UNKNOWN, STREAM_UNAVAILABLE);
   switch (failureForClose(e.closeCode, e.error)) {
     case "auth":
-      return fatal("unauthorized", "Flux did not accept the workspace key");
+      return fatal("unauthorized", STREAM_ERROR_TEXT.unauthorized);
     case "budget":
-      return fatal("key_budget_reached", "This Flux key has reached its budget");
+      return fatal("key_budget_reached", STREAM_ERROR_TEXT.key_budget_reached);
     case "premium":
-      return fatal("premium_locked", "streaming voice needs a paid Flux plan");
+      return fatal("premium_locked", STREAM_ERROR_TEXT.premium_locked);
     case "rate_limit":
-      return fatal("rate_limit_error", "Flux is rate limiting; try again shortly");
+      return fatal("rate_limit_error", STREAM_ERROR_TEXT.rate_limit_error, retryTiming(e.error?.retry_after_ms));
     case "format":
-      return fatal("invalid_param", "Flux refused the audio format");
+      return fatal("invalid_param", STREAM_ERROR_TEXT.invalid_param);
     default:
-      return e.closeCode === 4503 && e.error ? e.error : fatal("capability_unavailable", "Couldn't reach Flux");
+      return e.closeCode === 4503 && e.error
+        ? fatal("service_unavailable", STREAM_UNAVAILABLE, retryTiming(e.error.retry_after_ms))
+        : fatal("capability_unavailable", STREAM_UNAVAILABLE);
+  }
+}
+
+function projectStreamError(error: StreamError): StreamError {
+  let code = error.code;
+  if (classifyFluxRefusal(0, error) === "budget") code = "key_budget_reached";
+  else if (!isStreamErrorCode(code)) code = "internal_error";
+  const safe = fatal(code, STREAM_ERROR_TEXT[code] ?? STREAM_UNAVAILABLE, retryTiming(error.retry_after_ms));
+  return error.fatal ? safe : { ...safe, fatal: false, close_code: null };
+}
+
+function gracefulCloseReason(reason: string): string {
+  return reason === "client_close" || reason === MAX_SESSION_CLOSE_REASON || reason === "going_away" ? reason : "";
+}
+
+function projectCloseReason(code: number, reason: string, error: StreamError | null): string {
+  const refusal = classifyFluxRefusal(code, error ?? reason);
+  if (refusal === "premium") return "premium_locked";
+  if (refusal === "budget") return "key_budget_reached";
+  return gracefulCloseReason(reason);
+}
+
+function projectStreamMessage(msg: ServerMessage, goingAway: boolean, query: URLSearchParams): ServerMessage {
+  switch (msg.type) {
+    case "error":
+      return { ...msg, error: projectStreamError(msg.error) };
+    case "session.closed":
+      return { ...msg, reason: goingAway ? "going_away" : gracefulCloseReason(msg.reason) };
+    case "session.started":
+      return {
+        ...msg, model: DEFAULT_MODEL, config: projectStreamConfig(msg.config),
+        ignored_params: msg.ignored_params.filter((name) => PAGE_QUERY.has(name) && query.has(name)),
+      };
+    case "session.updated":
+      return { ...msg, config: projectStreamConfig(msg.config) };
+    case "warning":
+      return msg.code === "audio_dropped"
+        ? { ...msg, message: "audio arrived faster than real time; the excess was dropped" }
+        : { type: msg.type, seq: msg.seq, received_audio_ms: msg.received_audio_ms, code: "", message: "" };
+    default:
+      return msg;
   }
 }
 
@@ -480,7 +538,7 @@ function relay(page: WebSocket, url: URL, principal: string | null, deps: Stream
       }
     }, LEASE_MS);
 
-    stream.onMessage((raw, msg) => {
+    stream.onMessage((_raw, msg) => {
       lastSeq = msg.seq;
       lastReceived = msg.received_audio_ms;
       if (msg.type === "session.expiring") slot.expiring();
@@ -490,9 +548,8 @@ function relay(page: WebSocket, url: URL, principal: string | null, deps: Stream
         stream.close();
         return;
       }
-      // a restart the harness asked for: the page is told the reason it acts on (Astra I16)
       if (msg.type === "session.closed") relayedClosed = true;
-      page.send(goingAway && msg.type === "session.closed" ? JSON.stringify({ ...msg, reason: "going_away" }) : raw);
+      page.send(JSON.stringify(projectStreamMessage(msg, goingAway, query)));
     });
 
     const closed = await Promise.race([stream.closed, forcedClose.then(() => ({ code: 1001, reason: "going_away", error: null }))]);
@@ -504,7 +561,9 @@ function relay(page: WebSocket, url: URL, principal: string | null, deps: Stream
     if (goingAway) return endForRestart();
     // 1005 and 1006 cannot be sent in a close frame; a Flux socket that
     // vanished without one is, to the page, an unavailable provider.
-    if (closed.code === 1000 || closed.code === 1001 || closed.code === 1012 || closed.code >= 4000) return page.close(closed.code, trimCloseReason(closed.reason));
+    if (closed.code === 1000 || closed.code === 1001 || closed.code === 1012 || closed.code >= 4000) {
+      return page.close(closed.code, trimCloseReason(projectCloseReason(closed.code, closed.reason, closed.error)));
+    }
     refuse(fatal("capability_unavailable", "the connection to Flux dropped"));
   })();
 }

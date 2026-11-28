@@ -1,10 +1,11 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 if(process.argv.includes('--probe')){
  const root=process.env.GNL_PROBE_ROOT,home=join(root,'home'),data=join(root,'data');mkdirSync(home);mkdirSync(data);writeFileSync(join(data,'config.json'),'{}');
  Object.assign(process.env,{HOME:home,USERPROFILE:home,MURAGE_DATA_DIR:data,NODE_ENV:'test'});
@@ -22,5 +23,5 @@ if(process.argv.includes('--probe')){
   const r=spawnSync(process.execPath,['--experimental-strip-types','--import',pathToFileURL(loader).href,fileURLToPath(import.meta.url),'--probe'],{encoding:'utf8',timeout:30000,env:{...process.env,NODE_OPTIONS:'',GNL_PROBE_ROOT:dir}});
   assert.equal(r.status,0,r.stderr);const got=JSON.parse(readFileSync(join(dir,'result.json')));
   assert.notEqual(got.kind,'card');assert.equal(got.cards??0,0);assert.equal(got.autoOnly,undefined);
- }finally{rmSync(dir,{recursive:true,force:true});}
+ }finally{safeWipeSync(dir);}
 });

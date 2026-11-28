@@ -18,7 +18,7 @@ export function NoLimitsFollowers({upgrade=false}:{upgrade?:boolean}={}) {
  const dismiss=()=>{try{localStorage.setItem(UPGRADE_KEY,'1');}catch{/* this launch still remembers */}setSeen(true);};
  const layer=useFocusTrap(dialog,open,{name:'no-limits-upgrade',kind:'dialog',initialFocus:'[data-layer-cancel]',onEscape:dismiss});
  useEffect(()=>{let active=true;void api('/api/permissions/no-limits').then(value=>{if(active)setStatus(value);}).catch(cause=>{if(active)setError(String(cause));});return()=>{active=false;};},[permissionStamp,state.config?.newBots]);
- const useAll=async()=>{setSaving(true);setError('');try{setStatus(await api('/api/permissions/no-limits',{method:'POST',body:'{}'}));if(upgrade)dismiss();}catch(cause){setError(cause instanceof Error?cause.message:String(cause));}finally{setSaving(false);}};
+ const useAll=async()=>{setSaving(true);setError('');try{const plan=await api('/api/permissions/no-limits/plan');setStatus(await api('/api/permissions/no-limits',{method:'POST',body:JSON.stringify({reviewedSetId:plan.digest})}));if(upgrade)dismiss();}catch(cause){setError(cause instanceof Error?cause.message:String(cause));}finally{setSaving(false);}};
  if(upgrade&&!open)return null;
  if(!status?.enabled)return error?<p role="alert" className="text-danger">{error}</p>:null;
  const list=<>{status.lower.length>0&&<><p className="mt-2 text-[12px] text-ink-secondary">{t('noLimits.followers.lower')}</p><ul className="mt-1 text-[13px] text-ink">{status.lower.map(row=><li key={`${row.kind}:${row.id}`}>{row.name} ({t(`noLimits.followers.${row.kind}`)}): {t(row.level==='full'?'slik.levelFull':row.level==='auto'?'slik.levelAuto':'slik.levelAsk')}</li>)}</ul></>}</>;

@@ -706,7 +706,7 @@ describe("every limit-backup site asks the one gate", () => {
     expect(publishScan).toHaveBeenCalledTimes(1);
   });
   it("r4 Low: a late backup refusal keeps its own line on the direct and room settlements", () => {
-    expect(source).toContain("(kind === \"not-started\" ? backupRefusalMessage(submissionBoundary.refusedWith) : undefined) ?? turnRefusedLine(engineNameOf(instance), kind)");
+    expect(source).toContain("(kind === \"not-started\" ? backupRefusalMessage(submissionBoundary.refusedWith) : undefined) ?? turnRefusedLine(engineNameOf(instance), kind, isOutsideInputSource(opts?.automationSource))");
     expect(source).toContain("lateBackupLine = backupRefusalMessage(refusal) ?? lateBackupLine;");
     expect(source).toMatch(/e\.stopReason === "submission_refused" && lateBackupLine\) turnFailure = lateBackupLine;/);
   });

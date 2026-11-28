@@ -1,0 +1,57 @@
+[
+  {
+    "name": "flux-messages-cancelled-http",
+    "file": "server/memory/pip-transport.ts",
+    "from": "return { ...report, prompt_tokens: undefined, completion_tokens: undefined, estimatedRuns: 1, extraUnseen: 1 };",
+    "to": "return report;",
+    "testFiles": [
+      "server/drivers/headless-text-only.retry-ledger.test.ts"
+    ],
+    "testNamePattern": "A messages-cancelled: http Flux retains reservation, marker and exactly one unseen",
+    "line": 768
+  },
+  {
+    "name": "flux-messages-cancelled-headless",
+    "file": "server/memory/pip-transport.ts",
+    "from": "return { ...report, prompt_tokens: undefined, completion_tokens: undefined, estimatedRuns: 1, extraUnseen: 1 };",
+    "to": "return report;",
+    "testFiles": [
+      "server/drivers/headless-text-only.retry-ledger.test.ts"
+    ],
+    "testNamePattern": "A messages-cancelled: headless Flux retains reservation, marker and exactly one unseen",
+    "line": 768
+  },
+  {
+    "name": "flux-responses-zero-http",
+    "file": "server/memory/pip-transport.ts",
+    "from": "return { ...report, prompt_tokens: undefined, completion_tokens: undefined, estimatedRuns: 1, extraUnseen: 1 };",
+    "to": "return report;",
+    "testFiles": [
+      "server/drivers/headless-text-only.retry-ledger.test.ts"
+    ],
+    "testNamePattern": "A responses-zero: http Flux retains reservation, marker and exactly one unseen",
+    "line": 768
+  },
+  {
+    "name": "flux-responses-zero-headless",
+    "file": "server/memory/pip-transport.ts",
+    "from": "return { ...report, prompt_tokens: undefined, completion_tokens: undefined, estimatedRuns: 1, extraUnseen: 1 };",
+    "to": "return report;",
+    "testFiles": [
+      "server/drivers/headless-text-only.retry-ledger.test.ts"
+    ],
+    "testNamePattern": "A responses-zero: headless Flux retains reservation, marker and exactly one unseen",
+    "line": 768
+  },
+  {
+    "name": "flux-coalesced-result-keeps-real-usage",
+    "file": "server/memory/pip-transport.ts",
+    "from": "const keptUsage = usage.inputTokens !== undefined || usage.outputTokens !== undefined ? usage : run.result?.usage ?? usage;",
+    "to": "const keptUsage = usage;",
+    "testFiles": [
+      "server/drivers/headless-text-only.retry-ledger.test.ts"
+    ],
+    "testNamePattern": "D1: Flux keeps real usage before empty usage \\(one chunk\\)",
+    "line": 553
+  }
+]

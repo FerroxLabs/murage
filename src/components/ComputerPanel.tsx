@@ -53,13 +53,14 @@ import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { Switch } from "./SettingsPrimitives";
 import {
   autoMountsThisComputer,
+  autoRunsOnSentence,
   autoSelectsLocalComputer,
+  computerScreenOwnerLabel,
   computerSwitchNeedsLocalAutoWarning,
   instanceSupportsLocalComputer,
-  linuxAutoDescription,
+  windowsThisComputerText,
   localAutoHostPlatform,
   localComputerDisabledReason,
-  WINDOWS_COMPUTER_TEXT,
   localComputerSelectable,
   switchRevokesThisComputer,
   type HarnessAnnouncement,
@@ -165,6 +166,11 @@ type Phase =
   | "windows-computer"
   | "off"
   | "error";
+
+/** The phases whose screen is the owner's own computer, not the bot's. */
+export function screenIsThisComputer(phase: string): boolean {
+  return phase === "local" || phase === "local-unavailable" || phase === "windows-computer";
+}
 
 interface LocalVmStatus {
   mode: "shared" | "per-bot";
@@ -398,6 +404,9 @@ export function ComputerPanel({
   const { capabilities, ready: capabilitiesReady } = useDesktopCapabilities();
   const localAvailable = capabilities.localComputer.available;
   const isLinux = capabilities.host.platform === "linux";
+  // Auto mounts this computer on macOS only (autoSelectsLocalComputer, DESIGN 1022-cua-windows P1).
+  const isMac = capabilities.host.platform === "darwin";
+  const hostPlatform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
   const [localAutoWarning, setLocalAutoWarning] = useState(false);
@@ -505,7 +514,7 @@ export function ComputerPanel({
           ? null
           : phase === "ready"
             ? cloudBackend === "vps" ? "the self-hosted VPS selected by Auto" : "the cloud box selected by Auto"
-            : "this computer selected by Auto";
+            : hostPlatform === "darwin" ? "this computer selected by Auto" : "the cloud computer Auto picks when one is set up";
 
   // resolve the mode on open; box endpoints are only ever hit on the
   // cloud path, so local/off can never render a JSON error as an image
@@ -597,7 +606,7 @@ export function ComputerPanel({
     if (bot.computer !== "cloud" && !capabilitiesReady) return;
     if (cloudBackend === "vps") {
       const autoLocal =
-        !isLinux && bot.computer !== "cloud" && capabilitiesReady && localSelectable;
+        isMac && bot.computer !== "cloud" && capabilitiesReady && localSelectable;
       if (!vpsSupported) {
         if (autoLocal) setPhase("local");
         else {
@@ -907,7 +916,6 @@ export function ComputerPanel({
   // ── stopping a bot that is driving THIS screen ──────────────────────────
   // The harness platform decides, not the browser's: the same announcement
   // `planComputerDestinationChange` consults, for the same reason.
-  const hostPlatform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
   // Auto is the default and on macOS it mounts this very desktop, so "is this
   // bot on my screen" is not the same question as `bot.computer === "local"`.
   const usingThisScreen = Boolean(bot.busy) && autoMountsThisComputer({ platform: hostPlatform, computer: bot.computer });
@@ -1096,7 +1104,7 @@ export function ComputerPanel({
     "vps-stopped": "The managed VPS computer is stopped",
     "local-unavailable": localDisabledReason ?? "Local computer control isn't ready.",
     "vm-unavailable": "The Local VM isn't available for this bot",
-    "windows-computer": WINDOWS_COMPUTER_TEXT,
+    "windows-computer": windowsThisComputerText({ localReady: localAvailable, disabledReason: localDisabledReason }),
     "engine-unsupported": engineWithoutComputerText(selectedInstance?.displayName),
     off: "This bot's computer is off",
     error: "Couldn't reach the computer",
@@ -1213,7 +1221,7 @@ export function ComputerPanel({
           <ScreenStreamNotice message={liveNotice} />
           {/* Screen preview */}
           <div className="mb-1.5 mt-2 flex items-center justify-between text-[13px] text-ink-secondary">
-            <span>{bot.name}'s screen</span>
+            <span>{computerScreenOwnerLabel({ onThisComputer: screenIsThisComputer(phase), botName: bot.name })}</span>
             {phase === "local" && <span className="text-[11px]">this computer</span>}
             {phase === "vm" && <span className="text-[11px]">Local VM</span>}
             {cloudBackend === "vps" && (phase === "ready" || phase === "starting") && <span className="text-[11px]">self-hosted VPS</span>}
@@ -1230,7 +1238,7 @@ export function ComputerPanel({
             >
               <img
                 src={frameSrc}
-                alt={`${bot.name}'s screen`}
+                alt={computerScreenOwnerLabel({ onThisComputer: screenIsThisComputer(phase), botName: bot.name })}
                 className="h-full w-full object-contain transition group-hover:brightness-75 group-focus-visible:brightness-75"
               />
               <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-[11px] font-medium text-white opacity-80 shadow-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
@@ -1241,7 +1249,7 @@ export function ComputerPanel({
           ) : frameSrc ? (
             <img
               src={frameSrc}
-              alt={`${bot.name}'s screen`}
+              alt={computerScreenOwnerLabel({ onThisComputer: screenIsThisComputer(phase), botName: bot.name })}
               className="h-full w-full object-contain"
               title={phase === "vm" ? "Watch-only preview" : undefined}
             />
@@ -1515,14 +1523,7 @@ export function ComputerPanel({
           <div className="mt-4 rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">Runs on</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
-              {!bot.computer &&
-                (isLinux || !localSelectable
-                  ? cloudBackend === "vps"
-                    ? "Auto reuses a ready VPS when one is configured; otherwise computer use stays off. "
-                    : `${linuxAutoDescription()} `
-                  : cloudBackend === "vps"
-                    ? "Auto reuses a ready VPS when one exists, otherwise this computer, and asks you once before it first uses this computer. "
-                    : "Auto uses a cloud box when one exists, otherwise this computer, and asks you once before it first uses this computer. ")}
+              {!bot.computer && `${autoRunsOnSentence({ platform: capabilities.host.platform, localSelectable, vps: cloudBackend === "vps" })} `}
               Pick where this bot's computer lives. <b className="text-ink">Local VM</b> is a Cua-controlled Linux desktop
               in a container on this machine, kept apart from your own desktop. Set it up in App
               Settings → Computer & browser.
@@ -1545,7 +1546,7 @@ export function ComputerPanel({
               void revokeThisScreen();
             }
           }} />
-          {!bot.computer && !isLinux && localSelectable && (
+          {!bot.computer && isMac && localSelectable && (
             <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
               <div className="min-w-0">
                 <div className="text-[13px] text-ink">Using this computer on Auto</div>

@@ -6,6 +6,8 @@ import { legacyEmailDecisionFixture } from "./testing/legacy-decision-fixture.ts
 // Every send transition (design 9.1) and the failures F1 to F11, F25, F27 against a scripted fake Flux. In-memory SQLite, injected clock.
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
+import { installFluxStartGate } from "../flux-start-gate.ts";
+import type { SpendGate } from "../spend-gate.ts";
 import { FluxEmailClient } from "./flux-email-client.ts";
 import { emailCredentialProvider } from "./email-secrets.ts";
 import { EmailStore, type SendRow } from "./email-store.ts";
@@ -353,6 +355,43 @@ describe("every other ending (4.5, F9 to F11, M2, L1, L3)", () => {
     fake.on("DELETE", /\/held\/hld_1$/, { status: 204 });
     await service.tick();
     expect(row("send-1")).toMatchObject({ state: "withdrawn", code: "stopped" });
+  });
+
+  it.each(["inbox lock", "spend gate"])("Stop while waiting for the %s prevents provider dispatch", async (waiting) => {
+    let markEntered!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { markEntered = resolve; });
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const wait = () => {
+      markEntered();
+      return released;
+    };
+    fake.on("POST", /\/messages$/, sentOk());
+    let spendChecks = 0;
+    installFluxStartGate({ authorizeFluxDispatch: async () => {
+      spendChecks++;
+      if (waiting === "spend gate") await wait();
+    } } as SpendGate);
+    let locked: Promise<void> | undefined;
+    if (waiting === "inbox lock") {
+      locked = service.locks.exclusive(INBOX, wait);
+      await entered;
+    }
+    const pending = submit();
+    try {
+      if (locked) await expect.poll(() => row("send-1")?.state).toBe("dispatching");
+      else await entered;
+      await service.stop("b1", 1);
+      release();
+      expect((await pending).row).toMatchObject({ state: "withdrawn", code: "stopped", attempts: [] });
+      expect(fake.requests).toHaveLength(0);
+      expect(spendChecks).toBe(waiting === "inbox lock" ? 0 : 1);
+    } finally {
+      release();
+      await locked;
+      await pending.catch(() => {});
+      installFluxStartGate(null);
+    }
   });
 
   it("F10: Stop during an in-flight dispatch waits for the answer: 200 is reported sent, never withdrawn", async () => {

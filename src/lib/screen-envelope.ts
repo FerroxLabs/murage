@@ -255,7 +255,9 @@ export function resolveHelpScreen(input: HelpScreenInput): HelpScreen {
   });
   if (input.settingsPage) {
     const page = input.settingsPage;
-    const key = screenEntry(`settings:${page}`) ? `settings:${page}` : "settings:general";
+    // Rules and Messaging (Settings v10) keep the help screens of the pages they replaced, Bot defaults and Messaging apps.
+    const helpPage = page === "rules" ? "botDefaults" : page === "messaging" ? "channels" : page;
+    const key = screenEntry(`settings:${helpPage}`) ? `settings:${helpPage}` : "settings:general";
     return make(key, key, { page: key.slice("settings:".length) });
   }
   if (input.botSettingsOpen && bot) return make("bot", `bot:${bot.id}`, { botId: bot.id });

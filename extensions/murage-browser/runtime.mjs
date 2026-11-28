@@ -6,7 +6,7 @@ import { scopedCdpEvent } from './cdp-events.mjs';
 import { parseBrowserExtensionMessage, parseOrderedBrowserRequestId, browserCommandDeadlineMs, nativeWireBytes, MAX_RESULT_BYTES } from '../../shared/browser-extension-protocol.ts';
 import { categoryFor } from '../../shared/browser-site-categories.ts';
 import { isClipboardInput } from '../../shared/browser-clipboard.ts';
-import { groupTitle, GROUP_COLOR } from './tab-group.mjs';
+import { groupTitle, GROUP_COLOR, nearestGroupColor } from './tab-group.mjs';
 import { SECRET_CLASSIFIER_SOURCE } from '../../shared/browser-secret-classifier-source.ts';
 
 const STORAGE_KEY = 'murageBrowserState';
@@ -29,7 +29,19 @@ const METHODS = new Set([
   'Accessibility.enable', 'Accessibility.disable', 'Accessibility.getFullAXTree', 'Accessibility.getPartialAXTree',
   'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText',
   'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride', 'Emulation.setEmulatedMedia', 'Network.enable', 'Network.disable',
+  // PAY_HOLD (owner q1024-payguard-fable; server side server/pay-press-guard.ts): main-frame navigations are held for the length of one approved
+  // pay press. Only the exact shape below is accepted, and the hold is released here after 3 s whatever the server does.
+  'Fetch.enable', 'Fetch.disable',
+  // The press guard's report is pushed through one binding of Murage's own isolated world (the page's world never has it): one exact shape.
+  'Runtime.addBinding',
 ]);
+// v2: the hold AND the press report binding below. A build that only holds (v1) cannot report a press under a held form post, so it gets no pay card.
+export const PAY_HOLD_CAPABILITY = 'pay_hold_v2', PAY_HOLD_MAX_MS = 3000;
+const PAY_HOLD_SHAPE = JSON.stringify({ patterns: [{ urlPattern: '*', resourceType: 'Document', requestStage: 'Request' }] });
+// Must match server/pay-press-guard.ts PAY_REPORT_BINDING / PAY_REPORT_WORLD.
+export const PAY_REPORT_BINDING = '__muragePayReport', PAY_HOLD_CHECK_MS = 300;
+const PAY_REPORT_SHAPE = JSON.stringify({ name: PAY_REPORT_BINDING, executionContextName: GUARD_WORLD });
+const payHoldDenied = (method, params) => (method === 'Fetch.enable' && JSON.stringify(params) !== PAY_HOLD_SHAPE) || (method === 'Fetch.disable' && Object.keys(params).length > 0) || (method === 'Runtime.addBinding' && JSON.stringify(params) !== PAY_REPORT_SHAPE);
 const EVENT_DOMAINS = new Set(['Page', 'Runtime', 'DOM', 'Accessibility', 'Network']);
 const BOOTSTRAP_METHODS = new Set(['Target.setAutoAttach', 'Page.navigate', 'Page.enable', 'Page.disable', 'Runtime.enable', 'Runtime.disable', 'DOM.enable', 'DOM.disable', 'Accessibility.enable', 'Accessibility.disable', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'Page.addScriptToEvaluateOnNewDocument', 'Page.setLifecycleEventsEnabled', 'Network.enable', 'Network.disable', 'Runtime.runIfWaitingForDebugger']);
 // An accessibility tree deeper than this is cut; a screenshot is JPEG at this quality, then smaller.
@@ -164,6 +176,24 @@ const clip = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/
 // Lifecycle (T44). Planned capabilities (levels_v1, presence_v1, handoff_v1, upload_token_v1) are declared only once their code ships here.
 export const LIFECYCLE_CAPABILITY = 'lifecycle_v1';
 export const MIN_APP_PROTOCOL = 1;
+// The toolbar icon Chrome shows when no bot is working in a tab (manifest action.default_icon).
+export const DEFAULT_ACTION_ICON = { 16: 'icons/icon16.png', 32: 'icons/icon32.png' };
+// The bot's picture as toolbar icon pixels (16 and 32 px, round). Runs only in the extension worker; undefined where it cannot.
+async function decodeAvatarIcon(dataUrl) {
+  if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function') return undefined;
+  const [head, body] = dataUrl.split(',');
+  const bytes = Uint8Array.from(atob(body), c => c.charCodeAt(0));
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: head.slice(5, head.indexOf(';')) }));
+  const out = {};
+  for (const size of [16, 32]) {
+    const ctx = new OffscreenCanvas(size, size).getContext('2d');
+    ctx.beginPath(); ctx.arc(size / 2, size / 2, size / 2, 0, 2 * Math.PI); ctx.clip();
+    ctx.drawImage(bitmap, 0, 0, size, size);
+    out[size] = ctx.getImageData(0, 0, size, size);
+  }
+  bitmap.close?.();
+  return out;
+}
 const isAvatar = v => typeof v === 'string' && v.length <= 16384 && /^data:image\/(?:webp|png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(v);
 const MUTATING = new Set(['cdp', 'navigate', 'click', 'fill', 'type', 'press', 'scroll', 'hover', 'drag', 'select', 'back', 'forward', 'reload', 'tab_new', 'tab_close', 'tab_switch']);
 // Only a command that may have acted is journaled (so a restart can report it uncertain). Reads and setup calls write nothing.
@@ -208,6 +238,19 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   const uuid = options.uuid ?? (() => crypto.randomUUID());
   const emit = options.emit ?? (() => {});
   const bindings = new Map(), retired = new Set(), candidates = new Map(), popupUrls = new Map();
+  // The owner's Off for a bot, pressed in this extension (journey 1024, section 3): bot key -> the id of that Off. It holds for the
+  // bot, not for one binding: every binding of the bot is stopped and no new one is bound until the app names this very Off
+  // (which proves it has seen it) while reporting a new OK given on the desktop. Durable.
+  // An Off is never dropped to make room. With more than MAX_GRANT_OFFS standing, no new binding is made for any bot (grant_full)
+  // until binds that name their Off bring the count back down, so the table stays bounded (by the bindings live at that moment).
+  const grantOffs = new Map(), MAX_GRANT_OFFS = 256;
+  // One bot's group is made once: binds of the same bot that overlap wait here for the first one's group (bot key + window).
+  const groupJoins = new Map();
+  const refuseOff = offId => { throw Object.assign(new Error('grant_off'), { code: 'grant_off', offId }); };
+  const isBotKey = v => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
+  // The app's opaque per-bot key when it sends one (panel.grantBot); the bot's name otherwise (a same-named bot is then off too: fail closed).
+  const botKey = b => b.grantBot ?? `name:${b.botName}`;
+  const bindKey = (params, b) => isBotKey(params.panel?.grantBot) ? params.panel.grantBot : b ? botKey(b) : `name:${String(params.botName ?? 'Bot').slice(0, 80)}`;
   let requestNonce, lastRequestSequence = 0;
   let profileId, connected = false, writeBusy = false, connectionEpoch = 0;
   let saving = Promise.resolve(), disconnecting = Promise.resolve();
@@ -219,7 +262,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   const save = () => {
     // Protected origins admitted for this live No limits session are not durable
     // approvals: restart validation and ordinary bindings must still reject them.
-    const state = { profileId, retired: [...retired], ...(inFlight ? { inFlight } : {}), bindings: [...bindings.values()].map(b => ({ ...b, approvedOrigins: b.approvedOrigins.filter(o => { try { return originOf(o) === o; } catch { return false; } }), tabs: [...b.tabs.values()].map(({tabId, navigationEpoch, origin, url, bootstrap}) => ({tabId, navigationEpoch, origin, url, bootstrap})), attached: undefined, ready: undefined, noLimits: undefined, botAvatar: undefined, botAvatarId: undefined })) };
+    const state = { profileId, retired: [...retired], ...(grantOffs.size ? { grantOffs: [...grantOffs] } : {}), ...(inFlight ? { inFlight } : {}), bindings: [...bindings.values()].map(b => ({ ...b, approvedOrigins: b.approvedOrigins.filter(o => { try { return originOf(o) === o; } catch { return false; } }), tabs: [...b.tabs.values()].map(({tabId, navigationEpoch, origin, url, bootstrap}) => ({tabId, navigationEpoch, origin, url, bootstrap})), attached: undefined, ready: undefined, noLimits: undefined, botAvatar: undefined, botAvatarId: undefined })) };
     if (readOnly) return Promise.reject(Object.assign(new Error('persistence_unavailable'), { code: 'persistence_failed' }));
     // Each save starts from a settled tail, so one rejection never poisons the saves after it.
     const run = async () => { try { await api.storage.local.set({ [STORAGE_KEY]: { schema: STATE_SCHEMA, ...state } }); persistenceFailed = false; } catch (error) { persistenceFailed = true; throw error; } };
@@ -235,7 +278,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     const selected = tabs.find(t => t.tabId === b.selectedTabId) ?? tabs[0];
     return { ...(selected ?? {}), bindingId: b.id, generation: b.generation, botName: b.botName, state: b.state, ready: b.ready,
       ...(b.state === 'paused' && b.pausedReason ? { pausedReason: b.pausedReason } : {}), ...(persistenceFailed ? { persistenceFailed: true } : {}),
-      ...(selected ? { selectedTabId: selected.tabId } : {}), tabs, approvedOrigins: b.approvedOrigins, avatarId: b.botAvatar && b.botAvatarId ? b.botAvatarId : '' };
+      ...(selected ? { selectedTabId: selected.tabId } : {}), tabs, approvedOrigins: b.approvedOrigins, avatarId: b.botAvatar && b.botAvatarId ? b.botAvatarId : '', ...(b.grant === 'off' ? { grant: 'off', ...(grantOffs.has(botKey(b)) ? { grantOffId: grantOffs.get(botKey(b)) } : {}) } : {}) };
   };
   // ---- The side panel's view of one binding (PANEL-CONTRACT.md). Only what the runtime knows; nothing is invented. ----
   const handoffWaiting = b => b.state === 'paused' && b.pausedReason === 'handoff';
@@ -244,11 +287,13 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     const waiting = handoffWaiting(b), live = b.state !== 'stopped';
     const mode = b.mode ?? (b.full ? 'full' : 'step');
     // The owner's panel buttons: each is listed only where it applies. Setting a mode only tightens, Turn off leaves Full, and a new task starts only from a stopped one.
-    const actions = [...(waiting && connected ? ['continue'] : []), ...(live ? ['revoke', 'endtask'] : []), ...(live && connected && mode !== 'step' ? ['setMode'] : []), ...(live && connected && mode === 'full' ? ['turnoff'] : []), ...(!live && connected ? ['newtask'] : [])];
+    const actions = [...(waiting && connected ? ['continue'] : []), ...(live ? ['revoke', 'endtask'] : []), ...(live && connected && mode !== 'step' ? ['setMode'] : []), ...(live && connected && mode === 'full' ? ['turnoff'] : []), ...(!live && connected ? ['newtask'] : []),
+      // The per-bot OK can only be taken back here, never given (journey 1024, section 3): Off works with or without the app.
+      ...(live && b.grant === 'on' ? ['grantoff'] : [])];
     // What an active bot is doing, from what the runtime knows: a read in flight, a binding not yet ready (first time: starting; after that: connecting), or the app saying a card waits for the owner.
     const phase = b.state !== 'active' ? undefined : b.appPhase === 'waiting' ? 'waiting' : b.reading > 0 ? 'reading' : !b.ready ? (b.everReady ? 'connecting' : 'starting') : undefined;
     // The older summary fields (selected tab, epoch, approved sites) stay, so every earlier reader of the status keeps working.
-    return { ...base, bindingId: b.id, generation: b.generation, botName: b.botName, ...(b.botColor ? { botColor: b.botColor } : {}), ...(b.botAvatar ? { botAvatarId: b.botAvatarId } : {}), ...(b.conversation ? { conversation: b.conversation } : {}),
+    return { ...base, bindingId: b.id, generation: b.generation, botName: b.botName, ...(b.botColor ? { botColor: b.botColor } : {}), ...(b.botAvatar ? { botAvatarId: b.botAvatarId } : {}), ...(b.conversation ? { conversation: b.conversation } : {}), ...(b.grant ? { grant: b.grant } : {}),
       state: b.state, ...(waiting ? { pausedReason: 'handoff', ...(b.handoff ? { handoff: b.handoff } : {}), canContinue: connected } : {}),
       ready: !!b.ready && connected, ...(phase ? { phase } : {}), mode, tabs,
       grants: (b.grants ?? b.approvedOrigins.map(origin => ({ origin }))).filter(g => !b.revoked?.includes(g.origin)), activity: b.panelActivity ?? [], sites: b.sites ?? [],
@@ -267,7 +312,11 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // Only one phase comes from the app: a card is waiting for the owner. Any status without it clears it.
     if (panel.phase === 'waiting') b.appPhase = 'waiting'; else delete b.appPhase;
     if (typeof panel.conversation === 'string') b.conversation = clip(panel.conversation, 80);
-    if (typeof panel.botColor === 'string' && /^#[0-9a-f]{6}$/i.test(panel.botColor)) b.botColor = panel.botColor;
+    if (typeof panel.botColor === 'string' && /^#[0-9a-f]{6}$/i.test(panel.botColor) && panel.botColor !== b.botColor) { b.botColor = panel.botColor; stalePresence(b); }
+    // What the app says about the owner's one-time OK for this bot. Off, whoever set it (the owner here, or the app), is never
+    // lifted on this binding: a new OK starts a new binding.
+    if (isBotKey(panel.grantBot) && b.grantBot === undefined) b.grantBot = panel.grantBot;
+    if ((panel.grant === 'on' || panel.grant === 'off') && b.grant !== 'off') b.grant = panel.grant;
     if (typeof panel.handoff === 'string' && handoffWaiting(b)) b.handoff = clip(panel.handoff, 200);
     const list = (value, max, map) => Array.isArray(value) ? value.slice(0, max).map(map).filter(Boolean) : undefined;
     const origin = value => { try { return typeof value === 'string' ? originOf(value) : undefined; } catch { return undefined; } };
@@ -279,22 +328,72 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (sites) b.sites = sites;
   }
   const event = (b, name, data = {}) => { if (connected) emit({ version: 1, type: 'event', bindingId: b.id, generation: b.generation, event: name, data }); };
+  // The bot indicator (journey 1024, section 20): a tab group per bot (its name, the nearest of Chrome's colours to its own), the
+  // bot's picture and a badge on the toolbar icon of each tab it drives, and the page chip. A stopped bot leaves none of them.
   async function indicator(b) {
-    const text = b.state === 'stopped' ? 'STOP' : b.state === 'paused' ? 'II' : 'ON';
+    const stopped = b.state === 'stopped';
+    const text = stopped ? '' : b.state === 'paused' ? 'II' : 'ON';
     try {
-      for (const t of b.tabs.values()) await api.action.setBadgeText({ tabId: t.tabId, text });
-      // A group is renamed, never collapsed or moved. A sibling group in the same window is refreshed too,
-      // because the bot name appears once two bindings share a window.
-      await groupUpdate(b);
+      for (const t of b.tabs.values()) await tabIndicator(b, t.tabId, text);
+      // A group is renamed, never collapsed or moved; a stopped bot's group is dissolved (its tabs stay with the owner).
+      if (stopped) await groupRemove(b); else await groupUpdate(b);
       for (const other of bindings.values()) if (other !== b && other.groupId !== undefined && other.windowId === b.windowId) await groupUpdate(other);
     } finally { pushStatus(); }
   }
+  const avatarIcons = new Map();
+  async function avatarIcon(b) {
+    if (!b.botAvatar || !b.botAvatarId) return undefined;
+    if (!avatarIcons.has(b.botAvatarId)) {
+      if (avatarIcons.size >= 16) avatarIcons.clear();
+      avatarIcons.set(b.botAvatarId, await (options.avatarIcon ?? decodeAvatarIcon)(b.botAvatar));
+    }
+    return avatarIcons.get(b.botAvatarId);
+  }
+  // text '' = the bot is not in this tab any more: badge cleared and Murage's own icon back. The badge is set first and never
+  // depends on the picture (a cue, never a gate).
+  async function tabIndicator(b, tabId, text) {
+    await api.action.setBadgeText({ tabId, text });
+    // Asked again after the picture is decoded: a Stop (or the tab leaving) meanwhile must not get the picture back.
+    const live = () => text !== '' && b.state !== 'stopped' && b.tabs.has(tabId);
+    try {
+      if (live() && b.botColor) await api.action.setBadgeBackgroundColor?.({ tabId, color: b.botColor });
+      const imageData = live() ? await avatarIcon(b).catch(() => undefined) : undefined;
+      await api.action.setIcon?.(imageData && live() ? { tabId, imageData } : { tabId, path: DEFAULT_ACTION_ICON });
+    } catch { /* the icon is a cue */ }
+  }
   async function groupUpdate(b) {
     if (b.groupId === undefined) return;
-    const showBot = [...bindings.values()].filter(o => o.groupId !== undefined && o.windowId === b.windowId).length >= 2;
-    const title = groupTitle({ botName: b.botName, showBot, state: b.state, yourTurn: b.yourTurn, full: b.full, activity: b.activity }, api.i18n);
-    await api.tabGroups.update(b.groupId, { title, color: GROUP_COLOR }).catch(() => {});
+    // Conversations of one bot share its group: the title follows the one that is working, else a paused one.
+    const sharing = [...bindings.values()].filter(o => o.groupId === b.groupId && o.state !== 'stopped');
+    const lead = sharing.find(o => o.state === 'active') ?? sharing[0] ?? b;
+    const title = groupTitle({ botName: lead.botName, showBot: true, state: lead.state, yourTurn: lead.yourTurn, full: lead.full, activity: lead.activity }, api.i18n);
+    // Without the tabGroups permission (an install that has not taken the update yet) the bot still drives: icon, badge and chip remain.
+    try { await api.tabGroups.update(b.groupId, { title, color: nearestGroupColor(b.botColor) }); } catch { /* the group is a cue */ }
   }
+  async function groupRemove(b) {
+    if (b.groupId === undefined) return;
+    const tabIds = [...b.tabs.keys()], groupId = b.groupId;
+    delete b.groupId;
+    // Another conversation of the bot still uses the group: only this one's tabs leave it, and the group is drawn for the other.
+    const other = [...bindings.values()].find(o => o !== b && o.groupId === groupId && o.state !== 'stopped');
+    try { if (tabIds.length) { await api.tabs.ungroup(tabIds); if (other) await groupUpdate(other); return; } } catch { /* retitled below */ }
+    if (other) { await groupUpdate(other); return; }
+    // The group could not be dissolved (a tab already gone, no tab left to name): it says stopped, never working.
+    try { await api.tabGroups.update(groupId, { title: groupTitle({ botName: b.botName, state: 'stopped' }, api.i18n), color: 'grey' }); } catch { /* the group is gone too */ }
+  }
+  // Every live binding of one bot is stopped. With offId it is the owner's Off pressed here: the app is told on each binding.
+  // Authority ends for all of them in this same turn (fence() ends it before its first await); only the clean-up is awaited, so no
+  // command for a sibling conversation can run between two stops.
+  async function stopBot(key, offId) {
+    const stops = [];
+    for (const o of [...bindings.values()]) if (botKey(o) === key && o.state !== 'stopped') {
+      o.grant = 'off';
+      if (offId) event(o, 'notice', { kind: 'owner_grant_off', offId });
+      stops.push(fence(o, 'stopped', 'stopped'));
+    }
+    await Promise.all(stops);
+  }
+  function stalePresence(b) { for (const t of b.tabs?.values?.() ?? []) if (t.presence) t.presence.stale = true; }
   // A finished (stopped) task gives its slot back. The tombstone is durable, so its id can never return.
   function retire(id) {
     bindings.delete(id); retired.add(id);
@@ -808,8 +907,17 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (!b.noLimits && origin !== 'null' && !b.approvedOrigins.includes(origin)) fail('site_denied');
     if (generation !== undefined && !(connected && b.state === 'active' && b.ready && b.generation === generation)) fail('binding_inactive');
     b.tabs.set(tabId, { tabId, navigationEpoch: 1, origin, url: tab.url, bootstrap });
-    const groupId = await api.tabs.group({ tabIds: [tabId], ...(b.groupId === undefined ? {} : { groupId: b.groupId }) });
-    b.groupId = groupId; b.windowId = tab.windowId; b.selectedTabId ??= tabId; await save(); await indicator(b);
+    // One group per bot: a second conversation of the same bot in this window joins the bot's group.
+    const joinKey = `${tab.windowId} ${botKey(b)}`, earlier = groupJoins.get(joinKey);
+    const join = (async () => {
+    if (earlier) await earlier.catch(() => {});
+    const botGroup = b.groupId ?? [...bindings.values()].find(o => o !== b && o.groupId !== undefined && o.state !== 'stopped' && o.windowId === tab.windowId && botKey(o) === botKey(b))?.groupId;
+    const groupId = await api.tabs.group({ tabIds: [tabId], ...(botGroup === undefined ? {} : { groupId: botGroup }) });
+    b.groupId = groupId; b.windowId = tab.windowId;
+    })();
+    groupJoins.set(joinKey, join);
+    try { await join; } finally { if (groupJoins.get(joinKey) === join) groupJoins.delete(joinKey); }
+    b.selectedTabId ??= tabId; await save(); await indicator(b);
     return b.tabs.get(tabId);
   }
   async function createOwnedTab(b, generation) {
@@ -902,7 +1010,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   async function installPresence(b, t) {
     const p = t.presence;
     if (!p.bound) { await presenceSend(t, 'Runtime.addBinding', { name: p.name, executionContextName: PRESENCE_WORLD }); p.bound = true; }
-    const source = presenceSource({ botName: b.botName, bindingName: p.name, labels: presenceLabels(b.botName) });
+    const source = presenceSource({ botName: b.botName, botColor: b.botColor, avatar: b.botAvatar, bindingName: p.name, labels: presenceLabels(b.botName) });
     if (!p.script) p.script = (await presenceSend(t, 'Page.addScriptToEvaluateOnNewDocument', { source, worldName: PRESENCE_WORLD, runImmediately: true })).identifier;
     if (!t.frameId) t.frameId = (await presenceSend(t, 'Page.getFrameTree', {})).frameTree?.frame?.id;
     const world = await presenceSend(t, 'Page.createIsolatedWorld', { frameId: t.frameId, worldName: PRESENCE_WORLD });
@@ -922,6 +1030,8 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     const gone = () => !connected || b.state !== 'active' || b.tabs.get(t.tabId) !== t || !b.attached.has(t.tabId);
     if (gone()) return;
     try {
+      // The bot's colour or picture changed: the chip is drawn again with the new one.
+      if (t.presence?.stale) await removePresence(t);
       const p = t.presence ??= { name: `murage_presence_${uuid().replaceAll('-', '')}` };
       if (touch) p.lastActive = Date.now();
       let alive = false;
@@ -1061,6 +1171,23 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       if (Number.isInteger(req.params.appProtocol) && req.params.appProtocol < MIN_APP_PROTOCOL) fail('update_murage');
       const approvedOrigins = req.params.approvedOrigins;
       if (!Array.isArray(approvedOrigins) || approvedOrigins.length > 128 || approvedOrigins.some(o => typeof o !== 'string' || originOf(o, req.params.noLimits === true) !== o)) fail('site_denied');
+      // The owner's per-bot OK is off (the app's word, or an Off pressed in this extension): nothing is bound, no tab is opened.
+      const offKey = bindKey(req.params, b), offId = grantOffs.get(offKey);
+      if (offId !== undefined) {
+        // The refusal's message is the Off's id: the app records the Off, and only a later bind that names it (grantAck) lifts it.
+        if (!(req.params.panel?.grant === 'on' && req.params.panel.grantAck === offId && b?.grant !== 'off')) refuseOff(offId);
+        grantOffs.delete(offKey);
+      }
+      if (req.params.panel?.grant === 'off' || b?.grant === 'off') {
+        // The app's Off is for the bot, whichever binding id carries it (a fresh or a stopped one too): every live conversation of
+        // the bot stops, all in this turn. A binding that is only Off itself (the app now says on) stops nobody else.
+        const offKeys = req.params.panel?.grant === 'off' ? [offKey, ...(b ? [botKey(b)] : [])] : b.state !== 'stopped' ? [botKey(b)] : [];
+        if (b) b.grant = 'off';
+        await Promise.all([...new Set(offKeys)].map(key => stopBot(key)));
+        fail('grant_off');
+      }
+      // Too many Offs standing (none is ever dropped): no new binding until some are lifted.
+      if (!b && grantOffs.size > MAX_GRANT_OFFS) fail('grant_full');
       if (!b) {
         // A retired id is never bound again: an old, captured bind cannot revive a finished task.
         if (retired.has(req.bindingId)) fail('binding_retired');
@@ -1084,14 +1211,15 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       await indicator(b); return summary(b);
     }
     if (!b) fail('unknown_binding');
-    if (req.operation === 'status') { if (req.params.panel) { applyPanel(b, req.params.panel); pushStatus(); } return summary(b); }
+    if (req.operation === 'status') { if (req.params.panel) { const color = b.botColor; applyPanel(b, req.params.panel); if (req.params.panel.grant === 'off' || (b.grant === 'off' && b.state !== 'stopped')) await Promise.all([...new Set([botKey(b), ...(isBotKey(req.params.panel.grantBot) ? [req.params.panel.grantBot] : [])])].map(key => stopBot(key))); else if (b.botColor !== color) await indicator(b).catch(() => {}); else pushStatus(); } return summary(b); }
     if (b.generation !== req.generation) fail('stale_generation');
     if (req.operation === 'avatar') {
       const id = req.params?.avatarId;
       if (id === '') { delete b.botAvatar; delete b.botAvatarId; }
       else if (typeof id === 'string' && /^[0-9a-f]{16}$/.test(id) && isAvatar(req.params.data)) { b.botAvatar = req.params.data; b.botAvatarId = id; }
       else fail('invalid_params');
-      pushStatus(); return { avatarId: b.botAvatarId ?? '' };
+      // The new picture reaches the toolbar icon and the page chip at once.
+      stalePresence(b); await indicator(b).catch(() => {}); return { avatarId: b.botAvatarId ?? '' };
     }
 
     if (req.operation === 'retire') {
@@ -1101,7 +1229,18 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // A pause that names a handoff is the Your turn state: the page is released and the owner presses Continue (T25).
     if (req.operation === 'stop' || req.operation === 'pause') return fence(b, req.operation === 'stop' ? 'stopped' : 'paused', req.operation === 'stop' ? 'stopped' : 'paused', req.operation === 'pause' && req.params.reason === 'handoff' ? { text: req.params.handoff } : undefined);
     // The app's own Continue (the owner at the desktop) answers a hand-over; every other resume stays the owner's action in the browser.
-    if (req.operation === 'resume') { if (req.params?.reason === 'continue' && handoffWaiting(b)) return ownerResume(b, req.params.noLimits === true); fail('owner_action_required'); }
+    if (req.operation === 'resume') {
+      if (req.params?.reason === 'continue' && handoffWaiting(b)) return ownerResume(b, req.params.noLimits === true);
+      // 1.0.23 CHROME-RESUME-FROM-APP: the owner at the desktop resumes a plainly paused task. The same ownerResume as the panel's Resume
+      // (site and incognito checks, race guard, durable save, then the 'resumed' event); noLimits is never carried over.
+      if (req.params?.reason === 'app_owner') {
+        if (b.state === 'stopped') fail('binding_stopped');
+        if (handoffWaiting(b)) fail('handoff_use_continue');
+        if (b.state !== 'paused') fail('not_paused');
+        return ownerResume(b);
+      }
+      fail('owner_action_required');
+    }
     active(b, req.generation);
     if (req.operation === 'share') fail('owner_action_required');
     if (req.operation === 'unshare') return unshare(b, req.params.tabId);
@@ -1132,9 +1271,17 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       const live = frames.filter(f => f.documentLifecycle === undefined || f.documentLifecycle === 'active');
       return { result: { frames: live.map(f => ({ frameId: f.frameId, parentFrameId: f.parentFrameId, ...(typeof f.url === 'string' ? { url: f.url } : {}) })) }, tabId: t.tabId, navigationEpoch: t.navigationEpoch, origin: t.origin, url: t.url };
     }
-    if ((method === 'Target.setAutoAttach' && (req.params.noLimits !== true || params.flatten !== true)) || !METHODS.has(method) || params.sessionId || params.targetId || params.uniqueContextId) fail('method_denied');
+    if ((method === 'Target.setAutoAttach' && (req.params.noLimits !== true || params.flatten !== true)) || !METHODS.has(method) || payHoldDenied(method, params) || params.sessionId || params.targetId || params.uniqueContextId) fail('method_denied');
     if (req.params.noLimits !== true && isClipboardInput(method, params)) fail('clipboard_denied');
     const t = await checkedTab(b, req.params, BOOTSTRAP_METHODS.has(method));
+    // PAY_HOLD release: a held navigation answers no page check, so the release runs none and waits for no command in flight. Ending a hold
+    // only lets the page go on as it would have without Murage.
+    if (method === 'Fetch.disable') {
+      active(b, req.generation);
+      clearTimeout(t.payHold); t.payHold = undefined;
+      if (b.attached.has(t.tabId)) await api.debugger.sendCommand({ tabId: t.tabId }, 'Fetch.disable', {});
+      return { result: {}, tabId: t.tabId, navigationEpoch: t.navigationEpoch, origin: t.origin, url: t.url };
+    }
     // A page showing a dialog is blocked: answering it must not evaluate anything in that page.
     const dialog = method === 'Page.handleJavaScriptDialog', isInput = method.startsWith('Input.');
     const childSession = req.params.sessionId;
@@ -1211,6 +1358,8 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       let result;
       try {
         result = await sendOnce(sendParams);
+        // PAY_HOLD: the fail-safe release is set the moment the hold is on, before any page check below can stall on a held navigation.
+        if (method === 'Fetch.enable') { clearTimeout(t.payHold); const tabId = t.tabId; t.payHold = setTimeout(() => { t.payHold = undefined; api.debugger.sendCommand({ tabId }, 'Fetch.disable', {}).catch(() => {}); }, options.payHoldMaxMs ?? PAY_HOLD_MAX_MS); }
         if (shot && sendParams.format === 'jpeg') {
           for (const quality of SHOT_QUALITY.filter(q => !(sendParams.quality <= q))) {
             if (nativeWireBytes(result) <= MAX_RESULT_BYTES) break;
@@ -1225,18 +1374,35 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       const moved = !navigating && (b.tabs.get(t.tabId) !== t || t.navigationEpoch !== req.params.navigationEpoch);
       // Only an input was an action that may have landed; anything read from the old document is stale.
       if (moved && !isInput) fail('stale_document');
-      if (isInput && !moved) {
-        if (await observerCall(t,'globalThis.__murageTakeover?.clear()')) { await fence(b,'paused','takeover'); fail('binding_inactive'); }
-      }
-      active(b, req.generation);
-      if (!moved && !dialog && !['Page.navigate','Page.reload','Page.navigateToHistoryEntry'].includes(method)) await checkObserver(b,t);
-      active(b, req.generation);
-      // Navigation itself changes the epoch; its result is an acknowledgement, never page data.
-      if (!moved && method !== 'Page.navigate' && method !== 'Page.reload' && method !== 'Page.navigateToHistoryEntry') await checkedTab(b, req.params, BOOTSTRAP_METHODS.has(method));
+      // PAY_HOLD: under the hold an input can start the navigation that is then held (the pay button's own form post), and a held page answers
+      // no check. The checks after such an input get PAY_HOLD_CHECK_MS; past it they are dropped (they pause nothing later) and the input's
+      // result goes back at once, so the server can release the hold. Without a hold nothing changes.
+      let dropped = false;
+      const after = async () => {
+        if (isInput && !moved) {
+          const taken = await observerCall(t,'globalThis.__murageTakeover?.clear()'); if (dropped) return;
+          if (taken) { await fence(b,'paused','takeover'); fail('binding_inactive'); }
+        }
+        active(b, req.generation);
+        if (!moved && !dialog && !['Page.navigate','Page.reload','Page.navigateToHistoryEntry'].includes(method)) {
+          const paused = await observerCall(t, 'globalThis.__murageTakeover?.state()'); if (dropped) return;
+          if (paused) { await fence(b,'paused','takeover'); fail('binding_inactive'); }
+        }
+        active(b, req.generation);
+        // Navigation itself changes the epoch; its result is an acknowledgement, never page data.
+        if (!moved && method !== 'Page.navigate' && method !== 'Page.reload' && method !== 'Page.navigateToHistoryEntry') await checkedTab(b, req.params, BOOTSTRAP_METHODS.has(method));
+      };
+      if (isInput && t.payHold) {
+        let timer; const checks = after().then(() => true); checks.catch(() => {});
+        if (!await Promise.race([checks, new Promise(resolve => { timer = setTimeout(() => resolve(false), options.payHoldCheckMs ?? PAY_HOLD_CHECK_MS); })]).finally(() => clearTimeout(timer))) dropped = true;
+      } else await after();
       if (inspection) result = method === 'DOM.getDocument' ? { root: inspectionDomPiece(result?.root) } : { node: inspectionDomPiece(result?.node) };
       if (method === 'Accessibility.getFullAXTree') result = boundAxTree(result, MAX_RESULT_BYTES - 4096);
       if (nativeWireBytes({ result: result ?? {}, tabId: t.tabId, navigationEpoch: t.navigationEpoch, origin: t.origin, url: t.url }) > MAX_RESULT_BYTES) fail('response_too_large');
       const [domain, verb] = method.split('.');
+      if (domain === 'Fetch') {
+        if (verb !== 'enable') { clearTimeout(t.payHold); t.payHold = undefined; }
+      }
       if (EVENT_DOMAINS.has(domain) && (verb === 'enable' || verb === 'disable')) {
         t.subscriptions ??= new Map();
         if (verb === 'enable') t.subscriptions.set(method, structuredClone(params));
@@ -1277,7 +1443,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       await removeObserver(removed);
       for (const identifier of removed.scripts ?? []) await api.debugger.sendCommand({ tabId }, 'Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => {});
     } finally { b.attached.delete(tabId); await api.debugger.detach({ tabId }).catch(() => {}); await settled(saved); }
-    await api.action.setBadgeText({ tabId, text: '' }).catch(() => {}); if (notify) event(b, 'unshared', { tabId }); pushStatus(); return summary(b);
+    await tabIndicator(b, tabId, '').catch(() => {}); if (notify) event(b, 'unshared', { tabId }); pushStatus(); return summary(b);
   }
   // A request that only looks at the page: the panel can say "Reading this page" while one is in flight.
   const isReadRequest = req => ['snapshot', 'read', 'screenshot', 'wait'].includes(req.operation) || (req.operation === 'cdp' && /^(Accessibility\.|DOM\.getDocument|Page\.captureScreenshot|Page\.getFrameTree)/.test(String(req.params?.method ?? '')));
@@ -1293,7 +1459,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       if (!connected || epoch !== connectionEpoch) fail('host_lost_uncertain');
       return { ...response, result };
     }
-    catch (error) { return { ...response, error: { code: error.code ?? 'extension_error', message: error.code ?? 'Browser command failed' } }; }
+    catch (error) { return { ...response, error: { code: error.code ?? 'extension_error', message: (error.code === 'grant_off' && typeof error.offId === 'string' ? error.offId : error.code) ?? 'Browser command failed' } }; }
     finally { if (reads) { reader.reading = Math.max(0, (reader.reading ?? 1) - 1); if (reader.reading === 0) pushStatus(); } if (inFlight?.id === req.id) { inFlight = undefined; saveSoon(); } }
   }
   // The owner takes the task back: sites are looked at again, the generation moves on and the app is told (event 'resumed').
@@ -1315,6 +1481,18 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (action.action === 'avatar') return b.botAvatar ? { botAvatarId: b.botAvatarId, botAvatar: b.botAvatar } : {};
     if (action.action === 'stop' || action.action === 'pause') return fence(b, action.action === 'stop' ? 'stopped' : 'paused', action.action === 'stop' ? 'stopped' : 'paused');
     if (action.action === 'unshare') return unshare(b, action.tabId);
+    // The one-time per-bot OK, extension side (journey 1024, section 3): the panel may only take it back. Off stops the bot here at
+    // once, with or without the app; the app learns it from the notice, or from the next summary if it was not connected.
+    if (action.action === 'grantoff') {
+      if (b.grant !== 'on' || b.state === 'stopped') fail('invalid_action');
+      const key = botKey(b), offId = uuid();
+      grantOffs.set(key, offId);
+      await stopBot(key, offId);
+      await save().catch(() => {});
+      return panelBinding(b);
+    }
+    // Giving the OK (or lifting an Off) needs the Murage app on the computer.
+    if (action.action === 'granton') fail('desktop_required');
     // Owner actions the app carries out (it holds the bot's mode and the task). The runtime checks they apply, tells the app, and the app's next status shows the result.
     if (['endtask', 'setMode', 'turnoff', 'newtask'].includes(action.action)) {
       if (!connected) fail('host_offline');
@@ -1397,7 +1575,12 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (!details.url || details.url === 'about:blank') return; // still waiting for the first real page
     const b = bindings.get(candidates.get(details.tabId)); candidates.delete(details.tabId);
     // The new tab showed a page, so its first address was not a download: it no longer stands for one.
-    const announced = popupUrls.get(details.tabId); popupUrls.delete(details.tabId); if (announced) blockedUrls.delete(announced);
+    const announced = popupUrls.get(details.tabId); popupUrls.delete(details.tabId);
+    if (announced) {
+      blockedUrls.delete(announced);
+      // decide() reads raw events, so the announce and arm this popup's first address made go too; any other tab's stay.
+      for (const e of [...downloadEvents]) if ((e.kind === 'arm' || e.kind === 'announce') && e.tabId === details.tabId && e.url === announced) downloadEvents.delete(e);
+    }
     if (!b || !connected || b.state !== 'active' || !b.ready) return;
     const generation = b.generation;
     let origin = '';
@@ -1441,6 +1624,8 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       if (method === 'Runtime.bindingCalled' && source.sessionId) continue;
       if (method === 'Runtime.bindingCalled') {
         if (params.name === t.takeover?.name && params.executionContextId === t.takeover?.contextId && params.payload === 'pause') await fence(b,'paused','takeover');
+        // PAY_HOLD: the press guard's report, only while the hold is on, only from an isolated world Murage made in this tab, small.
+        else if (params.name === PAY_REPORT_BINDING && t.payHold && t.contextIds?.has(params.executionContextId) && typeof params.payload === 'string' && params.payload.length <= 300) event(b, 'cdp', { tabId: t.tabId, navigationEpoch: t.navigationEpoch, method, params: { name: params.name, payload: params.payload, executionContextId: params.executionContextId } });
         // The overlay's own pill and fallback signal: only from the presence world's context, never the page's.
         else if (t.presence && params.name === t.presence.name && params.executionContextId === t.presence.contextId) {
           if (params.payload === 'pause') await fence(b, 'paused', 'paused');
@@ -1479,7 +1664,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     for (const o of [...record.approvedOrigins, ...(record.revoked ?? [])]) { try { if (typeof o !== 'string' || originOf(o) !== o) return undefined; } catch { return undefined; } }
     const keep = {};
     for (const [key, ok] of [['color', v => typeof v === 'string'], ['groupId', Number.isSafeInteger], ['windowId', Number.isSafeInteger], ['bindEpoch', Number.isSafeInteger],
-      ['botColor', v => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)], ['conversation', v => typeof v === 'string'], ['mode', v => MODES.has(v)], ['full', v => typeof v === 'boolean']]) if (ok(record[key])) keep[key] = record[key];
+      ['botColor', v => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)], ['conversation', v => typeof v === 'string'], ['mode', v => MODES.has(v)], ['full', v => typeof v === 'boolean'], ['grant', v => v === 'on' || v === 'off'], ['grantBot', isBotKey]]) if (ok(record[key])) keep[key] = record[key];
     if (record.pausedReason === 'handoff' && record.state === 'paused') { keep.pausedReason = 'handoff'; keep.yourTurn = true; if (typeof record.handoff === 'string') keep.handoff = clip(record.handoff, 200); }
     if (record.revoked?.length) keep.revoked = [...record.revoked];
     return { ...keep, id: record.id, botName: record.botName.slice(0, 80), generation: record.generation, state: record.state, approvedOrigins: record.approvedOrigins.filter(o => !keep.revoked?.includes(o)),
@@ -1511,6 +1696,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (lost && typeof lost.id === 'string' && typeof lost.bindingId === 'string' && Number.isSafeInteger(lost.generation)) restartReport = lost;
     if (stored?.retired !== undefined && !Array.isArray(stored.retired)) damaged = true;
     for (const id of Array.isArray(stored?.retired) ? stored.retired.slice(-MAX_RETIRED) : []) if (isId(id)) retired.add(id);
+    for (const pair of Array.isArray(stored?.grantOffs) ? stored.grantOffs.slice(0, MAX_GRANT_OFFS + MAX_BINDINGS) : []) if (Array.isArray(pair) && typeof pair[0] === 'string' && pair[0].length <= 96 && typeof pair[1] === 'string' && pair[1].length <= 64) grantOffs.set(pair[0], pair[1]);
     // Browser tab IDs are not durable authority across a worker/browser restart. Every tab a record names is released, valid record or not.
     const list = Array.isArray(stored?.bindings) ? stored.bindings : plain(stored?.bindings) ? Object.values(stored.bindings) : [];
     if (stored?.bindings !== undefined && !Array.isArray(stored.bindings)) damaged = true;
@@ -1524,6 +1710,8 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (damaged) { await quarantine(raw, 'malformed'); recovery = { code: 'reshare_required', message: RECOVERY_MESSAGES.reshare_required }; }
     await save().catch(() => {});
     for (const b of bindings.values()) { await detach(b); await indicator(b); }
+    // No bot is in a tab this worker did not start: a picture or badge left by the last worker is cleared.
+    for (const t of previous) await tabIndicator({ tabs: new Map() }, t.tabId, '').catch(() => {});
     await releaseAbandonedTabs(previous);
     return profileId;
   }
@@ -1544,7 +1732,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       })();
       await disconnecting;
     }
-    return { version: 1, type: 'hello', profileId, browser: 'chromium', extensionVersion: api.runtime.getManifest().version, capabilities: ['panel_avatar_v1', 'scoped_cdp', 'durable_stop', 'explicit_share', 'manual_pause', 'unexpected_input_pause', 'engine_cdp_v1', 'ordered_requests_v1', LIFECYCLE_CAPABILITY] };
+    return { version: 1, type: 'hello', profileId, browser: 'chromium', extensionVersion: api.runtime.getManifest().version, capabilities: ['panel_avatar_v1', 'scoped_cdp', 'durable_stop', 'explicit_share', 'manual_pause', 'unexpected_input_pause', 'engine_cdp_v1', 'ordered_requests_v1', 'app_resume_v1', LIFECYCLE_CAPABILITY, PAY_HOLD_CAPABILITY] };
   }
   // The browser restarted during an action: tell the server it may have run. Never retried here.
   function restartReports() {

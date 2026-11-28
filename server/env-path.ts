@@ -429,7 +429,7 @@ function runCapture(shell: string): Promise<{ env: Record<string, string> } | { 
     let bytes = 0;
     const chunks: Buffer[] = [];
     let child: ReturnType<typeof spawn>;
-    const killGroup = (): void => {
+    const stopCapture = (): void => {
       // the negative pid is this capture's own session and group (setsid made it leader); never a pid read from anywhere else.
       // Only while the leader is unreaped: until Node reaps it the kernel keeps its pid, so -pid cannot name a reused group.
       // Reaping runs on this same event loop, so the check cannot race. Once reaped, nothing is signalled.
@@ -445,7 +445,15 @@ function runCapture(shell: string): Promise<{ env: Record<string, string> } | { 
       clearTimeout(timer);
       resolve(result);
     };
-    const timer = setTimeout(() => { killGroup(); settle({ cause: "it took too long" }); }, CAPTURE_MS);
+    const finishCompleteCapture = (): void => {
+      if (settled || child.exitCode !== 0) return;
+      const read = readCapture(Buffer.concat(chunks).toString("utf8"), mark);
+      if (!read) return;
+      // A background login job can keep stdout open after the shell exits.
+      settle({ env: read });
+      stopCapture();
+    };
+    const timer = setTimeout(() => { stopCapture(); settle({ cause: "it took too long" }); }, CAPTURE_MS);
     try {
       child = spawn(shell, ["-l", "-i", "-c", script], withHideInherit({ detached: true, stdio: ["ignore", "pipe", "pipe"], env }));
     } catch (error) {
@@ -454,16 +462,18 @@ function runCapture(shell: string): Promise<{ env: Record<string, string> } | { 
     }
     child.stdout?.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
-      if (bytes > CAPTURE_BYTES) { killGroup(); settle({ cause: "its output could not be read whole" }); return; }
+      if (bytes > CAPTURE_BYTES) { stopCapture(); settle({ cause: "its output could not be read whole" }); return; }
       chunks.push(chunk);
+      finishCompleteCapture();
     });
     child.stderr?.resume();
-    child.on("error", (error) => { killGroup(); settle({ cause: `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` }); });
-    child.on("close", (code, signal) => {
-      if (code !== 0) return settle({ cause: `the shell exited with ${String(code ?? signal ?? "an error")}` });
-      const read = readCapture(Buffer.concat(chunks).toString("utf8"), mark);
-      settle(read ? { env: read } : { cause: "its output could not be read whole" });
+    child.on("error", (error) => { stopCapture(); settle({ cause: `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` }); });
+    child.on("exit", (code, signal) => {
+      if (code === 0) return finishCompleteCapture();
+      settle({ cause: `the shell exited with ${String(code ?? signal ?? "an error")}` });
+      stopCapture();
     });
+    child.on("close", () => settle({ cause: "its output could not be read whole" }));
   });
 }
 

@@ -3,6 +3,7 @@ import { isWorkspaceOwner, threadHumanPrincipal } from "./human-principals.ts";
 import { type HeldPeerAuthority } from './held-peer-authority.ts';
 import { askerCancelled, handoffRequest, isTerminalRoomRequestState, type RoomRequest, completeRequest, requeueRequest } from "./room-requests.ts";
 import { awaitWriterGate, database, isDatabaseBusy, onDatabaseClose, transaction } from "./database.ts";
+import { withSecureDelete } from "./secure-delete.ts";
 import { isNoSpaceError } from "./disk-space.ts";
 import { afterCommit } from "./tx-scope.ts";
 import { registerLegacyDelegationParser, importLegacyDelegations, delegationTurnKey, delegationAdmissionHeld, holdForReconcile, ownerRecordMigrationPending } from "./pending-delegations-schema.ts";
@@ -49,6 +50,7 @@ import { ROUTINE_PERMISSION_MODES, type RoutinePeerSource } from "./routine-perm
 import type { BotRecord, Store } from "./store.ts";
 import { owedReplyOf, type OwedReply } from "./handoff-reply.ts";
 import { murageLine } from "./murage-line.ts";
+import { threadAutomationAncestry } from "./automation-ancestry.ts";
 
 /** Every row a handoff leaves in its source conversation names who handed
  * off when that conversation is a room. Several bots delegate in a room, and
@@ -99,6 +101,12 @@ export interface DelegationItem {
   sourceMessageId?: string;
   /** The effective parent routine ceiling, captured before its turn ends. */
   routineAuthority?: RoutinePeerSource;
+  /** Queued by a turn whose chain had a routine, wake or unattended hop (automation-ancestry.ts), read from the server's own record when
+   *  queued: the peer's turn mounts none of the owner-only tools that exclude automation, after a restart too. */
+  automationAncestry?: boolean;
+  /** L5H (Fable r2 H1): the host generation of the turn that queued this hand-off, so a recovered start reads the run that
+   * owned that exact turn. Host-set at the boundary from the authenticated claim, never from tool input. */
+  sourceGeneration?: string;
   /** Trusted originating event identity. Survives handoff/retry/restart so
    * the harness can retain the event's budget and provenance boundary. */
   eventId?: string;
@@ -661,7 +669,8 @@ export const DELEGATION_STOP_FAILED = "DELEGATION_STOP_FAILED: the handoff could
 export function forgetDelegationsForThreads(threadIds: readonly string[]): void {
   const gone = new Set(threadIds);
   if (gone.size) {
-    try { transaction(() => {
+    // 1.0.22 item 1a: the results peers sent back to a deleted conversation leave with secure_delete=ON
+    try { withSecureDelete(database(), () => transaction(() => {
       const forget = stmts().removeThread;
       const packs = database().prepare("DELETE FROM delegation_packs WHERE source_thread_id=? OR destination_thread_id=?");
       for (const threadId of gone) {
@@ -670,7 +679,7 @@ export function forgetDelegationsForThreads(threadIds: readonly string[]): void 
         forget.run(threadId);
         packs.run(threadId, threadId);
       }
-    }, { op: "delegation-forget" }); }
+    }, { op: "delegation-forget" })); }
     catch (error) { console.error("delegations: could not forget a deleted conversation's handoffs", error); }
   }
   const kept = receipts.filter((receipt) => !gone.has(receipt.sourceThreadId));
@@ -1040,6 +1049,7 @@ export function parsePendingItem(value: unknown): PendingDelegationItem | null {
     attempts: Number.isFinite(item.attempts) ? Math.max(0, Math.trunc(item.attempts!)) : 0,
     ...(typeof item.fromBotId === "string" && item.fromBotId ? { fromBotId: item.fromBotId } : {}),
     ...(item.eventId !== undefined ? { eventId: item.eventId } : {}),
+    ...(typeof item.sourceGeneration === "string" && item.sourceGeneration ? { sourceGeneration: item.sourceGeneration } : {}),
     ...(item.executionAudience ? { executionAudience: item.executionAudience } : {}),
     ...(item.coordination ? { coordination: coordinationTraceSchema.parse(item.coordination) } : {}),
   };
@@ -1052,6 +1062,8 @@ export function parsePendingItem(value: unknown): PendingDelegationItem | null {
   if (Object.hasOwn(item, "notOwnerAudience")) loaded.notOwnerAudience = item.notOwnerAudience !== false;
   if (Object.hasOwn(item, "unattended")) loaded.unattended = item.unattended !== false;
   if (item.routineAuthority) loaded.routineAuthority = { ...item.routineAuthority };
+  // PHONEAUD, fails closed: only an explicit false is an owner chain. A row written before this field (or damaged) counts as automation.
+  loaded.automationAncestry = !Object.hasOwn(item, "automationAncestry") || item.automationAncestry !== false;
   if (item.waitingOnBusy === true) {
     loaded.waitingOnBusy = true;
     // A queue written before this field existed restarts its clock.
@@ -1236,6 +1248,10 @@ export function queueDelegation(
   const { doneWhen: _unchecked, ...rest } = item;
   const queued: PendingDelegationItem = { ...rest, ...(doneWhen ? { doneWhen } : {}), ...(executionAudience ? { executionAudience } : {}), id, attempts: 0, fromBotId: from.id };
   queued.senderTurnId = senderTurnId;
+  // PHONEAUD: never lowered. A mark the item already carries (a held row sent again: resendHeldDelegation) stays; otherwise the source turn's
+  // own record decides, and a source with no record counts as automation. A caller can only add the mark, never clear it. Always written
+  // explicitly, so a loaded row can tell an owner chain from one written before this field (parsePendingItem).
+  queued.automationAncestry = item.automationAncestry === true || threadAutomationAncestry(sourceThreadId) !== false;
   // The room request that tracks this handoff and the queue row are accepted together or not at all.
   let inserting = false;
   try {

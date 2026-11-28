@@ -75,13 +75,23 @@ export function healthReturn(origin: HealthOrigin | undefined, state: HealthRetu
     case "needs-you": return state.needsYouTab ? { type: "showNeedsYou", tab: state.needsYouTab } : { type: "showNeedsYou" };
     case "routines": return { type: "showRoutines" };
     case "team-map": return { type: "showTeamMap" };
-    case "skill-recorder": return recorderAvailable ? { type: "showSkillRecorder" } : { type: "showToday" };
+    case "skill-recorder": return recorderAvailable ? { type: "showSkillRecorder", via: "return" } : { type: "showToday" };
     default: return { type: "showToday" };
   }
 }
 
 /** Where Routines' Back goes. All chats is a list of chats, not a place to come back to: it returns to the chat. */
 export type CalendarOrigin = Exclude<ShellView, "routines" | "all-chats">;
+
+/** Routines' Back (App closeCalendar). Back to the recorder is a return: it keeps who the recording is for (TEACH-ENTRY D5). */
+export function calendarReturn(origin: CalendarOrigin, recorderAvailable: boolean, selectedId: string): Action {
+  if (origin === "today") return { type: "showToday" };
+  if (origin === "needs-you") return { type: "showNeedsYou" };
+  if (origin === "health") return { type: "showHealth" };
+  if (origin === "team-map") return { type: "showTeamMap" };
+  if (origin === "skill-recorder" && recorderAvailable) return { type: "showSkillRecorder", via: "return" };
+  return { type: "select", id: selectedId };
+}
 
 export interface ShellOrigins {
   calendar: CalendarOrigin;

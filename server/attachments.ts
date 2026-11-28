@@ -12,6 +12,9 @@ import { basename, join, extname, dirname, resolve } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { addOutstandingBytes, availableForNewBytes, diskSpaceError, freeDiskBytes, isNoSpaceError, outstandingBytes } from "./disk-space.ts";
 import { DISK_FULL_MESSAGE } from "../shared/attachment-storage.ts";
+import { ARCHIVE_EXTENSIONS, binaryUploadType, XMIND_MIME } from "../shared/attachment-types.ts";
+import { XMIND_MAX_BYTES, xmindToMarkdown } from "./xmind.ts";
+import { redactSecretsInText } from "./redact.ts";
 import {
   ATTACHMENT_READ_CEILING, REMOVED_FOLDER, attachmentRemoved, attachmentsFolderForWriter, attachmentsHomeOf, isAttachmentName, probeAttachment,
   readAttachmentFile, type AttachmentsHome, type ProbeResult, type Refusal,
@@ -132,11 +135,9 @@ const IMAGE_MIMES: Record<string, string> = {
   "image/webp": ".webp",
 };
 
-/** Useful document formats accepted by the phone share sheet.
- * Generic archives, binaries, HTML, SVG, and executable/script mimes stay
- * out. Office/OpenDocument packages are allowed because they are documents,
- * despite using ZIP internally. The claimed mime determines the extension;
- * an attacker-controlled filename never does. */
+/** Useful document formats accepted by the phone share sheet. Its public
+ * document-only contract stays separate from the opaque archive upload
+ * types. HTML, SVG, and executable/script mimes stay out of both lists. */
 const FILE_MIMES: Readonly<Record<string, string>> = {
   "text/plain": ".txt",
   "text/markdown": ".md",
@@ -454,7 +455,7 @@ async function withUploadLock<T>(uploadId: string | undefined, operation: () => 
  * type, can be answered with a handful of direct stats instead of a scan
  * over every file in the directory. */
 const KNOWN_ATTACHMENT_EXTENSIONS = Array.from(
-  new Set([...Object.values(IMAGE_MIMES), ...Object.values(FILE_MIMES)]),
+  new Set([...Object.values(IMAGE_MIMES), ...Object.values(FILE_MIMES), ...ARCHIVE_EXTENSIONS]),
 );
 
 const CHECK_AGAIN_MESSAGE = "Could not check the earlier upload. Try again.";
@@ -534,15 +535,21 @@ export function extensionForFileMime(mime: string | undefined): string | null {
 export function sanitizeSharedFileName(name: string, mime: string): string {
   const extension = extensionForFileMime(mime);
   if (!extension) throw statusError(400, "content-type must be a supported document type");
+  return sanitizeFileName(name, extension);
+}
 
-  const normalized = name.normalize("NFKC").trim();
+function sanitizeFileName(name: string, extension: string, maskSecrets = false): string {
+  let normalized = name.normalize("NFKC").trim();
   if (!normalized) throw statusError(400, "name is required");
   if (normalized.length > 512) throw statusError(400, "name is too long");
   if (/[\\/]/.test(normalized) || /%(?:00|2f|5c)/i.test(normalized)) {
     throw statusError(400, "name must be a filename, not a path");
   }
 
-  const dot = normalized.lastIndexOf(".");
+  // Validate the original path first, then mask the complete name before
+  // normalization, character replacement, or clipping can split a secret.
+  if (maskSecrets) normalized = redactSecretsInText(redactSecretsInText(name).normalize("NFKC")).normalize("NFKC").trim();
+  const dot = normalized.toLowerCase().endsWith(extension) ? normalized.length - extension.length : normalized.lastIndexOf(".");
   const withoutExtension = dot > 0 ? normalized.slice(0, dot) : normalized;
   const safeCharacters = Array.from(withoutExtension, (character) => {
     const code = character.charCodeAt(0);
@@ -558,6 +565,9 @@ export function sanitizeSharedFileName(name: string, mime: string): string {
   return `${boundedStem}${extension}`;
 }
 
+// At most two bounded conversions in memory, regardless of upload count.
+const xmindUploads = new ImageUploadBudget(2 * XMIND_MAX_BYTES);
+
 /** Stream one shared document to a generated file without ever collecting
  * the request in memory. A failed, empty, or oversized upload leaves no
  * partial file behind. */
@@ -567,12 +577,13 @@ export async function saveFile(
   mime: string,
   options: { uploadId?: string; expectedBytes?: number } = {},
 ): Promise<SavedFile> {
-  const normalized = normalizedMime(mime);
-  if (!normalized || !extensionForFileMime(normalized)) {
+  const binary = binaryUploadType(originalName, mime);
+  const normalized = binary?.mime ?? normalizedMime(mime);
+  const extension = binary?.extension ?? extensionForFileMime(normalized ?? undefined);
+  if (!normalized || !extension) {
     throw statusError(400, "content-type must be a supported document type");
   }
-  const name = sanitizeSharedFileName(originalName, normalized);
-  const extension = extensionForFileMime(normalized)!;
+  const name = sanitizeFileName(originalName, extension, !!binary);
   const uploadId = validateAttachmentUploadId(options.uploadId);
   const expectedBytes = options.expectedBytes;
   if (expectedBytes !== undefined && (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0)) {
@@ -580,6 +591,24 @@ export async function saveFile(
   }
   if (expectedBytes !== undefined && expectedBytes > FILE_MAX_BYTES) {
     throw statusError(413, FILE_TOO_LARGE_MESSAGE);
+  }
+
+  if (normalized === XMIND_MIME) {
+    const tooLarge = () => statusError(413, `That mind map is too large. Mind maps can be up to ${humanBytes(XMIND_MAX_BYTES)}.`);
+    if (expectedBytes !== undefined && expectedBytes > XMIND_MAX_BYTES) throw tooLarge();
+    const release = xmindUploads.take(XMIND_MAX_BYTES);
+    if (!release) throw statusError(503, "Murage is still reading other mind maps. Try this one again in a moment.");
+    try {
+      const parts: Buffer[] = []; let size = 0;
+      for await (const value of chunks) {
+        size += value.byteLength;
+        if (size > XMIND_MAX_BYTES) throw tooLarge();
+        if (value.byteLength) parts.push(Buffer.from(value));
+      }
+      const markdown = Buffer.from(await xmindToMarkdown(Buffer.concat(parts)));
+      async function* converted() { yield markdown; }
+      return await saveFile(converted(), `${name.slice(0, -".xmind".length)}.md`, "text/markdown", { uploadId, expectedBytes: markdown.length });
+    } finally { release(); }
   }
 
   return withUploadLock(uploadId, async () => {

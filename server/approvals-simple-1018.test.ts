@@ -72,7 +72,7 @@ describe("5a: Python's run-tightening options before a literal script", () => {
 describe("section 4: the open-time hard read for an unreadable card", () => {
   // The exact text of Sean's card is not in the evidence yet; this reconstruction is read whole by the reader today.
   // Whatever the reader says of it, the hard read must come back clear (the real text replaces this row; handoff).
-  // Recorded 11-06 (relay 2, build host): the reader holds Petra's real text as `unreadable`, reason "opaque: a script
+  // Recorded 11-06 (relay 2, Hetzner): the reader holds Petra's real text as `unreadable`, reason "opaque: a script
   // file the reader does not see" (the heredoc append is followed by `python3 -I <script>` and a pipe, outside the
   // one-script shape), NOT under heredoc rule H4 (the heredoc goes to `cat`, not an interpreter). The hard read is
   // clear, so the card stamps `unreadable` and joins Approve all (design section 4). It still asks at Full access and
@@ -84,7 +84,7 @@ describe("section 4: the open-time hard read for an unreadable card", () => {
     expect(withoutDoubts(() => alwaysAskUnreadableReason(PETRA, CWD))).toBe("opaque: a script file the reader does not see");
     expect(alwaysAskUnreadableReason(PETRA, CWD)).toMatch(/^opaque: (?:Doubt\(value-path\)|a script file the reader does not see)$/);
     expect(unreadableHardRead(PETRA)).toBeNull();
-    expect(verdict("Full access", PETRA).approve).toBeFalsy();
+    expect(verdict("Full access", PETRA).approve).toBeTruthy(); // OVERREACH #6: the owner's own Full access turn runs it too
     expect(verdict("No limits", PETRA).approve).toBeTruthy(); // NOLIM 1.0.19: the owner's No limits turn runs it
   });
   it.each([

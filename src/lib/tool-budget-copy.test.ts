@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { setLocale, t } from "./i18n";
-import { RESEND_OFFER_LINE } from "../../shared/resend-offer";
+import { RESEND_OFFER_LINE, OUTSIDE_INPUT_REFUSED_LINE } from "../../shared/resend-offer";
 import { resendNoteLabel, toolBudgetLabel } from "./tool-budget-copy";
 afterEach(async () => { await setLocale("en"); });
 it.each(["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"])("C11 budget and submission copy uses locale %s", async locale => {
@@ -12,6 +12,7 @@ it.each(["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"])("C11 budget and sub
   expect(toolBudgetLabel("The tool list changed while Murage was preparing this turn. Murage could not fit it within this AI's limit.")).toBe(t("engine.toolLimit.catalogChanged"));
   expect(toolBudgetLabel("The original message was submitted. Murage could not send it again because the submission checks failed. It was not automatically sent again.")).toBe(t("engine.submission.afterSubmission"));
   expect(toolBudgetLabel("The earlier submission may have started. Murage could not send it again because the submission checks failed. It was not automatically sent again.")).toBe(t("engine.submission.afterSubmissionUncertain"));
+  expect(toolBudgetLabel(OUTSIDE_INPUT_REFUSED_LINE)).toBe(t("engine.submission.outsideInput"));
   expect(toolBudgetLabel("An unrelated provider error")).toBeUndefined();
   expect(toolBudgetLabel("Owner quoted: Some tools were left out this turn: this AI accepts at most 40 tools.")).toBeUndefined();
 });

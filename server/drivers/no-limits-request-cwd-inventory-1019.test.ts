@@ -5,6 +5,7 @@ const allow:Record<string,string>={
  'acp/core.ts#1':'Structured question; no local tool process.',
  'acp/core.ts#2':'Folder trust question; no local tool process.',
  'acp/core.ts#4':'Computer MCP mount executes on the host service; not in the ACP process cwd.',
+ 'acp/core.ts#5':'Held MCP server approval question (askHeldApproval); the approval is the engine\'s own toggle, no local tool process.',
  'claude.ts#1':'Sign-in question; no local tool process.',
  'claude.ts#2':'MCP elicitation question; no local tool process.',
  'muse-code.ts#2':'Structured question; no local tool process.',

@@ -12,7 +12,8 @@ export class MemorySendFenced extends Error {
 export const isMemorySendFenced = (error: unknown): boolean =>
   error instanceof MemorySendFenced || (error as { message?: unknown } | null)?.message === MEMORY_SEND_FENCED;
 
-/** The one log line of a dropped call: fixed words and the purpose label only, never the words it held. */
-export function logFencedDrop(purpose: "extraction" | "grounding" | "evaluation" | "reflection" | "continuity"): void {
-  try { console.info(`[memory] learning call dropped before send: reason=memory-changed purpose=${purpose}`); } catch { /* logging is best effort */ }
+/** The one log line of a dropped call: fixed words, the purpose label and the gate's fixed-word cause only, never the words it held. */
+export function logFencedDrop(purpose: "extraction" | "grounding" | "evaluation" | "reflection" | "continuity", cause?: string): void {
+  const why = cause && /^[a-z-]{1,24}$/.test(cause) ? cause : "unknown";
+  try { console.info(`[memory] learning call dropped before send: reason=memory-changed purpose=${purpose} cause=${why}`); } catch { /* logging is best effort */ }
 }

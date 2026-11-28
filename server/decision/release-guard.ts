@@ -6,6 +6,7 @@ import type { OwnerOperation as InspectedOperation } from '../no-limits-inspecti
 import type { ProtectedDecision } from '../no-limits-fs.ts';
 import { issuedOperationHash } from '../no-limits-operation.ts';
 import { wipeBreaker, inspectNativeWipe } from '../wipe-breaker.ts';
+import { sessionScriptContext } from '../no-limits-wipe-scripts.ts';
 import { degradedWipeContext, wipeContextFor, wipeEnvironment } from '../wipe/context.ts';
 import type { ExecEnv } from '../../shared/mount-identity.ts';
 import type { AlwaysAskHit } from '../always-ask.ts';
@@ -84,7 +85,7 @@ export function inspectReleaseWipes(operation: InspectedOperation, retainDecisio
   let shared;try{shared=wipeContextFor(identity?.threadId,identity?.botId,{cwd:operation.cwd});}catch{shared=degradedWipeContext({cwd:operation.cwd},identity?.botId);}
   const engine=identity?.execEnv;
   const env=engine&&!engine.unread?wipeEnvironment(shared.env,engine.env,engine.absent):shared.env;
-  const context={...shared,env,cwdOpaque:operation.cwdInvalid,...(operation.cwd?{cwd:operation.cwd}:{})};
+  const context={...shared,...(identity?.threadId?sessionScriptContext(identity.threadId):{}),env,cwdOpaque:operation.cwdInvalid,...(operation.cwd?{cwd:operation.cwd}:{})};
   const scan=operation.kind==='native'?inspectNativeWipe(operation.effects,operation.rawTool??'',operation.rawInput,context)
    :wipeBreaker(operation.text,{...context,...(operation.kind==='code'?{lang:operation.lang}:{dialect:operation.dialect})},true);
   const {hit,records}=scan;

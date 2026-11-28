@@ -560,6 +560,17 @@ describe("T105: the inlined copies equal their modules", () => {
     });
     expect(here('./pi-wipe-check.generated.mjs')).toBe(generated);
   });
+  it("the shipped checker cards a session-written script spelled in another Unicode form after the candidate folders overflowed", () => {
+    // Astra n4:8471 (script-bodies.ts): a macOS volume reads a composed and a decomposed accent as one file. Owner checker: q1024-intdev; shipped Pi copy: pi-wipe-seam-b.
+    const pathPort = {realpath: (path: string) => path, isBlockDevice: () => false};
+    const context = {home: '/home/fixture', cwd: '/work/other', project: '/work/other', dataDir: '/state/app', platform: 'linux' as const,
+      pathPort, mountInventory: {contains: () => false}, sessionEdits: new Set(['/work/other/caf\u00e9.sh'])};
+    const overflow = Array.from({length: 33}, (_, i) => `cd /e${i}`).join(' ; ');
+    for (const check of [wipeBreaker, carriedWipeBreaker]) {
+      expect(check(`${overflow} ; bash cafe\u0301.sh`, context)?.rule).toBe('wipe-check-fault');
+      expect(check(`${overflow} ; bash notwritten.sh`, context)).toBeNull();
+    }
+  });
   it("the shipped checker fails closed on protected glob overflow and recovers below the bound", () => {
     // MAIN RULING 1115-C4D2-GROK H2: saturated inventories fail closed, including unmatched globs.
     // Owner checker: wipe-v3; owner shipped Pi consumer regression: t6-pi-wipe.
@@ -680,7 +691,7 @@ describe("T105: the inlined copies equal their modules", () => {
     expect(imports.filter(line => !/from "node:/.test(line))).toEqual([
       'import "../../shared/win-hide-child-process.mjs";',
       'import { PI_CONTROL_FRAMES, preToolCode } from "./hook-control.ts";',
-      'import { wipeBreaker, nativeWipeBreaker, RootRegistry } from "./pi-wipe-check.generated.mjs";',
+      'import { noLimitsWipe, nativeWipeBreaker, RootRegistry } from "./pi-wipe-check.generated.mjs";',
     ]);
     const staged = here('./pi-wipe-check.generated.mjs');
     expect(staged.split('\n').filter(line => /^import /.test(line)).every(line => /from "node:/.test(line))).toBe(true);
@@ -726,6 +737,49 @@ describe('B8 No limits keeps only the local wipe check when the broker UI or sec
    expect(await call({toolName:'bash',input:{command:'rm -rf ~'}},ctx)).toMatchObject({block:true});
    expect(await call({toolName:'bash',input:{command:'echo "rm -rf /"'}},ctx)).toBeUndefined();
    expect(await call({toolName:'bash',input:{command:'rm -rf "$UNKNOWN"'}},ctx)).toBeUndefined();
+  }finally{delete process.env.MURAGE_PI_NO_LIMITS;}
+ });
+});
+// 1.0.23 q1023-nolimits-fix (ASTRA review of 1317c58c66, High 1; MAIN-RULING NOLIMITS-1022 H1 correction): the fallback is the
+// No limits wipe read, so an obfuscated wipe (decoded as far as it decodes) blocks here as it asks on every other No limits path.
+const PI_OBFUSCATED_WIPES=['rm$IFS-rf$IFS/','$(echo rm) -rf ~','echo cm0gLXJmIH4= | base64 -d | sh',"printf '\\x72\\x6d -\\x72\\x66 ~' | sh",
+ "echo '~ fr- mr' | rev | sh",`pwsh -ec ${Buffer.from('Remove-Item -Recurse -Force ~','utf16le').toString('base64')}`,'$(echo cm0gLXJmIC8= | base64 -d)'];
+const PI_OBFUSCATED_RUNS=['echo Y2F0IH4vLnNzaC9pZF9yc2E= | base64 -d | sh','eval "$(ssh-agent -s)"',`pwsh -ec ${Buffer.from('Remove-Item -Recurse -Force .\\scratch\\tmp','utf16le').toString('base64')}`,'eval true; echo cm0gLXJmIH4= | base64 -d'];
+describe('B9 No limits local fallback reads obfuscated wipes',()=>{
+ it.each([false,true])('missing secret=%s: an obfuscated wipe blocks; a decoder with no wipe in what runs does not',async missing=>{
+  if(!missing)process.env.MURAGE_PI_GATE=SECRET;else delete process.env.MURAGE_PI_GATE;
+  process.env.MURAGE_PI_NO_LIMITS='1';
+  const on=new Map<string,Handler>();
+  try{
+   process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+   piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+   const call=on.get('tool_call')!,ctx={cwd:project,hasUI:false,ui:{}};
+   const outcome=async(command:string)=>`${command} => ${(await call({toolName:'bash',input:{command}},ctx) as {block?:boolean}|undefined)?.block===true?'blocked':'runs'}`;
+   const wipes:string[]=[],runs:string[]=[];
+   for(const command of PI_OBFUSCATED_WIPES)wipes.push(await outcome(command));
+   for(const command of PI_OBFUSCATED_RUNS)runs.push(await outcome(command));
+   expect(wipes).toEqual(PI_OBFUSCATED_WIPES.map(command=>`${command} => blocked`));
+   expect(runs).toEqual(PI_OBFUSCATED_RUNS.map(command=>`${command} => runs`));
+  }finally{delete process.env.MURAGE_PI_NO_LIMITS;}
+ });
+});
+const PI_ARGV_DISK_WIPES=[`python3 -c 'import sys; open(sys.argv[1],"wb").write(b"x")' /tmp/../dev/sda`,`node -e 'require("fs").writeFileSync(process.argv[1], "x")' /tmp/../dev/sda`];
+const PI_ARGV_DISK_RUNS=[`python3 -c 'import sys; print(sys.argv[1])' /tmp/../dev/sda`,`python3 -c 'import sys; print("write", sys.argv[1])' /tmp/../dev/sda`,`python3 -c 'import sys; open(sys.argv[1],"w").write("x")' /w/out.txt`,`node -e 'console.log(process.argv[1])' /dev/stdout`];
+describe('B10 No limits local fallback cards a disk named to argv-writing interpreter code',()=>{
+ it.each([false,true])('missing secret=%s',async missing=>{
+  if(!missing)process.env.MURAGE_PI_GATE=SECRET;else delete process.env.MURAGE_PI_GATE;
+  process.env.MURAGE_PI_NO_LIMITS='1';
+  const on=new Map<string,Handler>();
+  try{
+   process.env.MURAGE_PI_WIPE_CONTEXT_FILE ??= join(root, 'default-context');
+   piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+   const call=on.get('tool_call')!,ctx={cwd:project,hasUI:false,ui:{}};
+   const outcome=async(command:string)=>`${command} => ${(await call({toolName:'bash',input:{command}},ctx) as {block?:boolean}|undefined)?.block===true?'blocked':'runs'}`;
+   const wipes:string[]=[],runs:string[]=[];
+   for(const command of PI_ARGV_DISK_WIPES)wipes.push(await outcome(command));
+   for(const command of PI_ARGV_DISK_RUNS)runs.push(await outcome(command));
+   expect(wipes).toEqual(PI_ARGV_DISK_WIPES.map(command=>`${command} => blocked`));
+   expect(runs).toEqual(PI_ARGV_DISK_RUNS.map(command=>`${command} => runs`));
   }finally{delete process.env.MURAGE_PI_NO_LIMITS;}
  });
 });

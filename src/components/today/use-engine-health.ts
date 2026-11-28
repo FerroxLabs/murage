@@ -97,7 +97,22 @@ export function refreshEngineHealth(): Promise<boolean> {
   return inFlight ? inFlight.then(fresh, fresh) : fresh();
 }
 
+/** Like refreshEngineHealth, but resolves with the answer the read it started published (null when that read failed):
+ * the Health page's own half of one snapshot. Waits for a read already on its way, as refreshEngineHealth does. */
+export function refreshEngineHealthAnswer(): Promise<EngineHealthAnswer | null> {
+  const fresh = () => refresh().then(() => answer);
+  return inFlight ? inFlight.then(fresh, fresh) : fresh();
+}
+
+/** The answer everyone shows right now (the Health page compares it with the one its last read took). */
+export function currentEngineHealthAnswer(): EngineHealthAnswer | null {
+  return answer;
+}
+
 /** Tests only. */
 export function resetEngineHealthForTests(): void {
-  answer = null; users = 0; inFlight = null; listeners.clear();
+  window.clearInterval(timer);
+  window.removeEventListener("focus", onWake);
+  window.removeEventListener("online", onWake);
+  answer = null; users = 0; timer = 0; inFlight = null; listeners.clear();
 }

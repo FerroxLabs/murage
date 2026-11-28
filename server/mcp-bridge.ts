@@ -62,9 +62,9 @@ import { releaseProxyFrame, proxyTransportLost, reserveProxyUpstream } from "./p
 // liveness probe, and only a probe that FAILS ends the bridge. Any byte on
 // stdin/stdout/stderr resets the window.
 export const BRIDGE_INACTIVITY_MS = 45_000;
+// Under the native CLI’s 15 s timeout so it does not close the wipe shim first.
+const BRIDGE_START_MS = 10_000;
 const PROBE_TIMEOUT_MS = 10_000;
-// Screenshots can be large; still cap an unterminated/malformed frame.
-export const MAX_BRIDGE_FRAME_BYTES = 8 * 1024 * 1024;
 
 export interface BridgeLiveness {
   command: string;
@@ -156,6 +156,9 @@ export function createInactivityWatchdog(options: {
 
 export interface BridgeOptions {
   releaseRole?: "containerMcp" | "vpsContainerMcp" | "vpsRelayMcp" | "wipeMcp";
+  /** q1022-connparity: how long the owner's server may take to answer `initialize` before it is dropped. Only a
+   * Settings Test with first-run patience sets it (mcp-wipe-proxy.ts); a chat keeps BRIDGE_START_MS. */
+  startMs?: number;
   command: string;
   args: string[];
   /** Names the far end in stderr messages, e.g. "Cua Driver". */
@@ -175,7 +178,9 @@ export interface BridgeOptions {
 /** Collect a byte stream into complete newline-terminated lines. MCP's
  * stdio transport is one JSON-RPC frame per line, so line boundaries are
  * the only safe place to inspect — or inject — anything. */
-export function createLineSplitter(onLine: (line: string) => void, maxBytes = MAX_BRIDGE_FRAME_BYTES): {
+/** MAIN-RULING cause22-no-transport-caps: a line of any size is delivered whole (as upstream); nothing here cuts, counts or throws.
+ * The second parameter is ignored: it is accepted only for the callers outside this lane that still pass their old bound. */
+export function createLineSplitter(onLine: (line: string) => void, _ignored?: number): {
   push: (chunk: Buffer | string) => void;
   flush: () => void;
 } {
@@ -183,16 +188,16 @@ export function createLineSplitter(onLine: (line: string) => void, maxBytes = MA
   const decoder = new StringDecoder("utf8");
   return {
     push(chunk) {
-      if (Buffer.byteLength(chunk) > maxBytes) throw new Error("MEMORY_CONTEXT_REVOKED");
-      pending += typeof chunk === "string" ? chunk : decoder.write(chunk);
-      let newline: number;
-      while ((newline = pending.indexOf("\n")) !== -1) {
-        const line = pending.slice(0, newline);
-        if (Buffer.byteLength(line) > maxBytes) throw new Error("MCP frame exceeds bridge limit");
-        pending = pending.slice(newline + 1);
+      const text = typeof chunk === "string" ? chunk : decoder.write(chunk);
+      let from = 0, newline: number;
+      // Only the new text is searched, so a large line that arrives in many chunks is not rescanned on each of them.
+      while ((newline = text.indexOf("\n", from)) !== -1) {
+        const line = pending + text.slice(from, newline);
+        pending = "";
+        from = newline + 1;
         onLine(line);
       }
-      if (Buffer.byteLength(pending) > maxBytes) throw new Error("MCP frame exceeds bridge limit");
+      pending += from ? text.slice(from) : text;
     },
     flush() {
       pending += decoder.end();
@@ -357,6 +362,12 @@ export function writeMcpLine(destination: Writable, line: string, engineRole?: s
   });
 }
 
+/** Two attempts; false when both failed. */
+async function recorded(work: () => Promise<void>): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) { try { await work(); return true; } catch { /* once more */ } }
+  return false;
+}
+
 export function runMcpBridge(options: BridgeOptions): void {
   // On Windows a bare name or a .cmd/.bat shim (npx, a package's bin) cannot be
   // started by a plain spawn; resolve it the way every engine launch does
@@ -370,9 +381,24 @@ export function runMcpBridge(options: BridgeOptions): void {
     stdio: ["pipe", "pipe", "pipe"],
   }));
   registerChildMcpInput(child.stdin);
+  let downstreamUnavailable = false;
+  let starting: { id: unknown; timer: ReturnType<typeof setTimeout> } | undefined;
+  const ownerWipeBridge = options.releaseRole === "wipeMcp" && !!process.env.MURAGE_RELEASE_INSTANCE;
+  const dropDownstream = () => {
+    if (!ownerWipeBridge || !process.connected || !process.send) return false;
+    if (!downstreamUnavailable) {
+      downstreamUnavailable = true;
+      if (starting) clearTimeout(starting.timer);
+      detach();
+      try {
+        process.send({ type: "mcp-server-unavailable" }, error => { if (error) proxyTransportLost("wipeMcp"); });
+      } catch { proxyTransportLost("wipeMcp"); }
+    }
+    return true;
+  };
   // EOF seals immediately, before a queued frame or splitter flush can run.
   process.stdin.once("end", () => { if (options.releaseRole) proxyTransportLost(options.releaseRole); });
-  child.stdout.once("end", () => { if (options.releaseRole) proxyTransportLost(options.releaseRole); });
+  child.stdout.once("end", () => { if (!dropDownstream() && options.releaseRole) proxyTransportLost(options.releaseRole); });
 
   // docker may exit before it drains stdin; pipe() leaves this error unhandled.
   child.stdin.on("error", () => {});
@@ -407,6 +433,7 @@ export function runMcpBridge(options: BridgeOptions): void {
   const droppedLine = () => process.stderr.write(`${options.label} bridge dropped a response that answers no waiting request\n`);
   // Every frame to the engine goes through the writer. A response leaves through the handle of its live entry; anything else is a plain send.
   const answer = (line: string): Promise<void> => {
+    if (downstreamUnavailable) return Promise.resolve();
     const { response, value } = shapeOf(line);
     if (response) {
       const taken = ids.take(value.id);
@@ -431,9 +458,17 @@ export function runMcpBridge(options: BridgeOptions): void {
   const intercept = createMcpBridgeInterceptor({
     answer,
     forward: async (line) => {
+      if (downstreamUnavailable) return;
+      const frame = ownerWipeBridge && shapeOf(line).value;
+      if (frame?.method === "initialize" && !starting) {
+        const timer = setTimeout(dropDownstream, options.startMs ?? BRIDGE_START_MS);
+        timer.unref?.();
+        starting = { id: frame.id, timer };
+      }
       try {
         await writeMcpLine(child.stdin, line);
       } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EPIPE" && dropDownstream()) return;
         if (options.releaseRole) proxyTransportLost(options.releaseRole);
         // Docker may close stdin before consuming a request. Stop feeding it,
         // but let its close event report the actual transport exit status.
@@ -490,13 +525,26 @@ export function runMcpBridge(options: BridgeOptions): void {
   }, () => child.stdin.end(), transportFailed);
   // The write of a child answer is not awaited before the next child line is read (the writer's own order is unchanged).
   pipeMcpLines(child.stdout, (line) => {
+    if (downstreamUnavailable) return;
+    if (starting && shapeOf(line).value?.id === starting.id) {
+      clearTimeout(starting.timer);
+      starting = undefined;
+    }
     if(!options.observeTools){answer(textOnlyErrorResultLine(toolLists.rewriteResponse(line))).catch(transportFailed);return;}
     return (async()=>{
       const frame=shapeOf(line).value,replace=effectLists.get(frame?.id);
-      if(replace!==undefined){effectLists.delete(frame.id);if(Array.isArray(frame.result?.tools))await options.observeTools!(frame.result.tools,replace);}
+      if(replace!==undefined){
+        effectLists.delete(frame.id);
+        // 1.0.21 cause6: effect hints that cannot be recorded fail this one tools/list (no tool is listed without its hints); they used to seal the whole server.
+        if(Array.isArray(frame.result?.tools)&&!await recorded(()=>options.observeTools!(frame.result.tools,replace))){
+          process.stderr.write(`${options.label} bridge could not record effect hints; this tools/list is answered with an error\n`);
+          await answer(textOnlyErrorResultLine(JSON.stringify({jsonrpc:"2.0",id:frame.id,error:{code:-32000,message:"Murage could not record this server's tools. Try again in a moment."}})));
+          return;
+        }
+      }
       await answer(textOnlyErrorResultLine(toolLists.rewriteResponse(line)));
     })();
-  }, () => { if (options.releaseRole) proxyTransportLost(options.releaseRole); }, transportFailed, options.releaseRole);
+  }, () => { if (!dropDownstream() && options.releaseRole) proxyTransportLost(options.releaseRole); }, transportFailed, options.releaseRole);
 
   let watchdog: WatchdogHandle | null = null;
   if (options.liveness) {
@@ -526,15 +574,17 @@ export function runMcpBridge(options: BridgeOptions): void {
     child.stderr.on("data", touch);
   }
 
-  child.on("error", () => {
-    if (options.releaseRole) proxyTransportLost(options.releaseRole);
-    process.stderr.write("bridge failures=1\n");
+  child.on("error", (error: NodeJS.ErrnoException) => {
+    // Name the launch failure before the release seals: code, syscall and the command's base name only.
+    const command = typeof error?.path === "string" ? error.path.split(/[\\/]/).pop()!.slice(0, 60) : "-";
+    process.stderr.write(`bridge failures=1 code=${String(error?.code ?? "-").slice(0, 32)} syscall=${String(error?.syscall ?? "-").split(" ")[0]!.slice(0, 32)} command=${command}\n`);
+    if (!dropDownstream() && options.releaseRole) proxyTransportLost(options.releaseRole);
     process.exitCode = 1;
     watchdog?.stop();
     detach();
   });
   child.on("close", (code, signal) => {
-    if (options.releaseRole) proxyTransportLost(options.releaseRole);
+    if (!dropDownstream() && options.releaseRole) proxyTransportLost(options.releaseRole);
     if (signal) process.stderr.write("bridge exits=1\n");
     // Let stdout and stderr drain before the bridge exits.
     process.exitCode = process.exitCode ?? code ?? 1;

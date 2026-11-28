@@ -16,7 +16,8 @@
 //                                      decision it received
 //
 // The engine log (FAKE_B35_LOG, JSONL) records only whitelisted identity keys
-// (MURAGE_BOT_ID, MURAGE_THREAD_ID, MURAGE_TURN_DEPTH). It never records the
+// (MURAGE_BOT_ID, MURAGE_THREAD_ID) plus claimDepth, the depth the server's token record
+// accepts (probed through the real route; depth is read from the token record, L2W #5768). It never records the
 // comms token, the MCP config or an environment dump.
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +35,7 @@ export const B35_ACTION = "fixture_b35_delegated_action_no_execution";
 export const B35_LOG_NAME = "b35-engine.jsonl";
 export const B35_CLI_NAME = "b35-delegation-claude.ts";
 
-export type B35Identity = { MURAGE_BOT_ID?: string; MURAGE_THREAD_ID?: string; MURAGE_TURN_DEPTH?: string };
+export type B35Identity = { MURAGE_BOT_ID?: string; MURAGE_THREAD_ID?: string; claimDepth?: number | null };
 export interface B35LogEntry {
   pid: number;
   role: "parent-create" | "parent-delegate" | "child-asked" | "child-decision" | "fixture-error";
@@ -90,7 +91,8 @@ const block = () => String.raw`  // ── B35-DELEGATION fixture: inserted by s
       // Whitelisted identity keys only: never MURAGE_COMMS_TOKEN, the config or an env dump.
       const b35Identity = () => {
         const env = b35McpServers().agents?.env ?? {};
-        return { MURAGE_BOT_ID: env.MURAGE_BOT_ID, MURAGE_THREAD_ID: env.MURAGE_THREAD_ID, MURAGE_TURN_DEPTH: env.MURAGE_TURN_DEPTH };
+        return { MURAGE_BOT_ID: env.MURAGE_BOT_ID, MURAGE_THREAD_ID: env.MURAGE_THREAD_ID,
+          claimDepth: claimDepthNow(env) };
       };
       // A generic MCP tool call, the same stdio JSON-RPC exchange
       // callPermissionPromptTool makes, but for any server in --mcp-config.

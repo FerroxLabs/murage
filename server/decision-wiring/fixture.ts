@@ -8,6 +8,9 @@ import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
 import { setRuntimeCredentialRoot } from '../../shared/runtime-credential-paths.ts';
 import { ShellSessionRegistry } from '../shell-session-state.ts';
+import {automaticSettlement} from '../skill-switch-settlement.ts';
+import { requestAutomationAncestry } from '../automation-ancestry.ts';
+import { foldCardChoices, foldCardQuestions } from '../../shared/questions.ts';
 export const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
 export function wiring(names: string[], globals: Record<string, unknown> = {}) {
   const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -17,7 +20,7 @@ export function wiring(names: string[], globals: Record<string, unknown> = {}) {
     return node.getText(ast);
   }).join('\n');
   const js = ts.transpileModule(`${bodies}\n;globalThis.result={${names.join(',')}};`, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.None } }).outputText;
-  const context = vm.createContext({ console, Date, Map, Set, Object, JSON, Promise, URL, autoAnsweredAsks: new Set<string>(),
+  const context = vm.createContext({ console, Date, Map, Set, Object, JSON, Promise, URL, automaticSettlement, autoAnsweredAsks: new Set<string>(),
     internalTurnOwners: new Map(), readApproval: () => undefined, setRuntimeCredentialRoot, randomUUID, realpathSync,
     shellSessions: new ShellSessionRegistry(),
     // The card-attention writer (approval-attention.ts) is a dependency too; a test that reaches it injects its own.
@@ -27,7 +30,9 @@ export function wiring(names: string[], globals: Record<string, unknown> = {}) {
     // LLS (nativecrash): Stop reads the turn refusal of its generation; a fixture that models no refusal has none (a suite that
     // extracts refusedTurnOf, or passes its own, overrides these).
     refusedTurnOf: () => undefined, stopInterrupts: new Map(), refusalStopGenerations: new Set(),
-    highlevel: { host: { onLevelChange: async () => {} } }, ...globals });
+    // cause22-E: the counted fold of a question card (shared/questions.ts), the real one, as index.ts imports it
+    foldCardChoices, foldCardQuestions,
+    highlevel: { host: { onLevelChange: async () => {} } }, requestAutomationAncestry, ...globals });
   vm.runInContext(js, context);
   return context.result as Record<string, (...args: any[]) => any>;
 }
@@ -69,7 +74,7 @@ export function wiringBlock(fn: string, anchor: string, globals: Record<string, 
 }
 function evaluate(expression: string, globals: Record<string, unknown>) {
   const js = ts.transpileModule(`globalThis.result = ${expression}`, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.None } }).outputText;
-  const context = vm.createContext({ console, Date, Map, Set, Object, JSON, Promise, URL, ...globals });
+  const context = vm.createContext({ console, Date, Map, Set, Object, JSON, Promise, URL, foldCardChoices, foldCardQuestions, ...globals });
   vm.runInContext(js, context);
   return context.result as (...args: any[]) => any;
 }

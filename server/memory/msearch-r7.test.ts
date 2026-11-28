@@ -58,18 +58,13 @@ describe("P1: a half-finished revalidation keeps nothing it read before the loop
     readable("rec-a", scope); readable("rec-b", scope);
     (await world(["rec-a", "rec-b"].map(id => entry(id, scope, TEXT)))).close();
     setAuthorizeSliceMsForTest(0);
-    let stamps = 0, skew = 0, moved = false, started = false;
+    let skew = 0, moved = false;
     const originalNow = performance.now.bind(performance), originalImmediate = globalThis.setImmediate, db = database(), prepare = db.prepare.bind(db);
-    db.prepare = ((sql: string) => {
-      if (sql.includes("SELECT data_revision,policy_revision,deletion_epoch FROM memory_meta") && ++stamps === 2) {
-        prepare("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1").run();
-        started = true;
-      }
-      return prepare(sql);
-    }) as typeof db.prepare;
-    // The first turn released after the revalidation began: the source of every accepted record moves, and the clock passes the limit.
+    // q1024-memsearch D: the search no longer reads a revision stamp to start a revalidation round (capture moves data_revision with every
+    // message); it reads what it answers once more, synchronously, just before answering. The change now commits at the first loop release
+    // after the search began (accepted records in hand): the source of every accepted record moves, and the clock passes the limit.
     (globalThis as { setImmediate: unknown }).setImmediate = ((fn: (...args: unknown[]) => void, ...args: unknown[]) => {
-      if (started && !moved) {
+      if (!moved) {
         moved = true; skew = 60_000;
         prepare("UPDATE memory_records SET state='deleted' WHERE id IN ('rec-a','rec-b')").run();
         prepare("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1").run();
@@ -85,7 +80,6 @@ describe("P1: a half-finished revalidation keeps nothing it read before the loop
     } finally {
       (performance as { now: () => number }).now = originalNow;
       (globalThis as { setImmediate: unknown }).setImmediate = originalImmediate;
-      db.prepare = prepare as typeof db.prepare;
     }
   }, 60_000);
 });

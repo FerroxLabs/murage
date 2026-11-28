@@ -30,6 +30,7 @@ const models = process.env.FAKE_CUSTOM_DEEPSEEK ? [
   { id: "glm-5.3-flash", label: "GLM-5.3-Flash", variants: ["medium", "high"] },
 ];
 const sessions = new Map<string, Session>();
+
 const pathFor = (sessionId: string) => join(directory, `${sessionId}.json`);
 const save = (sessionId: string, session: Session) => {
   sessions.set(sessionId, session);
@@ -71,7 +72,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       respond({ protocolVersion: 1, agentInfo: { name: "custom-acp-models-fixture", version: "1.0.0" },
         agentCapabilities: { loadSession: true, mcpCapabilities: { http: true } }, authMethods: [] });
     } else if (method === "session/new") {
-      const sessionId = randomUUID();
+      const sessionId = process.env.FAKE_CUSTOM_FIXED_ID ?? randomUUID();
       const session = { model: models[0].id, variant: "low" };
       save(sessionId, session);
       receipt({ method, sessionId, ...session });
@@ -94,6 +95,8 @@ for await (const line of createInterface({ input: process.stdin })) {
     } else if (method === "session/set_config_option") {
       const session = get(params.sessionId);
       if (params.configId === "model") {
+        // ACP-EFFORT fixture: a replacement session whose model pin is refused
+        if (process.env.FAKE_CUSTOM_FAIL_MODEL_ON_NEW_SESSION && existsSync(receiptPath) && readFileSync(receiptPath, "utf8").split("\n").filter(line => line.includes('"method":"session/new"')).length >= 2) throw new Error("fixture refused the model pin on the replacement session");
         const chosen = models.find((model) => model.id === params.value);
         if (!chosen) throw new Error(`Unknown fixture model ${params.value}`);
         session.model = chosen.id;
@@ -102,11 +105,20 @@ for await (const line of createInterface({ input: process.stdin })) {
         if (!models.find((model) => model.id === session.model)!.variants.includes(params.value)) {
           throw new Error(`Unsupported fixture thinking level ${params.value}`);
         }
-        session.variant = params.value;
+        if (process.env.FAKE_CUSTOM_SET_ERROR) throw new Error("fixture refused the thinking change");
+        // ACP-EFFORT fixtures: the answer may fail to carry the requested value, or a notification may move it right after the answer
+        if (!process.env.FAKE_CUSTOM_NO_CONFIRM) session.variant = params.value;
       } else throw new Error(`Unknown fixture config ${params.configId}`);
       save(params.sessionId, session);
       receipt({ method, sessionId: params.sessionId, configId: params.configId, value: params.value, ...session });
-      respond({ configOptions: configOptions(session) });
+      if (process.env.FAKE_CUSTOM_LATE_CHANGE && params.configId === "thinking") {
+        const answer = configOptions(session);
+        session.variant = process.env.FAKE_CUSTOM_LATE_CHANGE;
+        save(params.sessionId, session);
+        process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result: { configOptions: answer } }) + "\n"
+          + JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { sessionId: params.sessionId,
+            update: { sessionUpdate: "config_option_update", configOptions: configOptions(session) } } }) + "\n");
+      } else respond({ configOptions: configOptions(session) });
     } else if (method === "fixture/change_thinking") {
       const session = get(params.sessionId);
       session.variant = params.value;
@@ -117,7 +129,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     } else if (method === "session/prompt") {
       const session = get(params.sessionId);
       const marker = [...JSON.stringify(params.prompt).matchAll(/ACP_PICKER_[A-Z0-9_]+/g)].at(-1)?.[0] ?? "auxiliary";
-      receipt({ method, sessionId: params.sessionId, marker, ...session });
+      receipt({ method, sessionId: params.sessionId, marker, promptText: JSON.stringify(params.prompt), ...session });
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: params.sessionId,
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `fixture:${marker}:${session.model}:${session.variant}` } } } });
       respond({ stopReason: "end_turn" });

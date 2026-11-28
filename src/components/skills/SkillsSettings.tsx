@@ -3,7 +3,13 @@
 //
 // Settings → Skills: every skill in one place. Search first; Your skills,
 // then the library; click one to read it and choose which bots use it.
-import { ChevronRight, Search } from "lucide-react";
+import { ChevronRight, Search, Sparkles } from "lucide-react";
+import { useStore } from "@/state/store";
+import { skillRecorderAvailable } from "@/lib/feature-flags";
+import { isCloudOrigin } from "@/lib/cloud-workspace";
+import { useDesktopSurface } from "@/lib/use-surface";
+import { useDesktopCapabilities } from "../DesktopCapabilities";
+import { TaughtByYou } from "./TaughtByYou";
 import { useState } from "react";
 
 import { SkillImportPanel } from "./SkillImportPanel";
@@ -12,7 +18,7 @@ import { SkillPageControls } from "./SkillPageControls";
 import { useSkillsBrowser } from "./useSkillsBrowser";
 import { topicLabel, TopicSelect } from "./TopicSelect";
 import { VerdictBadge } from "./VerdictBadge";
-import { verdictLabel, CLEAN_LINE, type SkillSummary } from "@/lib/skills-api";
+import { verdictHint, verdictLabel, CLEAN_LINE, type SkillSummary } from "@/lib/skills-api";
 
 type View = { kind: "list" } | { kind: "read"; ref: string } | { kind: "import" };
 
@@ -31,6 +37,8 @@ function SkillRow({ skill, onOpen, browsing }: { skill: SkillSummary; onOpen(ref
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium text-ink">{skill.name}</div>
           <div className="truncate text-[11.5px] text-ink-secondary">{skill.description}</div>
+          {/* "Needs a look" alone leaves the owner guessing: say what was found and what to do next. */}
+          {verdictHint(skill) && <div className={"text-[11.5px] " + (skill.verdict === "blocked" ? "text-danger" : "text-warning")}>{verdictHint(skill)}</div>}
         </div>
         {/* Which bots use a skill is said on a phone too (it is also part of
             the row's accessible name), and so is a verdict that needs a look or
@@ -68,6 +76,11 @@ export function SkillScanRules() {
 export function SkillsSettings() {
   const [view, setView] = useState<View>({ kind: "list" });
   const { query, category, page, error, busy, setQuery, setCategory, goToPage, load } = useSkillsBrowser();
+  const { state, dispatch } = useStore();
+  const desktop = useDesktopSurface();
+  const { capabilities } = useDesktopCapabilities();
+  // TEACH-ENTRY D2: shown only where the recorder can run; no bot, so the recorder defaults to All my bots.
+  const teachAvailable = skillRecorderAvailable(state.config, desktop, isCloudOrigin(), capabilities.host?.platform);
 
   if (view.kind === "read") {
     return <SkillReader skillRef={view.ref} mode={{ kind: "settings" }} onBack={() => setView({ kind: "list" })} onChanged={() => void load()} />;
@@ -85,6 +98,12 @@ export function SkillsSettings() {
           <h2 id="skills-library-title" className="text-[15px] font-medium text-ink">Skills</h2>
           <p className="text-[12.5px] text-ink-secondary">Instructions your bots can follow. Read any skill before you use it.</p>
         </div>
+        {teachAvailable && (
+          <button type="button" title="Record a skill by showing it once" onClick={() => dispatch({ type: "showSkillRecorder", via: "entry" })} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-control px-3 py-1.5 text-[12.5px] text-ink">
+            <Sparkles size={14} aria-hidden="true" />
+            Teach a skill
+          </button>
+        )}
         <button type="button" data-setting-control="skills-settings-title" onClick={() => setView({ kind: "import" })} className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white">Import skill</button>
       </div>
 
@@ -104,6 +123,9 @@ export function SkillsSettings() {
           <TopicSelect topics={page.categories} value={category} onChange={setCategory} />
         )}
       </div>
+
+      {/* TEACH-ENTRY D6: recordings and who can use them; absent when there are none or the route does not exist. */}
+      <TaughtByYou bots={state.bots ?? []} />
 
       {error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger"><p>{error}</p><button type="button" onClick={() => void load()} className="mt-2 min-h-11 rounded-lg bg-control px-3 text-ink">Try again</button></div>}
       {!page && !error && <p className="mt-3 text-[12px] text-ink-secondary">Loading…</p>}

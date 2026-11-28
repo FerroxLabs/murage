@@ -1,6 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
+// Producer owner: recall-s3 (revalidated ceilings); consumer owner: recall-s1s2g (live lineage and continuation fences).
+//
 // Write-time privacy (DESIGN-WRITETIME.md, Murage 1.0.2): the shared types of the lane, fixed by S0. Every slice (S1 to S5) imports its
 // lineage vocabulary from here and calls only the functions exported by lineage-write.ts, deny-read.ts, revoke-commit.ts, prompt-parts.ts
 // and lineage-backfill.ts. The table names are in schema.ts (WRITETIME_TABLES). WRITETIME-API.md at the repository root lists every name.
@@ -25,7 +27,7 @@ export interface SessionKey { readonly threadId: string; readonly driverInstance
 
 /** The kinds of memory object a ref names. record, source, lesson and claim are memory tables; note, card, summary, skill and file are
  * Murage objects that hold words a bot wrote in a turn (a teammate's note or suggestion, a project card, a project summary, a learned skill,
- * a file written or read through a Murage tool). Each is one memory_deny_memory key and one carry child (child_kind 'record'). */
+ * a file written or read through a Murage tool). Each is one memory_deny_object key and one carry child (child_kind 'record'). */
 export const MEMORY_REF_KINDS = ["record", "source", "lesson", "claim", "note", "card", "summary", "skill", "file"] as const;
 export type MemoryRefKind = (typeof MEMORY_REF_KINDS)[number];
 /** The Murage-object kinds: no memory table, no scope; a mark on one is the whole of it (nothing is derived from one by lineage). */
@@ -42,7 +44,7 @@ export const OBJECT_EDGE_LSN = 0;
 /** The object's node in memory_thread_flow (writer threads flow into it, it flows into its consumers' threads). */
 export const objectFlowNode = (ref: { readonly kind: MemoryRefKind; readonly id: string }): string => `\u0001obj\u0000${ref.kind}:${ref.id}`;
 
-/** A memory object (memory_deny_memory key). version 0 or absent = every version. scopeId, when known, lets the read side check the
+/** A memory object (memory_deny_object key). version 0 or absent = every version. scopeId, when known, lets the read side check the
  * pending scope gate (memory_deny_pending_scope) without another seek. */
 export interface MemoryRef {
   readonly kind: MemoryRefKind;
@@ -152,7 +154,9 @@ export type FrontierNode =
   /** from: where the walk of what rests on the line starts when not at the line itself (refs added to a written line, revoke-commit.ts). */
   | { readonly kind: "line"; readonly threadId: string; readonly lsn: number; readonly from?: number }
   | { readonly kind: "range"; readonly threadId: string; readonly fromLsn: number }
-  | { readonly kind: "record"; readonly id: string; readonly version: number }
+  /** via "ev" (1.0.23 deny rule): enqueued by a source's evidence hop (revoke-marker.ts sourceNode), so the version's mark is implied by
+   * that source's (deny-rule.ts) and recordNode writes none. Absent on every other way in: the explicit mark is written. */
+  | { readonly kind: "record"; readonly id: string; readonly version: number; readonly via?: "ev" }
   | { readonly kind: "source"; readonly id: string }
   | { readonly kind: "receipt"; readonly bundleId: string }
   | { readonly kind: "session"; readonly session: SessionKey }
@@ -171,7 +175,7 @@ export function decodeNode(text: string): FrontierNode | null {
     switch (node?.kind) {
       case "line": return str(node.threadId) && int(node.lsn) && (node.from === undefined || int(node.from)) ? node : null;
       case "range": return str(node.threadId) && int(node.fromLsn) ? node : null;
-      case "record": return str(node.id) && int(node.version) ? node : null;
+      case "record": return str(node.id) && int(node.version) && (node.via === undefined || node.via === "ev") ? node : null;
       case "source": return str(node.id) ? node : null;
       case "receipt": return str(node.bundleId) ? node : null;
       case "session": return node.session && str(node.session.threadId) && str(node.session.driverInstance) && str(node.session.nativeSession) ? node : null;
@@ -194,7 +198,7 @@ export type RevokeRoot =
       readonly cause: "forget" | "hide" | "edit" | "delete" | "branch-switch" | "regenerate" }
   | { readonly kind: "thread"; readonly threadId: string; readonly cause: "delete-conversation" }
   | { readonly kind: "bot"; readonly botId: string; readonly threadIds: readonly string[]; readonly cause: "delete-bot" }
-  | { readonly kind: "memory"; readonly ref: MemoryRef; readonly cause: "archive" | "correct" | "forget" | "revise" | "retire" | "delete" | "unprovable" }
+  | { readonly kind: "memory"; readonly ref: MemoryRef; readonly cause: "archive" | "correct" | "forget" | "revise" | "retire" | "delete" | "unprovable" | "hide" }
   | { readonly kind: "scope"; readonly scopeId: string; readonly cause: "scope-deny" }
   /** "receipt-revoked": the receipt's state turned 'revoked' (a roster, settings, branch or restore revoke, or a single receipt): the RC
    * withheld what rests on it from AUDIENCE readers only (replay-lineage.ts: `audience !== null && row.state === "revoked"`), never from the
@@ -207,10 +211,24 @@ export type RevokeRoot =
 
 /** The reader a lookup judges for. audience null: content checks only (direct facts and marks; no watermark, no footprint). An owner
  * audience skips the footprint check (as copyOriginRevoked does today). */
-export interface LineageAudience { readonly recallOnly?: boolean; readonly personOnly?: boolean; readonly view?: import('./recall-view.ts').RecallViewHandle; readonly owner: boolean; readonly scopeIds: readonly string[] }
+export interface LineageAudience { readonly scopeCeiling?: readonly string[]; readonly recallOnly?: boolean; readonly personOnly?: boolean; readonly view?: import('./recall-view.ts').RecallViewHandle; readonly owner: boolean; readonly scopeIds: readonly string[] }
 /** ownFlag (LINEAGE-DESIGN-S6 15b, default true): whether the stored owner's note (withheldFromBots) and the caller's flag withhold a line
  * ("own-flag"). The reader door (bot-read.ts) sets it false and reads the committed verdicts the note mirrors. */
-export interface LineageReader { readonly audience: LineageAudience | null; readonly ownFlag?: boolean }
+/** settled (1.0.23 deny rule, MAIN-RULING 2026-11-26T20:15:28Z "owner turns use the last settled view"): the owner's own direct turn.
+ * Such a reader is judged by the durable deny rows alone (a deny rule = one row checked at read: memory_deny, memory_deny_point,
+ * memory_deny_range, memory_deny_object, memory_deny_session, tombstones and the rule they imply, deny-rule.ts); a revoke walk still in
+ * flight (memory_deny_pending, memory_deny_pending_scope, a queued receipt flip) is no verdict for it, so an unfinished or failed walk
+ * never takes the owner's own memory out of the owner's own turn. Every other reader keeps every pending window (fail closed). Carried only
+ * by OWNER_TURN_READER below, which is handed out only for the owner's OWN direct turn (index.ts ownerMayKeepPending AND
+ * disclosures.ts ownerDirectChat: the owner's words or the owner's own work, never outside input in the owner's chat). */
+export interface LineageReader { readonly audience: LineageAudience | null; readonly ownFlag?: boolean; readonly settled?: true }
+/** The reader of the owner's own direct turn: content checks, the last settled view (LineageReader.settled). */
+export const OWNER_TURN_READER: LineageReader = Object.freeze({ audience: null, settled: true as const });
+/** Whether pending windows are no verdict for this reader (the one place the flag is read). */
+export const readsSettledView = (reader: LineageReader): boolean => reader.settled === true;
+/** The same reader with every pending window counted again: what the owner turn's own bounded settle (continuation-settle.ts) judges by
+ * before the settled view answers for whatever that work could not finish. */
+export const strictReader = (reader: LineageReader): LineageReader => reader.settled === true ? { audience: reader.audience, ...(reader.ownFlag === undefined ? {} : { ownFlag: reader.ownFlag }) } : reader;
 
 /** Why a line is withheld. */
 export type DenyReason = "own-flag" | "tombstone" | "thread-deny" | "deny-line" | "deny-range" | "watermark" | "footprint"
@@ -220,7 +238,9 @@ export type CheckingReason = "no-lineage" | "thread-not-ready" | "pending" | "fo
 export type LineageVerdict =
   | { readonly state: "shown" }
   | { readonly state: "withheld"; readonly reason: DenyReason }
-  | { readonly state: "checking"; readonly reason: CheckingReason };
+  /** `driverRaised`: an engine driver refused the turn itself, with no ledger verdict behind it (the engine did not list or ready Murage's
+   * servers, a capacity or session rule): the engine state, not the context, refused, so it is never proof that a rebuild can succeed. */
+  | { readonly state: "checking"; readonly reason: CheckingReason; readonly driverRaised?: true };
 /** True only for "shown": withheld and checking both keep the text from the engine. */
 export const verdictShows = (verdict: LineageVerdict): boolean => verdict.state === "shown";
 /** The stricter of two verdicts (withheld > checking > shown). */

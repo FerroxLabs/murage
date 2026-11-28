@@ -9,15 +9,15 @@ import {
   resolveAgentBrowserReleaseAsset,
 } from "./browser-engine-release.ts";
 
-export const CHROME_VERSION = "152.0.7977.82";
+export const CHROME_VERSION = "158.0.8127.88";
 export const SUPPORTED_BROWSER_TARGETS = ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"] as const;
 export type BrowserBundleTarget = typeof SUPPORTED_BROWSER_TARGETS[number];
 
 const CHROME_ASSETS = {
-  "darwin-arm64": { platform: "mac-arm64", bytes: 97760996, sha256: "1615f063c894aa824fd55c89f8f05e9904f63cce0c95d0cbce7394d77884fba5", executableSha256: "ac18537fb2bc2b72b0440893b6ea5d4ef3bacc6220b1e9a1693c73f8b1045fbe" },
-  "darwin-x64": { platform: "mac-x64", bytes: 102895824, sha256: "c903707292c6aaed7c6e572c0bb5e6645454e45d9e0e6db27e876b18e9165f31", executableSha256: "2faefd55d4e47764956e31e338d362a1e794037fa772a426ffd510f122f33f19" },
-  "linux-x64": { platform: "linux64", bytes: 119454769, sha256: "0ca12ea26b502a83e32db334a17883c315348845efc071d908de7a6d94a97eff", executableSha256: "1301a5024fef1d58c4cfbde5d44794cb18c5b2cbbe4f3c64f81cc4eaa683c45f" },
-  "win32-x64": { platform: "win64", bytes: 119768220, sha256: "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845", executableSha256: "ec0744f041cb6c35c439c85a5ac42d77b507838cd59cac005e25114025336c98" },
+  "darwin-arm64": { platform: "mac-arm64", bytes: 105060087, sha256: "69320f6869c4defbbdac8b8fa83aef65dc63975e83bbd06899b75dbea5c464b3", executableSha256: "94aa2ddc006b462298814c4f4ed86f13bd834223c28e3f3d60218773a8960ccc" },
+  "darwin-x64": { platform: "mac-x64", bytes: 112314759, sha256: "dc1ac31965cb2ec7794aed8c66127aceea304ae15353cd56fc4b8bde44091548", executableSha256: "408f411de4c6d9757e047c1be0812c622b360620497e271fce173db07ff4cf27" },
+  "linux-x64": { platform: "linux64", bytes: 132091593, sha256: "63401333cc587645bfaeea7f0c90958b327d249251e23954a47f30112ca23d5b", executableSha256: "ff725c1ed878243206416340acd981e9f60bb8265557f927967c782cfa480db4" },
+  "win32-x64": { platform: "win64", bytes: 127879225, sha256: "e935ea2d4633495b5e9ab7bc66bcd982806329c0ee9ecbafc1ac9596a3b34cdb", executableSha256: "d91b470cb8433104e63b6678793d481f8385a52bf32c3f0e6a60cb583b9d6c06" },
 } as const;
 
 export function browserBundleSpec(target: string) {

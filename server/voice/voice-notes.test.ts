@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { initializeArtifacts } from "../artifacts.ts";
 import { isEngineOutput } from "../message-db.ts";
@@ -11,9 +11,22 @@ import type { AppConfig } from "../config.ts";
 import { createVoiceNote, VOICE_NOTE_MAX_CHARS, voiceNotePieces, type VoiceNoteDeps } from "./voice-notes.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
+// A save can disappear between Files registration and the acknowledgement.
+// Keep real disk/DB work; inject that single boundary failure.
+const fault = vi.hoisted(() => ({ loseSavedCopy: false }));
+vi.mock("../artifacts.ts", async original => {
+  const actual = await original<typeof import("../artifacts.ts")>();
+  return { ...actual, registerArtifact: (...args: Parameters<typeof actual.registerArtifact>) => {
+    const artifact = actual.registerArtifact(...args);
+    if (fault.loseSavedCopy) for (const file of readdirSync(args[1])) if (file.endsWith(".mp3")) unlinkSync(join(args[1], file));
+    return artifact;
+  } };
+});
+
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
 afterEach(() => {
+  fault.loseSavedCopy = false;
   for (const db of databases.splice(0)) db.close();
   for (const root of roots.splice(0)) removeTempDirSync(root);
 });
@@ -72,6 +85,13 @@ describe("voice notes", () => {
     expect(readdirSync(join(f.dataDir, "artifact-files")).some((name) => name.endsWith(".mp3"))).toBe(true);
     expect(note.mime).toBe("audio/mpeg");
     expect(note.bytes.toString()).toBe("[41]");
+  });
+
+  it("never acknowledges or attaches audio when the saved copy disappeared", async () => {
+    const f = fixture();
+    fault.loseSavedCopy = true;
+    await expect(createVoiceNote(f.deps, { botId: "bot-1", threadId: "thread-1", runId: "run-1", text: "Saved only if the bytes exist." })).rejects.toThrow();
+    expect(f.messages).toEqual([]);
   });
 
   it("speaks a longer note in pieces that end at sentences, and joins them into one file", async () => {

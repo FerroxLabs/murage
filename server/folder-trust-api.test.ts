@@ -1,3 +1,4 @@
+import { fixtureDisplayedResponse, fixtureDisplayRequest } from "./testing/display-http-fixture.ts";
 import { fakeEngineServerArgs } from "./testing/fake-engine-server.ts";
 // Folder trust through the real server (0.1.52 FUIGOTRUST1): a Fuigo bot on
 // the fake ACP CLI in `folder-trust` mode, which reads ./AGENTS.md into its
@@ -38,12 +39,13 @@ let dump: string;
 let stderr = "";
 
 const request = async (method: string, path: string, body?: unknown, headers = desktopHeaders): Promise<{ status: number; body: any }> => {
+  body = fixtureDisplayRequest(join(home, ".murage/messages.db"), path, body);
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  return { status: res.status, body: await res.json() };
+  return { status: res.status, body: fixtureDisplayedResponse(join(home, ".murage/messages.db"), await res.json()) };
 };
 const messages = async (threadId: string) => (await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const openTrustCard = async (threadId: string) => (await messages(threadId)).filter((m) => m.card?.folderTrust && !m.card.answered).at(-1);
@@ -153,8 +155,42 @@ async function send(bot: { id: string; threadId: string }, text = "go") {
 async function settled(bot: { id: string; threadId: string }) {
   await expect.poll(async () => (await request("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id)?.busy, { timeout: 30_000 }).toBe(false);
 }
-const answerTrust = (bot: { id: string }, requestId: string, label: string, headers = desktopHeaders) =>
-  request("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "answer", answers: [{ id: "folderTrust", selected: [label] }] }, headers);
+/** F15: wait for the turn to settle OR a folder-trust card to show, then require that none showed (a card holds the turn
+ * busy, so a plain settle would time out before the card assertion is reached). */
+/** A routine run's thread is not the bot's main thread, so its card is answered on the thread's own respond route. */
+const answerTrust = (threadId: string, requestId: string, label: string, headers = desktopHeaders) =>
+  request("POST", `/api/threads/${threadId}/respond`, { requestId, behavior: "answer", answers: [{ id: "folderTrust", selected: [label] }] }, headers);
+/** A turn that is not the owner's own: a routine run by hand at Ask (decision/trust-origin.ts owner-routine-manual), on a folder
+ * left undecided (picked, then forgotten). It still raises the card (F15 removes it from the owner's own turn only). */
+async function routineCard(name: string, canary: string) {
+  const project = join(home, `${name.toLowerCase().replace(/[^a-z]+/g, "-")}-project`);
+  mkdirSync(project, { recursive: true });
+  writeFileSync(join(project, "AGENTS.md"), `# routine\n${canary}\n`);
+  const bot = await makeBot(name);
+  expect((await request("PATCH", `/api/bots/${bot.id}`, { cwd: project })).status).toBe(200);
+  expect((await request("DELETE", `/api/folder-trust?folder=${encodeURIComponent(project)}`)).status).toBe(200);
+  const created = await request("POST", "/api/routines", {
+    name, prompt: "go", botId: bot.id, enabled: false,
+    schedule: { type: "interval", everyMinutes: 30, anchorAt: Date.now() }, timeoutMinutes: 20, permissionMode: "ask",
+  });
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
+  const started = await request("POST", `/api/routines/${created.body.routine.id}/run`);
+  expect(started.status, JSON.stringify(started.body)).toBe(201);
+  let threadId = "";
+  await expect.poll(async () => {
+    threadId = ((await request("GET", "/api/routines")).body.runs ?? []).find((run: any) => run.id === started.body.run.id)?.threadId ?? "";
+    return threadId;
+  }, { timeout: 20_000 }).not.toBe("");
+  await expect.poll(async () => Boolean(await openTrustCard(threadId)), { timeout: 20_000 }).toBe(true);
+  return { bot, project, run: { id: bot.id, threadId }, card: (await openTrustCard(threadId))! };
+}
+async function settledWithoutCard(bot: { id: string; threadId: string }) {
+  const carded = async () => (await messages(bot.threadId)).some((m) => m.card?.folderTrust);
+  const idle = async () => (await request("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id)?.busy === false;
+  await expect.poll(async () => (await carded()) || (await idle()), { timeout: 30_000 }).toBe(true);
+  expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toEqual([]);
+  await settled(bot);
+}
 
 posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => {
   beforeAll(async () => {
@@ -190,69 +226,54 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     const wire = readDump();
     expect(wire.argv).toContain("--trust");
     expect(wire.argv.indexOf("--trust")).toBeLessThan(wire.argv.indexOf("agent"));
-    expect(wire.initialize.clientCapabilities._meta).toEqual({ "fuigo/folderTrust": { interactive: true } });
+    expect(wire.initialize.clientCapabilities._meta).toEqual({ "fuigo/folderTrust": { interactive: true }, "fuigo/permissionPrompts": true });
     expect(wire.folderTrust).toMatchObject({ trustedAtBuild: true, requested: false });
     expect((await activities(bot.threadId)).filter((name) => name.startsWith("untrusted folder:"))).toEqual([]);
   });
 
-  it("a bot-created folder raises the card before the engine starts; only the owner answers; Trust is honoured by that turn, remembered and logged", async () => {
+  // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4): was "a bot-created folder raises the card ... Trust is honoured by
+  // that turn". The owner's own turn is never carded any more; the edge this guarded (a file the bot or an injection planted) now fails closed.
+  it("F15 a bot-created folder never raises a card: the planted file stays out, one line says so, nothing is recorded or asked again", async () => {
     const bot = await makeBot("Card bot");
-    // the bot's private workspace is app-owned and empty; a file the bot
-    // (or a prompt injection) wrote there is exactly what the gate is for
     const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
     mkdirSync(workspace, { recursive: true });
     writeFileSync(join(workspace, "AGENTS.md"), "# planted\ncanary-card-osprey\n");
     expect((await trustRecord(workspace)).record).toBeNull();
 
     await send(bot);
-    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
-    const card = (await openTrustCard(bot.threadId))!;
-    expect(card.card).toMatchObject({
-      title: "Trust this folder?",
-      folderTrust: { sources: ["AGENTS.md"] },
-      options: ["Trust this folder", "Don't trust"],
-      questions: [{ id: "folderTrust", header: "Folder trust", options: [{ label: "Trust this folder" }, { label: "Don't trust" }], allowOther: false }],
-    });
-    expect(card.card.questions[0].question).toContain("AGENTS.md");
-    // nothing was spawned while the card waits — no argv dump yet
-    expect(existsSync(dump)).toBe(false);
-    // auto mode did not answer it, and it is logged as a card a rule may not answer
-    // (the decision log is an async queued append — decision-log.ts `drain` —
-    // so the row can land a moment after the card is visible)
-    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "card-shown" && row.source === "question"), { timeout: 5_000 }).toBe(true);
+    await settledWithoutCard(bot);
+    expect(await botText(bot.threadId)).not.toContain("canary-card-osprey");
+    expect(readDump().argv).not.toContain("--trust");
+    expect((await activities(bot.threadId)).filter((name) => name.startsWith("untrusted folder:"))).toEqual(["untrusted folder: AGENTS.md"]);
+    expect((await trustRecord(workspace)).record).toBeNull();
+    expect(decisions().filter((row) => row.threadId === bot.threadId && row.decision === "card-shown")).toEqual([]);
 
-    // a companion surface (no desktop proof) cannot decide trust
-    const companion = await answerTrust(bot, card.card.requestId, "Trust this folder", {});
-    expect(companion.status).toBe(403);
-    expect(await openTrustCard(bot.threadId)).toBeTruthy();
-    // and an approval is not an answer
-    expect((await request("POST", `/api/bots/${bot.id}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(400);
-
-    const answered = await answerTrust(bot, card.card.requestId, "Trust this folder");
-    expect(answered).toMatchObject({ status: 200, body: { ok: true, outcome: "answered" } });
-    await settled(bot);
-    expect(await botText(bot.threadId)).toContain("canary-card-osprey");
-    expect(readDump().argv).toContain("--trust");
-    expect(await trustRecord(workspace)).toMatchObject({ record: { decision: "trust", source: "card" } });
-    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-trusted" && row.source === "user"), { timeout: 5_000 }).toBe(true);
-    const settledCard = (await messages(bot.threadId)).find((m) => m.card?.requestId === card.card.requestId)!;
-    expect(settledCard.card).toMatchObject({ answered: "answer", answers: [{ id: "folderTrust", selected: ["Trust this folder"] }] });
-
-    // the next turn in the same folder never asks again
     await send(bot, "again");
-    await settled(bot);
-    expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toHaveLength(1);
-    expect(readDump().argv).toContain("--trust");
+    await settledWithoutCard(bot);
+    expect(await botText(bot.threadId)).not.toContain("canary-card-osprey");
+    expect((await activities(bot.threadId)).filter((name) => name.startsWith("untrusted folder:"))).toHaveLength(2);
   });
 
-  it("a registered trust answer reports a failed save without a durable receipt or cached trust", async () => {
-    const bot = await makeBot("Trust save failure");
-    const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
-    mkdirSync(workspace, { recursive: true });
-    writeFileSync(join(workspace, "AGENTS.md"), "# Fixture instructions\n");
-    await send(bot);
-    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
-    const card = (await openTrustCard(bot.threadId))!;
+  // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4; Opus self-review H2): the card-answer route rows below used the owner's own
+  // turn, which is never carded now; they run on a routine run by hand, which still is (non-owner removal = G16, next round).
+  it("a card on a turn that is not the owner's own: only the owner's desktop answers it; Trust is honoured by that turn, remembered and logged", async () => {
+    const { project, run, card } = await routineCard("Routine card", "canary-routine-osprey");
+    expect(card.card).toMatchObject({ title: "Trust this folder?", folderTrust: { sources: ["AGENTS.md"] }, options: ["Trust this folder", "Don't trust"] });
+    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "card-shown" && row.source === "question"), { timeout: 5_000 }).toBe(true);
+    // a companion surface (no desktop proof) cannot decide trust, and an approval is not an answer
+    expect((await answerTrust(run.threadId, card.card.requestId, "Trust this folder", {})).status).toBe(403);
+    expect(await openTrustCard(run.threadId)).toBeTruthy();
+    expect((await request("POST", `/api/threads/${run.threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" })).status).toBe(400);
+    expect(await answerTrust(run.threadId, card.card.requestId, "Trust this folder")).toMatchObject({ status: 200, body: { ok: true, outcome: "answered" } });
+    await settled(run);
+    expect(await botText(run.threadId)).toContain("canary-routine-osprey");
+    expect(readDump().argv).toContain("--trust");
+    expect(await trustRecord(project)).toMatchObject({ record: { decision: "trust", source: "card" } });
+    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-trusted" && row.source === "user"), { timeout: 5_000 }).toBe(true);
+  });
+
+  it("a registered trust answer reports a failed save without a durable receipt or cached trust (on a routine run's card)", async () => {
+    const { project, run, card } = await routineCard("Routine save failure", "canary-routine-save");
     expect(card.card.approvalId).toBeTruthy();
     const file = join(home, ".murage", "folder-trust.json");
     const previous = `${file}.previous`;
@@ -260,11 +281,11 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     if (existed) renameSync(file, previous);
     mkdirSync(file); // Atomic replacement must fail even when the fixture runs as root.
     try {
-      const response = await answerTrust(bot, card.card.requestId, "Trust this folder");
+      const response = await answerTrust(run.threadId, card.card.requestId, "Trust this folder");
       expect(response.status, JSON.stringify(response.body)).toBe(500);
       expect(response.body.ok).not.toBe(true);
-      await settled(bot);
-      expect((await trustRecord(workspace)).record).toBeNull();
+      await settled(run);
+      expect((await trustRecord(project)).record).toBeNull();
       expect(decisions().filter(row => row.requestId === card.card.requestId && row.decision === "folder-trusted")).toEqual([]);
     } finally {
       rmSync(file, { recursive: true });
@@ -272,7 +293,8 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     }
   });
 
-  it("(0.1.54 C) a bot with a linked library skill runs its own thread desk trusted: no card, --trust on the spawn, nothing recorded; a planted AGENTS.md next to the links still asks", async () => {
+
+  it("(0.1.54 C) a bot with a linked library skill runs its own thread desk trusted: no card, --trust on the spawn, nothing recorded; a planted AGENTS.md next to the links is withheld on the owner's turn", async () => {
     const bot = await makeBot("Linked skill bot");
     const installed = await request("POST", `/api/bots/${bot.id}/skills/library`, { ids: ["abstract-writing"] });
     expect(installed.status, JSON.stringify(installed.body)).toBe(201);
@@ -289,58 +311,19 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     // decided per turn from what the desk holds, never remembered by Murage
     expect((await trustRecord(workspace)).record).toBeNull();
 
-    // anything beyond the links keeps the card (the fake engine keeps no
-    // grant of its own; the real one would, see managed-workspace-trust.ts)
+    // anything beyond the links is withheld (CHANGED-EXPECTATIONS F15, 1.0.24: was "keeps the card"): no card, one line
     writeFileSync(join(workspace, "AGENTS.md"), "# planted\n");
     await send(bot, "again");
-    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
-    const card = (await openTrustCard(bot.threadId))!;
-    expect(card.card.folderTrust.sources).toEqual(["AGENTS.md", ".agents/skills", ".claude/skills"]);
-    expect((await answerTrust(bot, card.card.requestId, "Don't trust")).status).toBe(200);
-    await settled(bot);
+    await settledWithoutCard(bot);
+    expect(readDump().argv).not.toContain("--trust");
+    expect((await activities(bot.threadId)).filter((name) => name.startsWith("untrusted folder:"))).toEqual(["untrusted folder: AGENTS.md, .agents/skills, .claude/skills"]);
   });
 
-  it("Don't trust runs untrusted with a chip naming what was left out and is remembered; forgetting asks again; a skip remembers nothing", async () => {
-    const bot = await makeBot("Reject bot");
-    const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
-    mkdirSync(join(workspace, ".fuigo", "skills"), { recursive: true });
-    writeFileSync(join(workspace, "AGENTS.md"), "# planted\ncanary-reject-kestrel\n");
+  // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4): "Don't trust runs untrusted with a chip ... forgetting asks again; a
+  // skip remembers nothing" deleted: every step answered a card. The untrusted chip is asserted by the F15 row above.
 
-    await send(bot);
-    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
-    const card = (await openTrustCard(bot.threadId))!;
-    expect(card.card.folderTrust.sources).toEqual(["AGENTS.md", ".fuigo/skills"]);
-    expect((await answerTrust(bot, card.card.requestId, "Don't trust")).status).toBe(200);
-    await settled(bot);
-    expect(await botText(bot.threadId)).toContain("agents: withheld");
-    expect(await botText(bot.threadId)).not.toContain("canary-reject-kestrel");
-    expect(readDump().argv).not.toContain("--trust");
-    expect(readDump().decision).toEqual({ outcome: "reject" });
-    expect(await activities(bot.threadId)).toContain("untrusted folder: AGENTS.md, .fuigo/skills");
-    expect((await activities(bot.threadId)).filter((name) => name.startsWith("error:"))).toEqual([]);
-    expect(await trustRecord(workspace)).toMatchObject({ record: { decision: "reject", source: "card" } });
-    await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "folder-untrusted"), { timeout: 5_000 }).toBe(true);
-
-    // remembered: the next turn gets the chip, not a card
-    await send(bot, "again");
-    await settled(bot);
-    expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toHaveLength(1);
-    expect((await activities(bot.threadId)).filter((name) => name === "untrusted folder: AGENTS.md, .fuigo/skills")).toHaveLength(2);
-
-    // forget it: the card comes back; a skip is an honest no-answer that
-    // records nothing, so it would come back once more
-    expect((await request("DELETE", `/api/folder-trust?folder=${encodeURIComponent(workspace)}`)).status).toBe(200);
-    expect((await trustRecord(workspace)).record).toBeNull();
-    await send(bot, "third");
-    await expect.poll(async () => (await messages(bot.threadId)).filter((m) => m.card?.folderTrust).length, { timeout: 20_000 }).toBe(2);
-    const again = (await openTrustCard(bot.threadId))!;
-    expect((await request("POST", `/api/bots/${bot.id}/respond`, { requestId: again.card.requestId, behavior: "skip" })).status).toBe(200);
-    await settled(bot);
-    expect((await trustRecord(workspace)).record).toBeNull();
-    expect(readDump().argv).not.toContain("--trust");
-    expect((await messages(bot.threadId)).find((m) => m.card?.requestId === again.card.requestId)!.card.answered).toBe("skipped");
-  });
-
+  // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4): the first turn used to raise a card answered Don't trust; it now runs
+  // withheld with no card and records nothing, so the conversation's Trust starts from no record. Title kept for the ledger.
   it("(1.0.4) a Don't trust is undone from the conversation: its own folder is readable, Trust is desktop only and recorded like the card, Forget reaches it", async () => {
     const bot = await makeBot("Undo bot");
     // the server names the conversation's folder by its real path (macOS's temp dir is /var -> /private/var), as the test above does
@@ -348,35 +331,32 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     mkdirSync(workspace, { recursive: true });
     writeFileSync(join(workspace, "AGENTS.md"), "# planted\ncanary-undo-heron\n");
     await send(bot);
-    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
-    const card = (await openTrustCard(bot.threadId))!;
-    expect((await answerTrust(bot, card.card.requestId, "Don't trust")).status).toBe(200);
-    await settled(bot);
+    await settledWithoutCard(bot);
     expect(await botText(bot.threadId)).not.toContain("canary-undo-heron");
 
     // the conversation's actual folder and its trust state, without a path
     const query = `bot=${encodeURIComponent(bot.id)}&thread=${encodeURIComponent(bot.threadId)}`;
     const read = await request("GET", `/api/folder-trust?${query}`);
     expect(read.status).toBe(200);
-    expect(read.body).toMatchObject({ folder: workspace, sources: ["AGENTS.md"], record: { decision: "reject", source: "card" } });
+    expect(read.body).toMatchObject({ folder: workspace, sources: ["AGENTS.md"], record: null });
     expect((await request("GET", `/api/folder-trust?bot=${bot.id}&thread=no-such-thread`)).status).toBe(404);
 
     // Trust: a companion cannot, the desktop can, and it needs a conversation
     // (a surface without desktop proof is turned away: 403 from the route, or 404 when the door never lists it)
     expect((await request("POST", "/api/folder-trust", { bot: bot.id, thread: bot.threadId }, {})).status).toBeGreaterThanOrEqual(403);
     expect((await request("POST", "/api/folder-trust", { bot: bot.id, thread: bot.threadId }, { "x-murage-companion": "1" })).status).toBeGreaterThanOrEqual(400);
-    expect((await trustRecord(workspace)).record).toMatchObject({ decision: "reject" });
+    expect((await trustRecord(workspace)).record).toBeNull();
     expect((await request("POST", "/api/folder-trust", { bot: bot.id })).status).toBe(400);
     const trusted = await request("POST", "/api/folder-trust", { bot: bot.id, thread: bot.threadId });
     expect(trusted).toMatchObject({ status: 200, body: { folder: workspace, record: { decision: "trust", source: "card" } } });
     await expect.poll(() => decisions().some((row) => row.threadId === bot.threadId && row.decision === "folder-trusted" && row.source === "user"), { timeout: 5_000 }).toBe(true);
 
-    // the next turn applies the folder's files, with no new card
+    // the next turn applies the folder's files, with no card
     await send(bot, "again");
     await settled(bot);
     expect(readDump().argv).toContain("--trust");
     expect(await botText(bot.threadId)).toContain("canary-undo-heron");
-    expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toHaveLength(1);
+    expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toEqual([]);
 
     // Forget through the conversation clears the record, so the card returns
     expect((await request("DELETE", `/api/folder-trust?${query}`)).status).toBe(200);
@@ -385,32 +365,31 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
 
   // ── FUIGOTRUST2 follow-ups ──────────────────────────────────────────────
 
+  // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4): "even over a Murage 'Don't trust'" came from a card, which the owner's own turn
+  // never raises now; the first turn runs withheld with no record and the engine's own grant still wins on the next.
   it("(2) a folder the user's own Fuigo install trusts never sees a card or a withheld chip — even over a Murage 'Don't trust' — and the picker says so", async () => {
     const bot = await makeBot("Upstream bot");
     const workspace = join(home, ".murage", "workspaces", bot.id, "threads", bot.threadId);
     mkdirSync(workspace, { recursive: true });
     writeFileSync(join(workspace, "AGENTS.md"), "# planted\ncanary-upstream-egret\n");
-    // first: Murage's own Don't trust, remembered
+    // first: no grant anywhere, so the turn runs withheld (no card)
     await send(bot);
-    await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
-    const card = (await openTrustCard(bot.threadId))!;
-    expect((await answerTrust(bot, card.card.requestId, "Don't trust")).status).toBe(200);
-    await settled(bot);
+    await settledWithoutCard(bot);
     expect(await botText(bot.threadId)).not.toContain("canary-upstream-egret");
     expect((await activities(bot.threadId)).filter((name) => name === "untrusted folder: AGENTS.md")).toHaveLength(1);
-    expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: false, record: { decision: "reject" } });
+    expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: false, record: null });
 
     // then the person runs `fuigo --trust` in that folder: the engine's own
     // store trusts it (its canonical key), which the engine reads before it
     // ever asks Murage
     writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `[folders.${JSON.stringify(realpathSync.native(workspace))}]\ntrusted = true\ndecided_at = 1789152451\n`);
     try {
-      expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: { decision: "reject" } });
+      expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: null });
       await send(bot, "again");
       await settled(bot);
       // no second card, the reply carries the instruction, and no chip
       // claims the folder was untrusted: Murage did not lie about the turn
-      expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toHaveLength(1);
+      expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toEqual([]);
       expect(await botText(bot.threadId)).toContain("canary-upstream-egret");
       expect((await activities(bot.threadId)).filter((name) => name === "untrusted folder: AGENTS.md")).toHaveLength(1);
       const wire = readDump();
@@ -418,7 +397,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
       expect(wire.argv).not.toContain("--trust");
       expect(wire.folderTrust, JSON.stringify(wire.argv)).toMatchObject({ trustedAtBuild: true, requested: false });
       // and Murage's record is untouched: nothing new was recorded
-      expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: { decision: "reject", source: "card" } });
+      expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: null });
     } finally {
       rmSync(join(home, ".fuigo", "trusted_folders.toml"), { force: true });
     }
@@ -491,17 +470,16 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
       expect((await status(project, "no-such-bot")).status).toBe(404);
       // the note under the other bot's picker matches what its turn does:
       // its engine's store does not trust the folder, so (picked, then
-      // forgotten) the card is raised
+      // forgotten) the folder's files are withheld with one line and no card (CHANGED-EXPECTATIONS F15, 1.0.24: was "the card
+      // is raised" and answered Don't trust; nothing is recorded now)
       expect((await request("PATCH", `/api/bots/${other.id}`, { cwd: project })).status).toBe(200);
       expect((await request("DELETE", `/api/folder-trust?folder=${encodeURIComponent(project)}`)).status).toBe(200);
       expect((await status(project, other.id)).body).toMatchObject({ upstreamTrusted: false, record: null });
       await send(other);
-      await expect.poll(async () => Boolean(await openTrustCard(other.threadId)), { timeout: 20_000 }).toBe(true);
-      const card = (await openTrustCard(other.threadId))!;
-      expect((await answerTrust(other, card.card.requestId, "Don't trust")).status).toBe(200);
-      await settled(other);
+      await settledWithoutCard(other);
       expect(readDump().argv).not.toContain("--trust");
-      expect((await status(project, other.id)).body).toMatchObject({ upstreamTrusted: false, record: { decision: "reject" } });
+      expect((await activities(other.threadId)).filter((name) => name.startsWith("untrusted folder:"))).toEqual(["untrusted folder: AGENTS.md"]);
+      expect((await status(project, other.id)).body).toMatchObject({ upstreamTrusted: false, record: null });
     } finally {
       rmSync(join(home, ".fuigo", "trusted_folders.toml"), { force: true });
       rmSync(join(home, "other-fuigo-home", "trusted_folders.toml"), { force: true });
@@ -611,20 +589,16 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     expect(await trustRecord(project)).toMatchObject({ record: { decision: "trust", source: "picker" } });
   });
 
-  it("(6) when the engine asks late and the turn finishes first, the card says the turn ran untrusted and the chip names what was asked about", async () => {
-    // the server's scan names nothing (an empty private workspace), so no
-    // card before the spawn; the engine's fake still asks, and answers the
-    // prompt at once — the turn outruns the card
+  // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4; Opus self-review H1): was "the card says the turn ran untrusted" (a late
+  // card that expired when the turn finished). On the owner's own turn the engine's late request is now answered reject at once
+  // (core.ts v1 owner branch), so no card opens; the chip still names what was asked about and the turn is not stopped.
+  it("(6) when the engine asks late on the owner's own turn it is answered at once: no card, the chip names what was asked about", async () => {
     const bot = await makeBot("Late bot", "fuigo-late");
     await send(bot);
-    await expect.poll(async () => (await messages(bot.threadId)).some((m) => m.card?.folderTrust), { timeout: 20_000 }).toBe(true);
-    await settled(bot);
-    const card = (await messages(bot.threadId)).find((m) => m.card?.folderTrust)!;
-    expect(card.card).toMatchObject({ answered: "expired", expired: true, folderTrust: { sources: ["AGENTS.md / CLAUDE.md"], late: "finished" } });
+    await settledWithoutCard(bot);
     expect(await activities(bot.threadId)).toContain("untrusted folder: AGENTS.md / CLAUDE.md");
     expect(await botText(bot.threadId)).toContain("agents: withheld");
     expect(readDump().decision).toEqual({ outcome: "reject" });
-    // the turn was not stopped: no "stopped:" chip
     expect((await activities(bot.threadId)).filter((name) => name.startsWith("stopped:"))).toEqual([]);
   });
 
@@ -641,6 +615,8 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
   // case pins the resumed path deterministically — memory off, so the
   // dispatch keeps the cursor and the driver always sends session/load —
   // so that branch of the fixture cannot regress behind memory timing again.
+  // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4): the first turn's Don't trust was a card answer and the third turn was
+  // answered from that record; the owner's own turn is never carded now, so both are answered by the same withheld reject (no record, no card).
   it("(7) a resumed turn (session/load) is gated like a fresh one: the engine's own grant is honoured with no card, and a remembered 'Don't trust' is answered from the record with a chip", async () => {
     const memory = (mode: "off" | "active") => request("POST", "/api/memory/action", { action: "configure", mode });
     expect((await memory("off")).status).toBe(200);
@@ -653,13 +629,10 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
     const cards = async () => (await messages(bot.threadId)).filter((m) => m.card?.folderTrust);
     try {
       // first turn: a fresh session (session/new writes the mcpServers the
-      // fake was handed), the card, Don't trust — the engine then asks after
-      // session/new and Murage answers from the record it just wrote
+      // fake was handed), no card (F15): the engine asks after session/new
+      // and Murage answers reject, with one chip (a card would hold the turn busy: wait for either, then require none)
       await send(bot);
-      await expect.poll(async () => Boolean(await openTrustCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
-      const card = (await openTrustCard(bot.threadId))!;
-      expect((await answerTrust(bot, card.card.requestId, "Don't trust")).status).toBe(200);
-      await settled(bot);
+      await settledWithoutCard(bot);
       const first = readDump();
       expect(first.mcpServers).toBeDefined();
       expect(first.folderTrust).toMatchObject({ trustedAtBuild: false, requested: true });
@@ -678,10 +651,10 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
       expect(resumed.argv).not.toContain("--trust");
       expect(resumed.folderTrust, JSON.stringify(resumed)).toMatchObject({ trustedAtBuild: true, requested: false });
       expect(resumed.decision).toBeUndefined();
-      expect(await cards()).toHaveLength(1);
+      expect(await cards()).toEqual([]);
       expect(await chips()).toHaveLength(1);
       expect(await botText(bot.threadId)).toContain("canary-resume-plover");
-      expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: { decision: "reject", source: "card" } });
+      expect(await trustRecord(workspace)).toMatchObject({ upstreamTrusted: true, record: null });
 
       // third turn, still resumed, grant gone: the engine asks after
       // session/load and Murage answers from its remembered Don't trust —
@@ -694,7 +667,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
       expect(third.argv).not.toContain("--trust");
       expect(third.folderTrust).toMatchObject({ trustedAtBuild: false, requested: true });
       expect(third.decision).toEqual({ outcome: "reject" });
-      expect(await cards()).toHaveLength(1);
+      expect(await cards()).toEqual([]);
       expect(await chips()).toHaveLength(2);
       expect((await activities(bot.threadId)).filter((name) => name.startsWith("error:"))).toEqual([]);
     } finally {

@@ -8,7 +8,7 @@ import { closeSync, constants, createReadStream, fstatSync, lstatSync, mkdirSync
 import { basename, dirname, join, relative, resolve, sep, isAbsolute } from "node:path";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, MAX_RESTORABLE_PATH_BYTES, type BackupSkipReason } from "../shared/backup-limits.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
+import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation, type SetAsideRow } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { claimCopyScratch } from "./settle-copy.ts";
 import { safeBackupProgress, type BackupProgressReport } from "../shared/backup-progress.mjs";
@@ -22,7 +22,7 @@ import { classifyDataDirEntryForBackup, DATA_DIR_RECORDS, classifyDataDirEntry }
 // name that list does not know).
 const JSON_COMPONENTS = new Set(DATA_DIR_RECORDS);
 const isProjectedRecord = (path: string) => JSON_COMPONENTS.has(path) || classifyDataDirEntry(path)?.backup === "record";
-const SAFE_CONFIG_FIELDS = ["settingsDefaultMode", "profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications", "hermesProfilesPinned", "newBots"] as const;
+const SAFE_CONFIG_FIELDS = ["settingsDefaultMode", "profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications", "hermesProfilesPinned", "newBots", "webSearch", "webRead"] as const;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function fail(code: string, path?: string): never { throw new InstallationSnapshotError(code, path ? { path } : undefined); }
@@ -104,9 +104,37 @@ function rebuildableFolder(absolute: string, name: string): boolean {
 // Kimi audit #5) is left out and listed like an unreadable one.
 const deniedRead = (error: unknown) => ["EACCES", "EPERM", "EBUSY"].includes(String((error as NodeJS.ErrnoException)?.code));
 
+// Search connections require setup again. Carry Search Off through recovery. The page-reading preference travels as top-level webRead.enabled
+// (projectWebReadPermission), never inside webSearch: v1.0.20's strict webSearch section would reject the key and fail the whole config.
+export function projectWebSearchPermission(value: unknown, invalidConfig: "INVALID_CONFIG_COMPONENT" | "INVALID_RESTORE_CONFIG") {
+  if (value === undefined) return;
+  if (!object(value) || (value.readEnabled !== undefined && typeof value.readEnabled !== "boolean")) fail(invalidConfig, "config.json/webSearch");
+  const permission: { provider?: "off" } = {};
+  if (value.provider === "off") permission.provider = "off";
+  if (Object.keys(permission).length) return permission;
+}
+/** The owner's page-reading switch from either place it may have been stored (webRead.enabled, or a dev build's webSearch.readEnabled): Off wins. */
+export function projectWebReadPermission(webSearch: unknown, webRead: unknown, invalidConfig: "INVALID_CONFIG_COMPONENT" | "INVALID_RESTORE_CONFIG"): { enabled: boolean } | undefined {
+  if (webRead !== undefined && (!object(webRead) || (webRead.enabled !== undefined && typeof webRead.enabled !== "boolean"))) fail(invalidConfig, "config.json/webRead");
+  const stored = object(webRead) ? webRead.enabled : undefined;
+  const legacy = object(webSearch) && typeof webSearch.readEnabled === "boolean" ? webSearch.readEnabled : undefined;
+  if (stored === undefined && legacy === undefined) return;
+  return { enabled: stored !== false && legacy !== false };
+}
+
 function projectConfig(value: unknown, omit: (path: string, reason: string) => void): JsonObject {
   if (!object(value)) fail("INVALID_CONFIG_COMPONENT");
   const projected: JsonObject = {};
+  const webSearch = projectWebSearchPermission(value.webSearch, "INVALID_CONFIG_COMPONENT");
+  if (webSearch) projected.webSearch = webSearch;
+  const webRead = projectWebReadPermission(value.webSearch, value.webRead, "INVALID_CONFIG_COMPONENT");
+  if (webRead) projected.webRead = webRead;
+  if (object(value.webSearch)) {
+    for (const key of Object.keys(value.webSearch)) {
+      if (key === "readEnabled" || (webSearch && Object.hasOwn(webSearch, key))) continue;
+      omit(`config.json/webSearch/${key}`, "Search connection or unknown configuration excluded");
+    }
+  }
   const fields: Record<string, Record<string, string>> = {
     profile: { name: "string", email: "string", timeZone: "string" },
     rooms: { turnTimeoutMinutes: "number" },
@@ -189,12 +217,12 @@ function projectComponent(name: string, value: unknown, omit: (path: string, rea
     return value.map((entry, index) => {
       if (!object(entry) || typeof entry.id !== "string" || typeof entry.threadId !== "string") fail("INVALID_ROSTER_COMPONENT");
       const bot = { ...entry };
-      delete bot.resumePolicies; delete bot.replayPending; // Fuigo provenance and replay marker belong to the cursor dropped below
+      delete bot.resumePolicies; delete bot.replayPending; delete bot.effortTouch; // Fuigo provenance and replay marker belong to the cursor dropped below
       if (Object.hasOwn(bot, "resumeCursors")) { delete bot.resumeCursors; omit(`${name}/${index}/resumeCursors`, "Native provider cursors require fresh sessions"); }
       if (Array.isArray(bot.tasks)) bot.tasks = bot.tasks.map((task, taskIndex) => {
         if (!object(task)) fail("INVALID_ROSTER_COMPONENT");
         const copy = { ...task };
-        delete copy.resumePolicies; delete copy.replayPending;
+        delete copy.resumePolicies; delete copy.replayPending; delete copy.effortTouch;
         if (Object.hasOwn(copy, "resumeCursors")) { delete copy.resumeCursors; omit(`${name}/${index}/tasks/${taskIndex}/resumeCursors`, "Native provider cursors require fresh sessions"); }
         if (Object.hasOwn(copy, "resumeSeals")) { delete copy.resumeSeals; omit(`${name}/${index}/tasks/${taskIndex}/resumeSeals`, "Native provider cursors require fresh sessions"); }
         return copy;
@@ -473,7 +501,14 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       if (names.length) manifest.names = names;
       if (skippedCount) { manifest.skipped = skipped; manifest.skippedCount = skippedCount; }
       mkdirSync(join(stage, "state"), { recursive: true, mode: 0o700 });
-      manifest.database = await installation.snapshotDatabase(join(stage, "state", "messages.db"), options.onProgress);
+      // A conversation row the backup could not read is left out and listed with the other items a backup leaves out (1.0.22): the
+      // manifest's database entry keeps its exact shape, and the list names the conversation and the message.
+      const { setAside, memoryAside, ...database } = await installation.snapshotDatabase(join(stage, "state", "messages.db"), options.onProgress) as Awaited<ReturnType<OfflineInstallation["snapshotDatabase"]>> & { setAside?: SetAsideRow[]; memoryAside?: string[] };
+      manifest.database = database;
+      // A memory row that failed memory's own proof is left out of the copy and named; every other memory row is kept.
+      for (const item of memoryAside ?? []) skip(`messages.db/memory/${item}`, "unreadable");
+      for (const row of setAside ?? []) skip(`messages.db/conversation ${row.thread || "?"}/message ${row.id || "?"}`, "unreadable");
+      if (skippedCount) { manifest.skipped = skipped; manifest.skippedCount = skippedCount; }
       if (manifest.database.status === "copied") add("messages.db", manifest.database.bytes, manifest.database.sha256, "messages.db");
       else manifest.missing.push("messages.db");
       safeBackupProgress(options.onProgress)("ledger");

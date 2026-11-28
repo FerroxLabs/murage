@@ -7,12 +7,9 @@ exports[`lexer recovery: owner > fallback quote > Full access snapshot protected
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -25,11 +22,8 @@ exports[`lexer recovery: owner > fallback quote > Full access snapshot protected
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -41,12 +35,9 @@ exports[`lexer recovery: owner > fallback quoted literal > Full access snapshot 
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -59,11 +50,8 @@ exports[`lexer recovery: owner > fallback quoted literal > Full access snapshot 
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -75,12 +63,9 @@ exports[`lexer recovery: owner > fallback syntax > Full access snapshot protecte
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -93,11 +78,8 @@ exports[`lexer recovery: owner > fallback syntax > Full access snapshot protecte
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -109,12 +91,9 @@ exports[`lexer recovery: owner > lexer case body > Full access snapshot protecte
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -127,11 +106,8 @@ exports[`lexer recovery: owner > lexer case body > Full access snapshot protecte
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -144,11 +120,8 @@ exports[`lexer recovery: owner > lexer comma limit > Full access snapshot protec
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -161,11 +134,8 @@ exports[`lexer recovery: owner > lexer comma limit > Full access snapshot protec
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -177,12 +147,9 @@ exports[`lexer recovery: owner > lexer earlier operand > Full access snapshot pr
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -195,11 +162,8 @@ exports[`lexer recovery: owner > lexer earlier operand > Full access snapshot pr
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -211,12 +175,9 @@ exports[`lexer recovery: owner > lexer fixed prefix > Full access snapshot prote
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -229,11 +190,8 @@ exports[`lexer recovery: owner > lexer fixed prefix > Full access snapshot prote
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -245,12 +203,9 @@ exports[`lexer recovery: owner > lexer for body > Full access snapshot protected
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -263,11 +218,8 @@ exports[`lexer recovery: owner > lexer for body > Full access snapshot protected
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -279,12 +231,9 @@ exports[`lexer recovery: owner > lexer function body > Full access snapshot prot
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -297,11 +246,8 @@ exports[`lexer recovery: owner > lexer function body > Full access snapshot prot
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -313,12 +259,9 @@ exports[`lexer recovery: owner > lexer later command > Full access snapshot prot
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -331,11 +274,8 @@ exports[`lexer recovery: owner > lexer later command > Full access snapshot prot
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -347,12 +287,9 @@ exports[`lexer recovery: owner > lexer later operand > Full access snapshot prot
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -365,11 +302,8 @@ exports[`lexer recovery: owner > lexer later operand > Full access snapshot prot
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -381,12 +315,9 @@ exports[`lexer recovery: owner > lexer nested brace > Full access snapshot prote
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -399,11 +330,8 @@ exports[`lexer recovery: owner > lexer nested brace > Full access snapshot prote
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -415,12 +343,9 @@ exports[`lexer recovery: owner > lexer nested shell > Full access snapshot prote
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -433,11 +358,8 @@ exports[`lexer recovery: owner > lexer nested shell > Full access snapshot prote
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -449,12 +371,9 @@ exports[`lexer recovery: owner > lexer option expansion > Full access snapshot p
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -467,11 +386,8 @@ exports[`lexer recovery: owner > lexer option expansion > Full access snapshot p
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -483,12 +399,9 @@ exports[`lexer recovery: owner > lexer parameter expansion > Full access snapsho
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -501,11 +414,8 @@ exports[`lexer recovery: owner > lexer parameter expansion > Full access snapsho
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -517,12 +427,9 @@ exports[`lexer recovery: owner > lexer quoted parameter > Full access snapshot p
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -535,11 +442,8 @@ exports[`lexer recovery: owner > lexer quoted parameter > Full access snapshot p
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -551,12 +455,9 @@ exports[`lexer recovery: owner > lexer redirect > Full access snapshot protected
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -569,11 +470,8 @@ exports[`lexer recovery: owner > lexer redirect > Full access snapshot protected
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -585,12 +483,9 @@ exports[`lexer recovery: owner > lexer stepped range > Full access snapshot prot
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -603,11 +498,8 @@ exports[`lexer recovery: owner > lexer stepped range > Full access snapshot prot
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -619,12 +511,9 @@ exports[`lexer recovery: owner > lexer until body > Full access snapshot protect
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -637,11 +526,8 @@ exports[`lexer recovery: owner > lexer until body > Full access snapshot protect
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -653,12 +539,9 @@ exports[`lexer recovery: owner > lexer while body > Full access snapshot protect
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
 }
 `;
@@ -671,11 +554,8 @@ exports[`lexer recovery: owner > lexer while body > Full access snapshot protect
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;

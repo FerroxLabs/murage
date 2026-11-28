@@ -44,7 +44,7 @@ import { executableTarget, verifySha256 } from "./prepare-cloudflared.mjs";
 import { FUIGO_EXECUTABLE_NAMES } from "../electron/harness-resources.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
-export const FUIGO_VERSION = "1.0.43";
+export const FUIGO_VERSION = "1.0.48";
 export const FUIGO_REGISTRY = "https://registry.npmjs.org";
 
 // Pinned to an exact version — never a floating range for a shipped binary.
@@ -53,41 +53,48 @@ export const FUIGO_REGISTRY = "https://registry.npmjs.org";
 //
 // Pin preparation uses a sentinel that is deliberately not a digest:
 // packaging fails closed until scripts/fill-fuigo-pin.sh verifies the release.
-// Source marker for fuigo-bump.mjs: report gitHead 48d6f8e3c862c1a63043b44eb83a3615f0c3b8b8.
-// See fuigo-1.0.43-provenance.json; older release receipts remain historical.
+// Source marker for fuigo-bump.mjs: report gitHead 8a1345cd3c90a847fe4a0a48ade830d292fa1dd7.
+// See fuigo-1.0.48-provenance.json; older release receipts remain historical.
 export const FUIGO_ASSETS = Object.freeze({
   "darwin-arm64": Object.freeze({
     package: "@fuigo/darwin-arm64",
-    tarballSha256: "820b41761792ecd4e706318339fc756ba11c0b9827c29a6839a662d39211b480",
-    binarySha256: "b5ea4aecd27b0e913026086e5ab5cac103c8fbfbb9ca26c24ce6117e19620091",
+    tarballSha256: "e2928874703e2e352cfb7df60cda315f97390b85d0eb255e6abf941e02364bc1",
+    binarySha256: "3f37c3d1356ac1b9b1796a9f33f743bec386d1864acf2df0de97ae05b959778b",
   }),
   "darwin-x64": Object.freeze({
     package: "@fuigo/darwin-x64",
-    tarballSha256: "f6542623d00d16fd0800abba7a5e70a2e924f69a8008bfa558257c0ef8ff6f85",
-    binarySha256: "3dbdcd2d99a65889524b6b77295b4f2a87d9cfd5db50b66fd421fa4f5cc80e4a",
+    tarballSha256: "ef769c587089fac8eb70f42f1bf3c19c5e27500749d9f5ec134c7b4a733d5501",
+    binarySha256: "c71848cfaa9ee32cc113a49588853bfa9cf302badb676c5711b569b861eba937",
   }),
   "linux-arm64": Object.freeze({
     package: "@fuigo/linux-arm64",
-    tarballSha256: "fb28ae482cb11b0899d8200a7133857526473d583a24d79e96443099ef901139",
-    binarySha256: "1f83ffb549ab08e9668841e3d1aec0a70335187a6340687a2a3872353cffafae",
+    tarballSha256: "bc94a4a17e0ff67071613cffa42f4cd4243c3fec8bdcfe0249243e2d86c704f2",
+    binarySha256: "eedb16d24955f2a5604bd8fccbb12d69de0a651e79b7314bae744caf13081ad0",
   }),
   "linux-x64": Object.freeze({
     package: "@fuigo/linux-x64",
-    tarballSha256: "3d0d0932ed82e9ca497fb504f2aa87f2a9caa08f387277257d27772064497eb5",
-    binarySha256: "d62ea93bc75ed09693e1b085b320c5656bd96429511d5d2f494886ca909861a1",
+    tarballSha256: "ee4071416786720733063e2619f8444f17405d8ccc2590e4bfd32aead93cde31",
+    binarySha256: "6c1d482c34bf6a15fde93e399400d9f01867a3827255df3893f00fe226efb85c",
   }),
   // Retained for the upstream package inventory; see UNSTAGEABLE_TARGETS.
   "win32-arm64": Object.freeze({
     package: "@fuigo/win32-arm64",
-    tarballSha256: "01883dbb7a504ecf268746a6651f6b0c62294d61123627486b2dadc7611000ea",
-    binarySha256: "9e01826db39082ee3d9dccd024563beef49eaaff0663ff288be6053de28dfc0e",
+    tarballSha256: "b86ea174fa5ac71780cf4ef3cda3d9b963bcb0a36481e7569f1de32381ff819d",
+    binarySha256: "eae48c50b8676664bf9b2168f3ca1bfacd0c0d7fe32e833634d6c5b71693eb69",
   }),
   "win32-x64": Object.freeze({
     package: "@fuigo/win32-x64",
-    tarballSha256: "329627e2f0503a09dd661b66de189dc805c45409d5f2cc3b70aee1d1b21272f0",
-    binarySha256: "f837e817a71acce83d17542a84ad9e9fc5d8215e995ff45ae9c0ccd0b215bfdd",
+    tarballSha256: "85d30af9c1bba49165e148bae1b02c8761ba910fa647c295245defba7a617c1a",
+    binarySha256: "c3e3e04def9f811246feac2b2548bb15b76705ffdde6417bad2acd9f899adf9e",
   }),
 });
+
+// Shared exact target table for packaging and final trust qualification.
+export const FUIGO_TARGET_OSES = Object.freeze({
+  'linux-x64': 'linux', 'linux-arm64': 'linux', 'win32-x64': 'windows',
+  'win32-arm64': 'windows', 'darwin-x64': 'macos', 'darwin-arm64': 'macos',
+});
+export const fuigoTargetFromPackage = name => Object.keys(FUIGO_ASSETS).find(target => FUIGO_ASSETS[target].package === name);
 
 // Pinned above, but NOT stageable yet: the shared executableTarget() parser
 // cannot classify PE ARM64 (0xaa64). Refuse before downloading an archive that

@@ -6,7 +6,7 @@ import { MERGED_CARD_ANCHORS, SETTINGS_CARDS } from "./settings-card-registry";
 import { CLOUD_COMPUTER_ONLY_CARDS, CLOUD_SETTINGS_CLASS, ON_YOUR_COMPUTER_ONLY, cloudCardBlocked, cloudCardHidden, cloudSectionBlocked } from "./cloud-settings";
 import { SETTINGS_SECTIONS, type AppSettingsSection } from "./settings-sections";
 import { SECTION_ALIASES, SECTION_PAGES, type SettingsAlias, type SettingsPage } from "./settings-pages";
-import { SETTINGS_PAGE_LOADERS } from "@/components/settings/page-registry";
+import { SETTINGS_V10_PAGE_LOADERS } from "@/components/settings/page-registry";
 
 const read = (file: string) => readFileSync(new URL(`../components/${file}`, import.meta.url), "utf8");
 
@@ -75,9 +75,12 @@ describe("Settings in a Cloud window", () => {
     expect(connections).toMatch(/cloudCardHidden\("mcp-servers-heading", cloud\) \? <ComputerOnlyStub anchor="mcp-servers-heading" \/> : \(\s*<Card[\s\S]*?<McpServersPanel embedded \/>/);
     expect(source).not.toContain("!cloudCardHidden(");
     expect(connections.match(/<McpServersPanel embedded \/>/g)).toHaveLength(1);
-    // every page body reads `section`, which is "" for a blocked id, and the nav and redirect read `requested`
+    // every page is mounted from its own file; a blocked id mounts none, and the nav and redirect read `requested`
     // a page with a file of its own (settings/page-registry.tsx) has no legacy block left to read
-    for (const entry of SECTION_PAGES) if (!SETTINGS_PAGE_LOADERS[entry.id]) expect(source, entry.id).toContain(`section === "${entry.id}"`);
+    for (const entry of SECTION_PAGES) {
+      expect(SETTINGS_V10_PAGE_LOADERS[entry.id as keyof typeof SETTINGS_V10_PAGE_LOADERS], entry.id).toBeTypeOf("function");
+      expect(source, entry.id).not.toContain(`section === "${entry.id}"`);
+    }
     expect(source).not.toMatch(/\bsection === id\b/);
     expect(source).toContain("const navPage = browsing ? null : resolveSettingsSection(requested).section;");
     // UX-L3B S7: one Settings window; a bot's row takes the page mark while its settings are open
@@ -126,7 +129,7 @@ describe("Settings search in a Cloud window", () => {
   // The modal and search read one list: every card the modal hides on a page a Cloud window renders.
   it("each of this computer's cards on a Cloud-usable page is a registered card, and the modal stubs it by that list", () => {
     const modal = read("SettingsModal.tsx") + read("settings/pages/GeneralPage.tsx") + read("settings/pages/SkillsPage.tsx") + read("settings/pages/AboutPage.tsx") + read("settings/pages/about-rows.tsx") + read("settings/pages/ConnectionsPage.tsx");
-    expect([...CLOUD_COMPUTER_ONLY_CARDS].sort()).toEqual(["claude-code-import-heading", "diagnostics-heading", "mcp-servers-heading", "setup-heading", "skill-recorder-heading", "startup-heading", "updates-heading", "voice-key-heading"]);
+    expect([...CLOUD_COMPUTER_ONLY_CARDS].sort()).toEqual(["claude-code-import-heading", "diagnostics-heading", "mcp-servers-heading", "setup-heading", "skill-recorder-heading", "startup-heading", "updates-heading"]);
     for (const anchor of CLOUD_COMPUTER_ONLY_CARDS) {
       // The updater row sits inside the merged Version and updates card, so its stub names that card.
       const card = cards.find((entry) => entry.anchor === (MERGED_CARD_ANCHORS[anchor] ?? anchor));

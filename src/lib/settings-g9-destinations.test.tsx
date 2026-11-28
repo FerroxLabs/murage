@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { searchSettingsIndex } from "./settings-search";
 import { landingControl } from "./settings-landing";
 import { setLocale, t } from "./i18n";
-import { readFileSync } from "node:fs";
 
 const choose = vi.fn();
 
@@ -28,6 +27,7 @@ vi.mock("@/state/store", async (original) => ({ ...await original<typeof import(
 
 import { SpendLimitCard } from "@/components/SpendLimitCard";
 import { BrowserChoiceView } from "@/components/BrowserChoice";
+import { settingsPanelSource } from "../components/bot-pages/panel-source";
 
 const CONTEXT = { desktop: true, cloud: false, bots: [{ id: "b-nova", name: "Nova" }] };
 let root: Root, container: HTMLDivElement;
@@ -55,7 +55,7 @@ describe("H5: the named tasks open the answer", () => {
     expect(hit.entry.id).toBe("bot.access.browser-choice");
     expect(hit.entry.anchor).toBe("bot-setting-browser-choice");
     // The bot page renders this row id around the Browser choice (SettingsPanel.tsx), apart from #bot-setting-browser.
-    const panel = readFileSync("src/components/SettingsPanel.tsx", "utf8"); // vitest runs at the repo root
+    const panel = settingsPanelSource(); // vitest runs at the repo root
     expect(panel).toMatch(/<div id="bot-setting-browser-choice" data-setting="bot.access.browser-choice"><BrowserChoice /);
     await act(async () => { root.render(<div id={hit.entry.anchor}><BrowserChoiceView name="Nova" mode="builtin" choose={choose} /></div>); });
     const landed = landingControl(container.querySelector<HTMLElement>(`#${hit.entry.anchor}`)!, document) as HTMLElement;

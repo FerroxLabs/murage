@@ -73,7 +73,7 @@ function macLocalControlStatus(connection) {
     : {
         enabled: false,
         status: "unavailable",
-        reasonCode: "permissions-required",
+        reasonCode: connection?.reasonCode ?? "permissions-required",
         ...(typeof connection?.reason === "string" ? { message: connection.reason } : {}),
       };
 }

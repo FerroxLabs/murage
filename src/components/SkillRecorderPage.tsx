@@ -33,9 +33,11 @@ import {
   type RecordedSkillEvent,
 } from "@/lib/skill-recorder";
 import { requestScreenPreview, stopScreenPreview } from "@/lib/screen-preview";
+import { recorderTranscription } from "@/lib/own-transcription-key";
 import { TRANSCRIPTION_STATUS_EVENT } from "@/lib/transcription-status";
 import { useStore } from "@/state/store";
 import { OpenBotListButton } from "./OpenBotListButton";
+import { postClip } from "./PushToTalk";
 
 type Phase = "idle" | "starting" | "recording" | "review" | "saving" | "saved";
 
@@ -66,8 +68,12 @@ function blobDataUrl(blob: Blob): Promise<string> {
   });
 }
 
+/** TEACH-ENTRY D9.4 (r3 Opus M2): how long a card Start waits for the page to be ready; inside the click's activation. */
+export const START_READY_WAIT_MS = 3_000;
+const START_NOTICE = "Press Start to begin recording.";
+
 export function SkillRecorderPage() {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const bridge = window.muragebox?.skillRecorder;
   const [phase, setPhase] = useState<Phase>("idle");
   const phaseRef = useRef<Phase>("idle");
@@ -78,10 +84,34 @@ export function SkillRecorderPage() {
   const transcriptRef = useRef("");
   const [partialTranscript, setPartialTranscript] = useState("");
   const [transcriptionConfigured, setTranscriptionConfigured] = useState<boolean | null>(null);
-  const [name, setName] = useState("");
+  // Flux (or any engine that transcribes) takes the narration when you stop, with no extra key (Sean 11-06); a key saved
+  // by an older version keeps live narration working when no engine transcribes.
+  const transcribeWith = recorderTranscription(state.config?.tts?.routes?.transcribe, transcriptionConfigured);
+  const transcribeWithRef = useRef(transcribeWith);
+  const [name, setName] = useState(state.skillRecorderTask ?? "");
   const [description, setDescription] = useState("");
+  // TEACH-ENTRY D5 "Who can use it": Only the bot the page was opened from, else All my bots (today's behaviour).
+  const [scope, setScope] = useState<"only" | "all">(state.skillRecorderFor ? "only" : "all");
+  const [onlyBot, setOnlyBot] = useState(state.skillRecorderFor ?? state.bots[0]?.id ?? "");
+  const botNames = useRef(new Map<string, string>());
+  for (const bot of state.bots) botNames.current.set(bot.id, bot.name);
+  // An entry click while the page is open states its own bot (and task); a Back return keeps both, so nothing changes.
+  const lastFor = useRef(state.skillRecorderFor);
+  if (lastFor.current !== state.skillRecorderFor) {
+    lastFor.current = state.skillRecorderFor;
+    setScope(state.skillRecorderFor ? "only" : "all");
+    setOnlyBot(state.skillRecorderFor ?? state.bots[0]?.id ?? "");
+  }
+  const lastTask = useRef(state.skillRecorderTask);
+  if (lastTask.current !== state.skillRecorderTask) {
+    lastTask.current = state.skillRecorderTask;
+    if (state.skillRecorderTask) setName(state.skillRecorderTask);
+  }
+  const onlyExists = state.bots.some((bot) => bot.id === onlyBot);
+  const [startNotice, setStartNotice] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<{ id: string; path: string; events: number } | null>(null);
+  const [savedScope, setSavedScope] = useState<{ only?: string } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const screenRef = useRef<MediaStream | null>(null);
   const micRef = useRef<MediaStream | null>(null);
@@ -178,16 +208,30 @@ export function SkillRecorderPage() {
     releaseStreams();
   }, [bridge, releaseStreams]);
 
+  // TEACH-ENTRY D9.4: the chat card's one-shot start token. Consumed before start() runs, latched by a ref so a
+  // StrictMode second effect cannot start twice; a remount finds the store's token already gone.
+  const tokenTaken = useRef<number | undefined>(undefined);
+  const autoStart = useRef(false);
+  const takeToken = (): number | undefined => {
+    const token = state.skillRecorderStart;
+    if (token === undefined || tokenTaken.current === token) return undefined;
+    tokenTaken.current = token;
+    dispatch({ type: "skillRecorderStartConsumed", token });
+    return token;
+  };
   const start = async () => {
     setError("");
+    setStartNotice("");
     if (!bridge || !window.muragebox?.beginScreenPreviewIntent || !navigator.mediaDevices?.getDisplayMedia) {
       setError("Skill recording requires the Murage desktop app on macOS.");
       return;
     }
-    if (!transcriptionConfigured || !window.muragebox.transcription) {
-      setError("Add your AssemblyAI key under Cloud transcription before recording.");
+    const using = transcribeWith === "own-key" && !window.muragebox.transcription ? "none" : transcribeWith;
+    if (using === "none") {
+      setError("Connect Flux Router in Settings to transcribe your narration before recording.");
       return;
     }
+    transcribeWithRef.current = using;
     const nextPermission = await bridge.permissions();
     if (!nextPermission.supported) {
       setError("Skill recording is currently available in the macOS desktop app.");
@@ -227,7 +271,7 @@ export function SkillRecorderPage() {
       setTranscript("");
       setPartialTranscript("");
       cloudTranscriptRef.current = { turns: new Map(), finalText: "", partialText: "" };
-      transcriptionSessionRef.current = await startAssemblyAITranscription({
+      if (using === "own-key") transcriptionSessionRef.current = await startAssemblyAITranscription({
         stream: mic,
         getToken: () => window.muragebox!.transcription!.streamingToken(),
         onTurn: (turn) => {
@@ -252,8 +296,32 @@ export function SkillRecorderPage() {
       releaseStreams();
       updatePhase("idle");
       setError(caught instanceof Error ? caught.message : String(caught));
+      // The card's click may have lost its activation by the time the picker opened (r3 Opus M2): one tap here.
+      if (autoStart.current) setStartNotice(START_NOTICE);
+    } finally {
+      autoStart.current = false;
     }
   };
+
+  const startByHand = () => {
+    takeToken();
+    void start();
+  };
+
+  useEffect(() => {
+    if (state.skillRecorderStart === undefined || tokenTaken.current === state.skillRecorderStart) return;
+    // Any phase but idle (a take made by hand, a review): the token is spent without a second capture.
+    if (phaseRef.current !== "idle") { takeToken(); return; }
+    if (transcriptionConfigured === null) {
+      // Not ready soon enough: spend the token and leave the page's own Start one tap away (fail closed, never a late start).
+      const timer = setTimeout(() => { if (takeToken() !== undefined) setStartNotice(START_NOTICE); }, START_READY_WAIT_MS);
+      return () => clearTimeout(timer);
+    }
+    if (takeToken() === undefined) return;
+    autoStart.current = true;
+    void start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.skillRecorderStart, phase, transcriptionConfigured]);
 
   const stop = async () => {
     if (stoppingRef.current || phaseRef.current !== "recording") return;
@@ -281,7 +349,17 @@ export function SkillRecorderPage() {
       mediaRecorderRef.current = null;
       if (audioChunksRef.current.length) {
         const mime = recorder?.mimeType.split(";")[0] || "audio/webm";
-        audioDataRef.current = await blobDataUrl(new Blob(audioChunksRef.current, { type: mime }));
+        const audio = new Blob(audioChunksRef.current, { type: mime });
+        audioDataRef.current = await blobDataUrl(audio);
+        if (transcribeWithRef.current === "engine") {
+          // The same route dictation uses (POST /api/voice/transcribe); a failure keeps the audio and says so.
+          const heard = await postClip(audio, 120_000).then((result) => result.text.trim(), () => {
+            setError("Your narration could not be transcribed; the original audio is still saved with the skill.");
+            return "";
+          });
+          transcriptRef.current = heard;
+          setTranscript(heard);
+        }
       }
       releaseStreams();
       updatePhase("review");
@@ -324,19 +402,26 @@ export function SkillRecorderPage() {
 
   const save = async () => {
     if (!bridge || !name.trim()) return;
+    // F3: the chosen bot was deleted since: refuse, never fall back to All my bots.
+    if (scope === "only" && !state.bots.some((bot) => bot.id === onlyBot)) {
+      setError(`${botNames.current.get(onlyBot) ?? "That bot"} was deleted. Choose who can use this skill.`);
+      return;
+    }
     updatePhase("saving");
     setError("");
     try {
       const result = await bridge.save({
         name,
         description,
+        ...(scope === "only" ? { bots: [onlyBot] } : {}),
         durationMs: elapsed,
         transcript: transcriptRef.current,
-        transcription: { provider: "assemblyai", model: "u3-rt-pro" },
+        transcription: transcribeWithRef.current === "own-key" ? { provider: "assemblyai", model: "u3-rt-pro" } : undefined,
         audio: audioDataRef.current || undefined,
         events: eventsRef.current,
       });
       setSaved(result);
+      setSavedScope(scope === "only" ? { only: botNames.current.get(onlyBot) ?? onlyBot } : {});
       updatePhase("saved");
     } catch (caught) {
       updatePhase("review");
@@ -396,7 +481,7 @@ export function SkillRecorderPage() {
                 <div className="mt-6 flex items-start gap-3 rounded-2xl bg-inset px-4 py-3">
                   <EyeOff size={17} className="mt-0.5 shrink-0 text-success" />
                   <p className="text-[12px] leading-5 text-ink-secondary">
-                    Raw keystrokes and clipboard contents are never stored. Screen frames can contain visible text and stay on this computer; microphone audio is streamed to AssemblyAI for transcription. You review everything before creating the skill.
+                    Raw keystrokes and clipboard contents are never stored. Screen frames can contain visible text and stay on this computer; microphone audio is sent to your transcription service to turn it into text. You review everything before creating the skill.
                   </p>
                 </div>
 
@@ -405,10 +490,10 @@ export function SkillRecorderPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-[13px] font-medium">
                       Cloud transcription
-                      {transcriptionConfigured && <span className="text-[10px] font-medium text-success">Saved</span>}
+                      {transcribeWith !== "none" && <span className="text-[10px] font-medium text-success">Ready</span>}
                     </div>
                     <p className="mt-0.5 text-[11px] leading-4 text-ink-secondary">
-                      {transcriptionConfigured ? "AssemblyAI is ready for live narration." : "Add an AssemblyAI key in Settings before recording."}
+                      {transcribeWith === "engine" ? "Your narration is turned into text when you stop." : transcribeWith === "own-key" ? "Your narration is turned into text as you speak." : "Connect Flux Router in Settings to turn your narration into text."}
                     </p>
                   </div>
                   <button
@@ -416,11 +501,11 @@ export function SkillRecorderPage() {
                     onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "voice" })}
                     className="shrink-0 rounded-xl bg-control px-3 py-2 text-[12px] font-medium text-ink hover:bg-raised-hover"
                   >
-                    {transcriptionConfigured ? "Manage" : "Open Settings"}
+                    {transcribeWith !== "none" ? "Manage" : "Open Settings"}
                   </button>
                 </div>
 
-                <button type="button" disabled={phase === "starting" || !transcriptionConfigured} onClick={() => void start()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3.5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-40">
+                <button type="button" disabled={phase === "starting" || transcribeWith === "none"} onClick={startByHand} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3.5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-40">
                   {phase === "starting" ? <><Circle size={15} className="animate-pulse" /> Getting ready…</> : <><Circle size={14} fill="currentColor" /> Start recording</>}
                 </button>
                 <p className="mt-3 text-center text-[11px] text-ink-secondary">macOS will ask for screen, microphone, and action-recording access the first time.</p>
@@ -436,11 +521,11 @@ export function SkillRecorderPage() {
                 <p className="mt-2 text-[14px] text-ink-secondary">Move through the task and explain the why as you go.</p>
                 <div className="mx-auto mt-6 max-w-lg rounded-2xl bg-inset p-4 text-left">
                   <div className="flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.12em] text-ink-secondary">
-                    <span className="flex items-center gap-2"><Volume2 size={14} /> Live narration · AssemblyAI</span>
+                    <span className="flex items-center gap-2"><Volume2 size={14} /> {transcribeWithRef.current === "engine" ? "Narration" : "Live narration"}</span>
                     <span>{events.length} moments</span>
                   </div>
                   <p className="mt-3 min-h-12 text-[13px] leading-5 text-ink">
-                    {[transcript, partialTranscript].filter(Boolean).join(" ") || "Start speaking; your transcript will appear here."}
+                    {[transcript, partialTranscript].filter(Boolean).join(" ") || (transcribeWithRef.current === "engine" ? "Start speaking; your transcript will appear when you stop." : "Start speaking; your transcript will appear here.")}
                   </p>
                 </div>
                 <button type="button" onClick={() => void stop()} className="mx-auto mt-7 flex items-center gap-2 rounded-2xl bg-danger px-6 py-3 text-[14px] font-semibold text-white">
@@ -491,6 +576,23 @@ export function SkillRecorderPage() {
                   <input id="skill-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. File an expense report" maxLength={100} className="mt-2 w-full rounded-xl border border-hairline bg-inset px-3 py-2.5 text-[13px] outline-none placeholder:text-ink-secondary/60 focus:border-accent" />
                   <label className="mt-4 block text-[11px] font-medium text-ink-secondary" htmlFor="skill-description">When should bots use it?</label>
                   <textarea id="skill-description" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Use when I ask to submit a company expense…" maxLength={300} rows={4} className="mt-2 w-full resize-none rounded-xl border border-hairline bg-inset px-3 py-2.5 text-[12px] leading-5 outline-none placeholder:text-ink-secondary/60 focus:border-accent" />
+                  <fieldset className="mt-4">
+                    <legend className="text-[11px] font-medium text-ink-secondary">Who can use it</legend>
+                    <label className="mt-2 flex items-center gap-2 text-[12px]">
+                      <input type="radio" name="skill-scope" value="only" checked={scope === "only"} disabled={state.bots.length === 0} onChange={() => setScope("only")} />
+                      Only
+                      <select aria-label="Which bot can use it" value={onlyExists ? onlyBot : ""} disabled={state.bots.length === 0} onChange={(event) => { setOnlyBot(event.target.value); setScope("only"); }} className="min-w-0 flex-1 rounded-lg border border-hairline bg-inset px-2 py-1 text-[12px]">
+                        {!onlyExists && <option value="" disabled>Choose a bot</option>}
+                        {state.bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
+                      </select>
+                    </label>
+                    {state.bots.length === 0 && <div className="ml-6 text-[11px] text-ink-secondary">You have no bots yet</div>}
+                    <label className="mt-2 flex items-center gap-2 text-[12px]">
+                      <input type="radio" name="skill-scope" value="all" checked={scope === "all"} onChange={() => setScope("all")} />
+                      All my bots
+                    </label>
+                    <p className="mt-2 text-[11px] text-ink-secondary">You can change this later in Settings → Skills.</p>
+                  </fieldset>
                   <div className="mt-4 space-y-2 rounded-xl bg-inset p-3 text-[11px] text-ink-secondary">
                     <div className="flex items-center justify-between"><span className="flex items-center gap-2"><FileText size={13} /> Steps</span><span>{events.length}</span></div>
                     <div className="flex items-center justify-between"><span className="flex items-center gap-2"><Mic size={13} /> Narration</span><span>{transcript ? "Included" : "Audio only"}</span></div>
@@ -506,7 +608,12 @@ export function SkillRecorderPage() {
             <div className="mx-auto max-w-xl rounded-3xl border border-hairline bg-panel p-9 text-center">
               <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-success/15 text-success"><Check size={27} /></div>
               <h2 className="mt-5 text-[25px] font-semibold">Skill ready</h2>
-              <p className="mt-2 text-[13px] leading-5 text-ink-secondary">Bots will load <span className="text-ink">{name}</span> automatically when a request matches it.</p>
+              <p className="mt-2 text-[13px] leading-5 text-ink-secondary">
+                {savedScope?.only
+                  ? <>Only {savedScope.only} can use <span className="text-ink">{name}</span>. It loads when a request matches it.</>
+                  : <>All your bots can use <span className="text-ink">{name}</span>. They load it when a request matches it.</>}
+              </p>
+              <p className="mt-1 text-[13px] leading-5 text-ink-secondary">Find it in Settings → Skills → Taught by you.</p>
               <div className="mt-5 rounded-2xl bg-inset p-4 text-left">
                 <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-ink-secondary">Saved locally</div>
                 <div className="mt-1 break-all text-[11px] text-ink">{saved?.path}</div>
@@ -515,6 +622,8 @@ export function SkillRecorderPage() {
             </div>
           )}
 
+          {startNotice && !error && <div role="status" className="mx-auto mt-4 max-w-2xl rounded-xl border border-hairline bg-panel px-4 py-3 text-[12px] text-ink-secondary">{startNotice}</div>}
+          {startNotice && error && <div role="status" className="mx-auto mt-4 max-w-2xl px-4 text-[12px] text-ink-secondary">{startNotice}</div>}
           {error && <div role="alert" className="mx-auto mt-4 max-w-2xl rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-[12px] text-danger">{error}</div>}
         </div>
       </div>

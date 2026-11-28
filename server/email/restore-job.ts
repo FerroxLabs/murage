@@ -12,6 +12,7 @@ import { rename as renameAsync, unlink as unlinkAsync } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { uptime } from "node:os";
 import { randomUUID } from "node:crypto";
+import { sealedForShutdown, trackFileWorker } from "../shutdown-seal.ts";
 import { workerPublish, type PublishRequest, type PublishHandle } from "./restore-job-effects.ts";
 import { writeFileAtomic } from "../atomic.ts";
 
@@ -260,10 +261,13 @@ export class RestoreJobStore {
   private startPublish(jobId: string, wait: BootWait): void {
     this.trace("enter");
     if (this.current() !== null) { this.trace("superseded"); this.log("[restore-job] boot wait publication: superseded"); this.publicationExited(); return; }
+    // the boot-wait row is written into messages.db by a thread of its own: once the shutdown close happened the handover owns the file, nothing is published
+    if (sealedForShutdown()) { this.log("[restore-job] boot wait publication: skipped, shutting down"); this.publicationExited(); return; }
     let h: PublishHandle;
     try {
       const req: PublishRequest = { dbPath: this.o.effects?.liveDb ?? "", ...wait, jobId, at: this.at(), bootId: this.bootId(), upMs: this.bootTime() };
       this.trace("call"); h = (this.o.publish ?? workerPublish)(req);
+      if (h.worker) trackFileWorker(h.worker); // ended and joined by the shutdown close (stopFileWorkers), like every thread that holds messages.db by name
     } catch { this.log("[restore-job] boot wait publication: failed:exit"); this.publicationExited(); return; }
     let logged = false;
     const report = (result: string): void => { if (result !== "saved" && !logged) { logged = true; this.log(`[restore-job] boot wait publication: ${result}`); } };

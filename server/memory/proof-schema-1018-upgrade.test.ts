@@ -7,6 +7,7 @@
 // first start and a bot, v13-1018-reclaimed.db.gz after 1.0.18's own root-set reclaim handed memory_session_roots back (and 1.0.18 opened it again).
 // Both must keep opening, start after start, with every proof trigger whose table is there; the reclaimed state is accepted only without the
 // table the two root triggers guard, never for a file that still has it.
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -44,7 +45,7 @@ function reclaim(db: DatabaseSync) {
 
 it("1.0.18's file goes through the 1.0.19 start, this build's reclaim, and three more starts", () => {
   let db = open1018("fresh");
-  expect(version(db)).toBe(13);
+  expect(version(db)).toBe(MEMORY_SCHEMA_VERSION);
   expect(present(db, ["memory_session_roots", ...SESSION_PROOF_ROOT_TRIGGERS, ...RECEIPT_LINE_TRIGGERS])).toHaveLength(5);
   db = restart();
   reclaim(db);
@@ -59,7 +60,7 @@ it("1.0.18's file goes through the 1.0.19 start, this build's reclaim, and three
 
 it("a file 1.0.18's own reclaim handed back opens, start after start, with the receipt-line proof triggers made", () => {
   let db = open1018("reclaimed");
-  expect(version(db)).toBe(13);
+  expect(version(db)).toBe(MEMORY_SCHEMA_VERSION);
   expect(db.prepare("SELECT value FROM memory_lineage_lsn_meta WHERE key='root_sets_dropped'").get()?.value).toBe(1);
   expect(present(db, ["memory_session_roots"])).toEqual([]);
   // the empty-checkpoint invalidation on receipt lines does not depend on the handed-back table

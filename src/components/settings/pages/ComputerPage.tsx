@@ -11,6 +11,7 @@ import { useStore } from "@/state/store";
 import { ApiKeyRow, VpsConnection } from "../../ApiKeys";
 import { BrowserExternalClients } from "../../BrowserExternalClients";
 import { DefaultComputerRow } from "../../DefaultComputerRow";
+import { HostedComputersRow } from "../../HostedComputersRow";
 import { LocalComputerSection } from "../../LocalComputerSection";
 import { ScriptAccessSettings } from "../../ScriptAccessSettings";
 import { Card } from "../../SettingsPrimitives";
@@ -22,7 +23,7 @@ type Bots = ReadonlyArray<{ id: string; name: string; hidden?: boolean }>;
 /** The cards of Computer & browser, in page order. */
 export function computerCards(bots: Bots): SettingsPageCard[] {
   return [
-    { id: "companion.computer", anchor: "computer-settings-heading", simple: false, render: () => <><LocalComputerSection /><DefaultComputerRow /><BrowserProfilesRow /><BrowserExternalClients /></> },
+    { id: "companion.computer", anchor: "computer-settings-heading", simple: false, render: () => <><LocalComputerSection /><DefaultComputerRow /><HostedComputersRow /><BrowserProfilesRow /><BrowserExternalClients /></> },
     { id: "companion.browser", anchor: "browser-settings-heading", simple: true, render: () => <WorkspaceFeatureRow feature="browser" /> },
     {
       id: "companion.vps", anchor: "vps-heading", simple: false, render: () => (

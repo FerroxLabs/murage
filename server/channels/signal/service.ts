@@ -180,12 +180,16 @@ export class SignalService implements ServiceContract {
   private rows: Row[] = [];
   private tombstones: Tombstone[] = [];
   private incoming: Array<{ row?: Row; deletion?: Tombstone }> = [];
+  private moving = false;
   private pausedAt?: number;
   private pauseReason: "disk-full" | "storage-slow" = "storage-slow";
   private ticker?: ReturnType<typeof setInterval>;
   private ticking?: Promise<void>;
   private revocation?: Promise<ChannelState>;
   private lastSweep = 0;
+  /** Keys whose family this ledger already redacted and whose runs were cancelled: later passes skip them until the key leaves the deleted set. */
+  private redactedKeys = new Set<string>();
+  private redactedFor?: DurableDelivery;
   private loaded = false;
   private readonly options: SignalServiceOptions;
   constructor(options: SignalServiceOptions) {
@@ -267,6 +271,8 @@ export class SignalService implements ServiceContract {
     if (this.options.isCloudHome() || !this.options.channelsOpen()) return this.status();
     if (this.connection.problem) { this.block(this.connection.problem); return this.status(); }
     if (!this.connection.binding || !this.connection.enabled) return this.status();
+    // CHIEF-TRANSFER: a Chief-change pause survives a restart; only a new link (completeLink) or a transfer move clears it
+    if (this.connection.paused) return this.status();
     const generation = this.connection.generation, lifecycle = ++this.lifecycle;
     try {
       if (!await this.checkStorage() || this.connection.generation !== generation || lifecycle !== this.lifecycle) return this.status();
@@ -452,10 +458,16 @@ export class SignalService implements ServiceContract {
     const cancellations: Promise<void>[] = [];
     const deleted = new Set([...this.tombstones.map(t => t.key), ...ledger.expiredSourceIds(), ...ledger.unknownExpirySourceIds()]);
     for (const row of this.rows) if (row.expiresAt !== undefined && row.expiresAt <= now) deleted.add(row.key);
+    if (this.redactedFor !== ledger) { this.redactedKeys.clear(); this.redactedFor = ledger; }
+    for (const key of this.redactedKeys) if (!deleted.has(key)) this.redactedKeys.delete(key);
     for (const key of deleted) {
+      if (this.redactedKeys.has(key)) continue;
       const result = ledger.redact(key);
       const runIds = [...(result?.runId ? [result.runId] : []), ...(result?.descendantRunIds ?? [])];
-      if (runIds.length) cancellations.push(this.options.revokeRuns(this.connection.connectionId, runIds));
+      // Remembered only once the redaction committed and its runs' cancellation succeeded; a failed cancellation is retried next pass.
+      const remember = () => { if (this.redactedFor === ledger) this.redactedKeys.add(key); };
+      if (runIds.length) cancellations.push(this.options.revokeRuns(this.connection.connectionId, runIds).then(remember));
+      else if (result) remember();
       if (!this.current(token)) break;
     }
     return { deleted, cancellations };
@@ -723,6 +735,37 @@ export class SignalService implements ServiceContract {
     }
     return this.status();
   }
+  quiesce(): void {
+    this.moving = true;
+    this.lifecycle++;
+    this.live = false; this.checked = undefined;
+    if (this.ticker) clearInterval(this.ticker); this.ticker = undefined;
+  }
+  async stopForChiefTransfer(): Promise<void> {
+    await this.ledger?.stop();
+    await this.stopHost();
+  }
+  endMove(): void { this.moving = false; }
+  /** The link keeps its identity, and start() builds the run callbacks for the new Chief. */
+  retarget(to: string): void {
+    const c = this.connection;
+    if (!c.binding || !c.enabled || c.revoking) throw new Error("Signal is not linked");
+    this.persist({ ...c, binding: { ...c.binding, chiefBotId: to }, paused: false });
+  }
+  /** CHIEF-TRANSFER: Signal has no durable Chief-change pause today (it only stops being current). An unchecked Signal link is paused
+   * for good: `paused:true` is persisted through persist() and the reader stops; only a new link clears it. */
+  async pauseForChiefChange(): Promise<void> {
+    if (this.moving) return;
+    const c = this.connection;
+    if (!c.binding || !c.enabled || c.revoking) return;
+    this.quiesce();
+    this.endMove();
+    if (!c.paused) this.persist({ ...c, paused: true });
+    await this.stopForChiefTransfer();
+  }
+  savedTarget(): string | null { return this.connection.binding?.chiefBotId ?? null; }
+  savedConnectionId(): string | null { return this.connection.binding ? this.connection.connectionId : null; }
+  savedPaused(): boolean { return !this.connection.enabled || this.connection.paused; }
   async stop(): Promise<void> {
     this.lifecycle++;
     this.linkAttempt++; this.cancelLinkWait?.(); this.linkDeadline = 0; this.linking = undefined;

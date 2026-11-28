@@ -9,7 +9,7 @@ import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BY
 import { GENERATED_IMAGE_MAX_BYTES, GENERATED_IMAGE_RECEIVE_MAX_BYTES, decodeGeneratedImage, type DecodedGeneratedImage } from "./generated-image.ts";
 import {
   FLUX_FAMILY_IDS, FLUX_LEGACY_IDS, IMAGE_FORMATS, IMAGE_NEGATIVE_PROMPT_MAX, IMAGE_PROMPT_HARD_MAX, IMAGE_QUALITIES, IMAGE_RESOLUTIONS, OPENAI_IMAGE_MODELS,
-  assembleImagePrompt, builtInImageCapabilities, exactTarget, fluxBuiltInModels, openRouterCapabilities, parseFluxImageCatalogue, promptTooLongMessage,
+  assembleImagePrompt, builtInImageCapabilities, exactTarget, fluxBuiltInModels, fluxImageModelLabel, openRouterCapabilities, parseFluxImageCatalogue, promptTooLongMessage,
   resolveImageSize, sentModelFor, type FluxCatalogue, type ImageModelCapabilities, type ImageSizeRequest, type ResolvedImageSize,
 } from "../shared/image-capabilities.ts";
 import {
@@ -444,7 +444,7 @@ function fluxCatalogFrom(connection: ImageConnection, catalogue: FluxCatalogue):
   }
   for (const entry of catalogue.entries) for (const alias of entry.aliases) {
     if (seen.has(alias)) continue;
-    rows.push(modelOption(alias, alias, pinned(alias, entry.capabilities) ?? entry.capabilities, { availability: "catalog-listed", aliasOf: entry.id }));
+    rows.push(modelOption(alias, fluxImageModelLabel(alias) ?? alias, pinned(alias, entry.capabilities) ?? entry.capabilities, { availability: "catalog-listed", aliasOf: entry.id }));
     seen.add(alias);
   }
   for (const model of staticCatalog(connection).models) if (!seen.has(model.id)) rows.push(model);

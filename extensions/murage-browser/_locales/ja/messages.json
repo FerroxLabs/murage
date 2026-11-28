@@ -417,5 +417,24 @@
   },
   "spErrStorageUnavailable": {
     "message": "Chrome のストレージを読み取れませんでした。Chrome を再起動してから、タブをもう一度共有してください。"
+  },
+  "spGrantTitle": {
+    "message": "あなたのブラウザ"
+  },
+  "spGrantOn": {
+    "message": "$BOT$ はあなたのブラウザを使えます。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spGrantOff": {
+    "message": "$BOT$ はあなたのブラウザを使えません。オンにするには、パソコンで Murage アプリを開いてください。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
   }
 }

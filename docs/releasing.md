@@ -186,6 +186,168 @@ failure classes, and carries `Approved-by: Sean Donahoe on YYYY-MM-DD`. The
 waiver is printed in the ci-gate job summary and recorded in the draft release
 notes. Without `ci_waiver` the gate is unchanged.
 
+## Rings: staged rollout (day 0, day 1, day 2)
+
+Owners: MAIN runs every ring op; the rings build lane owns the publisher
+(`scripts/release-rings.mjs` for the gates; `scripts/release-guard.mjs`
+`ring-publish-internal` and `ring-op` for every GitHub write and the signing
+key) and the client; MurageCloud owns the Cloud side (section 9 of
+`designs/RINGS-DESIGN.md`). Every ring op is a `ring_op` dispatch of
+**Release** (`release.yml`). A ring-op run builds nothing: `prepare` sets
+`should_release=false`, so every build job is skipped and only `assemble`
+runs the op. It is the only job holding `RELEASES_PAT` and the release key.
+Both ring steps are fixed guard commands with a fixed env, admitted by
+`scripts/release-capability-audit.mjs`; the guard imports the key into a
+private keyring itself and removes it after the op.
+`ring_op` with `publish` or `artifact_only` set fails at once.
+
+The manifest is `rings/rings.json` + `rings/rings.json.asc` on the `rings`
+branch of `FerroxLabs/murage-releases`. It is signed with the same key as the
+Linux checksums (`RELEASE_GPG_PRIVATE_KEY`). Before writing, the op verifies
+it with the shipped public key, using the client's own parser. Both files
+land in one commit. Never edit that branch by hand: an unsigned or
+hand-signed file is refused by every client, and it can block the next op.
+
+### Never publish from the GitHub UI
+
+`publish` (the `publish` input, `release-guard.mjs publish-prepared`) always
+publishes as `prerelease=true, make_latest=false`. No shipped client and no
+README button sees a prerelease. Only `ring_op=promote-all` with its gates
+makes a release latest. Publishing by hand in the GitHub UI as latest skips
+every ring. It is the one path this design cannot block. Don't do it.
+
+### Placing the internal ring marker
+
+Sean's Mac and the owner's Windows PC get updates on day 0. On each machine,
+with Murage quit, create `update-ring.json` in the Murage user-data directory
+with exactly `{"ring":"internal"}`:
+
+- macOS: `~/Library/Application Support/Murage/update-ring.json`
+- Windows: `%APPDATA%\Murage\update-ring.json`
+
+No UI, no key. The file grants nothing but earlier updates of signed builds.
+Delete the file to leave the ring. Nothing is ever sent anywhere: ring
+membership is local only.
+
+### Day 0: publish
+
+1. Run **Release** with `publish=true` (as before). The release goes out as a
+   prerelease. The same `assemble` job then runs `ring-publish-internal`: it
+   checks that the release is published, not a draft, still a prerelease, and
+   that `latest.yml`, `latest-mac.yml` and `latest-linux.yml` are uploaded
+   with digests. Then it names the version for `internal` only.
+2. On Sean's Mac and the owner's Windows PC: Settings > Updates > Check for
+   updates, install through the normal Update button. Run the bannergate on
+   Sean's store copy.
+3. Post `BANNERGATE <sha> PASS`, `RING0-MAC <v> PASS` and
+   `RING0-WIN <v> PASS` on the board. Each line must name the version.
+
+### Day 1: advance beta
+
+Run **Release** with `ring_op=advance-beta`, `ring_version=<v>`, and
+`ring_receipts` set to the three board lines joined with ` | `. The op
+refuses unless all of these hold:
+
+- `internal` holds exactly `v`.
+- No ring is halted.
+- The run is on a later UTC date than internal's day 0, and at least 20 h
+  after it.
+- All three receipts name `v` and `PASS`.
+
+"Get updates early" users then get `v`; everyone else does not.
+
+### Day 2: promote to everyone
+
+Run **Release** with `ring_op=promote-all` and `ring_version=<v>`. The op
+refuses unless all of these hold:
+
+- `beta` holds exactly `v`.
+- The run is on a later UTC date than beta's day 1, and at least 20 h after
+  it.
+- No ring is halted.
+
+It then flips the GitHub release to `prerelease=false, make_latest=true`,
+checks that `releases/latest` is `v`, and names `v` for `all`. Pre-ring
+clients get `v` through `releases/latest`. If the run fails after the flip,
+run it again: each half checks its own state first, so the re-run only
+writes the manifest.
+
+Start the Cloud release for the same version only after this run is green
+(section 9 contract).
+
+**Hotfix waiver:** shortening the calendar is Sean's call per release. Put
+his board line (it must contain `SEAN` and the version) in `ring_ruling`.
+The calendar check is skipped, but the version checks are not. The run
+summary prints the waiver.
+
+**Bootstrap (first ring-aware release only):** no install can hold the beta
+setting before that release exists, so day 1 is skipped.
+
+1. Install the prerelease by hand on the two internal machines.
+2. Place `update-ring.json`.
+3. Run the bannergate.
+4. On day 2, put `MAIN-RULING ... SEAN YES rings bootstrap <v>` in
+   `ring_ruling`. The day gate then runs against internal's day 0.
+
+The bootstrap release carries the rings code and nothing else.
+
+All writing ring ops share one concurrency group, so they never overlap. Before
+dispatching a ring op, check Actions: if another ring op is still pending, wait
+for it. GitHub cancels an older pending run in the same group when a newer one
+queues, and a cancelled halt shows as cancelled, not as done.
+
+### Halt, resume, pin-latest
+
+- **Halt:** `ring_op=halt`, `ring_version=<bad v>`,
+  `ring_args="ring=<internal|beta|all> previous=<last good version>"`.
+  `previous` must be a promoted release (published, not a prerelease, with
+  its three update feeds); anything else is refused before signing. This halts that ring and every wider one: halting beta also halts all.
+  Each halted ring holding the bad version is pinned to `previous`. If GitHub
+  latest is already the bad version (after day 2), the same run pins GitHub
+  latest back to `previous` and turns the bad release into a prerelease
+  again. Clients that have not installed get nothing new, and a staged
+  download is discarded at install time.
+- **Resume:** `ring_op=resume`, `ring_args="ring=<ring>"`. This clears that
+  ring's halt. Resume never advances; a fix ships as a new release through
+  day 0.
+- **Pin latest only:** `ring_op=pin-latest`, `ring_version=<bad v>`,
+  `ring_args="previous=<good v>"`.
+- Installs already on a bad version are never downgraded automatically
+  (memory schema refuses older apps). Use a kill switch now, and a
+  fix-forward release through day 0.
+
+### Kill switches
+
+Run `ring_op=kill` with
+`ring_args='kill_id=<id> kill_versions=">=1.0.25 <1.0.26" kill_code=<code>'`.
+
+- `kill_id` must be one of `shared/kill-switch-ids.mjs`.
+- `kill_code` must be `kill-safety`, `kill-data` or `kill-perf`.
+- Never free text: customers can see codes.
+
+A kill only turns a feature off, and only for the versions in its range. A
+kill ends when its range excludes the fixed version. Never remove a kill
+while a version it covers is still any ring's target. Latency: the next
+update check (up to 1 h, at launch, or Check for updates) plus up to 5 min of
+GitHub raw cache.
+
+### Daily resign
+
+A daily schedule (06:17 UTC) runs `ring_op=resign`: seq+1, same content, a
+new 72 h expiry. If it fails for 3 days, manifests expire. Ring-aware clients
+then fall back to GitHub latest, and kills stay in force. A red scheduled
+Release run means the resign failed: fix the key or token and re-run it.
+
+### Build floor
+
+Every platform job writes `electron/rings-floor.json` before packaging:
+`release-guard.mjs rings-floor` stores the seq of the manifest live at build
+time, or 0 before the first manifest. `rings-floor-check` fails the build if
+the file is missing or malformed. A fresh install never accepts a manifest
+older than its own build. The file is a build output and is git-ignored, so the
+Windows provenance gate still sees a clean tree. A build fails if `raw.githubusercontent.com` gives
+anything but the manifest or a 404 for both files.
+
 ## One-time setup: four secrets
 
 Set these in **Murage → Settings → Secrets and variables → Actions**.

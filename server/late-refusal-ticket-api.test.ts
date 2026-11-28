@@ -140,8 +140,10 @@ describe.skipIf(process.platform === "win32")("a late-refused turn owns one tick
     const dispatches = mine.filter(row => !row.prompt), all = await messages(bot.threadId);
     expect(dispatches).toHaveLength(3);
     expect(mine.filter(row => row.prompt)).toHaveLength(1);
-    // only the last resort notes that remembered context was left out; the late-view rebuild had its memory
-    expect(all.filter(message => message.memoryNote === "without-memory").map(message => message.turnId)).toEqual([dispatches[2].turnId]);
+    // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20): this asserted the last resort's note row (and none for the late-view rebuild, which had its
+    // memory). No dispatch writes a note row; the last resort is the one tier-2 log line of this turn.
+    expect(all.filter(message => message.memoryNote === "without-memory")).toEqual([]);
+    expect(readFileSync(fixture.info.logPath, "utf8").slice(logFrom).split(`[memory] fence recovery tier=2 thread=${bot.threadId} `).length + readFileSync(fixture.info.logPath, "utf8").slice(logFrom).split(`[memory] reply ran without remembered context thread=${bot.threadId} `).length - 2, "the last resort is logged").toBeGreaterThan(0);
     expect(all.filter(blocked)).toEqual([]);
     const served = readFileSync(fixture.info.logPath, "utf8").slice(logFrom);
     const revoked = [...served.matchAll(/memory receipts revoked scope=\S+ cause=roster count=(\d+)/g)].map(match => Number(match[1]));

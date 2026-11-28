@@ -10,6 +10,9 @@ import { forgetExclusionAddon } from "./engine-exclusion.ts";
 import * as meter from "./io-meter.ts";
 import { IoBudget, instrumentDatabase, ioBudget } from "./io-budget.ts";
 import { DatabaseSync } from "./sqlite-open.ts";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
+import { BgDeferred } from "./bg-admission.ts";
 import { checkpointLedger } from "./admission-shared.ts";
 import { checkpointCeiling, commitCeiling, shmCharge } from "./io-meter.ts";
 import { indexStepFrames } from "./memory/index-wal.ts";
@@ -356,5 +359,52 @@ it("T3 a second meter build in the process still counts its own refusals", () =>
   expect(api.ioGrantSnapshot().refusedWrites - before.refusedWrites, "T3 second refusal counted by its own snapshot").toBeGreaterThan(0);
   grant(() => db.exec("INSERT INTO t VALUES(1)"), db);
   expect(db.prepare("SELECT count(*) n FROM t").get()?.n, "T3 second grant admits").toBe(1);
+ } finally { db.close(); }
+});
+
+// Row 56 (WAL admission lock, 1.0.21 memv2-D B3 on 1.0.22): an instrumented background write refused only because the checkpointer
+// held the ledger lock for its one compare-exchange retries at LOCK_MISS_RETRY_MS, never at the next minute; a refusal for spent bytes
+// still waits for the minute. One row per refusalRetry consumer state (SITES.md in the lane's job dir). The step is written as a literal
+// (io-budget.ts LOCK_MISS_RETRY_MS) so a base without it fails at the behavioural assertion, not at an import.
+const LOCK_MISS_RETRY_MS = 250;
+async function holdLedger(buf: SharedArrayBuffer) {
+ const release = new Int32Array(new SharedArrayBuffer(4));
+ const holder = new Worker(`const { parentPort, workerData, threadId } = require("node:worker_threads");
+  const ledger = (0, eval)("(" + workerData.src + ")")(workerData.buf, threadId);
+  ledger.lock(); parentPort.postMessage("held"); Atomics.wait(new Int32Array(workerData.release), 0, 0, 20000); ledger.unlock();`,
+ { eval: true, workerData: { buf, src: checkpointLedger.toString(), release: release.buffer } });
+ const exited = new Promise<number>(resolve => holder.once("exit", resolve));
+ await once(holder, "message");
+ return async () => { Atomics.store(release, 0, 1); Atomics.notify(release, 0); expect(await exited).toBe(0); };
+}
+function refusal(b: IoBudget, db: DatabaseSync, source: string): BgDeferred {
+ try { b.withSource(source, () => db.exec("INSERT INTO t VALUES(zeroblob(64))")); } catch (error) { if (error instanceof BgDeferred) return error; throw error; }
+ throw new Error(`no refusal for ${source}`);
+}
+it.each([
+ { row: "R56-B3a lock miss, background source", source: "memory-idle" },
+ { row: "R56-B3b lock miss, capture source", source: "memory-capture" },
+])("$row: a held ledger lock refuses the write with the short retry, and the retry admits once the checkpointer lets go", { timeout: 30_000 }, async ({ source }) => {
+ const { b } = ledger(), { db } = fixture(); instrumentDatabase(db, b);
+ const release = await holdLedger(b.checkpointAdmissionBuffer());
+ let released = false;
+ try {
+  const refused = refusal(b, db, source);
+  expect({ retryInMs: refused.retryInMs, reservationWait: refused.reservationWait }, "lock miss retries at the short step, not the next minute").toEqual({ retryInMs: LOCK_MISS_RETRY_MS, reservationWait: true });
+  expect(db.prepare("SELECT count(*) n FROM t").get()?.n, "refused before step").toBe(0);
+  await release(); released = true;
+  b.withSource(source, () => db.exec("INSERT INTO t VALUES(zeroblob(64))"));
+  expect(db.prepare("SELECT count(*) n FROM t").get()?.n, "the retry after release is admitted").toBe(1);
+ } finally { if (!released) await release(); db.close(); }
+});
+it("R56-B3c a lock miss does not outlive its section: after release a refusal for spent bytes waits for the minute", { timeout: 30_000 }, async () => {
+ const { b } = ledger(), { db } = fixture(); instrumentDatabase(db, b);
+ const release = await holdLedger(b.checkpointAdmissionBuffer());
+ try { expect(refusal(b, db, "memory-idle").retryInMs, "miss row").toBe(LOCK_MISS_RETRY_MS); } finally { await release(); }
+ try {
+  const ticket = b.admit("BG", 12 * MiB)!; expect(ticket, "the ledger answers again").not.toBeNull(); b.settle(ticket, 12 * MiB);
+  const refused = refusal(b, db, "memory-idle");
+  expect({ retryInMs: refused.retryInMs, reservationWait: refused.reservationWait }, "spent bytes wait for the minute").toEqual({ retryInMs: b.nextAdmissionMs(), reservationWait: false });
+  expect(b.nextAdmissionMs(), "the minute is not the short step").toBeGreaterThan(LOCK_MISS_RETRY_MS);
  } finally { db.close(); }
 });

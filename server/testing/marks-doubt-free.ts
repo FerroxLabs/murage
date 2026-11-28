@@ -12,7 +12,7 @@ import { expect } from "vitest";
 import { alwaysAskCommand } from "../always-ask.ts";
 import { autoVerdict, type AutoContext } from "../auto-approve.ts";
 import { withoutDoubts } from "../shell/marks.ts";
-import { expectNoLimitsOwnerOutcome } from "./no-limits-1019.ts";
+import { expectFullOwnerOutcome, expectNoLimitsOwnerOutcome } from "./no-limits-1019.ts";
 
 type Shell = "pwsh" | undefined;
 const LEVELS: Array<[string, Parameters<typeof autoVerdict>[0]]> = [
@@ -30,18 +30,22 @@ function verdicts(cmd: string, cwd?: string, shell?: Shell) {
   const context = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null, commandText: cmd, commandCwd: cwd } as unknown as AutoContext;
   return LEVELS.map(([level, bot]) => [level, autoVerdict(bot, shell === "pwsh" ? "PowerShell" : "Bash", cmd, context)] as const);
 }
-/** A protected-path row: the doubt-free read names it, the strict read cards, every level cards, Full access names it. */
+/** A protected-path row: the doubt-free read names it, the strict read cards, Ask and Auto card; the owner's Full access and No limits turns run it unless it is a declared catastrophe. */
 export function expectProtectedPath(cmd: string, cwd?: string, shell?: Shell, protectedWrite: boolean | "catastrophe" = false): void {
   expect(doubtFreeRule(cmd, cwd, shell), `doubt-free read of ${JSON.stringify(cmd)}`).toBe("protected-path");
   expect(strictRead(cmd, cwd, shell), `strict read of ${JSON.stringify(cmd)} cards`).not.toBeNull();
   for (const [level, verdict] of verdicts(cmd, cwd, shell)) {
     // MAIN RULING NL-WIPE-ONLY-FIXTURES: owner No limits protected writes run;
     // an independently declared catastrophe keeps its hold. All lower levels stay asserted.
-    if (level === "No limits") {
-      if (protectedWrite === "catastrophe") {
-        expect(verdict, `No limits cards catastrophe ${JSON.stringify(cmd)}`).toMatchObject({ approve: null, source: "always-ask" });
+    // OVERREACH #6 (MAIN 2026-11-26): the owner's own Full access turn takes the same outcome as No limits for this rule.
+    // (a Windows shell call keeps its Full access card: OVERREACH #6 does not reach it)
+    if (level === "No limits" || (level === "Full access" && shell !== "pwsh")) {
+      if (protectedWrite === "catastrophe" && level === "Full access") {
+        expectFullOwnerOutcome(verdict, cmd, null, `${level} ${JSON.stringify(cmd)}`);
+      } else if (protectedWrite === "catastrophe") {
+        expect(verdict, `${level} cards catastrophe ${JSON.stringify(cmd)}`).toMatchObject({ approve: null, source: "always-ask" });
       } else {
-        expectNoLimitsOwnerOutcome(verdict, cmd, "protected-path", `No limits ${JSON.stringify(cmd)}`);
+        (level === "Full access" ? expectFullOwnerOutcome : expectNoLimitsOwnerOutcome)(verdict, cmd, "protected-path", `${level} ${JSON.stringify(cmd)}`);
       }
       continue;
     }
@@ -57,7 +61,9 @@ export function expectCardsEverywhere(cmd: string, cwd?: string, shell?: Shell):
   const readerRule = doubtFree(cmd, cwd, shell)?.rule;
   for (const [level, verdict] of verdicts(cmd, cwd, shell)) {
     // NOLIM 1.0.19: the owner's No limits turn runs a reader card; only the wipe list still asks
-    if (level === "No limits") { expectNoLimitsOwnerOutcome(verdict, cmd, readerRule, `No limits ${JSON.stringify(cmd)}`); continue; }
+    // OVERREACH #6: the owner's own Full access turn runs the three run rules, as No limits does
+    if (level === "No limits") { expectNoLimitsOwnerOutcome(verdict, cmd, readerRule, `${level} ${JSON.stringify(cmd)}`); continue; }
+    if (level === "Full access" && shell !== "pwsh") { expectFullOwnerOutcome(verdict, cmd, readerRule, `${level} ${JSON.stringify(cmd)}`); continue; }
     expect(verdict.approve, `${level} cards ${JSON.stringify(cmd)}`).toBeNull();
   }
 }

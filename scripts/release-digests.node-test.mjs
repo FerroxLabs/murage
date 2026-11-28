@@ -71,11 +71,14 @@ function github(views, { published = false, immutable = false } = {}) {
   const calls = [];
   let reads = 0;
   let patched = false;
+  let prerelease = false;
   const run = (command, args) => {
     calls.push([command, ...args]);
     const method = args[args.indexOf("--method") + 1];
     if (method === "PATCH") {
       patched = true;
+      // GitHub stores what the PATCH sends: rings B6 publishes as a prerelease and confirms it.
+      prerelease = args.includes("prerelease=true");
       return { status: 0, stdout: "{}" };
     }
     if (method === "POST") return { status: 0, stdout: "{}" };
@@ -83,7 +86,7 @@ function github(views, { published = false, immutable = false } = {}) {
     if (endpoint === "repos/FerroxLabs/murage-releases") return http({ permissions: { push: true } });
     const assets = views[Math.min(reads, views.length - 1)];
     if (endpoint.endsWith("/releases/7")) reads += 1;
-    return http({ id: 7, tag_name: `v${VERSION}`, draft: !(published || patched), immutable, assets });
+    return http({ id: 7, tag_name: `v${VERSION}`, draft: !(published || patched), prerelease, immutable, assets });
   };
   return {
     run,
@@ -247,7 +250,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs
 const args = process.argv.slice(2);
 appendFileSync(process.env.CALLS, JSON.stringify(args) + "\\n");
 const method = args[args.indexOf("--method") + 1];
-if (method === "PATCH") { writeFileSync(process.env.PUBLISHED, "1"); process.exit(0); }
+if (method === "PATCH") { writeFileSync(process.env.PUBLISHED, process.argv.includes("prerelease=true") ? "prerelease" : "1"); process.exit(0); }
 if (method !== "GET") process.exit(1);
 const endpoint = args.at(-1);
 let body;
@@ -257,6 +260,7 @@ else {
   const reads = existsSync(process.env.READS) ? Number(readFileSync(process.env.READS, "utf8")) : 0;
   writeFileSync(process.env.READS, String(reads + 1));
   body = { id: 7, tag_name: "v${VERSION}", draft: !existsSync(process.env.PUBLISHED), immutable: false,
+    prerelease: existsSync(process.env.PUBLISHED) && readFileSync(process.env.PUBLISHED, "utf8") === "prerelease",
     assets: views[Math.min(reads, views.length - 1)] };
 }
 process.stdout.write("HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n" + JSON.stringify(body));
@@ -315,7 +319,8 @@ process.stdout.write("HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\n\
     assert.equal(steps[proofIndex]["continue-on-error"], undefined);
     assert.equal(release.jobs.assemble["continue-on-error"], undefined);
     // No always()/failure()/cancelled(): a failed proof leaves Publish skipped.
-    assert.equal(steps[publishIndex].if, "${{ inputs.publish }}");
+    // Rings B7: a ring_op run never publishes (release.yml prepare refuses publish with ring_op as well).
+    assert.equal(steps[publishIndex].if, "${{ inputs.publish && needs.prepare.outputs.ring_op == '' }}");
     assert.match(steps[publishIndex].run, /node scripts\/release-guard\.mjs publish-prepared/);
   });
 

@@ -2,8 +2,9 @@ import { askShapeOf, type AskShape } from "./ask-shape.ts";
 import { degradedWipeContext, wipeContextFor } from './wipe/context.ts';
 import { noLimitsAppliesTo, permissionsForNoLimitsOrigin, type NoLimitsOrigin } from './no-limits-origin.ts';
 import { inheritedPermissions, permissionsForOrigin } from "./permission-inheritance.ts";
-import { wipeBreaker, nativeWipeBreaker } from "./wipe-breaker.ts";
-import { highlevelEngineAsk } from "./highlevel/engine-policy.ts";
+import { nativeWipeBreaker } from "./wipe-breaker.ts";
+import { HOME_OR_ROOT, noLimitsWipe, recursiveForceWord, wordsOf } from "./no-limits-wipe.ts";
+import { writtenScriptRuns } from "./wipe/script-bodies.ts";
 import { opendir as asyncOpendir, realpath as asyncRealpath } from "node:fs/promises";
 // Auto mode: when a bot may answer its own permission requests.
 //
@@ -21,10 +22,10 @@ import { CONNECTED_APPS_SERVER, sameToolGrant } from "../shared/connected-app-na
 import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, STAMP_SPELLING_WHY, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
 import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { decodeAnsiC, plainWipe, readOnlyShape, type OutsideMark, type ReadOnlyHooks } from "./outside-scan.ts";
+import { decodeAnsiC, plainWipe, type OutsideMark, type ReadOnlyHooks } from "./outside-scan.ts";
 import type { OutsideSource } from "./email/external-marks.ts";
 import { ownerMarks, withoutDoubts } from "./shell/marks.ts";
-import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, COULD_NOT_READ_FINDINGS, protectedScriptHit, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
+import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, ALWAYS_ASK_NO_LIMITS, COULD_NOT_READ_FINDINGS, protectedScriptHit, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, routineExactGrantCovers, type ExactCommand } from "../shared/exact-command.ts";
 import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
 import { SENSITIVE_RULES, SENSITIVE_PATHS } from "../shared/sensitive-paths.ts";
@@ -43,7 +44,7 @@ import { legacyGlobKeyRead } from "../shared/legacy-glob-key-read.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
 import { realPathInOrder, win32Canonical, type PlaceOptions } from "../shared/in-project.ts";
-import { isOwnAlwaysAsk, isOwnComputerRead, isOwnHandlerCarded, isOwnQuiet, isOwnUnasked, ownAlwaysAskByName } from "../shared/own-servers.ts";
+import { isOwnAlwaysAsk, isOwnComputerRead, isOwnHandlerCarded, isOwnQuiet, isOwnUnasked, ownAlwaysAskByName, ownWebSearchRunsUnasked } from "../shared/own-servers.ts";
 import { APP_LOOKUPS, ownAppTool } from "../shared/app-action-words.ts";
 import { pinOverrideIn, promptVerdict, type PromptFacts } from "../shared/prompt-capable.ts";
 import { bareToolName, isBareCommandGrant, isCommandTool, isQuestionGrant, isQuestionTool } from "../shared/grant-tool-names.ts";
@@ -1011,19 +1012,119 @@ function noLimitsOnlyVerdict(tool: string, summary: string, context?: AutoContex
   let shared:import('./wipe/types.ts').WipeContext;try{shared=wipeContextFor(context?.wipeThreadId,context?.wipeBotId,request);}catch{shared=degradedWipeContext(request,context?.wipeBotId);}
   const wipeContext = { ...shared, cwdOpaque:safe(()=>context?.commandCwdInvalid)??shared.cwdOpaque, cwd: safe(() => context?.commandCwd) ?? safe(() => context?.exactCommand?.cwd) ?? safe(() => context?.workFolder) ?? safe(() => context?.promptFacts?.cwd) ?? shared.cwd,
     project: safe(() => context?.workFolder) ?? safe(() => context?.promptFacts?.cwd) ?? shared.project, home: safe(() => context?.promptFacts?.home) ?? shared.home, env: safe(() => context?.commandEnv) ?? safe(() => context?.runtimePaths) ?? shared.env,
-    dataDir: safe(() => context?.dataDir) ?? shared.dataDir, shell };
+    dataDir: safe(() => context?.dataDir) ?? shared.dataDir, shell,
+    // OVERREACH #6: a script this session wrote is read for the wipe check
+    sessionEdits: safe(() => context?.readOnlyHooks?.sessionEdits) ?? safe(() => context?.unseen?.sessionEdits) ?? shared.sessionEdits, sessionFile: safe(() => context?.sessionFile) ?? safe(() => context?.unseen?.sessionFile) ?? shared.sessionFile };
   if(/^(?:execute_code|python|python3|node|javascript)$/i.test(tool)){
    const code=safe(()=>typeof input==='string'?input:(input as {code?:unknown;script?:unknown})?.code??(input as {script?:unknown})?.script);
-   if(typeof code==='string'){const found=wipeBreaker(code,{...wipeContext,lang:/node|javascript/i.test(tool)?'js':'py'});if(found)return {approve:null,source:'always-ask',rule:found.rule,classification:'deny',reason:found.rule,note:found.what};}
+   if(typeof code==='string'){const found=noLimitsWipe(code,{...wipeContext,lang:/node|javascript/i.test(tool)?'js':'py'});if(found)return {approve:null,source:'always-ask',rule:found.rule,classification:'deny',reason:found.rule,note:found.what};}
   }
   const native = nativeWipeBreaker(tool, input, wipeContext);
   if (native) return { approve: null, source: "always-ask", rule: native.rule, classification: "deny", reason: native.rule, note: native.what };
   const texts = new Set([command, inner, ...(!executable || command !== undefined || inner !== undefined ? [] : [summary])]);
   for (const text of texts) if (text !== undefined) {
-    const wipe = wipeBreaker(text, wipeContext);
+    // MAIN-RULING NOLIMITS-1022 H1 correction: an obfuscated wipe asks too, decoded as far as it decodes (noLimitsWipe)
+    const wipe = noLimitsWipe(text, wipeContext);
     if (wipe) return { approve: null, source: "always-ask", rule: wipe.rule, classification: "deny", reason: wipe.rule, note: wipe.what };
+    // MAIN-RULING NOLIMITS-1022 H1 correction: an obfuscated wipe asks too, decoded as far as it decodes
   }
   return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits" };
+}
+
+/** 1.0.22 MAIN-RULING NOLIMITS-1022 H1 (Sean 11-10/11-11/11-12: Full access and No limits ask only for deny rules and
+ * the wipe list): on a turn Full access covers, an `unreadable` hit (the reader could not follow the text and named
+ * nothing) runs unless the wipe check No limits uses finds a wipe in it, decoded as far as it decodes (`$(echo rm) -rf ~`
+ * still asks). A deny-class, mandatory or named-catastrophe hit is never lifted, and the key guard, the stop line and
+ * every guard after the always-ask read still judge the call. It runs only what the owner's No limits verdict
+ * (noLimitsOnlyVerdict) runs, so Full access is never looser than No limits. No limits never gets here. */
+function fullAccessUnreadableRuns(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, hit: AlwaysAskHit, texts: readonly (string | undefined)[], ownerRead: () => AlwaysAskHit | null): boolean {
+  if (hit.rule !== "unreadable" || hit.classification === "deny" || hit.mandatory || hit.namedCatastrophe) return false;
+  // a command relayed to the owner's own computer is a host boundary, not a reader doubt: it keeps its card
+  if (hit.unseenWhy === "relayed") return false;
+  // a cut or truncated call: the wipe may sit after the cut, so no wipe check has seen it
+  if (context?.inputCut === true || context?.inputTruncated === true || context?.call?.truncated === true) return false;
+  // N1 (1.0.19) command completeness: an unread environment or path, or a call whose tool is not a proven command tool, keeps its card
+  if (context?.envUnread !== undefined || context?.realPathCannot !== undefined) return false;
+  const call = context?.call;
+  if (call && (resolveCall(call).kind === "unproven" || !(call.toolKind === "execute" || isCommandTool(call.toolCall?.name ?? "")))) return false;
+  // a turn with no stored origin is unproven (Sean 11-12: unproven stays Ask); Full access's own default reads it as the owner's
+  if (context?.fullAccessOrigin === undefined && context?.routineLevel !== true && context?.channelOwner !== true) return false;
+  if (hasNoLimits(bot) || !fullAccessCovers(bot, fullAccessOriginOf(context))) return false;
+  if (texts.some(text => text !== undefined && wipeShaped(text))) return false;
+  // an unplaced link write (`ln -sf x "$d"/h*` with ./h a link to /etc) is a protected write the reader could not place: it keeps its card
+  if (hit.unplacedWrite === true) return false;
+  // deny = protected + refusals + wipe (Sean 11-10): a path the reader could not bound (doubt value-path) on a system folder
+  // or a home path the text computes is a protected path it could not place, so it keeps its card (`cp x /etc/"$X"`, `touch ~/"$X"`)
+  if (hit.doubt === "value-path" && texts.some(text => text !== undefined && (SYSTEM_ROOT.test(text) || HOME_COMPUTED.test(text)))) return false;
+  // whatever the doubt: when the owner's own read of the text (the read No limits judges by) names a deny and the text names
+  // a system folder or computes a home path, it is a protected write nobody placed, not a reader doubt, and keeps its card
+  // (`perl -e 'open(my $f, ">", "/etc/cron.d/pwn")'`). A system folder in a read position names no deny and runs
+  // (`if; ls /usr`), and so does a deny that names no system folder (`bash -c "$CMD"`, `sh -c "ls $HOME"`). A throw holds.
+  try {
+    const owner = ownerRead();
+    if (owner?.classification === "deny" && texts.some(text => text !== undefined && (SYSTEM_ROOT.test(text) || HOME_COMPUTED.test(text)))) return false;
+  } catch { return false; }
+  // the key guard is the protected part of deny and stays at Full access: code the reader did not follow that opens a file
+  // whose name it computes may read a key the guard cannot see (`open(chr(46)+chr(101)+chr(110)+chr(118))` is .env)
+  if (texts.some(text => text !== undefined && COMPUTED_READ.test(text))) return false;
+  // a file this session wrote that the command names: its bytes are what runs (r1.4 R-EXEC-3); unavailable or wipe-shaped bytes keep the card
+  const edits = context?.readOnlyHooks?.sessionEdits ?? context?.unseen?.sessionEdits;
+  const sessionFile = context?.sessionFile ?? context?.unseen?.sessionFile;
+  if (edits) for (const path of edits) {
+    const name = path.split(/[\\/]/).pop();
+    if (!name || !texts.some(text => text?.includes(name))) continue;
+    const file = sessionFile?.(path);
+    if (!file || file === "unavailable" || wipeShaped(file.text)) return false;
+  }
+  return noLimitsOnlyVerdict(tool, summary, context).approve !== null;
+}
+
+/** A file read whose name is not one plain quoted literal: an open or read call with a computed first argument (bounded,
+ * anchored on the call name, so it is linear). */
+const COMPUTED_READ = /\b(?:open|fopen|readFile|readFileSync|createReadStream|ReadAllText|ReadAllBytes|ReadAllLines|ReadLines|file_get_contents|Path)\s*\(\s*(?!["'`][^"'`+\n]{0,512}["'`]\s*[,)])(?!\s*\))/i;
+/** A system folder named as a path: anything under /etc, /boot, /System, /Library or /private, or /usr, /bin, /sbin, /lib as
+ * the folder itself (`/usr`, `/bin/`; a program in it, `/bin/bash`, is a program). */
+const SYSTEM_ROOT = /(?:^|[\s"'=(>,:])\/(?:(?:etc|boot|System|Library|private)(?=[\/\s"')]|$)|(?:usr|bin|sbin|lib|lib64)\/?(?=[\s"');&|]|$))/;
+const HOME_COMPUTED = /(?:~|\$\{?HOME\}?)\/["']?[$`]/;
+/** A shell or exec sink: the text hands something built at run time to a shell or an interpreter to run. */
+const SHELL_SINK = /\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b|\b(?:ba|z|da|k)?sh\s+-c\b|\beval\b|\bsource\s+\/dev\/stdin|\bxargs\b[^|;&]*\b(?:ba|z)?sh\b|\b(?:iex|invoke-expression)\b/i;
+const EXEC_SINK = /<\(|\$\(|`|\bexec\s*\(|\beval\s*\(|\bsource\s+<|\bFunction\s*\(/i;
+/** A decoder: what it prints is text no reader here has decoded (base64, hex, escapes, reversed or rotated letters). */
+const DECODER = /\bbase64\b|\bxxd\b|\bopenssl\b|\buudecode\b|\brev\b|\btr\s|\bb64decode\b|\bfromhex\b|\bunhexlify\b|\batob\b|\bfrombase64string\b|\bcodecs\b|\\x[0-9a-f]{2}|\\[0-7]{3}|\\u[0-9a-f]{4}|%b|\b(?:gunzip|zcat|bzcat|xzcat|zstdcat)\b|\bchr\s*\(|\bString\.fromCharCode\b/i;
+const DISK_TOOL = /\b(?:mkfs|shred|wipefs|diskutil)|\bof=\/dev\/|-recurse\b|--recursive\b/i;
+
+/** NOLIMITS-1022 H1 (1): a text the reader could not follow still counts as a wipe when, decoded as far as it decodes, the
+ * plain wipe check (every byte: `P=rm; $P -rf x`, a device, mkfs, a fork bomb) finds one, its control characters taken out
+ * (`$'\u0000rm' -rf ~`), or a recursive forced delete names the home folder or the root. A fault here is a wipe. */
+function wipeShaped(text: string): boolean {
+  try {
+    if (plainWipe(text)) return true;
+    // `$IFS` is a space to the shell (`rm$IFS-rf$IFS~`)
+    const spaced = text.replace(/\$\{?IFS\}?/g, " ");
+    if (spaced !== text && plainWipe(spaced)) return true;
+    const sink = SHELL_SINK.test(text) || EXEC_SINK.test(text);
+    // text built for a shell to run (`printf '%.2s -rf %.4s' rmX /usrX | sh`): a recursive forced flag or a disk tool in it is a wipe
+    if (sink && (DISK_TOOL.test(text) || wordsOf(text).some(recursiveForceWord))) return true;
+    // decoded text handed to a shell (`echo cm0g... | base64 -d | sh`, `printf '\x72\x6d ...' | sh`, `exec(b64decode(...))`): nothing
+    // here decoded what runs, so neither the wipe check nor the key guard has read it; it keeps its card
+    if (sink && DECODER.test(text)) return true;
+    // PowerShell's -EncodedCommand (any prefix of it, `-ec`, with `-` or `/`) is base64 UTF-16LE: read what it decodes to
+    for (const [, flag, encoded] of text.matchAll(/(?:^|\s)[-/]([a-z]+)[\s:]+["']?([A-Za-z0-9+/=]{4,})/gi)) {
+      const name = flag!.toLowerCase();
+      if (name !== "ec" && !(name.startsWith("e") && "encodedcommand".startsWith(name))) continue;
+      const inner = Buffer.from(encoded!, "base64").toString("utf16le");
+      if (plainWipe(inner) || /^\s*(?:rm|ri|rd|del|erase|remove-item)\b/i.test(inner) || wordsOf(inner).some(recursiveForceWord)) return true;
+    }
+    const decoded = decodeAnsiC(spaced).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+    // bash ends a `$'...'` word at its first NUL: `$'rm\0x'` runs rm
+    const cut = text.replace(/\$'(?:[^'\\]|\\[\s\S])*'/g, word => decodeAnsiC(word).split("\0")[0]!);
+    if ((decoded !== text && plainWipe(decoded)) || (cut !== text && plainWipe(cut))) return true;
+    // a recursive forced delete flag on the home folder or the root, whatever program the text names (`$R -rf ~`)
+    const words = wordsOf(decoded);
+    return words.some((word, at) => recursiveForceWord(word) && at + 1 < words.length && HOME_OR_ROOT.test(words[at + 1]!));
+  } catch {
+    return true;
+  }
 }
 
 /** Bounded command admission, recovered from 2888da485c. */
@@ -1122,12 +1223,6 @@ function autoVerdictOf(
   // blocks: no mode, grant or turn origin lets the machine answer it. It
   // names no rule — no grant was consulted, and none could apply.
   if (context?.question || isQuestionTool(tool)) return { approve: null, source: "question-tool" };
-  // HL-WRITES-1019 C3: all family tools mix reads and changes. Release only
-  // a proved own mount to its host before input values reach generic guards.
-  const highlevel = highlevelEngineAsk(context?.call, "unmarked");
-  if (highlevel?.kind === "own") {
-    return { approve: "HighLevel call released to Murage's handler", source: "own-unasked", rule: `own:highlevel/${highlevel.tool}` };
-  }
   // Next, and ahead of every mode, grant and allowance: the short list of
   // commands that wipe the computer always asks the owner. No limits lifts the
   // stop line, not this. It reads the engine's own command, whole, when there
@@ -1210,6 +1305,8 @@ function autoVerdictOf(
     return hit && hit.classification !== "deny" && !hit.mandatory && hit.rule === "unreadable" && hit.doubt !== undefined && hit.unseenScript !== true ? ownerMarks(() => lax(read)) : strict;
   };
   const resolvedCall = resolveCall(context?.call);
+  // only the card text, cut: what it would run may sit after the cut, so no reader (and no wipe check) has seen it
+  const cutSummary = text === undefined && commandTool && approvalSummaryIsCut(summary);
   if (routineCarve) {
     ({ hit: catastrophe, valueTarget } = ask(() => alwaysAskRoutineCommand(text, cwd, shell, home, unseen)));
   } else {
@@ -1311,6 +1408,10 @@ function autoVerdictOf(
     const unseenCovered = catastrophe?.unseenScript === true
       && (marksHitWaivable(catastrophe) || !hasNoLimits(bot) || ownerUnseen === true)
       && fullAccessCovers(bot, fullAccessOriginOf(context));
+    // 1.0.22 MAIN-RULING NOLIMITS-1022 H1: on a turn Full access covers, a text the reader could not follow is no reason
+    // to ask unless it is wipe-SHAPED; it goes on to the key guard and the grant below like any read text
+    if (catastrophe !== null && !unseenCovered && !cutSummary && fullAccessUnreadableRuns(bot, tool, summary, context, catastrophe, [text ?? summary, innerText],
+      () => ownerMarks(() => lax(() => alwaysAskCommand(text ?? summary, cwd, commandTool ? "command" : "text", shell, windowsBash, home, unseen))))) catastrophe = null;
     // 1.0.13 (NOLIMITS-MEANS-IT, design section 14): a text the reader could not follow holds at every level, owner
     // No limits included. Hits it holds on carry `readerFailed`.
     // HOOK (NOLIMITS-WIPE-WORD, design R3 and R11): any waiver of such a hit is one check on that mark, here and only here,
@@ -1319,8 +1420,17 @@ function autoVerdictOf(
     waived = catastrophe !== null && !unseenCovered
       && !windowsShellCall(shell, [text ?? summary, innerText])
       && couldNotReadWaived(bot, context, [catastrophe, outer, innerHit], [text ?? summary, ...(innerText !== undefined ? [innerText] : [])]);
+    // OVERREACH #6 (Sean 2026-11-26): the owner's own Full access turn runs the three rules No limits runs (unreadable, unknown-target,
+    // protected-path) when No limits' own wipe check finds nothing; the wipe rules, a deny hit and the key guard below still hold.
+    if (!waived && catastrophe !== null && !unseenCovered && !windowsShellCall(shell, [text ?? summary, innerText]) && fullOwnerRunWaives(bot, tool, summary, context, [catastrophe, outer, innerHit])) waived = true;
     if (waived) logWaived(bot, tool, catastrophe!);
     if (catastrophe && !unseenCovered && !waived) {
+      // OVERREACH #6: the owner's Full access card for a call No limits cards as a wipe is that wipe card, never a looser or vaguer one
+      // (only for a script file the reader did not open and a whole volume: every other held call keeps its own pinned card)
+      if (ALWAYS_ASK_NO_LIMITS[catastrophe.rule] === "run" && (catastrophe.unseenScript === true || catastrophe.protectedClass === "volume" || runsWrittenScript(text ?? summary, context)) && !windowsShellCall(shell, [text ?? summary, innerText])) {
+        const wipe = fullOwnerNoLimitsAnswer(bot, tool, summary, context);
+        if (wipe && wipe.approve === null && wipe.source === "always-ask" && wipe.rule !== undefined && ALWAYS_ASK_NO_LIMITS[wipe.rule as keyof typeof ALWAYS_ASK_NO_LIMITS] === "wipe") return wipe;
+      }
       const reader = catastrophe.rule === "unreadable" ? "held" : undefined;
       const held: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule,
         reason: catastrophe.reason ?? catastrophe.doubt ?? catastrophe.rule,
@@ -1331,16 +1441,6 @@ function autoVerdictOf(
       return held;
     }
   }
-  // Legacy lower-level policy (design r4 6.1): a marked lane turn asks here, after the always-ask read and ahead of every
-  // mode, grant, own-tool and own-folder answer. A Windows shell call keeps this card too (ruling 3: only 2.1 and 2.3
-  // are withheld there; design 7.5).
-  const outside = outsideTurnCard(bot, tool, context, resolvedCall, shell, commandTool, [text ?? summary, innerText]);
-  // Gate-file reads/mentions on proven owner work are not outside-content holds.
-  const gateRead = outside && hasNoLimits(bot) && ["owner", "routine", "owner-channel"].includes(noLimitsInitiator(bot, context))
-    && gateHit([text ?? summary, innerText ?? ""]) !== null
-    && !noLimitsProtectedWrite(text ?? summary, context, shell, true)
-    && (innerText === undefined || !noLimitsProtectedWrite(innerText, context, shell, true));
-  if (outside && !gateRead) return outside;
   // a carved command is guarded on its whole text too, so a key or a
   // destructive step past the card's cut summary still holds
   const passed = verdictPastAlwaysAsk(bot, tool, summary, context, windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined, windowsBash);
@@ -1371,7 +1471,7 @@ const OWN_ALWAYS_ASK_CARDS: ReadonlySet<AutoVerdictSource> = new Set<AutoVerdict
 
 /** Every mode, grant and guard after the always-ask reader. Rule 51: below
  * Full access, an OWN_ALWAYS_ASK tool (publish_site, take_down_site,
- * skill_manage, ...) is judged with every remembered answer taken away: no
+ * skill_manage, skill_switch, ...) is judged with every remembered answer taken away: no
  * "Always allow" (tool, exact command, app action or stop-line place), no task
  * allowance, no routine grant. Auto mode's own answer is the same as for any
  * tool. A card it raises offers no grant (source always-ask); a guard keeps its
@@ -1434,70 +1534,6 @@ export function outsideTurnNote(source: OutsideMark | OutsideSource | undefined)
   return `This chat read outside content (${source ?? "not checked"}), so Murage asks before running this. Allow to run it.`;
 }
 
-/** 6.1.2: the engine's LOCAL read tools (Claude, ACP kinds, Codex items) and the outside readers that set the mark.
- *  Compared on the engine's own tool name, lower case; never on an MCP name. */
-const OUTSIDE_TURN_ENGINE_READS: ReadonlySet<string> = new Set([
-  "read", "notebookread", "glob", "grep", "ls", "todowrite", "exitplanmode",
-  "search", "think", "switch_mode", "reasoning", "plan",
-  "webfetch", "websearch", "fetch",
-]);
-/** 6.1.2: Murage's own read tools, on a proven own mount only. */
-const OUTSIDE_TURN_OWN_READS: ReadonlySet<string> = new Set([
-  "venue_read_messages", "project_read_messages", "check_delegation", "wait_delegation", "tool_result_read", "email_list",
-  "email_read", "web_search", "thread_search", "thread_list", "thread_read", "memory_search", "memory_get", "skills_list",
-  "dweb_repo_status",
-]);
-
-/** 6.1.3: an engine file edit that may run on a marked lane turn: every path it names (and every real path the caller
- *  followed) lies inside the working folder, no segment of the part inside starts with `.`, and no gate file is named. */
-function editInsideWorkFolder(context: AutoContext, input: unknown): boolean {
-  const folder = context.workFolder;
-  if (!folder || !folder.startsWith("/")) return false;
-  const body = input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : undefined;
-  const named = body ? ["file_path", "path", "notebook_path"].map((key) => body[key]).filter((value): value is string => typeof value === "string" && value.trim() !== "") : [];
-  if (named.length === 0) return false;
-  const root = folder.replace(/\/+$/, "") || "/";
-  const inside = (p: string): boolean => {
-    if (!p.startsWith("/") || p.includes("\\") || p.includes("\0")) return false;
-    const parts = p.split("/").filter(Boolean);
-    if (parts.some((part) => part === ".." || part === ".")) return false;
-    const norm = `/${parts.join("/")}`;
-    if (root === "/" ? false : !(norm.startsWith(`${root}/`))) return false;
-    return !norm.slice(root.length + 1).split("/").some((part) => part.startsWith("."));
-  };
-  if (!named.every(inside)) return false;
-  if (!(context.realPaths ?? []).every(inside) || context.realPathCannot !== undefined) return false;
-  return gateHit([...named, ...(context.realPaths ?? [])]) === null;
-}
-
-type OutsideShell = "pwsh" | undefined;
-/** Legacy lower-level policy (design r4 6.1 items 1-3): on a marked lane turn, every shell text cards unless it is a
- *  read-only shape and the session has written nothing since it was tainted; every tool other than the local and
- *  outside readers and an in-folder engine edit cards. Items 4 (the whole key guard, the base could-not-read card)
- *  hold because 2.1 and 2.3 apply only on a clean turn. OWN_WRITERS card here too until their handler holds (6.1.5)
- *  exist: more cards, never fewer. Returns null when the call may go on to the usual verdict. */
-function outsideTurnCard(bot: AutoApprover, tool: string, context: AutoContext | undefined, resolved: ResolvedCall, shell: OutsideShell, commandTool: boolean, texts: ReadonlyArray<string | undefined>): AutoVerdict | null {
-  if (hasNoLimits(bot)) return null; // Sean 2026-11-12 02:05Z: wipe-only.
-  if (!markedLaneTurn(bot, context)) return null;
-  const card: AutoVerdict = { approve: null, source: "outside-turn", rule: "outside-content", note: outsideTurnNote(context?.outsideRead?.[0]) };
-  const inner = commandArgument(resolved.kind === "engine" || resolved.kind === "mcp" ? resolved.input : context?.call?.toolCall?.input);
-  const shellTexts = [...texts, inner].filter((t): t is string => t !== undefined);
-  if (commandTool || shell !== undefined || inner !== undefined) {
-    if (context!.readOnlySoFar !== true || !context!.readOnlyHooks) return card;
-    if (context!.inputCut === true || context!.inputTruncated === true || context!.call?.inputMissing !== undefined) return card;
-    return shellTexts.length > 0 && shellTexts.every((t) => readOnlyShape(t, context!.readOnlyHooks)) ? null : card;
-  }
-  if (resolved.kind === "unproven") return card;
-  if (resolved.kind === "mcp") return resolved.own && OUTSIDE_TURN_OWN_READS.has(resolved.tool) ? null : card;
-  if (/^mcp__/i.test(tool)) return card;
-  // the engine's own name, whole: a dotted or namespaced name is not taken for a local read
-  const name = resolved.kind === "engine" ? resolved.name.toLowerCase() : tool.toLowerCase();
-  if (OUTSIDE_TURN_ENGINE_READS.has(name)) return null;
-  const edit = FILE_EDIT_TOOLS.has(name) || name === "edit" || context?.call?.toolKind === "edit";
-  if (edit) return editInsideWorkFolder(context!, resolved.kind === "engine" ? resolved.input : context?.call?.toolCall?.input) ? null : card;
-  return card;
-}
-
 /** C1 + C2: a lane turn the server stated clean. Absent `outsideRead` is a marked turn. */
 function cleanLaneTurn(bot: AutoApprover, context: AutoContext | undefined): boolean {
   return laneApplies(bot, context) && context?.outsideRead === null;
@@ -1516,6 +1552,35 @@ function couldNotReadWaived(bot: AutoApprover, context: AutoContext | undefined,
   if (context!.inputCut === true || context!.inputTruncated === true || context!.call?.inputMissing !== undefined || context!.scope !== undefined) return false;
   if (!hits.every((hit) => hit === null || marksHitWaivable(hit))) return false;
   return !texts.some((t) => plainWipe(t));
+}
+
+/** OVERREACH #6: the owner's own turn at Full access (not No limits): started by the owner, attended, not a routine or channel turn. */
+function fullOwnerOwnTurn(bot: AutoApprover, context: AutoContext | undefined): boolean {
+  return hasFullAccess(bot) && !hasNoLimits(bot) && context?.ownerStarted === true && context.fullAccessOrigin === "owner"
+    && !context.unattended && !context.automated && !context.routineLevel && context.channelOwner !== true;
+}
+
+/** OVERREACH #6: the text runs a script this session wrote (the one case where the wipe check reads a file). */
+function runsWrittenScript(text: string, context: AutoContext | undefined): boolean {
+  try {
+    const edits = context?.readOnlyHooks?.sessionEdits ?? context?.unseen?.sessionEdits;
+    if (!edits || edits.size === 0) return false;
+    return writtenScriptRuns(text, { sessionEdits: edits, cwd: context?.commandCwd ?? context?.exactCommand?.cwd ?? context?.workFolder }, context?.promptFacts?.home ?? "").length > 0;
+  } catch { return false; }
+}
+/** OVERREACH #6: No limits' own answer for a whole call on the owner's own Full access turn (not scoped to the computer, not cut); null
+ * otherwise. Full access shows the card this answer is when it is a wipe (a script body that deletes the home folder, a whole volume, a
+ * script body that cannot be read), whatever reader rule held the call first; it never shows a looser one. */
+function fullOwnerNoLimitsAnswer(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined): AutoVerdict | null {
+  if (!fullOwnerOwnTurn(bot, context)) return null;
+  if (context!.inputCut === true || context!.inputTruncated === true || context!.call?.inputMissing !== undefined || context!.scope !== undefined) return null;
+  return noLimitsOnlyVerdict(tool, summary, context);
+}
+/** OVERREACH #6: a hit of the three ALWAYS_ASK_NO_LIMITS "run" rules is waived on the owner's own Full access turn, exactly as No limits
+ * runs it, when No limits' wipe check finds nothing and no hit is a deny, mandatory or named catastrophe. */
+function fullOwnerRunWaives(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, hits: ReadonlyArray<AlwaysAskHit | null>): boolean {
+  if (!hits.every((hit) => hit === null || (ALWAYS_ASK_NO_LIMITS[hit.rule] === "run" && hit.classification !== "deny" && !hit.mandatory && !hit.namedCatastrophe))) return false;
+  return fullOwnerNoLimitsAnswer(bot, tool, summary, context)?.approve != null;
 }
 
 /** Ask log for a waived hit: fixed names only, the reader's rule (a fixed string), never command text. */
@@ -1908,7 +1973,9 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   // same on every engine. Only for a call proved on this turn's own mount
   // (never a title), behind the guards above; a click, a key or typing keeps
   // its level's rules below and asks at Ask.
-  if (!destructive && !sensitive && resolved.kind === "mcp" && resolved.provenance === "own" && isOwnComputerRead(resolved.mountId, resolved.tool)) {
+  // Not on an unattended host turn: nobody is at the desk and the payload is someone else's, so even a look at the
+  // owner's real screen keeps the unattended block below (no grant, a card) like every other host action.
+  if (!destructive && !sensitive && !(context?.unattended && context.scope === "local-computer") && resolved.kind === "mcp" && resolved.provenance === "own" && isOwnComputerRead(resolved.mountId, resolved.tool)) {
     return { approve: `auto-approved ${resolved.name} (looks at the screen)`, source: "own-unasked", rule: `${resolved.mountId}/${resolved.tool}` };
   }
   if (!destructive && !sensitive && !context?.scope && resolved.kind === "mcp" && resolved.provenance === "own") {
@@ -1916,7 +1983,10 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     // A connected-app lookup is a read on an ordinary turn. On a routine's own run the four lookups are what the
     // routine remembers (Rule 76a): each is answered only by its own saved key (the routine grants, below), so a
     // remembered search never answers a schema read or any other lookup.
-    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnQuiet(resolved.mountId, resolved.tool);
+    const read = app !== undefined ? APP_LOOKUPS[app] !== undefined && context?.routineLevel !== true : isOwnQuiet(resolved.mountId, resolved.tool)
+      // CODEX-WEB-1020: own web_search on the free default provider is a read of the public web with no card at any level
+      // (the same answer the Codex hook gives); on a paid provider this is false and the always-ask card stands
+      || ownWebSearchRunsUnasked(resolved.mountId, resolved.tool);
     // a handler-carded own tool (bot email's send tools) reaches its handler at every level: the handler applies the bot's email setting and
     // holds on Murage's own card, so no engine card stands in front of it (BOT-EMAIL-MURAGE-109 3.2)
     if (read || (app === undefined && isOwnHandlerCarded(resolved.mountId, resolved.tool)) || (bot.autoApprove && isOwnUnasked(resolved.mountId, resolved.tool))) {

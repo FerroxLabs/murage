@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {readFileSync} from 'node:fs';
 import {expect,it} from 'vitest';
 import * as modes from '../lib/permission-mode';
 import {LevelExamples} from './approval/LevelExamples';
 import {t} from '../lib/i18n';
 import {BotPermissionDefault,NO_LIMITS_TERMS_NOTE} from './BotPermissionDefault';
+import { settingsPanelSource } from "./bot-pages/panel-source";
 type Profile=Parameters<typeof BotPermissionDefault>[0]['bot'] & {permissionExplicit?:boolean;permissionRev?:number;draftOnly?:boolean};
 const chief={chiefOfStaff:true,chiefScope:'workspace' as const,autoApprove:true,fullAccess:true,noLimits:true};
 const effective=(bot:Profile,bots=[chief],level?:string)=>modes.ownerBotPermissions(bot,bots,level);
@@ -17,13 +17,13 @@ const selected=(bot:Profile)=>{
 for(const [name,bot,label]of [
  ['old Ask',{autoApprove:false},'No limits'],
  ['old Auto',{autoApprove:true,fullAccess:false},'No limits'],
- ['explicit Ask',{autoApprove:false,permissionExplicit:true},'Ask'],
+ ['explicit Ask',{autoApprove:false,permissionExplicit:true},'Ask first'],
  ['explicit Auto',{autoApprove:true,permissionExplicit:true},'Auto'],
  ['legacy Full',{autoApprove:true,fullAccess:true},'No limits'],
- ['revised Ask',{autoApprove:false,permissionRev:2},'Ask'],
+ ['revised Ask',{autoApprove:false,permissionRev:2},'Ask first'],
  ['reset to inherit',{autoApprove:false,permissionExplicit:false,permissionRev:2},'No limits'],
- ['draft',{autoApprove:false,draftOnly:true},'Ask'],
- ['draft with stored No limits',{autoApprove:true,fullAccess:true,noLimits:true,draftOnly:true},'Ask'],
+ ['draft',{autoApprove:false,draftOnly:true},'Ask first'],
+ ['draft with stored No limits',{autoApprove:true,fullAccess:true,noLimits:true,draftOnly:true},'Ask first'],
 ]as const)it(`R3 F7 Settings shows ${name} as ${label}`,()=>{
  const original={...bot};expect(selected(effective(bot,[chief],'auto'))).toEqual([label]);expect(bot).toEqual(original);
 });
@@ -35,10 +35,10 @@ it('R3 F7 the owner can choose Ask below the inherited displayed level',()=>{
 });
 it('R3 F7 the new-bot No limits choice also resolves the Settings level',()=>{
  expect(selected(effective({autoApprove:false},[],'no-limits'))).toEqual(['No limits']);
- expect(selected(effective({autoApprove:false},[],'auto'))).toEqual(['Ask']);
+ expect(selected(effective({autoApprove:false},[],'auto'))).toEqual(['Ask first']);
 });
 it('R3 F7 Settings routes the effective profile through both display and level changes',()=>{
- const source=readFileSync(new URL('./SettingsPanel.tsx',import.meta.url),'utf8');
+ const source=settingsPanelSource();
  expect(source).toMatch(/const permissionBot\s*=\s*ownerBotPermissions\(bot, state.bots, state.config\?\.newBots\?\.permissionLevel\)/);
  expect(source).toContain('useLevelChange({ bot: permissionBot,');expect(source).toContain('permissionModeOf(permissionBot)');expect(source).toMatch(/bot=\{permissionBot\}\s+change=\{levelChange\}/);
 });

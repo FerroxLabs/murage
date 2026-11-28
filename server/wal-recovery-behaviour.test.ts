@@ -12,9 +12,9 @@ import ts from "typescript";
 import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { setAdmissionClockOffsetForFixture, ioBudget } from "./io-budget.ts";
-import { closeDatabase, database, transaction } from "./database.ts";
+import { JOURNAL_SIZE_LIMIT_BYTES, closeDatabase, database, transaction } from "./database.ts";
 import { DatabaseBusyError } from "./db-busy.ts";
-import { stopWalMaintenance, walMaintenanceCounters, walMaintenanceReady, walMaintenanceTestHooks, setWalRecoveryKnobsForTest, walWritesPaused, checkpointPassive, WAL_STALL_MS, WAL_PAUSED_MESSAGE } from "./wal-maintenance.ts";
+import { stopWalMaintenance, walMaintenanceCounters, walMaintenanceReady, walMaintenanceTestHooks, setWalRecoveryKnobsForTest, walWritesPaused, walBacklog, checkpointPassive, WAL_STALL_MS, WAL_PAUSED_MESSAGE } from "./wal-maintenance.ts";
 import { installWalBarrier } from "./testing/wal-barrier.ts";
 import { searchCleanupPending, stopSearchIndex } from "./message-search-index.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -32,8 +32,9 @@ it("progress refresh: a changed heartbeat restarts the stall deadline before a b
   const shared = new Int32Array(new SharedArrayBuffer((slot + 1) * 4));
   const m = { failed: false, shared, lastBeat: 0, beatAt: 1000, walFile: "fixture.db-wal", lastResult: null, lastSize: 0, inflight: null };
   let now = 5000, replacements = 0;
-  const context = { active: m, Atomics, HEARTBEAT_SLOT: slot, stallMs: STALL_MS, Date: { now: () => now }, writesPaused: true,
-    replaceStalled: () => { replacements++; return true; }, ioBudget: { admissionTick() {} }, statSync: () => ({ size: 0 }), checkpointPassive() {} };
+  const context = { active: m, Atomics, HEARTBEAT_SLOT: slot, stallMs: STALL_MS, Date: { now: () => now }, writesPaused: true, TICK_RESUME_GAP_MS: 5000, TICK_ASK_BYTES: 1 << 20, WAL_PACE: { quietMs: 5000 }, // 1.0.22 q1022-sqlite: the tick reads them
+    replaceStalled: () => { replacements++; return true; }, ioBudget: { admissionTick() {} }, statSync: () => ({ size: 0 }), checkpointPassive() {},
+    releaseWalReaders() {} }; // 1.0.21 B5 (memv2-D): the watch also runs the half-gate release (no SQL); this test is about the stall deadline
   const tick = runInNewContext(ts.transpile(supervisor + "\ntick"), context) as (maintenance: typeof m) => void;
   Atomics.store(shared, slot, 1); tick(m);
   expect(m.beatAt, "progress refreshes the deadline even after a long healthy lifetime").toBe(now);
@@ -120,7 +121,11 @@ async function expectResumes(since: number, boundMs: number, log: Attempt[], db:
   expect(resumed, `writes resumed within ${boundMs} ms of the failure, without an app restart`).not.toBeNull();
   const recoveryMs = Math.round(performance.now() - since);
   for (let index = 0; index < 5; index++) { const attempt = write(); log.push(attempt); expect(attempt.committed).toBe(true); await sleep(25); }
-  expect(walSize(), "the log is back under the ceiling").toBeLessThan(CEILING);
+  // 1.0.22 MAIN-RULING SQLITE-1022 item 1b: a restarted log keeps its file up to 16 MiB (above this suite's 12 MiB test ceiling; the prod
+  // ceiling is 512 MiB), so "back under the ceiling" is read as admission reads it: the live frames still to copy (walBacklog), and the
+  // file itself no larger than the kept 16 MiB plus the writes above
+  expect(walBacklog()!.backlog, "the log is back under the ceiling").toBeLessThan(CEILING);
+  expect(walSize(), "the file is no more than the kept 16 MiB and the last writes").toBeLessThan(Math.max(CEILING, JOURNAL_SIZE_LIMIT_BYTES + 2 * 1024 * 1024));
   expect(database(), "same handle: no app restart").toBe(db);
   expect(walMaintenanceReady()).toBe(true);
   // no silent loss: every committed write is in the table, every refused one is not
@@ -153,6 +158,7 @@ it("stall: a worker stuck in a busy loop is detected and replaced, the ceiling r
   expect(walMaintenanceTestHooks.heartbeat(), "the healthy worker clock advanced before the stall").toBeGreaterThan(beat);
   const gen = walMaintenanceCounters()!.gen;
   barrier.arm(3);
+  log.push(write(1024)); // 1.0.21 W4 (memv2-D): the worker polls on a commit, not on a 25 ms clock, so one write brings it to the barrier
   await vi.waitFor(() => expect(barrier.parkedAt()).toBe(3), { timeout: 5000, interval: 10 });
   barrier.disarm(); // the replacement must not park too; the parked thread stays parked
   const stalledAt = performance.now();
@@ -187,6 +193,7 @@ it("stalls again: one replacement, then writes paused (named state), no loop; pr
   await steady(40, log);
   const gen = walMaintenanceCounters()!.gen;
   barrier.arm(3); // stays armed: the replacement parks too
+  log.push(write(1024)); // 1.0.21 W4 (memv2-D): the worker polls on a commit, not on a 25 ms clock, so one write brings it to the barrier
   await vi.waitFor(() => expect(barrier.parkedAt()).toBe(3), { timeout: 5000, interval: 10 });
   burstUntilRefused(log);
   expectHonestRefusals(log);

@@ -66,8 +66,8 @@ describe("where the feed comes from", () => {
     expect(announcementSource({ MURAGE_ANNOUNCEMENTS_URL: "off" }, [A.raw])).toBeNull();
     // off-box override: ignored, the real feed with the compiled keys
     const real = announcementSource({ MURAGE_ANNOUNCEMENTS_URL: "https://evil.example/a.json", MURAGE_ANNOUNCEMENTS_TEST_KEY: B.raw }, [A.raw]);
-    expect(real?.feedUrl).toBe("https://updates.ferroxlabs.com/murage/announcements.json");
-    expect(real?.imagePrefix).toBe("https://updates.ferroxlabs.com/murage/images/");
+    expect(real?.feedUrl).toBe("https://murage.ai/murage/announcements.json");
+    expect(real?.imagePrefix).toBe("https://murage.ai/murage/images/");
     expect(real?.keys).toHaveLength(1);
   });
 });

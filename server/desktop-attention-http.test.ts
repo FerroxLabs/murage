@@ -5,6 +5,15 @@
 // outside answer path (`outside` on POST /api/threads/:id/respond).
 //
 // HEADLESS ONLY: the data directory is a throwaway temp HOME and the port is probed from the fixture band.
+import { EventEmitter } from "node:events";
+import { DatabaseSync } from "node:sqlite";
+// @ts-expect-error Native ESM has no declaration file.
+import { createAttentionMain } from "../electron/attention-main.mjs";
+// @ts-expect-error Native ESM has no declaration file.
+import { createLocalTransport } from "../electron/attention-transport.mjs";
+// @ts-expect-error Native ESM has no declaration file.
+import { watchInboxChanges } from "../electron/inbox-watch.mjs";
+import { sanitizeDisplayTextUnit } from "./transcript-page.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -79,6 +88,27 @@ type Bound = { approvalId: string; requestRef: string; actionHash: string };
 const bindingOf = (record: Bound): Bound => ({ approvalId: record.approvalId, requestRef: record.requestRef, actionHash: record.actionHash });
 const outsideBody = (requestId: string, record: Bound & { digest: string }, behavior: "allow" | "deny" = "allow", extra: Record<string, unknown> = {}) => ({ requestId, behavior, ...bindingOf(record), outside: { digest: record.digest, surface: "pill" }, ...extra });
 
+async function startFixture() {
+  const port = Number(new URL(base).port);
+  stderr = "";
+  child = spawn(process.execPath, [...fakeEngineImportArgs(), join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
+    cwd: join(SERVER_DIR, ".."),
+    env: { ...fixturePlatformEnv(), ...powerBlockTestEnv(), ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_COMPANION_TOKEN: COMPANION_TOKEN },
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+  });
+  child.stderr!.on("data", (c) => (stderr += c));
+  const deadline = Date.now() + 150_000;
+  for (;;) {
+    try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* not up yet */ }
+    if (child.exitCode !== null || Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  const proof = await request("GET", "/api/desktop-secret");
+  expect(proof.status).toBe(200);
+  desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+}
+
 describe("outside answers (NOTIFY-EVERYWHERE-1019 S1)", { timeout: 150_000 }, () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 19_199, 200);
@@ -88,22 +118,7 @@ describe("outside answers (NOTIFY-EVERYWHERE-1019 S1)", { timeout: 150_000 }, ()
     expect(() => assertSafeToWipe(home)).not.toThrow();
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({ instances: { echoer: { driver: "grokAgent", environment: sessionBoundAcpPermissionEnvironment({ FAKE_ACP_MODE: "permission" }), config: { cli: FAKE_CLI, fullAuto: false } } } }));
-    child = spawn(process.execPath, [...fakeEngineImportArgs(), join(SERVER_DIR, "index.ts")], {
-      windowsHide: true,
-      cwd: join(SERVER_DIR, ".."),
-      env: { ...fixturePlatformEnv(), ...powerBlockTestEnv(), ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_COMPANION_TOKEN: COMPANION_TOKEN },
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-    });
-    child.stderr!.on("data", (c) => (stderr += c));
-    const deadline = Date.now() + 150_000;
-    for (;;) {
-      try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* not up yet */ }
-      if (Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
-      await new Promise((r) => setTimeout(r, 150));
-    }
-    const proof = await request("GET", "/api/desktop-secret");
-    expect(proof.status).toBe(200);
-    desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+    await startFixture();
   }, 180_000);
 
   afterAll(async () => {
@@ -276,6 +291,53 @@ describe("outside answers (NOTIFY-EVERYWHERE-1019 S1)", { timeout: 150_000 }, ()
     }
   });
 
+  it("R7: recovery lists only eligible Ask cards and rechecks a live Inbox snooze", async () => {
+    const asked = await askedBot("Recovery fixture");
+    const listPath = "/api/desktop/attention?recover=1";
+    const cardPath = `/api/desktop/attention/card?threadId=${encodeURIComponent(asked.bot.threadId)}&messageId=${encodeURIComponent(asked.messageId)}`;
+    const read = () => desktopApi("GET", cardPath + "&recover=1");
+    const base = await desktopApi("GET", cardPath);
+    const defaultList = await desktopApi("GET", "/api/desktop/attention");
+    const listing = await desktopApi("GET", listPath);
+    expect(listing.body.mode).toBe("recover");
+    expect(listing.body.items).toContainEqual(expect.objectContaining({ messageId: asked.messageId, requestId: asked.requestId }));
+    expect(listing.body).not.toHaveProperty("quietStartsInMs");
+    expect(await read()).toMatchObject({ status: 200, body: { notifyOk: true, quietStartsInMs: null, epoch: listing.body.epoch, words: { botName: "Recovery fixture" } } });
+    const inbox = await desktopApi("GET", "/api/inbox?view=decisions");
+    const item = inbox.body.items.find((row: any) => row.link.messageId === asked.messageId);
+    expect(item).toBeDefined();
+    const snooze = async (snoozedUntil: number | null) => {
+      expect((await desktopApi("POST", "/api/inbox/state", { id: item.id, version: item.version, snoozedUntil })).status).toBe(200);
+    };
+    async function suppressed() {
+      expect((await desktopApi("GET", listPath)).body.items).not.toContainEqual(expect.objectContaining({ requestId: asked.requestId }));
+      expect((await read()).body.notifyOk).toBe(false);
+    }
+    try {
+      await snooze(Date.now() + 60_000);
+      await suppressed();
+      await snooze(null);
+      expect((await read()).body.notifyOk).toBe(true);
+      expect((await desktopApi("PATCH", `/api/bots/${asked.bot.id}`, { notifications: false })).status).toBe(200);
+      await suppressed();
+      expect((await desktopApi("PATCH", `/api/bots/${asked.bot.id}`, { notifications: true })).status).toBe(200);
+      expect((await desktopApi("PUT", "/api/config", { notifications: { attention: false } })).status).toBe(200);
+      await suppressed();
+      const utc = (ms: number) => new Date(ms).toISOString().slice(11, 16);
+      const now = Date.now();
+      const quiet = { enabled: true, start: utc(now - 60_000), end: utc(now + 600_000), timeZone: "UTC" };
+      expect((await desktopApi("PUT", "/api/config", { notifications: { attention: true, quietHours: quiet } })).status).toBe(200);
+      await suppressed();
+      expect((await read()).body.quietStartsInMs).toBe(0);
+      expect((await desktopApi("PUT", "/api/config", { notifications: { quietHours: { ...quiet, enabled: false }, previewContent: false } })).status).toBe(200);
+      expect((await read()).body).not.toHaveProperty("words");
+    } finally {
+      await desktopApi("PUT", "/api/config", { notifications: { attention: true, previewContent: true, quietHours: { enabled: false, start: "22:00", end: "07:00", timeZone: "UTC" } } });
+    }
+    expect(await desktopApi("GET", cardPath)).toEqual(base);
+    expect(await desktopApi("GET", "/api/desktop/attention")).toEqual(defaultList);
+  });
+
   it("quiet hours hold what they drop (ids only) until the desktop acks the list", async () => {
     const quiet = { enabled: true, start: "00:01", end: "00:00", timeZone: "UTC" };
     expect((await desktopApi("PUT", "/api/config", { notifications: { quietHours: quiet } })).status).toBe(200);
@@ -297,4 +359,162 @@ describe("outside answers (NOTIFY-EVERYWHERE-1019 S1)", { timeout: 150_000 }, ()
       await desktopApi("PUT", "/api/config", { notifications: { quietHours: { ...quiet, enabled: false } } });
     }
   });
+  it("R7: the real recovery route filters before limiting and projects oversized cards on the OS path", async () => {
+    const bot = async (name: string) => {
+      const response = await desktopApi("POST", "/api/bots", { name, modelSelection: { instanceId: "echoer", model: "fake-model" } });
+      expect(response.status).toBe(201);
+      return response.body.bot as { id: string; threadId: string };
+    };
+    const samples = await Promise.all(["Recovery bulk", "Recovery multibyte", "Recovery escaped", "Recovery redacted"].map(bot));
+    const eligible = samples[0]!;
+    const muted = await bot("Muted fixture");
+    expect((await desktopApi("PATCH", `/api/bots/${muted.id}`, { notifications: false })).status).toBe(200);
+    const ascii = "x".repeat(1024), emoji = "🧩".repeat(512), escaped = '"\\\u0001'.repeat(342).slice(0, 1024);
+    const credential = ["sk", "fixture".repeat(4)].join("-");
+    const willRun = "x".repeat(66_000);
+    const titles = [ascii, emoji, escaped, credential];
+    const stamp = Date.now();
+    await stopFixtureServer(child);
+    await startFixture();
+    const db = new DatabaseSync(join(home, ".murage", "messages.db"));
+    try {
+      // Historical rows predate the display sanitizer and keep their stored text.
+      db.exec("PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
+      const add = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,json) VALUES(?,?,?,'bot',?,?)");
+      const head = db.prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id=?");
+      const setHead = db.prepare("INSERT INTO thread_state(thread_id,active_leaf_id) VALUES(?,?) ON CONFLICT(thread_id) DO UPDATE SET active_leaf_id=excluded.active_leaf_id");
+      const row = (threadId: string, id: string, at: number, entry: object, kind = "options") => {
+        const parentId = head.get(threadId)?.active_leaf_id ?? null;
+        add.run(threadId, id, at, kind, JSON.stringify({ id, at, parentId, role: "bot", kind, ...entry }));
+        setHead.run(threadId, id);
+      };
+      for (const [i, sample] of samples.entries()) {
+        row(sample.threadId, `eligible-${i}`, stamp + titles.length - i, { from: { botId: sample.id }, card: { title: titles[i], subtitle: willRun, requestId: `request-${i}` } });
+      }
+      for (let i = 0; i < 60; i++) {
+        row(muted.threadId, `muted-${i}`, stamp + 100 + i, { from: { botId: muted.id }, card: { title: "Muted", subtitle: "Review", requestId: `muted-request-${i}` } });
+      }
+      for (const [id, state] of [["answered", { answered: "no" }], ["expired", { expired: true }], ["dismissed", { dismissed: true }]] as const) {
+        row(eligible.threadId, id, stamp + 200, { from: { botId: eligible.id }, card: { title: id, subtitle: "Review", requestId: id, ...state } });
+      }
+      row(eligible.threadId, "connection", stamp + 300, { connector: { slug: "fixture", status: "pending", resumeKey: "connection" } }, "connector");
+      db.exec("COMMIT");
+    } finally { db.close(); }
+    const listPath = "/api/desktop/attention?recover=1";
+    expect((await request("GET", listPath, undefined, phoneApp)).status).not.toBe(200);
+    const listing = await desktopApi("GET", listPath);
+    expect(listing.body.mode).toBe("recover");
+    const sampleThreads = new Set([...samples, muted].map(bot => bot.threadId));
+    const selected = listing.body.items.filter((item: { threadId: string }) => sampleThreads.has(item.threadId));
+    expect(selected.map((item: { messageId: string }) => item.messageId)).toEqual(titles.map((_, i) => `eligible-${i}`));
+    const transport = createLocalTransport({ origin: base, secret: desktopHeaders["x-murage-surface-secret"], identity: () => "fixture" });
+    const posts: string[] = [];
+    let focused = true;
+    const main = createAttentionMain({
+      isAppFocused: () => focused, prefsTrusted: () => true, prefs: () => ({ origin: "upgrade", surfaces: { notify: true } }),
+      presence: { rev: 0, refresh: async () => ({ rev: 0, locked: false }) },
+      transportFor: () => transport, createNotice: (options: { body: string }) => Object.assign(new EventEmitter(), {
+        show: () => posts.push(options.body), close() {},
+      }),
+    });
+    try {
+      focused = false;
+      main.focusChanged();
+      expect(await poll(async () => posts[0] ?? null, 10_000)).toBe(ascii);
+      expect(posts).toEqual([ascii]);
+    } finally { main.stopRecovery(); }
+    for (let i = 0; i < titles.length; i++) {
+      const query = `/api/desktop/attention/card?threadId=${samples[i]!.threadId}&messageId=eligible-${i}`;
+      const response = await fetch(base + query + "&recover=1", { headers: desktopHeaders });
+      const body = await response.text();
+      expect(response.status, `recover variant ${i}`).toBe(200);
+      expect(Buffer.byteLength(body)).toBeLessThan(2048);
+      const parsed = JSON.parse(body);
+      expect(parsed).toMatchObject({ requestId: `request-${i}`, notifyOk: true, epoch: listing.body.epoch });
+      expect(parsed).not.toHaveProperty("display");
+      expect(parsed).not.toHaveProperty("outsideOk");
+      if (i === 3) {
+        const [botName, title] = sanitizeDisplayTextUnit(["Recovery redacted", credential]);
+        expect(title).not.toEqual(credential);
+        expect(parsed.words).toEqual({ botName, title });
+      }
+    }
+    for (const id of ["answered", "expired", "dismissed"]) {
+      const closed = await desktopApi("GET", `/api/desktop/attention/card?threadId=${eligible.threadId}&messageId=${id}&recover=1`);
+      expect(closed.status).toBe(404);
+    }
+    const legacy = await desktopApi("GET", `/api/desktop/attention/card?threadId=${eligible.threadId}&messageId=eligible-0`);
+    expect(legacy.body.display.willRun).toBe(willRun);
+
+  });
+
+  it("R8: a real mute reaches the tray watcher before recovery submits", async () => {
+    const asked = await askedBot("Mute during recovery");
+    let focused = true, reads = 0, lists = 0, connected = false, mutedFrame = false;
+    let candidateRead = "";
+    let finishPresence: (() => void) | undefined;
+    const opened: string[] = [];
+    const notices: EventEmitter[] = [];
+    const transport = createLocalTransport({
+      origin: base, secret: desktopHeaders["x-murage-surface-secret"], identity: () => "fixture",
+      async fetchImpl(url: string, init: RequestInit) {
+        const path = new URL(url);
+        const response = await fetch(url, init);
+        if (path.pathname.endsWith("/card")) candidateRead = path.searchParams.get("messageId") ?? "";
+        else lists++;
+        return response;
+      },
+    });
+    const main = createAttentionMain({
+      isAppFocused: () => focused, prefsTrusted: () => true, prefs: () => ({ origin: "upgrade", surfaces: { notify: true } }),
+      presence: { rev: 0, async refresh() {
+        if (++reads === 2) await new Promise<void>(resolve => { finishPresence = resolve; });
+        return { rev: 0, locked: false };
+      } },
+      transportFor: () => transport,
+      openRecovered(target: { messageId: string }) { opened.push(target.messageId); },
+      createNotice() {
+        const notice = new EventEmitter();
+        return Object.assign(notice, {
+          show() { notices.push(notice); },
+          close() {},
+        });
+      },
+    });
+    const stop = watchInboxChanges((change: { connected?: boolean }) => { connected ||= change.connected === true; }, {
+      ready: () => true, url: () => base + "/api/events?screens=off", headers: () => desktopHeaders,
+      onFrame(frame: { kind: string; botId?: string }) {
+        main.watcherFrame(frame);
+        if (frame.kind === "bot" && frame.botId === asked.bot.id) mutedFrame = true;
+      },
+    });
+    try {
+      expect(await poll(async () => connected || null, 10_000)).toBe(true);
+      focused = false;
+      main.focusChanged();
+      expect(await poll(async () => finishPresence ? true : null, 10_000)).toBe(true);
+      expect(candidateRead).toBe(asked.messageId);
+      mutedFrame = false;
+      expect((await desktopApi("PATCH", `/api/bots/${asked.bot.id}`, { notifications: false })).status).toBe(200);
+      expect(await poll(async () => mutedFrame || null, 10_000)).toBe(true);
+      finishPresence?.();
+      expect(await poll(async () => lists >= 2 ? true : null, 10_000)).toBe(true);
+      notices.at(-1)?.emit("click");
+      expect(opened).not.toContain(asked.messageId);
+      const before = notices.length;
+      expect((await desktopApi("PATCH", `/api/bots/${asked.bot.id}`, { notifications: true })).status).toBe(200);
+      focused = true;
+      main.focusChanged();
+      focused = false;
+      main.focusChanged();
+      expect(await poll(async () => notices.length > before ? true : null, 10_000)).toBe(true);
+      notices.at(-1)?.emit("click");
+      expect(opened.at(-1)).toBe(asked.messageId);
+    } finally {
+      finishPresence?.();
+      stop();
+      main.stopRecovery();
+    }
+  });
+
 });

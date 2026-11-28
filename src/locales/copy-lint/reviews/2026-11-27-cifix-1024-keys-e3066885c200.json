@@ -1,0 +1,420 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "cifix1024-copyrev",
+    "account": "claude opus 5.5 subagent, independent read-only copy review of the 1.0.24 cifix strings (not their author)"
+  },
+  "author": "claude-sonnet-5-5",
+  "date": "2026-11-27",
+  "base": "ed74658d8b",
+  "scope": "cifix 1.0.24: 10 keys x 7 locales",
+  "strings": {
+    "en:composer.files.readFailed": {
+      "text": "That file could not be read. Choose it again.",
+      "en": "That file could not be read. Choose it again.",
+      "verdict": "pass"
+    },
+    "en:composer.files.tooLarge": {
+      "text": "That file is too large. Files of this type can be up to {limit}.",
+      "en": "That file is too large. Files of this type can be up to {limit}.",
+      "verdict": "pass"
+    },
+    "en:composer.files.invalidMindMap": {
+      "text": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass"
+    },
+    "en:composer.files.busy": {
+      "text": "Murage is still reading other mind maps. Try this one again in a moment.",
+      "en": "Murage is still reading other mind maps. Try this one again in a moment.",
+      "verdict": "pass"
+    },
+    "en:composer.files.attachFailed": {
+      "text": "That file could not be attached. Try again.",
+      "en": "That file could not be attached. Try again.",
+      "verdict": "pass"
+    },
+    "en:chatHeader.teach": {
+      "text": "Teach {name} a skill",
+      "en": "Teach {name} a skill",
+      "verdict": "pass"
+    },
+    "en:chatHeader.teachWord": {
+      "text": "Teach",
+      "en": "Teach",
+      "verdict": "pass"
+    },
+    "en:chatHeader.teachTip": {
+      "text": "Teach {name} a skill: show it a task once, and it can do it again",
+      "en": "Teach {name} a skill: show it a task once, and it can do it again",
+      "verdict": "pass"
+    },
+    "en:chatHeader.teachDetail": {
+      "text": "Show it a task once",
+      "en": "Show it a task once",
+      "verdict": "pass"
+    },
+    "en:engine.submission.outsideInput": {
+      "text": "Stopped: a memory check on outside input did not pass.",
+      "en": "Stopped: a memory check on outside input did not pass.",
+      "verdict": "pass"
+    },
+    "de:composer.files.readFailed": {
+      "text": "Die Datei konnte nicht gelesen werden. Wähle sie erneut aus.",
+      "en": "That file could not be read. Choose it again.",
+      "verdict": "pass"
+    },
+    "de:composer.files.tooLarge": {
+      "text": "Die Datei ist zu groß. Dateien dieses Typs dürfen bis zu {limit} groß sein.",
+      "en": "That file is too large. Files of this type can be up to {limit}.",
+      "verdict": "pass"
+    },
+    "de:composer.files.invalidMindMap": {
+      "text": "Die Mindmap konnte nicht gelesen werden. Verwende eine kleinere XMind-Datei oder exportiere sie als Markdown.",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass"
+    },
+    "de:composer.files.busy": {
+      "text": "Murage liest noch andere Mindmaps. Versuche es gleich noch einmal.",
+      "en": "Murage is still reading other mind maps. Try this one again in a moment.",
+      "verdict": "pass"
+    },
+    "de:composer.files.attachFailed": {
+      "text": "Die Datei konnte nicht angehängt werden. Versuche es erneut.",
+      "en": "That file could not be attached. Try again.",
+      "verdict": "pass"
+    },
+    "de:chatHeader.teach": {
+      "text": "Bringe {name} eine Fähigkeit bei",
+      "en": "Teach {name} a skill",
+      "verdict": "pass"
+    },
+    "de:chatHeader.teachWord": {
+      "text": "Beibringen",
+      "en": "Teach",
+      "verdict": "pass"
+    },
+    "de:chatHeader.teachTip": {
+      "text": "Bringe {name} eine Fähigkeit bei: Zeige dem Bot eine Aufgabe nur einmal, dann kann er sie wieder erledigen",
+      "en": "Teach {name} a skill: show it a task once, and it can do it again",
+      "verdict": "pass",
+      "note": "reviewer failed the first wording and supplied this text; applied as suggested"
+    },
+    "de:chatHeader.teachDetail": {
+      "text": "Zeige ihm eine Aufgabe nur einmal",
+      "en": "Show it a task once",
+      "verdict": "pass",
+      "note": "reviewer failed the first wording and supplied this text; applied as suggested"
+    },
+    "de:engine.submission.outsideInput": {
+      "text": "Gestoppt: Eine Gedächtnisprüfung für Eingaben von außen wurde nicht bestanden.",
+      "en": "Stopped: a memory check on outside input did not pass.",
+      "verdict": "pass"
+    },
+    "es:composer.files.readFailed": {
+      "text": "No se pudo leer el archivo. Vuelve a seleccionarlo.",
+      "en": "That file could not be read. Choose it again.",
+      "verdict": "pass"
+    },
+    "es:composer.files.tooLarge": {
+      "text": "El archivo es demasiado grande. Los archivos de este tipo pueden tener hasta {limit}.",
+      "en": "That file is too large. Files of this type can be up to {limit}.",
+      "verdict": "pass"
+    },
+    "es:composer.files.invalidMindMap": {
+      "text": "No se pudo leer el mapa mental. Usa un archivo XMind más pequeño o expórtalo como Markdown.",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass"
+    },
+    "es:composer.files.busy": {
+      "text": "Murage todavía está leyendo otros mapas mentales. Vuelve a intentarlo en un momento.",
+      "en": "Murage is still reading other mind maps. Try this one again in a moment.",
+      "verdict": "pass"
+    },
+    "es:composer.files.attachFailed": {
+      "text": "No se pudo adjuntar el archivo. Vuelve a intentarlo.",
+      "en": "That file could not be attached. Try again.",
+      "verdict": "pass"
+    },
+    "es:chatHeader.teach": {
+      "text": "Enseña una habilidad a {name}",
+      "en": "Teach {name} a skill",
+      "verdict": "pass"
+    },
+    "es:chatHeader.teachWord": {
+      "text": "Enseñar",
+      "en": "Teach",
+      "verdict": "pass"
+    },
+    "es:chatHeader.teachTip": {
+      "text": "Enseña una habilidad a {name}: muéstrale una tarea una vez y podrá repetirla",
+      "en": "Teach {name} a skill: show it a task once, and it can do it again",
+      "verdict": "pass"
+    },
+    "es:chatHeader.teachDetail": {
+      "text": "Muéstrale una tarea una vez",
+      "en": "Show it a task once",
+      "verdict": "pass"
+    },
+    "es:engine.submission.outsideInput": {
+      "text": "Detenido: no se superó una comprobación de memoria sobre contenido externo.",
+      "en": "Stopped: a memory check on outside input did not pass.",
+      "verdict": "pass"
+    },
+    "fr:composer.files.readFailed": {
+      "text": "Ce fichier n’a pas pu être lu. Sélectionne-le à nouveau.",
+      "en": "That file could not be read. Choose it again.",
+      "verdict": "pass"
+    },
+    "fr:composer.files.tooLarge": {
+      "text": "Ce fichier est trop volumineux. Les fichiers de ce type peuvent faire jusqu’à {limit}.",
+      "en": "That file is too large. Files of this type can be up to {limit}.",
+      "verdict": "pass"
+    },
+    "fr:composer.files.invalidMindMap": {
+      "text": "Cette carte mentale n’a pas pu être lue. Utilise un fichier XMind plus petit ou exporte-le en Markdown.",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass"
+    },
+    "fr:composer.files.busy": {
+      "text": "Murage lit encore d’autres cartes mentales. Réessaie dans un instant.",
+      "en": "Murage is still reading other mind maps. Try this one again in a moment.",
+      "verdict": "pass"
+    },
+    "fr:composer.files.attachFailed": {
+      "text": "Ce fichier n’a pas pu être joint. Réessaie.",
+      "en": "That file could not be attached. Try again.",
+      "verdict": "pass"
+    },
+    "fr:chatHeader.teach": {
+      "text": "Apprends une compétence à {name}",
+      "en": "Teach {name} a skill",
+      "verdict": "pass"
+    },
+    "fr:chatHeader.teachWord": {
+      "text": "Enseigner",
+      "en": "Teach",
+      "verdict": "pass",
+      "note": "reviewer failed the first wording and supplied this text; applied as suggested"
+    },
+    "fr:chatHeader.teachTip": {
+      "text": "Apprends une compétence à {name}: montre-lui une tâche une fois, et il pourra la refaire",
+      "en": "Teach {name} a skill: show it a task once, and it can do it again",
+      "verdict": "pass"
+    },
+    "fr:chatHeader.teachDetail": {
+      "text": "Montre-lui une tâche une fois",
+      "en": "Show it a task once",
+      "verdict": "pass"
+    },
+    "fr:engine.submission.outsideInput": {
+      "text": "Arrêté: une vérification de la mémoire sur du contenu externe a échoué.",
+      "en": "Stopped: a memory check on outside input did not pass.",
+      "verdict": "pass"
+    },
+    "hi:composer.files.readFailed": {
+      "text": "यह फ़ाइल पढ़ी नहीं जा सकी। इसे फिर से चुनें।",
+      "en": "That file could not be read. Choose it again.",
+      "verdict": "pass"
+    },
+    "hi:composer.files.tooLarge": {
+      "text": "यह फ़ाइल बहुत बड़ी है। इस प्रकार की फ़ाइलें {limit} तक की हो सकती हैं।",
+      "en": "That file is too large. Files of this type can be up to {limit}.",
+      "verdict": "pass"
+    },
+    "hi:composer.files.invalidMindMap": {
+      "text": "यह माइंड मैप पढ़ा नहीं जा सका। छोटी XMind फ़ाइल इस्तेमाल करें या इसे Markdown के रूप में निर्यात करें।",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass"
+    },
+    "hi:composer.files.busy": {
+      "text": "Murage अभी दूसरे माइंड मैप पढ़ रहा है। थोड़ी देर में फिर से कोशिश करें।",
+      "en": "Murage is still reading other mind maps. Try this one again in a moment.",
+      "verdict": "pass"
+    },
+    "hi:composer.files.attachFailed": {
+      "text": "यह फ़ाइल संलग्न नहीं की जा सकी। फिर से कोशिश करें।",
+      "en": "That file could not be attached. Try again.",
+      "verdict": "pass"
+    },
+    "hi:chatHeader.teach": {
+      "text": "{name} को एक कौशल सिखाएँ",
+      "en": "Teach {name} a skill",
+      "verdict": "pass"
+    },
+    "hi:chatHeader.teachWord": {
+      "text": "सिखाएँ",
+      "en": "Teach",
+      "verdict": "pass"
+    },
+    "hi:chatHeader.teachTip": {
+      "text": "{name} को एक कौशल सिखाएँ: उसे कोई काम एक बार दिखाएँ, फिर वह उसे दोबारा कर सकता है",
+      "en": "Teach {name} a skill: show it a task once, and it can do it again",
+      "verdict": "pass"
+    },
+    "hi:chatHeader.teachDetail": {
+      "text": "उसे कोई काम एक बार दिखाएँ",
+      "en": "Show it a task once",
+      "verdict": "pass"
+    },
+    "hi:engine.submission.outsideInput": {
+      "text": "रोका गया: बाहर से आए इनपुट की मेमोरी जाँच पास नहीं हुई।",
+      "en": "Stopped: a memory check on outside input did not pass.",
+      "verdict": "pass"
+    },
+    "ja:composer.files.readFailed": {
+      "text": "このファイルを読み取れませんでした。もう一度選択してください。",
+      "en": "That file could not be read. Choose it again.",
+      "verdict": "pass"
+    },
+    "ja:composer.files.tooLarge": {
+      "text": "このファイルは大きすぎます。この種類のファイルは {limit} まで添付できます。",
+      "en": "That file is too large. Files of this type can be up to {limit}.",
+      "verdict": "pass"
+    },
+    "ja:composer.files.invalidMindMap": {
+      "text": "このマインドマップを読み取れませんでした。小さい XMind ファイルを使うか、Markdown として書き出してください。",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass"
+    },
+    "ja:composer.files.busy": {
+      "text": "Murage は他のマインドマップを読み取っています。少し待ってからもう一度お試しください。",
+      "en": "Murage is still reading other mind maps. Try this one again in a moment.",
+      "verdict": "pass"
+    },
+    "ja:composer.files.attachFailed": {
+      "text": "このファイルを添付できませんでした。もう一度お試しください。",
+      "en": "That file could not be attached. Try again.",
+      "verdict": "pass"
+    },
+    "ja:chatHeader.teach": {
+      "text": "{name} にスキルを教える",
+      "en": "Teach {name} a skill",
+      "verdict": "pass"
+    },
+    "ja:chatHeader.teachWord": {
+      "text": "教える",
+      "en": "Teach",
+      "verdict": "pass"
+    },
+    "ja:chatHeader.teachTip": {
+      "text": "{name} にスキルを教える：作業を一度見せると、同じ作業をもう一度できるようになります",
+      "en": "Teach {name} a skill: show it a task once, and it can do it again",
+      "verdict": "pass"
+    },
+    "ja:chatHeader.teachDetail": {
+      "text": "作業を一度見せる",
+      "en": "Show it a task once",
+      "verdict": "pass"
+    },
+    "ja:engine.submission.outsideInput": {
+      "text": "停止しました：外部からの入力に対するメモリの確認に合格しませんでした。",
+      "en": "Stopped: a memory check on outside input did not pass.",
+      "verdict": "pass"
+    },
+    "pt-br:composer.files.readFailed": {
+      "text": "Não foi possível ler o arquivo. Selecione-o novamente.",
+      "en": "That file could not be read. Choose it again.",
+      "verdict": "pass"
+    },
+    "pt-br:composer.files.tooLarge": {
+      "text": "O arquivo é muito grande. Arquivos deste tipo podem ter até {limit}.",
+      "en": "That file is too large. Files of this type can be up to {limit}.",
+      "verdict": "pass"
+    },
+    "pt-br:composer.files.invalidMindMap": {
+      "text": "Não foi possível ler o mapa mental. Use um arquivo XMind menor ou exporte-o como Markdown.",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass"
+    },
+    "pt-br:composer.files.busy": {
+      "text": "O Murage ainda está lendo outros mapas mentais. Tente novamente em instantes.",
+      "en": "Murage is still reading other mind maps. Try this one again in a moment.",
+      "verdict": "pass"
+    },
+    "pt-br:composer.files.attachFailed": {
+      "text": "Não foi possível anexar o arquivo. Tente novamente.",
+      "en": "That file could not be attached. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:chatHeader.teach": {
+      "text": "Ensine uma habilidade a {name}",
+      "en": "Teach {name} a skill",
+      "verdict": "pass"
+    },
+    "pt-br:chatHeader.teachWord": {
+      "text": "Ensinar",
+      "en": "Teach",
+      "verdict": "pass"
+    },
+    "pt-br:chatHeader.teachTip": {
+      "text": "Ensine uma habilidade a {name}: mostre uma tarefa uma vez e ele poderá repeti-la",
+      "en": "Teach {name} a skill: show it a task once, and it can do it again",
+      "verdict": "pass"
+    },
+    "pt-br:chatHeader.teachDetail": {
+      "text": "Mostre uma tarefa uma vez",
+      "en": "Show it a task once",
+      "verdict": "pass"
+    },
+    "pt-br:engine.submission.outsideInput": {
+      "text": "Parado: uma verificação de memória da entrada externa não foi aprovada.",
+      "en": "Stopped: a memory check on outside input did not pass.",
+      "verdict": "pass",
+      "note": "reviewer failed the first wording and supplied this text; applied as suggested"
+    },
+    "zh:composer.files.readFailed": {
+      "text": "无法读取此文件。请重新选择。",
+      "en": "That file could not be read. Choose it again.",
+      "verdict": "pass"
+    },
+    "zh:composer.files.tooLarge": {
+      "text": "此文件太大。此类文件的大小上限为 {limit}。",
+      "en": "That file is too large. Files of this type can be up to {limit}.",
+      "verdict": "pass"
+    },
+    "zh:composer.files.invalidMindMap": {
+      "text": "无法读取此思维导图。请使用较小的 XMind 文件，或将其导出为 Markdown。",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass"
+    },
+    "zh:composer.files.busy": {
+      "text": "Murage 仍在读取其他思维导图。请稍后重试。",
+      "en": "Murage is still reading other mind maps. Try this one again in a moment.",
+      "verdict": "pass"
+    },
+    "zh:composer.files.attachFailed": {
+      "text": "无法附加此文件。请重试。",
+      "en": "That file could not be attached. Try again.",
+      "verdict": "pass"
+    },
+    "zh:chatHeader.teach": {
+      "text": "教 {name} 一项技能",
+      "en": "Teach {name} a skill",
+      "verdict": "pass"
+    },
+    "zh:chatHeader.teachWord": {
+      "text": "教它",
+      "en": "Teach",
+      "verdict": "pass",
+      "note": "reviewer failed the first wording and supplied this text; applied as suggested"
+    },
+    "zh:chatHeader.teachTip": {
+      "text": "教 {name} 一项技能：给它演示一次任务，它就能再次完成",
+      "en": "Teach {name} a skill: show it a task once, and it can do it again",
+      "verdict": "pass"
+    },
+    "zh:chatHeader.teachDetail": {
+      "text": "给它演示一次任务",
+      "en": "Show it a task once",
+      "verdict": "pass"
+    },
+    "zh:engine.submission.outsideInput": {
+      "text": "已停止：对外部输入的记忆检查未通过。",
+      "en": "Stopped: a memory check on outside input did not pass.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

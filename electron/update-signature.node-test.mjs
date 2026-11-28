@@ -361,7 +361,7 @@ test("actual updater wiring sets a download check on every platform: signed SUMS
         // The platform choice inside it (Linux SUMS vs signed build version) has its own tests (update-build-version).
         assert.deepEqual({ ...options }, { currentVersion: "1.9.0", packageType });
         return async () => {};
-      }, createGithubFallbackFeed: () => ({ activate: async () => false, reset() {} }),
+      }, createGithubFallbackFeed: () => ({ activate: async () => false, reset() {} }), createRingFeed: () => null, createRingMembership: () => () => ({}), verifyDetachedSignature: () => "", readFileSync: () => "", URL,
       electronIpcMain: {}, installWindowsUpdateVerifier: () => false,
     });
     vm.runInContext(source + "\nstartUpdater({ scheduleChecks: false });", context);

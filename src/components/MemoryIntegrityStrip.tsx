@@ -41,9 +41,12 @@ export function MemoryIntegrityStripView({ view, announced }: { view: StripView 
       className={`flex items-center justify-center gap-2 px-4 py-2 text-[13px] ${alert ? "bg-danger text-white font-medium" : "bg-raised text-ink"}`}
     >
       {view.kind === "working" && <Loader2 size={14} className="shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
-      {/* the visible sentence changes with every reading, so it is not the live region */}
-      <span aria-hidden={alert ? undefined : true}>{view.text}</span>
-      {!alert && <span className="sr-only" role="status" aria-live="polite">{spoken}</span>}
+      {/* the visible sentence changes with every reading, so it is not the live region once the spoken line lags behind it; while both say
+          the same words (the first reading) one element carries them, so the sentence is on the page once, not twice */}
+      {alert || spoken !== view.text
+        ? <span aria-hidden={alert ? undefined : true}>{view.text}</span>
+        : <span role="status" aria-live="polite">{view.text}</span>}
+      {!alert && spoken !== view.text && <span className="sr-only" role="status" aria-live="polite">{spoken}</span>}
     </div>
   );
 }

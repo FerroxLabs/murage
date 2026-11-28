@@ -417,5 +417,24 @@
   },
   "spErrStorageUnavailable": {
     "message": "Der Chrome-Speicher konnte nicht gelesen werden. Starte Chrome neu und teile deine Tabs dann erneut."
+  },
+  "spGrantTitle": {
+    "message": "Dein Browser"
+  },
+  "spGrantOn": {
+    "message": "$BOT$ darf deinen Browser verwenden.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spGrantOff": {
+    "message": "$BOT$ darf deinen Browser nicht verwenden. Zum Einschalten öffne die Murage-App auf deinem Computer.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
   }
 }

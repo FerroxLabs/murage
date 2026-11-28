@@ -81,8 +81,11 @@ it.each(['bash cleanup.sh','source ./cleanup.sh','ksh cleanup.sh','bash < cleanu
  try{
   await instance.adapter.sendTurn({threadId:'t',cwd,text:'__fixture_permission_tool__',noLimits:true,stopLine:true,routeAsks:true});
   await recorder.until(event=>event.type==='turn.completed',45000);
-  // MAIN RULING 2026-11-13 narrow-wipe (Sean)
-  expect(errors).toEqual([]);expect(outcomes).toEqual([]);expect(recovery.decisions).toEqual(['allow']);
+  // MAIN-RULING 2026-11-27 (2) supersedes the 2026-11-13 narrow-wipe for a script this turn wrote: the hook's wipe check reads its body
+  // (claude.ts passes the turn's written scripts), so a script that deletes the home folder opens the wipe card and is never allowed;
+  // a script fed on stdin is still not followed.
+  const reads=command!=='bash < cleanup.sh';
+  expect(errors).toEqual([]);expect(outcomes).toEqual(reads?['card']:[]);expect(recovery.decisions).toEqual(reads?['deny']:['allow']);
  }finally{recovery.fail=false;off();recorder.stop();f.dispose();}
 },60000);
 

@@ -10,13 +10,15 @@ import { isPhoneClient } from "@/lib/phone-client";
 import { api, useStore, type Bot } from "@/state/store";
 export type ExtensionSiteAccess = "allow" | "ask" | "never";
 export type BrowserExtensionPanelStatus = {
-  profiles: { profileId: string; browser: string; extensionVersion?: string }[];
-  bindings: { bindingId: string; botId: string; threadId: string; profileId: string; state: "active" | "paused" | "stopped"; /** EXT-RESTART 3.7: why the server paused it (connection_lost, uncertain, handoff). */ pausedReason?: string; /** Paused for a step only the owner can do (spec 2.5.1). */ handoff?: boolean; /** The task ended (End task or Stop): the offer to allow its sites for good reads this. */ taskEnded?: boolean; /** A failed save turned Allow always sites back to Ask (the status poll carries it). */ sitesLowered?: boolean; sites: Record<string, ExtensionSiteAccess> }[];
+  profiles: { profileId: string; browser: string; extensionVersion?: string; capabilities?: string[] }[];
+  bindings: { bindingId: string; botId: string; threadId: string; profileId: string; state: "active" | "paused" | "stopped"; /** CHROME-RESUME-FROM-APP: the generation the app shows (the Resume names it). */ generation?: number; /** The last step may have run (an uncertain restart report). */ outcomeUnknown?: boolean; /** EXT-RESTART 3.7: why the server paused it (connection_lost, uncertain, handoff). */ pausedReason?: string; /** Paused for a step only the owner can do (spec 2.5.1). */ handoff?: boolean; /** The task ended (End task or Stop): the offer to allow its sites for good reads this. */ taskEnded?: boolean; /** A failed save turned Allow always sites back to Ask (the status poll carries it). */ sitesLowered?: boolean; sites: Record<string, ExtensionSiteAccess> }[];
   helper: { running: boolean; reason?: string; problem?: "repair" | "foreign"; shared?: Partial<Record<Browser, string[]>> };
   storeUrl: string | null;
   extensionBuild?: "release" | "development" | "none";
   /** The server's route for starting a new task after Stop (C2). Absent until that route exists; the button stays hidden. */
   startTaskRoute?: string;
+  /** CHROME-RESUME-FROM-APP: the route says this request comes from the Murage app on this computer (the server check is the authority). */
+  canResumeHere?: boolean;
 };
 type Browser = "chrome" | "edge" | "brave";
 /** The tasks the server says have ended, whose sites the bot used (spec 2.3). */
@@ -45,6 +47,11 @@ export function extensionNeedsUpdate(version: string | undefined): boolean {
   const [major = 0, minor = 0, patch = 0] = parts;
   return major < 1 || (major === 1 && minor === 0 && patch < 1);
 }
+/** CHROME-RESUME-FROM-APP: the owner's Resume at the desktop needs an extension that says so in its hello. */
+export const APP_RESUME_CAPABILITY = "app_resume_v1";
+export const canResumeFromApp = (status: BrowserExtensionPanelStatus | null | undefined, binding: BrowserExtensionPanelStatus["bindings"][number]): boolean =>
+  status?.canResumeHere === true && binding.state === "paused" && !binding.handoff && binding.pausedReason !== "handoff" && typeof binding.generation === "number"
+  && status.profiles.find(profile => profile.profileId === binding.profileId)?.capabilities?.includes(APP_RESUME_CAPABILITY) === true;
 export function pairedExtensionProfile(profiles: ReadonlyArray<{ profileId: string; browser?: string }>): { ready: boolean; profileId?: string } {
   const chrome = profiles.filter(profile => ["chrome", "chromium"].includes((profile.browser ?? "").toLowerCase()));
   const named = chrome.length === 1 && (chrome[0]!.browser ?? "").toLowerCase() === "chrome" ? chrome[0]!.profileId : undefined;
@@ -83,11 +90,11 @@ export function setupProgress(status: BrowserExtensionPanelStatus | null, profil
 }
 const SUMMARY: Record<ApprovalMode, "browserExt.setup.summary.step" | "browserExt.setup.summary.task" | "browserExt.setup.summary.full"> = { step: "browserExt.setup.summary.step", task: "browserExt.setup.summary.task", full: "browserExt.setup.summary.full" };
 const MODE_NAME: Record<ApprovalMode, "browserExt.mode.step.name" | "browserExt.mode.task.name" | "browserExt.mode.full.name"> = { step: "browserExt.mode.step.name", task: "browserExt.mode.task.name", full: "browserExt.mode.full.name" };
-type ViewProps = { botId?: string; botName: string; profileId?: string; status: BrowserExtensionPanelStatus | null; pending: boolean; error: string; connectBrowser: Browser; onConnectBrowser: (browser: Browser) => void; onCheck: (browser: Browser) => void; onProfile: (profileId: string) => void; onAction: (action: "stop" | "pause", bindingId: string) => void; /** Start a new task after Stop; shown only when the status carries the route. */ onStartNew?: (bindingId: string) => void; onSite: (bindingId: string, origin: string, access: ExtensionSiteAccess) => void; onOwnBrowser: () => void;
+type ViewProps = { botId?: string; botName: string; profileId?: string; status: BrowserExtensionPanelStatus | null; pending: boolean; error: string; connectBrowser: Browser; onConnectBrowser: (browser: Browser) => void; onCheck: (browser: Browser) => void; onProfile: (profileId: string) => void; onAction: (action: "stop" | "pause", bindingId: string) => void; /** CHROME-RESUME-FROM-APP: Resume at the generation shown. */ onResume?: (bindingId: string, generation: number) => void; resumeNote?: string; /** Start a new task after Stop; shown only when the status carries the route. */ onStartNew?: (bindingId: string) => void; onSite: (bindingId: string, origin: string, access: ExtensionSiteAccess) => void; onOwnBrowser: () => void;
   /** Mode, approved sites and activity (T34); the container fills it. */ settings?: ReactNode; /** Moved here from remote debugging by itself: say so once. */ upgraded?: boolean; onDismissUpgraded?: () => void; removing?: boolean; removedNote?: string; onRepair?: (browser: Browser) => void; onRemoveAsk?: () => void; onRemoveConfirm?: (browser: Browser) => void; onRemoveCancel?: () => void;
   /** Setup step 3: the three cards (compact) for the first choice, the full settings after Change. */ modeCards?: ReactNode; modeSettings?: ReactNode; approvalMode?: ApprovalMode; /** The server's stored mode has been read. */ modeKnown?: boolean; /** The read itself: step 3 shows no choice until it is in, and offers Try again when it failed. */ modeRead?: "loading" | "failed" | "known"; onModeRetry?: () => void;
   /** Full access was on during this visit: its settings stay reachable on step 1 or 2 after it is turned off. */ keepSettings?: boolean; wizard?: SetupWizard; onWizard?: (patch: Partial<SetupWizard>) => void };
-export function BrowserExtensionPanelView({ botId, botName, profileId, status, pending, error, connectBrowser, onConnectBrowser, onCheck, onProfile, onAction, onStartNew, onSite, onOwnBrowser, settings, upgraded, onDismissUpgraded, removing, removedNote, onRepair, onRemoveAsk, onRemoveConfirm, onRemoveCancel, modeCards, modeSettings, approvalMode = "task", modeKnown = false, modeRead = modeKnown ? "known" : "loading", onModeRetry, keepSettings = false, wizard = NO_WIZARD, onWizard }: ViewProps) {
+export function BrowserExtensionPanelView({ botId, botName, profileId, status, pending, error, connectBrowser, onConnectBrowser, onCheck, onProfile, onAction, onResume, resumeNote, onStartNew, onSite, onOwnBrowser, settings, upgraded, onDismissUpgraded, removing, removedNote, onRepair, onRemoveAsk, onRemoveConfirm, onRemoveCancel, modeCards, modeSettings, approvalMode = "task", modeKnown = false, modeRead = modeKnown ? "known" : "loading", onModeRetry, keepSettings = false, wizard = NO_WIZARD, onWizard }: ViewProps) {
   const connected = !!status?.profiles.some(profile => profileId ? profile.profileId === profileId : profile.browser.toLowerCase() === connectBrowser);
   // The stored profile is gone (a reinstalled extension makes a new id) while others are live: offer the picker, and for a single new profile an owner-confirmed rebind.
   const replaced = !!profileId && !!status && status.profiles.length > 0 && !connected;
@@ -138,12 +145,18 @@ export function BrowserExtensionPanelView({ botId, botName, profileId, status, p
     {replaced && <div data-rebind-profile className="flex flex-col gap-3 rounded-lg bg-card p-3"><p>Murage for Chrome has a new browser profile since you last connected. Choose it and {botName} carries on in your browser.</p>{status!.profiles.length === 1 && <button className={control} data-action="use-new-profile" disabled={pending} onClick={() => onProfile(status!.profiles[0]!.profileId)}>Use this browser profile</button>}</div>}
     {status && (status.profiles.length > 1 || (!profileId && status.profiles.length === 1) || replaced) && <label className="flex flex-col gap-2">Browser profile<select className={control} aria-label="Connected browser profile" value={replaced ? "" : profileId ?? ""} disabled={pending} onChange={event => onProfile(event.target.value)}><option value="" disabled>Choose a profile</option>{status.profiles.map(profile => <option key={profile.profileId} value={profile.profileId}>{profile.browser} · {profile.profileId.slice(0, 8)}</option>)}</select></label>}
     {connected && <>
-      <p className="text-ink-secondary">Share a tab from the extension side panel. Resume there after checking the page. Private input stays paused until you choose to continue.</p>
+      <p className="text-ink-secondary">Share a tab from the extension side panel. Resume here or in the side panel after checking the page. Private input stays paused until you choose to continue.</p>
       {!status?.bindings.length && <p>No browser task is active. Ask {botName} to use a shared tab.</p>}
+      {resumeNote && <p role="status" data-resume-note className="text-ink-secondary">{resumeNote}</p>}
       {status?.bindings.map(binding => <div key={binding.bindingId} className="flex flex-col gap-3 rounded-lg border border-hairline p-3">
         {binding.handoff && binding.state === "paused" && <div role="status" data-your-turn className="rounded-lg border-2 border-warning p-3"><p className="font-medium">{t("browserExt.yourTurn.title")}</p><p className="text-ink-secondary">{t("browserExt.yourTurn.chatReminder", { bot: botName })}</p></div>}
         <p role="status">{binding.state !== "stopped" && !status?.profiles.some(profile => profile.profileId === binding.profileId) ? t("browserExt.state.offline") : binding.state === "active" ? "Ready to work in shared tabs" : binding.state === "paused" && (binding.pausedReason === "connection_lost" || binding.pausedReason === "uncertain") ? t("browserExt.state.connectionLost") : binding.state === "paused" ? "Paused by you" : "Stopped by you"}</p>
-        {binding.state === "paused" && extensionNeedsUpdate(status?.profiles.find(profile => profile.profileId === binding.profileId)?.extensionVersion) && <p role="status" data-extension-update className="text-ink-secondary">{t("browserExt.updateToResume")}</p>}
+        {binding.state === "paused" && !binding.handoff && status?.canResumeHere === true && status.profiles.some(profile => profile.profileId === binding.profileId) && status.profiles.find(profile => profile.profileId === binding.profileId)?.capabilities?.includes(APP_RESUME_CAPABILITY) !== true && <p role="status" data-extension-update className="text-ink-secondary">{t("browserExt.updateToResumeApp")}</p>}
+        {binding.state === "paused" && status?.canResumeHere !== true && extensionNeedsUpdate(status?.profiles.find(profile => profile.profileId === binding.profileId)?.extensionVersion) && <p role="status" data-extension-update className="text-ink-secondary">{t("browserExt.updateToResume")}</p>}
+        {canResumeFromApp(status, binding) && <div className="flex flex-col gap-2">
+          {(binding.outcomeUnknown === true || binding.pausedReason === "uncertain") && <p role="status" data-resume-hint className="text-ink-secondary">{t("browserExt.resume.uncertainHint")}</p>}
+          <button className={control} data-action="resume" disabled={pending} onClick={() => onResume?.(binding.bindingId, binding.generation as number)}>{t("browserExt.resume.button")}</button>
+        </div>}
         <div className="flex flex-wrap gap-2"><button className={control} disabled={pending || binding.state === "stopped"} onClick={() => onAction("stop", binding.bindingId)}>Stop</button><button className={control} disabled={pending || binding.state !== "active"} onClick={() => onAction("pause", binding.bindingId)}>Pause</button>{binding.state === "stopped" && onStartNew && startNewTaskRoute(status) && <button className={control} data-action="start-new-task" disabled={pending} onClick={() => onStartNew(binding.bindingId)}>{t("browserExt.task.startNew")}</button>}</div>
         {Object.entries(binding.sites).map(([origin, access]) => <label key={origin} className="flex min-w-0 flex-col gap-2"><span className="break-all">{origin}</span><select aria-label={`Site access for ${origin}`} className={control} disabled={pending} value={access} onChange={event => onSite(binding.bindingId, origin, event.target.value as ExtensionSiteAccess)}><option value="allow">Allow site access</option><option value="ask">Ask each time</option><option value="never">Never allow</option></select></label>)}
       </div>)}
@@ -170,6 +183,7 @@ export function BrowserExtensionPanel({ bot, onChoose }: { bot: Bot; onChoose: (
   const [pending, setPending] = useState(false);
   const [connectBrowser, setConnectBrowser] = useState<Browser>(rememberedBrowser(bot));
   const [removing, setRemoving] = useState(false);
+  const [resumeNote, setResumeNote] = useState("");
   const [removedNote, setRemovedNote] = useState("");
   const [upgraded, setUpgraded] = useState(() => upgradedToExtension.has(bot.id));
   const [wizard, setWizard] = useState<SetupWizard>(NO_WIZARD);
@@ -202,6 +216,21 @@ export function BrowserExtensionPanel({ bot, onChoose }: { bot: Bot; onChoose: (
   },[bot.id,bot.browserMode,bot.browserSetupRevision,bot.selectionRevision,bot.browserExtensionProfileId,bot.browserExtensionBrowser,setupProfileId,dispatch]);
   const perform = async (operation: () => Promise<void>) => { const generation = epoch.current; setPending(true); setError(""); try { await operation(); } catch(cause) { if (epoch.current === generation) setError(cause instanceof Error ? cause.message : "Browser update failed. Try again."); } finally { if (epoch.current === generation) setPending(false); } };
   const action = (body: Record<string, unknown>) => perform(async () => { const generation = epoch.current; await api(base, { method: "POST", body: JSON.stringify(body) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); });
+  // CHROME-RESUME-FROM-APP (U5, U6): the press names the generation shown; every press ends in a plain sentence, never a hang.
+  const resume = (bindingId: string, generation: number) => perform(async () => {
+    const generationSeen = epoch.current; setResumeNote("");
+    try {
+      const result = await api(base, { method: "POST", body: JSON.stringify({ action: "resume", bindingId, generation }) }) as BrowserExtensionPanelStatus & { code?: string };
+      if (generationSeen !== epoch.current) return;
+      setStatus(result);
+      if (result.code === "resume_unconfirmed") setResumeNote(t("browserExt.resume.unconfirmed"));
+    } catch (cause) {
+      const key = (cause as { body?: { errorKey?: string } }).body?.errorKey;
+      if (generationSeen === epoch.current) setResumeNote(key ? t(key as Parameters<typeof t>[0]) : cause instanceof Error ? cause.message : t("browserExt.owner.errorResumeFailed"));
+      const next = await api(base).catch(() => null) as BrowserExtensionPanelStatus | null;
+      if (next && generationSeen === epoch.current) setStatus(next);
+    }
+  });
   // Repair: remove only the owned registration this build cannot reuse, then connect again.
   const repair = (browser: Browser) => perform(async () => { const generation = epoch.current; await api(base, { method: "POST", body: JSON.stringify({ action: "remove", browser }) }); await api(base, { method: "POST", body: JSON.stringify({ action: "connect", browser }) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); });
   const remove = (browser: Browser) => perform(async () => {
@@ -214,7 +243,7 @@ export function BrowserExtensionPanel({ bot, onChoose }: { bot: Bot; onChoose: (
   // Pairing changes readiness only. An owner profile choice uses the same
   // preview and revision check as the always-visible picker.
   const patch = (body: Record<string, unknown>) => onChoose({ mode: body.useMyChrome === false ? 'builtin' : 'chrome-extension', profile: typeof body.browserExtensionProfileId === 'string' ? body.browserExtensionProfileId : undefined, browser: connectBrowser });
-  return <BrowserExtensionPanelView botId={bot.id} botName={bot.name} profileId={bot.browserExtensionProfileId} status={status} pending={pending} error={error || connectionError} connectBrowser={connectBrowser} onConnectBrowser={setConnectBrowser} onCheck={browser => void action({ action: "connect", browser })} onProfile={profileId => void patch({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: profileId })} onAction={(name, bindingId) => void action({ action: name, bindingId })} onStartNew={bindingId => { const route = startNewTaskRoute(status); if (route) void perform(async () => { const generation = epoch.current; await api(route, { method: "POST", body: JSON.stringify({ bindingId }) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); }); }} onSite={(bindingId, origin, access) => void action({ action: "site", bindingId, origin, access })} onOwnBrowser={() => void patch({ useMyChrome: false, browserTransport: null, browserExtensionProfileId: null })}
+  return <BrowserExtensionPanelView botId={bot.id} botName={bot.name} profileId={bot.browserExtensionProfileId} status={status} pending={pending} error={error || connectionError} connectBrowser={connectBrowser} onConnectBrowser={setConnectBrowser} onCheck={browser => void action({ action: "connect", browser })} onProfile={profileId => void patch({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: profileId })} onAction={(name, bindingId) => void action({ action: name, bindingId })} onResume={(bindingId, generation) => void resume(bindingId, generation)} resumeNote={resumeNote} onStartNew={bindingId => { const route = startNewTaskRoute(status); if (route) void perform(async () => { const generation = epoch.current; await api(route, { method: "POST", body: JSON.stringify({ bindingId }) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); }); }} onSite={(bindingId, origin, access) => void action({ action: "site", bindingId, origin, access })} onOwnBrowser={() => void patch({ useMyChrome: false, browserTransport: null, browserExtensionProfileId: null })}
     modeCards={approval.view(true)} modeSettings={approval.view()} approvalMode={approval.mode} modeKnown={approval.known} modeRead={approval.read} onModeRetry={approval.retry} keepSettings={keepSettings} wizard={wizard} onWizard={onWizard}
-    settings={<><BrowserApprovedSites bot={bot} profileId={bot.browserExtensionProfileId} endedBindingIds={endedBindingIds(status)} sitesLowered={sitesLoweredIn(status)} /><BrowserActivityLog bot={bot} /></>} upgraded={upgraded} onDismissUpgraded={() => { upgradedToExtension.delete(bot.id); setUpgraded(false); }} removing={removing} removedNote={removedNote} onRepair={browser => void repair(browser)} onRemoveAsk={() => { setRemovedNote(""); setRemoving(true); }} onRemoveConfirm={browser => void remove(browser)} onRemoveCancel={() => setRemoving(false)} />;
+    settings={<><BrowserApprovedSites bot={bot} profileId={bot.browserExtensionProfileId} endedBindingIds={endedBindingIds(status)} sitesLowered={sitesLoweredIn(status)} connectionError={status ? "" : connectionError} /><BrowserActivityLog bot={bot} /></>} upgraded={upgraded} onDismissUpgraded={() => { upgradedToExtension.delete(bot.id); setUpgraded(false); }} removing={removing} removedNote={removedNote} onRepair={browser => void repair(browser)} onRemoveAsk={() => { setRemovedNote(""); setRemoving(true); }} onRemoveConfirm={browser => void remove(browser)} onRemoveCancel={() => setRemoving(false)} />;
 }

@@ -2,6 +2,15 @@ import type { Routine, RoutineRun, RoutineSchedule } from "./routines";
 
 export const CALENDAR_SLOT_MINUTES = 5;
 const ROUTINE_MARKER_MINUTES = 30;
+/** A new one-time routine's default moment is never closer than this, so filling the form in does not carry it into the past. */
+export const DEFAULT_ONCE_LEAD_MINUTES = 2;
+
+/** The default time for a new one-time routine: the next 5-minute mark (local) at least DEFAULT_ONCE_LEAD_MINUTES ahead. */
+export function defaultOnceMoment(now: number): number {
+  const step = CALENDAR_SLOT_MINUTES * 60_000;
+  const offset = new Date(now).getTimezoneOffset() * 60_000;
+  return Math.ceil((now + DEFAULT_ONCE_LEAD_MINUTES * 60_000 - offset) / step) * step + offset;
+}
 const MAX_RECEIPTS_PER_ROUTINE_PER_RANGE = 12;
 
 export type RoutineCalendarItem = {

@@ -51,6 +51,21 @@ export function questionDisplayAction(card: OptionCardData, messageId: string, a
   }), ...(sentAsMessage ? { sentAsMessage: true } : {}) };
 }
 
+/** A pick named by its option label (the Needs you row's one tap, quickAnswerChoices) as the display action the chat card
+ *  posts for the same pick (q1022-approvefix): one answer path, never the card's handle sent as a raw request id. */
+export function questionDisplayActionByLabel(card: OptionCardData, messageId: string, answers: QuestionAnswer[]): DisplayAction {
+  const questions = cardQuestions(card);
+  return questionDisplayAction(card, messageId, answers.map((answer) => {
+    const question = questions.find((candidate) => questionKey(candidate) === answer.id);
+    if (!question) return answer;
+    return { ...answer, selected: answer.selected.map((picked) => {
+      // By label only: a label may read like another option's handle ("o.0.1"), and the tap named the label.
+      const option = question.options.find((candidate) => candidate.label === picked);
+      return option ? optionKey(option) : picked;
+    }) };
+  }));
+}
+
 export type QuestionCardState = "open" | "answered" | "skipped" | "expired" | "sent" | "closed";
 
 /** Where a question card stands, from the persisted card alone. */

@@ -7,6 +7,7 @@ import type { RepairBot } from "./keepall-unwedge.ts";
 import { denyLookup, memoryLookup, sessionLookup } from "./deny-read.ts";
 import { AUDIENCE_COALESCED, memoryRefKey, type MemoryRef } from "./lineage-types.ts";
 import { sessionKeyOf } from "./session-incarnation.ts";
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { CONTENT, MEMBER, OWNER, WritetimeFixture } from "./testing/writetime-fixture.ts";
 
 const fixtures: WritetimeFixture[] = [];
@@ -84,7 +85,7 @@ it("fresh_start_clears_exactly_p1", () => {
     !([900, 901].includes(Number(row.revoke_id)) && eligible.some(key => key.threadId === row.thread_id && key.driverInstance === row.driver_instance && key.nativeSession === row.native_session))) };
   expect(snapshot(fx)).toEqual(expected); // every other table, including epochs, is identical
   const retained = expected.memory_deny_session.filter(row => ["T", "room"].includes(String(row.thread_id))).length
-    + before.memory_deny_line.length + before.memory_deny_range.length;
+    + before.memory_deny_point.length + before.memory_deny_range.length;
   expect(plan.retainedBlocks).toBe(retained);
   expect(plan.retainedCapped).toBe(false);
   expect(apply(fx, plan)).toBe(0);
@@ -253,6 +254,25 @@ it("fresh_start_bounds_cursor_candidates_too", () => {
   expect(plan.cursorClears).toEqual([]);
   expect(apply(fx, plan)).toBe(0);
   expect(snapshot(fx)).toEqual(before);
+});
+
+// 1.0.23 q1023-bump14: the planner admits exactly this build's schema (MEMORY_SCHEMA_VERSION, 14), never the one before or an unknown later one.
+it.each([
+  ["current", 0, null],
+  ["previous", -1, "unsupported-schema"],
+  ["future", 1, "unsupported-schema"],
+] as const)("fresh_start_schema_version_gate (%s)", (_name, delta, blocked) => {
+  const fx = setup();
+  if (delta !== 0) {
+    fx.db.exec("PRAGMA ignore_check_constraints=ON"); // memory_meta's CHECK pins the version a real file of another build would carry
+    fx.db.prepare("UPDATE memory_meta SET schema_version=? WHERE id=1").run(MEMORY_SCHEMA_VERSION + delta);
+    fx.db.exec("PRAGMA ignore_check_constraints=OFF");
+  }
+  const before = snapshot(fx), plan = planFreshStart(fx.db, bot, deps);
+  expect(plan.blocked).toBe(blocked);
+  expect(plan.sessionRows).toHaveLength(blocked ? 0 : 1);
+  expect(apply(fx, plan)).toBe(blocked ? 0 : 1);
+  if (blocked) expect(snapshot(fx)).toEqual(before);
 });
 
 it("fresh_start_unsupported_schema_blocks", () => {

@@ -215,7 +215,6 @@ async function refusal(res: Response): Promise<{ message: string; code: string; 
     return { message: "", code: "", param: "" };
   }
 }
-const said = async (res: Response) => (await refusal(res)).message;
 
 export async function synthesize(text: string, voice: string, endpoint: VoiceEndpoint | null, call: typeof fetch = fetch): Promise<Audio> {
   return (await synthesizeClip(text, voice, endpoint, false, call)) as Audio;
@@ -273,14 +272,13 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
         retry = policy.attempts !== 1 && attempt === 0 && Date.now() - started <= RETRY_ONLY_IF_WITHIN_MS;
         if (retry) await res.body?.cancel().catch(() => undefined);
       }
-    } catch (error) {
+    } catch {
       clearTimeout(timer);
       if (policy.signal?.aborted) throw new DOMException("Speech cancelled", "AbortError");
       const timedOut = control.signal.aborted;
       fail(timedOut ? "timeout" : "network", Date.now() - started);
-      retry = policy.attempts !== 1 && attempt === 0 && !timedOut && Date.now() - started <= RETRY_ONLY_IF_WITHIN_MS;
-      if (!retry) throw unreachable();
-      res = undefined;
+      // Fetch can reject after the provider received the paid POST.
+      throw unreachable();
     }
     if (!retry) break;
     await new Promise((resolve) => setTimeout(resolve, retryMs));
@@ -309,16 +307,13 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
     if (endpoint.via !== "flux" || classifyFluxRefusal(res.status, { code }) !== "budget") throw new Error(`${provider} voices need a paid plan. The key is fine; the plan does not cover it yet.`);
     throw new SpeechBudgetReached();
   }
-  if (res.status === 429) throw new RateLimitedError((await said(res)) || `${provider} is rate-limiting this account. Wait a moment and try again.`, retryAfterMs(res.headers.get("retry-after")));
+  if (res.status === 429) throw new RateLimitedError(`${provider} is rate-limiting this account. Wait a moment and try again.`, retryAfterMs(res.headers.get("retry-after")));
   if (eleven && res.status === 400) {
     const { param } = await refusal(res);
     if (param === "voice") throw new ElevenVoiceNotOffered(`Flux no longer offers the ElevenLabs voice ${chosen}. Pick another voice.`);
     throw new ElevenRefused("ElevenLabs couldn't speak this text through Flux. Try again, or pick another voice.");
   }
-  if (!res.ok) {
-    const theirs = await said(res);
-    throw new Error(theirs ? `Speaking failed: ${theirs}` : `Speaking failed (${res.status})`);
-  }
+  if (!res.ok) throw new Error(`Speaking failed (${res.status})`);
   // A reply that is not audio (a proxy's error page, JSON sent with 200) must
   // never reach the player as if it were sound.
   const type = res.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() || "audio/mpeg";

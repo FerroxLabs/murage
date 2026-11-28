@@ -182,7 +182,7 @@ describe("M-R11-unseen owner No limits turn runs an unseen script Full access ru
     expect(turn("bash ./build.sh", extra).approve).toBeTruthy();
   });
   it.each(["bash /etc/tool.sh", "bash /usr/share/tool.sh", "python3 /usr/lib/tool.py"])("M-R11-unseen-deny %s: Full access keeps the card, No limits runs it", cmd => {
-    expect(call(FULL, cmd).approve, cmd).toBeNull();
+    expect(call(FULL, cmd).approve, cmd).toBeTruthy(); // OVERREACH #6: the owner's own Full access turn runs it too
     expectNoLimitsOwnerOutcome(turn(cmd, {}), cmd, readerRule(cmd));
   });
   // the wipe list holds on every No limits turn, as for the could-not-read waiver (auto-approve.ts couldNotReadWaived)
@@ -257,10 +257,14 @@ describe("Grok 67 High 4 / PR-4: an output-option tail that folds to a device", 
 });
 
 describe("Astra r15 High 2 / PR-5: unavailable session execution cards on Full access too", () => {
-  const files: Files = { "/w/F.sh": "unavailable" };
-  it.each(["bash /w/F.sh", "sh /w/F.sh", "/w/F.sh", "source /w/F.sh"])("Full access: %s", (cmd) => cards(FULL, cmd, "/w", files));
-  it.each(["bash /w/F.sh", "/w/F.sh"])("No limits: %s", (cmd) => cards(NO_LIMITS, cmd, "/w", files));
-  it("Full access: an unavailable session-written Python file", () => cards(FULL, "python3 /w/F.py", "/w", { "/w/F.py": "unavailable" }));
+  const files0: Files = { "/w/F.sh": "unavailable" };
+  // MAIN-RULING 2026-11-27 (3): Full access never looser than No limits; the unreadable written script is the same wipe-check card at both
+  const same = (cmd: string, files: Files = files0) => {
+    expect(call(FULL, cmd, "/w", files), cmd).toMatchObject({ approve: null, source: "always-ask", rule: "wipe-check-fault" });
+    expect(call(NO_LIMITS, cmd, "/w", files), cmd).toMatchObject({ approve: null, source: "always-ask", rule: "wipe-check-fault" });
+  };
+  it.each(["bash /w/F.sh", "sh /w/F.sh", "/w/F.sh", "source /w/F.sh"])("Full access and No limits: %s", (cmd) => same(cmd));
+  it("Full access and No limits: an unavailable session-written Python file", () => same("python3 /w/F.py", { "/w/F.py": "unavailable" }));
 });
 
 describe("Astra r15 High 3 / PR-6: file-fed argument lists", () => {
@@ -322,6 +326,18 @@ describe("Astra r16 (b): a non-literal write target in interpreter code", () => 
     if (cmd.includes("/tmp/../dev/sda")) wipes(cmd);
     else cards(NO_LIMITS, cmd);
   });
+});
+
+describe("q1024 argv-bound disk: a stream or a plain operand is no disk", () => {
+  it.each([
+    `python3 -c 'import sys; print(open(sys.argv[1]).read())' /dev/null`,
+    `node -e 'console.log(process.argv[1])' /dev/stdout`,
+    `python3 -c 'import sys; open(sys.argv[1],"w").write("x")' /w/out.txt`,
+    `python3 -c 'import sys; print(sys.argv[1])' /tmp/../dev/sda`,
+    `python3 -c 'import sys; print("write", sys.argv[1])' /tmp/../dev/sda`,
+    `python3 -c 'import sys; print(open(sys.argv[1],"rb").read(1))' /dev/sda`,
+  ])("%s", cmd => runs(NO_LIMITS, cmd));
+  it("code that never reads argv is not the argv check's to card", () => runs(NO_LIMITS, `python3 -c 'print(1)' /tmp/../dev/sda`));
 });
 
 describe("GrokBuild 68 High 3: a device path assembled in interpreter code", () => {
@@ -391,7 +407,7 @@ describe("strict same-text files and closed-grammar costs", () => {
 // MAIN RULING 2026-11-13 wipe-only: printing a device pathname is data, not erasure.
 it("M-PR-1a: embedded dotted device is held by the word scanner alone", () => runs(NO_LIMITS, "echo target=/./dev/sda"));
 it("reading an unavailable session file does not execute it", () => runs(NO_LIMITS, "cat /w/F", "/w", { "/w/F": "unavailable" }));
-it("canonical session execution cannot evade the unavailable-file guard", () => cards(FULL, "bash /w/./F.sh", "/w", { "/w/F.sh": "unavailable" }));
+it("canonical session execution cannot evade the unavailable-file guard", () => expect(call(FULL, "bash /w/./F.sh", "/w", { "/w/F.sh": "unavailable" })).toMatchObject({ approve: null, source: "always-ask", rule: "wipe-check-fault" }));
 
 describe("MARKS r7: the closed-list doubts hold owner No limits only (r1.5 :24)", () => {
   it.each(["touch out", "rm -rf build"])("M-R7-level %s with no fixed folder runs on Full access", cmd => runs(FULL, cmd, ""));

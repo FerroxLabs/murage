@@ -6,7 +6,7 @@
 //
 //   ask   every send and reply waits on the owner
 //   auto  a reply to an approved first-writer, or a send to approved addresses, goes out; anything else waits
-// Content triggers hold under both policies: any attachment; more than 3 email addresses (in the text, or as recipients) or more than
+// Content triggers hold under both policies (except an owner-turn send at "auto", which skips the attachment and length holds): any attachment; more than 3 email addresses (in the text, or as recipients) or more than
 // 8,000 characters; a reply whose source is unauthenticated, not DMARC aligned, list mail, or not scanned complete and clear; any reply
 // recipient besides the stored From; a cc to anyone not approved.
 import { normalizeAddresses } from "./canonical.ts";
@@ -32,6 +32,8 @@ export interface PolicyInput {
   attachmentCount: number;
   replySource: ReplySource | null;
   isApproved: (address: string) => boolean;
+  /** The owner's own typed turn (never an email-triggered or routine one). With policy "auto", such a send to approved contacts waits on no attachment or length. */
+  ownerTurn?: boolean;
 }
 export interface PolicyDecision { needsOwner: boolean; why: WhyCode }
 
@@ -41,8 +43,10 @@ export function distinctAddressesInText(text: string): number {
 
 export function decideSend(input: PolicyInput): PolicyDecision {
   const to = normalizeAddresses(input.to), cc = normalizeAddresses(input.cc);
-  if (input.attachmentCount > 0) return { needsOwner: true, why: "waiting_attachment" };
-  if (input.text.length > MAX_TEXT_CHARS) return { needsOwner: true, why: "waiting_long" };
+  // Attachment and length cards guard against what an email-triggered turn could ship out; the owner's own send at "auto" to approved contacts skips them (the approved-recipient rule below still holds).
+  const ownerAuto = input.ownerTurn === true && input.policy === "auto" && input.kind === "send";
+  if (input.attachmentCount > 0 && !ownerAuto) return { needsOwner: true, why: "waiting_attachment" };
+  if (input.text.length > MAX_TEXT_CHARS && !ownerAuto) return { needsOwner: true, why: "waiting_long" };
   if (distinctAddressesInText(`${input.subject}\n${input.text}`) > MAX_ADDRESSES || to.length + cc.length > MAX_ADDRESSES) return { needsOwner: true, why: "waiting_many_addresses" };
   if (input.kind === "reply") {
     const source = input.replySource;

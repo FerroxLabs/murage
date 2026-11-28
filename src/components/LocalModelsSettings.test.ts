@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // Where the Local models section is allowed to be, and what it is never
 // allowed to do.
 //
@@ -12,7 +13,15 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { act, createElement as h } from "react";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+import type { LocalServerView } from "../../shared/local-models";
+import { cleanup, installDOMHarness, mount, settle } from "../testing/dom-harness";
+import { ServerCard } from "./LocalModelsSettings";
+
+const fixture = vi.hoisted(() => ({ api: vi.fn() }));
+vi.mock("../state/store", async (original) => ({ ...(await original<typeof import("../state/store")>()), api: fixture.api }));
 
 const here = dirname(fileURLToPath(import.meta.url));
 const models = readFileSync(join(here, "ModelsSettings.tsx"), "utf8");
@@ -97,5 +106,49 @@ describe("a key is only ever a key", () => {
     expect(section).not.toMatch(/value=\{server\.apiKey/);
     expect(section).toContain("server.hasKey");
     expect(section).toMatch(/type="password"/);
+  });
+});
+
+// M10 (1.0.23) P4/P3: the real card for an Ollama cloud model, rendered and clicked.
+describe("M10 Ollama cloud model card", () => {
+  let restore: () => void;
+  beforeAll(() => { restore = installDOMHarness(); });
+  afterAll(() => restore());
+  afterEach(async () => { cleanup(); await settle(); document.body.replaceChildren(); fixture.api.mockReset(); });
+
+  const SENTENCE = "This model runs on ollama.com at its own context, so it needs no copy.";
+  const ollama = (cloud: boolean): LocalServerView => ({
+    id: "srv_fixture01", name: "desktop", label: "Ollama on desktop", kind: "ollama", address: "http://127.0.0.1:11434/v1",
+    source: "added", editable: true, hasKey: false, status: "running", checkedAt: 1,
+    models: [{
+      id: "srv_fixture01::fixture-model:big", model: "fixture-model:big", loaded: false, engines: [], ...(cloud ? { cloud: true as const } : {}),
+      // A card rendered before Murage knew the alias was cloud still offers the copy.
+      test: { serverId: "srv_fixture01", apiBase: "http://127.0.0.1:11434/v1", model: "fixture-model:big", outcome: "context-too-small", checks: [],
+        surfaces: { chat: false, responses: false, messages: false }, context: { contextWindow: 4_096, source: "ollama-ps", loaded: true }, testedAt: 1, durationMs: 1 },
+    }],
+  });
+  const card = (server: LocalServerView, onChanged = vi.fn()) => mount(h(ServerCard, { server, now: 1, onChanged, onTested: vi.fn() }));
+
+  it("W8b shows Runs on ollama.com under a cloud model's name, and not under a local one", async () => {
+    card(ollama(true));
+    await settle();
+    const lines = [...document.querySelectorAll("[data-local-model-id] p")].map((p) => p.textContent);
+    expect(lines).toContain("Runs on ollama.com"); // W8b-line
+    cleanup(); await settle(); document.body.replaceChildren();
+    card(ollama(false));
+    await settle();
+    expect([...document.querySelectorAll("[data-local-model-id] p")].map((p) => p.textContent)).not.toContain("Runs on ollama.com");
+  });
+
+  it("W8b a stale copy offer refused as cloud-model shows the server's sentence and refreshes once", async () => {
+    fixture.api.mockRejectedValue(Object.assign(new Error("400"), { status: 400, body: { error: SENTENCE, code: "cloud-model" } }));
+    const onChanged = vi.fn();
+    card(ollama(false), onChanged);
+    await settle();
+    const offer = [...document.querySelectorAll("button")].find((b) => b.textContent === "Create a 64K copy")!;
+    await act(async () => { offer.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await settle(); await settle();
+    expect(onChanged).toHaveBeenCalledTimes(1); // W8b-refresh
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(SENTENCE);
   });
 });

@@ -105,12 +105,41 @@ function validStoredServer(value: unknown): StoredLocalServer | null {
   };
 }
 
+// Address generations (M10, Astra 49db4e1188 High): one counter per server
+// address and kind, bumped whenever the server list changes at it (add, edit of
+// address or kind, delete, an outside edit of the file). The context cache
+// stamps every reading with the generation its read started under, so a reply
+// that lands after the list changed is never served for that address. Memory
+// only: a restart starts every address over with an empty cache.
+let seenOwners = new Map<string, string>();
+const addressGenerations = new Map<string, number>();
+
+/** The cache owner of a server address: kind plus API base, no trailing slash. */
+export function localAddressOwner(kind: string, apiBase: string): string {
+  return `${kind}@${apiBase.replace(/\/$/, "")}`;
+}
+
+function noteServers(servers: readonly StoredLocalServer[]): StoredLocalServer[] {
+  const owners = new Map(servers.map((server) => [server.id, localAddressOwner(server.kind, server.apiBase)]));
+  const bump = (owner: string) => addressGenerations.set(owner, (addressGenerations.get(owner) ?? 0) + 1);
+  for (const [id, owner] of seenOwners) if (owners.get(id) !== owner) bump(owner);
+  for (const [id, owner] of owners) if (seenOwners.get(id) !== owner) bump(owner);
+  seenOwners = owners;
+  return servers as StoredLocalServer[];
+}
+
+/** The current generation of an address; re-reads the server list first. */
+export function localAddressGeneration(owner: string): number {
+  readLocalServers();
+  return addressGenerations.get(owner) ?? 0;
+}
+
 /** Every valid user-added server. Invalid or duplicate entries are skipped. */
 export function readLocalServers(): StoredLocalServer[] {
-  if (!storeDir) return [];
+  if (!storeDir) return noteServers([]);
   const path = join(storeDir, SERVERS_FILE);
   const key = fileKey(path);
-  if (!key) return [];
+  if (!key) return noteServers([]);
   if (serversCache?.key === key) return serversCache.servers;
   const parsed = readJson(path);
   const rows = parsed && typeof parsed === "object" && Array.isArray((parsed as { servers?: unknown }).servers)
@@ -125,7 +154,7 @@ export function readLocalServers(): StoredLocalServer[] {
     servers.push(server);
   }
   serversCache = { key, servers };
-  return servers;
+  return noteServers(servers);
 }
 
 export function userLocalServer(id: string): StoredLocalServer | undefined {
@@ -139,6 +168,7 @@ export function writeLocalServers(servers: readonly StoredLocalServer[]): void {
   const path = join(storeDir, SERVERS_FILE);
   writeFileAtomic(path, `${JSON.stringify({ version: 1, servers }, null, 2)}\n`, { mode: 0o600 });
   serversCache = null;
+  readLocalServers();
 }
 
 export function newLocalServerId(taken: ReadonlySet<string>): string {

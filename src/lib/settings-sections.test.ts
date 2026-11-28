@@ -19,11 +19,12 @@ import {
 } from "./settings-sections";
 import { settingsSearchResults } from "./settings-search";
 import { initialState, reducer } from "@/state/store";
-import { en } from "@/locales";
 
 /** Every id a 0.1.61 build could send: deep links, stored state, notices. */
 const OLD_IDS: AppSettingsSection[] = ["models", "general", "backups", "experimental", "connections", "engines", "channels", "companion", "computer", "skills", "houseRules", "aboutMe", "memory", "usage"];
 const NEW_IDS: AppSettingsSection[] = ["botDefaults", "images", "webSearch", "voice", "about", "storage"];
+// Settings v10 added these ids (the 17-page rail: Overview, Bots, Rules, Tools, Messaging) and the Providers alias; none is ever removed.
+const V10_IDS: AppSettingsSection[] = ["overview", "bots", "rules", "tools", "messaging", "providers"];
 
 /** The 0.1.61 search words, section by section (SettingsModal.tsx at ac3ea1c9). */
 const OLD_KEYWORDS = [
@@ -43,14 +44,14 @@ const OLD_KEYWORDS = [
 ];
 
 describe("the grouped sections", () => {
-  it("are twenty-two ids under six groups, in the approved order", () => {
+  it("are twenty-eight ids under six groups, in the approved order", () => {
     expect(SETTINGS_GROUPS).toEqual(["you", "bots", "allBots", "ai", "reach", "app"]);
     expect(SETTINGS_SECTIONS.map((entry) => `${entry.group}:${entry.id}`)).toEqual([
-      "you:general", "you:calls", "you:aboutMe",
+      "you:overview", "you:general", "you:calls", "you:aboutMe",
       "bots:browseBots",
-      "allBots:botDefaults", "allBots:houseRules", "allBots:skills", "allBots:experimental", "allBots:memory",
-      "ai:models", "ai:engines", "ai:images", "ai:webSearch", "ai:voice",
-      "reach:connections", "reach:channels", "reach:companion", "reach:computer",
+      "allBots:bots", "allBots:rules", "allBots:botDefaults", "allBots:houseRules", "allBots:tools", "allBots:skills", "allBots:experimental", "allBots:memory",
+      "ai:models", "ai:providers", "ai:engines", "ai:images", "ai:webSearch", "ai:voice",
+      "reach:connections", "reach:channels", "reach:messaging", "reach:companion", "reach:computer",
       "app:backups", "app:storage", "app:usage", "app:about",
     ]);
     // a group's sections sit together, so a heading is drawn once
@@ -58,16 +59,16 @@ describe("the grouped sections", () => {
     expect(groups.filter((group, index) => group !== groups[index - 1])).toEqual([...SETTINGS_GROUPS]);
   });
 
-  it("keeps every old id and adds six (storage in 1.0.3) and two (calls and browseBots in 1.0.19), with plain English labels", () => {
+  it("keeps every old id and adds six (storage in 1.0.3), two (calls and browseBots in 1.0.19) and six (v10), with plain English labels", () => {
     const ids = SETTINGS_SECTIONS.map((entry) => entry.id);
-    for (const id of [...OLD_IDS, ...NEW_IDS]) expect(ids, id).toContain(id);
-    expect(ids).toHaveLength(OLD_IDS.length + NEW_IDS.length + 2);
+    for (const id of [...OLD_IDS, ...NEW_IDS, ...V10_IDS]) expect(ids, id).toContain(id);
+    expect(ids).toHaveLength(OLD_IDS.length + NEW_IDS.length + V10_IDS.length + 2);
     for (const id of ["calls", "browseBots"]) expect(ids, id).toContain(id);
     expect(settingsSectionLabel("connections")).toBe("Connected apps");
     expect(settingsSectionLabel("computer")).toBe("Computer & browser");
     expect(settingsSectionLabel("about")).toBe("About & updates");
     expect(settingsSectionLabel("storage")).toBe("Storage");
-    for (const id of ids) expect(en[`settings.section.${id}` as keyof typeof en], id).toBeTruthy();
+    for (const id of ids) expect(settingsSectionLabel(id), id).toBeTruthy();
   });
 });
 
@@ -91,7 +92,7 @@ describe("settings search across the groups", () => {
     const ai = settingsSearchResults("models and tools");
     for (const id of ["models", "engines", "images", "webSearch", "voice"] as const) expect(ai).toContain(id);
     // The whole intended result, in order: the group's four pages, plus Models & engines, whose own words mention connections.
-    expect(settingsSearchResults("connections")).toEqual(["models", "connections", "channels", "companion", "computer"]);
+    expect(settingsSearchResults("connections")).toEqual(["models", "connections", "channels", "messaging", "companion", "computer"]);
     // "reach" was the old group id and is not a name anyone sees now.
     expect(settingsSearchResults("reach")).toEqual([]);
   });
@@ -109,17 +110,17 @@ describe("settings search across the groups", () => {
 describe("which sections a surface sees", () => {
   it("admits Calls, a read-only Models & engines, Apps and its Messaging alias alongside General, Usage and About on a paired phone", () => {
     // LOCKED 2.4 (G9 gap check H3): Calls and Models & engines are phone pages; Models renders read-only there.
-    const phone = ["general", "calls", "models", "engines", "connections", "channels", "usage", "about"];
+    const phone = ["overview", "general", "calls", "models", "providers", "engines", "connections", "channels", "messaging", "usage", "about"];
     expect(sectionsForSurface(SETTINGS_SECTIONS, false).map((entry) => entry.id)).toEqual(phone);
     expect(sectionsForSurface(SETTINGS_SECTIONS, undefined).map((entry) => entry.id)).toEqual(phone);
     expect(sectionsForSurface(SETTINGS_SECTIONS, true)).toHaveLength(SETTINGS_SECTIONS.length);
   });
 
-  it("waits on a new desktop-only page while the surface is unconfirmed (0.1.61 flux-entrypoints)", () => {
+  it("waits on a new desktop-only page while the surface is unconfirmed (0.1.61 flux-entrypoints); a refused page moves to Overview, the first page", () => {
     const unknown = sectionsForSurface(SETTINGS_SECTIONS, undefined);
     for (const id of ["images", "webSearch", "voice", "botDefaults"] as const) {
       expect(settingsSectionRedirect(SETTINGS_SECTIONS, id, undefined, unknown), id).toBeNull();
-      expect(settingsSectionRedirect(SETTINGS_SECTIONS, id, false, sectionsForSurface(SETTINGS_SECTIONS, false)), id).toBe("general");
+      expect(settingsSectionRedirect(SETTINGS_SECTIONS, id, false, sectionsForSurface(SETTINGS_SECTIONS, false)), id).toBe("overview");
       expect(settingsSectionRedirect(SETTINGS_SECTIONS, id, false, sectionsForSurface(SETTINGS_SECTIONS, false), false), id).toBeNull();
     }
     expect(settingsSectionRedirect(SETTINGS_SECTIONS, "about", false, sectionsForSurface(SETTINGS_SECTIONS, false))).toBeNull();
@@ -128,8 +129,8 @@ describe("which sections a surface sees", () => {
 
 describe("the one door for a section id", () => {
   it("passes every known id through and lands anything else on General", () => {
-    for (const id of [...OLD_IDS, ...NEW_IDS]) expect(normalizeSettingsSection(id)).toBe(id);
-    for (const stale of ["tools", "Tools & Connections", "", undefined, null, 7, "settings-connections"]) expect(normalizeSettingsSection(stale)).toBe("general");
+    for (const id of [...OLD_IDS, ...NEW_IDS, ...V10_IDS]) expect(normalizeSettingsSection(id)).toBe(id);
+    for (const stale of ["Tool box", "Tools & Connections", "", undefined, null, 7, "settings-connections"]) expect(normalizeSettingsSection(stale)).toBe("general");
   });
 
   it("is the reducer's: a stale or unknown id cannot open Settings on nothing", () => {

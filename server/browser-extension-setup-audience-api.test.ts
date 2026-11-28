@@ -42,15 +42,16 @@ beforeAll(async () => {
 }, 60000);
 afterAll(async () => { await fixture?.close(); });
 
-it("a turn that is not the owner's audience cannot raise the browser setup card; the owner's own turn can", async () => {
+it("a turn that is not the owner's audience is refused by the audience fence; the owner's own turn gets the retired route", async () => {
   const chain = await start("Setup chain fixture", true);
   try {
     const refused = await request(chain.token);
     expect(refused.status).toBe(403);
     expect(refused.body.error).toBe("Ask about browser setup from an owner conversation.");
   } finally { await api("POST", `/api/bots/${chain.bot.id}/interrupt`, { threadId: chain.bot.threadId }); }
-  // Control: an owner turn in the same server raises the card.
+  // Control, FLIPPED by W3 (DESIGN-JOURNEY-1024 section 6): an owner turn's bot no longer raises the card either; the audience
+  // fence above still answers first (403), the owner turn gets the retired-route 410.
   const owner = await start("Setup owner fixture");
-  try { expect((await request(owner.token)).status).toBe(201); }
+  try { expect((await request(owner.token)).status).toBe(410); }
   finally { await api("POST", `/api/bots/${owner.bot.id}/interrupt`, { threadId: owner.bot.threadId }); }
 }, 45000);

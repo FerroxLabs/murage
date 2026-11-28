@@ -27,7 +27,7 @@ import {
   connectedAppCallTimeoutMs,
   isConnectedAppLookup,
 } from "../shared/connected-app-calls.ts";
-import { exposedMessage, serviceMessage, usesLegacyNames } from "../shared/connected-app-names.ts";
+import { CONNECTOR_ALIASES_ENV, CONNECTOR_ALIASES_HEADER, exposedMessage, serviceMessage, usesLegacyNames } from "../shared/connected-app-names.ts";
 
 type Json = Record<string, unknown>;
 
@@ -36,7 +36,8 @@ const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
 const BOT_ID = process.env.MURAGE_BOT_ID ?? "";
 const THREAD_ID = process.env.MURAGE_THREAD_ID ?? "";
 const token = () => turnSecret("MURAGE_CONNECTORS_TOKEN");
-const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
+/** F11-V3: this engine's mount carries plain-name app tools (set by the server for engines in ALIAS_ENGINES). */
+const ALIASES = process.env[CONNECTOR_ALIASES_ENV] === "1";
 /** The upstream session is opened behind the local initialize answer; a call
  * that needs it waits this long at most, then goes without it. */
 const INITIALIZE_RELAY_TIMEOUT_MS = 10_000;
@@ -207,7 +208,10 @@ function currentScope(): ListScope | null {
   const revision = turnSecret("MURAGE_CONNECTOR_REVISION");
   return IDENTITY_SHAPE.test(identity) && revision && revision.length <= 128 ? { identity, revision } : null;
 }
-const scopeKey = (scope: ListScope | null): string => (scope ? `${scope.identity}|${scope.revision}` : "");
+/** F11-V3: the alias flag is part of the remembered-list identity (memory key and disk entry), so a list built for a flagged engine is
+ * never served to an unflagged one. The scope's own `revision` stays the harness's (the mount markers and the initial-tools file use it). */
+const listRevision = (scope: ListScope): string => (ALIASES ? `${scope.revision}+aliases` : scope.revision);
+const scopeKey = (scope: ListScope | null): string => (scope ? `${scope.identity}|${listRevision(scope)}` : "");
 let memoryList: { scope: ListScope; generation: string; tools: unknown[]; at: number } | null = null;
 
 /** The connection generation the harness announces BEFORE it purges (a
@@ -222,14 +226,14 @@ function readDiskList(scope: ListScope, generation: string): unknown[] | null {
   const dir = privateDirOf(cacheEnvFromProcess(), false);
   if (!dir) return null;
   const parsed = readCacheEntry(dir, `${scope.identity}.json`);
-  if (!parsed || parsed.revision !== scope.revision || (typeof parsed.generation === "string" ? parsed.generation : "") !== generation) return null;
+  if (!parsed || parsed.revision !== listRevision(scope) || (typeof parsed.generation === "string" ? parsed.generation : "") !== generation) return null;
   return Array.isArray(parsed.tools) && parsed.tools.length ? (parsed.tools as unknown[]) : null;
 }
 function writeDiskList(scope: ListScope, generation: string, tools: unknown[]): void {
   const dir = privateDirOf(cacheEnvFromProcess(), true);
   if (!dir) return;
   const name = `${scope.identity}.json`;
-  writeCacheEntry(dir, name, JSON.stringify({ revision: scope.revision, generation, tools }));
+  writeCacheEntry(dir, name, JSON.stringify({ revision: listRevision(scope), generation, tools }));
   // A purge that began while this was being written would otherwise leave it behind.
   if (readGeneration(dir) !== generation) removeCacheEntry(dir, name);
 }
@@ -688,21 +692,13 @@ function initializeResult(id: unknown, protocolVersion: unknown): Json {
 class ConnectorApplicationRefusal extends Error {}
 
 async function readBounded(response: Response): Promise<string> {
-  const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > Math.min(MAX_RESPONSE_BYTES, 8 * 1024 * 1024)) throw new Error("connector response exceeded 20 MB");
   if (!response.body) return "";
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let size = 0;
   let text = "";
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    size += value.byteLength;
-    if (size > Math.min(MAX_RESPONSE_BYTES, 8 * 1024 * 1024)) {
-      await reader.cancel();
-      throw new Error("connector response exceeded 20 MB");
-    }
     text += decoder.decode(value, { stream: true });
   }
   return text + decoder.decode();
@@ -769,6 +765,8 @@ export async function relay(message: Json, deadlineAt: number = deadlineIn(RELAY
       accept: "application/json, text/event-stream",
       ...parsedHeaders(),
       ...(upstreamSessionId ? { "mcp-session-id": upstreamSessionId } : {}),
+      // F11-V3: a listing request for the plain-name rows; never authority
+      ...(ALIASES && message.method === "tools/list" ? { [CONNECTOR_ALIASES_HEADER]: "1" } : {}),
       // How long the server may hold the bot before answering "still running".
       ...(action ? { [CONNECTED_APP_WAIT_HEADER]: String(Math.max(0, remaining - ACTION_GRACE_MS)) } : {}),
     },
@@ -869,9 +867,17 @@ async function showConnectorCards(items: ConnectorRequest[], statusOnly = false)
   return body.pending === false && typeof body.message === "string" ? body.message : undefined;
 }
 
-async function handle(message: Json, req: McpRequest): Promise<void> {
+async function handle(received: Json, req: McpRequest): Promise<void> {
+  let message = received;
   const id = message.id;
   const method = String(message.method ?? "");
+  // Keep the alias resolver's approval dependencies off the initialize and discovery path.
+  if (ALIASES && method === "tools/call") {
+    const { aliasMessage } = await import("../shared/connected-app-aliases.ts");
+    const aliased = aliasMessage(message as Parameters<typeof aliasMessage>[0]);
+    if (aliased && "refused" in aliased) { if (id !== undefined) send(req, textResult(id, aliased.refused, true)); return; }
+    if (aliased) message = aliased.message as Json;
+  }
   resumeProbeForActiveTurn(); // a request in an active turn with the stand-in still held restarts bounded recovery
   // OpenCode (and other MCP clients) mark a stdio server failed unless
   // initialize returns capabilities/serverInfo. Relaying that handshake to

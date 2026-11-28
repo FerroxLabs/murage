@@ -69,7 +69,7 @@ describe("which settings a surface may see", () => {
     // A stale `appSettingsSection` — set on the desktop, or restored from
     // state — must not render a withheld pane just because the nav no longer
     // offers it.
-    for (const id of ["companion", "memory", "botDefaults", "webSearch", "models", "backups", "skills"]) {
+    for (const id of ["companion", "memory", "rules", "webSearch", "models", "backups", "skills"]) {
       // A page with a file of its own gates every card through deviceGate (settings/pages/page-kit.tsx).
       const file = readFileSync(new URL("./settings/page-registry.tsx", import.meta.url), "utf8").match(new RegExp(`${id}: \\(\\) => import\\("\\./pages/(\\w+)"\\)`))?.[1];
       if (file) expect(readFileSync(new URL(`./settings/pages/${file}.tsx`, import.meta.url), "utf8"), `${id} renders without a surface check`).toContain("deviceGate(");

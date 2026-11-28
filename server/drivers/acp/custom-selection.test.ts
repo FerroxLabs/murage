@@ -45,7 +45,7 @@ it('processes a load response and thinking update in one stdout write', async ()
   } finally { recorder.stop(); await instance.dispose(); await removeTempDir(home); }
 });
 
-it.each([false, true])('restores engine-default thinking on a resumed conversation, including restart (unknown default: %s)', async unknown => {
+it.each([false, true])('an Engine decides turn after a chosen level opens one fresh session at the engine default, including after restart (unknown default: %s)', async unknown => {
   const home = mkdtempSync(join(tmpdir(), 'murage-custom-default-'));
   const create = () => CustomAcpDriver.create({ instanceId: 'default-fixture', displayName: 'Fixture', enabled: true,
     environment: { HOME: home, USERPROFILE: home, FAKE_CUSTOM_ACP_DIRECTORY: home, ...(unknown ? { FAKE_CUSTOM_NO_DEFAULT: '1' } : {}) },
@@ -69,7 +69,8 @@ it.each([false, true])('restores engine-default thinking on a resumed conversati
     expect(rows().filter(r => r.method === 'session/prompt').map(r => r.variant)).toEqual(['max', 'low', 'max', 'low']);
     expect(rows().filter(r => r.method === 'session/load')).toHaveLength(3);
     const ids = rows().filter(r => r.method === 'session/prompt').map(r => r.sessionId);
-    expect(new Set(ids).size).toBe(unknown ? 3 : 1);
+    // ACP-EFFORT r9 U2: Murage never sends a default to a touched session; each Engine decides turn after a choice opens one fresh session
+    expect(new Set(ids).size).toBe(3);
   } finally { recorder.stop(); await instance.dispose(); await removeTempDir(home); }
 });
 
@@ -92,7 +93,9 @@ it('binds the fallback owner before a notification in the same stdout write', as
 });
 
 
-it('checks late thinking updates before releasing the submission boundary', async () => {
+it('a late thinking update before the final fence runs the turn on a fresh session at the default, then checks the submission boundary (ACP-EFFORT X10)', async () => {
+  // was: the turn failed with "changed thinking before the prompt". r9 W5 / design G3 forbid that throw: a level that moved after its
+  // confirmation falls back to a fresh session with one line, and beforeSubmit is still called once, after the fence.
   const home = mkdtempSync(join(tmpdir(), 'murage-custom-submit-'));
   const beforeSubmit = vi.fn();
   const driver = createAcpDriver({
@@ -112,10 +115,12 @@ it('checks late thinking updates before releasing the submission boundary', asyn
     const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: 'submit-boundary',
       text: 'ACP_PICKER_SUBMIT', model: 'glm-5.3', variant: 'low', beforeSubmit });
     const ended = await events.until(e => e.type === 'turn.completed' && e.turnId === turnId);
-    expect(beforeSubmit).not.toHaveBeenCalled();
-    expect(ended).toMatchObject({ ok: false });
+    expect(ended).toMatchObject({ ok: true });
+    expect(beforeSubmit).toHaveBeenCalledTimes(1);
     const rows = readFileSync(join(home, 'receipts.jsonl'), 'utf8').trim().split('\n').map(s => JSON.parse(s));
-    expect(rows.filter(r => r.method === 'session/prompt')).toEqual([]);
+    expect(rows.filter(r => r.method === 'session/new')).toHaveLength(2);
+    expect(rows.filter(r => r.method === 'session/prompt')).toHaveLength(1);
+    expect(JSON.stringify(events.events)).toContain('could not confirm effort low');
   } finally { events.stop(); await instance.dispose(); await removeTempDir(home); }
 });
 

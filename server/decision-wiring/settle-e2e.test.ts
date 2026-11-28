@@ -7,10 +7,11 @@ describe('R9/R17/A3a: registered delivery and terminal event forwarding', () => 
     const target={providerInstanceId:'p',threadId:'t',generation:'g',turnId:'turn',requestId:'r'};
     const live={providerInstanceId:'p',generation:'g',turnId:'turn'};
     const decisionRequestTargets=new Map([[JSON.stringify(['p','t','g','turn','r']),{target,terminal:false}]]);
-    const { decisionTargetAdapter }=wiring(['decisionTargetAdapter'], {decisionRequestTargets,decisionLiveIdentity:()=>live,registry:{get:()=>({decisionAdapter:{respondToRequest,interruptTurn}})}});
+    // undelivered-card-1021: the test-process seam is absent outside its preload
+    const { decisionTargetAdapter }=wiring(['decisionTargetAdapter'], {testDeliveryLost:undefined,testDeliveryRefused:undefined,decisionRequestTargets,decisionLiveIdentity:()=>live,registry:{get:()=>({decisionAdapter:{respondToRequest,interruptTurn}})}});
     expect(decisionTargetAdapter(target)).toBeDefined();
     for (const field of ['providerInstanceId','generation','turnId','threadId','requestId']) expect(decisionTargetAdapter({...target,[field]:'stale'})).toBeUndefined();
-    const { decisionTargetAdapter: missing }=wiring(['decisionTargetAdapter'],{decisionRequestTargets,decisionLiveIdentity:()=>live,registry:{get:()=>({adapter:{respondToRequest}})}});
+    const { decisionTargetAdapter: missing }=wiring(['decisionTargetAdapter'],{testDeliveryLost:undefined,testDeliveryRefused:undefined,decisionRequestTargets,decisionLiveIdentity:()=>live,registry:{get:()=>({adapter:{respondToRequest}})}});
     expect(missing(target)).toBeUndefined();
   });
   it('answers old-posture records before entering the driver barrier', async () => {
@@ -35,9 +36,11 @@ it('registered answers report the persisted acknowledgement and answer, includin
     [{delivery:'failed',answer:{behavior:'allow'}},'unavailable'],
     [{delivery:'accepted'},'unavailable'],
   ] as const){
-    const send=vi.fn(async()=>{});
-    const {answerRegisteredApproval}=wiring(['answerRegisteredApproval'],{answerApproval:send,readApprovalExecution:()=>receipt,readApproval:()=>undefined});
+    const send=vi.fn(async()=>{}),settleUndeliveredCard=vi.fn();
+    const {answerRegisteredApproval}=wiring(['answerRegisteredApproval'],{answerApproval:send,readApprovalExecution:()=>receipt,readApproval:()=>undefined,settleUndeliveredCard});
     expect(await answerRegisteredApproval({approvalId:'real-issued-ref'}, {behavior:'allow'})).toBe(expected);
     expect(send).toHaveBeenCalledTimes(1);
+    // undelivered-card-1021: every answer not taken hands its card to the attention settle (which checks it is closed)
+    expect(settleUndeliveredCard).toHaveBeenCalledTimes(expected==='unavailable'?1:0);
   }
 });

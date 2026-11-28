@@ -6,8 +6,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   applySkillEnabled,
+  skillSourceLabel,
+  skillRemoveWords,
   createSkillsStore,
   filterSkills,
+  indexTag,
+  orderByIndex,
   skillDescriptionLine,
   SkillsBody,
   SKILL_PAGE_SIZE,
@@ -142,9 +146,23 @@ describe("what skills a bot has", () => {
     expect(skills).toContain('staged.action === "create" ? installPreparedSkill(botId, staged.source, prepared, { enabled: true,');
   });
 
-  it("describes /learn only where /learn exists", () => {
-    expect(render({ skills: [], authoringEnabled: true })).toContain("/learn in chat");
-    expect(render({ skills: [], authoringEnabled: false })).not.toContain("/learn");
+  // 1.0.21 polish (Sean's live walk): the settings panel printed the chat command "/learn". Settings names the
+  // outcome in plain words (teach it in chat); the command itself lives in the composer. Replaces the old
+  // "describes /learn only where /learn exists" assertion, whose first half required the jargon.
+  it("describes teaching in chat only where it exists, without the slash command", () => {
+    const on = render({ skills: [], authoringEnabled: true });
+    expect(on).toContain("A skill you teach Ember in chat is switched on once you confirm it.");
+    expect(on).not.toContain("/learn");
+    expect(render({ skills: [], authoringEnabled: false })).not.toContain("teach");
+  });
+
+  // 1.0.21 polish: Sable (Chief of Staff) showed "Sable has no skills yet" directly under its own switched-on Chief of
+  // Staff guide. A bot with a built-in skill never reads as having none.
+  it("never says a bot with a built-in skill has no skills", () => {
+    const markup = render({ skills: [], botName: "Sable", builtInSkills: 1 });
+    expect(markup).not.toContain("has no skills yet");
+    expect(markup).toContain("Sable has no other skills yet.");
+    expect(render({ skills: [], botName: "Sable" })).toContain("Sable has no skills yet.");
   });
 
   it("names the bot while its skills are loading", () => {
@@ -323,6 +341,15 @@ describe("switching a skill on and off", () => {
     });
     expect(list.current[0]!.enabled).toBe(true);
     expect(list.current[0]!.warnings).toEqual(["network access"]);
+  });
+
+  it("shows the 40-skill ceiling refusal in place, in the server's own words, and puts the row back", async () => {
+    const list = track([skill({ enabled: false })]);
+    const said = "This bot already has 40 skills on. Turn one off to add another.";
+    const request = vi.fn<SkillsRequest>(async () => { throw Object.assign(new Error(said), { status: 409, body: { code: "SKILL_CEILING", error: said } }); });
+    const result = await toggleSkillEnabled({ botId: "bot-1", name: "chart-analysis", enabled: true, apply: list.apply, request });
+    expect(result).toEqual({ ok: false, error: said });
+    expect(list.current[0]!.enabled).toBe(false);
   });
 
   it("flips the row before the request answers", async () => {
@@ -742,5 +769,63 @@ describe("removing a skill", () => {
     // button above it does.
     expect(panelSource).not.toContain("Use /learn in chat to add another.");
     expect(panelSource).toContain("Add a skill");
+  });
+});
+
+
+describe("safe per-bot removal", () => {
+  it("names Your skills and explains shared versus only-copy removal", () => {
+    expect(skillSourceLabel("collection:x")).toBe("Your skills · x");
+    expect(skillRemoveWords(skill({ source: "collection:sample-skill" }), "Fixture bot")).toMatchObject({ label: "Take off", shared: true, title: expect.stringContaining("Your other bots and the shared copy keep it") });
+    expect(skillRemoveWords(skill({ source: "learn:conversation" }), "Fixture bot")).toMatchObject({ label: "Delete", shared: false, title: expect.stringContaining("only copy") });
+  });
+  it("requires a second confirm before deleting a learned skill, and cancellation writes nothing", async () => {
+    const learned = skill({ source: "learn:conversation" });
+    const request = vi.fn<SkillsRequest>(async () => ({ skills: [learned] }));
+    const store = createSkillsStore({ botId: "fixture-bot", request });
+    await store.load();
+    await store.remove(learned);
+    expect(request.mock.calls.filter(call => call[1]?.method === "DELETE")).toHaveLength(0);
+    expect(store.getSnapshot().confirming).toMatchObject({ name: learned.name, action: "delete" });
+    await store.confirm(false);
+    expect(request.mock.calls.filter(call => call[1]?.method === "DELETE")).toHaveLength(0);
+    await store.remove(learned);
+    await store.confirm(true);
+    expect(request.mock.calls.filter(call => call[1]?.method === "DELETE")).toEqual([["/api/bots/fixture-bot/skills/chart-analysis", { method: "DELETE" }]]);
+  });
+  it("takes a shared skill off with one per-bot DELETE", async () => {
+    const request = vi.fn<SkillsRequest>(async () => ({ skills: [skill()] }));
+    const store = createSkillsStore({ botId: "fixture-bot", request });
+    await store.load(); await store.remove(skill());
+    expect(request.mock.calls.filter(call => call[1]?.method === "DELETE")).toEqual([["/api/bots/fixture-bot/skills/chart-analysis", { method: "DELETE" }]]);
+  });
+});
+
+describe("Settings v10 B6: In every message rows lead", () => {
+  const index = { inEveryMessage: [{ name: "beta", bytes: 120 }, { name: "delta", bytes: 118 }], lookedUp: ["gamma"], omitted: 1, reason: "the cap" };
+  const skills = [skill({ name: "alpha", enabled: false }), skill({ name: "gamma" }), skill({ name: "beta" }), skill({ name: "delta" })];
+
+  it("orders the skills in every message first, then those looked up, then those off, keeping each group's own order", () => {
+    expect(orderByIndex(skills, index).map((entry) => entry.name)).toEqual(["beta", "delta", "gamma", "alpha"]);
+  });
+
+  it("tags only skills that are on: In every message or Looked up when needed", () => {
+    expect(indexTag(skills[2]!, index)).toBe("In every message");
+    expect(indexTag(skills[1]!, index)).toBe("Looked up when needed");
+    expect(indexTag(skills[0]!, index)).toBeNull();
+  });
+
+  it("with no preview (it did not load) keeps the order and claims nothing about any row", () => {
+    expect(orderByIndex(skills, null).map((entry) => entry.name)).toEqual(["alpha", "gamma", "beta", "delta"]);
+    expect(indexTag(skills[2]!, null)).toBeNull();
+    expect(render({ skills, index: null })).not.toContain("In every message");
+  });
+
+  it("draws the tag on the row, and the rows lead in the markup", () => {
+    const html = render({ skills, index });
+    expect(html.indexOf("Read beta")).toBeLessThan(html.indexOf("Read gamma"));
+    expect(html.indexOf("Read gamma")).toBeLessThan(html.indexOf("Read alpha"));
+    expect(html.match(/In every message/g)).toHaveLength(2);
+    expect(html.match(/Looked up when needed/g)).toHaveLength(1);
   });
 });

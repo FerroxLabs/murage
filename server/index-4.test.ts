@@ -2765,30 +2765,32 @@ describe("the Chief of Staff is not replaced by accident", () => {
   const makeBot = async (name: string) =>
     (await desktopApi("POST", "/api/bots", { name, title: "Test", description: "t", color: "purple" })).body.bot;
 
-  /** Stand down whoever currently holds the role.
-   *
-   * These tests share one workspace with every other test in this file, and
-   * the rule under test is precisely "there can only be one" — so a test that
-   * assumed an empty chair was refused by the feature it was written to
-   * verify. Clearing first makes each one independent of what ran before it,
-   * and exercises the stand-down path on the way in. */
-  const standDownChief = async () => {
-    const bots: { id: string; chiefScope?: string }[] = (await api("GET", "/api/bots")).body.bots;
-    for (const bot of bots.filter((candidate) => candidate.chiefScope === "workspace")) {
-      await desktopApi("PATCH", `/api/bots/${bot.id}`, { chiefOfStaff: false, chiefScope: null, individual: false });
-    }
-  };
-
+  /** CHIEF-TRANSFER-1023: with a workspace Chief seated the role only moves through the transfer sheet's endpoint (a direct PATCH election,
+   * demotion or hide is a 409 chief-transfer-required), and a workspace can never be left with no Chief. So these tests no longer clear the
+   * chair first: each one seats the bot it needs, by a direct election when the chair is empty and by a transfer when it is not. */
   const botsNow = async (): Promise<Array<{ id: string; chiefOfStaff?: boolean; chiefScope?: string; section?: string }>> =>
     (await api("GET", "/api/bots")).body.bots;
 
+  const transferChief = async (fromId: string, toId: string) => {
+    const preview = await desktopApi("GET", `/api/chief-transfer/preview?from=${fromId}&to=${toId}`);
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    return desktopApi("POST", "/api/chief-transfer", { fence: preview.body.fence, move: [] });
+  };
+  const seatChief = async (botId: string, extra: Record<string, unknown> = {}) => {
+    const sitting = (await botsNow()).find((bot) => bot.chiefScope === "workspace");
+    if (!sitting) expect((await desktopApi("PATCH", `/api/bots/${botId}`, { ...extra, chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
+    else if (sitting.id !== botId) {
+      expect((await transferChief(sitting.id, botId)).status).toBe(200);
+      if (Object.keys(extra).length) expect((await desktopApi("PATCH", `/api/bots/${botId}`, extra)).status).toBe(200);
+    } else if (Object.keys(extra).length) expect((await desktopApi("PATCH", `/api/bots/${botId}`, extra)).status).toBe(200);
+  };
+
   it("hands the Chief role over in one step and keeps the former Chief as its team's leader", async () => {
-    await standDownChief();
     const first = await makeBot("Single Holder Sable");
     const second = await makeBot("Single Holder Rex");
-    expect((await desktopApi("PATCH", `/api/bots/${first.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
+    await seatChief(first.id);
 
-    const handed = await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    const handed = await transferChief(first.id, second.id);
     expect(handed.status, JSON.stringify(handed.body)).toBe(200);
     const bots = await botsNow();
     const incoming = bots.find((bot) => bot.id === second.id)!;
@@ -2802,16 +2804,15 @@ describe("the Chief of Staff is not replaced by accident", () => {
   });
 
   it("makes the former Chief a team member when its team already has a leader", async () => {
-    await standDownChief();
     // one leader per team: the former Chief cannot take a second seat
     const section = "Handover Team";
     const first = await makeBot("Seated Chief");
     const leader = await makeBot("Seated Leader");
     const second = await makeBot("Seated Successor");
-    await desktopApi("PATCH", `/api/bots/${first.id}`, { section, chiefOfStaff: true, chiefScope: "workspace" });
+    await seatChief(first.id, { section });
     await desktopApi("PATCH", `/api/bots/${leader.id}`, { section, chiefOfStaff: true, chiefScope: "section" });
 
-    const handed = await desktopApi("PATCH", `/api/bots/${second.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    const handed = await transferChief(first.id, second.id);
     expect(handed.status, JSON.stringify(handed.body)).toBe(200);
     const bots = await botsNow();
     expect(bots.find((bot) => bot.id === second.id)!.chiefScope).toBe("workspace");
@@ -2822,30 +2823,34 @@ describe("the Chief of Staff is not replaced by accident", () => {
   });
 
   it("still lets the SAME bot re-assert the role", async () => {
-    await standDownChief();
     // The guard compares ids. Without that, re-saving a role control on the
     // incumbent would refuse her her own job.
     const chief = await makeBot("Re-asserting Chief");
+    await seatChief(chief.id);
     expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
     expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
   });
 
-  it("lets the role move once the incumbent stands down", async () => {
-    await standDownChief();
+  it("moves the role only through the transfer: a direct election or a stand-down is refused", async () => {
     const outgoing = await makeBot("Outgoing Chief");
     const incoming = await makeBot("Incoming Chief");
-    await desktopApi("PATCH", `/api/bots/${outgoing.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    await seatChief(outgoing.id);
 
-    await desktopApi("PATCH", `/api/bots/${outgoing.id}`, { chiefOfStaff: false, chiefScope: null, individual: false });
-    expect((await desktopApi("PATCH", `/api/bots/${incoming.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
+    const stand = await desktopApi("PATCH", `/api/bots/${outgoing.id}`, { chiefOfStaff: false, chiefScope: null, individual: false });
+    expect(stand.status).toBe(409);
+    expect(stand.body.code).toBe("chief-transfer-required");
+    const direct = await desktopApi("PATCH", `/api/bots/${incoming.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    expect(direct.status).toBe(409);
+    expect((await botsNow()).filter((bot) => bot.chiefScope === "workspace").map((bot) => bot.id)).toEqual([outgoing.id]);
+    expect((await transferChief(outgoing.id, incoming.id)).status).toBe(200);
+    expect((await botsNow()).filter((bot) => bot.chiefScope === "workspace").map((bot) => bot.id)).toEqual([incoming.id]);
   });
 
   it("does not block a TEAM LEAD, which is an ordinary handover", async () => {
-    await standDownChief();
     // The asymmetry is deliberate. A team's lead changing is reversible and
     // local; blocking it would make the sidebar's own menu item fail.
     const chief = await makeBot("Guarding Chief");
-    await desktopApi("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" });
+    await seatChief(chief.id);
     const lead = await makeBot("Ordinary Lead");
     expect((await desktopApi("PATCH", `/api/bots/${lead.id}`, { chiefOfStaff: true, chiefScope: "section" })).status).toBe(200);
   });

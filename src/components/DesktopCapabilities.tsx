@@ -8,7 +8,7 @@ type DesktopState = {
 
 const DesktopContext = createContext<DesktopState>({
   capabilities: initialDesktopCapabilities(),
-  ready: !window.muragebox,
+  ready: typeof window === "undefined" || !window.muragebox,
 });
 
 export function DesktopCapabilitiesProvider({ children }: { children: ReactNode }) {

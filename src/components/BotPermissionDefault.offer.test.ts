@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { applyPermissionPreviewOnce } from "./BotPermissionDefault";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const source = () => readFileSync(new URL("./BotPermissionDefault.tsx", import.meta.url), "utf8");
 
@@ -51,7 +52,7 @@ describe("bringing open conversations up to the saved level", () => {
     const text = source();
     expect(text).not.toMatch(/PermissionOffer|permissionOffer/);
     expect(text).toContain("<LevelConfirmCard");
-    const settings = readFileSync(new URL("./SettingsPanel.tsx", import.meta.url), "utf8");
+    const settings = settingsPanelSource();
     expect(settings).not.toContain("permissionRequest");
   });
 });

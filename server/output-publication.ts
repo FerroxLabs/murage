@@ -440,7 +440,8 @@ async function completeReleasedReceipt(deps: OutputPublicationDeps, receiptId: s
     }
     if (current.messageId) return;
     const { artifact } = readArtifact(db, filesDir, current.artifactId!, { owner: true, scopes: [scope] });
-    const existing = deps.store.messagesFor(current.threadId).find(message => message.artifactIds?.includes(artifact.id));
+    // A keyed read of the thread's saved-file rows (message-db.ts artifactRows), never a load of the whole thread.
+    const existing = deps.store.artifactRows(current.threadId).find(message => message.artifactIds?.includes(artifact.id));
     // the card names the turn recorded with the receipt; a receipt with none has its card withheld (the saved file stays in Files)
     if (!existing && !current.turnId) return;
     const message = existing ?? deps.store.appendMessage(current.threadId, murageLine({ role: "bot", kind: "text", text: outputCardText([artifact.name], 0), turnId: current.turnId, artifactIds: [artifact.id] }));

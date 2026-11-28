@@ -47,7 +47,7 @@ entries:
     anchors:
       - 'file:src/components/ClaudeCodeImportCard.tsx#settings.claudeCode.reviewRequired'
       - settings-card:connections/claude-code
-      - 'file:server/claude-code-import.ts#enabled: false, disabledReason: DISABLED_REASON'
+      - 'file:server/claude-code-import.ts#const DISABLED_REASON = disabledReasonFor("Claude Code");'
     verified: 1.0.19
     since: 1.0.19
     internal: 1.0.19 "Bring your Claude Code setup" (a9e405c196, 1692e65430, 401597398f; 2026-11-09/10, after the 1.0.18 bump). Windows reads through the engine-exclusion addon version 11 and refuses without it (server/claude-code-import.ts importPlatform); Mac needs Darwin 20 or later. A Cloud window gets the computer-only stub (ConnectionsPage.tsx ClaudeCodeCard).

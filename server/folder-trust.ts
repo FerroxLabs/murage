@@ -17,10 +17,10 @@
 // skills"). It walks the same cwd → git-root chain the upstream loaders walk.
 // Fuigo's scan stays authoritative for the gate itself: if it gates something
 // this scan did not name, its request still reaches the driver and the card.
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { buildFolderTrustSnapshot, type FolderTrustIndex } from "./folder-trust-index.ts";
+import { trustFs } from "./trust-fs.ts";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
-import { DatabaseSync } from "./sqlite-open.ts";
 
 import { dataRoots, ownedPath } from "./data-roots.ts";
 import type { Partition } from "./execution-audience.ts";
@@ -49,14 +49,14 @@ const CONFIG_DIRS = [".fuigo/hooks", ".fuigo/plugins", ".claude/plugins", ".fuig
 
 function isDir(path: string): boolean {
   try {
-    return statSync(path).isDirectory();
+    return trustFs.statSync(path).isDirectory();
   } catch {
     return false;
   }
 }
 function isFile(path: string): boolean {
   try {
-    return statSync(path).isFile();
+    return trustFs.statSync(path).isFile();
   } catch {
     return false;
   }
@@ -65,7 +65,7 @@ function isFile(path: string): boolean {
 /** The canonical real path, or the resolved path when it does not exist. */
 export function canonicalFolder(path: string): string {
   try {
-    return realpathSync.native(path);
+    return trustFs.realpathNative(path);
   } catch {
     return resolve(path);
   }
@@ -76,7 +76,7 @@ export function canonicalFolder(path: string): string {
 export function gitRootOf(folder: string): string | null {
   let dir = canonicalFolder(folder);
   for (;;) {
-    if (existsSync(join(dir, ".git"))) return dir;
+    if (trustFs.existsSync(join(dir, ".git"))) return dir;
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -85,7 +85,7 @@ export function gitRootOf(folder: string): string | null {
 
 /** `{folder}/.git` exists, as a file or a directory (the generation 2 card's worktree sentence). */
 export function folderHasGit(folder: string): boolean {
-  return existsSync(join(folder, ".git"));
+  return trustFs.existsSync(join(folder, ".git"));
 }
 
 /** The user's home, canonicalized once; a repo that IS the home folder (a
@@ -107,7 +107,7 @@ export function isUnrecordableTrustRoot(key: string): boolean {
 function gitCoreConfig(gitDir: string): { bare: boolean; worktree: string | null } {
   let text: string;
   try {
-    text = readFileSync(join(gitDir, "config"), "utf8");
+    text = trustFs.readFileSync(join(gitDir, "config"));
   } catch {
     return { bare: false, worktree: null };
   }
@@ -149,8 +149,8 @@ export function linkedWorktreeMainRoot(root: string): string | null {
   const dotGit = join(root, ".git");
   let link: string;
   try {
-    if (!statSync(dotGit).isFile()) return null;
-    link = readFileSync(dotGit, "utf8");
+    if (!trustFs.statSync(dotGit).isFile()) return null;
+    link = trustFs.readFileSync(dotGit);
   } catch {
     return null;
   }
@@ -162,7 +162,7 @@ export function linkedWorktreeMainRoot(root: string): string | null {
   let commonRel: string;
   try {
     if (!isFile(join(gitDir, "gitdir"))) return null;
-    commonRel = readFileSync(join(gitDir, "commondir"), "utf8").trim();
+    commonRel = trustFs.readFileSync(join(gitDir, "commondir")).trim();
   } catch {
     return null;
   }
@@ -241,44 +241,30 @@ export function managedWorktreeSourceRepo(folder: string, fuigoHome: string): st
   if (!pathStartsWith(folder, worktreesDir) || relative(worktreesDir, folder) === "") return null;
   const file = join(fuigoHome, UPSTREAM_WORKTREES_DB);
   if (!isFile(file)) return null;
-  let db: DatabaseSync;
-  try {
-    db = new DatabaseSync(file, { readOnly: true });
-  } catch (error) {
-    warnWorktreesDb(file, error);
-    return null;
-  }
-  try {
-    const byPath = db.prepare("SELECT source_repo FROM worktrees WHERE path = ?");
-    let path = folder;
-    while (pathStartsWith(path, worktreesDir) && relative(worktreesDir, path) !== "") {
-      // `WorktreeDb::get` treats a string with a `/` as a path (canonicalized
-      // before the lookup) and anything else as an id or label — so a
-      // backslash-only spelling never matches by path, on the engine's side
-      // and on this one
-      if (path.includes("/")) {
-        const row = byPath.get(canonicalFolder(path)) as { source_repo?: unknown } | undefined;
-        if (row && typeof row.source_repo === "string" && row.source_repo) return row.source_repo;
+  let path = folder;
+  while (pathStartsWith(path, worktreesDir) && relative(worktreesDir, path) !== "") {
+    // `WorktreeDb::get` treats a string with a `/` as a path (canonicalized
+    // before the lookup) and anything else as an id or label — so a
+    // backslash-only spelling never matches by path, on the engine's side
+    // and on this one
+    if (path.includes("/")) {
+      // the open and the query are file calls: answered off the serving thread (trust-fs.ts)
+      const found = trustFs.worktreeSource(file, canonicalFolder(path));
+      if ("error" in found) {
+        warnWorktreesDb(file, found.error);
+        return null;
       }
-      const parent = dirname(path);
-      if (parent === path) break;
-      path = parent;
+      if (found.source) return found.source;
     }
-    return null;
-  } catch (error) {
-    warnWorktreesDb(file, error);
-    return null;
-  } finally {
-    try {
-      db.close();
-    } catch {
-      /* already closed */
-    }
+    const parent = dirname(path);
+    if (parent === path) break;
+    path = parent;
   }
+  return null;
 }
 
-function warnWorktreesDb(file: string, error: unknown): void {
-  const message = `[folder-trust] could not read the Fuigo worktree registry ${file}: ${error instanceof Error ? error.message : String(error)}`;
+function warnWorktreesDb(file: string, error: string): void {
+  const message = `[folder-trust] could not read the Fuigo worktree registry ${file}: ${error}`;
   if (warnedWorktreesDb.has(message)) return;
   warnedWorktreesDb.add(message);
   console.warn(message);
@@ -323,6 +309,7 @@ export interface FolderTrustScan {
 export interface FolderTrustScanOptions {
   /** Settings must report grants effective for the running trust protocol. */
   trustGeneration?: 1 | 2;
+  upstreamState?: { trusted: boolean; declined: boolean };
   /** The Fuigo home whose `trusted_folders.toml` the engine will read for
    * this turn (`fuigoHomeFromEnv`); null/undefined = do not consult one —
    * a provider-routed turn runs under a per-turn temporary FUIGO_HOME that
@@ -354,9 +341,9 @@ export function scanFolderTrustSources(folder: string, options: FolderTrustScanO
   for (const dir of dirs) for (const name of SKILL_DIRS) if (isDir(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_FILES) if (isFile(join(dir, name))) hit(name);
   for (const dir of dirs) for (const name of CONFIG_DIRS) if (isDir(join(dir, name))) hit(name);
-  const upstream = options.fuigoHome ? upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome, options.trustGeneration), folder, options) : null;
+  const upstream = options.upstreamState ? (options.upstreamState.trusted ? true : options.upstreamState.declined ? false : null) : options.fuigoHome ? upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome, options.trustGeneration), folder, options) : null;
   // Legacy grants on generation 2 are ineffective, but they are not a stored no.
-  const declined = upstream === false && (options.trustGeneration !== 2 || (options.fuigoHome && upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome), folder, options) === false));
+  const declined = options.upstreamState ? options.upstreamState.declined : upstream === false && (options.trustGeneration !== 2 || (options.fuigoHome && upstreamFolderVerdict(readUpstreamTrustedFolders(options.fuigoHome), folder, options) === false));
   return { key, folder: start, sources, ...(upstream === true ? { upstreamTrusted: true as const } : declined ? { upstreamDeclined: true as const } : {}) };
 }
 
@@ -555,7 +542,7 @@ export function parseUpstreamTrustedFolders(text: string, generation: 1 | 2 = 1)
 export function readUpstreamTrustedFolders(fuigoHome: string, generation: 1 | 2 = 1): Map<string, boolean> {
   let text: string;
   try {
-    text = readFileSync(join(fuigoHome, UPSTREAM_TRUST_FILE), "utf8");
+    text = trustFs.readFileSync(join(fuigoHome, UPSTREAM_TRUST_FILE));
   } catch {
     return new Map();
   }
@@ -579,7 +566,7 @@ export function readUpstreamTrustFile(fuigoHome: string): UpstreamTrustFile {
   const file = join(fuigoHome, UPSTREAM_TRUST_FILE);
   let text: string;
   try {
-    text = readFileSync(file, "utf8");
+    text = trustFs.readFileSync(file);
   } catch (error) {
     return { file, declines: [], unreadable: (error as NodeJS.ErrnoException).code !== "ENOENT" };
   }
@@ -720,7 +707,7 @@ export function folderTrustRejectFor(rejects: readonly FolderTrustReject[], key:
   // a stored `/K/` names the folder `/K`, so it is usable once stripped too
   const exact = rejects.find((reject) => (trustPath(reject.key) === k && usable(trustPath(reject.key))) || (trustPath(reject.folder) === k && usable(trustPath(reject.folder))));
   if (exact) return exact;
-  const onCwdPath = (path: string) => usable(path) && pathStartsWith(realCwd, path) && (path === key || !pathStartsWith(key, path));
+  const onCwdPath = (path: string) => pathStartsWith(realCwd, path) && (path === key || !pathStartsWith(key, path)) && usable(path); // the seed plan only (folder-trust-seed.ts), inside answerFromTrustFs: a turn answers from its snapshot (1.0.24 S03)
   return rejects.find((reject) => onCwdPath(reject.key) || onCwdPath(reject.folder)) ?? null;
 }
 
@@ -731,7 +718,7 @@ function declinesWhere(rejects: readonly FolderTrustReject[], key: string, relat
   const k = trustPath(key);
   const qualifies = (path: string) => {
     const candidate = trustPath(path);
-    return candidate !== k && !isUnrecordableTrustRoot(candidate) && relation(candidate, k);
+    return candidate !== k && relation(candidate, k) && !isUnrecordableTrustRoot(candidate); // prefix first: an unrelated No is never resolved (1.0.24 S03)
   };
   const seen = new Set<string>();
   const out: string[] = [];
@@ -804,16 +791,35 @@ export class FolderTrustStore {
   private folders = new Map<string, FolderTrustRecord>();
   private readonly file: string;
   private seededFrom: string | undefined;
+  private authorityReadable = true;
+  get readable(): boolean { return this.authorityReadable; }
+  private indexed: FolderTrustIndex | undefined;
+  private rows: Array<{ key: string } & FolderTrustRecord> | undefined;
+  private recordViews = new Map<string, FolderTrustRecordRow[]>();
+
+  index(): FolderTrustIndex { return this.indexed ??= buildFolderTrustSnapshot(this.folders, this.authorityReadable); }
+  snapshot(): FolderTrustIndex { return this.index(); }
+
+  private publish(next: Map<string, FolderTrustRecord>): void {
+    this.recordViews.clear();
+    this.folders = new Map([...next].map(([key, record]) => [key, Object.freeze({ ...record })]));
+    this.indexed = buildFolderTrustSnapshot(next, this.authorityReadable);
+    this.rows = [...next].map(([key, record]) => ({ key, ...record })).sort((a, b) => b.decidedAt - a.decidedAt || a.key.localeCompare(b.key));
+  }
 
   constructor(file: string) {
     this.file = file;
     const parsed = readPersistedJson(file);
-    if (parsed === undefined) return;
+    if (parsed === undefined) { this.publish(this.folders); return; }
     const raw = parsed as Partial<PersistedFolderTrust> | null;
     if (raw && typeof raw === "object" && typeof raw.seededFrom === "string") this.seededFrom = raw.seededFrom;
     const folders = raw && typeof raw === "object" && raw.folders && typeof raw.folders === "object" ? raw.folders : null;
-    if (!folders) return;
-    for (const [key, record] of Object.entries(folders)) if (isRecord(record)) this.folders.set(key, record);
+    if (!folders || Array.isArray(folders)) { this.authorityReadable = false; this.publish(this.folders); return; }
+    for (const [key, record] of Object.entries(folders)) {
+      if (isRecord(record)) this.folders.set(key, record);
+      else this.authorityReadable = false;
+    }
+    this.publish(this.folders);
   }
 
   /** S5 site 12: boot-only inventory matching. Never infer ownership from a path. */
@@ -858,7 +864,7 @@ export class FolderTrustStore {
     const parent = ownedPath(dirname(this.file), { create: false });
     const data: PersistedFolderTrust = { version: 1, folders: Object.fromEntries(next), ...(this.seededFrom ? { seededFrom: this.seededFrom } : {}) };
     writeFileAtomic(join(parent.canonical, basename(this.file)), JSON.stringify(data, null, 2), { mode: 0o600 });
-    this.folders = next;
+    this.publish(next);
     console.warn(`data-dir-rebase kind=folder-trust count=${count} collisions=${collisions}`);
   }
 
@@ -873,15 +879,16 @@ export class FolderTrustStore {
   seedOnce(folders: Iterable<string>, release: string): number {
     if (this.seededFrom) return -1;
     let count = 0;
+    const next = new Map(this.folders);
     const now = Date.now();
     for (const folder of folders) {
       const key = folderTrustKey(folder);
       if (isUnrecordableTrustRoot(key) || this.folders.has(key)) continue;
-      this.folders.set(key, { decision: "trust", decidedAt: now, source: "upgrade", folder: canonicalFolder(folder) });
+      next.set(key, { decision: "trust", decidedAt: now, source: "upgrade", folder: canonicalFolder(folder) });
       count++;
     }
     this.seededFrom = release;
-    this.persist();
+    try { this.commit(next); } catch (error) { this.seededFrom = undefined; throw error; }
     return count;
   }
 
@@ -929,31 +936,28 @@ export class FolderTrustStore {
     // a consent-2 trust. A plain picker record may refresh. FOLDER-PICK-KEEPS-CONSENT.
     const held = source === "picker" ? this.folders.get(key) : undefined;
     if (held && (held.decision === "reject" || held.consent === 2)) return key;
-    const previous = this.folders.get(key);
-    this.folders.set(key, { decision, decidedAt: Date.now(), source, folder: canonicalFolder(folder), ...(options.consent === 2 ? { consent: 2 as const } : {}) });
-    try {
-      this.persist();
-    } catch (error) {
-      if (previous) this.folders.set(key, previous);
-      else this.folders.delete(key);
-      throw error;
-    }
+    const next = new Map(this.folders);
+    next.set(key, { decision, decidedAt: Date.now(), source, folder: canonicalFolder(folder), ...(options.consent === 2 ? { consent: 2 as const } : {}) });
+    this.commit(next);
     return key;
   }
 
   /** Forget every record a lookup for the folder would find. */
   forget(folder: string, options: FolderTrustKeyOptions = {}): boolean {
+    const next = new Map(this.folders);
     let removed = false;
-    for (const key of this.keysFor(folder, options)) removed = this.folders.delete(key) || removed;
-    if (removed) this.persist();
+    for (const key of this.keysFor(folder, options)) removed = next.delete(key) || removed;
+    if (removed) this.commit(next);
     return removed;
   }
 
   /** Forget one stored record by its exact key, whatever folder is asking.
    * Never writes a trust and never touches another key. */
   forgetKey(key: string): boolean {
-    if (!this.folders.delete(key)) return false;
-    this.persist();
+    if (!this.folders.has(key)) return false;
+    const next = new Map(this.folders);
+    next.delete(key);
+    this.commit(next);
     return true;
   }
 
@@ -977,11 +981,42 @@ export class FolderTrustStore {
 
   /** Every record, for the settings surface: key → record. */
   list(): Array<{ key: string } & FolderTrustRecord> {
-    return [...this.folders].map(([key, record]) => ({ key, ...record })).sort((a, b) => b.decidedAt - a.decidedAt);
+    return (this.rows ?? []).map(row => ({ ...row }));
   }
 
-  private persist(): void {
-    const data: PersistedFolderTrust = { version: 1, folders: Object.fromEntries(this.folders), ...(this.seededFrom ? { seededFrom: this.seededFrom } : {}) };
+  /** Explicit Settings browse only. Cursors bind the immutable decision
+   * revision and selected subject; no partial page is the complete store. */
+  page(folder: string, search = '', cursor?: string): { records: FolderTrustRecordRow[]; next: string | null; total: number; revision: string } {
+    const revision = this.snapshot().revision;
+    let offset = 0;
+    if (cursor) {
+      let value: unknown;
+      try { value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); } catch { throw new Error('Invalid saved-answer cursor'); }
+      if (!Array.isArray(value) || value.length !== 4 || value[0] !== revision || value[2] !== folder || value[3] !== search
+        || !Number.isSafeInteger(value[1]) || value[1] < 0) throw new Error('Saved answers changed; refresh the list');
+      offset = value[1];
+    }
+    const query = search.toLocaleLowerCase();
+    const viewKey = JSON.stringify([folder, query]);
+    let rows = this.recordViews.get(viewKey);
+    if (!rows) {
+      rows = folderTrustRecordRows(this.rows ?? [], folder).filter(row => !query || row.key.toLocaleLowerCase().includes(query) || row.folder.toLocaleLowerCase().includes(query)).sort((a, b) => Number(b.onPath) - Number(a.onPath));
+      if (this.recordViews.size >= 8) this.recordViews.delete(this.recordViews.keys().next().value!);
+      this.recordViews.set(viewKey, rows);
+    }
+    const records = rows.slice(offset, offset + 50);
+    return { records, revision, total: rows.length, next: offset + records.length < rows.length
+      ? Buffer.from(JSON.stringify([revision, offset + records.length, folder, search])).toString('base64url') : null };
+  }
+
+  private commit(next: Map<string, FolderTrustRecord>): void {
+    this.persist(next);
+    this.publish(next);
+  }
+
+  private persist(folders = this.folders): void {
+    if (!this.authorityReadable) throw new Error("Saved folder answers need recovery; the original file was preserved");
+    const data: PersistedFolderTrust = { version: 1, folders: Object.fromEntries(folders), ...(this.seededFrom ? { seededFrom: this.seededFrom } : {}) };
     writeFileAtomic(this.file, JSON.stringify(data, null, 2), { mode: 0o600 });
   }
 }

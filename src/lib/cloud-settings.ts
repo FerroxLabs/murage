@@ -23,6 +23,14 @@ export type CloudSettingsClass = "home" | "mixed" | "computer-only";
 export const CLOUD_SETTINGS_CLASS: Readonly<Record<AppSettingsSection, CloudSettingsClass>> = Object.freeze({
   // Startup (login item) and Set up again are this computer's; profile, appearance, language, notifications are not.
   general: "mixed",
+  // Settings v10 pages: the Overview, Bots, Rules and Tools pages keep the home's own state; Messaging is the old Messaging
+  // apps page (each computer action guarded in its own card); Providers is the first card of Models & engines.
+  overview: "home",
+  bots: "home",
+  rules: "home",
+  tools: "home",
+  messaging: "mixed",
+  providers: "mixed",
   // Calls moved off General's notifications card; it is the same card, so the same class (desktop-only content, renders its own stub).
   calls: "mixed",
   // The list of bots is the home's own; opening one is the bot window.
@@ -73,7 +81,6 @@ export const CLOUD_COMPUTER_ONLY_CARDS: ReadonlySet<string> = new Set([
   "updates-heading", // About: the updater is this computer's (the Cloud window has no window.muragebox).
   "diagnostics-heading", // About: the diagnostics export is this computer's.
   "skill-recorder-heading", // Skills: the recorder runs on this computer.
-  "voice-key-heading", // Skills: the AssemblyAI key is this computer's.
   "mcp-servers-heading", // Connected apps: this computer's MCP servers (mcp-servers:*).
   "claude-code-import-heading", // Connected apps: copies Claude Code's files from this computer's home folder.
 ]);

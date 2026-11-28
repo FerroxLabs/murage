@@ -90,7 +90,7 @@ import { answerDoorChallenge, takeDoorIdentity } from "./door-identity.ts";
 import { createHarnessCall } from "./push-door.ts";
 import { abortAskForwardsOnRemoval, AskForwards, phoneHarnessRevoke, revokeShareAsk } from "./phone-door.ts";
 import { askRevokeSender, createAskRevocations } from "./ask-revocations.ts";
-import { createPushRevocations, revokeDeviceSender, watchDeviceRemovals } from "./push-revocations.ts";
+import { createPushRevocations, removalCheckSender, revokeDeviceSender, watchDeviceRemovals } from "./push-revocations.ts";
 import { DATA_DIR } from "./state.ts";
 import { takeLaunchSecret } from "./launch-secret.ts";
 
@@ -410,6 +410,7 @@ const devices = new DeviceRegistry();
 const pushRevocations = createPushRevocations({
   file: join(DATA_DIR, "push-revocations.json"),
   send: revokeDeviceSender(createHarnessCall(HARNESS_PORT), companionToken),
+  check: removalCheckSender(createHarnessCall(HARNESS_PORT), companionToken),
 });
 watchDeviceRemovals(devices, pushRevocations);
 devices.announceStartupPurge();
@@ -567,6 +568,7 @@ const control = createControlServer({
   connectedDeviceIds: connectedDevices.ids,
   disconnectDevice: connectedDevices.disconnect,
   revokePush: (deviceId) => pushRevocations.add(deviceId),
+  pushRemovalStatus: (deviceId) => pushRevocations.status(deviceId),
   revokePhoneJobs: (id) => phoneHarnessRevoke(createHarnessCall(HARNESS_PORT), companionToken, id, "removed"),
   revokeShareAsk: (id) => revokeShareAsk(id, { devices, revocations: askRevocations, forwards: askForwards }),
   shareAskPending: (id) => askRevocations.pending().some((e) => e.deviceId === id),

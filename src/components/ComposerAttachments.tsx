@@ -16,6 +16,8 @@ import {
 } from "@/lib/composer-attachments";
 import { imageAttachmentFromFile } from "@/lib/composer-image-upload";
 import { composerFileIntake } from "@/lib/composer-intake";
+import { fileUploadErrorCopy } from "@/lib/attachment-upload-copy";
+import { fileAttachmentFromFile } from "@/lib/composer-file-upload";
 import { insideFileDropZone } from "@/lib/file-drop-zone";
 import { AttachmentPreviewDialog, previewImage, type PreviewImage } from "./AttachmentPreview";
 
@@ -107,6 +109,8 @@ export function ComposerAttachments({
         getPath: pathForFile,
         uploadImage: file => imageAttachmentFromFile(file, threadId),
         queueAudio: onAudioFile,
+        fileError: fileUploadErrorCopy,
+        uploadFile: fileAttachmentFromFile,
         onAdd,
         onNotice,
         stillListening: () => active,

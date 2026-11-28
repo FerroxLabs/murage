@@ -9,6 +9,8 @@ export type TurnOwner = Readonly<{ threadId: string; generation: string }>;
  * These coordinate app-managed resources, not arbitrary shell commands. */
 export class TurnResources {
   private readonly owners = new Map<string, TurnOwner>();
+  /** How many times each resource has passed to a new holder, so a turn that handed it back can tell whether anyone else held it since. */
+  private readonly handoffs = new Map<string, number>();
 
   claim(resource: string, owner: TurnOwner): boolean {
     return this.claimAll([resource], owner);
@@ -23,9 +25,15 @@ export class TurnResources {
       }
     }
     const frozen = Object.freeze({ ...owner });
-    for (const resource of resources) this.owners.set(resource, frozen);
+    for (const resource of resources) {
+      const previous = this.owners.get(resource);
+      if (!previous || !sameOwner(previous, owner)) this.handoffs.set(resource, (this.handoffs.get(resource) ?? 0) + 1);
+      this.owners.set(resource, frozen);
+    }
     return true;
   }
+
+  takenCount(resource: string): number { return this.handoffs.get(resource) ?? 0; }
 
   /** Resources this generation currently holds, so a waiter can release them
    * all and later re-claim the same union atomically. */

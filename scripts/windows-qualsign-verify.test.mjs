@@ -1,11 +1,13 @@
-const { test } = await import(process.env.VITEST ? 'vitest' : 'node:test');
 import assert from 'node:assert/strict';
 import { createHash, X509Certificate } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, renameSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { preapprove, verifyFetched, pinRecord, verifySignerIdentity, BOUND_PATHS, SCRUB_EXCLUDED_WORKFLOWS, IDENTITY, STRINGS } from './windows-qualsign-verify.mjs';
+
+const { test } = import.meta.vitest ?? await import('node:test');
 
 const hash=data=>createHash('sha256').update(data).digest('hex');
 const blob=data=>createHash('sha1').update(`blob ${Buffer.byteLength(data)}\0`).update(data).digest('hex');
@@ -376,7 +378,7 @@ test('fixed CLI English string and exit-code inventory',()=>scratch(dir=>{
   assert.deepEqual(STRINGS,{
     usage:'Usage: windows-qualsign-verify.mjs preapprove|verify|pin <input.json>',input:'Qualification input rejected',preapprove:'Qualification preapproval rejected',archive:'Qualification archive rejected',receipt:'Qualification receipt rejected',signer:'Qualification signer rejected',verify:'Qualification fetch rejected',deletion:'delete-required',
   });
-  const script=new URL('./windows-qualsign-verify.mjs',import.meta.url).pathname,file=join(dir,'input.json');
+  const script=fileURLToPath(new URL('./windows-qualsign-verify.mjs',import.meta.url)),file=join(dir,'input.json');
   const cli=(args,expected)=>{const result=spawnSync(process.execPath,[script,...args],{encoding:'utf8'});assert.equal(result.status,expected, result.stderr);return result;};
   assert.equal(cli([],64).stderr.trim(),STRINGS.usage);
   assert.equal(cli(['other',file],64).stderr.trim(),STRINGS.usage);

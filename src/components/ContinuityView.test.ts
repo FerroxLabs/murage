@@ -11,6 +11,7 @@ import {
   CONTINUITY_CHANGED_SENTENCE, CONTINUITY_ERRORS, CONTINUITY_HEADLINE, CONTINUITY_SENTENCE, SLUG_PATTERN, continuityDeleteBody, continuityErrorSentence,
   continuityPatchBody, continuityWriteBody, continuityOptionsPatchBody, proposalsReadBody, proposalConfirmBody, proposalDismissBody, keepBody, reflectStatusBody, reflectRetryBody, refusalLine, proposalsChip, PIP_NEW_SENTENCES, WRONG_TEMPLATE_TEXT, type ProposalView, type DisputeView, type ReflectionStatus, coverageLine, draftIsStale, freshKey, loadContinuity, rebaseDraft, managedInContinuity, slugFromText, wroteLine, type ContinuityView as Data,
 } from "@/lib/continuity";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 const read2 = read;
@@ -60,7 +61,7 @@ describe("the Continuity block", () => {
     expect(source).not.toMatch(/window\.(confirm|alert)|\bconfirm\(|\balert\(/);
   });
   it("is mounted in the Memory section on the desktop and toggles through the bot PATCH", () => {
-    expect(read("./SettingsPanel.tsx")).toMatch(/desktop === true && <ContinuityBlock/);
+    expect(settingsPanelSource()).toMatch(/desktop === true && <ContinuityBlock/);
     expect(read("./ContinuityBlock.tsx")).toContain('patch: { continuity: next }');
     expect(read("../state/bot-patch-queue.ts")).toContain('"continuity"');
     expect(read("../state/store.tsx")).toContain("continuity?: boolean");

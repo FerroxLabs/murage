@@ -322,7 +322,7 @@ it.each(['gh18_crash_before_flush_reapplies_on_start','gh18_next_turn_opens_new_
       // A generated line is withdrawn; authorized user replay remains available.
       const line = db.prepare("SELECT l.lsn,l.message_id FROM memory_line_lineage l JOIN memory_thread_no t ON t.no=l.thread_no JOIN messages m ON m.thread_id=t.thread_id AND m.id=l.message_id WHERE t.thread_id=? AND m.role='bot' AND m.kind='text' AND m.text='Hello from late' LIMIT 1").get(bot.threadId);
       expect(line).toBeTruthy();
-      db.prepare("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,901,?,'test')").run(bot.threadId,line!.lsn,line!.lsn);
+      db.prepare("INSERT INTO memory_deny_point(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,901,?,'test')").run(bot.threadId,line!.lsn,line!.lsn);
       db.exec("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'");
       expect(denyLookup(db,{threadId:bot.threadId,lines:[{messageId:String(line!.message_id),author:'generated'}]},{audience:null}).get(String(line!.message_id))).toMatchObject({state:'withheld'});
     } finally { db.close(); }
@@ -365,7 +365,7 @@ it.each(['gh18_crash_before_flush_reapplies_on_start','gh18_next_turn_opens_new_
     const finalDb = new DatabaseSync(join(fixture.info.dataDir,'messages.db'),{readOnly:true});
     let audits;
     try {
-      expect(finalDb.prepare('SELECT count(*) AS n FROM memory_deny_line WHERE revoke_id=901').get()?.n).toBe(1);
+      expect(finalDb.prepare('SELECT count(*) AS n FROM memory_deny_point WHERE revoke_id=901').get()?.n).toBe(1);
       audits=finalDb.prepare('SELECT operation_id,cursors_applied,state,outcome_json FROM gh18_operations').all();
       expect(audits).toHaveLength(2);
     } finally { finalDb.close(); }

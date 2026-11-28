@@ -11,7 +11,7 @@ import { pageCardProblems } from "@/lib/settings-page-contract";
 import { SETTINGS_CARDS } from "@/lib/settings-card-registry";
 import { cardForAnchor } from "@/lib/settings-cards";
 import { isAdvancedOnlyCard, isSimpleCard } from "@/lib/settings-simple-cards";
-import { SETTINGS_PAGE_LOADERS } from "./page-registry";
+import { SETTINGS_V10_PAGE_LOADERS } from "./page-registry";
 import { botDefaultsCards } from "./pages/BotDefaultsPage";
 import { callsCards } from "./pages/CallsPage";
 import { generalCards } from "./pages/GeneralPage";
@@ -20,17 +20,15 @@ import { modelsCards } from "./pages/ModelsPage";
 import { webSearchCards } from "./pages/SearchImagesDictationPage";
 import { skillsCards } from "./pages/SkillsPage";
 import { InAdvanced, Part, PartSlot, PartsHost } from "../SettingsPrimitives";
-import { VoiceNotesStatus } from "../TranscriptionSettings";
+import { OwnTranscriptionKey, VoiceNotesStatus } from "../TranscriptionSettings";
+import { settingsPanelSource } from "../bot-pages/panel-source";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
-/** Section 2.4 of the split with SETPAGES-B: connections.phone-calls renders on Calls. The registry line is B's; until the
- *  branches meet, the registry here still says connections, so this view applies the move. */
-const registry = SETTINGS_CARDS.map((entry) => (entry.id === "connections.phone-calls" ? { ...entry, section: "calls" as const } : entry));
 const on = { desktop: true as const, cloud: false };
 /** memory.limit (the monthly learning limit) is SETPAGES-B's: it moves to Usage there. Until the branches meet, the registry
  *  here still lists it on Memory, so pages 5 to 7 are checked against the registry without it. */
 // The browser is a nested search destination within the existing people card, not another page-level slot.
-const registryA = registry.filter((entry) => entry.id !== "memory.limit" && entry.id !== "memory.browser");
+const registryA = SETTINGS_CARDS.filter((entry) => entry.id !== "memory.limit" && entry.id !== "memory.browser");
 
 it("reports the configured voice-note route without claiming service health or guessing a missing route", () => {
   const voice = (route?: string | null) => renderToStaticMarkup(createElement(VoiceNotesStatus, { route }));
@@ -47,7 +45,7 @@ describe("pages 1 to 4 list every registered card once", () => {
   it.each([
     ["general", generalCards(on)],
     ["calls", callsCards(on)],
-    ["botDefaults", botDefaultsCards(on)],
+    ["rules", botDefaultsCards(on)],
     ["skills", skillsCards(on)],
     ["memory", memoryCards(on)],
     ["models", modelsCards(on)],
@@ -58,8 +56,8 @@ describe("pages 1 to 4 list every registered card once", () => {
 
   it("each page has a loader and no legacy block left in the modal", () => {
     const modal = read("../SettingsModal.tsx");
-    for (const page of ["general", "calls", "botDefaults", "skills", "memory", "models", "webSearch"] as const) {
-      expect(SETTINGS_PAGE_LOADERS[page], page).toBeTypeOf("function");
+    for (const page of ["general", "calls", "rules", "skills", "memory", "models", "webSearch"] as const) {
+      expect(SETTINGS_V10_PAGE_LOADERS[page], page).toBeTypeOf("function");
       expect(modal, page).not.toContain(`section === "${page}"`);
     }
   });
@@ -114,9 +112,10 @@ describe("a page that owns no anchor twice", () => {
 });
 
 describe("Models & engines in Simple and Advanced", () => {
-  it("Simple keeps Engines, the model connections, Paste keys and the existing keys, in page order", () => {
+  it("Simple keeps the model connections (Flux first), Engines and Paste keys, in page order", () => {
     // G9 Fable H2: Existing/default connections left Simple (a third key field with an interrupt warning).
-    expect(modelsCards(on).filter((card) => card.simple).map((card) => card.id)).toEqual(["models.engines", "models.providers", "models.paste-keys"]);
+    // 1.0.21 (Sean, standing): Flux Router leads the page, so models.providers moved ahead of the engines.
+    expect(modelsCards(on).filter((card) => card.simple).map((card) => card.id)).toEqual(["models.providers", "models.engines", "models.paste-keys"]);
   });
   it("lists the new-bot effort here under its old id, and How every bot behaves no longer lists it", () => {
     expect(modelsCards(on).map((card) => card.id)).toContain("botDefaults.new-bot-effort");
@@ -128,22 +127,43 @@ describe("Models & engines in Simple and Advanced", () => {
     expect(engines).toContain("const route = routeState(null, instance, null, creditFromHealth(useEngineHealthAnswer()));");
     expect(engines).toContain("<EngineRow name={instance.displayName} state={route} onFix={onFix}");
     expect(read("../ModelPickerDialog.tsx")).toContain("<ModelRouteRow engine={engine} manage={manage}");
-    expect(read("../SettingsPanel.tsx")).toContain("<ModelRouteRow engine={engine}");
+    expect(settingsPanelSource()).toContain("<ModelRouteRow engine={engine}");
     expect(read("../ModelRouteRow.tsx")).toContain("if (!route.fix) return null;");
   });
 });
 
-describe("the AssemblyAI key has one home, on Skills", () => {
-  it("is a Skills card with its old id, next to Teach a skill, and the Search page has no key card", () => {
-    expect(skillsCards(on).map((card) => card.id)).toEqual(["skills.recorder", "webSearch.voice-key", "skills.library", "skills.scan-rules"]);
-    expect(webSearchCards(on).map((card) => card.id)).not.toContain("webSearch.voice-key");
-    expect(SETTINGS_CARDS.find((card) => card.id === "webSearch.voice-key")).toMatchObject({ section: "skills", anchor: "voice-key-heading" });
+describe("no transcription key card unless an old one is in use (Sean 11-06, standing 11-19)", () => {
+  it("Skills never lists it; it is an Advanced card on Search, images and dictation", () => {
+    expect(skillsCards(on).map((card) => card.id)).toEqual(["skills.recorder", "skills.library", "skills.scan-rules"]);
+    expect(read("./pages/SkillsPage.tsx")).not.toMatch(/TranscriptionKey|voice-key/);
+    expect(webSearchCards(on).map((card) => card.id)).toContain("webSearch.voice-key");
+    expect(SETTINGS_CARDS.find((card) => card.id === "webSearch.voice-key")).toMatchObject({ section: "webSearch", anchor: "voice-key-heading", advanced: true });
+  });
+  it("renders nothing when Flux or any engine transcribes, or when no key was saved", () => {
+    const html = (route: string | null | undefined, keySaved: boolean | null) => renderToStaticMarkup(createElement(OwnTranscriptionKey, { route, keySaved }));
+    for (const route of ["flux", "groq", "openai"]) {
+      expect(html(route, true), route).toBe("");
+      expect(html(route, false), route).toBe("");
+    }
+    expect(html(undefined, true)).toBe("");
+    expect(html(null, false)).toBe("");
+    expect(html(null, null)).toBe("");
+  });
+  it("an old saved key with no engine shows plainly, with no vendor name and no dashboard link", () => {
+    const out = renderToStaticMarkup(createElement(OwnTranscriptionKey, { route: null, keySaved: true }));
+    expect(out).toContain("Your own transcription key, optional");
+    expect(out).not.toMatch(/assemblyai|dashboard/i);
+  });
+  it("the dictation card names no vendor and points at no key", () => {
+    const source = read("../TranscriptionSettings.tsx");
+    expect(source).not.toMatch(/assemblyai/i);
+    expect(source).not.toMatch(/dashboard/i);
+    for (const route of ["flux", null]) expect(renderToStaticMarkup(createElement(VoiceNotesStatus, { route }))).not.toMatch(/assemblyai|transcription key/i);
   });
   it("mounts the key field once and marks one control for it", () => {
     const pages = readdirSync(new URL("./pages", import.meta.url)).map((file) => read(`./pages/${file}`)).join("\n");
-    expect(pages.match(/<TranscriptionKey \/>/g)).toHaveLength(1);
+    expect(pages.match(/<OwnTranscriptionKeyCard \/>/g)).toHaveLength(1);
     expect(read("../TranscriptionSettings.tsx").match(/data-setting-control="voice-key-heading"/g)).toHaveLength(1);
-    expect(read("./pages/SearchImagesDictationPage.tsx")).not.toContain("TranscriptionKey");
   });
 });
 
@@ -209,6 +229,6 @@ describe("cards made of pieces of one component (pages 5 to 7)", () => {
     expect(read("../MemorySettings.tsx")).toContain('id="memory-browser-heading"');
   });
   it("Search, images and dictation lists Web search, Images and Dictation in that order", () => {
-    expect(webSearchCards(on).map((card) => card.id)).toEqual(["webSearch.search", "webSearch.provider-keys", "webSearch.images", "webSearch.daily-check", "webSearch.voice"]);
+    expect(webSearchCards(on).map((card) => card.id)).toEqual(["webSearch.search", "webSearch.provider-keys", "webSearch.images", "webSearch.daily-check", "webSearch.voice", "webSearch.voice-key"]);
   });
 });

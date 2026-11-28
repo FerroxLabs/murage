@@ -1,7 +1,7 @@
 // Producer owner: sc-safety (immutable relay observation). Consumer owner: new3-g2 (fake ACP behavior).
 // Test support only: the engine's actual wire stanza remains the stdio shim.
 import { readFileSync, statSync } from "node:fs";
-const FIELDS = ["MURAGE_TURN_DEPTH", "MURAGE_EMAIL", "MURAGE_VENUE_POST", "MURAGE_PROJECT_ROLE"] as const;
+const FIELDS = ["MURAGE_EMAIL", "MURAGE_VENUE_POST", "MURAGE_PROJECT_ROLE"] as const;
 type Entry = { name?: string; env?: Array<{ name: string; value: string }> };
 export function withFixtureMountMetadata<T extends Entry>(entry: T | null): T | null {
   if (!entry) return null;

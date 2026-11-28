@@ -395,23 +395,6 @@ export const SCREENS: readonly ScreenIndexEntry[] = [
     ]
   },
   {
-    "key": "settings:botDefaults",
-    "pattern": "settings:botDefaults",
-    "title": "ux.l4a.screen.settings.botDefaults.title",
-    "intro": "ux.l4a.screen.settings.botDefaults.intro",
-    "tips": [
-      "ux.l4a.screen.settings.botDefaults.tip1"
-    ],
-    "why": "ux.l4a.screen.settings.botDefaults.why",
-    "controls": [
-      {
-        "id": "settings-search",
-        "label": "ux.l4a.control.settingsSearch",
-        "address": "murage://settings/search"
-      }
-    ]
-  },
-  {
     "key": "settings:skills",
     "pattern": "settings:skills",
     "title": "ux.l4a.screen.settings.skills.title",
@@ -592,6 +575,23 @@ export const SCREENS: readonly ScreenIndexEntry[] = [
       "ux.l4a.screen.settings.channels.tip1"
     ],
     "why": "ux.l4a.screen.settings.channels.why",
+    "controls": [
+      {
+        "id": "settings-search",
+        "label": "ux.l4a.control.settingsSearch",
+        "address": "murage://settings/search"
+      }
+    ]
+  },
+  {
+    "key": "settings:botDefaults",
+    "pattern": "settings:botDefaults",
+    "title": "ux.l4a.screen.settings.botDefaults.title",
+    "intro": "ux.l4a.screen.settings.botDefaults.intro",
+    "tips": [
+      "ux.l4a.screen.settings.botDefaults.tip1"
+    ],
+    "why": "ux.l4a.screen.settings.botDefaults.why",
     "controls": [
       {
         "id": "settings-search",

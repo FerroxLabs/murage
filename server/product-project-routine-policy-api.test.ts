@@ -1,3 +1,4 @@
+import { evidencePath, assertExternalEvidencePath } from '../scripts/evidence-path.mjs';
 // Real owner replies in the routine's persisted conversation, with an inert engine.
 import {afterAll,beforeAll,expect,it} from 'vitest';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
@@ -6,7 +7,7 @@ import {launchVerificationServer,runControlMurage,type VerificationServer} from 
 import {raiseLevel} from './testing/raise-level.ts';
 let fixture:VerificationServer,desktop:Record<string,string>;
 const evidence:unknown[]=[];
-const out=process.env.GNL_OWNER_POLICY_EVIDENCE??'evidence/afix-gnl-prod-r5/project-policy';
+const out=assertExternalEvidencePath(process.env.GNL_OWNER_POLICY_EVIDENCE ?? evidencePath('evidence/afix-gnl-prod-r5/project-policy'));
 const instrumentation=`
 process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
 const fs=await import('node:fs'),path=await import('node:path'),{registerHooks}=await import('node:module');

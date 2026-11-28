@@ -1882,6 +1882,8 @@ describe.each(process.env.MURAGE_TEST_COMMS_RECALL_SKIP === "1" ? ["recall skipp
     await api("PATCH", `/api/bots/${helper.id}`, { name: "Helper", modelSelection: selection });
     const asker = (await api("POST", "/api/bots")).body.bot;
     await api("PATCH", `/api/bots/${asker.id}`, { name: "Asker", modelSelection: askerSelection });
+    // the observer asks the real route for the depth the helper's token record holds (L2W #5768); only this bot is probed
+    writeFileSync(join(home, "comms-mounts.jsonl.probe-bots"), JSON.stringify([helper.id]));
 
     const send = await api("POST", `/api/bots/${asker.id}/messages`, { text: "delegate this to @Helper please" });
     expect(send.status).toBe(202);
@@ -1911,9 +1913,9 @@ describe.each(process.env.MURAGE_TEST_COMMS_RECALL_SKIP === "1" ? ["recall skipp
       (m: any) => m.role === "bot" && m.kind === "text" && m.text?.includes("hello from fake acp"),
     );
     expect(reply.text).toContain("hello from fake acp");
-    expect(reply.text).toContain("agents tools available at depth 1");
+    expect(reply.text).toContain("agents tools available");
     const mounts = readFileSync(join(home, "comms-mounts.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
-    expect(mounts.filter(row => row.botId === helper.id).map(row => row.depth)).toContain("1");
+    expect(mounts.filter(row => row.botId === helper.id).map(row => row.claimDepths)).toContainEqual([1]); // depth is read from the token record (L2W #5768): only body depth 1 passes the route's cross-check
     expect(mounts.every(row => row.privateWireFields === false)).toBe(true);
     expect(reply.text).toContain(asker.id);
     expect(reply.text).not.toContain("peer error");

@@ -3,12 +3,8 @@
 exports[`cwd scopes owner > changed ordinary cwd > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -27,12 +23,8 @@ exports[`cwd scopes owner > changed ordinary cwd > Full access snapshot 1`] = `
 exports[`cwd scopes owner > changed protected cwd > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -51,12 +43,8 @@ exports[`cwd scopes owner > changed protected cwd > Full access snapshot 1`] = `
 exports[`cwd scopes owner > parenthesized cwd > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -75,12 +63,8 @@ exports[`cwd scopes owner > parenthesized cwd > Full access snapshot 1`] = `
 exports[`cwd scopes owner > sibling substitutions > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -99,12 +83,8 @@ exports[`cwd scopes owner > sibling substitutions > Full access snapshot 1`] = `
 exports[`cwd scopes owner > wrapper cwd > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -123,12 +103,8 @@ exports[`cwd scopes owner > wrapper cwd > Full access snapshot 1`] = `
 exports[`cwd scopes routine > changed ordinary cwd > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -148,12 +124,8 @@ exports[`cwd scopes routine > changed ordinary cwd > Full access snapshot 1`] = 
 exports[`cwd scopes routine > changed protected cwd > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -173,12 +145,8 @@ exports[`cwd scopes routine > changed protected cwd > Full access snapshot 1`] =
 exports[`cwd scopes routine > parenthesized cwd > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -198,12 +166,8 @@ exports[`cwd scopes routine > parenthesized cwd > Full access snapshot 1`] = `
 exports[`cwd scopes routine > sibling substitutions > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -223,12 +187,8 @@ exports[`cwd scopes routine > sibling substitutions > Full access snapshot 1`] =
 exports[`cwd scopes routine > wrapper cwd > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,

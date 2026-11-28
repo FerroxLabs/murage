@@ -155,6 +155,8 @@ export class ChildTeardown {
   }
 
   /** The driver has asked the OS to terminate this child. */
+  get stopWasRequested(): boolean { return this.#stopRequested; }
+
   markStopRequested(): void {
     if (this.#stopRequested) return;
     this.#stopRequested = true;

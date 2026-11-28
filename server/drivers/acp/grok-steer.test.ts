@@ -24,6 +24,8 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
 import { GrokAgentDriver } from "./grok.ts";
+import { steerReadyWaitMs } from "../../steer-lineage.ts";
+import { STEER_READY_WAIT_MS } from "../../project-card-executor.ts";
 
 const cli = fileURLToPath(new URL("../../testing/fake-acp-cli.ts", import.meta.url));
 const homes: string[] = [];
@@ -104,6 +106,20 @@ describe("Grok Build pictures and mid-turn messages", () => {
     expect(text).toContain("fallback reply #1");
     // Murage records the steered message itself; the echo adds nothing.
     expect(recorder!.events.filter((e) => JSON.stringify(e).includes("also check the totals"))).toEqual([]);
+  }, 30_000);
+
+  it("turnpolish-5: a message sent while grok is still starting waits for the prompt and is delivered, and the desk gives grok a longer wait than Claude", async () => {
+    const home = ownerHome();
+    const dump = join(home, "rpc.json"), gate = join(home, "turn.gate");
+    const created = await create(home, { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gate, FAKE_ACP_RPC_DUMP: dump, FAKE_ACP_INTERJECT: "fallback", FAKE_ACP_INIT_DELAY_MS: "800" });
+    await created.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-slow", text: "Count the invoices" });
+    await recorder!.until((e) => e.type === "turn.started");
+    expect(methods(dump)).not.toContain("session/prompt");
+    expect(await created.adapter.steer!("t-grok-slow", "also check the totals", steerFence("t-grok-slow", "also check the totals"))).toBe("delivered");
+    expect(methods(dump)).toContain("_x.ai/interject");
+    expect(steerReadyWaitMs(created.adapter)).toBeGreaterThan(STEER_READY_WAIT_MS);
+    writeFileSync(gate, "");
+    await recorder!.until((e) => e.type === "turn.completed", 15_000);
   }, 30_000);
 
   it("a grok that answers method-not-found is rejected (the caller queues the line) and never asked again", async () => {

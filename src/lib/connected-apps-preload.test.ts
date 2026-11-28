@@ -15,8 +15,9 @@ it("shares the warm-up with a panel opened during the request", async () => {
   expect(inventory.pendingConnectedApps()).toBe(first);
   resolve({ configured: true, services: { calendar: { connected: true } } });
   await expect(first).resolves.toMatchObject({ authoritative: true, services: { calendar: { connected: true } } });
-  await inventory.preloadConnectedApps();
-  expect(api).toHaveBeenCalledTimes(1);
+  api.mockResolvedValueOnce({ configured: true, services: { calendar: { connected: true } } });
+  await inventory.preloadConnectedApps(); // no 30 s skip: the server's scope is the only owner check
+  expect(api).toHaveBeenCalledTimes(2);
   expect(inventory.pendingConnectedApps()).toBeNull();
 });
 
@@ -70,6 +71,7 @@ it("held_panel_reopen_keeps_accounts_and_time_on_unknown_and_unavailable_answers
   const admission = { outcome: "held", reason: "rate_limited", status: 429, retryAt };
   api.mockResolvedValueOnce({ configured: true, known: true, services: { calendar: { connected: true } }, admission });
   await inventory.preloadConnectedApps();
+  api.mockResolvedValueOnce({ configured: true, known: true, services: { calendar: { connected: true } }, admission });
   expect((await inventory.preloadConnectedApps()).admission?.retryAt).toBe(retryAt);
   for (const response of [{ configured: true, known: false }, { credentialStore: "unavailable" }, { configured: false }]) {
     api.mockResolvedValueOnce(response);
@@ -92,6 +94,7 @@ it("T6 terminal recovery replaces an elapsed hold and stays secret-free through 
   const failed = { outcome: "failed" as const, reason: "credential_recovery_failed", attempted: false };
   api.mockResolvedValueOnce({ configured: true, known: true, services: { calendar: { connected: true } }, admission: failed });
   expect((await inventory.preloadConnectedApps(true)).admission).toEqual(failed);
+  api.mockResolvedValueOnce({ configured: true, known: true, services: { calendar: { connected: true } }, admission: failed });
   expect((await inventory.preloadConnectedApps()).admission).toEqual(failed);
   expect(inventory.cachedConnectorStatus?.calendar.connected).toBe(true);
 });

@@ -10,7 +10,7 @@
 // flattened that into a 502 would tell a user with a perfectly good key to
 // keep checking their key forever.
 import { createServer, type Server } from "node:http";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MAX_AUDIO_BYTES, TranscriptionUnavailable, type Transcript } from "./flux-voice.ts";
 import {
@@ -46,6 +46,8 @@ interface Seen {
 let seen: Seen[] = [];
 /** Lines the route wrote to its log. */
 let logged: string[] = [];
+let billed: number[] = [];
+let useDefaultLog = false;
 /** What the stubbed transcribe should do next. */
 let answer: { ok: Transcript } | { throws: unknown } = {
   ok: { text: "ship it", language: "en", duration: 3.2, model: "flux-voice-fast", billedSeconds: 4 },
@@ -111,8 +113,12 @@ beforeAll(async () => {
         if ("throws" in answer) throw answer.throws;
         return answer.ok;
       },
-      budget,
-      log: (line) => logged.push(line),
+      budget: { begin: () => {
+        const slot = budget.begin();
+        if (!slot.ok) return slot;
+        return { ...slot, done: (seconds) => { billed.push(seconds); slot.done(seconds); } };
+      } },
+      log: useDefaultLog ? undefined : (line) => logged.push(line),
     });
     // The dispatcher's own fall-through, reproduced: a false return has to
     // leave the response untouched for every route below.
@@ -130,6 +136,8 @@ beforeAll(async () => {
 beforeEach(() => {
   seen = [];
   logged = [];
+  billed = [];
+  useDefaultLog = false;
   completions = 0;
   releaseGate();
   releaseGate = () => {};
@@ -432,8 +440,8 @@ describe("refusals keep their meaning", () => {
     expect(format.body.retryable).toBe(false);
   });
 
-  it("logs the upstream detail without the audio when a recording is refused", async () => {
-    const failure = Object.assign(new TranscriptionUnavailable("format", "That recording could not be read."), {
+  it("keeps transcription refusal metadata private and bills format refusals zero seconds", async () => {
+    const failure = Object.assign(new TranscriptionUnavailable("format", "fixture provider message"), {
       provider: "groq",
       status: 400,
       detail: "unsupported or unrecognized audio format",
@@ -441,20 +449,43 @@ describe("refusals keep their meaning", () => {
     answer = { throws: failure };
     const res = await post(CLIP, { type: "audio/mp4" });
     expect(res.status).toBe(400);
-    expect(JSON.stringify(await bodyOf(res))).not.toContain("unrecognized");
+    const publicBody = await bodyOf(res);
+    expect(publicBody).toMatchObject({ reason: "format", retryable: false });
+    expect(JSON.stringify(publicBody)).not.toContain("fixture provider message");
+    expect(JSON.stringify(publicBody)).not.toContain("unrecognized");
+    expect(billed).toEqual([0]);
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain("provider=groq");
     expect(logged[0]).toContain("status=400");
     expect(logged[0]).toContain("mime=audio/mp4");
     expect(logged[0]).toContain(`bytes=${CLIP.byteLength}`);
-    expect(logged[0]).toContain("unsupported or unrecognized audio format");
+    expect(logged[0]).toContain("reason=format");
+    expect(logged[0]).not.toContain("fixture provider message");
+    expect(logged[0]).not.toContain("unsupported or unrecognized audio format");
   });
 
-  it("turns an unexpected throw into a 502 rather than a hang or a 500", async () => {
-    answer = { throws: new Error("something nobody planned for") };
-    const res = await post(CLIP);
-    expect(res.status).toBe(502);
-    expect((await bodyOf(res)).reason).toBe("upstream");
+  it.each(["upstream", "unexpected"])("keeps %s transcription details out of the default log and response", async (kind) => {
+    const log = vi.spyOn(console, "warn").mockImplementation(() => {});
+    useDefaultLog = true;
+    const canary = "fixture private audio metadata";
+    answer = { throws: kind === "upstream"
+      ? Object.assign(new TranscriptionUnavailable("upstream", canary), { provider: canary, status: 999, detail: canary })
+      : new Error(canary) };
+    try {
+      const res = await post(CLIP);
+      expect(res.status).toBe(502);
+      expect(await bodyOf(res)).toEqual({
+        error: "Couldn't transcribe the recording. Check your connection.",
+        reason: "upstream",
+        ...(kind === "upstream" ? { retryable: true } : {}),
+      });
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(canary);
+      if (kind === "upstream") expect(log).toHaveBeenCalledWith(expect.stringContaining("provider=unknown status=none"));
+      expect(billed).toEqual([estimateBilledSeconds(CLIP.byteLength)]);
+    } finally {
+      log.mockRestore();
+    }
   });
 });
 

@@ -137,9 +137,10 @@ describe("a routine that asks a team-shared bot (through POST /api/internal/ask-
     expect(Number(seen.row.unattended)).toBe(0);
     expect(seen.ceiling, "the routine's ceiling must be recorded for the shared request").toMatchObject({ permissionMode: "ask" });
     // browser setup is an approval card at the ceiling: the route only posts it, and the bot cannot answer it itself
-    expect(seen.browserSetupStatus).toBe(201);
-    expect(seen.browserSetupBody?.pending).toBe(true);
-    expect(seen.selfAnswerStatus).toBe(403);
+    // W3 (DESIGN-JOURNEY-1024 section 6): the bot setup route is retired. It still probes attendance (the audience fence answers
+    // 403 first for an unattended turn); an attended turn now gets 410, and no card exists for the bot's token to answer.
+    expect(seen.browserSetupStatus).toBe(410);
+    expect(seen.selfAnswerStatus).toBeUndefined();
   }, 120_000);
 
   it("a project (room-goal) routine's ask is ceiling-bounded too", async () => {
@@ -156,8 +157,9 @@ describe("a routine that asks a team-shared bot (through POST /api/internal/ask-
     expect(Number(seen.row.unattended)).toBe(0);
     expect(seen.ceiling, "the routine's ceiling must be recorded for the shared request").toMatchObject({ permissionMode: "ask" });
     // browser setup is an approval card at the ceiling: the route only posts it, and the bot cannot answer it itself
-    expect(seen.browserSetupStatus).toBe(201);
-    expect(seen.browserSetupBody?.pending).toBe(true);
-    expect(seen.selfAnswerStatus).toBe(403);
+    // W3 (DESIGN-JOURNEY-1024 section 6): the bot setup route is retired. It still probes attendance (the audience fence answers
+    // 403 first for an unattended turn); an attended turn now gets 410, and no card exists for the bot's token to answer.
+    expect(seen.browserSetupStatus).toBe(410);
+    expect(seen.selfAnswerStatus).toBeUndefined();
   }, 120_000);
 });

@@ -1,0 +1,126 @@
+{
+  "mode": "dev",
+  "base": "ws://127.0.0.1:8787/v1",
+  "sim": true,
+  "results": [
+    {
+      "id": "E-latency",
+      "status": "pass",
+      "ms": 42909
+    },
+    {
+      "id": "E-murage",
+      "status": "pass",
+      "ms": 96622
+    }
+  ],
+  "metrics": {
+    "rtt": {
+      "p50": 1,
+      "p90": 3,
+      "n": 5
+    },
+    "text_client": {
+      "p50": 1468,
+      "p90": 1561,
+      "n": 5
+    },
+    "eot_client": {
+      "p50": 1532,
+      "p90": 2942,
+      "n": 5
+    },
+    "server_lag": {
+      "p50": 360,
+      "p90": 474,
+      "n": 5
+    },
+    "start": {
+      "p50": 1319,
+      "p90": 1455,
+      "n": 5
+    },
+    "eot_murage": {
+      "p50": 1480,
+      "p90": 1765,
+      "n": 5
+    },
+    "audible_restarts": {
+      "p50": 0,
+      "p90": 0,
+      "n": 6
+    },
+    "superseded": {
+      "p50": 1,
+      "p90": 2,
+      "n": 5
+    }
+  },
+  "gates": [
+    {
+      "id": "T-text-p50",
+      "value": 1467,
+      "limit": 800,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-text-p90",
+      "value": 1560,
+      "limit": 1000,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-eot-p50",
+      "value": 1531,
+      "limit": 900,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-eot-p90",
+      "value": 2941,
+      "limit": 2000,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-eot-murage-p90",
+      "value": 1764,
+      "limit": 1300,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-superseded",
+      "value": 4,
+      "limit": 2,
+      "samples": 5,
+      "needed": 5,
+      "pass": false
+    },
+    {
+      "id": "T-audible-restarts",
+      "value": 0,
+      "limit": 0,
+      "samples": 6,
+      "needed": 6,
+      "pass": true
+    }
+  ],
+  "owner": [],
+  "failures": [
+    "gate T-text-p50",
+    "gate T-text-p90",
+    "gate T-eot-p50",
+    "gate T-eot-p90",
+    "gate T-eot-murage-p90",
+    "gate T-superseded"
+  ]
+}

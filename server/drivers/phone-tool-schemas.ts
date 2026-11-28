@@ -6,6 +6,8 @@
 // the harness checks the key, the owner audience and the active settings revision again at every call (server/phone-calls/service.ts).
 // Neither tool has an assistant, number, voice or settings field, so a bot cannot swap them. Same two tools on every engine.
 
+import type { PhoneAskCard, PhoneAskTurn } from "../phone-calls/contracts.ts";
+
 /** The env the harness sets on the agents integration: "1" lists both phone tools. Absent: none. */
 export const PHONE_TOOLS_ENV = "MURAGE_PHONE_CALLS";
 export const PHONE_TOOL_NAMES = ["phone_call_place", "phone_call_result"] as const;
@@ -22,9 +24,11 @@ export const PHONE_TOOLS = [
     description: "Phone a business for the owner, like booking a table, using the owner's own phone call settings (opening lines, recording, language, max length). Returns a call id; read the outcome later with phone_call_result. Callee speech never comes back as text.",
     annotations: { readOnlyHint: false, openWorldHint: true },
     inputSchema: {
-      type: "object", additionalProperties: false, required: ["to", "goal"],
+      type: "object", additionalProperties: false, required: ["goal"],
       properties: {
-        to: { type: "string", maxLength: 16, description: "The number to call, in +E.164 form." },
+        purpose: { type: "string", enum: ["ask", "book", "cancel"], description: "ask (default), book, or cancel a booking this bot made earlier." },
+        booking: { type: "string", pattern: "^call_[0-9a-f]{24}$", description: "For cancel: the call id of the booking to cancel." },
+        to: { type: "string", maxLength: 16, description: "The number to call, in +E.164 form. Required unless purpose is cancel, which calls the booking's own number." },
         goal: { type: "string", minLength: 1, maxLength: 500, description: "What the call is for, in one or two lines." },
         details: { type: "string", maxLength: 2000, description: "Facts the caller may give, such as names, party size, times." },
         limits: { type: "string", maxLength: 1000, description: "What the caller must not agree to." },
@@ -48,7 +52,7 @@ export function phoneToolsFor(env: string | undefined): typeof PHONE_TOOLS {
 
 /** Ask card (3f): the harness registers the service's askPreview here once, so every engine's card path can show number, goal,
  *  details, limits, when, resolved language and settings revision without importing the service. No side effects at import. */
-export type PhoneAskPreview = (args: Record<string, unknown>) => { to: string; goal: string; details: string; limits: string; when?: string; language: string; settings_revision: number } | null;
+export type PhoneAskPreview = (args: Record<string, unknown>, turn?: PhoneAskTurn) => PhoneAskCard | null;
 let askPreviewImpl: PhoneAskPreview | null = null;
 export function setPhoneAskPreview(fn: PhoneAskPreview | null): void { askPreviewImpl = fn; }
 /** The name each engine shape gives the place tool: bare, with an MCP prefix (mcp__agents__phone_call_place, Claude, Codex, Pi,
@@ -59,12 +63,15 @@ export function setPhoneAskPreview(fn: PhoneAskPreview | null): void { askPrevie
 const AGENTS_SERVER = String.raw`(?:agents|murage[-_]agents(?:[-_][a-f0-9]{20})?)`;
 const PHONE_PLACE_NAME = new RegExp(String.raw`^(?:(?:mcp__)?${AGENTS_SERVER}(?:__|\s*[/.:]\s*))?phone_call_place(?:\s*\(${AGENTS_SERVER}(?: MCP Server)?\))?$`, "i");
 /** The tool name may carry an MCP prefix (mcp__agents__phone_call_place). Returns the card line, or null for any other tool. */
-export function phoneAskLine(tool: string | undefined, input: Record<string, unknown> | undefined): string | null {
+export function phoneAskLine(tool: string | undefined, input: Record<string, unknown> | undefined, turn?: PhoneAskTurn): string | null {
   if (!tool || !input || !PHONE_PLACE_NAME.test(tool.trim())) return null;
-  const p = askPreviewImpl?.(input);
+  const p = askPreviewImpl?.(input, turn);
   if (!p) return null;
-  return [`Call ${p.to}`, `Goal: ${p.goal}`, p.details && `Details: ${p.details}`, p.limits && `Limits: ${p.limits}`, p.when && `When: ${p.when}`,
-    `Language: ${p.language}`, `Settings revision ${p.settings_revision}`].filter(Boolean).join("\n").slice(0, 3200);
+  const max = p.max_seconds === undefined ? undefined : p.max_seconds % 60 === 0 ? `${p.max_seconds / 60} min` : `${p.max_seconds} s`;
+  return [p.sameRequest && "This is the same request as a call already made in this chat. Approving returns that call's result; it doesn't call again.",
+    p.cancelOf && `Cancel your booking at ${p.cancelOf.business}${p.cancelOf.time ? ` (${p.cancelOf.time})` : ""}`,
+    `Call ${p.to}`, `Goal: ${p.goal}`, p.details && `Details: ${p.details}`, p.limits && `Limits: ${p.limits}`, p.when && `When: ${p.when}`,
+    `Language: ${p.language}`, max && `Max length: ${max}`, `Settings revision ${p.settings_revision}`].filter(Boolean).join("\n").slice(0, 3200);
 }
 
 const plainRecord = (value: unknown): Record<string, unknown> | undefined =>
@@ -75,21 +82,21 @@ const innerInput = (raw: Record<string, unknown>) => plainRecord(raw.tool_input 
  *  (a shell command, an edit, another server's tool) never does, whatever the model-written title or input says. Without a stamp,
  *  a call that carries a command or file target never gets the card; otherwise a wrapper's inner tool (`tool_name` + `tool_input`)
  *  or the title names it. Same line as phoneAskLine. */
-export function acpPhoneAskLine(toolCall: { title?: unknown; rawInput?: unknown; _meta?: unknown; kind?: unknown } | undefined): string | null {
+export function acpPhoneAskLine(toolCall: { title?: unknown; rawInput?: unknown; _meta?: unknown; kind?: unknown } | undefined, turn?: PhoneAskTurn): string | null {
   if (!toolCall) return null;
   const raw = plainRecord(toolCall.rawInput);
   const meta = plainRecord(toolCall._meta);
   if (meta && "fuigo/tool" in meta) {
     const stamp = plainRecord(meta["fuigo/tool"]);
     if (!stamp || stamp.version !== 1) return null;
-    if (stamp.namespace === "mcp" && typeof stamp.name === "string") return phoneAskLine(stamp.name, raw);
+    if (stamp.namespace === "mcp" && typeof stamp.name === "string") return phoneAskLine(stamp.name, raw, turn);
     // the engine's own dispatcher, naming the MCP tool it runs in its structured input
-    if (stamp.name === "use_tool" && typeof raw?.tool_name === "string") return phoneAskLine(raw.tool_name, innerInput(raw));
+    if (stamp.name === "use_tool" && typeof raw?.tool_name === "string") return phoneAskLine(raw.tool_name, innerInput(raw), turn);
     return null;
   }
   if (typeof toolCall.kind === "string" && ["execute", "edit", "delete", "move"].includes(toolCall.kind)) return null;
   if (raw && ["command", "cmd", "path", "paths", "file_path", "filePath"].some((key) => key in raw)) return null;
   const inner = raw?.tool_name ?? raw?.toolName;
-  if (inner !== undefined) return typeof inner === "string" && raw ? phoneAskLine(inner, innerInput(raw)) : null;
-  return phoneAskLine(typeof toolCall.title === "string" ? toolCall.title : undefined, raw);
+  if (inner !== undefined) return typeof inner === "string" && raw ? phoneAskLine(inner, innerInput(raw), turn) : null;
+  return phoneAskLine(typeof toolCall.title === "string" ? toolCall.title : undefined, raw, turn);
 }

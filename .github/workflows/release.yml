@@ -37,11 +37,46 @@ on:
         required: false
         type: boolean
         default: false
+      artifact_only:
+        description: "Build, sign and verify Actions artifacts without writing to the release repository"
+        type: boolean
+        default: false
       ci_waiver:
         description: "Optional: path of a committed, approved CI waiver (docs/releases/ci-waiver-template.md). Empty = CI must pass"
         required: false
         type: string
         default: ""
+      # Rings (designs/RINGS-DESIGN.md sections 5-6, docs/releasing.md "Rings"). A ring_op run builds nothing: every
+      # build job is skipped and only the assemble job runs the op (it holds RELEASES_PAT and the release key).
+      ring_op:
+        description: "Ring operation instead of a release (empty = normal release run)"
+        required: false
+        type: choice
+        default: ""
+        options: ["", "publish-internal", "advance-beta", "promote-all", "halt", "resume", "kill", "resign", "pin-latest"]
+      ring_version:
+        description: "Ring op: the version (x.y.z) it acts on (halt: the bad version)"
+        required: false
+        type: string
+        default: ""
+      ring_args:
+        description: "Ring op: ring=<internal|beta|all> previous=<x.y.z> kill_id=<id> kill_versions=<range> kill_code=<code>, space-separated"
+        required: false
+        type: string
+        default: ""
+      ring_receipts:
+        description: "advance-beta: the three board lines BANNERGATE / RING0-MAC / RING0-WIN for this version, joined with ' | '"
+        required: false
+        type: string
+        default: ""
+      ring_ruling:
+        description: "promote-all: the MAIN-RULING ... SEAN YES rings bootstrap <v> line (bootstrap only) or a Sean waiver line"
+        required: false
+        type: string
+        default: ""
+  # Daily resign (R3): seq+1, content unchanged, so a replay window is at most 72 h. Builds nothing.
+  schedule:
+    - cron: "17 6 * * *"
   # Merging a version bump to main IS the release trigger. `publish` is a
   # workflow_dispatch input only, so a push-started run leaves a DRAFT — a
   # human still publishes it. The should_release guard below is what keeps
@@ -63,11 +98,37 @@ jobs:
     # platform builds start after the token probe, beside the CI check.
     timeout-minutes: 15
     outputs:
+      ring_op: ${{ steps.mode.outputs.ring_op }}
+      artifact_only: ${{ steps.mode.outputs.artifact_only }}
       sha: ${{ steps.pin.outputs.sha }}
       version: ${{ steps.pin.outputs.version }}
       should_release: ${{ steps.pin.outputs.should_release }}
       signal_enabled: ${{ steps.signal.outputs.enabled }}
     steps:
+      - name: Select the release mode
+        id: mode
+        env:
+          ARTIFACT_ONLY: ${{ inputs.artifact_only || github.ref == 'refs/heads/rel/1.0.21-cand0' }}
+          PUBLISH: ${{ inputs.publish }}
+          PRIVATE_REPO: ${{ github.event.repository.private }}
+          RING_OP: ${{ github.event_name == 'schedule' && 'resign' || inputs.ring_op }}
+        run: |
+          if [ -n "$RING_OP" ] && { [ "$PUBLISH" = true ] || [ "$ARTIFACT_ONLY" = true ]; }; then
+            echo "::error::a ring_op run builds and publishes nothing; clear publish/artifact_only"
+            exit 1
+          fi
+          if [ -n "$RING_OP" ]; then echo "ring_op=$RING_OP" >> "$GITHUB_OUTPUT"; fi
+          if [ "$ARTIFACT_ONLY" = true ]; then
+            if [ "$PUBLISH" = true ]; then
+              echo "::error::artifact-only runs cannot publish"
+              exit 1
+            fi
+            if [ "$PRIVATE_REPO" != true ]; then
+              echo "::error::artifact-only runs require a private repository"
+              exit 1
+            fi
+          fi
+          echo "artifact_only=$ARTIFACT_ONLY" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # github.sha, not github.ref: on a push the branch tip can already
@@ -98,6 +159,7 @@ jobs:
       - id: pin
         env:
           BEFORE: ${{ github.event.before }}
+          RING_OP: ${{ steps.mode.outputs.ring_op }}
         run: |
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           current=$(node scripts/release-guard.mjs version)
@@ -115,6 +177,8 @@ jobs:
             previous=$(git show "$BEFORE:package.json" | node -e 'let s=""; process.stdin.on("data", d => s += d).on("end", () => console.log(JSON.parse(s).version))')
             should_release=$(node scripts/release-guard.mjs should-release "$current" "$previous")
           fi
+          # A ring op (or the scheduled resign) builds nothing: every build job keys on should_release.
+          if [ -n "$RING_OP" ]; then should_release=false; fi
           echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
       - name: Require the curated release notes for this version
         # package:prepare stages release-notes/<version>.md for the update card
@@ -222,6 +286,7 @@ jobs:
           package-manager-cache: false
       - run: node scripts/release-guard.mjs bootstrap
       - run: node scripts/release-guard.mjs wait-probe
+        if: needs.prepare.outputs.artifact_only == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -229,14 +294,19 @@ jobs:
     name: macOS arm64 + x64 (sign, notarize, staple)
     needs: [prepare, preflight]
     if: needs.prepare.outputs.should_release == 'true'
-    runs-on: macos-15
+    # macos-15-xlarge (14 GB): the 8192 MiB compiler cap below needs it.
+    runs-on: ${{ vars.MURAGE_MAC_RELEASE_RUNNER || 'macos-15-xlarge' }}
     # package-mac-qualification.yml needs 90 for ONE architecture plus the
     # GEPA build (45-minute cap inside build-mac.py); this job packages both.
     timeout-minutes: 240
-    # Production-only compiler programs are measured below 70% of this cap;
-    # full test types run in ci-gate on the 16 GB Linux runner.
+    # 1.0.20 (MAIN ruling): server-build peaked at 3022.7 MiB here, over 70% of
+    # the recorded 4300 MiB cap. The job declares the ubuntu CI heap as its
+    # compiler cap, so the 70% rule holds against 8192 (5734 MiB). Splitting
+    # server-build before any further raise is the 1.0.21 follow-up.
+    # Full test types run in ci-gate on the 16 GB Linux runner.
     env:
-      NODE_OPTIONS: --max-old-space-size=4300
+      NODE_OPTIONS: --max-old-space-size=8192
+      MURAGE_TYPECHECK_CAP_MIB: "8192"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -286,6 +356,13 @@ jobs:
       # committed placeholder fails here, so a release cannot ship without it.
       - name: Murage for Chrome release identity
         run: node scripts/release-guard.mjs browser-extension extensions/murage-browser/release.json >> "$GITHUB_ENV"
+      # Rings R2: the build floor = the seq of the ring manifest live now (0 before the first manifest). The
+      # client never accepts a manifest below it; the check fails the build when the file is missing or malformed.
+      - name: Write and check the ring build floor
+        shell: bash
+        run: |
+          node scripts/release-guard.mjs rings-floor electron/rings-floor.json
+          node scripts/release-guard.mjs rings-floor-check electron/rings-floor.json
       - name: Clean generated output
         run: rm -rf dist dist-server dist-native release qualification-evidence
 
@@ -666,7 +743,7 @@ jobs:
     # build. Binds its report to the final x64 bytes from the mac job.
     needs: [prepare, preflight, mac]
     if: needs.prepare.outputs.should_release == 'true'
-    runs-on: macos-15-intel
+    runs-on: ${{ vars.MURAGE_MAC_INTEL_RELEASE_RUNNER || 'macos-15-intel' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -883,6 +960,13 @@ jobs:
       - name: Murage for Chrome release identity
         shell: bash
         run: node scripts/release-guard.mjs browser-extension extensions/murage-browser/release.json >> "$GITHUB_ENV"
+      # Rings R2: the build floor = the seq of the ring manifest live now (0 before the first manifest). The
+      # client never accepts a manifest below it; the check fails the build when the file is missing or malformed.
+      - name: Write and check the ring build floor
+        shell: bash
+        run: |
+          node scripts/release-guard.mjs rings-floor electron/rings-floor.json
+          node scripts/release-guard.mjs rings-floor-check electron/rings-floor.json
       - name: Clean generated output
         shell: bash
         run: rm -rf dist dist-server dist-native release qualification-evidence
@@ -902,6 +986,10 @@ jobs:
         run: |
           python -I native/gepa/build-windows.py "$env:RUNNER_TEMP/gepa-windows"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: List GEPA native images to sign (never Microsoft redistributables)
+        # Microsoft's VC++ runtime keeps Microsoft's own signature; verify-windows.ps1 requires it.
+        shell: pwsh
+        run: ./native/gepa/sign-list-windows.ps1 -Bundle "$pwd/dist-native/gepa/win32-x64" -List "$pwd/qualification-evidence/gepa-windows-sign-list.txt"
       - name: Sign GEPA native images before freezing their manifest
         uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         with:
@@ -911,9 +999,7 @@ jobs:
           endpoint: https://eus.codesigning.azure.net
           signing-account-name: ferrox-labs-signing
           certificate-profile-name: ferroxlabs
-          files-folder: ${{ github.workspace }}/dist-native/gepa/win32-x64
-          files-folder-filter: exe,dll,pyd
-          files-folder-recurse: true
+          files-catalog: ${{ github.workspace }}/qualification-evidence/gepa-windows-sign-list.txt
           file-digest: SHA256
           timestamp-digest: SHA256
           exclude-azure-cli-credential: true
@@ -961,10 +1047,16 @@ jobs:
           }
           exit $code
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          # Same compiler headroom as the Mac job (1.0.20; split is a 1.0.21 item).
+          NODE_OPTIONS: --max-old-space-size=8192
+          MURAGE_TYPECHECK_CAP_MIB: "8192"
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      - name: Verify packaged computer-use driver (win32-x64)
+        shell: bash
+        run: node scripts/verify-windows-package.mjs "release/win-unpacked/resources"
 
       - name: Verify packaged Signal inventory (win32-x64)
         if: needs.prepare.outputs.signal_enabled == 'true'
@@ -1020,7 +1112,7 @@ jobs:
           # rejects a perfectly good Cloudflare signature. Allowlist the
           # vendors by name rather than skipping them: a swapped binary with a
           # different signer still fails this gate.
-          $allowed = @('Ferrox Labs, LLC', 'Cloudflare, Inc.')
+          $allowed = @('Ferrox Labs, LLC', 'Cloudflare, Inc.', 'Cua AI, Inc.')
           $script:fail = 0
           Get-ChildItem release -Filter *.exe -Recurse | ForEach-Object {
             if ($rawBackupFiles.Contains([System.IO.Path]::GetFullPath($_.FullName))) { return }
@@ -1216,7 +1308,7 @@ jobs:
         # GEPA downloads hashed wheels on the host; native compilation uses Docker.
         run: >-
           sudo apt-get update && sudo apt-get install -y
-          at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb
+          at-spi2-core dbus-x11 desktop-file-utils libxi6 libxkbcommon0 squashfs-tools x11-utils xdotool xvfb xfwm4
           build-essential binutils libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
           pkg-config libseccomp-dev xz-utils python3 python3-pip git linux-libc-dev
       - run: pnpm install --frozen-lockfile
@@ -1224,12 +1316,21 @@ jobs:
       # committed placeholder fails here, so a release cannot ship without it.
       - name: Murage for Chrome release identity
         run: node scripts/release-guard.mjs browser-extension extensions/murage-browser/release.json >> "$GITHUB_ENV"
+      # Rings R2: the build floor = the seq of the ring manifest live now (0 before the first manifest). The
+      # client never accepts a manifest below it; the check fails the build when the file is missing or malformed.
+      - name: Write and check the ring build floor
+        shell: bash
+        run: |
+          node scripts/release-guard.mjs rings-floor electron/rings-floor.json
+          node scripts/release-guard.mjs rings-floor-check electron/rings-floor.json
       - name: Clean generated output
         run: pnpm clean && rm -rf qualification-evidence
       - name: Stage the pinned CUA runtime
         run: pnpm build:cua:linux
       - name: Prove overlay-free X11 input routing
-        run: dbus-run-session -- xvfb-run -a pnpm smoke:cua-x11-input
+        # cua-driver 0.55.0 sends foreground input only after a window manager
+        # has made the target window active (_NET_ACTIVE_WINDOW).
+        run: dbus-run-session -- xvfb-run -a sh -c 'xfwm4 --compositor=off & sleep 2; exec pnpm smoke:cua-x11-input'
       # Mirrors package-linux.yml: build-linux.py verifies the pinned toolchain
       # and the exact source SHA, stages dist-native/gepa/linux-x64 and writes
       # the manifest receipt electron-builder is handed below.
@@ -1253,7 +1354,9 @@ jobs:
         run: node scripts/stage-signal-runtime.mjs --target linux-x64 --release
       - name: Package with the frozen GEPA manifest
         env:
-          NODE_OPTIONS: --max-old-space-size=4300
+          # Same compiler headroom as the Mac job (1.0.20; split is a 1.0.21 item).
+          NODE_OPTIONS: --max-old-space-size=8192
+          MURAGE_TYPECHECK_CAP_MIB: "8192"
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           export MURAGE_REQUIRE_BUNDLED_MODEL=1
@@ -1517,12 +1620,9 @@ jobs:
             "Murage-$VERSION-x86_64.AppImage"
             Murage-amd64.deb Murage-intel.dmg Murage-setup.exe
             Murage.AppImage Murage.dmg SHA256SUMS-ubuntu-x64.txt
+            SHA256SUMS-ubuntu-x64.txt.asc
             "capability-db-$VERSION.json"
           )
-          # The Linux checksum signature (audit C8): required whenever the
-          # Linux job made one, so a signed release cannot lose it on the way.
-          # (The job warns when the signing key is not configured.)
-          if [ -e assets/SHA256SUMS-ubuntu-x64.txt.asc ]; then required+=(SHA256SUMS-ubuntu-x64.txt.asc); fi
           for file in "${required[@]}"; do
             test -s "assets/$file" || { echo "::error::missing or empty release asset: $file"; exit 1; }
           done
@@ -1542,9 +1642,11 @@ jobs:
           previous="$RUNNER_TEMP/capability-db-previous.json"
           # A failed lookup fails the step: only a release that was read and carries no export is the bootstrap.
           latest="$RUNNER_TEMP/previous-release.json"
+          # Rings B6: the newest published release older than this one, prereleases included (an N+1 cut during
+          # N's day 0-2 diffs against N, not N-1; releases/latest would still be N-1).
           curl -fsSL --retry 3 -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" \
-            https://api.github.com/repos/FerroxLabs/murage-releases/releases/latest -o "$latest"
-          url=$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(!r.tag_name||!Array.isArray(r.assets))process.exit(2);const a=r.assets.find(x=>/^capability-db-.*\.json$/.test(x.name));process.stdout.write(a?a.browser_download_url:"")' "$latest")
+            "https://api.github.com/repos/FerroxLabs/murage-releases/releases?per_page=100" -o "$latest"
+          url=$(node scripts/release-guard.mjs capability-baseline "$VERSION" "$latest")
           if [ -n "$url" ]; then
             curl -fsSL --retry 3 "$url" -o "$previous"
           else
@@ -1624,6 +1726,13 @@ jobs:
           path: review.json
           if-no-files-found: error
           retention-days: 7
+      - name: Qualify current Fuigo folder configuration on the final packages
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+          MURAGE_TRUST_EXPECTED_RELEASE: ${{ vars.MURAGE_TRUST_EXPECTED_RELEASE }}
+          MURAGE_TRUST_RECEIPT: ${{ vars.MURAGE_TRUST_RECEIPT }}
+          MURAGE_TRUST_CAPTURES: ${{ vars.MURAGE_TRUST_CAPTURES }}
+        run: node scripts/fuigo-trust-release.mjs
       - name: Retain the verified installer set for the release job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -1635,14 +1744,19 @@ jobs:
   assemble:
     name: Release the verified assets
     needs: [prepare]
-    if: needs.prepare.outputs.should_release == 'true'
+    if: (needs.prepare.outputs.should_release == 'true' && needs.prepare.outputs.artifact_only == 'false') || needs.prepare.outputs.ring_op != ''
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
     timeout-minutes: 360
     concurrency:
-      group: release-assemble-v${{ needs.prepare.outputs.version }}
+      # Rings: every writing ring op runs in ONE group (release-rings), so a halt and a promote can never interleave
+      # (Astra r4 pass 3), and none queues behind a release run of the same package version. The daily resign has
+      # its own group so it can never cancel a pending halt; it keeps content, and a stale resign write is refused
+      # by the fast-forward-only ref update (writes are based on the commit they read). docs/releasing.md: never
+      # dispatch a second ring op while one is pending (GitHub cancels an older pending run in the same group).
+      group: ${{ needs.prepare.outputs.ring_op == 'resign' && format('release-rings-resign-{0}', github.run_id) || needs.prepare.outputs.ring_op != '' && 'release-rings' || format('release-assemble-v{0}', needs.prepare.outputs.version) }}
       cancel-in-progress: false
     # This is the only release-write capability in the repository. All shell
     # commands are fixed guard entrypoints; no action may extend this allowlist.
@@ -1658,19 +1772,23 @@ jobs:
       - name: Install the pinned guard dependencies without lifecycle scripts
         run: node scripts/release-guard.mjs bootstrap
       - name: Probe release token before builds
+        if: needs.prepare.outputs.ring_op == ''
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: node scripts/release-guard.mjs probe-prepared
       - name: Wait for successful CI and verified staging
+        if: needs.prepare.outputs.ring_op == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release-guard.mjs wait-stage
       - name: Download only this run's verified installer artifact
+        if: needs.prepare.outputs.ring_op == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release-guard.mjs download
       - name: Generate notes and record any approved CI waiver
+        if: needs.prepare.outputs.ring_op == ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -1678,21 +1796,46 @@ jobs:
           REVIEW_FILE: release-review/review.json
         run: node scripts/release-guard.mjs notes-file
       - name: Create or update the draft with the complete asset set
+        if: needs.prepare.outputs.ring_op == ''
         id: upload
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: node scripts/release-guard.mjs upload-prepared
       - name: Prove the draft holds the exact staged bytes
+        if: needs.prepare.outputs.ring_op == ''
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_ID: ${{ steps.upload.outputs.release_id }}
         run: node scripts/release-guard.mjs verify-digests
       - name: Publish (only when asked to)
-        if: ${{ inputs.publish }}
+        if: ${{ inputs.publish && needs.prepare.outputs.ring_op == '' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_ID: ${{ steps.upload.outputs.release_id }}
         run: node scripts/release-guard.mjs publish-prepared
+      # Rings D0 (designs/RINGS-DESIGN.md section 5): publish made a prerelease that is not latest; now the signed
+      # manifest names it for the internal ring only. verify-published runs inside the op before signing. Both ring
+      # steps are fixed guard commands (MAIN-RULING 2026-11-27 option A): the guard imports the signing key itself.
+      - name: Name the published prerelease in the internal ring
+        if: ${{ inputs.publish && needs.prepare.outputs.ring_op == '' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/release-guard.mjs ring-publish-internal
+      - name: Ring operation
+        if: needs.prepare.outputs.ring_op != ''
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          RING_OP: ${{ needs.prepare.outputs.ring_op }}
+          RING_VERSION: ${{ inputs.ring_version }}
+          RING_ARGS: ${{ inputs.ring_args }}
+          RING_RECEIPTS: ${{ inputs.ring_receipts }}
+          RING_RULING: ${{ inputs.ring_ruling }}
+        run: node scripts/release-guard.mjs ring-op

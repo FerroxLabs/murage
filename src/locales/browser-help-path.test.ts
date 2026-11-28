@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { settingsPanelSource } from "../components/bot-pages/panel-source";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 const pack = (code: string) => JSON.parse(read(`./${code}.json`)) as Record<string, string>;
@@ -36,6 +37,6 @@ describe("the browser-off line names the real Settings path in all 8 languages",
   });
 
   it("the bot's Browser row shows this key when the app-wide switch is off", () => {
-    expect(read("../components/SettingsPanel.tsx")).toContain(`t("${KEY}")`);
+    expect(settingsPanelSource()).toContain(`t("${KEY}")`);
   });
 });

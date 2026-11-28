@@ -243,3 +243,31 @@ describe("this month by bot", () => {
     expect(usageCsv(rows.map((r) => ({ name: r.bot.name, replies: r.replies, tokens: r.tokens })))).toBe('Bot,Replies,Tokens\n"Bo, the ""second""",5,5500\nAda,3,500\n');
   });
 });
+
+it("W7 counts only fresh input and output on the usage chip over three turns", () => {
+  const cachedInput = 60_000;
+  const cacheCreation = 20_000;
+  const turn = { input: 20_000 + cachedInput + cacheCreation, cachedInput, output: 1_000, costUsd: null, turns: 1 };
+  const task = sumUsage([turn, turn, turn]);
+  expect(freshTokens(task)).toBe(123_000);
+  expect(usageChip(task)).toBe("123k tok");
+});
+
+describe("botUsage cache coverage", () => {
+  const base = { input: 10_100, output: 5, costUsd: null, turns: 2 };
+  it("keeps the cached share when the server counted every request", () => {
+    const u = botUsage({ tasks: [], usageTotal: { ...base, cachedInput: 80, usageAccounting: { version: 1, inputComplete: true, cacheComplete: true } } });
+    expect(u.cachedInput).toBe(80);
+  });
+  it("reads a partial cache count as unknown, so the rest of the input is not called new", () => {
+    const u = botUsage({ tasks: [], usageTotal: { ...base, cachedInput: 80, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } } });
+    expect(u).not.toHaveProperty("cachedInput");
+    expect(usageDetail(u)).not.toContain("cached");
+  });
+  it("keeps the saved split of a bot written before the marks (unmarked-only), and drops it once a marked partial is in", () => {
+    const legacy = botUsage({ tasks: [], usageTotal: { ...base, cachedInput: 80, cacheUnmarkedOnly: true, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } } });
+    expect(legacy.cachedInput).toBe(80);
+    const marked = botUsage({ tasks: [], usageTotal: { ...base, cachedInput: 80, usageAccounting: { version: 1, inputComplete: true, cacheComplete: false } } });
+    expect(marked).not.toHaveProperty("cachedInput");
+  });
+});

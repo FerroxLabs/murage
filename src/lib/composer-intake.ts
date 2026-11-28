@@ -20,7 +20,7 @@
 // uploaded one file at a time with a per-file error, rather than passed
 // through `intakeFiles`. What it is not is exempt from the counter.
 
-import { intakeFiles, type Attachment, type DroppedFile } from "./composer-attachments";
+import { intakeFiles, type Attachment, type DroppedFile, type FileAttachment, type FileUploadErrorLine } from "./composer-attachments";
 import { trackComposerUpload } from "./composer-uploads";
 import { batchRefusalLine } from "../../shared/attachment-storage.ts";
 
@@ -33,6 +33,8 @@ export interface ComposerFileIntake<T extends DroppedFile & { type: string }> {
   getPath: (file: T) => string;
   uploadImage: (file: T) => Promise<Attachment | null>;
   queueAudio?: (file: T) => void;
+  fileError?: FileUploadErrorLine;
+  uploadFile?: (file: T, line: FileUploadErrorLine) => Promise<FileAttachment>;
   onAdd: (attachments: Attachment[]) => void;
   onNotice: (message: string) => void;
   /** The drop target listens on the window and can outlive its component.
@@ -58,6 +60,8 @@ export function composerFileIntake<T extends DroppedFile & { type: string }>(
       getPath: intake.getPath,
       uploadImage: intake.uploadImage,
       queueAudio: intake.queueAudio,
+      fileError: intake.fileError,
+      uploadFile: intake.uploadFile,
     });
     if (attachments.length) intake.onAdd(attachments);
     if (intake.stillListening && !intake.stillListening()) return;

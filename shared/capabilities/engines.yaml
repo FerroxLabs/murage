@@ -18,18 +18,19 @@ entries:
       or Continue with Grok, then pick the plan's model. Not there? Say what shows. The Codex and
       Grok apps are separate. To set up Codex or Grok on a plan, reply with
       [Continue with ChatGPT](murage://plan/chatgpt) or
-      [Continue with Grok](murage://plan/supergrok), and say Grok is Unofficial. Nothing switches a
+      [Continue with Grok](murage://plan/supergrok), and say xAI has not published this sign-in for other apps yet. Nothing switches a
       bot by itself, and a bot on Claude Code moves to Fuigo first.
     limits: >
-      Desktop app only: finish on the computer running Murage. Grok is marked Unofficial and needs
-      SuperGrok or X Premium. Never put a sign-in code or key in a chat.
+      Desktop app only: finish on the computer running Murage. xAI has not published the Grok sign-in
+      for other apps yet, so it can be turned off; it needs SuperGrok or X Premium. Never put a sign-in code or key in a chat.
     settings_path: Settings → Models & engines → Use a plan you already have
     platforms: [mac, windows, linux]
     engines: [fuigo, codex, grok, qwen, hermes, openai-compatible]
     anchors:
       - settings-control:models/plan-sign-in
       - "file:electron/model-signin-presets.mjs#const DEFAULT_ON = Object.freeze({ chatgpt: true, supergrok: true })"
-      - file:src/components/SubscriptionSignIn.tsx#modelSignIn.grok.unofficial
+      - "file:src/components/SubscriptionSignIn.tsx#note: \"modelSignIn.grok.note\""
+      - file:src/components/SubscriptionSignIn.tsx#modelSignIn.grok.unauthorized
       - "file:shared/provider-engine.ts#if (preset === \"chatgpt\" || preset === \"supergrok\") {"
       - file:src/lib/engine-chat-link.ts#PLAN_SIGNIN_ANCHOR
     verified: 1.0.14
@@ -47,13 +48,13 @@ entries:
       Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with
       nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi
       Code and other apps set up from the Engines list. Never list keys first. ChatGPT:
-      [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say it is Unofficial:
+      [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say xAI has not published it for other apps yet:
       [Continue with Grok](murage://plan/supergrok). Claude:
       [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches
       a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to
       Fuigo first. What you use depends on the one you pay for.
     limits: >
-      Grok is marked Unofficial and needs SuperGrok or X Premium. A Claude plan cannot be used
+      xAI has not published the Grok sign-in for other apps yet; it needs SuperGrok or X Premium. A Claude plan cannot be used
       through Fuigo.
     settings_path: Settings → Models & engines → Use a plan you already have
     platforms: [mac, windows, linux]
@@ -193,12 +194,12 @@ entries:
       - Does Murage bundle Codex?
     answer: >
       For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback
-      recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0.
+      recommends GPT-6.1 Sol, supported by the Codex 0.162.1 and Codex 0.167.0 catalogs.
       A live Codex catalog or configured
       Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol,
       stay as they are. The picker marks the current catalog recommendation.
     limits: >
-      Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately.
+      Desktop Murage bundles Fuigo 1.0.48; install or update Claude Code and Codex separately.
       Cloud home includes Claude Code and Codex.
       Describe your model from the turn’s engine
       facts, not these recommendations.
@@ -209,7 +210,7 @@ entries:
       - settings-card:models/engines
       - 'file:server/drivers/claude.ts#default: "claude-sonnet-5-5"'
       - 'file:server/drivers/claude.ts#id: "claude-fable-5-2"'
-      - 'file:scripts/prepare-fuigo.mjs#export const FUIGO_VERSION = "1.0.43"'
+      - 'file:scripts/prepare-fuigo.mjs#export const FUIGO_VERSION = "1.0.48"'
       - 'file:server/drivers/codex-catalog.ts#default: "gpt-6.1-sol"'
       - file:server/default-engine.ts#export function defaultModel
       - file:server/capabilities-primer.ts#const modelId =
@@ -242,4 +243,114 @@ entries:
     since: 1.0.16
     doc: providers#muse-code
     internal: GAP-MUSE (GAP-MUSE-CHECK-1101.md). Probe 3 (11-03) found Contributor is a model and Muse's served default is one, so every session/start and session/resume names a regular model (MUSE_DEFAULT_MODEL muse-spark-1.3), a Contributor answer refuses the turn, plus --contributor-mode off and MUSE_CONTRIBUTOR_MODE=0. Probe 2 found writes never ask, so --disable-write at Ask and Auto until MUSE-WRITE-GATE (1.0.18); MUSE_DISABLE_APPROVAL_JUDGE=1 on every child. Cloud waits on GAP-MUSE-CLOUD (counsel or Meta).
+  - id: engines.command-code
+    name: Command Code
+    status: can
+    questions:
+      - Set up Command Code
+      - How do I sign in to Command Code?
+      - Can Command Code see images in Murage?
+      - Is Command Code on Murage Cloud?
+    answer: >
+      Yes, in the desktop app. Install Command Code (npm install -g command-code, which needs Node.js), then run
+      cmd login in a terminal or set COMMAND_CODE_API_KEY. Command Code bills your own account. Murage
+      always runs it in its ask mode at every level, so each write or command reaches Murage's approvals. A bot can
+      send it images, and your Murage tools and MCP servers are handed to it.
+    limits: Not on Murage Cloud yet. Murage lists the models Command Code offers; a reasoning level shows only when Command Code offers one with a model. Install and update it yourself.
+    settings_path: Settings → Models & engines → Engines
+    platforms: [mac, windows, linux]
+    engines: [commandcode]
+    anchors:
+      - settings-card:models/engines
+      - "file:server/drivers/acp/command-code.ts#export const COMMAND_CODE_MODE = \"default\""
+      - "file:server/drivers/acp/command-code.ts#images: true"
+      - "file:server/drivers/acp/command-code.ts#signInCommand: SIGN_IN"
+      - "file:server/engine-signin-recipe.ts#commandCodeAgent: terminal([\"login\"]"
+      - "file:server/cloud-home/runnable-engines.ts#commandCodeAgent: \"Command Code\""
+    verified: 1.0.23
+    since: 1.0.23
+    internal: Read from server/drivers/acp/command-code.ts (ACP, `command-code acp`). No static effortLevels on the support; effort reaches the picker only as a model variant (config-options.ts) when the CLI offers one. Every level runs session mode "default", set each turn, never bypass. The sign-in is a browser login the CLI owns (pickAuthMethod null), so a terminal recipe.
+
+  - id: engines.kiro
+    name: Kiro
+    status: can
+    questions:
+      - Set up Kiro
+      - How do I sign in to Kiro?
+      - Can Kiro see images in Murage?
+      - Does Kiro take over without asking?
+    answer: >
+      Yes, in the desktop app. Install Kiro CLI from Kiro's own installer, then run kiro-cli login in a terminal or set
+      KIRO_API_KEY. Kiro bills your own account. Murage keeps Kiro's Autopilot off at every level, so it asks before each
+      write or command and Murage's approvals answer. Your Murage tools and MCP servers are handed to it.
+    limits: Not on Murage Cloud yet. Kiro takes text only, so Murage sends it no images, and a reasoning level shows only when the engine offers one with a model. Install and update it yourself.
+    settings_path: Settings → Models & engines → Engines
+    platforms: [mac, windows, linux]
+    engines: [kiro]
+    anchors:
+      - settings-card:models/engines
+      - "file:server/drivers/acp/kiro.ts#export const KIRO_AUTOPILOT = \"off\""
+      - "file:server/drivers/acp/kiro.ts#images: false"
+      - "file:server/drivers/acp/kiro.ts#signInCommand: SIGN_IN"
+      - "file:server/engine-signin-recipe.ts#kiroAgent: terminal([\"login\"]"
+      - "file:server/cloud-home/runnable-engines.ts#kiroAgent: \"Kiro\""
+    verified: 1.0.23
+    since: 1.0.23
+    internal: Read from server/drivers/acp/kiro.ts (ACP, `kiro-cli acp --agent-engine=v3 --auth-method=cli`). images false, no effortLevels. Autopilot set to "off" every turn. Signed in by KIRO_API_KEY or a token in Kiro's own data.sqlite3 (read only).
+
+  - id: engines.omp
+    name: OMP
+    status: can
+    questions:
+      - Set up OMP
+      - How do I sign in to OMP?
+      - Can OMP see images in Murage?
+      - Does OMP ask before it runs a command?
+    answer: >
+      Yes, in the desktop app. Install OMP (npm install -g @oh-my-pi/pi-coding-agent, which needs Node.js), then run omp login in a
+      terminal or set up a provider in OMP itself. OMP has no permission mode over Murage, so every write or command
+      asks and Murage's approvals answer at your level. A bot can send it images, and your Murage tools and MCP servers
+      are handed to it.
+    limits: Not on Murage Cloud yet. OMP sits with the custom engines, uses the providers you set up in it, and a reasoning level shows only when the engine offers one with a model. Install and update it yourself.
+    settings_path: Settings → Models & engines → Engines
+    platforms: [mac, windows, linux]
+    engines: [omp]
+    anchors:
+      - settings-card:models/engines
+      - "file:server/drivers/acp/omp.ts#access: \"custom\""
+      - "file:server/drivers/acp/omp.ts#images: true"
+      - "file:server/drivers/acp/omp.ts#signInCommand: \"omp login\""
+      - "file:server/engine-signin-recipe.ts#ompAgent: terminal([\"login\"]"
+      - "file:server/cloud-home/runnable-engines.ts#ompAgent: \"OMP\""
+    verified: 1.0.23
+    since: 1.0.23
+    internal: Read from server/drivers/acp/omp.ts (ACP, `omp acp`). No static effortLevels; effort only as a model variant when offered. Nothing sets a mode; every level arrives as session/request_permission. A provider key comes only from this instance's own environment, never a workspace credential.
+
+  - id: engines.devin
+    name: Devin
+    status: can
+    questions:
+      - Set up Devin
+      - How do I sign in to Devin?
+      - Can Devin see images in Murage?
+      - Does Devin ask before it runs a command?
+    answer: >
+      Yes, in the desktop app. Install Devin's CLI from Devin's own installer, then run devin auth login in a terminal or set
+      WINDSURF_API_KEY. Devin bills your own account. Murage keeps Devin in its Ask mode at every level and refuses the turn if Devin
+      does not confirm it, so each command reaches Murage's approvals. A bot can send it images, and your Murage tools and MCP
+      servers are handed to it.
+    limits: Not on Murage Cloud yet. Devin's approvals allow once only, and a reasoning level shows only when the engine offers one with a model. Install and update it yourself.
+    settings_path: Settings → Models & engines → Engines
+    platforms: [mac, windows, linux]
+    engines: [devin]
+    anchors:
+      - settings-card:models/engines
+      - "file:server/drivers/acp/devin.ts#const PERMISSION_MODE = \"ask\""
+      - "file:server/drivers/acp/devin.ts#allowOnceOnly: true"
+      - "file:server/drivers/acp/devin.ts#signInCommand: \"devin auth login\""
+      - "file:server/engine-signin-recipe.ts#devinAgent: terminal([\"auth\", \"login\"]"
+      - "file:server/cloud-home/runnable-engines.ts#devinAgent: \"Devin\""
+    verified: 1.0.23
+    since: 1.0.23
+    internal: Read from server/drivers/acp/devin.ts (ACP, `devin acp`). No static effortLevels; effort only as a model variant when offered. Mode "ask" set each turn and read back; a mismatch throws. Signed in by WINDSURF_API_KEY or credentials.toml under the CLI's data or config folder.
 retired: []

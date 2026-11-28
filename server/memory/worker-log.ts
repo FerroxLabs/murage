@@ -7,7 +7,7 @@
 // line 3). Fixed words only: no job, source, scope or message content.
 import { observeLine } from "../observe.ts";
 
-export type WorkerSubsystem = "capture" | "index" | "learning" | "reflection" | "maintenance" | "recall";
+export type WorkerSubsystem = "capture" | "index" | "learning" | "reflection" | "maintenance" | "recall" | "notebook";
 const WINDOW_MS = 10 * 60_000;
 const MAX_ENTRIES = 256;
 interface Entry { since: number; reportedAt: number; count: number }
@@ -27,8 +27,16 @@ export function causeOf(error: unknown): string {
   return "unnamed";
 }
 
+/** How a child ended: its exit code and signal name, nothing it printed. */
+export interface WorkerDetail { code: number | null; signal: string | null }
+function detailWords({ code, signal }: WorkerDetail): string {
+  const c = typeof code === "number" && Number.isInteger(code) ? String(code) : "none";
+  const s = typeof signal === "string" && /^SIG[A-Z0-9]{1,12}$/.test(signal) ? signal : "none";
+  return `code=${c} signal=${s}`;
+}
+
 /** Log one swallowed failure. Returns true when a line was written (the first of a cause, then at most one per ten minutes with the count since). */
-export function logSwallowed(subsystem: WorkerSubsystem, error: unknown, nextInMs?: number, now = Date.now()): boolean {
+export function logSwallowed(subsystem: WorkerSubsystem, error: unknown, nextInMs?: number, now = Date.now(), detail?: WorkerDetail): boolean {
   const cause = causeOf(error), key = `${subsystem}\u0000${cause}`;
   let entry = entries.get(key);
   if (!entry) {
@@ -39,10 +47,16 @@ export function logSwallowed(subsystem: WorkerSubsystem, error: unknown, nextInM
   entry.count++;
   if (now - entry.reportedAt < WINDOW_MS) return false;
   entry.reportedAt = now;
-  observeLine(`[memory-worker] subsystem=${subsystem} cause=${cause} count=${entry.count} since=${new Date(entry.since).toISOString()} next=${nextInMs === undefined ? "later" : new Date(now + nextInMs).toISOString()}`);
+  observeLine(`[memory-worker] subsystem=${subsystem} cause=${cause} count=${entry.count} since=${new Date(entry.since).toISOString()} next=${nextInMs === undefined ? "later" : new Date(now + nextInMs).toISOString()}${detail ? ` ${detailWords(detail)}` : ""}`);
   return true;
 }
 export function resetWorkerLog(): void { entries.clear(); }
+/** 1.0.22 revokehealth item 4: a pass of `subsystem` got through, so its failures so far are over: the next one is logged at once and its
+ * count and since start from it (a line never adds up failures across a success in between). */
+export function forgetSwallowed(subsystem: WorkerSubsystem): void {
+  const prefix = `${subsystem}\u0000`;
+  for (const key of [...entries.keys()]) if (key.startsWith(prefix)) entries.delete(key);
+}
 
 /** Child process stderr, line by line, at most `perMinute` lines a minute (S5). Text is cut and carries no paths. */
 export function makeStderrForwarder(perMinute = 6, now: () => number = Date.now): (chunk: string) => void {

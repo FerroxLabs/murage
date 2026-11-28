@@ -1,4 +1,6 @@
 import { serviceQueue, producerBase, serviceOwnerNoLimits, type ProducerApprovalQueue, type ServiceAuthorityReader } from "../narrow-denials.ts";
+import { trustOriginNow } from "../decision/trust-origin.ts";
+import { emailGeneration } from "./email-turns.ts";
 import { readApproval, presentApproval, settle, type PendingQueueApproval, type ApprovalAnswer } from "../decision/index.ts";
 import { emailCardView } from './cards.ts';
 // Copyright 2026 Ferrox Labs
@@ -270,13 +272,20 @@ export class EmailSendService {
     };
   }
 
+  /** The owner typed this turn (or messaged it from their own channel DM), never an email-triggered, routine or unproven one: the same origin proof the trust rules use. */
+  private ownerDirectTurn(row: SendRow): boolean {
+    const identity = this.authorityFor(row.threadId, row.botId)?.identity;
+    // The authority must be the turn that made this row: a prepared row retried under a later owner turn does not borrow its exemption.
+    return !!identity && emailGeneration(identity.generation) === row.generation && row.summary.replySource === null && trustOriginNow({ ...identity, botId: row.botId }).kind === "owner-direct";
+  }
+
   /** 3.3 on a `prepared` row (at entry and again at boot): awaiting_owner, or dispatching then the call. */
   private async decide(row: SendRow, holdForOwner = false): Promise<SendRow> {
     const binding = this.store.getBinding(row.botId);
     const decision = holdForOwner ? { needsOwner: true, why: "waiting_ask" as const } : decideSend({
       policy: binding?.policy ?? "ask", kind: row.kind, to: row.summary.to, cc: row.summary.cc, subject: row.summary.subject,
       text: this.textOf(row), attachmentCount: row.summary.attachments.length, replySource: row.summary.replySource,
-      isApproved: address => this.store.isApproved(row.botId, address),
+      isApproved: address => this.store.isApproved(row.botId, address), ownerTurn: this.ownerDirectTurn(row),
     });
     if (this.held(row.botId)) return this.move(row, { dueAt: this.now() + FENCE_RETRY_MS }) ?? this.fresh(row.sendId);
     const planned={...row,state:'awaiting_owner' as const,revision:row.revision+1};
@@ -314,14 +323,22 @@ export class EmailSendService {
     const draft = partsDraft(row.kind, this.store.getPayload(row.sendId));
     const idem = sendIdempotencyKey(this.options.installId, row.sendId, row.idemSuffix);
     const attachments = draft.attachments.map(file => ({ filename: file.name, content_type: file.contentType, content: Buffer.from(file.bytes).toString("base64") }));
-    const outcome: FluxOutcome<SendBody> = await this.locks.shared(row.inboxId, () => row.kind === "reply" && row.replyMessageId
-      ? this.client.reply(row.botId, row.inboxId, row.replyMessageId, { text: draft.text, cc: draft.cc, attachments, reply_all: false, client_reference: row.sendId }, idem)
-      : this.client.send(row.botId, row.inboxId, { to: draft.to, cc: draft.cc, subject: draft.subject, text: draft.text, attachments, client_reference: row.sendId }, idem));
+    const canDispatch = () => {
+      const current = this.fresh(row.sendId);
+      return current.state === "dispatching" && current.idemSuffix === row.idemSuffix && !current.stopRequested;
+    };
+    const outcome = await this.locks.shared<FluxOutcome<SendBody>>(row.inboxId, async () => {
+      if (!canDispatch()) return { kind: "local_refused", code: "dispatch_cancelled" };
+      return row.kind === "reply" && row.replyMessageId
+        ? this.client.reply(row.botId, row.inboxId, row.replyMessageId, { text: draft.text, cc: draft.cc, attachments, reply_all: false, client_reference: row.sendId }, idem, canDispatch)
+        : this.client.send(row.botId, row.inboxId, { to: draft.to, cc: draft.cc, subject: draft.subject, text: draft.text, attachments, client_reference: row.sendId }, idem, canDispatch);
+    });
     if (outcome.kind === "refused" && outcome.code === "spend_limit") {
       // This is a definite local non-send, not an uncertain network outcome.
       // Keep the same payload, consent and idempotency key in the outbox.
       const current = this.fresh(row.sendId);
-      if (current.state !== "dispatching" || current.stopRequested) return current;
+      if (current.state !== "dispatching") return current;
+      if (current.stopRequested) return this.landRefused(row.sendId);
       return this.move(current, { state: "prepared", code: "spend_limit", dispatchedAt: null, dueAt: null }) ?? this.fresh(row.sendId);
     }
     let current = this.fresh(row.sendId);

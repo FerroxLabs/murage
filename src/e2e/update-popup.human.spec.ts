@@ -76,12 +76,13 @@ test('the card hands a download to the pop-up and focus returns to the round but
  await push(page,{status:'available',version:'1.0.12'});await page.getByTestId('update-indicator').click();await expect(page.getByRole('dialog')).toBeVisible();
  await push(page,{status:'downloading',version:'1.0.12'});await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.getByTestId('update-popup')).toBeVisible();await expect(page.getByTestId('update-indicator')).toBeFocused();
 });
-test('lifts clear of the Undo toast and settles back',async({page})=>{
+test('waits behind the Undo toast and settles back',async({page})=>{
  await page.setViewportSize({width:1280,height:800});await go(page);
  await push(page,{status:'downloading',version:'1.0.12',percent:10});const before=await box(page.getByTestId('update-popup'));
  await page.evaluate(()=>(window as any).fixtureUndo.offerUndo({kind:'local',key:'updpop',ms:30000,message:'Moved to archive, with a headline long enough to wrap onto more lines in the toast than one',undo:()=>{}}));
  const toast=page.locator('[data-undo-toast]');await expect(toast).toBeVisible();
- await expect.poll(async()=>apart(await box(page.getByTestId('update-popup')),await box(toast))).toBe(true);
+ // One corner notice at a time (notice lane, cd8c1f8398): the Undo toast takes the corner and the pop-up waits behind the round button.
+ await expect(page.getByTestId('update-popup')).toHaveCount(0);await expect(page.getByTestId('update-indicator')).toBeVisible();
  await toast.getByRole('button',{name:'Dismiss'}).click();await expect(toast).toHaveCount(0);
  await expect.poll(async()=>(await box(page.getByTestId('update-popup'))).y).toBe(before.y);
 });

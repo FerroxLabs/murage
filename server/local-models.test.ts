@@ -21,17 +21,21 @@ import { ensureHermesInjectProvider } from "./drivers/acp/hermes.ts";
 import { ensureKimiInjectAlias } from "./drivers/acp/kimi.ts";
 import { ensureOpenCodeInjectModel } from "./drivers/acp/opencode-go.ts";
 import { ensureQwenInjectModel } from "./drivers/acp/qwen.ts";
+import { localEnginesFor, type LocalToolTestResult } from "../shared/local-models.ts";
 import {
   applyClaudeInject,
+  cachedLocalContext,
+  cachedLocalTestFor,
   clearLocalContextCacheForTests,
   decodeInjectId,
   localHost,
   mergeLocalInject,
+  probeLocalHosts,
   probeLocalInjects,
 } from "./drivers/local-inject.ts";
 import { ensurePiInjectModel } from "./drivers/pi.ts";
 import { setLocalNameLookupForTests, type LocalNameLookup } from "./local-address-guard.ts";
-import { configureLocalServerStore, readLocalServers } from "./local-servers.ts";
+import { configureLocalServerStore, readLocalServers, saveLocalToolTest } from "./local-servers.ts";
 import { createLocalModelsRoute } from "./local-models.ts";
 import { detectLocalServerKind, probeHost } from "./local-server-probe.ts";
 import type { DelegatedRequest } from "./route-delegation.ts";
@@ -664,6 +668,143 @@ describe("Ollama: create a 64k copy (spec T3)", () => {
       status: 409,
       body: { code: "not-ollama" },
     });
+  });
+});
+
+// M10 (1.0.23): Ollama cloud models through the real route. Fixtures follow
+// Ollama's api/types.go: ShowResponse remote_model / remote_host and
+// model_info["<arch>.context_length"]; ProcessResponse rows name, model,
+// context_length. Neutral names only.
+describe("M10 Ollama cloud models (P1, P3, P4, P5)", () => {
+  type Ps = Array<{ name: string; context_length: number }>;
+  function cloudOllama(state: { models: string[]; ps?: Ps; remote: Record<string, number> }) {
+    return fake((req, body, res) => {
+      switch (req.url) {
+        case "/api/version":
+          return (send(res, 200, { version: "0.14.2" }), true);
+        case "/v1/models":
+          return (send(res, 200, { object: "list", data: state.models.map((id) => ({ id, object: "model" })) }), true);
+        case "/api/tags":
+          return (send(res, 200, { models: state.models.map((name) => ({ name, model: name })) }), true);
+        case "/api/ps":
+          return (send(res, 200, { models: (state.ps ?? []).map((row) => ({ ...row, model: row.name })) }), true);
+        case "/api/create":
+          return (send(res, 200, { status: "success" }), true);
+        case "/api/show": {
+          const model = String(body.model);
+          const remote = state.remote[model];
+          if (remote) {
+            return (send(res, 200, { remote_model: "fixture-model:70b-cloud", remote_host: "https://ollama.com:443", model_info: { "fixture.context_length": remote } }), true);
+          }
+          return (send(res, 200, { parameters: model.endsWith("-64k") ? "num_ctx                        65536" : "", model_info: { "fixture.context_length": 40_960 } }), true);
+        }
+      }
+    });
+  }
+  async function addOllama(localRoot: string): Promise<LocalServerView> {
+    const result = await route()(request("POST", "/api/local-models/servers", { address: localRoot, name: "desktop" }));
+    expect((result.body as { server: LocalServerView }).server.kind).toBe("ollama");
+    return (result.body as { server: LocalServerView }).server;
+  }
+  const listed = async (id: string) =>
+    ((await route()(request("GET", "/api/local-models"))).body as LocalModelsListResponse).servers.find((row) => row.id === id)!;
+  const storedTooSmall = (server: LocalServerView, model: string): LocalToolTestResult => ({
+    serverId: server.id, apiBase: server.address, model, outcome: "context-too-small", checks: [],
+    surfaces: { chat: false, responses: false, messages: false },
+    context: { contextWindow: 4_096, source: "ollama-ps", loaded: true }, fix: { kind: "ollama-context-copy" }, testedAt: 1, durationMs: 1,
+  });
+
+  it("W3c an alias listed in ps is classified by show on its first test and leaves its sibling's window alone", async () => {
+    const ollama = await cloudOllama({
+      models: ["fixture-model:big", "fixture-model:7b"],
+      ps: [{ name: "fixture-model:big", context_length: 4_096 }, { name: "fixture-model:7b", context_length: 65_536 }],
+      remote: { "fixture-model:big": 131_072 },
+    });
+    const server = await addOllama(ollama.root);
+    clearLocalContextCacheForTests();
+    const tested = await route()(request("POST", `/api/local-models/servers/${server.id}/test`, { model: "fixture-model:big" }));
+    const body = tested.body as { test: LocalToolTestResult };
+    expect(body.test.context).toMatchObject({ contextWindow: 131_072, source: "ollama-cloud" }); // W3c-test
+    expect(body.test.outcome).not.toBe("context-too-small");
+    expect(cachedLocalContext(server.id, "fixture-model:big")?.cloud).toBe(true);
+    const page = (await probeLocalHosts(env(), guardedFetch)).find((row) => row.host.id === server.id)!;
+    expect(page.contexts.get("fixture-model")?.contextWindow).toBe(65_536);
+  });
+
+  it("W6 a cloud-tagged copy request is refused with 400 before any request to the host", async () => {
+    const ollama = await cloudOllama({ models: ["fixture-model:70b-cloud"], remote: {} });
+    const server = await addOllama(ollama.root);
+    const before = ollama.calls.length;
+    const result = await route()(request("POST", `/api/local-models/servers/${server.id}/ollama-context-copy`, { model: "fixture-model:70b-cloud" }));
+    expect(ollama.calls.slice(before).map((call) => call.path)).toEqual([]); // W6-zero
+    expect(result).toEqual({
+      status: 400,
+      body: { code: "cloud-model", error: "This model runs on ollama.com at its own context, so it needs no copy." },
+    });
+  });
+
+  it("W7 an untagged alias is refused on a fresh remote show, teaches the card, and a local one still copies", async () => {
+    const state = { models: ["fixture-model:big"], remote: { "fixture-model:big": 131_072 } as Record<string, number> };
+    const ollama = await cloudOllama(state);
+    const server = await addOllama(ollama.root);
+    clearLocalContextCacheForTests();
+    const before = ollama.calls.length;
+    const refused = await route()(request("POST", `/api/local-models/servers/${server.id}/ollama-context-copy`, { model: "fixture-model:big" }));
+    expect(refused).toMatchObject({ status: 400, body: { code: "cloud-model" } }); // W7-refused
+    expect(ollama.calls.slice(before).some((call) => call.path === "/api/version" || call.path === "/api/create")).toBe(false);
+    expect(cachedLocalContext(server.id, "fixture-model:big")?.cloud).toBe(true); // W7-memory
+    const card = await listed(server.id);
+    const view = card.models.find((row) => row.model === "fixture-model:big")!;
+    // The card's action for a cloud view (never a copy) is W8, src/lib/local-models-view.test.ts.
+    expect(view.cloud).toBe(true);
+
+    state.remote = {};
+    const copied = await route()(request("POST", `/api/local-models/servers/${server.id}/ollama-context-copy`, { model: "fixture-model:big" }));
+    expect(copied).toMatchObject({ status: 200, body: { status: "created" } });
+    expect(ollama.calls.some((call) => call.path === "/api/create")).toBe(true);
+  });
+
+  it("W9 a llama.cpp model named like a cloud tag keeps its result, its fix and its 409", async () => {
+    const llama = await fake((req, _body, res) => {
+      if (req.url === "/props") return (send(res, 200, { default_generation_settings: { n_ctx: 4_096 }, total_slots: 1 }), true);
+      if (req.url === "/v1/models") return (send(res, 200, { object: "list", data: [{ id: "x:cloud", object: "model" }] }), true);
+      if (req.url === "/health") return (send(res, 200, { status: "ok" }), true);
+    });
+    const server = await addFixtureHost(llama.root);
+    expect(server.kind).toBe("llamacpp");
+    saveLocalToolTest({ ...storedTooSmall(server, "x:cloud"), context: { contextWindow: 4_096, source: "llamacpp-props", loaded: true }, fix: { kind: "raise-context", value: "-c 65536" } });
+    const view = (await listed(server.id)).models.find((row) => row.model === "x:cloud")!;
+    expect(view.cloud).toBeUndefined(); // W9-view
+    expect(view.test?.outcome).toBe("context-too-small");
+    expect(cachedLocalTestFor(server.id, "x:cloud")?.outcome).toBe("context-too-small");
+    expect(view.test?.fix).toEqual({ kind: "raise-context", value: "-c 65536" });
+    expect(await route()(request("POST", `/api/local-models/servers/${server.id}/ollama-context-copy`, { model: "x:cloud" }))).toMatchObject({
+      status: 409, body: { code: "not-ollama" },
+    });
+  });
+
+  it("W10 the server list marks a cloud model and only it", async () => {
+    const ollama = await cloudOllama({ models: ["fixture-model:70b-cloud", "fixture-model:7b"], remote: {} });
+    const server = await addOllama(ollama.root);
+    const card = await listed(server.id);
+    expect(card.models.find((row) => row.model === "fixture-model:70b-cloud")?.cloud).toBe(true); // W10-flag
+    expect(card.models.find((row) => row.model === "fixture-model:7b")?.cloud).toBeUndefined();
+  });
+
+  it("W11 a stored pre-M10 'context too small' for a cloud model reads as untested; a local one stands", async () => {
+    const ollama = await cloudOllama({ models: ["fixture-model:70b-cloud", "fixture-model:7b"], remote: {} });
+    const server = await addOllama(ollama.root);
+    saveLocalToolTest(storedTooSmall(server, "fixture-model:70b-cloud"));
+    saveLocalToolTest(storedTooSmall(server, "fixture-model:7b"));
+    const card = await listed(server.id);
+    const cloud = card.models.find((row) => row.model === "fixture-model:70b-cloud")!;
+    const local = card.models.find((row) => row.model === "fixture-model:7b")!;
+    expect(cloud.test).toBeUndefined(); // W11-untested
+    expect(cloud.engines).toEqual(localEnginesFor(undefined));
+    expect(cloud.cloud).toBe(true);
+    expect(cachedLocalTestFor(server.id, "fixture-model:70b-cloud")).toBeUndefined();
+    expect(local.test?.outcome).toBe("context-too-small");
+    expect(local.cloud).toBeUndefined();
   });
 });
 

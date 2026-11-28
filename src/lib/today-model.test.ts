@@ -206,8 +206,12 @@ describe("Today slice 1.0.18: head and Done today", () => {
     // the browser door has no read: no tag, as before
     expect(tag(undefined, { reads: false })).toBeUndefined();
     // zero owed but Worth a look lines below: counted, in info, never Nothing needs you
-    expect(tag(0, { stale: false, lines: 1, reads: true })).toMatchObject({ tone: "info", text: "1 thing needs you" });
-    expect(tag(0, { stale: false, lines: 3, reads: true })).toMatchObject({ tone: "info", text: "3 things need you" });
+    // 1.0.20 owner walk: "5 things need you" over a Needs you page reading "Needs you (0)". Worth a look lines are
+    // not owed, so they never become the count; the tag says "Worth a look" and opens nothing (was "N things need you").
+    expect(tag(0, { stale: false, lines: 1, reads: true })).toMatchObject({ tone: "info", text: "Worth a look" });
+    expect(tag(0, { stale: false, lines: 3, reads: true })).toMatchObject({ tone: "info", text: "Worth a look" });
+    expect(tag(0, { stale: false, lines: 3, reads: true })?.action).toBeUndefined();
+    expect(tag(0, { stale: false, lines: 5, reads: true })?.text).not.toMatch(/need you/);
     // the count above 0 keeps the badge truth
     expect(tag(4, { stale: false, lines: 1, reads: true })).toMatchObject({ tone: "info", text: "4 things need you" });
     // only a fresh 0 with no line is the green all-clear

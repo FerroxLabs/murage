@@ -174,7 +174,9 @@ for (const { state, venue, cli } of cases) {
           expect(requests[1].recall).toBe("full");
           expect((log.match(/fixture held published/g)??[])).toHaveLength(1);
           const finalTranscript=await run(["messages",...destination,"--limit","30"]);
-          expect(finalTranscript.messages.filter((message:any)=>message.tool?.name==="Memory is still catching up, so this reply did not use recalled memories.")).toHaveLength(1);
+          // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20 + F21): this asserted the one "Memory wasn't ready" row; the held dispatch is the log line.
+          expect(finalTranscript.messages.filter((message:any)=>/Memory wasn't ready/.test(message.tool?.name??""))).toHaveLength(0);
+          expect(log).toContain("turn dispatch recall=held");
         }
         expect(log).not.toContain("starting turn without recalled memory");
       }

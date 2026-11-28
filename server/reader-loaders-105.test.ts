@@ -38,12 +38,14 @@ const verdict = (level: Level, cmd: string, cwd = CWD, proof: object = OWNER_TUR
   autoVerdict(LEVELS[level], "Bash", cmd, { ...proof, commandText: cmd, commandCwd: cwd, stopLine: classifyStopLine("Bash", { command: cmd }, "", nix(cwd)), unseen: { fs: STUB, platform: "posix" } });
 const pwshVerdict = (level: Level, cmd: string) =>
   autoVerdict(LEVELS[level], "PowerShell", cmd, { commandText: cmd, commandCwd: "C:\\work" });
-const { expectNoLimitsOwnerOutcome } = await import("./testing/no-limits-1019.ts");
+const { expectNoLimitsOwnerOutcome, expectFullOwnerOutcome } = await import("./testing/no-limits-1019.ts");
 /** Ask, Auto and Full access card the text. NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn (OWNER_TURN) runs a loader or
  * unseen-script finding unless it is a wipe row, so its cell asserts on the reader's own rule through the shared helper. */
 const everywhere = (cmd: string, cwd = CWD) => {
   for (const level of Object.keys(LEVELS) as Level[]) {
+    // OVERREACH #6: the owner's own Full access turn gives the same outcome as No limits
     if (level === "No limits") { expectNoLimitsOwnerOutcome(verdict(level, cmd, cwd), cmd, alwaysAskCommand(cmd, cwd)?.rule, `${level}: ${cmd}`); continue; }
+    if (level === "Full access") { expectFullOwnerOutcome(verdict(level, cmd, cwd), cmd, alwaysAskCommand(cmd, cwd)?.rule, `${level}: ${cmd}`); continue; }
     expect(verdict(level, cmd, cwd), `${level}: ${cmd}`).toMatchObject({ approve: null });
   }
 };
@@ -234,7 +236,8 @@ describe("a computed or unresolved write target before a startup-file reader is 
       // names no protected path: a could-not-read (card at Full access and elsewhere), waived on the owner's clean No limits turn
       expect(ownerMarks(() => alwaysAskCommand(cmd, CWD))).toMatchObject({ classification: "ask", couldNotRead: true });
       const at = (bot: Record<string, unknown>) => autoVerdict(bot as never, "Bash", cmd, { commandText: cmd, commandCwd: CWD, workFolder: CWD, fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null } as never);
-      expect(at({ id: "x", autoApprove: true, fullAccess: true })).toMatchObject({ approve: null, source: "always-ask" });
+      // OVERREACH #6: the owner's own Full access turn runs it too
+      expect(at({ id: "x", autoApprove: true, fullAccess: true }).approve).toBeTruthy();
       expect(at({ id: "x", autoApprove: true, fullAccess: true, noLimits: true }).approve).toBeTruthy();
       return;
     }

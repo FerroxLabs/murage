@@ -14,7 +14,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const source = "1234567890abcdef1234567890abcdef12345678";
 const sha = (algorithm, bytes, encoding = "hex") => createHash(algorithm).update(bytes).digest(encoding);
 const digest = bytes => sha("sha256", bytes);
-const receipt = "scripts/fuigo-1.0.43-provenance.json";
+const receipt = `scripts/fuigo-${FUIGO_VERSION}-provenance.json`;
 const files = ["scripts/prepare-fuigo.mjs", "scripts/prepare-fuigo.test.mjs", receipt, "deploy/cloud-home/LICENSES.md", "pnpm-lock.yaml"];
 
 function binary(target) {
@@ -91,7 +91,7 @@ function copyFixture() {
 const suppliedLinux = digest(binary("linux-x64"));
 const hashes = [suppliedLinux, digest(binary("win32-x64")), digest(binary("darwin-arm64"))];
 
-describe("fill Fuigo 1.0.43 after npm publication", () => {
+describe(`fill Fuigo ${FUIGO_VERSION} after npm publication`, () => {
   it("validates exactly three real digests before any network or write", async () => {
     const fetcher = vi.fn();
     for (const args of [[], ["FILL\x2dAT-NPM", ...hashes.slice(1)], ["bad", ...hashes.slice(1)], [...hashes, hashes[0]]]) {
@@ -117,7 +117,7 @@ describe("fill Fuigo 1.0.43 after npm publication", () => {
     const refreshLock = vi.fn(() => writeFileSync(join(directory, "pnpm-lock.yaml"), "fixture refreshed lock\n"));
     try {
       const proof = await fillFuigoPin(hashes, { root: directory, fetcher, refreshLock });
-      expect(proof).toMatchObject({ version: "1.0.43", source, status: "filled", nativeExecutablesRun: false });
+      expect(proof).toMatchObject({ version: FUIGO_VERSION, source, status: "filled", nativeExecutablesRun: false });
       expect(proof.packages).toHaveLength(7);
       expect(refreshLock).toHaveBeenCalledTimes(1);
       expect(fetcher).toHaveBeenCalledTimes(14);

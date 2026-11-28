@@ -58,7 +58,7 @@ it('copied Pi extensions carry a resolvable installer in the packaged server tre
     expect(readFileSync(join(dir, 'shared/win-hide-child-process.mjs'), 'utf8')).toBe(readFileSync(new URL('../shared/win-hide-child-process.mjs', import.meta.url), 'utf8'));
     const gate = readFileSync(join(dir, 'drivers/pi-permission-gate.ts'), 'utf8');
     // MAIN RULING 1114-PI-FLOOR-FOLLOWS-AUTHORITY: the gate carries the approved checker as a staged generated copy, not the hand-written floor.
-    expect(gate).toContain('import { wipeBreaker, nativeWipeBreaker, RootRegistry } from "./pi-wipe-check.generated.mjs";');
+    expect(gate).toContain('import { noLimitsWipe, nativeWipeBreaker, RootRegistry } from "./pi-wipe-check.generated.mjs";');
     expect(gate).not.toContain('function visibleWipe(');
     expect(readFileSync(join(dir, 'drivers/pi-wipe-check.generated.mjs'), 'utf8')).toBe(readFileSync(new URL('../server/drivers/pi-wipe-check.generated.mjs', import.meta.url), 'utf8'));
     // Bundling from this isolated output resolves the complete runtime graph

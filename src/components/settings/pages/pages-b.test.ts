@@ -16,7 +16,7 @@ import { aboutCards } from "./AboutPage";
 import { backupsCards } from "./BackupsPage";
 import { ChannelsPageBody, channelsCards } from "./ChannelsPage";
 import { SECTION_ALIASES } from "@/lib/settings-pages";
-import { SETTINGS_PAGE_LOADERS } from "../page-registry";
+import { SETTINGS_V10_PAGE_LOADERS } from "../page-registry";
 import { companionCards } from "./CompanionPage";
 import { computerCards } from "./ComputerPage";
 import ConnectionsPage, { ConnectedAppsCard, connectionsCards } from "./ConnectionsPage";
@@ -59,11 +59,11 @@ describe("About and help (page 13)", () => {
 
 describe("Connected apps (page 8)", () => {
   const cards = connectionsCards({ desktop: true, cloud: false });
-  it("lists every registered card once; Simple has the apps and tools cards, Advanced adds bot email, HighLevel and phone calls", () => {
-    expect(pageCardProblems("connections", [...cards, ...channelsCards({ desktop: true })], SETTINGS_CARDS)).toEqual([]);
+  it("lists every registered card once; Simple has the apps and tools cards, Advanced adds bot email and Claude Code import", () => {
+    expect(pageCardProblems("connections", cards, SETTINGS_CARDS)).toEqual([]);
     expect(ids(visibleCards(cards, "simple").shown)).toEqual(["connections.apps", "connections.mcp"]);
-    expect(visibleCards(cards, "simple").hidden).toBe(4);
-    expect(ids(visibleCards(cards, "advanced").shown)).toEqual(["connections.apps", "connections.bot-email", "connections.mcp", "connections.claude-code", "connections.highlevel", "connections.phone-calls"]);
+    expect(visibleCards(cards, "simple").hidden).toBe(2);
+    expect(ids(visibleCards(cards, "advanced").shown)).toEqual(["connections.apps", "connections.bot-email", "connections.mcp", "connections.claude-code"]);
   });
   it("on a phone keeps every card and its computer-action stub, including app and email readouts", () => {
     for (const card of connectionsCards({ desktop: false, cloud: false })) expect(html(card.render() as never), card.id).toContain("data-settings-stub");
@@ -89,16 +89,13 @@ describe("Connected apps (page 8)", () => {
     expect(modal).toContain('role="dialog"');
     expect(modal).toContain("Close connected apps");
   });
-  it.each(["simple", "advanced"] as const)("composes the same Messaging body in %s with its surface and mode", (mode) => {
-    const props = { page: "connections" as const, mode, desktop: false, cloud: false, anchor: "telegram-settings-title" };
-    const out = html(createElement(ConnectionsPage, props));
-    const body = html(createElement(ChannelsPageBody, props));
-    expect(out).toContain("Messaging apps");
-    expect(out).toContain(body);
-    expect(out).toContain('role="tabpanel"');
-    expect(out).toContain('aria-controls=');
-    expect(out).toContain('hidden=""');
-    expect(Object.hasOwn(SETTINGS_PAGE_LOADERS, "channels")).toBe(false);
+  it.each(["simple", "advanced"] as const)("v10: Messaging is its own page in %s, no longer a tab of Connected apps", (mode) => {
+    const props = { page: "messaging" as const, mode, desktop: false, cloud: false, anchor: "telegram-settings-title" };
+    const apps = html(createElement(ConnectionsPage, { ...props, page: "connections" as const }));
+    expect(apps).not.toContain(">Messaging apps<");
+    for (const card of channelsCards(props)) expect(apps.split(`id="${card.anchor}"`)).toHaveLength(1);
+    const out = html(createElement(ChannelsPageBody, props));
+    expect(Object.hasOwn(SETTINGS_V10_PAGE_LOADERS, "messaging")).toBe(true);
     for (const card of channelsCards(props).filter((card) => mode === "advanced" || card.simple)) {
       expect(out.split(`id="${card.anchor}"`)).toHaveLength(2);
     }
@@ -114,18 +111,18 @@ describe("Connected apps (page 8)", () => {
     expect(tabsRow).toBeGreaterThan(-1);
     expect(refresh).toBeGreaterThan(tabsRow);
   });
-  it("opens the legacy Channels route on the visible Messaging tab", () => {
+  it("opens the legacy Channels route on the Messaging page (v10: a page of its own, not a tab of Connected apps)", () => {
     const target = SECTION_ALIASES.channels;
-    const out = html(createElement(ConnectionsPage, { page: target.section, anchor: target.anchor, mode: "simple", desktop: false, cloud: false }));
-    expect(out).toMatch(/aria-selected="true"[^>]*>Messaging apps<\/button>/);
+    expect(target.section).toBe("messaging");
+    const out = html(createElement(ChannelsPageBody, { anchor: target.anchor, mode: "simple", desktop: false, cloud: false }));
     expect(out).toContain('id="telegram-settings-title"');
     expect(out).not.toContain('id="slack-app-setup-heading"');
   });
-  it.each([{ desktop: false, cloud: false }, { desktop: true, cloud: true }, { desktop: undefined, cloud: false }])("retains readouts and stubs tools/HighLevel on $desktop/$cloud", (surface) => {
+  it.each([{ desktop: false, cloud: false }, { desktop: true, cloud: true }, { desktop: undefined, cloud: false }])("retains readouts and stubs tools on $desktop/$cloud", (surface) => {
     const remote = connectionsCards(surface);
     expect(html(remote.find((card) => card.id === "connections.apps")!.render() as never)).toContain('data-plugins-embedded="true"');
     expect(html(remote.find((card) => card.id === "connections.bot-email")!.render() as never)).toContain('data-testid="bot-email-readout"');
-    for (const id of ["connections.mcp", "connections.highlevel"]) expect(html(remote.find((card) => card.id === id)!.render() as never)).toContain('data-settings-stub="other-surface"');
+    expect(html(remote.find((card) => card.id === "connections.mcp")!.render() as never)).toContain('data-settings-stub="other-surface"');
   });
   it("shows email state, usage, addresses and stale information without account mutation controls or prices", () => {
     const status: EmailStatusState = { kind: "on", view: {
@@ -150,15 +147,15 @@ describe("Connected apps (page 8)", () => {
 });
 
 describe("Messaging apps (Apps tab)", () => {
-  const cards = channelsCards({ desktop: true });
+  const cards = channelsCards({ desktop: true, cloud: false });
   it("lists the eight registered cards once in app order; Simple has the four apps, Advanced adds the four parts", () => {
-    expect(pageCardProblems("connections", [...connectionsCards({ desktop: true, cloud: false }), ...cards], SETTINGS_CARDS)).toEqual([]);
+    expect(pageCardProblems("messaging", cards, SETTINGS_CARDS)).toEqual([]);
     expect(ids(cards)).toEqual(["channels.telegram", "channels.slack", "channels.slack-setup", "channels.discord", "channels.discord-setup", "channels.whatsapp", "channels.allow-lists", "channels.whatsapp-groups"]);
     expect(ids(visibleCards(cards, "simple").shown)).toEqual(["channels.telegram", "channels.slack", "channels.discord", "channels.whatsapp"]);
     expect(visibleCards(cards, "simple").hidden).toBe(4);
   });
   it("on a phone stubs every card instead of dropping it", () => {
-    for (const card of channelsCards({ desktop: false })) expect(html(card.render() as never), card.id).toContain("data-settings-stub");
+    for (const card of channelsCards({ desktop: false, cloud: false })) expect(html(card.render() as never), card.id).toContain("data-settings-stub");
   });
 });
 
@@ -233,7 +230,7 @@ describe("Phone and other devices (page 10)", () => {
 
 describe("the Simple card list (settings-simple-cards.ts) says what the page files say", () => {
   const pages = {
-    connections: [...connectionsCards({ desktop: true, cloud: false }), ...channelsCards({ desktop: true })], backups: backupsCards("simple"),
+    connections: [...connectionsCards({ desktop: true, cloud: false }), ...channelsCards({ desktop: true, cloud: false })], backups: backupsCards("simple"),
     usage: usageCards(), about: aboutCards({ desktop: true, cloud: false }), computer: computerCards([]), companion: companionCards(undefined),
   } as const;
   for (const [page, cards] of Object.entries(pages)) {

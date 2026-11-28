@@ -8,7 +8,6 @@ import { beforeEach, expect, it, vi } from "vitest";
 import type { Bot } from "@/state/store";
 
 Object.assign(globalThis, { window: (globalThis as { window?: unknown }).window ?? {} });
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
 const header = vi.hoisted(() => ({
   dispatch: vi.fn(),
   state: {
@@ -20,7 +19,8 @@ const header = vi.hoisted(() => ({
 }));
 vi.mock("@/state/store", () => ({ useStore: () => header }));
 vi.mock("@/lib/use-surface", () => ({ useDesktopSurface: () => false }));
-vi.mock("@/lib/chat-header-layout", () => ({
+vi.mock("@/lib/chat-header-layout", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/chat-header-layout")>()),
   HEADER_RELOCATION_ORDER: [],
   useChatHeaderLayout: () => ({ layout: { twoRow: false, chips: "full" }, slots: new Set() }),
 }));

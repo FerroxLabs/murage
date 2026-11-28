@@ -1,0 +1,415 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "botpages-copyrev",
+    "account": "claude subagent, independent read-only copy review of the bot pages Archive or delete strings (not their author)"
+  },
+  "author": "sv10-botpages-rb1124-r2 (Sonnet 5.5)",
+  "date": "2026-11-25",
+  "base": "076fbb6122",
+  "scope": "bot pages Archive or delete row, ux.botpages.* in 8 languages",
+  "strings": {
+    "en:ux.botpages.archive.title": {
+      "text": "Archive or delete",
+      "en": "Archive or delete",
+      "verdict": "pass"
+    },
+    "en:ux.botpages.archive.lead": {
+      "text": "Archive {name}.",
+      "en": "Archive {name}.",
+      "verdict": "pass"
+    },
+    "en:ux.botpages.archive.body": {
+      "text": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "en": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "verdict": "pass"
+    },
+    "en:ux.botpages.archive.button": {
+      "text": "Archive",
+      "en": "Archive",
+      "verdict": "pass"
+    },
+    "en:ux.botpages.archive.conflict": {
+      "text": "{name}'s apps changed. Nothing was archived.",
+      "en": "{name}'s apps changed. Nothing was archived.",
+      "verdict": "pass"
+    },
+    "en:ux.botpages.archive.done": {
+      "text": "{name} archived. You can bring it back from Bots.",
+      "en": "{name} archived. You can bring it back from Bots.",
+      "verdict": "pass"
+    },
+    "en:ux.botpages.delete.lead": {
+      "text": "Delete {name}.",
+      "en": "Delete {name}.",
+      "verdict": "pass"
+    },
+    "en:ux.botpages.delete.body": {
+      "text": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+      "en": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+      "verdict": "pass"
+    },
+    "en:ux.botpages.delete.button": {
+      "text": "Delete this bot",
+      "en": "Delete this bot",
+      "verdict": "pass"
+    },
+    "en:ux.botpages.delete.failed": {
+      "text": "{name} was not deleted.",
+      "en": "{name} was not deleted.",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.archive.title": {
+      "text": "Archivieren oder löschen",
+      "en": "Archive or delete",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.archive.lead": {
+      "text": "{name} archivieren.",
+      "en": "Archive {name}.",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.archive.body": {
+      "text": "Blendet {name} aus und stoppt die Routinen. Chats, Erinnerungen, Routinen und Dateien bleiben erhalten, und du kannst {name} über Bots zurückholen. Die gespeicherten App-Auswahlen bleiben nicht erhalten: {name} kommt mit „Nur ausgewählte Apps“ und ohne Apps zurück.",
+      "en": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.archive.button": {
+      "text": "Archivieren",
+      "en": "Archive",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.archive.conflict": {
+      "text": "Die Apps von {name} haben sich geändert. Nichts wurde archiviert.",
+      "en": "{name}'s apps changed. Nothing was archived.",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.archive.done": {
+      "text": "{name} archiviert. Du kannst es über Bots zurückholen.",
+      "en": "{name} archived. You can bring it back from Bots.",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.delete.lead": {
+      "text": "{name} löschen.",
+      "en": "Delete {name}.",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.delete.body": {
+      "text": "Entfernt {name} samt Chats, Erinnerungen und Routinen endgültig. Nur ein Backup bringt es zurück.",
+      "en": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.delete.button": {
+      "text": "Diesen Bot löschen",
+      "en": "Delete this bot",
+      "verdict": "pass"
+    },
+    "de:ux.botpages.delete.failed": {
+      "text": "{name} wurde nicht gelöscht.",
+      "en": "{name} was not deleted.",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.archive.title": {
+      "text": "Archivar o eliminar",
+      "en": "Archive or delete",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.archive.lead": {
+      "text": "Archivar a {name}.",
+      "en": "Archive {name}.",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.archive.body": {
+      "text": "Oculta a {name} y detiene sus rutinas. Se conservan sus chats, memoria, rutinas y archivos, y puedes recuperarlo desde Bots. Sus apps elegidas no se conservan: {name} vuelve con «Solo las apps elegidas» y sin apps.",
+      "en": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.archive.button": {
+      "text": "Archivar",
+      "en": "Archive",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.archive.conflict": {
+      "text": "Las apps de {name} cambiaron. No se archivó nada.",
+      "en": "{name}'s apps changed. Nothing was archived.",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.archive.done": {
+      "text": "{name} archivado. Puedes recuperarlo desde Bots.",
+      "en": "{name} archived. You can bring it back from Bots.",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.delete.lead": {
+      "text": "Eliminar a {name}.",
+      "en": "Delete {name}.",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.delete.body": {
+      "text": "Elimina a {name}, sus chats, memoria y rutinas para siempre. Solo una copia de seguridad permite recuperarlo.",
+      "en": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.delete.button": {
+      "text": "Eliminar este bot",
+      "en": "Delete this bot",
+      "verdict": "pass"
+    },
+    "es:ux.botpages.delete.failed": {
+      "text": "No se eliminó a {name}.",
+      "en": "{name} was not deleted.",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.archive.title": {
+      "text": "Archiver ou supprimer",
+      "en": "Archive or delete",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.archive.lead": {
+      "text": "Archiver {name}.",
+      "en": "Archive {name}.",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.archive.body": {
+      "text": "Masque {name} et arrête ses routines. Ses discussions, sa mémoire, ses routines et ses fichiers sont conservés, et tu peux le rétablir depuis Bots. Ses choix d'apps enregistrés ne sont pas conservés : {name} revient réglé sur « Seulement les apps choisies », sans aucune app.",
+      "en": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.archive.button": {
+      "text": "Archiver",
+      "en": "Archive",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.archive.conflict": {
+      "text": "Les apps de {name} ont changé. Rien n'a été archivé.",
+      "en": "{name}'s apps changed. Nothing was archived.",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.archive.done": {
+      "text": "{name} est archivé. Tu peux le rétablir depuis Bots.",
+      "en": "{name} archived. You can bring it back from Bots.",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.delete.lead": {
+      "text": "Supprimer {name}.",
+      "en": "Delete {name}.",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.delete.body": {
+      "text": "Supprime {name}, ses discussions, sa mémoire et ses routines définitivement. Seule une sauvegarde permet de revenir en arrière.",
+      "en": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.delete.button": {
+      "text": "Supprimer ce bot",
+      "en": "Delete this bot",
+      "verdict": "pass"
+    },
+    "fr:ux.botpages.delete.failed": {
+      "text": "{name} n'a pas été supprimé.",
+      "en": "{name} was not deleted.",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.archive.title": {
+      "text": "संग्रहित करें या हटाएँ",
+      "en": "Archive or delete",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.archive.lead": {
+      "text": "{name} को संग्रहित करें।",
+      "en": "Archive {name}.",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.archive.body": {
+      "text": "{name} को छिपा देता है और उसकी रूटीन रोक देता है। उसकी चैट, मेमोरी, रूटीन और फ़ाइलें बनी रहती हैं, और आप उसे Bots से वापस ला सकते हैं। उसके सहेजे गए ऐप विकल्प नहीं रखे जाते: {name} “केवल चुने हुए ऐप” पर और बिना किसी ऐप के लौटता है।",
+      "en": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.archive.button": {
+      "text": "संग्रहित करें",
+      "en": "Archive",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.archive.conflict": {
+      "text": "{name} के ऐप बदल गए। कुछ भी संग्रहित नहीं हुआ।",
+      "en": "{name}'s apps changed. Nothing was archived.",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.archive.done": {
+      "text": "{name} संग्रहित हो गया। आप उसे Bots से वापस ला सकते हैं।",
+      "en": "{name} archived. You can bring it back from Bots.",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.delete.lead": {
+      "text": "{name} को हटाएँ।",
+      "en": "Delete {name}.",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.delete.body": {
+      "text": "{name}, उसकी चैट, मेमोरी और रूटीन हमेशा के लिए हट जाते हैं। वापस पाने का एकमात्र तरीका बैकअप है।",
+      "en": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.delete.button": {
+      "text": "इस बॉट को हटाएँ",
+      "en": "Delete this bot",
+      "verdict": "pass"
+    },
+    "hi:ux.botpages.delete.failed": {
+      "text": "{name} नहीं हटाया गया।",
+      "en": "{name} was not deleted.",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.archive.title": {
+      "text": "アーカイブまたは削除",
+      "en": "Archive or delete",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.archive.lead": {
+      "text": "{name}をアーカイブ。",
+      "en": "Archive {name}.",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.archive.body": {
+      "text": "{name}を非表示にし、ルーティンを停止します。チャット、メモリー、ルーティン、ファイルは残り、Botsから元に戻せます。保存済みのアプリの選択は残りません。{name}は「選んだアプリのみ」でアプリなしの状態で戻ります。",
+      "en": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.archive.button": {
+      "text": "アーカイブ",
+      "en": "Archive",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.archive.conflict": {
+      "text": "{name}のアプリが変更されました。何もアーカイブされていません。",
+      "en": "{name}'s apps changed. Nothing was archived.",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.archive.done": {
+      "text": "{name}をアーカイブしました。Botsから元に戻せます。",
+      "en": "{name} archived. You can bring it back from Bots.",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.delete.lead": {
+      "text": "{name}を削除。",
+      "en": "Delete {name}.",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.delete.body": {
+      "text": "{name}と、そのチャット、メモリー、ルーティンを完全に削除します。元に戻せるのはバックアップだけです。",
+      "en": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.delete.button": {
+      "text": "このボットを削除",
+      "en": "Delete this bot",
+      "verdict": "pass"
+    },
+    "ja:ux.botpages.delete.failed": {
+      "text": "{name}は削除されませんでした。",
+      "en": "{name} was not deleted.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.archive.title": {
+      "text": "Arquivar ou excluir",
+      "en": "Archive or delete",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.archive.lead": {
+      "text": "Arquivar {name}.",
+      "en": "Archive {name}.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.archive.body": {
+      "text": "Oculta {name} e para as rotinas. Os chats, a memória, as rotinas e os arquivos são mantidos, e você pode trazê-lo de volta em Bots. As escolhas de apps salvas não são mantidas: {name} volta em “Somente apps escolhidos” e sem apps.",
+      "en": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.archive.button": {
+      "text": "Arquivar",
+      "en": "Archive",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.archive.conflict": {
+      "text": "Os apps de {name} mudaram. Nada foi arquivado.",
+      "en": "{name}'s apps changed. Nothing was archived.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.archive.done": {
+      "text": "{name} arquivado. Você pode trazê-lo de volta em Bots.",
+      "en": "{name} archived. You can bring it back from Bots.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.delete.lead": {
+      "text": "Excluir {name}.",
+      "en": "Delete {name}.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.delete.body": {
+      "text": "Remove {name}, seus chats, memória e rotinas para sempre. Só um backup permite recuperar.",
+      "en": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.delete.button": {
+      "text": "Excluir este bot",
+      "en": "Delete this bot",
+      "verdict": "pass"
+    },
+    "pt-br:ux.botpages.delete.failed": {
+      "text": "{name} não foi excluído.",
+      "en": "{name} was not deleted.",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.archive.title": {
+      "text": "归档或删除",
+      "en": "Archive or delete",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.archive.lead": {
+      "text": "归档 {name}。",
+      "en": "Archive {name}.",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.archive.body": {
+      "text": "隐藏 {name} 并停止它的例行任务。它的聊天、记忆、例行任务和文件都会保留，你可以在“机器人”中把它恢复。它已保存的应用选择不会保留：{name} 恢复后为“仅选定的应用”，且没有任何应用。",
+      "en": "Hides {name} and stops its routines. Its chats, memory, routines and files are kept, and you can bring it back from Bots. Its saved app choices are not kept: {name} comes back set to Only chosen apps with no apps.",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.archive.button": {
+      "text": "归档",
+      "en": "Archive",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.archive.conflict": {
+      "text": "{name} 的应用已更改。没有归档任何内容。",
+      "en": "{name}'s apps changed. Nothing was archived.",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.archive.done": {
+      "text": "{name} 已归档。你可以在“机器人”中把它恢复。",
+      "en": "{name} archived. You can bring it back from Bots.",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.delete.lead": {
+      "text": "删除 {name}。",
+      "en": "Delete {name}.",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.delete.body": {
+      "text": "永久删除 {name} 及其聊天、记忆和例行任务。只有备份才能找回。",
+      "en": "Removes {name}, its chats, memory and routines for good. A backup is the only way back.",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.delete.button": {
+      "text": "删除此机器人",
+      "en": "Delete this bot",
+      "verdict": "pass"
+    },
+    "zh:ux.botpages.delete.failed": {
+      "text": "{name} 未被删除。",
+      "en": "{name} was not deleted.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

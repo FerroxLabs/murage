@@ -1,10 +1,11 @@
+import { archivedEvidencePath, assertExternalEvidencePath, evidencePath } from './evidence-path.mjs';
 // Run only in the network-none fixture container. Mutations live in a disposable
 // source copy; every run retains the original regression and positive controls.
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-const source=process.cwd(),out=resolve(process.argv[2]??'evidence/gnl-prod-r4/mutants');
+const source=process.cwd(),out=assertExternalEvidencePath(resolve(process.argv[2]??evidencePath('evidence/gnl-prod-r4/mutants')));
 mkdirSync(out,{recursive:true});
 const root=mkdtempSync(join(tmpdir(),'gnl-service-origin-mutants-'));
 const results=[];
@@ -22,7 +23,7 @@ try {
  };
  const control=run('control');
  if(control.status!==0||control.tests.length!==6||control.tests.some(test=>test.status!=='passed'))throw Error('Unmutated control failed');
- const oldOrigin=readFileSync(join(source,'evidence/gnl-prod-r4/unsafe-service-origin.txt'),'utf8').trimEnd();
+ const oldOrigin=readFileSync(archivedEvidencePath('evidence/gnl-prod-r4/unsafe-service-origin.txt'),'utf8').trimEnd();
  const mutants=[
   {id:'old-service-origin',change:s=>s.replace("          const origin = decisionNoLimitsOrigin(dispatchProvenance);",oldOrigin)},
   {id:'unproved-as-unattended',change:s=>s.replace("  if (k === 'guest' || k === 'other-human') return 'other-human';\n",'')},

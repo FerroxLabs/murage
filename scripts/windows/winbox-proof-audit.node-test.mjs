@@ -1,7 +1,8 @@
+import { archivedEvidencePath } from '../evidence-path.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,existsSync} from 'node:fs';
-const read = name => readFileSync(new URL(name,import.meta.url),'utf8');
+const read = name => readFileSync(name.startsWith('evidence/') ? archivedEvidencePath('scripts/windows/' + name) : new URL(name,import.meta.url),'utf8');
 
 // This conservative inventory includes every quoted source fragment, including
 // technical tokens, so prompts/diagnostics/fixture text cannot silently escape.

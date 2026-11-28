@@ -2,7 +2,7 @@
 import { isAbsolute } from 'node:path';
 import { wipeBreaker, type WipeContext } from './wipe-breaker.ts';
 import { wipeContextFor, degradedWipeContext } from './wipe/context.ts';
-import { outsideTurnKey, runningOutsideInstance, currentTurnEdits, recordCurrentTurnEdits, turnBegunAt } from './email/external-marks.ts';
+import { outsideTurnKey, runningOutsideInstance, currentTurnEdits, recordCurrentTurnEdits, turnBegunAt, sessionEdits } from './email/external-marks.ts';
 
 const emptyFiles:ReadonlySet<string>=new Set();
 /** Record allowed write attempts in the live turn journal. */
@@ -16,6 +16,10 @@ export function authenticatedTurnWrittenScripts(threadId:string,providerInstance
  if(outsideTurnKey(threadId)!==turnId||runningOutsideInstance(threadId)!==providerInstanceId||begun===undefined)return undefined;
  const files=currentTurnEdits(threadId,providerInstanceId,turnId);
  return files;
+}
+/** OVERREACH #6: the scripts the running session wrote, for the wipe check on a command that runs one. Nothing when no session is running. */
+export function sessionScriptContext(threadId:string):Pick<WipeContext,'sessionEdits'> {
+ try{const instance=runningOutsideInstance(threadId);return instance?{sessionEdits:sessionEdits(threadId,instance)}:{};}catch{return {};}
 }
 export function turnWrittenScripts(threadId:string,providerInstanceId:string,turnId:string):ReadonlySet<string> {
  return authenticatedTurnWrittenScripts(threadId,providerInstanceId,turnId)??emptyFiles;

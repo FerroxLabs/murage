@@ -6,7 +6,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { neutralizeRestoredSends } from "./send-store.ts";
 import { initializeSendAttempts, SendAttemptStore } from "./send-attempt-state.ts";
 
-const fields = ["resumeCursors", "resumePolicies", "replayPending", "resumeSeals", "resumeIncarnations"];
+const fields = ["resumeCursors", "resumePolicies", "replayPending", "effortTouch", "resumeSeals", "resumeIncarnations"];
 /** R3: installation-wide and durable-only, independent of startup recovery. */
 export function clearRetainedContextForAmbiguousAttempts(root: string, db: Database): { ambiguous: number; cleared: number } {
   if (!exists(db, "send_attempts")) return { ambiguous: 0, cleared: 0 };

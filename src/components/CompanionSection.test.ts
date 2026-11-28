@@ -522,9 +522,10 @@ describe("removing a paired device asks first", () => {
 
   it("calls revoke from exactly one place: the confirm step", () => {
     const src = source();
-    expect(src.match(/companion\.revoke\(/g)?.length).toBe(3); // the Replace flow's own confirm, this one, and Try again on a pending row
+    // A7: the Replace flow's own confirm, and revokeAndRecord, the one place that keeps the recorded removal; the confirm and Try again both go through it
+    expect(src.match(/companion\.revoke\(/g)?.length).toBe(2);
     const confirmCall = src.slice(src.indexOf("<RevokeDeviceConfirm"), src.indexOf("<RevokeDeviceConfirm") + 700);
-    expect(confirmCall).toContain("companion.revoke(device.id)");
+    expect(confirmCall).toContain("revokeAndRecord(device.id)");
     expect(confirmCall).toContain("onCancel={() => setRevoking(null)}");
   });
 
@@ -670,6 +671,6 @@ describe("a removal that has not finished", () => {
   it("the device row shows it from removalPending and Try again runs the same removal", () => {
     const source = readFileSync(fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)), "utf8");
     expect(source).toContain("device.removalPending");
-    expect(source).toMatch(/<RemovalPendingNote[\s\S]*?companion\.revoke\(device\.id\)/);
+    expect(source).toMatch(/<RemovalPendingNote[\s\S]*?onRetry=\{\(\) => void revokeAndRecord\(device\.id\)\}/);
   });
 });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // secret-scan: fixture
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -178,4 +178,53 @@ it('M credit: exact live-turn owner approval forwards to G2 once, never to anoth
   expect(approveOnce).toHaveBeenCalledExactlyOnceWith(operation);
   f.stop.abort();
   expect(approveExecWipeOnce('fixture-thread', 'fixture-turn', operation)).toBe(false);
+});
+
+// 1.0.20 Windows gate box: an empty optical drive D:\ answers every stat/realpath with UNKNOWN; every owner turn on
+// every engine ended "error: wipe-path-probe-failed" before the engine started.
+it('a root the real probe worker cannot read (a link loop) keeps its lexical form and never throws', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'guard-probe-')); dirs.push(root);
+  const loop = join(root, 'loop');
+  symlinkSync(loop, loop);
+  const { systemPathPort } = await import('../wipe/roots.ts');
+  expect(() => systemPathPort.realpath(loop)).toThrow('wipe-path-probe-failed');
+  const roots = wipeGuardRootPaths({ project: '/fixture/project' }, [loop]);
+  expect(roots).toContain(loop);
+  expect(roots).toContain('/');
+});
+
+it('Windows: a not-ready drive (UNKNOWN) stays a protected lexical root beside the readable drives', () => {
+  const pathPort = { isBlockDevice: () => null, realpath: (p: string) => {
+    if (/^d:/i.test(p)) throw Object.assign(new Error('wipe-path-probe-failed'), { code: 'UNKNOWN' });
+    return /^[c]:/i.test(p) ? p : null;
+  } };
+  const roots = wipeGuardRootPaths({ home: 'C:/Users/fixture', project: 'C:/project', pathPort }, ['D:/'], 'win32');
+  expect(roots).toEqual(expect.arrayContaining(['C:/', 'D:/', 'Z:/', 'C:/Users/fixture', 'C:/project']));
+});
+
+it('an owner No limits turn starts its guard with an unreadable root instead of failing setup', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'guard-probe-')); dirs.push(root);
+  const loop = join(root, 'loop');
+  symlinkSync(loop, loop);
+  const f = fixture();
+  const env = await wipeGuardTurnEnvironment({ ...f.input, turn: { ...turn(), addDirs: [loop] } });
+  expect(env.MURAGE_WIPE_GUARD).toBe('/fixture/turn-guard');
+  expect(f.options().roots).toContain(loop);
+  f.stop.abort();
+});
+
+it('a guard code that carries digits is refused with the same plain line, never shown raw', async () => {
+  const f = fixture();
+  f.start.mockImplementationOnce(async () => { throw new Error('wipe-guard-v2-probe-failed'); });
+  const failure = await wipeGuardTurnEnvironment(f.input).then(() => undefined, (error: Error) => error);
+  expect(failure?.message).toBe("Murage couldn't start this reply because its delete protection could not be set up.");
+  expect((failure as { code?: string }).code).toBe('wipe-guard-v2-probe-failed');
+});
+
+it('a guard that cannot start refuses the turn with a plain line, never a raw probe code', async () => {
+  const f = fixture();
+  f.start.mockImplementationOnce(async () => { throw Object.assign(new Error('wipe-path-probe-failed'), { code: 'UNKNOWN' }); });
+  const failure = await wipeGuardTurnEnvironment(f.input).then(() => undefined, (error: Error) => error);
+  expect(failure?.message).toBe("Murage couldn't start this reply because its delete protection could not be set up.");
+  expect(failure?.message).not.toMatch(/wipe-/);
 });

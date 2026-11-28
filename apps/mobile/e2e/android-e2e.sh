@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Plan 2 E2E on Android: a real phone over USB, or an emulator already booted.
-# The APK is built on the build host (scripts/android-remote.sh); Gradle never runs
+# The APK is built on Hetzner (scripts/android-hetzner.sh); Gradle never runs
 # here. The device is ANDROID_SERIAL, else the first one `adb devices` lists.
 #
 # It brings up the isolated host (host/run-host.sh + host/serve.sh up) and
@@ -98,8 +98,8 @@ fi
 if [[ "${SKIP_BUILD:-}" != 1 ]]; then
   # The lane is cleaned whether the build worked or not (golden rule).
   built=0
-  (cd "$MOBILE" && pnpm build && pnpm sync && scripts/android-remote.sh build) && built=1
-  "$MOBILE/scripts/android-remote.sh" clean
+  (cd "$MOBILE" && pnpm build && pnpm sync && scripts/android-hetzner.sh build) && built=1
+  "$MOBILE/scripts/android-hetzner.sh" clean
   [[ $built == 1 ]] || { echo "the APK build failed" >&2; exit 1; }
 fi
 adb install -r "$MOBILE/build/app-debug.apk" >/dev/null

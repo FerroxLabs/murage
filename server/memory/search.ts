@@ -1,10 +1,9 @@
 import { eligibleViewPage, lexicalViewPage, pendingViewPage, RecallWorkBudget } from './recall-view-index.ts';
+import { scopeSetOf, scopeSetWire } from './oneindex.ts';
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { database } from "../database.ts";
+import { noteSemanticCapacityHit } from "./model-adoption.ts";
 import { assertMemoryAccess, inMemoryAccessPass, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
-import { authorityStamp } from "./authority-epoch.ts";
-import { denyGeneration } from "./deny-read.ts";
-import { learningDeletionEpoch } from "./deny.ts";
 import { plausiblyReadable, readableMemoryRecord, withReaderRule } from "./readable.ts";
 import { isLineageLimit } from "./replay-lineage.ts";
 import type { LineageAllowance } from "./lineage-allowance.ts";
@@ -13,8 +12,8 @@ import { byScore, compareRefs } from "./ref-order.ts";
 import { createHash } from "node:crypto";
 import { MemoryQueryCache } from "./cache.ts";
 import { selectMemoryEvidence } from "./relevance.ts";
-import { keywordMemoryHits, recentMemoryHitsSliced } from "./recent.ts";
-import { lexicalPage, ownerIndexHandle, memoryIndexReaderState, RECALL_FIRST_PAGE, vectorlessAmong } from "./index-reader.ts";
+import { keywordMemoryHits, pendingMemoryHitsSliced, recentMemoryHitsSliced } from "./recent.ts";
+import { lexicalPage, lexicalPageSliced, ownerIndexHandle, memoryIndexReaderState, RECALL_FIRST_PAGE, vectorlessAmong } from "./index-reader.ts";
 import { causeOf, logSwallowed } from "./worker-log.ts";
 import { rateLimited } from "../observe.ts";
 import { noteRecallMode } from "./recall-budget.ts";
@@ -73,10 +72,11 @@ const ELIGIBLE_PAGE=256;
 const PENDING_PAGE=256;
 /** Readable recent matches the fallback needs before it stops reading further ones. */
 const RECENT_READABLE=20;
-/** How often a search whose data moved under it reads its accepted records again before it answers nothing. */
-const REVALIDATION_ROUNDS=3;
 const yieldTurn=()=>new Promise<void>(resolve=>setImmediate(resolve));
-export async function searchMemory(query:string,access:MemoryAccess,bridge:MemorySearchBridge,given:{workBudget?:RecallWorkBudget;allowance:LineageAllowance;limit?:number;historical?:boolean;cursor?:string;signal?:AbortSignal;profile?:boolean;lexical?:((...args:Parameters<typeof lexicalPage>)=>ReturnType<typeof lexicalPage>|Promise<ReturnType<typeof lexicalPage>>)|null;evolutionPolicy?:MemoryEvolutionPolicy;withheldMessage?:(threadId:string,messageId:string,allowance:LineageAllowance,verdict?:{checking?:boolean})=>boolean;caller?:RecallCaller;telemetry?:(facts:SearchTelemetry)=>void}){
+export async function searchMemory(query:string,access:MemoryAccess,bridge:MemorySearchBridge,given:{workBudget?:RecallWorkBudget;allowance:LineageAllowance;limit?:number;historical?:boolean;cursor?:string;signal?:AbortSignal;profile?:boolean;lexical?:((...args:Parameters<typeof lexicalPage>)=>ReturnType<typeof lexicalPage>|Promise<ReturnType<typeof lexicalPage>>)|null;evolutionPolicy?:MemoryEvolutionPolicy;withheldMessage?:(threadId:string,messageId:string,allowance:LineageAllowance,verdict?:{checking?:boolean})=>boolean;caller?:RecallCaller;telemetry?:(facts:SearchTelemetry)=>void;
+  /** The search is made for the owner's OWN direct turn (bundle.ts passes its own flag): candidates are read by the durable deny rows alone
+   *  (readable.ts MemoryReadOptions.ownerTurn). A bot's own tool search (routes.ts) sets it only in the owner's own typed turn (MAIN-RULING memory G/H, index.ts ownerDirectLine). */
+  ownerTurn?:boolean}){
   // the reader's transcript rule, defaulted for a reader whose audience is not the owner (readable.ts withReaderRule)
   const options=withReaderRule(access,given);
   const serviceStarted=performance.now();
@@ -108,7 +108,7 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   const helperAbort=new AbortController();
   const helperSignal=AbortSignal.any([signal,helperAbort.signal]);
   const helper=cached?null:(()=>{
-    try{return withinDeadline(bridge.search({query,scopeIds:[],view:access.view,reader:{botId:access.botId,threadId:access.threadId,humanPrincipal:access.humanPrincipal,notOwnerAudience:memoryAccessNotOwnerAudience(access)},policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,historical:options.historical??false,cursor:rawCursor,limit,semantic:true,deadlineAt,...options.profile?{profile:true}:{}},helperSignal),helperSignal);}
+    try{return withinDeadline(bridge.search({query,scopeIds:[],view:access.view,...scopeSetOf(access.view)?{scopeSet:scopeSetWire(access.view)}:{},reader:{botId:access.botId,threadId:access.threadId,humanPrincipal:access.humanPrincipal,notOwnerAudience:memoryAccessNotOwnerAudience(access)},policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,historical:options.historical??false,cursor:rawCursor,limit,semantic:true,deadlineAt,...options.profile?{profile:true}:{}},helperSignal),helperSignal);}
     catch(error){return Promise.reject(error);}
   })();
   helper?.catch(()=>{});
@@ -116,7 +116,8 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // evidence withdrawn, outside the reader's scopes), and stops at the search's own deadline with a page flagged partial
   // (msearch review round 6). Reader-specific refusals are still decided record by record below.
   const lexicalSource=options.lexical===null?null:((q:string,_scopes:readonly string[],limit:number,offset=0)=>
-    options.lexical ? options.lexical(q,[],limit,offset) : lexicalViewPage(database(),q,access.view,limit,offset,scanBudget));
+    options.lexical ? options.lexical(q,[],limit,offset) : scopeSetOf(access.view) ? sharedPage(q,access,limit,offset,options.historical??false,deadlineAt,signal)
+      : lexicalViewPage(database(),q,access.view,limit,offset,scanBudget,!(options.historical??false),options.historical??false));
   assertMemoryAccess(access);
   ownerIndexHandle();
   const direct=lexicalSource?await lexicalSource(query,[],RECALL_FIRST_PAGE):null;
@@ -135,7 +136,9 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // The helper's index was readable and it did not answer: whether anything the reader may read is still waiting for the
   // word index is worked out below, from the reader's own scopes and after authorization.
   let pendingScan=false;
-  try{result=cached??await helper!;}
+  try{result=cached??await helper!;
+    // The scan stopped at its budget with records left: the owner is told (memory status semantic.capacityHitAt).
+    if(result.resumeAfter!==undefined)noteSemanticCapacityHit();}
   catch(error){
     options.signal?.throwIfAborted();assertMemoryAccess(access);
     logSwallowed("recall",error);helperAnswered=false;
@@ -157,7 +160,13 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   if(helperAnswered&&(!lexicalReady||result.vectorRows>0)&&["missing","unreadable"].includes(memoryIndexReaderState()))result={...result,coverageComplete:false};
   const bridgeDone=performance.now();
   assertMemoryAccess(access);
-  const recentScan=options.historical?{hits:[],complete:true}:await recentMemoryHitsSliced(query,access,{workBudget:scanBudget,deadlineAt:serviceStarted+hydrationLimitMs-KEYWORD_HYDRATION_RESERVE_MS,...options.signal?{signal:options.signal}:{}});
+  // What the word index has not indexed yet: the newest-first window first, as before (it also reads a record no receipt names yet). On a large
+  // store it never finishes; then (MAIN-RULING memint-3 (4)) the reader's pending projections are read to their end with what is left (bounded by
+  // the backlog, not by the store), and a walk that finishes stands for the window. One that cannot finish leaves the answer cut, as before.
+  const unindexed={workBudget:scanBudget,deadlineAt:serviceStarted+hydrationLimitMs-KEYWORD_HYDRATION_RESERVE_MS,...options.signal?{signal:options.signal}:{}};
+  const windowScan=options.historical?{hits:[],complete:true}:await recentMemoryHitsSliced(query,access,unindexed);
+  const pendingWalk=windowScan.complete?null:await pendingMemoryHitsSliced(query,access,unindexed);
+  const recentScan=pendingWalk?.complete?{hits:[...new Map([...windowScan.hits,...pendingWalk.hits].map(hit=>[`${hit.id}:${hit.version}`,hit])).values()].sort(byScore),complete:true}:windowScan;
   const recent=recentScan.hits;
   // Authorization comes first, and everything a reader can observe is computed from what it may read. Every candidate, on
   // every path (helper, word index, recent, keyword fallback, historical), is read through readableMemoryRecord
@@ -167,20 +176,23 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   //
   // Authorization never holds the event loop (msearch review round 5): the candidates of one step are narrowed by ONE
   // batched statement that spares the certain refusals (plausiblyReadable), the rest are read in slices of AUTHORIZE_SLICE_MS
-  // with the loop released between slices, and when the data, the policy or the deletion epoch moved while the loop was
-  // released, every record already accepted is read again before anything is answered.
+  // with the loop released between slices. What is answered is read once more, synchronously, just before the answer is built
+  // (q1024-memsearch D), so whatever moved while the loop was released is judged on what stands now.
   let partial=false;
+  // q1023-leftout: a record the search FOUND was left out because its own check could not finish (not known now: a revoke walk still
+  // pending, or the read's allowance) or because the results would not hold still. Unlike a time or scan cut, something found is missing.
+  let foundUnchecked=false;
   // Hydration stops at the limit for every caller and returns what it has, flagged partial. No candidate is exempt: a
   // search that starts late (a stalled event loop) answers partial or empty, inside the proxy's wait (P1, msearch review).
   const mode=options.historical?"historical" as const:"current" as const;
-  const readOptions={workBudget,allowance:options.allowance,mode,agent:true,discovery:true,...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}};
+  const readOptions={workBudget,allowance:options.allowance,mode,agent:true,discovery:true,...options.withheldMessage?{withheldMessage:options.withheldMessage}:{},...options.ownerTurn===true?{ownerTurn:true}:{}};
   const keyOf=(ref:{id:string;version:number})=>`${ref.id}:${ref.version}`;
   const checked=new Map<string,{ref:{id:string;version:number};value:Readable|null}>();
   const hydrate=(ref:{id:string;version:number}):Readable|null=>{
     let read:ReturnType<typeof readableMemoryRecord>;
     // a read the allowance could not finish is left out for now, and the answer says it is partial
     try{read=readableMemoryRecord(ref.id,ref.version,access,readOptions);}
-    catch(error){if(isLineageLimit(error)){partial=true;return null;}throw error;}
+    catch(error){if(isLineageLimit(error)){partial=true;foundUnchecked=true;return null;}throw error;}
     if(typeof read==="string")return null;
     const record=read.row;
     // masked at read like the bundle (bundle.ts hydrateInPass): an unscrubbed 1.0.3 row never hands a recall its digits
@@ -189,15 +201,10 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
       evidence:read.evidence.map((handle,n)=>({...handle,occurredAt:read.occurredAt[n]}))};
   };
   const overTime=()=>performance.now()-serviceStarted>hydrationLimitMs;
-  // A reader whose audience is not the owner is also judged on the lines its records rest on (disclosures.ts readerWithheldMessage), and
-  // a receipt revoke or a marker commit can withhold one without moving data, policy or epoch: its stamp carries the authority stamp
-  // (undefined counts as moved) and the deny generation too. The owner follows content withdrawals, including scoped thread
-  // deletion, but an audience-only receipt flip must not discard the owner's accepted words or exhaust its hydration budget.
+  // A reader whose audience is not the owner is also judged on the lines its records rest on (disclosures.ts readerWithheldMessage):
+  // the final synchronous read of what is answered applies that judgement as it stands at answer time, receipt revokes and marker
+  // commits included.
   const audienceReader=!memoryAccessIsOwnerAudience(access);
-  let unstamped=0;
-  const revisionStamp=()=>{const meta=database().prepare("SELECT data_revision,policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;const base=`${meta.data_revision}:${meta.policy_revision}:${meta.deletion_epoch}`;if(!audienceReader)return `${base}|${learningDeletionEpoch(database())}`;const authority=authorityStamp();const generation=denyGeneration(database());return `${base}|${authority===undefined||generation<0?`moved-${++unstamped}`:`${authority}|${generation}`}`;};
-  let stampAtAccept:string|null=null;
-  let revalidationCut=false;
   /** Read `refs` (the ones not yet read), a slice at a time. Stops, flagged partial, at the hydration limit. */
   const authorizeAll=async(refs:ReadonlyArray<{id:string;version:number}>):Promise<void>=>{
     const todo:Array<{id:string;version:number}>=[];
@@ -206,7 +213,6 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     if(todo.length>workBudget.remaining){todo.length=workBudget.remaining;partial=true;}
     workBudget.candidates(todo.length);
     if(overTime()){partial=true;return;}
-    stampAtAccept??=revisionStamp();
     const plausible=inMemoryAccessPass(()=>plausiblyReadable(todo,access.view,mode,!audienceReader&&!memoryAccessNotOwnerAudience(access)));
     const survivors:Array<{id:string;version:number}>=[];
     for(const ref of todo){if(plausible.has(keyOf(ref)))survivors.push(ref);else checked.set(keyOf(ref),{ref,value:null});}
@@ -218,32 +224,6 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     }
   };
   const readableOf=(ref:{id:string;version:number}):Readable|null=>checked.get(keyOf(ref))?.value??null;
-  /** When the data, the policy or the deletion epoch moved while the loop was released, read every accepted record again.
-   * True when it had to (what was ranked from the old reads is ranked again). */
-  const revalidate=async():Promise<boolean>=>{
-    if(stampAtAccept===null)return false;
-    const now=revisionStamp();
-    if(now===stampAtAccept)return false;
-    const accepted=[...checked.values()].filter(entry=>entry.value!==null).map(entry=>entry.ref);
-    // The new stamp is committed only when EVERY accepted record has been read again. Whatever the deadline leaves unread is
-    // discarded (it is not answered, and not read later against a stamp that says it was checked); the old stamp stays, so no
-    // later pass takes a half-checked set for a checked one (msearch review round 6).
-    let complete=true;
-    for(let at=0;at<accepted.length;){
-      if(overTime()){
-        partial=true;complete=false;
-        // Every accepted record is dropped, including the ones this pass already read again: they were read before the loop was
-        // released for the rest, and their source may have moved since (msearch review round 7). Nothing is kept on a half pass.
-        for(const ref of accepted)checked.set(keyOf(ref),{ref,value:null});
-        break;
-      }
-      const until=performance.now()+AUTHORIZE_SLICE_MS;
-      inMemoryAccessPass(()=>{do{const ref=accepted[at++];checked.set(keyOf(ref),{ref,value:hydrate(ref)});}while(at<accepted.length&&performance.now()<until);});
-      if(at<accepted.length){await yieldTurn();options.signal?.throwIfAborted();}
-    }
-    if(complete)stampAtAccept=now;else revalidationCut=true;
-    return true;
-  };
   // Known residual (1.0.2, docs/memory.md "Search and what a reader cannot read"): the order of the word list comes from FTS5's
   // BM25, whose corpus statistics (inverse document frequency, average length) are computed over every document in the shared
   // index, readable or not. It cannot add, remove or reveal a result, count, page or cursor; it can reorder readable results
@@ -361,13 +341,13 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     // Pending projections the reader's own scopes hold (the word index has not caught up): only a readable one counts.
     let pendingReadable=false;
     if(pendingScan){
-      for(let after=0;;){
+      for(let after='';;){
         const refs=pendingViewPage(database(),access.view,after,PENDING_PAGE,scanBudget);
         if(!refs.length){if(scanBudget.remaining===0)partial=true;break;}
         await authorizeAll(refs);
         if(refs.some(ref=>readableOf(ref)!==null)){pendingReadable=true;break;}
         if(partial){pendingReadable=true;break;}
-        after=refs[refs.length-1].rowid;
+        after=JSON.stringify([refs[refs.length-1].id,refs[refs.length-1].version]);
       }
     }
     return {ranked:ranked.map(({read,...hit})=>({...hit,...read})),incomplete:incomplete||unproven,unscored,recentReadable,meaningRead:meaning.taken.length>0,paged,pendingReadable};
@@ -387,20 +367,7 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
       cursor=JSON.stringify([rows[rows.length-1].id,rows[rows.length-1].version]);
     }
   }
-  let lists:Awaited<ReturnType<typeof rankLists>>;
-  for(let attempt=0;;attempt++){
-    lists=await rankLists();
-    // The loop was released while this ran: if anything moved, what was accepted has been read again, and is ranked again.
-    if(!await revalidate())break;
-    // Out of time while reading again: what could not be read again is already discarded; rank once more from what stands.
-    if(revalidationCut){lists=await rankLists();break;}
-    if(attempt>=REVALIDATION_ROUNDS){
-      // It will not hold still: answer nothing rather than something that may have been withdrawn.
-      partial=true;
-      lists={ranked:[],incomplete:true,unscored:undefined,recentReadable:0,meaningRead:false,paged:false,pendingReadable:false};
-      break;
-    }
-  }
+  const lists=await rankLists();
   const hits=lists.ranked;
   assertMemoryAccess(access);
   // Whether every readable record was counted: the helper's own flag (an older helper), or no readable record is waiting for its vector.
@@ -411,7 +378,20 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   if(!recentScan.complete&&!(coverage===true&&(pendingScan||result.unvectored!==undefined&&result.vectorModel!==undefined&&memoryIndexReaderState()==="ready")))scanCut=true;
   if(helperAnswered&&!cached&&!result.degradedReason&&coverage&&result.vectorRows>0)queryCache.set(cacheKey,result);
   const optional=new Set(selectMemoryEvidence(query,hits.filter(hit=>!hit.pinned),evolutionPolicy));
-  const selected=hits.filter(hit=>hit.pinned||optional.has(hit)).slice(0,limit);
+  // q1024-memsearch D: what is answered is read again here, in one synchronous pass with no await between it and the answer,
+  // so a record withdrawn while the loop was released is never answered. It is O(limit): capture moves data_revision with every
+  // message, and reading every accepted record again whenever it moved (up to three rounds, then nothing) left turn recall
+  // empty under a live session. A record that moved may still have shifted the order of the others; it cannot be answered.
+  // The limit counts what this read finds readable (ASTRA :9229): a withdrawn record never takes the slot of a readable one ranked below it.
+  const selected=inMemoryAccessPass(()=>{
+    const answer:typeof hits=[];
+    for(const hit of hits){
+      if(answer.length>=limit)break;
+      if(!hit.pinned&&!optional.has(hit))continue;
+      const fresh=hydrate(hit);if(fresh)answer.push({...hit,...fresh});
+    }
+    return answer;
+  });
   recordMemoryRetrieval(selected.length);
   noteRecallMode(access.threadId,lists.meaningRead?"hybrid":"lexical");
   const totalMs=performance.now()-serviceStarted;
@@ -428,12 +408,17 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   const note=caller==="tool"&&isPartial?(selected.length?PARTIAL_NOTE:degradedReason==="MEMORY_RECALL_UNAVAILABLE"?UNAVAILABLE_NOTE:undefined):caller==="tool"&&boundedScan?BOUNDED_NOTE:undefined;
   // The recent fallback is reported only when it found a record this reader may read.
   if(cut||boundedScan||lists.recentReadable)coverage=false;
+  // q1022 recallperf item 4: the meaning search was dropped (cut off at SEMANTIC_CUTOFF_MS or failed): what meaning alone would find was
+  // never looked at, so the answer is never reported complete.
+  if(!helperAnswered&&!cached)coverage=false;
   // Only these fields are the answer. The helper's counts, memory use and timings stay in the process (telemetry above), and
   // the helper's cursor, an id that may name a record this reader cannot read, is replaced by a token only this reader can use.
   // Final admission check follows every callback and all result construction work.
   assertMemoryAccess(access);
   return {hits:selected,...degradedReason!==undefined?{degradedReason}:{},...coverage!==undefined?{coverageComplete:coverage}:{},...lists.paged?{nextCursor:sealMemoryCursor(result.resumeAfter!,access,options.historical??false)}:{},
-    ...isPartial?{partial:true,recallMode:"keyword" as const}:{},...note?{note}:{},evolutionPolicyRevision:evolutionPolicy.revision,...lists.recentReadable?{recentFallback:true}:{},
+    ...isPartial?{partial:true,recallMode:"keyword" as const}:{},
+    // A readable record may have been missed (hydration or scan cut short, or words only before the word index is ready); words-only recall over a ready index misses none.
+    ...partial||scanCut||keywordOnly&&!lexicalReady?{missed:true as const}:{},...foundUnchecked?{unproven:true as const}:{},...note?{note}:{},evolutionPolicyRevision:evolutionPolicy.revision,...lists.recentReadable?{recentFallback:true}:{},
     };
 }
 
@@ -464,4 +449,13 @@ function withinDeadline<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{
     signal.addEventListener("abort",stop,{once:true});
     work.then(resolve,reject).finally(()=>signal.removeEventListener("abort",stop));
   });
+}
+
+/** ONEINDEX + H4: a scope-set reader's words come from the shared index (rare-word plan + postings, eligible form, its computed scopes).
+ * When the index cannot answer (missing, unreadable, blocked, writer drain) this is null and searchMemory takes its bounded keyword
+ * fallback (keywordMemoryHits + recentMemoryHitsSliced over the reader's own records, recent.ts), so a cold index never gives an empty
+ * recall and never waits on a view build. */
+async function sharedPage(query: string, access: MemoryAccess, limit: number, offset: number, historical: boolean, deadlineAt: number, signal: AbortSignal) {
+  try { return await lexicalPageSliced(query,scopeSetOf(access.view)!.set.scopes,limit,offset,undefined,{eligible:true,historical,deadlineAt,signal}); }
+  catch (error) { logSwallowed("recall",error); return null; }
 }

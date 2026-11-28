@@ -1094,25 +1094,25 @@ describe("voice host: long replies (2026-09-30 call)", () => {
     return { fetchImpl, calls: () => calls };
   }
 
-  it("a first-token stall is asked once more before the turn fails over", async () => {
+  it("a first-token stall ends without replaying the submitted POST", async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const net = stalling(1);
     const events = collect(runVoiceHostTurn({ state: STATE, history: [], said: "tell me more", host: HOST, fetchImpl: net.fetchImpl }));
     await vi.advanceTimersByTimeAsync(6_001);
-    expect(await events).toEqual([{ type: "sentence", text: "Here it is." }, { type: "done" }]);
-    expect(net.calls()).toBe(2);
+    expect(await events).toEqual([{ type: "error", reason: "timeout", message: "The fast reply took too long." }]);
+    expect(net.calls()).toBe(1);
     warn.mockRestore();
   });
 
-  it("a second stall is a timeout, which the call hands to the engine", async () => {
+  it("a persistent stall submits only the original POST", async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const net = stalling(2);
     const events = collect(runVoiceHostTurn({ state: STATE, history: [], said: "tell me more", host: HOST, fetchImpl: net.fetchImpl }));
     await vi.advanceTimersByTimeAsync(12_002);
     expect(await events).toEqual([{ type: "error", reason: "timeout", message: "The fast reply took too long." }]);
-    expect(net.calls()).toBe(2);
+    expect(net.calls()).toBe(1);
     warn.mockRestore();
   });
 
@@ -1273,7 +1273,7 @@ describe("voice host: timing", () => {
     expect(seen).toEqual([{ headersMs: 200, firstTokenMs: 500, firstPieceMs: 1101, attempts: 1, firstPiece: "sentence", firstPieceChars: 11 }]);
   });
 
-  it("a first-token stall then a retry that answers 300 ms later is attempts 2", async () => {
+  it("a first-token stall reports one attempt and no first token", async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const seen: any[] = [];
@@ -1288,8 +1288,9 @@ describe("voice host: timing", () => {
     await vi.advanceTimersByTimeAsync(6_400);
     await events;
     expect(seen).toHaveLength(1);
-    expect(seen[0].attempts).toBe(2);
-    expect(seen[0].firstTokenMs).toBeGreaterThanOrEqual(6_300);
+    expect(seen[0].attempts).toBe(1);
+    expect(seen[0].firstTokenMs).toBeNull();
+    expect(calls).toBe(1);
     warn.mockRestore();
   });
 
@@ -1612,4 +1613,29 @@ it("L-FR33-1 lookup billing diagnostics accept numeric metadata only", async () 
     }
     expect(log.mock.calls).toEqual([["[voice] lookup via Flux: 2 searches, $0.020000, 1 sources"]]);
   } finally { log.mockRestore(); }
+});
+
+// C5: a POST may charge even when no headers or stream frame reaches Murage.
+describe.each(["flux", "openai"] as const)("ambiguous host POST on %s", via => {
+  afterEach(() => vi.useRealTimers());
+  it.each(["headers", "first frame"])("does not replay after a stalled %s", async stage => {
+    vi.useFakeTimers();
+    const seen: unknown[] = [];
+    let starts = 0;
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      starts++;
+      if (starts !== 1) return new Response('data: {"choices":[{"delta":{"content":"Replayed."}}]}\n\ndata: [DONE]\n\n');
+      if (stage === "headers") return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("fixture abort", "AbortError")), { once: true });
+      });
+      return new Response(new ReadableStream<Uint8Array>({
+        start(out) { init?.signal?.addEventListener("abort", () => out.error(new DOMException("fixture abort", "AbortError")), { once: true }); },
+      }, { highWaterMark: 0 }), { headers: { "content-type": "text/event-stream" } });
+    });
+    const events = collect(runVoiceHostTurn({ state: STATE, history: [], said: "go on", host: { ...HOST, via }, fetchImpl, onTiming: timing => seen.push(timing) }));
+    await vi.advanceTimersByTimeAsync(6001);
+    expect(await events).toEqual([{ type: "error", reason: "timeout", message: "The fast reply took too long." }]);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(seen).toEqual([expect.objectContaining({ attempts: 1, firstTokenMs: null, firstPieceMs: null })]);
+  });
 });

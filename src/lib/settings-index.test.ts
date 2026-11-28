@@ -9,9 +9,10 @@ import { BOT_SETTINGS_SECTIONS } from "@/components/bot-settings-sections";
 import { SETTINGS_CARDS } from "./settings-card-registry";
 import { APP_SETTINGS_ENTRIES, BOT_SETTINGS_CARDS, MERGED_SETTINGS_ROWS, SETTINGS_INDEX, settingsIndexProblems } from "./settings-index";
 import { searchSettingsIndex, type SettingsFindContext } from "./settings-search";
+import { settingsPanelSource } from "../components/bot-pages/panel-source";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
-const PANEL = read("../components/SettingsPanel.tsx") + read("../components/BotFreshStartAction.tsx");
+const PANEL = settingsPanelSource() + read("../components/BotFreshStartAction.tsx");
 const MODAL = read("../components/SettingsModal.tsx");
 const CALLS = read("../components/BotCallsSettings.tsx");
 const BOTS = [{ id: "b-nova", name: "Nova" }, { id: "b-rex", name: "Rex" }, { id: "b-ivy", name: "Ivy" }];

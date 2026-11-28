@@ -19,6 +19,7 @@ import { createMcpMountAdmission } from "./mcp-mounts.ts";
 import { recordEvents } from "../testing/events.ts";
 import { hasClaudeS2Pending, claudeS2HasLiveTurn, claudeS2SteerAdapter } from "./claude-s2-pending.ts";
 import type { SendTurnInput } from "../contracts.ts";
+import { decorateOwnerTurnInstance, setOwnerTurnResolver } from "../harness/power-owner-adapter.ts";
 
 // The executable is an isolated wire-protocol fixture, so qualification is
 // an explicit injected receipt at this I/O edge, never an ambient test unlock.
@@ -35,9 +36,19 @@ vi.mock("./process-tree.ts", async original => ({ ...await original<typeof impor
   descendantBaseline: async () => new Set<number>(), untrackedDescendants: async () => new Set<number>(),
 }));
 const stdinProbe = vi.hoisted(() => ({ write: undefined as undefined | ((wire: string) => void) }));
+// q1024-steerquar H1: a kept CLI whose stop can never be confirmed (it is not signalled and never reads stopped).
+const heldProbe = vi.hoisted(() => ({ pid: null as number | null }));
 vi.mock("../procs.ts", async original => {
   const api = await original<typeof import("../procs.ts")>();
-  return { ...api, spawnCli: (...args: Parameters<typeof api.spawnCli>) => {
+  const held = (child: { pid?: number }) => heldProbe.pid !== null && child.pid === heldProbe.pid;
+  return { ...api,
+    killCliTree: (...args: Parameters<typeof api.killCliTree>) => { if (!held(args[0])) api.killCliTree(...args); },
+    awaitCliTreeStopped: (...args: Parameters<typeof api.awaitCliTreeStopped>) => held(args[0]) ? Promise.resolve(false) : api.awaitCliTreeStopped(...args),
+    cliTreeStoppedSignal: (...args: Parameters<typeof api.cliTreeStoppedSignal>) => held(args[0])
+      ? new Promise<void>(resolve => { const t = setInterval(() => { if (!held(args[0])) { clearInterval(t); resolve(); } }, 50); }).then(() => api.cliTreeStoppedSignal(...args))
+      : api.cliTreeStoppedSignal(...args),
+    cliTreeConfirmedStopped: (...args: Parameters<typeof api.cliTreeConfirmedStopped>) => held(args[0]) ? false : api.cliTreeConfirmedStopped(...args),
+    spawnCli: (...args: Parameters<typeof api.spawnCli>) => {
     const child = api.spawnCli(...args);
     const write = child.stdin.write.bind(child.stdin);
     child.stdin.write = ((chunk: any, ...rest: any[]) => {
@@ -51,6 +62,7 @@ const cleanup: Array<() => unknown> = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
   stdinProbe.write = undefined;
+  if (heldProbe.pid !== null) { try { process.kill(heldProbe.pid, "SIGKILL"); } catch {} heldProbe.pid = null; }
   vi.unstubAllEnvs(); resetClaudeMcpReadinessForTests(); resetClaudeVersionGate();
 });
 async function until(check: () => boolean) {
@@ -345,3 +357,45 @@ it.each([true, false])("S2 exact-turn lease waits for idle inspection, reusable=
     else expect(() => process.kill(x.pid, 0)).toThrow();
   } finally { release(null); inspect.mockRestore(); }
 }, 30_000);
+
+// q1024-steerquar H1 (FABLE/ASTRA/OPUS 583d64b809, MAIN "owner sends never fail"): the owner's own send is never refused because
+// this thread's kept CLI (and so its relay) cannot be confirmed stopped, at the S2 key-change retire (claude.ts retained CLI retire)
+// or the S2 cold fallback. It goes on to a fresh process after the bounded wait; any other audience is still refused there.
+// Entry: the registry's owner decorator over the real ClaudeDriver and the isolated S2 wire fixture.
+it.each([
+  ["key-change retire", false, true], ["key-change retire", false, false], ["cold fallback", true, true], ["cold fallback", true, false],
+] as const)("q1024-steerquar H1 Claude S2 %s with the kept CLI unconfirmed: cold=%s owner=%s", async (_row, cold, ownerTurn) => {
+  const x = await fixture(cold);
+  // Before the instance is disposed: the held CLI really ends and its confirmation is no longer withheld.
+  cleanup.push(() => { heldProbe.pid = null; try { process.kill(x.pid, "SIGKILL"); } catch {} });
+  setOwnerTurnResolver(threadId => ownerTurn && threadId === x.threadId);
+  cleanup.push(() => setOwnerTurnResolver(() => false));
+  const adapter = decorateOwnerTurnInstance(x.instance).adapter;
+  heldProbe.pid = x.pid;
+  // The S2 wire fixture answers a fresh process's first prompt only when it says "first".
+  const input = cold ? x.turn("first again") : { ...x.turn("first again"), sessionReset: true };
+  const sent = adapter.sendTurn(input).then(({ turnId }) => turnId, (error: unknown) => `refused: ${String(error)}`);
+  if (cold) {
+    await until(() => x.rows().some(r => r.frame.request?.subtype === "mcp_reconnect"));
+    writeFileSync(x.release, "release");
+  }
+  const turnId = await sent;
+  if (!ownerTurn) {
+    expect(turnId, "a non-owner send beside the unconfirmed kept CLI is still refused").toMatch(/^refused:.*MOUNT_RELAY_STOP_UNCONFIRMED/);
+    return;
+  }
+  expect(turnId, "the owner's send is never refused by its own kept CLI's unconfirmed stop").not.toMatch(/^refused:/);
+  const completed = await x.events.until(e => e.type === "turn.completed" && e.turnId === turnId, 30_000).catch((error: unknown) => {
+    console.log(`DIAG events=${JSON.stringify(x.events.events.map(e => [e.type, (e as any).turnId, (e as any).message ?? (e as any).error ?? ""]))}`);
+    console.log(`DIAG rows=${JSON.stringify(x.rows().map(r => [r.pid, r.frame.type, r.frame.request?.subtype ?? r.frame.message?.content ?? ""]))} held=${x.pid}`);
+    throw error;
+  });
+  expect(completed, "the owner's turn runs to its reply").toMatchObject({ ok: true });
+  const users = x.rows().filter(r => r.frame.type === "user");
+  const owned = users.filter(r => JSON.stringify(r.frame.message.content).includes("first again"));
+  expect(owned.length, "the owner's prompt reached one process").toBe(1);
+  expect(owned[0]!.pid, "a fresh process, not the unconfirmed kept CLI").not.toBe(x.pid);
+  // Only the kept CLI is unconfirmed; its mount child was confirmed gone, so the owner's relay starts that integration again.
+  const notices = x.events.events.filter(e => e.type === "item.started" && (e as { toolKind?: string }).toolKind === "notice").map(e => String((e as { title?: string }).title));
+  expect(notices, "no integration is dropped when only the kept CLI is unconfirmed").toEqual([]);
+}, 90_000);

@@ -17,8 +17,8 @@ import { initialState } from '../state/store';
 import { configReply } from '../state/hydrate-bodies';
 import { pbConfig } from '../e2e/pullback-layers.responses';
 import type { Routine, RoutineRun } from '../lib/routines';
-const fixture = vi.hoisted(() => ({ desktop: true, state: {} as Record<string, unknown>, dispatch: vi.fn() }));
-vi.mock('../state/store', async original => ({ ...await original<typeof import('../state/store')>(), useStore: () => ({ state: fixture.state, dispatch: fixture.dispatch }), api: async () => ({ calls: [], routines: [], runs: [], entries: [] }) }));
+const fixture = vi.hoisted(() => ({ desktop: true, state: {} as Record<string, unknown>, dispatch: vi.fn(), api: vi.fn() }));
+vi.mock('../state/store', async original => ({ ...await original<typeof import('../state/store')>(), useStore: () => ({ state: fixture.state, dispatch: fixture.dispatch }), api: fixture.api }));
 vi.mock('../lib/use-surface', () => ({ useDesktopSurface: () => fixture.desktop, useSurfaceState: () => ({ desktop: fixture.desktop, confirmed: true }) }));
 vi.mock('./DesktopCapabilities', () => ({ useDesktopCapabilities: () => ({ capabilities: { host: { platform: 'linux' } }, ready: true }) }));
 const routine: Routine = { id: 'r', botId: 'b', name: 'Fixture routine', prompt: 'Fixture task', target: 'bot', runOn: 'ember', enabled: true, schedule: { type: 'daily', time: '09:00', weekdays: [1,2,3,4,5] }, durationMinutes: 30, nextRunAt: 1, createdAt: 1, updatedAt: 1 };
@@ -26,7 +26,7 @@ const seed = { kind: 'routine' as const, at: Date.now(), durationMinutes: 30, bo
 let restore: () => void;
 beforeAll(() => { restore = installDOMHarness(); });
 afterAll(() => restore());
-beforeEach(() => { fixture.desktop = true; fixture.state = { ...initialState, routines: [routine] }; });
+beforeEach(() => { fixture.api.mockReset().mockResolvedValue({ calls: [], routines: [], runs: [], entries: [] }); fixture.desktop = true; fixture.state = { ...initialState, routines: [routine] }; });
 afterEach(async () => { cleanup(); await settle(); expect(activeTrapCount()).toBe(0); document.body.replaceChildren(); vi.restoreAllMocks(); });
 function opener() { const b = document.createElement('button'); document.body.append(b); b.focus(); return b; }
 const cases = [
@@ -255,6 +255,27 @@ it('R24-AUDIT BF-24: Watch a file blocks the calendar c shortcut', async () => {
     press('Escape', cancel); await settle(); expect(openLayers()).toHaveLength(0); expect(document.activeElement).toBe(watch);
   } finally { HTMLElement.prototype.scrollTo = scroll; }
 });
+it.each([
+  ['target_moved', 'Results waiting. The results chat was moved or shared.', true],
+  ['bot_shared', "Results waiting. This bot is shared with a team, so its results chat can't be private. Results arrive when the bot is private again.", false],
+  ['cloud_check_unavailable', "Results waiting. Murage Cloud couldn't confirm who can see the results chat. Retrying automatically.", false],
+] as const)('L5H Results waiting renders the %s reason and only its available action', async (reason, copy, canRecreate) => {
+  const webhook = { id: 'hook-a', name: 'Fixture webhook', botId: 'b', enabled: true, runOn: 'ember' };
+  fixture.state.webhooks = [webhook];
+  fixture.state.routineRuns = [{
+    id: 'run-a', webhookId: webhook.id, botId: webhook.botId, triggerSource: 'webhook',
+    status: 'completed', scheduledFor: 1, eventResult: { state: 'held', reason },
+  }];
+  const view = mount(h(WebhooksPanel, { bots: [] }));
+  expect(view.container.querySelector('[role="status"]')?.textContent).toBe(copy);
+  const action = Array.from(view.container.querySelectorAll('button')).find(button => button.textContent === 'Recreate results chat');
+  expect(Boolean(action)).toBe(canRecreate);
+  if (action) {
+    await act(async () => action.click());
+    expect(fixture.api).toHaveBeenCalledExactlyOnceWith('/api/webhooks/hook-a/results/recreate', { method: 'POST' });
+  }
+});
+
 it('R24-H1 BF-26: webhook editor yields to Settings, consumes editable Escape and returns', async () => {
   mount(h(WebhooksPanel, { bots: [{ id: 'b', name: 'Bot' } as import('../state/store').Bot] }));
   const launch = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim() === 'Create local webhook')!;

@@ -17,7 +17,7 @@ import {
 } from "./announcements.ts";
 
 const base = { id: "flux-voice", kind: "info", title: "Voice calls through Flux", body: "Call any bot. **No extra keys.**" };
-const IMAGE = "https://updates.ferroxlabs.com/murage/images/voice.webp";
+const IMAGE = "https://murage.ai/murage/images/voice.webp";
 const item = (extra: Record<string, unknown> = {}): Announcement => {
   const checked = checkAnnouncement({ ...base, ...extra });
   if (!checked.ok) throw new Error(checked.errors.join("; "));
@@ -43,14 +43,14 @@ describe("one notice", () => {
   it("only takes images from our host, over https, in our folder", () => {
     expect(allowedImageUrl(IMAGE)).toBe(true);
     for (const bad of [
-      "http://updates.ferroxlabs.com/murage/images/voice.webp",
+      "http://murage.ai/murage/images/voice.webp",
       "https://evil.example/murage/images/voice.webp",
-      "https://updates.ferroxlabs.com.evil.example/murage/images/voice.webp",
-      "https://updates.ferroxlabs.com/murage/other/voice.webp",
-      "https://updates.ferroxlabs.com/murage/images/../voice.webp",
-      "https://updates.ferroxlabs.com/murage/images/voice.svg",
-      "https://updates.ferroxlabs.com/murage/images/voice.webp?x=1",
-      "https://user@updates.ferroxlabs.com/murage/images/voice.webp",
+      "https://murage.ai.evil.example/murage/images/voice.webp",
+      "https://murage.ai/murage/other/voice.webp",
+      "https://murage.ai/murage/images/../voice.webp",
+      "https://murage.ai/murage/images/voice.svg",
+      "https://murage.ai/murage/images/voice.webp?x=1",
+      "https://user@murage.ai/murage/images/voice.webp",
     ]) {
       expect(allowedImageUrl(bad), bad).toBe(false);
       expect(checkAnnouncement({ ...base, image: bad, imageAlt: "x" }).ok, bad).toBe(false);

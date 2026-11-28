@@ -41,6 +41,7 @@ scripts/action-guard-sample.test.mjs	extended
 scripts/b25-measure.test.mjs	extended
 scripts/backup-offsite-platforms.test.mjs	extended
 scripts/browser-extension-chromereal-worker.test.mjs	extended
+scripts/browser-extension-indicator-1024.test.mjs	extended
 scripts/browser-extension-lifecycle.test.mjs	extended
 scripts/browser-extension-locales.test.mjs	extended
 scripts/browser-extension-presence.test.mjs	extended
@@ -55,7 +56,6 @@ scripts/channel-live-cleanup.test.mjs	extended
 scripts/channel-live-inputs.test.mjs	extended
 scripts/channel-live-providers.test.mjs	extended
 scripts/check-bundle-budget.test.mjs	extended
-scripts/check-repository-custody.test.mjs	extended
 scripts/checkout-line-endings.test.mjs	extended
 scripts/collect-gepa-build-evidence.test.mjs	extended
 scripts/compress-dist.test.mjs	extended
@@ -150,7 +150,9 @@ server/browser-extension-round5.test.ts	delete (pending review; runs here until 
 server/browser-extension-snapshot.test.ts	extended
 server/browser-floor-recipients.test.ts	extended
 server/browser-is-the-place.test.ts	extended
+server/browser-macos-pinned-assets.test.ts	nightly (real pinned browser assets: needs network or the MURAGE_PIN_FIXTURE_DIR fixture cache; network-free gate lanes leave it out)
 server/browser-native-relay.test.ts	extended
+server/browser-native-relay.respawn.test.ts	extended
 server/browser-preview-capture.test.ts	extended
 server/browser-profile-precondition-api.test.ts	extended
 server/browser-profile-precondition.test.ts	extended
@@ -238,6 +240,7 @@ server/decision-log-wiring.test.ts	extended
 server/default-engine-boot.test.ts	extended
 server/delegation-failure-detail.test.ts	extended
 server/delegation-receipt-reload.test.ts	extended
+server/demo-replay-1118-api.test.ts	extended
 server/direct-screen-settlement-api.test.ts	extended
 server/dm-title.test.ts	extended
 server/drivers/acp/build-key.test.ts	extended
@@ -251,11 +254,17 @@ server/drivers/acp/mcp-listed-wait.test.ts	extended
 server/drivers/acp/murage-surface.test.ts	extended
 server/drivers/acp/opencode-go.test.ts	extended
 server/drivers/acp/opencode-scope-config.test.ts	extended
+server/drivers/acp/opencode-quiet-real.test.ts	extended
 server/drivers/acp/reasoning-replay.test.ts	extended
 server/drivers/acp/subagents.test.ts	extended
 server/drivers/acp/version-probe.test.ts	extended
+server/drivers/agents-proxy-polish.test.ts	extended
 server/drivers/agents-project-tools.test.ts	extended
 server/drivers/bounded-lines.test.ts	extended
+server/drivers/bounded-lines-fit-1021.test.ts	extended
+server/drivers/bounded-lines-fit-unit-1021.test.ts	extended
+server/drivers/acp/cause22-fit-acp-1021.test.ts	extended
+server/drivers/cause22-fit-drivers-1021.test.ts	extended
 server/drivers/boxagent.test.ts	extended
 server/drivers/browser-proxy.test.ts	extended
 server/drivers/claude-accounts.test.ts	extended
@@ -294,6 +303,7 @@ server/drivers/process-tree-hook-identity.test.ts	extended
 server/drivers/provider-error-body.test.ts	extended
 server/drivers/provider-idle-cut.test.ts	extended
 server/drivers/remote-mcp-proxy-core.test.ts	extended
+server/drivers/remote-mcp-proxy.interleave-long.test.ts	nightly (whole file: 19500 seeded schedules; nightly.yml runs it, the extended job does not)
 server/drivers/remote-mcp-proxy.test.ts	extended
 server/drivers/scope-version-fail-closed.test.ts	extended
 server/drivers/stop-line-copy.test.ts	extended
@@ -328,6 +338,7 @@ server/gepa-bundle-admission.test.ts	extended
 server/gepa-worker.test.ts	extended
 server/git-remote-hosts.test.ts	extended
 server/goal-envelope-v2.test.ts	extended
+server/goal-wait-polish.test.ts	extended
 server/goal-wait.test.ts	extended
 server/group-goal-run.test.ts	extended
 server/group-goal-wait-cap.e2e.test.ts	extended
@@ -386,6 +397,7 @@ server/library-template-skills.test.ts	extended
 server/link-removal.electron.test.ts	extended
 server/link-removal.native.test.ts	extended
 server/local-models.test.ts	extended
+server/local-server-probe-cloud.test.ts	extended
 server/local-setup-failure.test.ts	extended
 server/local-tool-probe.test.ts	extended
 server/local-vm-idle.test.ts	extended
@@ -446,6 +458,7 @@ server/memory/gepa-ledger.test.ts	extended
 server/memory/handle-guard.test.ts	extended
 server/memory/health.test.ts	extended
 server/memory/identity-epoch.test.ts	extended
+server/memory/idle-final-receipt-real.test.ts	extended
 server/memory/idle-trace.test.ts	extended
 server/memory/idle-wake.test.ts	extended
 server/memory/import-flat.test.ts	extended
@@ -560,6 +573,9 @@ server/memory/scope-id.test.ts	extended
 server/memory/search-budget.test.ts	extended
 server/memory/search-recall.test.ts	extended
 server/memory/second-connection.test.ts	extended
+server/memory/session-collector-matrix-absent.test.ts	nightly (whole file: scale; the generated kill/fail matrix of the session-proof collector, guard state absent; nightly.yml runs it, the extended job does not)
+server/memory/session-collector-matrix-present.test.ts	nightly (whole file: scale; the generated kill/fail matrix of the session-proof collector, guard state present; nightly.yml runs it, the extended job does not)
+server/memory/session-collector-matrix-retry.test.ts	nightly (whole file: scale; the generated kill/fail matrix of the session-proof collector, guard state retry; nightly.yml runs it, the extended job does not)
 server/memory/session-append-only.test.ts	extended
 server/memory/session-incarnation.test.ts	extended
 server/memory/session-prefix-flat.test.ts	extended
@@ -619,6 +635,7 @@ server/new-task-folder.test.ts	extended
 server/no-sync-fill.test.ts	extended
 server/notification-preferences.test.ts	extended
 server/notification-wiring.test.ts	extended
+server/notify-polish.test.ts	extended
 server/notify.test.ts	extended
 server/observe-route-holder.test.ts	extended
 server/observe.test.ts	extended
@@ -849,6 +866,9 @@ server/wayland-library.integration.test.ts	extended
 server/website-publisher.test.ts	extended
 server/whats-new-api.test.ts	extended
 server/whats-new.test.ts	extended
+server/winproof-card-clock-api.test.ts	extended
+server/winterry-first-response-api.test.ts	extended
+server/winterry-murage-chip-api.test.ts	extended
 server/working-context-scale.test.ts	extended
 server/writetime-rootsets-turn.test.ts	extended
 shared/agent-plan.test.ts	extended
@@ -936,6 +956,7 @@ src/components/BotTeamsSection.test.ts	extended
 src/components/BrowserActivityLog.test.ts	extended
 src/components/BrowserApprovalMode.test.ts	extended
 src/components/BrowserApprovedSites.test.ts	extended
+src/components/browser-connection-alert.dom.test.ts	extended
 src/components/BrowserExternalClients.test.ts	extended
 src/components/BrowserPanel.test.ts	extended
 src/components/BrowserSetupCard.test.ts	extended
@@ -961,6 +982,7 @@ src/components/ComputerOnlyNotice.test.ts	extended
 src/components/ComputerPanel.test.ts	extended
 src/components/ComputerPanelVmLink.test.ts	extended
 src/components/ConnectedAppsLock.test.ts	extended
+src/components/ConnectedAppsSurfaces.polish1021.test.ts	extended
 src/components/ConnectionDetail.test.ts	extended
 src/components/ContinuityView.test.ts	extended
 src/components/ConversationSnooze.test.ts	extended
@@ -978,7 +1000,6 @@ src/components/FirstRunPhases.test.ts	extended
 src/components/FirstRunWelcome.test.ts	extended
 src/components/FluxKeyProblemBanner.test.ts	extended
 src/components/FluxRouterConnection.test.ts	extended
-src/components/FolderTrustNote.test.ts	extended
 src/components/FullAccessWarning.test.ts	extended
 src/components/GoalRunCard.test.ts	extended
 src/components/GroupCallView.test.ts	extended
@@ -1006,6 +1027,7 @@ src/components/LocalComputerAutoWarning.test.ts	extended
 src/components/LocalModelsSettings.test.ts	extended
 src/components/MarkdownEditor.test.ts	extended
 src/components/McpServersPanel.test.ts	extended
+src/components/McpServersPanel.translated.test.ts	Finishing the MCP list load after browser translation renders the saved servers.
 src/components/McpSignInCard.test.ts	extended
 src/components/MemoryEvolutionControls.test.ts	extended
 src/components/MemoryLearningControls.test.ts	extended
@@ -1211,6 +1233,7 @@ src/lib/dictation-cleanup.test.ts	extended
 src/lib/dictation-notes.test.ts	extended
 src/lib/draft-channel-mode.test.ts	extended
 src/lib/drawer-close.test.ts	extended
+src/lib/duplicate-bot-names.test.ts	extended
 src/lib/edit-drafts.test.ts	extended
 src/lib/ember-colors-shared.test.ts	delete (pending review; runs here until then)
 src/lib/emergency-stop.test.ts	extended
@@ -1516,9 +1539,7 @@ server/static-ui-setup-page.test.ts	extended
 server/static-ui-setup-page.e2e.test.ts	extended
 
 server/c11-refused-resend-api.test.ts
-
 server/drivers/acp/opencode-pinned-catalog.test.ts
-
 # Existing L9 regression coverage
 server/drivers/acp/fuigo-bundled-real.test.ts	extended
 src/components/cloud/cloud-banner-waiting.test.ts	Presentation coverage; no data or authority boundary
@@ -1534,6 +1555,7 @@ server/low-disk-classify.test.ts	extended
 server/low-disk-repro.test.ts	extended
 server/low-disk-start.test.ts	extended
 server/low-disk-strict.test.ts	extended
+server/wal-disk-recovery-1021.test.ts	extended
 server/read-only-authority.test.ts	extended
 server/read-only-index-gate.test.ts	extended
 server/read-only-missing-tables.test.ts	extended
@@ -1545,6 +1567,9 @@ server/team-identities-switch.test.ts	extended
 server/testing/strict-fs.test.ts	extended
 server/venue-recover-composed.test.ts	extended
 src/components/Inbox.disk.test.tsx	extended
+src/components/needs-badge-resolve.test.tsx	extended
+server/bot-suggestion-inbox-changed.test.ts	extended
+server/memory/review-inbox-changed.test.ts	extended
 src/locales/disk-copy.test.ts	extended
 src/state/send-delivery.disk.test.ts	extended
 server/routine-link-restore-compat.test.ts	Real encrypted backup with the predecessor routine trigger restores and installs the guard (WIP RED witness b0d51cb5ec; extended until its owner proves GREEN)
@@ -1552,3 +1577,78 @@ server/low-disk-channels.test.ts	extended
 server/approval-attention-race.test.ts	extended
 server/testing/fake-acp-mcp-timeout.test.ts	extended
 server/approval-attention-boot.test.ts	extended
+server/browser-fresh-tab-1020.real-chrome.test.ts	extended
+server/browser-tab-gone-1021.test.ts	extended
+src/components/backup-switch.test.ts	extended
+server/drivers/browserroot-1020-packaged.test.ts
+server/skills-v10-timing.test.ts	skills query p95 150 ms at 2,262 and 400 ms at 10,000 generated skills
+server/team-delete-admission.test.ts	extended
+server/phone-calls/d5-migration.test.ts	D5 phone storage bounds legacy backfill and indexed call, retention and analysis work
+server/phone-calls/d5-migration-boot.test.ts	D5 booted server resumes a crashed phone migration at its committed cursor
+src/components/handoff-chip-polish.test.ts	extended
+server/drivers/agents-proxy-voice.test.ts	extended
+server/drivers/phone-input.test.ts	extended
+server/voice/voice-notes-kept.e2e.test.ts	extended
+server/mailbox/testing/mail-server.test.ts	Real mail daemons in the dedicated offline image via tools/it-mailtest.sh
+scripts/browser-extension-reconnect.test.mjs	extended
+server/memory/mem-strict-1022.test.ts	extended
+server/memory/mem-strict-1022-pip.test.ts	extended
+server/memory/pip-split-1022.test.ts	extended
+server/memory/mem-strict-1022-sites.test.ts	extended
+server/memory/mem-strict-1022-recall-dispatch.test.ts	extended
+server/drivers/acp/warm-acp-retire-1022.test.ts	extended
+server/cloud-home/engine-signin-isolation.test.ts	extended
+server/provider-selection-plan-refused-api.test.ts	extended
+server/drivers/alias-ask-dispatch-real-1023.test.ts	F11-V3 W11 on the real vendor Claude and Codex CLIs (set MURAGE_REAL_CLI_DIR): the model's plain-name app call is filed as the execute call, allowed, and the CLI's own MCP client runs it
+server/tts/elevenlabs-route.test.ts	extended
+server/tts/elevenlabs-upstream.test.ts	extended
+src/components/push-to-talk-eleven.test.ts	extended
+server/limit-refusal-3102-server.test.ts	extended
+src/lib/mcp-cloud-connect.test.ts	extended
+src/lib/mcp-cloud-connect-browser.test.ts	extended
+src/components/McpConnectBrowser.dom.test.ts	extended
+src/components/McpConnectSettingsFreshCode.dom.test.ts	extended
+src/components/PhoneSetupFlow.pairing-code.test.ts	extended
+server/ctxrev-fresh-chat-1020.test.ts
+server/winfu-cold-mount-start-1022.test.ts
+server/drivers/acp/mcpgate-op-1021.test.ts
+scripts/rig-realsize/verdict.test.mjs	extended
+scripts/rig-realsize/completion.test.mjs	extended
+scripts/rig-realsize/load.test.mjs	extended
+scripts/rig-realsize/replay.test.mjs	extended
+scripts/rig-realsize/rerun.test.mjs	extended
+scripts/rig-realsize/remote.test.mjs	extended
+server/memory/migration-v2-kill.test.ts	extended
+server/memory/migration-v2-kill-forced.test.ts	extended
+server/memory/memv2-c-pace-backlog-1021.test.ts	extended
+server/memory/revoke-own-frames-1021.test.ts	extended
+server/memory/compat-v2-oldbuild.test.ts	extended
+server/idle-io-budget-1022.test.ts	extended
+server/idle-ordinary-files-1022.test.ts	extended
+server/heldrest-revoke-continue-1022.test.ts	extended
+server/heldrest-revoke-continue-late-1022.test.ts	extended
+server/memory/turn-spans-idle-1022.test.ts	extended
+server/memory/pip-reflect-idle-1022.test.ts	extended
+server/memory/worker-tick-idle-1022.test.ts	extended
+server/wipe/mounts-idle-1022.test.ts	extended
+server/memory/controller-checkpoint-idle-1022.test.ts	extended
+server/memory/controller-checkpoint-wait-1022.test.ts	extended
+server/upgrade-catchup-accept-1022.test.ts	extended
+server/winfu-fresh-fuigo-memory-1022.test.ts	extended
+server/heldrest-revoke-room-1022.test.ts	extended
+server/heldrest-revoke-room-mode-1022.test.ts	extended
+server/heldrest-revoke-floor-mode-1022.test.ts	extended
+server/memory/startmem-open-1022.test.ts	extended
+server/paynl-nolimits-realbrowser-1024.test.ts	extended
+src/components/ComputerPanelCuFind.test.ts	extended
+server/owner-mask-1023.test.ts	extended
+server/owner-mask-boot-1024.test.ts	extended
+server/memory/worker-import-cycle.test.ts	extended
+server/owner-show-1023.test.ts	extended
+server/pay-press-guard-realbrowser-1024.test.ts	extended
+scripts/browser-extension-pay-hold-realbrowser-1024.test.mjs	extended
+src/components/MemoryIntegrityStrip.once.test.ts	extended
+server/memory/revocation-quiet-turnpolish.test.ts	extended
+tests/settings-v10/fixture-checks.test.ts	extended
+tests/settings-v10/fixture-mutants.test.ts	extended
+tests/settings-v10/q2-script.test.ts	extended

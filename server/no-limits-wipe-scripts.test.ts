@@ -33,7 +33,7 @@ for(const [command,name,body]of [
  ['python3 cleanup.py','cleanup.py',"import shutil\nshutil.rmtree('/archive/backups')"],
  ['node cleanup.js','cleanup.js',"require('fs').rmSync('/archive/backups', {recursive:true})"],
 ] as const)it(`W3 current-turn written script cards: ${command}`,()=>{
- const s=setup();s.write(name,body);expect(s.run(command)).toBe('run'); // MAIN RULING: REDESIGN-WIPE-NARROW §0 (Sean, 2026-11-13).
+ const s=setup();s.write(name,body);expect(s.run(command)).toBe(/rm -rf ~/.test(body)?'card':'run'); // MAIN-RULING 2026-11-27 (2) supersedes REDESIGN-WIPE-NARROW §0 for the wipe check: the body of a script this session wrote is read, for wipes only.
 s.f.dispose();
 });
 for(const mode of ['safe','missing','unwritten','previous-turn','oversize','echo-data','inline-argument'])it(`W3 script boundary runs: ${mode}`,()=>{
@@ -44,8 +44,8 @@ for(const mode of ['safe','missing','unwritten','previous-turn','oversize','echo
   if(mode==='previous-turn'){utimesSync(file,new Date(1000),new Date(1000));beginOutsideTurn('t','p','turn',true,Date.now());}
  }
  const command=mode==='echo-data'?'echo bash cleanup.sh':mode==='inline-argument'?"bash -c 'echo cleanup.sh'":'bash cleanup.sh';
- // MAIN RULING: REDESIGN-WIPE-NARROW §0/§4.4: no included-file reads; ordinary subfolders and data run.
- expect(s.run(command)).toBe('run');s.f.dispose();
+ // A written script that deletes home cards (a previous turn's too, and one past the read bound is a wipe-check fault card); data, missing and unwritten files run.
+ expect(s.run(command)).toBe(mode==='previous-turn'||mode==='oversize'?'card':'run');s.f.dispose();
 });
 for(const [command,_card]of [['eval "$OPAQUE"',false],["X='echo ok'; eval \"$X\"",false],["X='rm -rf ~'; eval \"$X\"",false],['eval "echo ok"',false],["export X='echo ok'; eval \"$X\"",false],['eval "$OPAQUE"; echo remove',false]] as const)it(`W3 final eval resolution: ${command}`,()=>{
  // MAIN RULING: REDESIGN-WIPE-NARROW §4.4/§8 N4 scans a literal eval body.
@@ -66,9 +66,9 @@ s.f.dispose();
 
 it('W3 written script execution follows command cwd and a resolved file variable',()=>{
  const s=setup();mkdirSync(join(s.root,'scripts'));s.write('scripts/cleanup.sh','rm -rf ~');
- expect(s.run('cd scripts && bash cleanup.sh')).toBe('run'); // MAIN RULING: REDESIGN-WIPE-NARROW §0 (Sean, 2026-11-13).
+ expect(s.run('cd scripts && bash cleanup.sh')).toBe('card'); // MAIN-RULING 2026-11-27 (2): the script is found in the folder the text moved to
 
- expect(s.run('FILE=scripts/cleanup.sh; bash "$FILE"')).toBe('run'); // MAIN RULING: REDESIGN-WIPE-NARROW §0 (Sean, 2026-11-13).
+ expect(s.run('FILE=scripts/cleanup.sh; bash "$FILE"')).toBe('run'); // named gap: only a literal script path is followed (a path built in a variable is not), as before MAIN-RULING 2026-11-27
 s.f.dispose();
 });
 for(const command of ['node --check cleanup.js','bash -s cleanup.sh','python3 - cleanup.py'])it(`W3 script names used as data stay runs: ${command}`,()=>{
@@ -88,14 +88,14 @@ it('W3 script execution cwd keeps an ordinary subfolder delete a run',()=>{
 it('R1 a complete long executable retains current-turn script wipe context',()=>{
  const s=setup();s.write('cleanup.sh','rm -rf ~');
  const command='#'+'x'.repeat(1_050_000)+'\nbash cleanup.sh';
- expect(d.decide(s.f.open('long-script',{command,cwd:s.root}),baseRun).kind).toBe('run'); // MAIN RULING: REDESIGN-WIPE-NARROW §0 (Sean, 2026-11-13).
+ expect(d.decide(s.f.open('long-script',{command,cwd:s.root}),baseRun).kind).toBe('card'); // MAIN-RULING 2026-11-27 (2) supersedes REDESIGN-WIPE-NARROW §0 for the wipe check: the body of a script this session wrote is read, for wipes only.
 s.f.dispose();
 });
 
 it('R5 journaled script stays untrusted after backdating its mtime',()=>{
  const s=setup(),file=s.write('cleanup.sh','rm -rf ~');utimesSync(file,new Date(1000),new Date(1000));
- // MAIN RULING: REDESIGN-WIPE-NARROW §0/§4.4: no included-file reads; ordinary subfolders and data run.
- expect(s.run('bash cleanup.sh')).toBe('run');s.f.dispose();
+ // // MAIN-RULING 2026-11-27 (2) supersedes REDESIGN-WIPE-NARROW §0 for the wipe check: the body of a script this session wrote is read, for wipes only.
+ expect(s.run('bash cleanup.sh')).toBe('card');s.f.dispose();
 });
 
 // H1: direct execution follows the shebang, including extensionless scripts.
@@ -148,8 +148,8 @@ for(const depth of [4,5,12])it(`R5 nested current-turn scripts hold at the read 
  const s=setup();
  try{
   for(let at=0;at<=depth;at++)s.write(`a${at}.sh`,at===depth?'rm -rf ~':`bash a${at+1}.sh`);
- // MAIN RULING: REDESIGN-WIPE-NARROW §0/§4.4: no included-file reads; ordinary subfolders and data run.
-  expect(s.run('bash a0.sh')).toBe('run');
+ // // MAIN-RULING 2026-11-27 (2) supersedes REDESIGN-WIPE-NARROW §0 for the wipe check: the body of a script this session wrote is read, for wipes only. Past the nesting bound the wipe check cannot finish: a card.
+  expect(s.run('bash a0.sh')).toBe('card');
  }finally{s.f.dispose();}
 });
 it('R5 unfamiliar stdin with a backdated wipe still cards',()=>{
@@ -162,13 +162,13 @@ it('R5 unfamiliar stdin with a backdated wipe still cards',()=>{
 it('R5 exhausting the nested script limit holds even without a visible primitive',()=>{
  const s=setup();
  // MAIN RULING: REDESIGN-WIPE-NARROW §0/§4.4: no included-file reads; ordinary subfolders and data run.
- try{for(let at=0;at<=5;at++)s.write(`safe${at}.sh`,at===5?'echo ok':`bash safe${at+1}.sh`);expect(s.run('bash safe0.sh')).toBe('run');}
+ try{for(let at=0;at<=5;at++)s.write(`safe${at}.sh`,at===5?'echo ok':`bash safe${at+1}.sh`);expect(s.run('bash safe0.sh')).toBe('card');}
  finally{s.f.dispose();}
 });
 it('R5 a current-turn script cycle holds at the recursion limit',()=>{
  const s=setup();
  // MAIN RULING: REDESIGN-WIPE-NARROW §0/§4.4: no included-file reads; ordinary subfolders and data run.
- try{s.write('loop.sh','bash loop.sh');expect(s.run('bash loop.sh')).toBe('run');}
+ try{s.write('loop.sh','bash loop.sh');expect(s.run('bash loop.sh')).toBe('card');}
  finally{s.f.dispose();}
 });
 
@@ -187,5 +187,5 @@ for(const executable of ['tee','/usr/bin/tee','/bin/tee'])for(const existing of 
 it('R8 a written executable named tee still has its script bytes inspected',()=>{
  const s=setup();
  // MAIN RULING: REDESIGN-WIPE-NARROW §0/§4.4: no included-file reads; ordinary subfolders and data run.
- try{s.write('tee','rm -rf ~');expect(s.run('./tee out.txt')).toBe('run');}finally{s.f.dispose();}
+ try{s.write('tee','rm -rf ~');expect(s.run('./tee out.txt')).toBe('card');}finally{s.f.dispose();}
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 import { api } from "@/state/store";
-import { readCachedInventory, writeCachedInventory } from "./connected-apps-cache";
+import { forgetCachedInventory, readCachedInventory, writeCachedInventory } from "./connected-apps-cache";
 import type { AppCard as ToolkitCard } from "./app-catalog";
 
 export interface ConnectedAppsAdmission {
@@ -48,6 +48,8 @@ export let cachedConnectorStatus: Record<string, ConnectorStatus> | null = null;
 export let cachedConnectorStatusAt = 0;
 export let cachedConnectorStatusAuthoritative = true;
 let connectorStatusRequest: Promise<ConnectorInventory> | null = null;
+/** The scope of the owner incarnation the last confirmed answer came from; null until one answered with a scope. */
+let knownInventoryScope: string | null = null;
 /** The server's card for every connected slug (logo, name), kept with the
  * inventory so the Connected tab can show apps no loaded list carries. */
 export let inventoryApps: Record<string, ToolkitCard> = {};
@@ -56,7 +58,34 @@ export let inventoryApps: Record<string, ToolkitCard> = {};
  * read this launch. Config then cannot vouch for which keys exist, so the
  * lock stands down and the panel shows what it remembers, as it always did. */
 let credentialStoreUnreadable = false;
-const CONNECTOR_STATUS_CACHE_MS = 30_000;
+
+/** What a scope on an answer means for the remembered list. `equal`: confirmed. `replaced`: another owner incarnation, the
+ * remembered list and its saved copy are dropped. `unknown`: the server could not say (null), nothing is confirmed and
+ * nothing is dropped; the remembered list stays, marked stale. A saved entry with no scope (1.0.22) is never equal. */
+export function noteInventoryScope(scope: unknown): "equal" | "replaced" | "unknown" {
+  if (typeof scope !== "string" || scope === "") return "unknown";
+  const disk = readCachedInventory();
+  const remembered = knownInventoryScope ?? disk?.scope ?? null;
+  knownInventoryScope = scope;
+  if (remembered === scope) return "equal";
+  if (cachedConnectorStatus !== null || disk !== null) {
+    cachedConnectorStatus = null;
+    cachedConnectorStatusAt = 0;
+    forgetCachedInventory();
+  }
+  return "replaced";
+}
+
+/** The list a view falls back to when the server cannot answer: this window's, else the saved one. A saved list of another
+ * owner incarnation is already gone: the answer that named the new scope removed it (noteInventoryScope). */
+function rememberedServices(): Record<string, ConnectorStatus> {
+  return cachedConnectorStatus ?? readCachedInventory()?.services ?? {};
+}
+
+/** Painted from the saved copy of an earlier launch, before any answer has confirmed it. */
+export function isRememberedUnconfirmed(): boolean {
+  return cachedConnectorStatus === null && readCachedInventory() !== null;
+}
 export interface ConnectorInventory {
   admission?: ConnectedAppsAdmission;
   services: Record<string, ConnectorStatus>;
@@ -72,40 +101,37 @@ export interface ConnectorInventory {
   /** the server answered from what it last knew and is refreshing it: usable
    * now, ask again shortly */
   revalidating?: boolean;
+  /** true only when the server answered with the list itself; false for a remembered list the server could not confirm. */
+  confirmed?: boolean;
 }
 
 /** Warm the account inventory once the app server is ready. Concurrent panel
  * opens share the same request, and recent data survives modal unmounts. */
 export function preloadConnectedApps(force = false, serverForce = force): Promise<ConnectorInventory> {
-  if (!force && cachedConnectorStatus !== null && Date.now() - cachedConnectorStatusAt < CONNECTOR_STATUS_CACHE_MS) {
-    return Promise.resolve({
-      admission: cachedConnectedAppsAdmission,
-      services: cachedConnectorStatus,
-      authoritative: cachedConnectorStatusAuthoritative,
-      apps: inventoryApps,
-    });
-  }
+  // No time-based skip: the renderer has no signal that the owner changed, so only the server's scope can say whether the
+  // remembered list is still this owner's. Every ask goes out; the server answers from its held snapshot.
   if (connectorStatusRequest) return connectorStatusRequest;
   connectorStatusRequest = api(serverForce ? "/api/connectors/connected?force=1" : "/api/connectors/connected")
     .then((response) => {
       rememberConnectedAppsAdmission(response.admission);
+      noteInventoryScope(response.inventoryScope);
       const services: Record<string, ConnectorStatus> = response.services ?? {};
       // An unreadable credential store tells us nothing about what is
       // connected. Keep the last inventory we were sure about instead.
       if (response.credentialStore === "unavailable") {
         credentialStoreUnreadable = true;
-        return { admission: cachedConnectedAppsAdmission, services: cachedConnectorStatus ?? readCachedInventory()?.services ?? {}, authoritative: false };
+        return { admission: cachedConnectedAppsAdmission, services: rememberedServices(), authoritative: false, confirmed: false };
       }
       credentialStoreUnreadable = false;
       // Not ready yet: remembered accounts, if any, stand; nothing is cached
       // on the strength of an answer that does not know.
       if (response.configured === false) {
-        return { admission: cachedConnectedAppsAdmission, services: cachedConnectorStatus ?? readCachedInventory()?.services ?? {}, authoritative: false, backendReady: false };
+        return { admission: cachedConnectedAppsAdmission, services: rememberedServices(), authoritative: false, backendReady: false, confirmed: false };
       }
       // The server has nothing remembered and its first answer has not come
       // back yet: an empty list here is "not yet", never "nothing connected".
       if (response.known === false) {
-        return { admission: cachedConnectedAppsAdmission, services: cachedConnectorStatus ?? readCachedInventory()?.services ?? {}, authoritative: false, revalidating: true };
+        return { admission: cachedConnectedAppsAdmission, services: rememberedServices(), authoritative: false, revalidating: true, confirmed: false };
       }
       const revalidating = response.revalidating === true;
       cachedConnectorStatus = services;
@@ -113,10 +139,10 @@ export function preloadConnectedApps(force = false, serverForce = force): Promis
       cachedConnectorStatusAt = revalidating ? 0 : Date.now();
       cachedConnectorStatusAuthoritative = true;
       if (response.apps && typeof response.apps === "object") inventoryApps = { ...inventoryApps, ...response.apps };
-      writeCachedInventory(services, Date.now());
-      return { admission: cachedConnectedAppsAdmission, services, authoritative: true, apps: inventoryApps, ...(revalidating ? { revalidating } : { revalidating: false }) };
+      writeCachedInventory(services, Date.now(), undefined, typeof response.inventoryScope === "string" ? response.inventoryScope : null);
+      return { admission: cachedConnectedAppsAdmission, services, authoritative: true, confirmed: true, apps: inventoryApps, ...(revalidating ? { revalidating } : { revalidating: false }) };
     })
-    .catch(() => ({ admission: cachedConnectedAppsAdmission, services: cachedConnectorStatus ?? readCachedInventory()?.services ?? {}, authoritative: false }))
+    .catch(() => ({ admission: cachedConnectedAppsAdmission, services: rememberedServices(), authoritative: false, confirmed: false }))
     .finally(() => {
       connectorStatusRequest = null;
     });

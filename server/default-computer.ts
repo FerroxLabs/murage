@@ -5,7 +5,7 @@
 // Read at new-bot creation only: the answer is copied into the new bot's own computer
 // choice, so a later change here never touches an existing bot and the bot's own
 // Access > Computer choice always wins afterwards.
-import type { DefaultComputerChoice } from "./config.ts";
+import { defaultComputerForNewBots, type AppConfig, type DefaultComputerChoice } from "./config.ts";
 
 export type NewBotComputer = "off" | "local" | "vm" | "cloud" | undefined;
 
@@ -16,6 +16,15 @@ export interface NewBotComputerEnv {
   vmAvailable: boolean;
   /** A hosted computer (box) can be reached from this install. */
   boxAvailable: boolean;
+}
+
+/** What a new bot starts on. The owner's own choice always wins; with none made, "this computer" only
+ * where local control is on, so a machine with it off starts bots with no computer instead of a bot that
+ * wants a computer it cannot have (and says so on its first turn). A Cloud home has no local control at all:
+ * "this computer" there already means the automatic choice (resolveNewBotComputer), so the rule never applies. */
+export function newBotComputerChoice(cfg: AppConfig, env: { cloudHome: boolean; localControlOff: boolean }): DefaultComputerChoice {
+  if (cfg.computer?.defaultForNewBots === undefined && !env.cloudHome && env.localControlOff) return "off";
+  return defaultComputerForNewBots(cfg);
 }
 
 /** The value for the new bot's `computer` field, and whether the choice had to fall back to "this computer". */

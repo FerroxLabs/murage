@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setOwnWebSearchProviderProbe } from "../../shared/own-servers.ts";
 import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
@@ -25,7 +26,7 @@ import { consumingFixture } from "../testing/consuming-fixture.ts";
 import { codexMountConfiguration } from "../testing/codex-mount-configuration.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin, readCodexLoginMode } from "./codex.ts";
-import { CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests, setHookRuntimeForTests } from "./codex-hook.ts";
+import { CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests, setHookRuntimeForTests, routeDelivery, codexWebRedirect } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
@@ -436,15 +437,37 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(recorder.events.some(e => e.type === "turn.retrying")).toBe(false);
   });
 
-  it.each(["parent-invalid-ack", "parent-overflow"])("fails unbound parent output explicitly (%s)", async (mode) => {
+  // MAIN-RULING cause22-no-transport-caps: the old hold of 256 early updates / 32 MiB that ended the turn is deleted.
+  it("holds 300 updates sent ahead of the turn-start acknowledgement (over the old 256 hold) and the turn completes with all of them", async () => {
+    await create({ mode: "parent-overflow" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "parent-early-many", text: "one parent action" });
+    // The completion is the 302nd held update: if any held update is lost the turn may never complete, which fails here, not as a wait timeout.
+    const done = await recorder.until((e) => e.type === "turn.completed", 15_000).catch(() => undefined);
+    expect(done, `no early-update cap ends the turn or loses its completion: ${JSON.stringify(recorder.events.filter((e) => e.type === "runtime.error"))}`).toMatchObject({ ok: true });
+    const replies = recorder.events.filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_text").map((e) => (e as { text?: string }).text);
+    expect(replies.length, "every early reply reached the turn").toBe(300);
+    expect(replies).toEqual(Array.from({ length: 300 }, (_, n) => `parent reply ${n}`));
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+  });
+
+  it("holds two 20 MiB items sent ahead of the turn-start acknowledgement (over the old 32 MiB hold) and the turn completes with both whole", async () => {
+    await create({ mode: "parent-early-large" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "parent-early-large", text: "one parent action" });
+    // The completion is held behind both items: if either is lost or the hold ends the turn, this fails here, not as a wait timeout.
+    const done = await recorder.until((e) => e.type === "turn.completed", 30_000).catch(() => undefined);
+    expect(done, `no early-update size cap ends the turn: ${JSON.stringify(recorder.events.filter((e) => e.type === "runtime.error"))}`).toMatchObject({ ok: true });
+    const streamed = recorder.events.filter((e) => e.type === "content.delta").map((e) => (e as { delta?: string }).delta ?? "");
+    expect(streamed.map((delta) => [delta.length, delta[0]]), "both 20 MiB items reached the turn whole, in order").toEqual([[20 * 1024 * 1024, "a"], [20 * 1024 * 1024, "b"]]);
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+  }, 60_000);
+
+  it.each(["parent-invalid-ack"])("fails unbound parent output explicitly (%s)", async (mode) => {
     await create({ mode });
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "parent-failure", text: "one parent action" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toMatchObject([{ ok: false }]);
     expect(recorder.events.some((e) => e.type === "content.delta" || e.type === "thread.token-usage.updated")).toBe(false);
-    expect(recorder.events.find((e) => e.type === "runtime.error")?.message).toMatch(
-      mode === "parent-invalid-ack" ? /^Codex Test did not start the turn\.$/ : /^Codex Test sent more updates before the turn started than Murage can hold, so the turn was stopped\.$/,
-    );
+    expect(recorder.events.find((e) => e.type === "runtime.error")?.message).toMatch(/^Codex Test did not start the turn\.$/);
     expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
   });
 
@@ -1228,6 +1251,14 @@ describe("CodexDriver turns (fake app-server)", () => {
     const argv: string[] = JSON.parse(readFileSync(file, "utf8")).argv;
     expect(argv).toContain('web_search="disabled"');
     expect(argv.join(" ")).toContain("mcp_servers.agents.command");
+    // CODEX-WEB-1020: the turn that loses native search must have a search that runs with no card. The hook's answer for
+    // Murage's own web_search on this turn's agents mount is a final allow; a native web call is told that tool's name.
+    const mounts = [{ engineName: "agents", mountId: "own:agents", provenance: "own" as const }];
+    setOwnWebSearchProviderProbe(() => "engine");
+    try { expect(routeDelivery({ tool_name: "mcp__agents__web_search", tool_input: { query: "Murage" }, tool_use_id: "u", turn_id: "t", cwd: scratch }, { project: scratch, home: scratch, mounts }))
+      .toEqual({ route: "allow", final: true, why: "own-unasked" }); } finally { setOwnWebSearchProviderProbe(undefined); }
+    expect(routeDelivery({ tool_name: "web__run", tool_input: {}, tool_use_id: "u", turn_id: "t", cwd: scratch }, { project: scratch, home: scratch, mounts }))
+      .toEqual({ route: "deny", reason: codexWebRedirect("agents") });
   });
 
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
@@ -1268,7 +1299,6 @@ describe("CodexDriver turns (fake app-server)", () => {
             MURAGE_BOT_ID: "captain",
             MURAGE_THREAD_ID: "t-agents",
             MURAGE_COMMS_TOKEN: "peer-comms-secret",
-            MURAGE_TURN_DEPTH: "0",
           },
         },
       },
@@ -1401,7 +1431,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   });
 
   // Isolation-all round 3: a cursor from an earlier root is not in the bot's state root. Real Codex 0.162.1
-  // (fake CODEX_HOME, build host container) answers thread/resume with -32600 "no rollout found for thread id …".
+  // (fake CODEX_HOME, Hetzner container) answers thread/resume with -32600 "no rollout found for thread id …".
   it("replays the conversation into the one fresh thread when resume fails, and a resumed thread gets no replay", async () => {
     await create(); // fake rejects thread/resume outside resume mode
     const dump = join(scratch, "r3-dump.json");
@@ -1999,7 +2029,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const agentsMount = {
       command: process.execPath,
       args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))],
-      env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:8799", MURAGE_BOT_ID: "captain", MURAGE_THREAD_ID: "t", MURAGE_COMMS_TOKEN: "peer", MURAGE_TURN_DEPTH: "0" },
+      env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:8799", MURAGE_BOT_ID: "captain", MURAGE_THREAD_ID: "t", MURAGE_COMMS_TOKEN: "peer" },
     };
     const mcpAsk = (serverName: string, meta: Record<string, unknown>) => {
       process.env.FAKE_CODEX_APPROVAL = JSON.stringify({
@@ -2329,6 +2359,27 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(readCodexLogin(true, "Logged in using ChatGPT\n")).toBeUndefined();
     expect(readCodexLogin(true, "")).toBeUndefined();
     expect(readCodexLogin(false, "\n")).toBeUndefined();
+  });
+
+  it("reads the current Codex API-key status as a metered sign-in", async () => {
+    await create({ mode: "api-key-configured" });
+    await expect(instance.snapshot()).resolves.toMatchObject({ state: "available", authenticated: true, billing: "metered" });
+  });
+
+  it("asks Codex again after a turn finds its own login gone", async () => {
+    await create({ mode: "unauthorized", environment: { CODEX_HOME: scratch } });
+    await expect(instance.snapshot()).resolves.toMatchObject({ authenticated: true });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "first", text: "hi" });
+    await expect(recorder.until(e => e.type === "turn.completed" && e.turnId === first.turnId))
+      .resolves.toMatchObject({ ok: false, stopReason: "auth_required" });
+    const spawn = vi.spyOn(procs, "spawnCli");
+    onTestFinished(() => { spawn.mockRestore(); });
+    process.env.FAKE_CODEX_MODE = "logged-out";
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "second", text: "hi" });
+    await expect(recorder.until(e => e.type === "turn.completed" && e.turnId === second.turnId))
+      .resolves.toMatchObject({ ok: false, stopReason: "auth_required" });
+    expect(recorder.events).toContainEqual(expect.objectContaining({ turnId: second.turnId, type: "runtime.error", setup: true }));
+    expect(spawn.mock.calls.some(([, args]) => args[0] === "app-server")).toBe(false);
   });
 
   it("also accepts login status from older Codex versions that used stdout", async () => {
@@ -2980,7 +3031,9 @@ describe("CodexDriver turns (fake app-server)", () => {
   });
 });
 
-// A4: app-server stdout is framed with a byte bound before any parse.
+// A4: app-server stdout is framed by line before any parse. MAIN-RULING cause22-no-transport-caps (1.0.21) deleted the 32 MiB
+// frame cap: a frame over it is read whole and its turn completes (this row asserted frame_too_large before; an unterminated frame
+// no longer fails early, it is held until its newline or the process end, as upstream).
 describe("CodexDriver bounded ingress (A4)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
@@ -2995,9 +3048,6 @@ describe("CodexDriver bounded ingress (A4)", () => {
     });
     recorder = recordEvents(instance.adapter);
   };
-  /** No event on the thread may carry the dropped frame's content. */
-  const noLargePayload = (threadId: string) =>
-    recorder.events.filter((e) => e.threadId === threadId).every((e) => JSON.stringify(e).length < 1024 * 1024);
 
   beforeEach(() => {
     chmodSync(FAKE_CLI, 0o755);
@@ -3007,35 +3057,22 @@ describe("CodexDriver bounded ingress (A4)", () => {
     await instance?.dispose();
   });
 
-  it("fails only the turn whose frame is over the limit, even when turn/completed follows it", async () => {
+  it("reads a frame over the old 32 MiB cap whole and its turn completes, beside an ordinary turn", async () => {
     await create();
     const oversized = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oversize", text: "__fixture_oversize_frame__" });
     const ordinary = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ordinary", text: "hello" });
-    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
-    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
+    // A lost or cut frame leaves the turn open: the wait ends quietly so that case fails at the completion assertion below.
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId, 60_000).catch(() => undefined);
+    const other = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId, 20_000).catch(() => undefined);
 
-    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
-    expect(done).toMatchObject({ ok: true });
-    expect(recorder.events).toContainEqual(expect.objectContaining({
-      type: "runtime.error",
-      threadId: "t-oversize",
-      message: expect.stringMatching(/^Codex sent a protocol message larger than 32 MiB/),
-    }));
-    expect(recorder.events).toContainEqual(expect.objectContaining({
-      type: "item.completed", itemType: "assistant_text", threadId: "t-ordinary", text: "done from fake codex",
-    }));
-    expect(noLargePayload("t-oversize")).toBe(true);
+    expect(done, "the turn whose frame is over 32 MiB completes").toMatchObject({ ok: true });
+    expect(other).toMatchObject({ ok: true });
+    // The frame's own text reached the turn whole, as streamed text.
+    const streamed = recorder.events.filter((e) => e.turnId === oversized.turnId && e.type === "content.delta").map((e) => (e as { delta?: string }).delta ?? "");
+    expect(Math.max(0, ...streamed.map((delta) => Buffer.byteLength(delta))), "the whole frame reached the turn").toBe(32 * 1024 * 1024 + 1024);
+    expect(recorder.events.some((e) => e.type === "runtime.error" && e.threadId === "t-oversize")).toBe(false);
     expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
-  });
-
-  it("fails an unterminated oversized frame without waiting for a newline", async () => {
-    await create();
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-open", text: "__fixture_oversize_open_frame__" });
-    const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
-
-    expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
-    expect(noLargePayload("t-open")).toBe(true);
-  });
+  }, 120_000);
 
   // `imageGeneration` was the only raster this driver kept; an MCP tool's own
   // image was read for its ok flag and dropped.
@@ -4381,6 +4418,8 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       const held = gate();
       const spy = vi.spyOn(localInject, "codexLocalProviderArgs").mockImplementation(async () => { await held.promise; throw new Error("late provider failure"); });
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // sweep-1021 N1: swallowing a late rejection is a note (nothing is lost), not a warning
+      const info = vi.spyOn(console, "info").mockImplementation(() => {});
       const heldChildren: ChildProcess[] = [];
       const kill = vi.spyOn(procs, "killCliTree").mockImplementation(child => { heldChildren.push(child); });
       const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
@@ -4390,12 +4429,13 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
         await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
         expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
         held.open();
-        await vi.waitFor(() => expect(warn.mock.calls.some((c) => String(c[0]).includes("late rejection after the turn ended"))).toBe(true));
+        await vi.waitFor(() => expect(info.mock.calls.some((c) => String(c[0]).includes("late rejection after the turn ended"))).toBe(true));
+        expect(warn.mock.calls.some((c) => String(c[0]).includes("late rejection after the turn ended"))).toBe(false);
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(endings(sent.turnId)).toHaveLength(1);
         expect(errorsOf(sent.turnId)).toHaveLength(1);
         expect(instance.adapter.hasSession("t-lr1")).toBe(false);
-      } finally { spy.mockRestore(); warn.mockRestore(); kill.mockRestore(); confirm.mockRestore(); for (const child of heldChildren) { procs.killCliTree(child); await procs.awaitCliTreeStopped(child); } held.open(); }
+      } finally { spy.mockRestore(); warn.mockRestore(); info.mockRestore(); kill.mockRestore(); confirm.mockRestore(); for (const child of heldChildren) { procs.killCliTree(child); await procs.awaitCliTreeStopped(child); } held.open(); }
     }, 30_000);
 
     it.each(["Stop", "dispose"] as const)("USAGE-1 codex %s on a live turn that already reported usage keeps it on the final turn.completed", async (kind) => {

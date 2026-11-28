@@ -16,6 +16,7 @@ const sources = {
   electron: `export const app={isPackaged:false,getPath:()=>globalThis.__cuaFixture().home}; export const ipcMain={handle:(name,fn)=>globalThis.__cuaFixture().handlers.set(name,fn)};`,
   "node:child_process": `export const execFile=(...args)=>globalThis.__cuaFixture().exec(...args);`,
   "node:fs": `export default {existsSync:()=>true};`,
+  "node:os": `export const release=()=>globalThis.__cuaFixture().release;`,
   "node:net": `export default {createConnection:()=>globalThis.__cuaFixture().socket()};`,
   "@trycua/cua-driver/embedded": `export class EmbeddedCuaDriverHost { constructor(...args){return globalThis.__cuaFixture().host(...args);} }`,
   "@trycua/cua-driver/electron": `export const requestMacOSPermissions=()=>{globalThis.__cuaFixture().permissionRequests++;return {};}; export const hasRequiredMacOSPermissions=()=>globalThis.__cuaFixture().permissions;`,
@@ -46,7 +47,7 @@ let sequence = 0;
 async function setup(t) {
   fixture = {
     home: mkdtempSync(path.join(tmpdir(), "murage-cua-async-")), handlers: new Map(),
-    children: [], hosts: [], sockets: [], permissions: false, permissionRequests: 0,
+    children: [], hosts: [], sockets: [], permissions: false, permissionRequests: 0, release: "22.0.0",
     socketReady: false, holdSocket: false,
     exec(command,args,options,callback) {
       const child={ command,args,options, stdout:new EventEmitter(), stderr:new EventEmitter(), signals:[],
@@ -79,6 +80,25 @@ async function setup(t) {
   t.after(()=>{ Object.defineProperty(process,"platform",platform); if(prior===undefined)delete process.env.MURAGE_CUA_EMBEDDED;else process.env.MURAGE_CUA_EMBEDDED=prior;safeWipeSync(fixture.home); });
   return import(`./cua.mjs?fixture=${++sequence}`);
 }
+
+test("macOS before Ventura reports the version requirement before launching Cua Driver", async (t) => {
+  const cua = await setup(t);
+  fixture.release = "21.6.0";
+  let result;
+  const pending = cua.startCua().then(value => { result = value; });
+  await until(() => result || fixture.children.length > 0);
+  if (fixture.children[0]) {
+    fixture.socketReady = true;
+    fixture.children[0].close();
+  }
+  await pending;
+  assert.equal(result.mode, "unavailable");
+  assert.equal(result.reasonCode, "macos-version-unsupported");
+  assert.match(result.reason, /macOS 13/);
+  assert.equal(fixture.permissionRequests, 0);
+  assert.equal(fixture.children.length, 0);
+  assert.deepEqual(await cua.cuaPermissionsStatus(), { available: false });
+});
 
 test("async launch/status preserve outputs and exact command bounds", async(t)=>{
   const cua=await setup(t); const started=cua.startCua();

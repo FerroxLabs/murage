@@ -66,6 +66,9 @@ export function lastCheckedLine(at: number, now: number): string {
   return `checked ${new Date(at).toLocaleString()}`;
 }
 
+/** M10 R4: the line under a cloud model's name. */
+export const OLLAMA_CLOUD_LINE = "Runs on ollama.com";
+
 export function tokensLabel(tokens: number): string {
   return tokens >= 1000 ? contextK(tokens) : String(tokens);
 }
@@ -75,10 +78,12 @@ export function tokensLabel(tokens: number): string {
 export function contextLine(model: LocalModelView): string {
   const window = model.context?.contextWindow;
   if (!window) return "Context size not reported by this server";
+  // A cloud model is never loaded here: its window is its own trained length.
+  const size = model.context?.cloud ? `${tokensLabel(window)} context` : `${tokensLabel(window)} context loaded`;
   if (window < AGENT_MIN_CONTEXT_TOKENS) {
-    return `${tokensLabel(window)} context loaded: too small for bots, which need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)} or more`;
+    return `${size}: too small for bots, which need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)} or more`;
   }
-  return `${tokensLabel(window)} context loaded`;
+  return size;
 }
 
 /** Spec V2: which engines can use this model right now, by their own names.
@@ -103,7 +108,7 @@ export function testOutcomeLine(test: LocalToolTestResult): string {
       return "This model answers but can't use tools (it came back as text)";
     case "context-too-small":
       return test.context?.contextWindow
-        ? `Context too small for bots (loaded ${tokensLabel(test.context.contextWindow)}; bots need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)}+)`
+        ? `Context too small for bots (${test.context.cloud ? "" : "loaded "}${tokensLabel(test.context.contextWindow)}; bots need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)}+)`
         : `Context too small for bots (bots need ${tokensLabel(AGENT_MIN_CONTEXT_TOKENS)}+)`;
     case "server-rejects-tools":
       return "This server rejects tools. It has to be started with them enabled";
@@ -184,17 +189,27 @@ export function nextActionFor(server: LocalServerView, model: LocalModelView): L
   }
   const test = model.test;
   if (!test) {
-    return {
-      kind: "test",
-      label: `Test ${model.model}`,
-      help: "Runs seven checks on this computer. Nothing is sent to a cloud provider.",
-    };
+    // M10 R4: only Ollama knows whether it forwards a model to ollama.com, so
+    // no Ollama card claims that nothing leaves the machine.
+    const help = server.kind !== "ollama"
+      ? "Runs seven checks on this computer. Nothing is sent to a cloud provider."
+      : model.cloud
+        ? "Runs seven checks through your Ollama. This model runs on ollama.com, so the checks are sent there."
+        : "Runs seven checks through your Ollama. Models it runs itself stay on that machine; an ollama.com model sends the checks to ollama.com.";
+    return { kind: "test", label: `Test ${model.model}`, help };
   }
   switch (test.outcome) {
     case "tools-work":
     case "tools-partial":
       return { kind: "use", label: "Use with a bot", help: "Opens the model menu so you can pick it for the bot you are in." };
     case "context-too-small":
+      if (model.cloud) {
+        return {
+          kind: "pick-other-model",
+          label: "Try another model",
+          help: "This model runs on ollama.com and its context is too small for bots. Pick another model on this server and test it.",
+        };
+      }
       if (server.kind === "ollama") {
         return {
           kind: "ollama-context-copy",

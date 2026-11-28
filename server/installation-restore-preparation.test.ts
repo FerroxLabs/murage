@@ -29,6 +29,7 @@ import { completeRequest, insertRoomRequest, markRequestDispatched } from "./roo
 import { assertRestoreReviewed, RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { configSourcesPersistence, listSourceCells, SourceCellStore } from "./engine-setup-readers/source-cells.ts";
 
 beforeEach(() => servingDatabase.closeDatabase());
 async function prepareInstallationRestore(...args: Parameters<typeof prepareOfflineRestore>) {
@@ -44,13 +45,13 @@ async function prepareInstallationRestore(...args: Parameters<typeof prepareOffl
 }
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
-async function fixture(customize?: { bot?: Record<string, unknown>; group?: Record<string, unknown>; db?: (db: DatabaseSync) => void; withoutLegacyQueueFile?: boolean }) {
+async function fixture(customize?: { bot?: Record<string, unknown>; group?: Record<string, unknown>; db?: (db: DatabaseSync) => void; withoutLegacyQueueFile?: boolean; config?: Record<string, unknown> }) {
   const root = mkdtempSync(join(tmpdir(), "murage-restore-preparation-"));
   roots.push(root);
   const data = join(root, "source");
   mkdirSync(data);
   const put = (path: string, value: unknown) => { mkdirSync(dirname(join(data, path)), { recursive: true }); writeFileSync(join(data, path), JSON.stringify(value)); };
-  put("config.json", { instances: { fake: { driver: "claudeAgent", enabled: true, config: { cli: "must-not-run" } } }, features: { browser: true, skillRecorder: true } });
+  put("config.json", { instances: { fake: { driver: "claudeAgent", enabled: true, config: { cli: "must-not-run" } } }, features: { browser: true, skillRecorder: true }, ...customize?.config });
   put("bots.json", [{ id: "bot", threadId: "thread", name: "Preserved bot", autoApprove: true, autoReview: "enforce", alwaysAllow: ["Bash:sh"], computer: "cloud", autoStartVps: true, browser: true, useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: "profile_1", composio: true, busy: true, resumePolicies: { engine: { root: "/old", sha256: "hash" } }, replayPending: { engine: { cursor: "kept" } }, tasks: [{ threadId: "thread", title: "Keep me", autoApprove: true, alwaysAllow: ["Bash:sh"], resumePolicies: { engine: { root: "/old", sha256: "hash" } }, replayPending: { engine: { cursor: "kept" } }, resumeSeals: { engine: { cursor: "kept", generation: 1 } }, resumeCursors: { old: "cursor" } }], ...customize?.bot }]);
   put("groups.json", [{ id: "room", threadId: "room-thread", name: "Room", memberIds: ["bot"], working: true, busyBotId: "bot", ...customize?.group }]);
   const run = { routineId: "routine", routineName: "Routine", botId: "bot", target: "bot", runOn: "ember", scheduledFor: 1, manual: true, createdAt: 1 };
@@ -809,3 +810,18 @@ it("R1 golden: the desktop prepared state (tree, database rows and review notes)
   if (R1_DESKTOP_GOLDEN === "PENDING") throw new Error(`R1 golden not captured yet: ${hash}`);
   expect(hash).toBe(R1_DESKTOP_GOLDEN);
 }, 60_000);
+
+// F5n (Q-K5) W15, C-K5 pin: the real restore rewrite never carries the other-app source cells (engineSetup.sources), so a restored ON
+// cell is never read without a fresh opt-in. GREEN on base by design (a pin); any later edit of the allowlist must keep it GREEN.
+it("W15 a restore never carries engineSetup.sources: ON cells at epoch 7 in the archive come back absent (OFF)", async () => {
+  const f = await fixture({ config: { engineSetup: { sources: { src_aaaaaaaaaaaaaaaaaaaaaaaa: { optIn: true, epoch: 7 } } } } });
+  const result = await prepareInstallationRestore(f.archive, f.root);
+  const written = JSON.parse(readFileSync(join(result.stateDirectory, "config.json"), "utf8"));
+  expect(written.engineSetup?.sources).toBeUndefined(); // W15-pin
+  // The restored config, as the real rewrite wrote it, is what the server boots on: every cell OFF, and the next opt-in starts at epoch 1.
+  const store = new SourceCellStore(configSourcesPersistence(() => written, () => undefined));
+  const cells = listSourceCells({ home: f.root, platform: "darwin", dataDir: join(f.root, "data") });
+  expect(cells.every((cell) => !store.isOn(cell.cellId) && store.epoch(cell.cellId) === 0)).toBe(true);
+  const cursor = cells.find((cell) => cell.sourceKind === "cursor")!;
+  expect(store.setOptIn(cells, "cursor", cursor.cellId, true)).toEqual({ status: 200, optIn: true, epoch: 1 }); // W15-epoch
+});

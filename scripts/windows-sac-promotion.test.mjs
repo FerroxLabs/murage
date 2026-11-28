@@ -124,10 +124,10 @@ function optionAGuard(command, { remoteMismatch = false } = {}) {
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');const args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(args)+'\\n');
 if(args[0]==='run')process.exit(2);
-if(args[args.indexOf('--method')+1]==='PATCH'){fs.writeFileSync(${JSON.stringify(published)},'1');console.log('{}');return;}
+if(args[args.indexOf('--method')+1]==='PATCH'){fs.writeFileSync(${JSON.stringify(published)},args.includes('prerelease=true')?'prerelease':'1');console.log('{}');return;}
 const assets=fs.readdirSync('assets').map(name=>({name,state:'uploaded',digest:'sha256:'+crypto.createHash('sha256').update(fs.readFileSync(path.join('assets',name))).digest('hex')}));
 if(${remoteMismatch}) assets[0].digest='sha256:'+'0'.repeat(64);
-console.log('HTTP/2.0 200 OK\\n\\n'+JSON.stringify({id:7,tag_name:'v1.0.19',draft:!fs.existsSync(${JSON.stringify(published)}),immutable:false,assets}));
+console.log('HTTP/2.0 200 OK\\n\\n'+JSON.stringify({id:7,tag_name:'v1.0.19',draft:!fs.existsSync(${JSON.stringify(published)}),prerelease:fs.existsSync(${JSON.stringify(published)})&&fs.readFileSync(${JSON.stringify(published)},'utf8')==='prerelease',immutable:false,assets}));
 `, { mode: 0o755 });
   const args = command === "publish" ? ["1.0.19", "7", "assets"] : command === "upload" ? ["1.0.19", "assets", path.join(root, "temp/release-notes.md")] : [];
   const result = spawnSync(process.execPath, [path.join(scripts, "release-guard.mjs"), command, ...args], { cwd: root, encoding: "utf8", timeout: 30_000,

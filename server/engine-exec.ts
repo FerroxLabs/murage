@@ -82,13 +82,19 @@ export function lstatOrNull(path: string): Stats | null {
 }
 
 /** `target` strictly inside `root`, reached without crossing a symlink: its resolved path, "absent" when a folder on the way (or
- * the root) is not there, "refused" when it is outside the root or the way crosses a link or a file. */
-function confine(root: string, target: string): { full: string } | "absent" | "refused" {
+ * the root) is not there, "refused" when it is outside the root, the way crosses a link or a file, or (ownedRoot) the root itself is a
+ * link or a file. */
+function confine(root: string, target: string, ownedRoot = false): { full: string } | "absent" | "refused" {
   const api = pathApiFor(root);
   if (!isStrictlyInside(root, target, api)) return "refused";
   const parts = api.relative(api.resolve(root), api.resolve(target)).split(api.sep);
   let at = api.resolve(root);
-  if (!lstatOrNull(at)) return "absent";
+  const rootStat = lstatOrNull(at);
+  if (!rootStat) return "absent";
+  // An app-owned root (removeConfined) is the owned tree: a link or junction standing in its place (or a file) would send every cut
+  // below it elsewhere. An engine's own home or sub-folder is the person's: it may be a link to another disk or a dotfiles folder,
+  // as it was on v1.0.20, and only the way below it is checked.
+  if (ownedRoot && (rootStat.isSymbolicLink() || !rootStat.isDirectory())) return "refused";
   for (const part of parts.slice(0, -1)) {
     at = api.join(at, part);
     const stat = lstatOrNull(at);
@@ -103,7 +109,7 @@ function confine(root: string, target: string): { full: string } | "absent" | "r
  * as a link. */
 export function removeConfined(root: string, target: string): RemoveOutcome {
   try {
-    const found = confine(root, target);
+    const found = confine(root, target, true);
     if (found === "refused" || found === "absent") return found;
     const full = found.full;
     const stat = lstatOrNull(full);
@@ -286,7 +292,7 @@ function markDeleteEach(files: readonly string[], judged: ReadonlyMap<string, Ju
  * (renamed aside) opened it before the rename and is running now: a closed answer after the rename means nobody can write to it. */
 function gateNow(): EngineVerdict {
   if (!currentWindow) return { state: "unknown", via: "enumeration" };
-  return openPassGate(currentWindow, engineState(currentWindow.engine, currentWindow.home, { dbs: currentWindow.dbs, identities: currentWindow.identities }));
+  return openPassGate(currentWindow, engineState(currentWindow.engine, currentWindow.home, { dbs: currentWindow.dbs, identities: currentWindow.identities, conversation: currentWindow.conversation }));
 }
 /** DELETION-WHILE-OPEN-107: in an open-home pass the engine being open is expected (the owner's own CLI on the home); what keeps the
  * running CLI's files out of reach is the per-file hold every step of that pass takes (renamed to a private name, then `noWriters`
@@ -630,10 +636,10 @@ const LOCK_STALE_MS = 10_000;
 const LOCK_FRESH_MS = 1_000;
 
 /** The window of the home that is being run (executeEnginePlans): what stale-lock cleanup asks again before it moves anything. */
-interface Window { engine: string; home: string; dbs: string[]; identities: string[]; /** DELETION-WHILE-OPEN-107: an open-home pass */ open?: boolean }
+interface Window { engine: string; home: string; dbs: string[]; identities: string[]; /** DELETION-WHILE-OPEN-107: an open-home pass */ open?: boolean; /** the plan's conversation (HomePlanData) */ conversation?: HomePlanData["conversation"] }
 let currentWindow: Window | null = null;
 /** The gate's whole verdict, asked again while the lock is taken: an open engine and one that could not be checked are told apart. */
-const verdictNow = (ownLock: boolean): EngineVerdict => (currentWindow ? engineState(currentWindow.engine, currentWindow.home, { dbs: currentWindow.dbs, identities: currentWindow.identities, ignoreHistoryLock: ownLock }) : { state: "unknown", via: "enumeration" });
+const verdictNow = (ownLock: boolean): EngineVerdict => (currentWindow ? engineState(currentWindow.engine, currentWindow.home, { dbs: currentWindow.dbs, identities: currentWindow.identities, conversation: currentWindow.conversation, ignoreHistoryLock: ownLock }) : { state: "unknown", via: "enumeration" });
 /** Private folders of Murage's that could not be given back or removed (named in the run's result). */
 let strays: string[] = [];
 
@@ -1595,10 +1601,10 @@ export function executeEnginePlans(plans: Record<string, HomePlanData>, onStep?:
     const delta = (result.factsDelta[key] ??= { clear: {} });
     const clear = (name: string, value: string) => { (delta.clear[name] ??= []).push(value); };
     if (plan.steps.every((step) => step.done && step.k !== "ownerCheck")) continue;
-    const window: Window = { engine: plan.engine, home: plan.home, dbs: dbsOf(plan), identities: [...(plan.identities ?? [])], ...(mode.openHome ? { open: true } : {}) };
+    const window: Window = { engine: plan.engine, home: plan.home, dbs: dbsOf(plan), identities: [...(plan.identities ?? [])], ...(mode.openHome ? { open: true } : {}), ...(plan.conversation ? { conversation: plan.conversation } : {}) };
     // an open-home pass runs nothing but its own removal steps, with no proof to wait for (checked here as well as where it is planned)
     if (mode.openHome && plan.steps.some((step) => !OPEN_PASS_STEPS.has(step.k) || step.needs?.length)) { result.failedHomes.push(key); result.homeReasons[key] ??= "other"; continue; }
-    const verdict = (): EngineVerdict => openPassGate(window, engineState(window.engine, window.home, { dbs: window.dbs, identities: window.identities }));
+    const verdict = (): EngineVerdict => openPassGate(window, engineState(window.engine, window.home, { dbs: window.dbs, identities: window.identities, conversation: window.conversation }));
     const failHome = (): void => { if (!result.failedHomes.includes(key)) result.failedHomes.push(key); };
     const pendingHome = (path: string, reason: string, app?: string): void => {
       failHome();

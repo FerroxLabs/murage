@@ -39,7 +39,7 @@
 // the card. The shape is still checked here, not taken on trust from the
 // caller: inside `<dataDir>/workspaces`, owned by this bot by name, ending in
 // `threads/<threadId>`, every component a real directory (no symlink, no `..`).
-import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { trustFs } from "./trust-fs.ts";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { canonicalFolder, gitRootOf, type FolderTrustScan } from "./folder-trust.ts";
@@ -90,7 +90,7 @@ export function deskComponents(dataDir: string, desk: string, botId: string, thr
 
 function realDirectory(path: string): boolean {
   try {
-    const stat = lstatSync(path);
+    const stat = trustFs.lstatSync(path);
     return stat.isDirectory() && !stat.isSymbolicLink();
   } catch {
     return false;
@@ -99,7 +99,7 @@ function realDirectory(path: string): boolean {
 
 function realFile(path: string): boolean {
   try {
-    const stat = lstatSync(path);
+    const stat = trustFs.lstatSync(path);
     return stat.isFile() && !stat.isSymbolicLink();
   } catch {
     return false;
@@ -115,7 +115,7 @@ export function managedThreadDesk(folder: string, input: Pick<ManagedWorkspaceTr
   if (!parts) return null;
   let data: string;
   try {
-    data = realpathSync.native(input.dataDir);
+    data = trustFs.realpathNative(input.dataDir);
   } catch {
     return null;
   }
@@ -126,7 +126,7 @@ export function managedThreadDesk(folder: string, input: Pick<ManagedWorkspaceTr
   }
   let real: string;
   try {
-    real = realpathSync.native(folder);
+    real = trustFs.realpathNative(folder);
   } catch {
     return null;
   }
@@ -138,13 +138,13 @@ export function managedThreadDesk(folder: string, input: Pick<ManagedWorkspaceTr
 function isMurageSkillLink(desk: string, root: string, name: string, bundleIds: ReadonlySet<string>): boolean {
   const link = join(root, name);
   try {
-    if (!lstatSync(link).isSymbolicLink()) return false;
+    if (!trustFs.lstatSync(link).isSymbolicLink()) return false;
   } catch {
     return false;
   }
   let target: string;
   try {
-    target = realpathSync.native(link);
+    target = trustFs.realpathNative(link);
   } catch {
     return false; // dangling
   }
@@ -183,12 +183,12 @@ export function managedWorkspaceAutoTrust(folder: string, scan: FolderTrustScan,
     const root = join(parentDir, leaf);
     let exists = false;
     try {
-      lstatSync(root);
+      trustFs.lstatSync(root);
       exists = true;
     } catch {
       try {
         // a symlinked `.claude` whose `skills` is missing is still not ours
-        if (lstatSync(parentDir).isSymbolicLink()) return false;
+        if (trustFs.lstatSync(parentDir).isSymbolicLink()) return false;
       } catch {
         /* no parent: nothing to check */
       }
@@ -197,7 +197,7 @@ export function managedWorkspaceAutoTrust(folder: string, scan: FolderTrustScan,
     if (!realDirectory(parentDir) || !realDirectory(root)) return false;
     let names: string[];
     try {
-      names = readdirSync(root);
+      names = trustFs.readdirSync(root);
     } catch {
       return false;
     }
@@ -226,12 +226,12 @@ export function managedDeskQualifies(folder: string, scan: FolderTrustScan, inpu
     for (const rel of SKILL_ROOTS) {
       const [parent] = rel.split("/") as [string, string];
       try {
-        lstatSync(join(desk, rel));
+        trustFs.lstatSync(join(desk, rel));
         return null;
       } catch {
         // a symlinked parent such as `.claude` is not Murage's, skills or not
         try {
-          if (lstatSync(join(desk, parent)).isSymbolicLink()) return null;
+          if (trustFs.lstatSync(join(desk, parent)).isSymbolicLink()) return null;
         } catch {
           /* no parent */
         }

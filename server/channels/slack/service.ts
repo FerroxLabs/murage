@@ -48,6 +48,7 @@ export class SlackService {
   private error: string | null = null;
   private nextRetryAt: number | null = null;
   private connecting = false;
+  private moving = false;
   private options: Options;
   constructor(options: Options) { this.options = { ...options, chosen: chosenSchema.parse(options.chosen) }; }
   private now() { return this.options.now?.() ?? Date.now(); }
@@ -203,8 +204,27 @@ export class SlackService {
     const generation = this.generation;
     this.timer = setTimeout(() => { if (generation === this.generation) void this.resume(); }, this.nextRetryAt - this.now()); this.timer.unref?.();
   }
-  async stop() { this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); this.approvals?.clear(); await this.ledger?.stop(); this.state = "idle"; await this.transport?.stop(); }
+  async stop() { this.live = false; this.authorised = false; this.state = "idle"; this.generation++; clearTimeout(this.timer); this.approvals?.clear(); await this.ledger?.stop(); await this.transport?.stop(); }
+  /** CHIEF-TRANSFER D4: the synchronous prefix of stop(), no await and no file write. While `moving`, pause() is a no-op, so no tick, receive
+   * or listener can pause, unlink or overwrite this pairing mid-move. Cleared by endMove() (the moveTarget fence/failure branches) or by dropping this instance. */
+  quiesce(): void { this.moving = true; this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); }
+  endMove(): void { this.moving = false; }
+  /** CHIEF-TRANSFER: the saved pairing now names `to` (chosen and binding together, per the connection schema) and is no longer paused. Runtime untouched. */
+  retarget(to: string): void {
+    const c = this.read();
+    if (!c?.enabled) throw new Error("Slack connection is not enabled");
+    const binding = c.binding ? { ...c.binding, chiefBotId: to } : null;
+    // the receipt ledger is keyed by a digest of the binding, which names the Chief: move the key first, so a crash here re-runs cleanly
+    if (c.binding && binding) DurableDelivery.rekey({ file: join(this.options.dataDir, "channels", "slack", c.binding.connectionId + ".json"), recipient: c.binding.dmId,
+      from: digest(JSON.stringify(c.binding)), to: digest(JSON.stringify(binding)) });
+    this.save({ ...c, chosen: { ...c.chosen, chiefBotId: to }, binding, paused: false });
+  }
+  /** The chief bot id the saved connection names (null when none is saved). */
+  savedTarget(): string | null { try { return this.read()?.chosen.chiefBotId ?? null; } catch { return null; } }
+  savedConnectionId(): string | null { try { return this.read()?.binding?.connectionId ?? null; } catch { return null; } }
+  savedPaused(): boolean { try { const c = this.read(); return !c?.enabled || c.paused; } catch { return true; } }
   async pause() {
+    if (this.moving) return;
     await this.disable(false);
   }
   async revoke() {
@@ -212,10 +232,11 @@ export class SlackService {
   }
   private async disable(revoke: boolean) {
     let failed = false;
-    try { await this.stop(); } catch { failed = true; }
+    const stopped = this.stop().catch(() => { failed = true; });
     this.state = revoke ? "idle" : "blocked"; this.error = revoke ? null : "chief-changed";
     try { this.connection ??= this.read(); } catch { failed = true; }
-    try { if (this.connection) this.save({ ...this.connection, ...(revoke ? { enabled: false, pairing: null } : {}), paused: true }); } catch { failed = true; }
+    try { if (this.connection && (revoke || !this.connection.paused)) this.save({ ...this.connection, ...(revoke ? { enabled: false, pairing: null } : {}), paused: true }); } catch { failed = true; }
+    await stopped;
     try { this.ledger?.revoke(); } catch { failed = true; }
     try { if (this.connection?.binding) await this.options.revokeRuns(this.connection.binding.connectionId); } catch { failed = true; }
     if (failed) { this.state = "blocked"; this.error = "revoke-recovery-required"; throw new Error("Slack stopped; saved revocation needs recovery."); }

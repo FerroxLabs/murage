@@ -115,6 +115,7 @@ describe("built-in tables", () => {
   it("states each direct provider's budget, sizes, references and delivery", () => {
     expect(builtInImageCapabilities("openai", "gpt-image-2")).toMatchObject({ maxPromptChars: 32000, maxReferences: 16, supports: { n: 10, background: false }, delivery: { stream: true }, sizeRule: { kind: "free" } });
     expect(builtInImageCapabilities("openai", "gpt-image-1")).toMatchObject({ sizeRule: { kind: "list", sizes: ["1024x1024", "1536x1024", "1024x1536"] }, supports: { background: true } });
+    expect(builtInImageCapabilities("openai", "gpt-image-2.6-sunburst")).toMatchObject({ qualities: ["low", "medium", "high", "xhigh", "max"], supports: { edit: true, background: true } });
     expect(builtInImageCapabilities("openai", "gpt-image-2.5-sunburst")).toMatchObject({ qualities: ["low", "medium", "high", "xhigh", "max"], supports: { background: true } });
     expect(builtInImageCapabilities("google", "gemini-3.1-flash-image")).toMatchObject({ maxReferences: 14, supports: { seed: true, n: 1 }, sizeRule: { kind: "ratioTier", tiers: ["512", "1K", "2K", "4K"] } });
     expect((builtInImageCapabilities("google", "gemini-3.1-flash-image")!.sizeRule as { ratios: string[] }).ratios).toContain("1:8");

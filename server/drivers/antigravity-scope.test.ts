@@ -34,7 +34,7 @@ const LEGACY_LINK_NOTES = {
 const LEGACY_AGENTS = {
   command: "/usr/bin/node",
   args: ["/opt/murage/server/drivers/agents-proxy.ts"],
-  env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:4100", MURAGE_BOT_ID: "b", MURAGE_THREAD_ID: "t", MURAGE_COMMS_TOKEN: "old", MURAGE_TURN_DEPTH: "0", MURAGE_SKILL_AUTHORING_ENABLED: "0" },
+  env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:4100", MURAGE_BOT_ID: "b", MURAGE_THREAD_ID: "t", MURAGE_COMMS_TOKEN: "old", MURAGE_SKILL_AUTHORING_ENABLED: "0" },
 };
 const OWNER_KEPT = ["murage-agents", "murage-custom-mine", "personal-db", "personal-github"];
 

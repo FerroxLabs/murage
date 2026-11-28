@@ -48,19 +48,19 @@ describe("tool bridge on every engine (item 3)", () => {
   });
   it("mounts on an owner turn of an engine with Murage tools; plain line on OpenClaw/Antigravity; nothing without key or for others", () => {
     _resetPhoneSecretsForTest();
-    expect(phoneMount({ agentsMcp: true, ownerAudience: true })).toEqual({ mounted: false, line: null });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: true, botAllowed: true })).toEqual({ mounted: false, line: null });
     desktopNoKey();
-    expect(phoneMount({ agentsMcp: true, ownerAudience: true })).toEqual({ mounted: false, line: null });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: true, botAllowed: true })).toEqual({ mounted: false, line: null });
     desktopWithKey();
-    expect(phoneMount({ agentsMcp: true, ownerAudience: true })).toEqual({ mounted: true });
-    expect(phoneMount({ agentsMcp: false, ownerAudience: true })).toEqual({ mounted: false, line: PHONE_ENGINE_ABSENT });
-    expect(phoneMount({ agentsMcp: true, ownerAudience: false })).toEqual({ mounted: false, line: null });
-    expect(phoneMount({ agentsMcp: true, ownerAudience: true, projectRole: true })).toEqual({ mounted: false, line: null });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: true, botAllowed: true })).toEqual({ mounted: true });
+    expect(phoneMount({ agentsMcp: false, ownerAudience: true, botAllowed: true })).toEqual({ mounted: false, line: PHONE_ENGINE_ABSENT });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: false, botAllowed: true })).toEqual({ mounted: false, line: null });
+    expect(phoneMount({ agentsMcp: true, ownerAudience: true, botAllowed: true, projectRole: true })).toEqual({ mounted: false, line: null });
     expect(PHONE_ENGINE_ABSENT).not.toMatch(/MCP|vapi|key/i);
   });
   it.each(["openclaw", "antigravity"])("carries the no-tools fallback through %s's rendered primer before settings are saved", (driverKind) => {
     desktopWithKey();
-    const verdict = phoneMount({ agentsMcp: false, ownerAudience: true });
+    const verdict = phoneMount({ agentsMcp: false, ownerAudience: true, botAllowed: true });
     const facts = turnCapabilityFacts({
       instance: { driverKind, models: { default: "model", options: [] }, adapter: { capabilities: {} } },
       integrations: {}, ownerAudience: true, peers: 0, memory: "off", imageProvider: false, canAskOwner: true,
@@ -79,7 +79,7 @@ describe("tool bridge on every engine (item 3)", () => {
     expect(service.askPreview({ to: "+15550123456", goal: "Book" })).toBeNull();
     await service.saveSettings({ ...defaultSettings("pn-1", "Sam"), language: "de" });
     expect(service.askPreview({ to: "+15550123456", goal: "Book a table", details: "4 people", limits: "no deposit", when: "2026-11-06T18:00:00Z", language: "en" }))
-      .toEqual({ to: "+15550123456", goal: "Book a table", details: "4 people", limits: "no deposit", when: "2026-11-06T18:00:00Z", language: "de", settings_revision: 1 });
+      .toEqual({ to: "+15550123456", goal: "Book a table", details: "4 people", limits: "no deposit", when: "2026-11-06T18:00:00Z", language: "de", settings_revision: 1, max_seconds: 300 });
   });
 });
 
@@ -89,6 +89,8 @@ describe("saving calls and settings (item 4)", () => {
     const db = new DatabaseSync(":memory:");
     const open = () => {
       const store = new SqliteCallStore(db);
+      // As the app's start pass does: assistant cleanup waits for the key-table migration (D5 P8b gate).
+      while (!store.migrateBatch());
       const adapter = fakeAdapter();
       return { store, adapter, service: new PhoneCallService(adapter, new RevisionStore(store.loadRevisions(), (s) => store.saveRevisions(s)), () => "en", () => {}, store) };
     };

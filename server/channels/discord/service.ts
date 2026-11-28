@@ -47,6 +47,7 @@ export class DiscordService {
   private error: string | null = null;
   private nextRetryAt: number | null = null;
   private connecting = false;
+  private moving = false;
   private options: Options;
   constructor(options: Options) { this.options = { ...options, chosen: chosenSchema.parse(options.chosen) }; }
   private now() { return this.options.now?.() ?? Date.now(); }
@@ -210,7 +211,23 @@ export class DiscordService {
     this.timer = setTimeout(() => { if (generation === this.generation) void this.resume(); }, this.nextRetryAt - this.now()); this.timer.unref?.();
   }
   async stop() { this.live = false; this.authorised = false; this.state = "idle"; this.generation++; clearTimeout(this.timer); this.approvals?.clear(); await this.ledger?.stop(); await this.transport?.stop(); }
+  /** CHIEF-TRANSFER D4: see SlackService.quiesce. */
+  quiesce(): void { this.moving = true; this.live = false; this.authorised = false; this.state = "idle"; this.generation++; clearTimeout(this.timer); }
+  endMove(): void { this.moving = false; }
+  retarget(to: string): void {
+    const c = this.read();
+    if (!c?.enabled) throw new Error("Discord connection is not enabled");
+    const binding = c.binding ? { ...c.binding, chiefBotId: to } : null;
+    // the receipt ledger is keyed by a digest of the binding, which names the Chief: move the key first, so a crash here re-runs cleanly
+    if (c.binding && binding) DurableDelivery.rekey({ file: join(this.options.dataDir, "channels", "discord", c.binding.connectionId + ".json"), recipient: c.binding.dmId,
+      from: digest(JSON.stringify(c.binding)), to: digest(JSON.stringify(binding)) });
+    this.save({ ...c, chosen: { ...c.chosen, chiefBotId: to }, binding, paused: false });
+  }
+  savedTarget(): string | null { try { return this.read()?.chosen.chiefBotId ?? null; } catch { return null; } }
+  savedConnectionId(): string | null { try { return this.read()?.binding?.connectionId ?? null; } catch { return null; } }
+  savedPaused(): boolean { try { const c = this.read(); return !c?.enabled || c.paused; } catch { return true; } }
   async pause() {
+    if (this.moving) return;
     await this.disable(false);
   }
   async revoke() {
@@ -218,10 +235,11 @@ export class DiscordService {
   }
   private async disable(revoke: boolean) {
     let failed = false;
-    try { await this.stop(); } catch { failed = true; }
+    const stopped = this.stop().catch(() => { failed = true; });
     this.state = revoke ? "idle" : "blocked"; this.error = revoke ? null : "chief-changed";
     try { this.connection ??= this.read(); } catch { failed = true; }
-    try { if (this.connection) this.save({ ...this.connection, ...(revoke ? { enabled: false, pairing: null } : {}), paused: true }); } catch { failed = true; }
+    try { if (this.connection && (revoke || !this.connection.paused)) this.save({ ...this.connection, ...(revoke ? { enabled: false, pairing: null } : {}), paused: true }); } catch { failed = true; }
+    await stopped;
     try { this.ledger?.revoke(); } catch { failed = true; }
     try { if (this.connection?.binding) await this.options.revokeRuns(this.connection.binding.connectionId); } catch { failed = true; }
     if (failed) { this.state = "blocked"; this.error = "revoke-recovery-required"; throw new Error("Discord stopped; saved revocation needs recovery."); }

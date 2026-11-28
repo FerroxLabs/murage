@@ -17,6 +17,14 @@ export const ON_CARD = {
   buttonHover: "hover:bg-control-hover",
 } as const;
 
+/** An account's row name: the owner's label, else "<App> account" (numbered after the first). The service's own id
+ *  ("ca_...") is plumbing and is never shown, even when it was saved as the label. */
+export function accountDisplayName(account: { id: string; alias?: string }, appLabel: string, index: number): string {
+  const alias = account.alias?.trim() ?? "";
+  if (alias && alias !== account.id && !/^ca_[A-Za-z0-9_-]+$/.test(alias)) return alias;
+  return index > 0 ? `${appLabel} account ${index + 1}` : `${appLabel} account`;
+}
+
 /** The small line under an account's name: its id may be cut short, its status word never is. */
 export function ConnectedAccountLine({ id, status }: { id: string; status: string }) {
   return (

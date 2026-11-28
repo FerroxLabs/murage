@@ -1,5 +1,6 @@
-import { receiveLearningNoticeFrame } from "@/lib/live-events";
-import { forgetHighLevelReview, highlevelReviewId } from "@/components/HighLevelReviewValues";
+import { appendArrayItem, arrayChange, onArrayChange, prependArrayItems, replaceArrayItem } from "../lib/persistent-array";
+import { transcriptIndex } from "./transcript-index";
+import { privateSkillReviewDigest, privateSkillReviewVerdict } from "@/lib/skill-switch-review";
 import type { TurnStateCapabilities, TurnStateEnvelope, ResendAction, ResendActionResult, SendActionTarget } from "../../shared/help-turn-state";
 import { chatsGenHello, chatsGenFrame, chatsGenUnproven, registerChatsGenReplacement } from "@/lib/chats-gen";
 import { createStoreSubscriptions } from "./store-subscriptions";
@@ -23,7 +24,7 @@ import { EMAIL_STATUS_EVENT } from "@/lib/email-status-event";
 // stream from the harness server into local state. The reducer stays
 // pure; everything async lives in the wrapped dispatch + SSE fold.
 import type { SharedRow, SharedWorkMarker } from "@/lib/shared-teams";
-import { requestFailedSentence } from "@/lib/request-failed";
+import { RECONNECTING_SENTENCE, requestFailedSentence } from "@/lib/request-failed";
 import type { TaskResourceWait } from "@/lib/resource-wait";
 import type { BotSettingsSection } from "@/components/bot-settings-sections";
 import {
@@ -52,6 +53,7 @@ import { EMPTY_HELPERS, helpersAfterEvent, type HelperState } from "@/lib/subtas
 import { normalizeAgentPlan, type AgentPlanEntry } from "../../shared/agent-plan";
 import type { EmberColor, EmberMotion } from "@/lib/mascot";
 import { botRole } from "@/lib/bot-role";
+import { chiefTransferBlocksPatch } from "@/lib/chief-transfer";
 import { SETUP_VIEW_EVENT } from "@/lib/app-events";
 import { idToSaveOnSetupView, landingId, readLastConversation, shouldRemember, workspaceKey, writeLastConversation } from "@/lib/last-conversation";
 import { homeMeta } from "@/lib/cloud-home-meta";
@@ -85,7 +87,8 @@ import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
 import { isDiskNotice, isHealthPage, showDiskNotice, showHealthPage, showNotification } from "@/lib/notify";
-import { forwardAttentionConfig, forwardAttentionSettled, reportAttentionVisible, routeNotification } from "@/lib/attention-offer";
+import { notificationSoundsEnabled } from "@/lib/notification-sounds";
+import { dropReplayedNotify, forwardAttentionBot, forwardAttentionConfig, forwardAttentionResync, forwardAttentionSettled, reportAttentionVisible, routeNotification } from "@/lib/attention-offer";
 import { replyController } from "@/lib/tts/reply-speech";
 import { knownComputer, surface } from "@/lib/surface";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
@@ -98,9 +101,10 @@ import { sameSidebarLine, sidebarLineOf, type SidebarLine } from "../../shared/s
 import { ThreadSettingsWrites } from "./thread-settings-writes";
 import { persistCardPatch } from "./card-persist";
 import { noteTurnEvent } from "./turn-status";
+import { noteStarTurn } from "@/lib/star-prompt";
 import { applyTranscriptInput, hydrateTranscript, legacyTranscriptInput, transcriptState, vouches, type InputKind, type SeqTranscript } from "./transcript-seq";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
-import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
+import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents, responderIsOurs } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
 import { busyRetriesFor, busyRetryDelayMs, createOutbox, createSendDelivery, sendActionRequest, terminalSendReceipt, deliverEdit, isDatabaseBusyAnswer, retryWhileBusy, venuePostBody, type OutboxDraft, type OutboxEntry, type VenuePostPick } from "./send-delivery";
 import { checkPinnedDrafts, draftJournal, forgetDeletedDrafts, migrateLegacyDrafts, noteRefusedChips, releaseRecoveredSend, setDraftOwnerCheck, setDraftSendLookup, settleDraftSend, type DraftSendLookupResult } from "@/lib/drafts";
@@ -112,6 +116,7 @@ import { isCloudOrigin, notificationBridge } from "@/lib/cloud-workspace";
 import { applyThreadDelta, conversationCache, loadConversationCache } from "@/lib/conversation-cache-host";
 import type { CachedConversation } from "@/lib/conversation-cache";
 import { deletionErrorSentence, deletionNote, owedNote, type OwedLine } from "@/lib/deletion-notes";
+import { permissionAnswerBody } from "./permission-answer";
 import { ANSWER_TTL_MS, answerClock, carryAnswerTag, fromAnswer, sentAtOf, tagAnswer, type HttpOrigin, type RoomOrigin } from "./answer-tag";
 export { asAnswer, freshAnswer, fromAnswer } from "./answer-tag";
 import { hiddenPatchFrom } from "@/lib/record-numbers";
@@ -168,6 +173,42 @@ export function commandOutboxBody(entry: OutboxEntry): { threadId: string; comma
   return { threadId: entry.threadId, commandHandle: command.commandHandle, args: command.args, sendId: entry.sendId };
 }
 
+/** The chat card's Allow/Deny post (decideRequest's plain answer), through fresh authentication where the card needs it.
+ *  Exported so the chat's own code is the one a test drives (q1022-approvefix); `send` is the store's api(). */
+export function postPermissionDecision(
+  action: Extract<Action, { type: "decideRequest" }>,
+  showError: (error: unknown) => void,
+  send: typeof api = api,
+) {
+  // One body for every surface (q1022-approvefix): the Needs you row posts the same one (permission-answer.ts).
+  // rel/1023 merge: the skill review proofs (reviewedSha256, and the skill-switch reviewedVerdictHash) ride with the display
+  // action too, as the chat card's decideRequest posted them before this body moved into permissionAnswerBody.
+  const answer = {
+    ...permissionAnswerBody(action.card, action.requestId, action.behavior, {
+      message: action.message, reviewedSha256: action.reviewedSha256, seen: action.seen, allowForTask: action.allowForTask }),
+    ...(action.reviewedSha256 ? { reviewedSha256: action.reviewedSha256 } : {}),
+    ...(action.reviewedVerdictHash ? { reviewedVerdictHash: action.reviewedVerdictHash } : {}),
+  };
+  const { allowForTask, onTaskAdded } = action;
+  return decideWithFreshAuth(
+    async (extra) => {
+      const body = await send(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) });
+      // UX-TRUST-MOMENTS-1012 1.3: the allowance this answer added, for the card's Undo
+      if (allowForTask && body?.outcome === "allowed-once") onTaskAdded?.(stringList(body.taskAdded));
+      return body;
+    },
+    {
+      threadId: action.threadId,
+      requestId: action.requestId,
+      decision: action.behavior === "allow" ? (action.allowForTask ? "allow-task" : "allow") : undefined,
+      card: action.card,
+      botName: action.botName,
+      onDevicePrompt: action.onDevicePrompt,
+    },
+    { onError: action.onError, onSuccess: action.onSuccess, showError },
+  );
+}
+
 export function permissionDisplayAction(requestHandle: string, action: "allow" | "deny"): DisplayAction {
   return { requestHandle, action };
 }
@@ -220,6 +261,8 @@ export interface OptionCardData {
   options: string[];
   answered?: string;
   dismissed?: boolean;
+  /** 1021 Retry: the owner's answer did not reach the bot, which still waits ('offered': Send again; 'sending'). The card is open. */
+  deliveryRetry?: "offered" | "sending";
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
   requestHandle?: string;
@@ -668,6 +711,10 @@ export interface TaskUsage {
    * from builds before cost existed lack the field entirely */
   costUsd: number | null;
   turns: number;
+  /** What the server could and could not count. A cache count it marks incomplete is a partial sum, so the split is unknown. */
+  usageAccounting?: { version: 1; inputComplete: boolean; cacheComplete: boolean };
+  /** Every record whose cache count is not marked complete is a saved one from before the marks: the split it carries stands. */
+  cacheUnmarkedOnly?: true;
 }
 
 export interface Bot {
@@ -788,6 +835,8 @@ export interface Bot {
   pinned?: boolean;
   hidden?: boolean;
   sidebarHidden?: boolean;
+  /** Tools switched off for this bot alone (Settings, Tools, Which bots). Absent means none. */
+  toolsOff?: string[];
   /** Sidebar section this bot renders under; absent = unsectioned. */
   section?: string;
   /** the one message pinned to the top of this bot's active thread */
@@ -910,7 +959,6 @@ export interface Bot {
  * so a view is recomputed only when the transcript changed, not on each of the
  * dispatches (busy, unread, stream frames) that leave it alone. */
 const visibleCache = new WeakMap<Message[], { leafId: string | null | undefined; path: Message[] | null }>();
-const versionCache = new WeakMap<Message[], Map<string | null, Message[]>>();
 
 /** The visible conversation: walk parentId links from the active leaf back
  * to the root. Falls back to the flat list for pre-branching payloads. A leaf
@@ -922,18 +970,48 @@ export function visibleMessages(bot: Bot): Message[] {
   const cached = visibleCache.get(bot.messages);
   let path = cached && cached.leafId === leafId ? cached.path : undefined;
   if (path === undefined) {
-    const byId = new Map(bot.messages.map((m) => [m.id, m]));
-    path = byId.has(leafId) ? [] : null;
-    for (let cur = byId.get(leafId); cur && path; cur = cur.parentId ? byId.get(cur.parentId) : undefined) path.push(cur);
+    const byId = transcriptIndex(bot.messages).byId;
+    path = byId.get(leafId) ? [] : null;
+    const seen = new Set<string>();
+    for (let row = byId.get(leafId)?.message; row && path && !seen.has(row.id); row = row.parentId ? byId.get(row.parentId)?.message : undefined) {
+      seen.add(row.id);
+      path.push(row);
+    }
     path?.reverse();
+    if (path) transcriptIndex(path);
     visibleCache.set(bot.messages, { leafId, path });
   }
   return path ?? (bot.hasMore ? EMPTY_MESSAGES : bot.messages);
 }
 const EMPTY_MESSAGES: Message[] = [];
 
+onArrayChange<Message>((before, after) => {
+  const visible = visibleCache.get(before);
+  const change = arrayChange(after);
+  if (!visible?.path || !change) return;
+  let { leafId, path } = visible;
+  const { index, value } = change;
+  if (index === before.length) {
+    if (value.parentId === leafId) {
+      path = appendArrayItem(path, value);
+      leafId = value.id;
+    } else if (path[0]?.parentId === value.id) {
+      return;
+    }
+  } else {
+    if (before[index]?.parentId !== value.parentId || before[index]?.id !== value.id) return;
+    const position = transcriptIndex(path).byId.get(value.id)?.position;
+    if (position !== undefined) path = replaceArrayItem(path, position, value);
+  }
+  visibleCache.set(after, { leafId, path });
+});
+
 /** True while the selected branch head is older than every held row. */
 export const branchHeadMissing = (bot: Bot): boolean => Boolean(bot.activeLeafId && bot.hasMore) && visibleMessages(bot) === EMPTY_MESSAGES;
+
+export function openIntakeQuestion(bot: Bot): Message | null {
+  return transcriptIndex(visibleMessages(bot)).intake.last ?? null;
+}
 
 /** What the composer and a call answer: the open cards on the visible branch,
  * and in front of them the ones older than the held rows (`openCards`) while
@@ -961,29 +1039,24 @@ export function withRefreshedCards<T extends { openCards?: Message[]; openCardsL
   const merged = [...held.filter((card) => !fresh.has(card.id)), ...action.cards].sort((x, y) => x.at - y.at);
   return { ...b, openCards: merged.length ? merged : undefined, openCardsLeaf: action.cards.length || !held.length ? action.leafId : b.openCardsLeaf, openCardsPending: true };
 }
+const olderCardsCache = new WeakMap<Message[], { cards: Message[]; leaf?: string; combined: Message[] }>();
+
 export function olderOpenCards(owner: { openCards?: Message[]; openCardsLeaf?: string }, visible: Message[]): Message[] {
   const older = owner.openCards;
   if (!older?.length || visible[0]?.parentId === null) return visible;
-  // The cards were worked out for one branch head. A branch that no longer
-  // passes through it (an edit, a switch to a sibling) is not theirs.
-  if (owner.openCardsLeaf && !visible.some((m) => m.id === owner.openCardsLeaf)) return visible;
-  const held = new Set(visible.map((m) => m.id));
-  return [...older.filter((card) => !held.has(card.id)), ...visible];
+  const cached = olderCardsCache.get(visible);
+  if (cached?.cards === older && cached.leaf === owner.openCardsLeaf) return cached.combined;
+  const held = transcriptIndex(visible).byId;
+  if (owner.openCardsLeaf && !held.get(owner.openCardsLeaf)) return visible;
+  const combined = prependArrayItems(older.filter(card => !held.get(card.id)), visible);
+  olderCardsCache.set(visible, { cards: older, leaf: owner.openCardsLeaf, combined });
+  return combined;
 }
 
-/** All versions of a user message (itself + the forks that replaced it),
- * oldest first. Length 1 = never edited. Indexed by parent once per held
- * transcript, so a row asks in O(versions), not O(held messages). */
+/** All versions of a user message, oldest first. */
 export function messageVersions(bot: Bot, message: Message): Message[] {
   if (message.role !== "user" || message.kind !== "text") return [message];
-  let index = versionCache.get(bot.messages);
-  if (!index) {
-    index = new Map();
-    for (const m of bot.messages) if (m.role === "user" && m.kind === "text") index.set(m.parentId ?? null, [...(index.get(m.parentId ?? null) ?? []), m]);
-    for (const list of index.values()) list.sort((x, y) => x.at - y.at);
-    versionCache.set(bot.messages, index);
-  }
-  return index.get(message.parentId ?? null) ?? [];
+  return transcriptIndex(bot.messages).versions.get(message.parentId ?? "") ?? [];
 }
 
 /** GET /api/config — configured flags only; secrets are never echoed. */
@@ -1027,7 +1100,9 @@ export interface ConfigStatus extends TurnStateCapabilities {
   flux?: { configured: boolean; keyState?: FluxKeyState };
   /** Decision model switches (never a key). Absent from an older harness. */
   decider?: { enabled: boolean; /** false while this key's plan cannot use it */ available?: boolean; byoKeyConfigured?: boolean; jobs?: { roomRouting?: boolean } };
-  webSearch?: { provider: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyConfigured: boolean; exaConfigured: boolean; firecrawlConfigured: boolean; fluxConfigured?: boolean };
+  webSearch?: { provider: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; readEnabled?: boolean; tavilyConfigured: boolean; exaConfigured: boolean; firecrawlConfigured: boolean; fluxConfigured?: boolean; lastProvider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off" };
+  /** Read web pages (Settings v10 T1): absent means on. */
+  webRead?: { enabled: boolean };
   notifications?: import("../../shared/notification-preferences").NotificationPreferences;
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
@@ -1036,7 +1111,7 @@ export interface ConfigStatus extends TurnStateCapabilities {
   /** The monthly limit (a heads-up only) and the server's Flux key fingerprint, never a figure (src/lib/spend-meter.ts). The desktop's only; absent elsewhere. */
   spend?: { monthlyLimitUsd: number | null; headsUpLeft: string | null; keyFingerprint: string | null; pauseFingerprint?: string | null };
   /** Opt-in flags. Absent means off. */
-  features?: { skillRecorder: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; browser?: boolean; projectsLead?: boolean; projectsGoals?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; projectsAutonomy?: boolean; projectsParallelCards?: boolean; roomsQueue?: boolean };
+  features?: { skillRecorder: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; browser?: boolean; cloudBoxComputers?: boolean; projectsLead?: boolean; projectsGoals?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; projectsAutonomy?: boolean; projectsParallelCards?: boolean; roomsQueue?: boolean };
   /** Named browser sessions any bot can be pointed at. */
   browserProfiles?: BrowserProfile[];
   /** The harness announcing itself: `platform` is its `process.platform`,
@@ -1048,6 +1123,8 @@ export interface ConfigStatus extends TurnStateCapabilities {
   harness?: { platform: string };
   /** Whether the owner has accepted No limits as it now stands. Desktop only: the phone's copy has no such field. */
   noLimitsTerms?: { accepted: boolean };
+  /** F33: a fresh install's one Automatic-mode notice is still unanswered. Absent (an upgrade, or an older harness) never shows it. */
+  automaticNotice?: { pending: boolean };
   /** A Cloud home's owner browser: false once the owner factor ran out (chat only until they open Murage from murage.ai). Absent off a home. */
   owner?: boolean;
   /** When the owner factor ends (ms epoch), on a Cloud home. */
@@ -1071,7 +1148,7 @@ export type FluxKeyState = "ok" | "missing" | "not-flux" | "refused";
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "turnStateContract" | "scopedTurnStop" | "sendActionContract" | "queueRemovable" | "settingsDefaultMode" | "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "newBotComputer" | "claudeCodeImport" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "spend" | "features" | "browserProfiles" | "harness"
+  "turnStateContract" | "scopedTurnStop" | "sendActionContract" | "queueRemovable" | "settingsDefaultMode" | "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "newBotComputer" | "claudeCodeImport" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "webRead" | "notifications" | "profile" | "language" | "spend" | "features" | "browserProfiles" | "harness" | "automaticNotice"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -1099,6 +1176,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     flux: frame.flux,
     decider: frame.decider,
     webSearch: frame.webSearch,
+    webRead: frame.webRead,
     notifications: frame.notifications,
     profile: frame.profile,
     language: frame.language,
@@ -1106,6 +1184,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     features: frame.features,
     browserProfiles: frame.browserProfiles,
     harness: frame.harness,
+    ...(frame.automaticNotice ? { automaticNotice: frame.automaticNotice } : {}),
   };
 }
 
@@ -1148,7 +1227,7 @@ export interface InstanceInfo {
     setUpOnHome?: boolean;
     renewSignIn?: boolean;
   };
-  models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string; variants?: Array<{ id: string; label: string }> }> };
+  models: { default: string; note?: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string; variants?: Array<{ id: string; label: string }> }> };
   capabilities?: {
     computerMcp?: boolean;
     agentsMcp?: boolean;
@@ -1221,6 +1300,12 @@ export interface AppState {
   conversationPicks?: number;
   /** UX 1.0.13 shell (HANDOFF-1013-UX-L2A.md): Today, Needs you and Health are views too. */
   activeView: "chat" | "team-map" | "routines" | "skill-recorder" | "all-chats" | "today" | "needs-you" | "health";
+  /** TEACH-ENTRY D5: the bot an entry click opened the recorder for ("Only {bot}"); absent = All my bots. Only an entry sets or clears it. */
+  skillRecorderFor?: string;
+  /** TEACH-ENTRY D9: the chat card's task, the review step's Skill name suggestion. */
+  skillRecorderTask?: string;
+  /** TEACH-ENTRY D5/D9.4: the one-shot start token, set only by the chat card's Start click. Exists only while the recorder is the view. */
+  skillRecorderStart?: number;
   /** The Needs you page's tab; "decisions" (the Needs you umbrella) unless a door or a link asked for another. */
   needsYouTab?: import("../../shared/inbox").InboxView;
   /** Today was chosen by the launch, not by the person. It holds only until the setup view answers: while first run
@@ -1613,7 +1698,10 @@ export type Action =
   | { type: "showTeamMap"; memory?: boolean }
   | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView; tab?: "import" }
   | { type: "hideTeamLibrary" }
-  | { type: "showSkillRecorder" }
+  /** TEACH-ENTRY 1.0.23 D5: an entry click states who the recorder is for (and, from the chat card only, `start`); a Back return keeps it. */
+  | { type: "showSkillRecorder"; via: "entry" | "return"; forBotId?: string; task?: string; start?: true }
+  /** The recorder page took the one-shot start token (D9.4); clears only a matching token. */
+  | { type: "skillRecorderStartConsumed"; token: number }
   /** All chats (CHATS-FINDABILITY-DESIGN 3): every chat across bots and channels; a scope pre-sets its filter. */
   | { type: "showAllChats"; botId?: string; groupId?: string }
   /** Back from All chats to the chat that was open. */
@@ -1707,6 +1795,7 @@ export type Action =
   | { type: "instances"; instances: InstanceInfo[]; shellEnvironment?: ShellEnvironment | null; engineNote?: string; localOnlyEngines?: string[] }
   | { type: "configStatus"; config: ConfigStatus }
   | { type: "noLimitsTermsAccepted" }
+  | { type: "automaticNoticeAnswered" }
   | { type: "select"; id: string; threadId?: string }
   | {
       type: "send";
@@ -1737,6 +1826,8 @@ export type Action =
        * step on a send it had never heard back from.
        */
       noSteer?: boolean;
+      /** TEACH-ENTRY D9.2: the composer drew a Teach card for this send. */
+      teachCard?: true;
       onReceipt?: (receipt: HelpSendReceipt) => void;
       onIndexing?: () => void;
       onSent?: () => void;
@@ -1784,8 +1875,7 @@ export type Action =
       message?: string;
       /** Exact proposal hash displayed by a current learned-skill client. */
       reviewedSha256?: string;
-      /** HighLevel: the digest of the open review whose values this surface showed (HL-S2-WRITES (a)4). */
-      reviewDigest?: string;
+      reviewedVerdictHash?: string;
       seen?: { renderer: string; digest: string };
       /** remember this exact grant (the server's allowKey) for the bot, or a
        * several-action card's whole set (its allowKeys, Rule 78c) */
@@ -1810,7 +1900,7 @@ export type Action =
       botName?: string;
       /** Local UI recovery hook for voice flows. Never sent to the server.
        * A Face ID cancel arrives as ("", "cancelled"). */
-      onError?: (message: string, code?: import("../lib/fresh-auth").FreshAuthCode) => void;
+      onError?: (message: string, code?: import("../lib/fresh-auth").FreshAuthCode | import("../lib/fresh-auth").DeliveryCode) => void;
       /** Local UI hook: the answer was accepted by the server. Never sent. */
       onSuccess?: () => void;
       /** Local UI hook: the phone's device prompt opened (true) or closed (false). Never sent. */
@@ -1867,7 +1957,7 @@ export type Action =
   | ({ type: "threadDeltaApplied"; bot: BotAnnouncement & { threadDelta: { messages: Message[]; activeLeafId?: string | null } }; intent: number } & HttpOrigin)
   | { type: "renameTask"; botId: string; threadId: string; title: string }
   | { type: "pinTask"; botId: string; threadId: string; pinned: boolean }
-  | { type: "deleteTask"; botId: string; threadId: string }
+  | { type: "deleteTask"; botId: string; threadId: string; nextThreadId?: string }
   /** `profile`: hire in one sentence (UX-L6A part 2, src/lib/hire-defaults.ts). The engine is still the server's birth rule. */
   | { type: "newBot"; profile?: { name: string; description: string }; onSettled?: (error: unknown | null) => void }
   | { type: "botComputerNotice"; botId: string; message: string }
@@ -2293,11 +2383,20 @@ function withMascotMotion(
   };
 }
 
+function messageInTranscript(bot: Bot | undefined, id: string): Message | undefined {
+  return bot ? transcriptIndex(bot.messages).byId.get(id)?.message : undefined;
+}
+
+function patchTranscriptMessage(messages: Message[], id: string, patch: (message: Message) => Message): Message[] {
+  const position = transcriptIndex(messages).byId.get(id)?.position;
+  return position === undefined ? messages : replaceArrayItem(messages, position, patch(messages[position]!));
+}
+
 function patchCard(state: AppState, botId: string, messageId: string, patch: Partial<OptionCardData>): AppState {
   const apply = (m: Message) => (m.id === messageId && m.card ? { ...m, card: { ...m.card, ...patch } } : m);
   return updateBot(state, botId, (b) => ({
     ...b,
-    messages: b.messages.map(apply),
+    messages: patchTranscriptMessage(b.messages, messageId, apply),
     openCards: patchOpenCards(b.openCards, messageId, apply),
     cardsRev: (b.cardsRev ?? 0) + 1,
   }));
@@ -3143,8 +3242,12 @@ function settingsShownBotId(state: AppState): string | null {
   return (state.bots.find((bot) => bot.id === state.selectedId) ?? state.bots[0])?.id ?? null;
 }
 
+let skillRecorderStartSeq = 0;
+
 export function reducer(state: AppState, action: Action): AppState {
-  const next = reduceState(state, action);
+  let next = reduceState(state, action);
+  // TEACH-ENTRY D5 rule (b): the start token can only exist while the recorder is the view.
+  if (next.skillRecorderStart !== undefined && next.activeView !== "skill-recorder") next = { ...next, skillRecorderStart: undefined };
   return next === state ? next : withSidebarLines(state, next);
 }
 
@@ -3588,10 +3691,21 @@ function reduceState(state: AppState, action: Action): AppState {
       };
     case "closeAllChats":
       return state.activeView === "all-chats" ? { ...state, activeView: "chat", allChatsScope: undefined } : state;
-    case "showSkillRecorder":
+    case "showSkillRecorder": {
       if (isCloudOrigin() || !skillRecorderEnabled(state.config)) return state;
+      // D5: an entry with a bot sets it; an entry with none keeps it while the recorder is already open (F2), else clears it.
+      // A return (closeCalendar, healthReturn) keeps who and what exactly as they are.
+      const entry = action.via === "entry";
+      const skillRecorderFor = !entry ? state.skillRecorderFor
+        : action.forBotId ?? (state.activeView === "skill-recorder" ? state.skillRecorderFor : undefined);
+      const skillRecorderTask = entry ? action.task : state.skillRecorderTask;
+      // Rule (a): only an entry with start sets a fresh token; every other showSkillRecorder clears it.
+      const skillRecorderStart = entry && action.start === true ? ++skillRecorderStartSeq : undefined;
       return {
         ...state,
+        skillRecorderFor,
+        skillRecorderTask,
+        skillRecorderStart,
         activeView: "skill-recorder",
         settingsOpen: false,
         computerOpen: false,
@@ -3599,6 +3713,10 @@ function reduceState(state: AppState, action: Action): AppState {
         appSettingsOpen: false,
         pluginsOpen: false,
       };
+    }
+    case "skillRecorderStartConsumed":
+      // Rule (c): only the token the page read; a newer click's token survives a stale consume.
+      return state.skillRecorderStart === action.token ? { ...state, skillRecorderStart: undefined } : state;
     case "routinesHydrated":
       // A reply that slipped past its shape check keeps what is on screen (PHONE-HYDRATE-BAD-BODY).
       if (!Array.isArray(action.routines) || !Array.isArray(action.runs)) return state;
@@ -3711,6 +3829,8 @@ function reduceState(state: AppState, action: Action): AppState {
       };
     case "noLimitsTermsAccepted":
       return state.config?.noLimitsTerms ? { ...state, config: { ...state.config, noLimitsTerms: { accepted: true } } } : state;
+    case "automaticNoticeAnswered":
+      return state.config?.automaticNotice ? { ...state, config: { ...state.config, automaticNotice: { pending: false } } } : state;
     case "select": {
       // An id this client has neither a bot nor a group for (E1, 2026-09-28:
       // a companion selecting a bot⇄bot group the server never sent it) used
@@ -3739,7 +3859,7 @@ function reduceState(state: AppState, action: Action): AppState {
     // optimistic card settle; the server's message.patch confirms it later
     case "answerCard": {
       const bot = state.bots.find((candidate) => candidate.id === action.botId);
-      const card = (bot?.messages.find((message) => message.id === action.messageId) ?? bot?.openCards?.find((message) => message.id === action.messageId))?.card;
+      const card = (messageInTranscript(bot, action.messageId) ?? bot?.openCards?.find((message) => message.id === action.messageId))?.card;
       return withMascotMotion(
         patchCard(state, action.botId, action.messageId, {
           answered: action.answer,
@@ -3754,7 +3874,7 @@ function reduceState(state: AppState, action: Action): AppState {
       // A live question never vanishes on dismiss: it is skipped (the
       // engine is told at once) and the server's patch shows it as skipped.
       const owner = state.bots.find((bot) => bot.id === action.botId);
-      const card = (owner?.messages.find((message) => message.id === action.messageId) ?? owner?.openCards?.find((message) => message.id === action.messageId))?.card;
+      const card = (messageInTranscript(owner, action.messageId) ?? owner?.openCards?.find((message) => message.id === action.messageId))?.card;
       if (isQuestionCard(card)) return state;
       return patchCard(state, action.botId, action.messageId, { dismissed: true });
     }
@@ -3970,7 +4090,7 @@ function reduceState(state: AppState, action: Action): AppState {
       // back: a newer reply that won the race is past it. It does move the head
       // forward when it chains onto it (a create response folded the row in
       // while the head was still its parent): a child of the head is never older.
-      if (bot.messages.some((message) => message.id === action.message.id)) {
+      if (messageInTranscript(bot, action.message.id)) {
         const forward = (action.message.parentId ?? null) === (bot.activeLeafId ?? null) && action.message.id !== bot.activeLeafId;
         return forward ? updateBot(state, bot.id, (b) => ({ ...b, activeLeafId: action.message.id })) : state;
       }
@@ -3990,16 +4110,17 @@ function reduceState(state: AppState, action: Action): AppState {
         // turn artifact (settle-time screenshot) — the leaf must stay put,
         // or the follow-up send it raced would fall off the active branch.
         const adoptsLeaf = (action.message.parentId ?? null) === (b.activeLeafId ?? null);
-        let messages = [...b.messages, action.message];
+        let messages = appendArrayItem(b.messages, action.message);
         // base64 screen frames are big; a long computer-use session would
         // grow memory without bound. Keep the newest few frames' pixels and
         // strip the rest (the message row survives as a placeholder).
         if (action.message.kind === "screen") {
-          const withPng = messages.filter((m) => m.kind === "screen" && m.png);
+          const withPng = transcriptIndex(messages).screens;
           const excess = withPng.length - MAX_KEPT_SCREEN_FRAMES;
           if (excess > 0) {
-            const dropIds = new Set(withPng.slice(0, excess).map((m) => m.id));
-            messages = messages.map((m) => (dropIds.has(m.id) ? { ...m, png: undefined } : m));
+            for (const { message: old } of withPng.slice(0, excess)) {
+              messages = patchTranscriptMessage(messages, old.id, row => ({ ...row, png: undefined }));
+            }
           }
         }
         return { ...b, messages, activeLeafId: adoptsLeaf ? action.message.id : b.activeLeafId };
@@ -4043,7 +4164,7 @@ function reduceState(state: AppState, action: Action): AppState {
       }
       return updateBot(next, bot.id, (b) => ({
         ...b,
-        messages: b.messages.map((m) => (m.id === action.message.id ? action.message : m)),
+        messages: patchTranscriptMessage(b.messages, action.message.id, () => action.message),
         openCards: patchOpenCards(b.openCards, action.message.id, () => action.message),
         ...(b.patchedSinceOpen ? { patchedSinceOpen: [...b.patchedSinceOpen, action.message.id] } : {}),
         ...(action.message.kind === "options" ? { cardsRev: (b.cardsRev ?? 0) + 1 } : {}),
@@ -4189,6 +4310,12 @@ function reduceState(state: AppState, action: Action): AppState {
     case "appSettingsAnchorDone":
       return state.appSettingsAnchor === null ? state : { ...state, appSettingsAnchor: null };
     case "updateBot": {
+      // CHIEF-TRANSFER D2: while a workspace Chief exists the role only moves through a committed transfer, so the optimistic update never
+      // paints a Chief change the server will refuse (409 chief-transfer-required). The rest of the patch applies as before.
+      if (chiefTransferBlocksPatch(state.bots, action.botId, action.patch)) {
+        const { chiefOfStaff: _chief, chiefTier: _tier, hidden: _hidden, ...rest } = action.patch;
+        return Object.keys(rest).length === 0 ? state : reducer(state, { ...action, patch: rest });
+      }
       const mascotChanged =
         Object.prototype.hasOwnProperty.call(action.patch, "color") ||
         Object.prototype.hasOwnProperty.call(action.patch, "mascotExpression") ||
@@ -4615,7 +4742,11 @@ export const initialState: AppState = {
 };
 
 // ── API client ─────────────────────────────────────────────────────────
-export async function api(path: string, init?: RequestInit, busyTries: number = busyRetriesFor(init?.method)): Promise<any> {
+/** Reads asked again while another responder answers, one second apart. */
+const RECONNECT_TRIES = 8;
+const RECONNECT_RETRY_MS = 1000;
+
+export async function api(path: string, init?: RequestInit, busyTries: number = busyRetriesFor(init?.method), reconnectTries: number = RECONNECT_TRIES): Promise<any> {
   // Resolve the desktop proof before the first call rather than racing it.
   // Already known in the packaged app (the preload answered synchronously),
   // so this costs a microtask; in dev it is one loopback fetch, memoized.
@@ -4655,6 +4786,17 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
     // redirect would hand the launch secret to whatever it points at.
     redirect: "error",
   });
+  if (!responderIsOurs(res)) {
+    // Not our engine answering (another program on this port, or a launch this page has no proof for): its words are never shown and its body
+    // never applied. A read asks again while main moves the window to the engine (electron/server-follow.mjs); a write is not repeated, because
+    // it may have reached an engine that did not answer as ours.
+    const method = (init?.method ?? "GET").toUpperCase();
+    if ((method === "GET" || method === "HEAD") && reconnectTries > 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, RECONNECT_RETRY_MS));
+      return api(path, init, busyTries, reconnectTries - 1);
+    }
+    throw Object.assign(new Error(RECONNECTING_SENTENCE), { status: 503, reconnecting: true, body: { error: RECONNECTING_SENTENCE } });
+  }
   const body = normalizeAudienceWire(await res.json().catch(() => ({})));
   // Not proof on its own: a harness route answers 401 for a provider it
   // could not sign in to. The door's /session decides (lib/session-check.ts).
@@ -4682,7 +4824,7 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
     // Only that answer: any other 503 is a real failure and reaches the caller on the first try.
     if (busyTries > 1 && isDatabaseBusyAnswer(error)) {
       await new Promise<void>((resolve) => setTimeout(resolve, busyRetryDelayMs(error)));
-      return api(path, init, busyTries - 1);
+      return api(path, init, busyTries - 1, reconnectTries);
     }
     throw error;
   }
@@ -4792,6 +4934,8 @@ export type AudienceRegion = { regionId?: string; itemRevision?: number; speechD
  *
  * Adapted narrowly from OpenMausBot 31777c6c1e417d487e314fad3c1353f16c5264bd.
  */
+/** The live bubble's line for an assistant region the server withheld whole (the same words as the stored row: server/owner-display.ts REPLY_WITHHELD, fix/1020-redact2-n2). */
+export const LIVE_REPLY_WITHHELD = "Murage held back this message because it may repeat something that must stay hidden.";
 /** About 30 flushes a second: each one re-renders every stream consumer. */
 const STREAM_FLUSH_MS = 33;
 export function createStreamDeltaBuffer(
@@ -4837,10 +4981,14 @@ export function createStreamDeltaBuffer(
         const suppressed = audience.speechDisposition === "none" && delta.includes("«redacted»");
         if (previous?.suppressed) { previous.revision = audience.itemRevision!; return; }
         if (!previous && own.size >= 64) return;
-        const text = audience.op === "omit" ? "«redacted»"
+        const raw = audience.op === "omit" ? "«redacted»"
           : audience.op === "replace" ? delta : (previous?.text ?? "") + delta;
+        // 1.0.20 redact2-1020: an assistant region that is only the marker paints the plain line, never a bare «redacted» bubble while the
+        // bot works (the stored row replaces it when the item completes); an inline mask inside other words is kept as the server sent it.
+        const withheld = kind === "assistant_text" && raw.includes("«redacted»") && !raw.replaceAll("«redacted»", "").trim();
+        const text = withheld ? LIVE_REPLY_WITHHELD : raw;
         own.set(audience.regionId, { revision: audience.itemRevision!, text, suppressed: suppressed || audience.op === "omit" });
-        if (audience.op === "replace" || audience.op === "omit") {
+        if (audience.op === "replace" || audience.op === "omit" || withheld) {
           delta = [...own.values()].map((entry) => entry.text).join("");
           replacement = true;
         }
@@ -4985,6 +5133,8 @@ export function BrowserStoreProvider({ botId, children }: { botId: string; child
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 
+let attentionStreamGeneration = 0;
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const [selections] = useState(() => createStoreSubscriptions(state));
@@ -4996,7 +5146,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => { syncReplyContext(); }, [state.hydrated, state.selectedId, state.activeView, state.bots, state.groups]);
   // NOTIFY-EVERYWHERE-1019 S3: tell the router which conversation is on screen and whether this window has focus (changes only).
   useEffect(() => {
-    const report = () => reportAttentionVisible(visibleNotificationThread(stateRef.current), document.hasFocus() && document.visibilityState !== "hidden");
+    const report = () => reportAttentionVisible(visibleNotificationThread(stateRef.current), document.hasFocus() && document.visibilityState !== "hidden", undefined, notificationSoundsEnabled());
     report();
     window.addEventListener("focus", report);
     window.addEventListener("blur", report);
@@ -5077,7 +5227,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 api(`/api/bots/${entry.botId}/messages`, {
                   method: "POST",
                   signal,
-                  body: JSON.stringify(commandOutboxBody(entry) ?? { text: entry.text, replyToId: entry.replyToId, threadId: entry.threadId, sendId: entry.sendId, ...venuePostBody(entry), ...(entry.noSteer ? { noSteer: true, typedStop: false } : {}), ...(entry.resend ? { resend: true, ...(entry.restoreGen ? { restoreGen: entry.restoreGen } : {}), ...(entry.stopGen ? { stopGen: entry.stopGen } : {}), ...(entry.actionId ? { actionId: entry.actionId } : {}) } : {}) }),
+                  body: JSON.stringify(commandOutboxBody(entry) ?? { text: entry.text, replyToId: entry.replyToId, threadId: entry.threadId, sendId: entry.sendId, ...venuePostBody(entry), ...(entry.noSteer ? { noSteer: true, typedStop: false } : {}), ...(entry.teachCard ? { teachCard: true } : {}), ...(entry.resend ? { resend: true, ...(entry.restoreGen ? { restoreGen: entry.restoreGen } : {}), ...(entry.stopGen ? { stopGen: entry.stopGen } : {}), ...(entry.actionId ? { actionId: entry.actionId } : {}) } : {}) }),
                 }),
               );
         },
@@ -5527,6 +5677,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 ...venuePostBody(action),
                 ...(action.noSteer ? { noSteer: true, account: stateRef.current.config?.profile?.email } : {}),
                 ...(action.outboxDraft ? { draft: action.outboxDraft } : {}),
+                ...(action.teachCard ? { teachCard: true as const } : {}),
                 ...(action.resend ? { resend: true as const, ...(action.restoreGen ? { restoreGen: action.restoreGen } : {}), ...(action.stopGen ? { stopGen: action.stopGen } : {}), ...(action.actionId ? { actionId: action.actionId } : {}) } : {}),
                 at: Date.now(),
                 attempts: 0,
@@ -5616,46 +5767,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         }
         case "decideRequest": {
-          const requestHandle = action.card && "requestHandle" in action.card && typeof action.card.requestHandle === "string"
-            ? action.card.requestHandle : action.requestId;
-          // PROVISIONAL INTERFACE: existing task-grant and fresh-auth proof
-          // fields are transport metadata. The route must separate them before
-          // strict resolveDisplayAction validation, as it does legacy proofs.
-          const answer = /^p\.[A-Za-z0-9-]+$/.test(requestHandle) && (action.behavior === "allow" || action.behavior === "deny")
-            ? { ...permissionDisplayAction(requestHandle, action.behavior), ...(action.allowForTask ? { allowForTask: true } : {}) }
-            : {
-            requestId: action.requestId,
-            behavior: action.behavior,
-            message: action.message,
-            reviewedSha256: action.reviewedSha256,
-            ...(action.reviewDigest ? { reviewDigest: action.reviewDigest } : {}),
-            ...(action.seen ? { seen: action.seen } : {}),
-            ...(action.allowForTask ? { allowForTask: true } : {}),
-          };
           // SEC-006: an Allow from the phone may be met by a challenge; the
           // helper asks for Face ID and re-posts once. A deny or an answer is
           // never signed.
-          const { allowForTask, onTaskAdded } = action;
-          const respond = () =>
-            decideWithFreshAuth(
-              async (extra) => {
-                const body = await api(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) });
-                const highlevelId = highlevelReviewId(action.requestId);
-                if (highlevelId && (body?.outcome === "allowed-once" || body?.outcome === "rejected")) forgetHighLevelReview(highlevelId);
-                // UX-TRUST-MOMENTS-1012 1.3: the allowance this answer added, for the card's Undo
-                if (allowForTask && body?.outcome === "allowed-once") onTaskAdded?.(stringList(body.taskAdded));
-                return body;
-              },
-              {
-                threadId: action.threadId,
-                requestId: action.requestId,
-                decision: action.behavior === "allow" ? (action.allowForTask ? "allow-task" : "allow") : undefined,
-                card: action.card,
-                botName: action.botName,
-                onDevicePrompt: action.onDevicePrompt,
-              },
-              { onError: action.onError, onSuccess: action.onSuccess, showError },
-            );
+          const respond = () => postPermissionDecision(action, showError);
           // AMEND-13 Rule 81b (A13 C1 amendment): a remembered choice is
           // checked and staged BEFORE the answer releases the bot (it may ask
           // again within milliseconds), by the server, in the same request,
@@ -5796,15 +5911,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "answerCard": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
-          const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
+          const card = messageInTranscript(bot, action.messageId)?.card;
           if (card?.requestId) {
             const behavior = card.skillRequest
-              ? skillRequestBehavior(action.answer)
+              ? skillRequestBehavior(action.answer, card.skillRequest, card.options)
               // a held Post in… card (server/venue-post-held.ts): Post it is the owner's yes, Don't post a no
               : card.requestId.startsWith("venue-post-") ? (action.answer === "Post it" ? "allow" : "deny")
               : action.answer === "Allow" ? "allow" : action.answer === "Deny" ? "deny" : "answer";
             const requestId = card.requestId;
-            const reviewedSha256 = behavior === "allow" && card.skillRequest ? reviewedSkillSha256(card.skillRequest) : undefined;
+            const reviewedSha256 = behavior === "allow" && card.skillRequest ? (reviewedSkillSha256(card.skillRequest) ?? privateSkillReviewDigest(card.skillRequest, action.messageId)) : undefined;
             // An Allow goes through fresh authentication like every other
             // phone Allow; a deny or an answer is posted as it always was.
             void decideWithFreshAuth(
@@ -5816,6 +5931,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   behavior,
                   message: behavior === "answer" ? action.answer : undefined,
                   reviewedSha256,
+                  reviewedVerdictHash:card.skillRequest?.preview ? card.skillRequest.verdictHash : card.skillRequest ? privateSkillReviewVerdict(card.skillRequest,action.messageId) : undefined,
                   ...extra,
                 }),
               }),
@@ -5843,7 +5959,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "dismissCard": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
-          const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
+          const card = messageInTranscript(bot, action.messageId)?.card;
           if (card?.requestId) {
             // A question's X is an explicit skip the engine hears at once.
             // Sending "deny" to a question used to be refused, and the bot
@@ -6131,7 +6247,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // record already moved to it and waits for its snapshot), not by intent: the server's deletion frame, which precedes this
             // answer, is the server's own intent and moves it.
             const intent = requestPage(rawDispatch, stateRef.current, action.botId);
-            api(`/api/bots/${action.botId}/tasks/${action.threadId}`, { method: "DELETE" })
+            const next = action.nextThreadId === undefined ? "" : `?nextThreadId=${encodeURIComponent(action.nextThreadId)}`;
+            api(`/api/bots/${action.botId}/tasks/${action.threadId}${next}`, { method: "DELETE" })
               .then((r: any) => {
                 showDeletionNote(r);
                 const current = stateRef.current.bots.find(bot => bot.id === action.botId);
@@ -6282,7 +6399,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // out for (an edit, a switch to a sibling): they belong to the branch it
   // left, so the ones on this branch are fetched, once per head.
   const cardsBot = onScreen && "activeLeafId" in onScreen ? (onScreen as Bot) : null;
-  const cardsLeaf = cardsBot?.activeLeafId && cardsBot.openCardsLeaf && cardsBot.openCardsLeaf !== cardsBot.activeLeafId && !visibleMessages(cardsBot).some((m) => m.id === cardsBot.openCardsLeaf) ? cardsBot.activeLeafId : "";
+  const cardsLeaf = cardsBot?.activeLeafId && cardsBot.openCardsLeaf && cardsBot.openCardsLeaf !== cardsBot.activeLeafId
+    && !transcriptIndex(visibleMessages(cardsBot)).byId.get(cardsBot.openCardsLeaf) ? cardsBot.activeLeafId : "";
   const cardsThread = cardsBot?.threadId ?? "";
   const cardsRev = cardsBot?.cardsRev ?? 0;
   const fetchedCards = useRef("");
@@ -6451,7 +6569,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         key: "config",
         request: async () => {
           const config = configReply<ConfigStatus>(await api("/api/config"));
-          return () => { receiveLearningNoticeFrame({ kind: "config", learningFluxSent: config.learningFluxSent }); rawDispatch({ type: "configStatus", config }); };
+          return () => { rawDispatch({ type: "configStatus", config }); };
         },
       },
       {
@@ -6605,6 +6723,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let liveGen = 0;
     const pendingFrames: Array<{ frame: any; replayed: boolean; liveGen: number }> = [];
     let handleFrame: (frame: any, replayed?: boolean) => void;
+    let attentionGen = 0;
+    const forwardedAttention = new WeakSet<object>();
+    function forwardAttentionControl(frame: { kind: string; threadId?: unknown; requestId?: unknown; bot?: { id?: unknown } }) {
+      if (forwardedAttention.has(frame)) return;
+      if (frame.kind === "attention.settled") forwardAttentionSettled(frame);
+      else if (frame.kind === "config") forwardAttentionConfig();
+      else if (frame.kind === "bot") forwardAttentionBot(frame.bot?.id);
+      else return;
+      forwardedAttention.add(frame);
+    }
     // What is still owed for deleted conversations is asked for on every connect and reconnect: a notice raised while this
     // window was closed or disconnected is never broadcast again, and one that was settled meanwhile must go.
     const refreshOwed = () => {
@@ -6645,11 +6773,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // server replays what we missed when it can, and re-downloading every
     // transcript on a reconnect it already covered is pure waste.
     handleFrame = (frame, replayed = false) => {
-      receiveLearningNoticeFrame(frame);
+      forwardAttentionControl(frame);
       frame = normalizeAudienceWire(frame);
       if (frame.kind === "inbox.changed") { emitInboxChanged(frame.pollScale); return; }
-      if (frame.kind === "attention.settled") { forwardAttentionSettled(frame); return; }
-      if (frame.kind === "config") forwardAttentionConfig(); // a content-free signal; the handling below is unchanged
+      if (frame.kind === "attention.settled") return;
       // A memory the bot just kept (B5m): the open chat attaches its chip under the reply it came from.
       if (frame.kind === "learning.remembered" || frame.kind === "learning.improved") { window.dispatchEvent(new CustomEvent(REMEMBERED_EVENT, { detail: frame })); return; }
       // How many memories wait for the owner (counts only): the shared counts, the badge and the Memory screen move at once.
@@ -6709,10 +6836,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "message.patch":
           conversationCache()?.applyFrame(frame);
-          if (frame.message?.card?.answered || frame.message?.card?.dismissed) {
-            const reviewId = highlevelReviewId(frame.message.card.requestId);
-            if (reviewId) forgetHighLevelReview(reviewId);
-          }
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message, ...seqEnvelope(frame) });
           break;
         case "thread":
@@ -6762,7 +6885,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // the harness decided this was worth interrupting for; the toggle
         // in each bot's settings is what gates it, server-side
         case "notify":
-          if (frame.notification?.kind === "approval" && replayed) break;
+          if (dropReplayedNotify(frame.notification?.kind, replayed)) break;
           // A read-only start (boot tolerance D3): one fixed line in the owner's language, opens the Inbox where the same line and the restart button are.
           if (isDiskNotice(frame.notification)) {
             if (!replayed) showDiskNotice({ title: "Murage", body: t("ux.l2b.disk.readOnly") }, () => dispatch({ type: "showNeedsYou" }));
@@ -6823,6 +6946,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const event = frame.event;
           // Whether the thread's turn has ended keeps the mascot for the whole turn (turn-status.ts).
           noteTurnEvent(event);
+          // The star card counts days of use and whether the last turn went well; local only (lib/star-prompt.ts).
+          noteStarTurn(event, knownComputer(), replayed);
           if (event.type === "content.delta") {
             // Batch token deltas per animation frame (t3code-style): a fast
             // stream dispatches once per frame instead of once per token, so
@@ -6923,12 +7048,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         screens: phone ? false : undefined,
         taskDelta: true,
         cardsBeside: true,
-        onOpen: () => { rawDispatch({ type: "connected", value: true }); requestMemoryWake("RECONNECT"); refreshOwed(); deleteControl.current.kick(); },
+        onOpen: () => { attentionGen = ++attentionStreamGeneration; forwardAttentionResync(attentionGen); rawDispatch({ type: "connected", value: true }); requestMemoryWake("RECONNECT"); refreshOwed(); deleteControl.current.kick(); },
         onError: () => { chatsGenUnproven(); replyController.disconnect(); streamProof.live = false; rawDispatch({ type: "connected", value: false }); },
         onHello: (resumed, chatsGen) => { chatsGenHello(chatsGen); streamProof.live = resumed; },
         onConnection: identity => replyController.hello(identity.connectionId, identity.bootId),
         onCaughtUp: () => { syncReplyContext(hydrated); replyController.caughtUp(); },
         onSnapshotRequired: () => {
+          forwardAttentionResync(attentionGen);
           syncReplyContext(false);
           projectEvents.replayGap();
           clearTimeout(hydrationFallback);
@@ -6940,6 +7066,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return hydrate().then((loaded) => { if (loaded) streamProof.live = true; return loaded; });
         },
         onFrame: (frame, delivery) => {
+          forwardAttentionControl(frame);
           if (frame.kind === "chats.forgot") { if (frame.gen) chatsGenFrame(frame.gen, delivery?.replayed === true); return; }
           syncReplyContext(hydrated);
           replyController.receive(frame as unknown as Record<string, unknown>, delivery?.replayed === true);

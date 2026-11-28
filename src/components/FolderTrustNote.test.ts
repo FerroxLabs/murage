@@ -15,6 +15,7 @@ import { FolderTrustRow } from "./FolderTrustRow";
 import { folderTrustLabel, folderTrustNotice } from "@/lib/folder-trust";
 import { FOLDER_TRUST_STORED_NO_LINE, FOLDER_TRUST_STORED_NO_NAME, folderTrustDisplayName, folderTrustPassedName } from "../../shared/folder-trust";
 import { FolderTrustNoteView, folderTrustStatusKind, folderTrustStatusLabel, folderTrustVerdicts, type FolderTrustResult, type FolderTrustStatus } from "./FolderTrustNote";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
@@ -25,6 +26,15 @@ describe("a stored no in Fuigo's own store", () => {
     expect(folderTrustDisplayName(FOLDER_TRUST_STORED_NO_NAME)).toBe(FOLDER_TRUST_STORED_NO_LINE);
     const html = renderToStaticMarkup(createElement(FolderTrustRow, { kind: "storedNo", sources: "", botId: "b", threadId: "t", phone: false }));
     expect(html).toContain("left out because you said no");
+    expect(html).not.toContain("folder-trust-row-trust");
+  });
+});
+
+describe("a process-only automatic reply", () => {
+  it("automatic-reply-renders-transient-copy (W-T13): says it was allowed for this turn, never that the owner chose to trust", () => {
+    const html = renderToStaticMarkup(createElement(FolderTrustRow, { kind: "process", sources: "", botId: "b", threadId: "t", phone: false }));
+    expect(html).toContain("Folder settings allowed for this turn.");
+    expect(html).not.toContain("You chose to trust this folder");
     expect(html).not.toContain("folder-trust-row-trust");
   });
 });
@@ -127,7 +137,7 @@ describe("folderTrustVerdicts", () => {
 
 describe("where it is rendered", () => {
   const group = read("./GroupView.tsx");
-  const settings = read("./SettingsPanel.tsx");
+  const settings = settingsPanelSource();
   const note = read("./FolderTrustNote.tsx");
 
   it("a room passes its Fuigo members, chosen by the engine their selection runs on; a bot's settings pass the bot", () => {
@@ -138,7 +148,9 @@ describe("where it is rendered", () => {
 
   it("asks the server about each subject and forgets per subject, so a card's record under a bot's engine key is reached", () => {
     expect(note).toContain("Promise.all(subjects.map(query))");
-    expect(note).toContain("`/api/folder-trust?${target(id)}`, { method: \"DELETE\" }");
+    // MAIN RULING G2/F08: every Forget uses a returned exact key, even after the folder changes.
+    expect(note).toContain("folderTrustForgetKeyPath(target(subjects[0]?.id), key)");
+    expect(note).toContain("result.status.record?.key");
   });
 });
 
@@ -203,4 +215,18 @@ describe("the chip for a decline passed to Fuigo (S5a, U2)", () => {
 it("does not call an unstamped Murage record effective on generation 2", () => {
   const legacy = { gated: true, sources: ["AGENTS.md"], trustGeneration: 2, record: { decision: "trust", source: "picker", decidedAt: 1 } } as import("./FolderTrustNote").FolderTrustStatus;
   expect(folderTrustStatusLabel(legacy)).toBe("Trusted before Fuigo 1.0.35. Fuigo asks once more");
+});
+
+describe("the last turn line for withheld folder settings", () => {
+  const lastTurn = (reason: NonNullable<FolderTrustStatus["lastObserved"]>["reason"]) => {
+    const html = render([result("Fuigo", { lastObserved: { kind: "configuration-withheld", reason, revision: "r1" } })]);
+    const line = /data-testid="folder-trust-last-turn">(.*?)<\/div>/su.exec(html)?.[1] ?? "";
+    return line.replace(/<[^>]*>/gu, "").replace(/\s+/gu, " ").trim();
+  };
+
+  it("names a real reason and adds nothing for reason none, never a raw key", () => {
+    expect(lastTurn("unsafe-key")).toBe("Last turn: Folder settings withheld. The folder key is not valid.");
+    expect(lastTurn("none")).toBe("Last turn: Folder settings withheld.");
+    expect(lastTurn(undefined)).toBe("Last turn: Folder settings withheld.");
+  });
 });

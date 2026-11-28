@@ -1,6 +1,7 @@
 import { Crown, User, UserRound, Users } from "lucide-react";
 
 import { botRole, botRolePatch, BOT_ROLE_TITLE, type BotRole } from "@/lib/bot-role";
+import { chiefTransferRoute, openChiefTransfer } from "@/lib/chief-transfer";
 import { useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { formerChiefOutcome } from "../../shared/chief-handover";
@@ -120,6 +121,9 @@ export function BotRoleControl({ bot, canCoordinate }: { bot: Bot; canCoordinate
 
   const select = (next: BotRole) => {
     if (next === role) return;
+    // CHIEF-TRANSFER D2: while a workspace Chief exists the role only moves through the transfer sheet; no PATCH is sent from here
+    const route = chiefTransferRoute(state.bots, bot, next);
+    if (route) { openChiefTransfer(route); return; }
     dispatch({ type: "updateBot", botId: bot.id, patch: botRolePatch(next) });
   };
 

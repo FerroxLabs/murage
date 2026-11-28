@@ -1,12 +1,13 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {mkdtempSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {writeAppDenial} from './app-fixture.mjs';
 import {describe} from '../../server/decision/action.ts';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 test('the inert app tool traverses the real connected-app denial classification',()=>{
  const action=describe({tool:'mcp__fixture__connected_app_write',input:{toolkit:'gmail',tool_slug:'GMAIL_SEND_EMAIL',accountId:'fixture-account',text:'fixture'}});
  assert.deepEqual(action.targets,[{kind:'connected-app',toolkit:'gmail',tool:'GMAIL_SEND_EMAIL',accountId:'fixture-account',op:'write'}]);
@@ -18,7 +19,7 @@ test('saved app denial represents both denied and revoked fixtures',()=>{
   writeAppDenial(root,'fixture',source);
   const [bot]=JSON.parse(readFileSync(join(root,'bots.json'),'utf8'));
   assert.equal(bot.connectedAppAccess.denials[0].source,source);assert.equal(bot.connectedAppAccess.mode,'restricted');assert.deepEqual(bot.connectedAppAccess.grants,[]);
- }}finally{rmSync(root,{recursive:true,force:true});}
+ }}finally{safeWipeSync(root);}
 });
 test('inert MCP exposes exact field write and connected-app tools, never executes input',()=>{
  const root=mkdtempSync(join(tmpdir(),'gnl-app-mcp-')),capture=join(root,'capture');
@@ -31,5 +32,5 @@ test('inert MCP exposes exact field write and connected-app tools, never execute
   assert.deepEqual(replies[1].result.tools.map(t=>t.name).sort(),['connected_app_write','write']);
   assert.equal(replies[2].result.isError,false);assert.equal(replies[3].result.isError,false);
   assert.equal(readFileSync(capture,'utf8').trim().split('\n').length,2);
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });

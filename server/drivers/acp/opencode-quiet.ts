@@ -91,7 +91,27 @@ export class OpenCodeQuiet {
   }
 }
 
+const LABELS: Record<OpenCodeFailure, string> = { authentication: "an authentication failure", rate_limit: "a rate limit", unavailable: "an unavailable provider", tool_count: "a tool-count limit" };
+export function openCodeFailureLabel(category: OpenCodeFailure): string { return LABELS[category]; }
+
 export function openCodeQuietLine(category: OpenCodeFailure, quietMs: number): string {
-  const labels: Record<OpenCodeFailure, string> = { authentication: "an authentication failure", rate_limit: "a rate limit", unavailable: "an unavailable provider", tool_count: "a tool-count limit" };
-  return `OpenCode reported ${labels[category]}. No reply for ${Math.max(60, Math.floor(quietMs / 1000))} seconds.`;
+  return `OpenCode reported ${openCodeFailureLabel(category)}. No reply for ${Math.max(60, Math.floor(quietMs / 1000))} seconds.`;
+}
+
+/** Exit card for an OpenCode exit before the result. Reads only the {"type":"opencode_failure","category"} lines that
+ * capturedEngineStderr produces; any other input keeps the generic engineClosedLine (undefined). */
+export function openCodeExitNote(captured: string): string | undefined {
+  const labels: string[] = [];
+  for (const line of captured.split("\n")) {
+    if (!line) continue;
+    let record: unknown;
+    try { record = JSON.parse(line); } catch { return; }
+    const { type, category } = (record ?? {}) as { type?: unknown; category?: unknown };
+    if (type !== "opencode_failure" || typeof category !== "string" || !Object.hasOwn(LABELS, category)) return;
+    const label = openCodeFailureLabel(category as OpenCodeFailure);
+    if (!labels.includes(label)) labels.push(label);
+  }
+  if (!labels.length) return;
+  const last = labels.pop()!;
+  return `OpenCode closed before replying. It reported ${labels.length ? `${labels.join(", ")} and ${last}` : last}.`;
 }

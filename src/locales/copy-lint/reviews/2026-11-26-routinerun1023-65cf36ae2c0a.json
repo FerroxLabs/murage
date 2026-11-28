@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "cl-routine1023",
+  "date": "2026-11-26",
+  "base": "d11e43d8c6",
+  "scope": "routine Ran once label (8 locales)",
+  "strings": {
+    "en:ux.l5b.when.ranOnce": {
+      "text": "Ran once",
+      "en": "Ran once",
+      "verdict": "pass",
+      "note": "Reads as a once-routine that has already fired; plain, correct grammar."
+    },
+    "de:ux.l5b.when.ranOnce": {
+      "text": "Einmal ausgeführt",
+      "en": "Ran once",
+      "verdict": "pass",
+      "note": "Reads as a once-routine that has already fired; plain, correct grammar."
+    },
+    "es:ux.l5b.when.ranOnce": {
+      "text": "Ejecutada una vez",
+      "en": "Ran once",
+      "verdict": "pass",
+      "note": "Reads as a once-routine that has already fired; plain, correct grammar."
+    },
+    "fr:ux.l5b.when.ranOnce": {
+      "text": "Exécutée une fois",
+      "en": "Ran once",
+      "verdict": "pass",
+      "note": "Reads as a once-routine that has already fired; plain, correct grammar."
+    },
+    "hi:ux.l5b.when.ranOnce": {
+      "text": "एक बार चली",
+      "en": "Ran once",
+      "verdict": "pass",
+      "note": "Reads as a once-routine that has already fired; plain, correct grammar."
+    },
+    "ja:ux.l5b.when.ranOnce": {
+      "text": "1回実行済み",
+      "en": "Ran once",
+      "verdict": "pass",
+      "note": "Reads as a once-routine that has already fired; plain, correct grammar."
+    },
+    "pt-br:ux.l5b.when.ranOnce": {
+      "text": "Executada uma vez",
+      "en": "Ran once",
+      "verdict": "pass",
+      "note": "Reads as a once-routine that has already fired; plain, correct grammar."
+    },
+    "zh:ux.l5b.when.ranOnce": {
+      "text": "已运行一次",
+      "en": "Ran once",
+      "verdict": "pass",
+      "note": "Reads as a once-routine that has already fired; plain, correct grammar."
+    }
+  },
+  "files": {}
+}

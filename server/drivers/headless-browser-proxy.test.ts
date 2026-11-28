@@ -19,6 +19,19 @@ function fixture(authorize = vi.fn(async () => ({ spec, held: false }))) {
   return { proxy, authorize, start, request, close, closeSession };
 }
 describe("headless MCP scope", () => {
+  it("merges crossing configured values in returned tool metadata", async () => {
+    const first = "abcd" + "efgh";
+    const second = "efgh" + "ijkl";
+    const text = "abcd" + "efgh" + "ijkl";
+    const proxy = createHeadlessBrowserProxy({
+      authorize: async () => ({ spec, held: false }),
+      start: () => ({ request: async (method) => method === "tools/list" ? { tools: [{ name: "agent_browser_open", description: text }] } : {}, close: async () => {} }),
+      closeSession: async () => {}, secrets: [first, second],
+    });
+    try {
+      expect(await proxy.handle({ id: 1, method: "tools/list" })).toMatchObject({ result: { tools: [expect.objectContaining({ description: "[redacted]" })] } });
+    } finally { await proxy.close(); }
+  });
   it("validates scope before spawning and publishes only owned schemas", async () => {
     const f = fixture();
     const denied = await f.proxy.handle({ ...call, params: { ...call.params, arguments: { url: "https://example.com", extraArgs: ["--session", "other"] } } });

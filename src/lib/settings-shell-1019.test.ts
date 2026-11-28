@@ -9,8 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import en from "@/locales/en.json";
 import lazyEn from "@/locales/en-settings/settings.json";
-import { BROWSE_BOTS_ROUTE, SECTION_ALIASES, SECTION_PAGES, SETTINGS_PAGE_GROUPS, isSimpleTarget, resolveSettingsSection, settingsPageGroup, simplePages } from "./settings-pages";
-import { SETTINGS_SECTIONS, normalizeSettingsSection, sectionsForSurface } from "./settings-sections";
+import { BROWSE_BOTS_ROUTE, LIST_PAGES, SECTION_ALIASES, SECTION_PAGES, SETTINGS_PAGE_GROUPS, isSimpleTarget, resolveSettingsSection, settingsPageGroup, simplePages } from "./settings-pages";
+import { SETTINGS_SECTIONS, normalizeSettingsSection, sectionsForSurface, settingsPageLabel } from "./settings-sections";
 import { initializeSettingsMode, SETTINGS_FOLD_SEEN_KEY, SETTINGS_MODE_KEY, noteAdvancedFoldOpened, resetSettingsModeForTest, setSettingsMode, settingsMode, subscribeSettingsMode } from "./settings-mode";
 import { pageCardProblems, visibleCards, type SettingsPageCard } from "./settings-page-contract";
 import { SIDEBAR_BOT_ROWS, browsableBots, sidebarBots } from "./settings-shell-bots";
@@ -22,30 +22,33 @@ import { settingsCardProblems } from "./settings-cards";
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 const words = { ...en, ...lazyEn } as Record<string, string>;
 
-describe("the 13 sidebar pages and Messaging tab", () => {
+describe("the 17 v10 rail pages (the 13 of 1.0.19 plus Overview, Bots, Rules, Tools and Messaging)", () => {
   it("keeps the page order with Messaging inside Apps, Each bot having rows and no page", () => {
     expect(SETTINGS_PAGE_GROUPS).toEqual(["you", "bots", "allBots", "ai", "reach", "app"]);
     expect(SECTION_PAGES.map((page) => `${page.group}:${page.id}`)).toEqual([
-      "you:general", "you:calls",
-      "allBots:botDefaults", "allBots:skills", "allBots:memory",
+      "you:overview", "you:general", "you:calls",
+      "allBots:bots", "allBots:rules", "allBots:tools", "allBots:skills", "allBots:memory",
       "ai:models", "ai:webSearch",
-      "reach:connections", "reach:computer", "reach:companion",
+      "reach:connections", "reach:messaging", "reach:computer", "reach:companion",
       "app:backups", "app:usage", "app:about",
     ]);
-    expect(SECTION_PAGES).toHaveLength(13);
+    expect(SECTION_PAGES).toHaveLength(17);
     expect(SECTION_PAGES.some((page) => page.group === "bots")).toBe(false);
     expect(settingsPageGroup("computer")).toBe("reach");
   });
 
   it("name their headings and pages in plain words", () => {
-    const label = (key: string) => words[key];
+    // Overview, Bots and Tools carry plain English in lib/settings-sections.ts (no locale key yet), read through the same functions the rail uses.
+    const label = (key: string) => words[key] ?? settingsPageLabel(key.split(".").pop() as never);
+    // Rules and Messaging keep the older pages' words (and their translations); Overview, Bots and Tools are in the lazy pack.
+    const keyOf = (kind: "page" | "pageNote", id: string) => id === "rules" ? `settings.${kind}.botDefaults` : id === "messaging" ? `settings.${kind}.channels` : `settings.${kind}.${id}`;
     expect(SETTINGS_PAGE_GROUPS.map((group) => label(`settings.group.${group}`))).toEqual(["You", "Each bot", "All bots", "Models and tools", "Connections", "App"]);
-    expect(SECTION_PAGES.map((page) => label(`settings.page.${page.id}`))).toEqual([
-      "General", "Calls", "How every bot behaves", "Skills", "Memory", "Models & engines", "Search, images and dictation",
-      "Connected apps", "Computer & browser", "Phone and other devices", "Backups", "Usage", "About & help",
+    expect(SECTION_PAGES.map((page) => label(keyOf("page", page.id)))).toEqual([
+      "Overview", "General", "Calls", "Bots", "How every bot behaves", "Tools", "Skills", "Memory", "Models & engines", "Search, images and dictation",
+      "Connected apps", "Messaging apps", "Computer & browser", "Phone and other devices", "Backups", "Usage", "About & help",
     ]);
     for (const group of SETTINGS_PAGE_GROUPS) expect(label(`settings.groupNote.${group}`), group).toBeTruthy();
-    for (const page of SECTION_PAGES) expect(label(`settings.pageNote.${page.id}`), page.id).toBeTruthy();
+    for (const page of SECTION_PAGES) expect(label(keyOf("pageNote", page.id)), page.id).toBeTruthy();
     expect(label("settings.page.browseBots")).toBe("Browse bots");
   });
 
@@ -55,7 +58,7 @@ describe("the 13 sidebar pages and Messaging tab", () => {
       if (id === BROWSE_BOTS_ROUTE) continue;
       expect(pages.has(resolveSettingsSection(id).section), id).toBe(true);
     }
-    expect(Object.keys(SECTION_ALIASES).sort()).toEqual(["aboutMe", "channels", "engines", "experimental", "houseRules", "images", "storage", "voice"]);
+    expect(Object.keys(SECTION_ALIASES).sort()).toEqual(["aboutMe", "botDefaults", "channels", "engines", "experimental", "houseRules", "images", "providers", "storage", "voice"]);
     expect(resolveSettingsSection("computer")).toEqual({ section: "computer", anchor: null });
     expect(resolveSettingsSection("calls")).toEqual({ section: "calls", anchor: null });
     expect(resolveSettingsSection("images")).toEqual({ section: "webSearch", anchor: "image-settings-heading" });
@@ -64,12 +67,12 @@ describe("the 13 sidebar pages and Messaging tab", () => {
   });
 
   it("shows the Simple pages, including Browser access and phone pairing in their canonical homes", () => {
-    expect(simplePages()).toEqual(["general", "models", "connections", "computer", "companion", "backups", "usage", "about"]);
+    expect(simplePages()).toEqual(["overview", "general", "models", "connections", "messaging", "computer", "companion", "backups", "usage", "about"]);
     expect(isSimpleTarget("computer")).toBe(true);
     expect(isSimpleTarget("companion")).toBe(true);
     expect(isSimpleTarget("general")).toBe(true);
     expect(isSimpleTarget("memory")).toBe(false);
-    expect(isSimpleTarget("houseRules")).toBe(false); // an alias lands on botDefaults
+    expect(isSimpleTarget("houseRules")).toBe(false); // an alias lands on Rules
     expect(isSimpleTarget("aboutMe")).toBe(true); // an alias lands on General
     expect(isSimpleTarget(BROWSE_BOTS_ROUTE)).toBe(true);
   });
@@ -77,7 +80,7 @@ describe("the 13 sidebar pages and Messaging tab", () => {
   it("admits Calls, a read-only Models and Apps on a phone while Browse bots and computer stay desktop-only", () => {
     // LOCKED 2.4 (G9 gap check H3): a phone gets Calls and Models & engines (read-only) as pages.
     const phone = sectionsForSurface(SECTION_PAGES, false).map((page) => page.id);
-    expect(phone).toEqual(["general", "calls", "models", "connections", "usage", "about"]);
+    expect(phone).toEqual(["overview", "general", "calls", "models", "connections", "messaging", "usage", "about"]);
     expect(SETTINGS_SECTIONS.find((entry) => entry.id === BROWSE_BOTS_ROUTE)?.desktopOnly).toBe(true);
   });
 });
@@ -162,15 +165,15 @@ describe("the page contract", () => {
     const on = (page: string) => SETTINGS_CARDS.filter((entry) => entry.section === page).map((entry) => entry.id);
     expect(on("computer")).toEqual(["companion.browser", "companion.script-access", "companion.vps", "companion.computer"]);
     expect(on("companion")).toEqual(["companion.pairing"]);
-    expect(on("calls")).toEqual(["calls.calls"]);
+    expect(on("calls")).toEqual(["calls.calls", "connections.phone-calls"]);
     expect(on("general")[0]).toBe("general.mode");
     expect(SETTINGS_CARDS.find((entry) => entry.id === "general.mode")).toMatchObject({ anchor: "advanced-mode-heading", surface: "any" });
-    for (const page of SECTION_PAGES) expect(on(page.id).length, page.id).toBeGreaterThan(0);
+    for (const page of SECTION_PAGES) if (!LIST_PAGES.includes(page.id)) expect(on(page.id).length, page.id).toBeGreaterThan(0);
   });
 
-  it("lists page loaders one per line, alphabetical, none yet, so builders never touch the same line", () => {
+  it("lists page loaders one per line, in rail order, so builders never touch the same line", () => {
     const source = read("../components/settings/page-registry.tsx");
-    expect(source).toContain("export const SETTINGS_PAGE_LOADERS");
+    expect(source).toContain("export const SETTINGS_V10_PAGE_LOADERS");
     expect(source).toContain("export function SettingsPageMount");
     expect(source).toContain("export const hasPageFile");
   });

@@ -185,6 +185,20 @@ export function searchHelp(query: string, options: HelpSearchOptions = {}): Help
   return results.slice(0, Math.min(Math.max(options.limit ?? 3, 1), 5));
 }
 
+// OPTIONAL HIGHLEVEL (Sean, 1.0.20): HighLevel is never suggested to anyone who did not ask for it. A bot's help search
+// returns sections that name HighLevel only when the question names it; otherwise they are left out, so a question about
+// contacts or a CRM never comes back as "connect HighLevel". The owner's own help panel is unchanged.
+const NAMES_HIGHLEVEL = /high\s*level|leadconnector/i;
+
+/** searchHelp for a bot (murage_help): the HighLevel sections only for a question that names HighLevel. */
+export function searchHelpForBot(query: string, options: HelpSearchOptions = {}): HelpResult[] {
+  if (NAMES_HIGHLEVEL.test(query)) return searchHelp(query, options);
+  const limit = Math.min(Math.max(options.limit ?? 3, 1), 5);
+  return searchHelp(query, { ...options, limit: 5 })
+    .filter((result) => !NAMES_HIGHLEVEL.test(`${result.id}\n${result.title}\n${result.heading ?? ""}\n${result.where}\n${result.text}`))
+    .slice(0, limit);
+}
+
 function rank(
   index: ReturnType<typeof buildIndex>,
   tokens: readonly string[],

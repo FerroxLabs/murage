@@ -1,4 +1,5 @@
 import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
+import { sealedForShutdown, trackFileWorker } from "../shutdown-seal.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -16,6 +17,7 @@ import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // checkpoint that cuts the write-ahead log back (never waiting on a lock),
 // and incremental vacuum where the file allows it. No step changes what any
 // set holds: a converted set keeps its members and its content address.
+import { adoptWorker, writeSetGuardCall } from "./wake.ts";
 import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import { readTimeRetired } from "./read-time-retired.ts";
 import { statSync, statfsSync } from "node:fs";
@@ -25,7 +27,7 @@ import { Worker } from "node:worker_threads";
 import { settleWal } from "../wal-maintenance.ts";
 import { integrityFlags } from "./integrity-flags.ts";
 import { lineageRepairPending } from "./schema.ts";
-import { reclaimVacuumWaiting, nextReclaimStep, reclaimApplies, reclaimCertified, reclaimShortOfDisk, rootSetReclaimStatus } from "./root-set-reclaim.ts";
+import { reclaimVacuumWaiting, readTimeJudgeRetired, nextReclaimStep, reclaimApplies, reclaimCertified, reclaimShortOfDisk, rootSetReclaimStatus } from "./root-set-reclaim.ts";
 import { ensureRootSetWorklist, ROOT_SET_WORKLIST_TABLE } from "./upgrade-app-tables.ts";
 import { verifyDerivedRows } from "../branch-index.ts";
 
@@ -99,7 +101,7 @@ export function lineageStorageStatus(db: DatabaseSync): LineageStorageStatus {
     try { step = nextReclaimStep(db).kind; } catch { /* an unreadable file offers nothing */ }
     const base = { total: 0, done: 0, freeBytes, walBytes, legacyIndexPending: legacyIndexPending(db) };
     if (step === "done") return { state: "idle", percent: 100, ...base };
-    if (!reclaimCertified(db)) return { state: "waiting", reason: "checking", percent: 0, ...base };
+    if (!reclaimCertified(db) || !readTimeJudgeRetired()) return { state: "waiting", reason: "checking", percent: 0, ...base };
     if (markerJobsWaiting(db)) return { state: "waiting", reason: "marker", percent: 0, ...base };
     if (reclaimVacuumWaiting()) return { state: "waiting", reason: "vacuum-idle", percent: 90, ...base };
     if (reclaimShortOfDisk(db)) return { state: "waiting-for-disk", percent: 0, ...base, message: WAITING_MESSAGE };
@@ -616,6 +618,7 @@ let db;
 try {
   db = new DatabaseSync(workerData.file);
   db.exec("PRAGMA busy_timeout=60000");
+  ${writeSetGuardCall("root-set-compaction")}
   const number = (name) => { const row = db.prepare("PRAGMA " + name).get(); return row ? Number(Object.values(row)[0] || 0) : 0; };
   db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   db.exec("DROP INDEX IF EXISTS " + workerData.index);
@@ -662,9 +665,12 @@ export function reclaimLineageSpaceInWorker(db: DatabaseSync, options: StartupSt
       } else { result.skippedForDisk = true; diskShort.add(db); console.warn(`[memory] the space hand-back was skipped (${message ?? "unknown"}); it can be tried again`); }
       resolve(result);
     };
+    if (sealedForShutdown()) { resolve(result); return; } // the worker opens the file by name: not after the shutdown close
     try {
       options.hold?.(true);
       const worker = new Worker(windowsHidePrelude + RECLAIM_WORKER_SOURCE, { eval: true, workerData: { file, index: LEGACY_MEMBER_INDEX, minBytes: options.reclaimMinBytes ?? RECLAIM_MIN_BYTES, fraction: options.reclaimFraction ?? 0.2 } });
+      adoptWorker(worker, "root-set-compaction");
+      trackFileWorker(worker);
       worker.on("message", (message: { ok: boolean; vacuumed?: boolean; message?: string }) => finish(message.ok, Boolean(message.vacuumed), message.message));
       worker.on("error", (error: Error) => finish(false, false, error.message));
       worker.on("exit", () => finish(false, false, "the worker ended early"));
@@ -700,6 +706,15 @@ export interface StorageMaintenanceOptions {
 }
 /** Slices of root-set collection one background pass may take. */
 export const MAINTAIN_SLICES = 40;
+/** 1.0.22 q1022-sqlite (HIDDEN-COST: each 30 s idle sweep ran up to 64 incremental_vacuum(512) commits for any free page, and moving pages to the
+ * end writes 2-3x what is freed): the idle sweep hands free pages back only once they are this share of the file or this many bytes. Below it
+ * SQLite reuses them for the next rows. Freed pages are already zeroed by secure_delete=ON (database.ts), so a kept free page keeps no text. */
+export const VACUUM_MIN_FREE_FRACTION = 0.05;
+export const VACUUM_MIN_FREE_BYTES = 64 * 1024 * 1024;
+function freeWorthHandingBack(db: DatabaseSync): boolean {
+  const free = pragmaNumber(db, "freelist_count"), pages = pragmaNumber(db, "page_count");
+  return free > 0 && (free >= pages * VACUUM_MIN_FREE_FRACTION || free * pragmaNumber(db, "page_size") >= VACUUM_MIN_FREE_BYTES);
+}
 const pause = (ms: number) => new Promise<void>(resolve => { const timer = setTimeout(resolve, ms); timer.unref?.(); });
 
 /** One background pass (the memory worker's idle sweep): only short writes,
@@ -718,7 +733,7 @@ export async function maintainLineageStorage(options: StorageMaintenanceOptions)
     await pause(pauseMs);
   }
   let db = options.database();
-  if (!stop() && pragmaNumber(db, "auto_vacuum") === 2) {
+  if (!stop() && pragmaNumber(db, "auto_vacuum") === 2 && freeWorthHandingBack(db)) {
     let rounds = 0;
     while (!stop() && pragmaNumber(db, "freelist_count") > 0 && rounds++ < 64) {
       db.exec("PRAGMA incremental_vacuum(512)");

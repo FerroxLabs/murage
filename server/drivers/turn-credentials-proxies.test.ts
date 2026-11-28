@@ -15,7 +15,7 @@ import { createTurnCredentialStore } from "./turn-credentials.ts";
 interface ProxyCase { name: string; file: string; args?: string[]; server: string; envVar: string; env?: Record<string, string>; urlEnv: string; method: string; params: unknown }
 
 const cases: ProxyCase[] = [
-  { name: "agents", file: "./agents-proxy.ts", server: "murage-agents", envVar: "MURAGE_COMMS_TOKEN", urlEnv: "MURAGE_HARNESS_URL", env: { MURAGE_BOT_ID: "b1", MURAGE_THREAD_ID: "t1", MURAGE_TURN_DEPTH: "0" }, method: "tools/call", params: { name: "web_search", arguments: { query: "x" } } },
+  { name: "agents", file: "./agents-proxy.ts", server: "murage-agents", envVar: "MURAGE_COMMS_TOKEN", urlEnv: "MURAGE_HARNESS_URL", env: { MURAGE_BOT_ID: "b1", MURAGE_THREAD_ID: "t1" }, method: "tools/call", params: { name: "web_search", arguments: { query: "x" } } },
   { name: "browser", file: "./browser-proxy.ts", server: "murage-browser", envVar: "MURAGE_BROWSER_TOKEN", urlEnv: "MURAGE_BROWSER_URL", env: { MURAGE_BOT_ID: "b1" }, method: "tools/call", params: { name: "browser_navigate", arguments: { url: "https://example.com" } } },
   { name: "memory", file: "./memory-proxy.ts", server: "murage-memory", envVar: "MURAGE_MEMORY_TOKEN", urlEnv: "MURAGE_HARNESS_URL", method: "tools/call", params: { name: "memory_search", arguments: { query: "a" } } },
   { name: "remote-mcp", file: "./remote-mcp-proxy.ts", args: ["--server", "comfy"], server: "murage-remote-comfy", envVar: "MURAGE_MCP_TOKEN", urlEnv: "MURAGE_HARNESS_URL", method: "tools/list", params: {} },

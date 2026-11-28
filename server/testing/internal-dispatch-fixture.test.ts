@@ -9,6 +9,18 @@ import { internalDispatchAuthorityFixture } from './internal-dispatch-fixture.ts
 const fixtures: ReturnType<typeof consumingFixture>[] = [];
 afterEach(async () => { await clearInternalAuthorityFixtures(); for (const f of fixtures.splice(0)) f.close(); });
 
+it.each([false, true])('SFX-CUSTODY persists a dispatch seed in the fixture database (template=%s)', async internalSchema => {
+  const f = consumingFixture(undefined, { empty: true, internalSchema }); fixtures.push(f);
+  const { botId, threadId, dispatchGeneration: generation } = f.binding.identity;
+  const capabilities = new InternalCapabilities();
+  capabilities.begin(botId, threadId, generation, threadHumanPrincipal(threadId, f.f.db));
+  const message = { role: 'bot', kind: 'text', text: 'Fixture reply' } as const;
+  const id = 'fixture-reply';
+  const stored = internalDispatchAuthorityFixture(f, capabilities, { messages: [{ threadId, id, message }] }).then(() =>
+    f.f.db.prepare("SELECT json_extract(json, '$.text') AS text FROM messages WHERE thread_id=? AND id=?").get(threadId, id));
+  expect(await stored.catch((error: unknown) => error), `dispatch fixture template=${internalSchema}`).toEqual({ text: message.text });
+});
+
 it.each(['owner', 'unknown', 'guest', 'stale'] as const)('SFX-SETUP genuine capability with %s provenance retains its own authority', async origin => {
   const f = consumingFixture(undefined, { empty: true, botId: 'setup-bot', threadId: 'setup-thread' }); fixtures.push(f);
   const { botId, threadId, dispatchGeneration: generation } = f.binding.identity;

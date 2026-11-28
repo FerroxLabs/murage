@@ -215,3 +215,21 @@ it.each(["fetch", "playback"])("native budget closing survives unmount and stops
     real.stop(); stop.mockReset(); output.mockReset(); play.mockRestore(); teardown.mockRestore();
   }
 });
+
+it("ends a direct call with a connection error on unknown stream admission", async () => {
+  h.streamBudget = false;
+  const bot: any = { id: "fixture-bot", name: "Bot", threadId: "t", messages: [], tasks: [], busy: false };
+  startCall(bot.id);
+  render = () => CallView({ bot, collapsed: true });
+  await flush();
+  const starts = h.start.mock.calls.length;
+  h.micEnd({ code: 1, reason: "call_admission_unknown" });
+  expect(currentCall()).toBeNull();
+  expect(callBudgetEnded()).toBeNull();
+  expect(h.close).toHaveBeenCalled();
+  expect(h.dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "interrupt" }));
+  expect(h.dispatch).toHaveBeenCalledWith({ type: "error", message: "Flux is temporarily unavailable" });
+  await flush();
+  expect(h.start).toHaveBeenCalledTimes(starts);
+  expect(h.speak).not.toHaveBeenCalled();
+});

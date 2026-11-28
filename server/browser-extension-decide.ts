@@ -32,6 +32,8 @@ export interface DecideInput {
   clipboard?: boolean;
   /** The floor on the facts of the moment: null = nothing found; undefined (never checked) is the floor. */
   floor: FloorResult | null | undefined;
+  /** PAYFULL A6: the owner-approved pay/terms card's pass for this one call (kind and rule); see LevelInput.floorPass. */
+  floorPass?: { floor: string; rule: string };
   operation: string;
   key?: string;
   facts: LevelFacts;
@@ -104,14 +106,15 @@ export async function decide(input: DecideInput, deps: DecideDeps = REAL): Promi
     if (input.clipboard === true) return refuse("clipboard", "clipboard", "Pasting, copying and select-all are not available in the owner's browser.");
     trace.push("floor");
     const given = input.floor;
-    if (given === undefined || (given !== null && (typeof given !== "object" || (given as { floor?: unknown }).floor !== null))) {
+    const passed = !!input.floorPass && !!given && typeof given === "object" && (given as FloorResult).unsure !== true && (given as FloorResult).floor === input.floorPass.floor && (given as FloorResult).rule === input.floorPass.rule;
+    if (!passed && (given === undefined || (given !== null && (typeof given !== "object" || (given as { floor?: unknown }).floor !== null)))) {
       return done({ outcome: "floor", level: "floor", stage: "floor", rule: "floor", reason: (given as FloorResult | null | undefined)?.reason || "This step needs the owner in person.", decidedBy: "policy" });
     }
 
     // Level (T12), with no verdicts yet: it settles which stages apply and fixes the level for the rest.
     trace.push("level");
     const base: Omit<LevelInput, "intent" | "checker" | "mode"> = {
-      operation: input.operation, ...(input.key !== undefined ? { key: input.key } : {}), facts: input.facts, floor: input.floor ?? null,
+      operation: input.operation, ...(input.key !== undefined ? { key: input.key } : {}), facts: input.facts, floor: input.floor ?? null, ...(passed ? { floorPass: input.floorPass } : {}),
       category: input.category, routine: input.routine, grants: input.grants, siteAllowedAlways: input.siteAllowedAlways,
       ...(input.textHasNewline !== undefined ? { textHasNewline: input.textHasNewline } : {}),
     };
@@ -146,6 +149,8 @@ export async function decide(input: DecideInput, deps: DecideDeps = REAL): Promi
         // Attended Full: an outage or an "ask" is advisory and never feeds the loop guard, so it can never pause the binding.
         // A judged "block" still counts and refuses the step (below), never a card.
         if (fullAttended && (FAILURE_CODES.has(verdict.code) || verdict.decision === "ask")) verdict = { ...verdict, decision: "allow", advisory: true, original: verdict.decision } as CheckerVerdict;
+        // OVERREACH #4: on the owner's attended turn a checker outage is a card for the owner to decide, never a step toward the loop guard's pause.
+        else if (!input.routine && FAILURE_CODES.has(verdict.code)) { /* the card below is the owner's decision */ }
         else input.checker.tally.record(verdict);
         if (fullAttended && verdict.decision === "block") {
           return refuse("checker", "full-checker-block", DECIDE_LINES.blocked, { level, decidedBy: "checker", line: DECIDE_LINES.blocked, checker: verdict });

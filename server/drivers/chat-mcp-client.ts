@@ -24,11 +24,13 @@ import { ChildTeardown } from "./child-teardown.ts";
 import { descendantIdentitiesKeepingUnknown, processParentsAndArgs, type ProcessIdentities } from "./process-tree.ts";
 import { linuxDescendantIdentities, linuxParentsAndArgs } from './linux-process-snapshot.ts';
 import { platformProcessHooks } from '../platform-process-hooks.ts';
+import { onServerQuit, serverQuitting } from "../quit-latch.ts";
 
 export const CHAT_MCP_PROTOCOL_VERSION = "2025-06-18";
 /** One frame (one line) may hold at most this many bytes; a longer line kills the session. */
 export const CHAT_MCP_FRAME_CAP_BYTES = 2 * 1024 * 1024;
-/** Frames one session may receive in its whole life. */
+/** MAIN-RULING cause22-no-transport-caps: no longer enforced by this client (a session receives any number of frames). Kept only for the relay's import until
+ * group A drops it at merge. */
 export const CHAT_MCP_MAX_FRAMES = 10_000;
 /** initialize through the last tools/list page, per server. */
 export const CHAT_MCP_STARTUP_MS = 8_000;
@@ -76,6 +78,8 @@ export interface OpenChatMcpOptions {
   /** Called synchronously for every child the moment it is spawned, before any await, so the caller tracks even a child
    *  whose startup then fails. */
   onSpawn?(server: string, teardown: ChildTeardown): void;
+  /** The owner's own turn (OVERREACH #5): its servers are not under the power block. Absent: wrapped as before. */
+  ownerTurn?: boolean;
   /** Test hook. Default: spawnCli under engineJob(). */
   spawn?: (command: string, args: string[], env: Record<string, string>, cwd: string) => ChildProcess;
 }
@@ -142,10 +146,10 @@ function parseEntry(entry: unknown): Launch | null {
   return { command: entry.command, args: args as string[], env: entry.env };
 }
 
-const defaultSpawn = (command: string, args: string[], env: Record<string, string>, cwd: string): ChildProcess =>
+const defaultSpawn = (command: string, args: string[], env: Record<string, string>, cwd: string, ownerTurn = false): ChildProcess =>
   !env.MURAGE_RELEASE_INSTANCE
-    ? spawnCli(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env }, engineJob())
-    : spawnCli(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe", "ipc"], env }, engineJob());
+    ? spawnCli(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env }, engineJob({ ownerTurn }))
+    : spawnCli(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe", "ipc"], env }, engineJob({ ownerTurn }));
 
 const validId = (id: unknown): boolean => typeof id === "number" || typeof id === "string" || id === null;
 
@@ -156,8 +160,13 @@ interface RequestOptions { signal?: AbortSignal; timeoutMs?: number }
  *  starts (a server that exits by itself ends the wait at once). Without it a Windows job kill lands in the same tick as the
  *  write, so no server there ever read its cancellation. */
 export const CHAT_MCP_CANCEL_GRACE_MS = 1_000;
-/** H6: how long a stop waits for the descendant snapshot before it ends the server anyway. */
-export const CHAT_MCP_SNAPSHOT_CAP_MS = 1_000;
+/** H6: how long a stop waits for the descendant snapshot before it ends the server anyway. It covers one whole process listing
+ *  (its own 5 s kill bound, process-tree.ts) and a little more. It was 1 s: on a loaded Mac the listing answered later than
+ *  that, the server was ended without it, and the stop then could never be confirmed (1.0.21). A listing that failed is asked
+ *  again while this bound allows; the server is ended only once one answered or the bound passed. */
+export const CHAT_MCP_SNAPSHOT_CAP_MS = 6_000;
+/** The pause before a failed process listing is asked again. */
+const SNAPSHOT_RETRY_PAUSE_MS = 100;
 /** H6: how long a descendant still running after the SIGKILL bound is re-checked for a late exit (its teardown stays unconfirmed). */
 const ESCAPED_LATE_WATCH_MS = 60_000;
 
@@ -191,9 +200,12 @@ const linuxZombie = async (pid: number): Promise<boolean> => {
  *  cannot be found by parentage; it is observed only through the pipes it holds (root close). */
 export class ChatMcpDescendants {
   readonly #root: number | undefined;
+  readonly #child: ChildProcess;
   readonly #active: boolean;
   readonly #local: boolean;
   readonly #known: ProcessIdentities = new Map();
+  /** S08 (N8): every descendant pid this server was seen to spawn (identity read), kept for the stop's log record. */
+  readonly #spawned = new Set<number>();
   #frozen = false;
   /** The stop's own snapshot gave no answer in time: what escaped is unknown, so nothing can confirm the tree gone (Astra code-r2). */
   #blind = false;
@@ -201,6 +213,8 @@ export class ChatMcpDescendants {
   readonly #verified = new Set<number>();
   #inFlight: Promise<void> | null = null;
   #ready: Promise<void> | null = null;
+  /** Set when Quit ended ready() before its listing answered: whether that listing answered while the server still ran. */
+  #late: Promise<boolean> | null = null;
   #stop: Promise<boolean> | null = null;
   #gone = false;
   #resolveGone: (() => void) | null = null;
@@ -208,12 +222,16 @@ export class ChatMcpDescendants {
 
   constructor(child: ChildProcess, platform: NodeJS.Platform = process.platform) {
     this.#root = child.pid;
+    this.#child = child;
     this.#active = platform !== "win32" && typeof child.pid === "number";
     this.#local = platform === 'linux' && !platformProcessHooks().listTree;
   }
 
   /** False on Windows (the job holds the tree) and for a child the OS never created: nothing to track. */
   get active(): boolean { return this.#active; }
+
+  /** The server has not exited: its descendants still hang off it, so a listing read now shows every one of them. */
+  #rootRunning(): boolean { return this.#child.exitCode == null && this.#child.signalCode == null; }
 
   /** True when the probe answered (an empty answer included). */
   #take(): Promise<boolean> {
@@ -227,7 +245,7 @@ export class ChatMcpDescendants {
       // longer be confirmed (Grok code-r2)
       for (const [pid, start] of found) {
         if (pid === process.pid) continue;
-        if (start) this.#known.set(pid, start);
+        if (start) { this.#known.set(pid, start); this.#spawned.add(pid); }
         else this.#blind = true;
       }
       return true;
@@ -240,20 +258,77 @@ export class ChatMcpDescendants {
     this.#inFlight = this.#take().then(() => undefined).finally(() => { this.#inFlight = null; });
   }
 
-  /** The stop's own snapshot, bounded: the group is signalled and stdin ended only once it settled (or its cap passed). */
+  /** The stop's own snapshot, bounded: the group is signalled and stdin ended only once it settled (or its cap passed).
+   *  Quit never waits on it (quit-latch.ts): the bound is as long as the server's whole shutdown allowance
+   *  (graceful-shutdown.ts SERVER_SHUTDOWN_TIMEOUT_MS), so a listing still outstanding when the server exits would mean the
+   *  stdin end and the group signal were never sent and the detached mount server outlived Murage. Once Quit has begun the wait
+   *  ends at once, for a stop already waiting and for one that starts later. The listing itself keeps running: stop() still
+   *  reads it after the signal went out (#late), and it counts only when it answered while the server was still running (its
+   *  descendants still hung off it then). With no such answer the stop stays unconfirmed. */
   ready(): Promise<void> {
     if (!this.#active) return Promise.resolve();
-    return this.#ready ??= (() => {
+    return this.#ready ??= (async () => {
+      // a monotonic clock: a machine waking from sleep, or a clock step, must neither end the wait at once nor stretch it
+      const deadline = performance.now() + CHAT_MCP_SNAPSHOT_CAP_MS;
       let answered = false;
-      const snapshot = Promise.all([this.#inFlight, this.#take()]).then(([, ok]) => { answered = ok; });
-      return settleWithin(snapshot, CHAT_MCP_SNAPSHOT_CAP_MS).then(() => { if (!answered) this.#blind = true; });
+      let forget = () => {};
+      const quit = serverQuitting() ? Promise.resolve() : new Promise<void>((resolve) => { forget = onServerQuit(resolve); });
+      /** The latest attempt: true when it answered while the server still ran. */
+      let latest: Promise<boolean> | null = null;
+      // Each attempt is a listing started now, while the server still runs and its descendants still hang off it. A listing that
+      // answers late is waited for (within the bound), never dropped: ending the server first would hide a descendant that left
+      // the group for good. One that failed is asked again. Only a bound with no answer at all leaves the stop unable to confirm.
+      // The Linux /proc read is local and immediate: one that failed is not asked again (the same answer, six seconds later).
+      try {
+        for (let first = true; !answered; first = false) {
+          const left = deadline - performance.now();
+          if (left <= 0) break;
+          const attempt = Promise.all([first ? this.#inFlight : null, this.#take()])
+            .then(([, ok]) => { answered ||= ok; return ok && this.#rootRunning(); });
+          latest = attempt;
+          // (at Quit the attempt is still started, and the local read is still awaited: it answers in this same turn)
+          await (this.#local ? settleWithin(attempt, left) : Promise.race([settleWithin(attempt, left), quit]));
+          if (answered || this.#local || serverQuitting()) break;
+          await Promise.race([pause(Math.min(SNAPSHOT_RETRY_PAUSE_MS, Math.max(0, deadline - performance.now()))), quit]);
+          if (serverQuitting()) break;
+        }
+      } finally { forget(); }
+      if (answered) return;
+      if (latest && !this.#local && serverQuitting()) {
+        // released by Quit: the signal goes out now, the listing is read after it, within the same bound
+        const outstanding = latest;
+        this.#late = Promise.race([outstanding, pause(Math.max(0, deadline - performance.now())).then(() => false)]);
+        return;
+      }
+      this.#blind = true;
     })();
   }
 
   /** Idempotent: true once every remembered descendant is gone; false at the SIGKILL bound (goneSignal reports a late exit). */
   stop(): Promise<boolean> {
     if (!this.#active) return Promise.resolve(true);
-    return this.#stop ??= this.#run();
+    return this.#stop ??= this.#run().then((gone) => { this.#report(); return gone; });
+  }
+
+  /** S08 (N8): one record per stop naming the exact pids this server spawned, which ended and which still run (an escaped
+   *  survivor is also watched for a late exit, reported when it comes). Only pids seen spawned are ever named. */
+  #report(late = false): void {
+    const survived = [...this.#known.keys()];
+    const ended = [...this.#spawned].filter((pid) => !this.#known.has(pid));
+    const detail = `server pid ${this.#root}; tool processes spawned [${[...this.#spawned].join(", ")}]; ended [${ended.join(", ")}]; survived [${survived.join(", ")}]${this.#blind ? "; process list unanswered, escapes cannot be ruled out" : ""}`;
+    if (survived.length || this.#blind) console.warn(`[chat-mcp] stop of MCP server: ${detail}`);
+    else console.info(`[chat-mcp] stop of MCP server${late ? " (late exit)" : ""}: ${detail}`);
+  }
+
+  /** S08 (N8) Windows: the engine job holds the tool processes, so no child pid is listed. The record is written once the tree
+   *  stop has been CONFIRMED (never on entry to the stop), and says plainly when it was not, so it cannot claim an end nobody saw. */
+  #winLogged = new Set<boolean>();
+  reportJobStop(treeConfirmed: boolean): void {
+    if (this.#active || typeof this.#root !== "number" || this.#winLogged.has(treeConfirmed)) return;
+    this.#winLogged.add(treeConfirmed);
+    const head = `[chat-mcp] stop of MCP server: server pid ${this.#root}; its tool processes are held by the engine job object, so individual pids are not listed`;
+    if (treeConfirmed) console.info(`${head}; the job's tree stop was confirmed`);
+    else console.warn(`${head}; the job's tree stop was NOT confirmed, so its tool processes may still run`);
   }
 
   /** Resolves whenever every remembered descendant is finally gone; never otherwise. */
@@ -264,6 +339,12 @@ export class ChatMcpDescendants {
 
   async #run(): Promise<boolean> {
     await this.ready();
+    if (this.#late) {
+      // Quit released the signal before the listing answered. What earlier snapshots remembered is not held on it either; then
+      // only an answer read while the server still ran counts
+      await this.#signal("SIGTERM");
+      if (!(await this.#late)) this.#blind = true;
+    }
     this.#frozen = true;
     if (!this.#blind && await this.#remaining().then((left) => left?.size === 0)) return this.#markGone();
     await this.#signal("SIGTERM");
@@ -277,7 +358,7 @@ export class ChatMcpDescendants {
     if (await this.#allGone(CLI_FORCE_WAIT_MS)) return this.#markGone();
     const pids = [...this.#known.keys()];
     console.warn(`[chat-mcp] ${pids.length} escaped MCP descendant(s) still running after SIGKILL (pids ${pids.join(", ")}); the run stays owned`);
-    void this.#allGone(ESCAPED_LATE_WATCH_MS, 1_000).then((gone) => { if (gone) this.#markGone(); });
+    void this.#allGone(ESCAPED_LATE_WATCH_MS, 1_000).then((gone) => { if (gone) { this.#markGone(); this.#report(true); } });
     return false;
   }
 
@@ -323,12 +404,21 @@ export class ChatMcpDescendants {
 
 /** The server's teardown: the group's confirmation (after the stop's snapshot) AND every remembered descendant gone. */
 export function chatMcpTeardown(child: ChildProcess, descendants: ChatMcpDescendants): ChildTeardown {
-  return new ChildTeardown(
+  // A server that exits on its own was not stopped by anyone: it gets no stop record. A late success (the job route answers
+  // false at its cap while the attempt goes on) is recorded as it comes, so a NOT-confirmed line is always followed by the outcome.
+  const teardown: ChildTeardown = new ChildTeardown(
     child,
-    (target) => Promise.all([descendants.ready().then(() => awaitCliTreeStopped(target)), descendants.stop()]).then(([tree, rest]) => tree && rest),
+    (target) => Promise.all([descendants.ready().then(() => awaitCliTreeStopped(target)), descendants.stop()]).then(([tree, rest]) => {
+      if (teardown.stopWasRequested) descendants.reportJobStop(tree && rest);
+      return tree && rest;
+    }),
     cliStopDelivery,
-    (target) => Promise.all([cliTreeStoppedSignal(target), descendants.goneSignal()]).then(() => true as const),
+    (target) => Promise.all([cliTreeStoppedSignal(target), descendants.goneSignal()]).then(() => {
+      if (teardown.stopWasRequested) descendants.reportJobStop(true);
+      return true as const;
+    }),
   );
+  return teardown;
 }
 
 export class ChatMcpConnection implements ChatMcpSession, EngineTransport {
@@ -342,7 +432,6 @@ export class ChatMcpConnection implements ChatMcpSession, EngineTransport {
   #nextId = 1;
   readonly #pending = new Map<number, Pending>();
   readonly #transport: RelayedMount;
-  #frames = 0;
 
   readonly #descendants: ChatMcpDescendants;
 
@@ -417,7 +506,7 @@ export class ChatMcpConnection implements ChatMcpSession, EngineTransport {
     if (this.#closed) return false;
     try {
       const frame = JSON.stringify(message);
-      this.#transport.request(frame);
+      NotModelRequest("Local MCP protocol for capability-bound chat tools and cancellation.", this.#transport.request(frame));
       if (this.#closed) return false;
       return true;
     } catch {
@@ -449,7 +538,7 @@ export class ChatMcpConnection implements ChatMcpSession, EngineTransport {
       const stop = (kind: "aborted" | "timeout") => {
         if (!this.#pending.delete(id)) return;
         cleanup();
-        try { this.#mount.ingress.cancel(id, frame => { this.#child.stdin?.write(frame + "\n"); }); }
+        try { this.#mount.ingress.cancel(id, frame => { NotModelRequest("Local MCP protocol for capability-bound chat tools and cancellation.", this.#child.stdin?.write(frame + "\n")); }); }
         catch { this.#mount.ingress.seal(); }
         this.#shutdown(CHAT_MCP_CANCEL_GRACE_MS);
         reject(new ChatMcpError(kind));
@@ -475,7 +564,6 @@ export class ChatMcpConnection implements ChatMcpSession, EngineTransport {
   #acceptFrame(text: string): void {
     const line = text.trim();
     if (!line) return;
-    if (++this.#frames > CHAT_MCP_MAX_FRAMES) { this.close(); return; }
     let message: unknown;
     try { message = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { this.close(); return; }
     if (!isRecord(message) || message.jsonrpc !== "2.0") { this.close(); return; }
@@ -570,7 +658,7 @@ export async function openChatMcpServers(
   try { for (const [name, entry] of Object.entries(servers ?? {})) admitted.set(name, admittedMcpMount(entry)); }
   catch (error) { for (const mount of admitted.values()) mount.close(); throw error; }
   const cwd = botFolderOrThrow(options);
-  const launchMcp = options.spawn ?? defaultSpawn;
+  const launchMcp = options.spawn ?? ((command, args, env, cwd) => defaultSpawn(command, args, env, cwd, options.ownerTurn === true));
   const startupMs = typeof options.startupMs === "number" && options.startupMs > 0 ? options.startupMs : CHAT_MCP_STARTUP_MS;
   const slots: Array<{ name: string; connection?: ChatMcpConnection }> = [];
   // Everything is spawned and reported synchronously, before the first await.

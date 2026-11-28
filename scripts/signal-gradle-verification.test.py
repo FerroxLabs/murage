@@ -14,7 +14,7 @@ import urllib.error
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-RETRIEVER = ROOT / 'docs/verification/evidence/signal-gradle-d102/enrich-keys.py'
+RETRIEVER = ROOT / 'scripts/signal-gradle-enrich-keys.py'
 BUILDER = ROOT / 'scripts/build-signal-runtime-inputs.sh'
 
 

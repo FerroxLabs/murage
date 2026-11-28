@@ -1,3 +1,5 @@
+// Settlement issuer/caller owner: skills lane. Queue transport/receipt owner: decision lane.
+import type { Settlement, SkillDeliveryContext } from '../skill-switch-settlement.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { OwnerNlAuthority, OwnerNlDecision } from '../no-limits-authority.ts';
 import type { AutoVerdict } from '../auto-approve.ts';
@@ -60,7 +62,8 @@ export type Initiator =
   | { readonly k: 'routine-run' | 'routine-wake' | 'project-room-routine' | 'routine-peer';
       readonly form: 'run' | 'wake' | 'project-room' | 'peer'; readonly sourceRunId: string;
       readonly sourceBotId: string; readonly recipientGeneration: string; readonly trigger: 'manual' | 'schedule' }
-  | { readonly k: 'webhook' | 'other-human' | 'guest' | 'delegation' }
+  /** 'murage': a turn Murage started itself (a team-incident report), unattended, with no person's words. */
+  | { readonly k: 'webhook' | 'other-human' | 'guest' | 'delegation' | 'murage' }
   | { readonly k: 'peer'; readonly fromBotId: string };
 export interface TurnProvenance {
   /** Captured permission of a durable continuation, independent of later bot edits. */
@@ -165,7 +168,12 @@ export interface DecisionEngineTarget {
 }
 export interface DecisionTransport {
   respond(target: DecisionEngineTarget, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>): Promise<RequestDelivery>;
-  interrupt(target: DecisionEngineTarget): Promise<void>;
+  /** `hostStopReason`: Murage stops the turn itself; the thread says why, never "Stopped by you". */
+  interrupt(target: DecisionEngineTarget, hostStopReason?: string): Promise<void>;
+  /** 1021 Retry (RETRY-DESIGN-r2 D3): the driver still holds this exact ask, unresolved, undelivered, in its live generation. */
+  canRedeliver?(target: DecisionEngineTarget): boolean;
+  /** 1021 Retry step 5: re-check canRedeliver, close the failed answer slot and open a fresh one, same tick as respond. */
+  rearmRetry?(target: DecisionEngineTarget): boolean;
 }
 /** S4 supplies the actual S1 Store instance before ingress/recovery. S1 owns
  * transactions, record/cache updates, row writes, text refusals and FIFO text.
@@ -179,9 +187,12 @@ export interface DecisionHost {
     present(record: ApprovalRecordView): void;
     close(threadId: string, approvalId: string): void;
   };
+  skillSettlementPolicy?(item:PendingQueueApproval,cause:string):{kind:'eligible'|'needs-review'|'stale';retire:boolean;message?:string};
   featureOff?(threadId: string, botId: string, tool: string): string | undefined;
   executionContext?(threadId:string,botId:string): {cwd?:string;project?:string;home?:string;projects?:readonly string[];dataDir?:string};
   view(registration: Readonly<Registration>): ApprovalView;
+  /** 1021 Retry: a failed engine card was ended (endFailed); the host settles its attention. */
+  deliveryEnded?(ref: ApprovalRef): void;
 }
 /** S2 durable queue metadata. proof is an opaque server-issued provenance
  * reference, NOT a serialized ExecutionClaim. Never store caller authority.
@@ -203,6 +214,12 @@ export type QueueCancellationReason = 'unverifiable' | 'conflict' | 'missing-rec
 export interface QueueRecoverySource {
   readonly kind: ServiceId;
   pendingApprovals(): readonly PendingQueueApproval[];
+  approval?(approvalId: string): PendingQueueApproval | undefined;
+  receipt?(item: PendingQueueApproval): RequestDelivery | undefined;
+  switchDeliverySlotAvailable?(): boolean;
+  hasPendingProof?(proof:unknown): boolean;
+  refuseBeforeEffect?(item:PendingQueueApproval,code:string,message:string):RequestDelivery;
+  pendingPage?(after?: string, limit?: number): { items: readonly PendingQueueApproval[]; next?: string };
   /** Fresh verifier-issued claim from server-validated durable proof. Undefined
    * means refuse/cancel, never silently grant owner authority. S1 verifies the
    * returned service, call, queueRef, epoch and claim against the pending item.
@@ -214,7 +231,7 @@ export interface QueueRecoverySource {
    * same-answerId pending/accepted/failed dedup match DecisionTransport/S3.
    * Acknowledges durable queue acceptance, not completion of the side effect.
    */
-  respond(item: PendingQueueApproval, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>): Promise<RequestDelivery>;
+  respond(item: PendingQueueApproval, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>, settlement?: Settlement): Promise<RequestDelivery>;
   /** Durably remove the item from awaiting_owner on failed authentication,
    * timeout or cancellation. Must be idempotent. Throw/reject is surfaced by
    * recover (never success); S1 retains retryable failure, no stranded success.
@@ -324,7 +341,7 @@ export type EngineApprovalBuilder = (registration: Readonly<Registration>, why: 
 
 export interface SynchronousQueueDelivery {
   readonly kind: ServiceId;
-  respondNow(item: PendingQueueApproval, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>): RequestDelivery;
+  respondNow(item: PendingQueueApproval, answer: ApprovalAnswer, options: Readonly<RequestAnswerOptions>, settlement?: Settlement): RequestDelivery;
 }
 /** S4 supplies authenticated live authority; S2 never serializes a claim.
  * Durable proof names a server-owned continuation/job, not caller bot/thread ids.
@@ -359,12 +376,13 @@ export interface ProducerOpenRequest {
 }
 
 export interface ProducerQueue extends ProducerQueuePort {
+  switchCapacity?(): boolean;
   /** Bind the actual acceptor for live and recovered items before recover. */
-  bindAcceptance(tool: string, accept: (item: PendingQueueApproval, answer: ApprovalAnswer) => void | Promise<void>): () => void;
+  bindAcceptance(tool: string, accept: (item: PendingQueueApproval, answer: ApprovalAnswer, delivery?: SkillDeliveryContext) => void | Promise<void>, acceptNow?: (item:PendingQueueApproval,answer:ApprovalAnswer,delivery?:SkillDeliveryContext)=>void): () => void;
   open(input: ProducerRequest): ProducerOpenRequest;
-  execute<T>(request: ProducerOpenRequest, operation: (call: ServiceCall) => Promise<T>): Promise<ServiceExecution<T>>;
+  execute<T>(request: ProducerOpenRequest, operation: (call: ServiceCall, delivery?: SkillDeliveryContext) => Promise<T>): Promise<ServiceExecution<T>>;
   present(request: ProducerOpenRequest, ref: ApprovalRef,
-    accept?: (item: PendingQueueApproval, answer: ApprovalAnswer) => void | Promise<void>): Promise<PendingQueueApproval>;
+    accept?: (item: PendingQueueApproval, answer: ApprovalAnswer, delivery?: SkillDeliveryContext) => void | Promise<void>): Promise<PendingQueueApproval>;
 }
 
 export type ProducerQueueFactory = (kind: ServiceId) => ProducerQueue;

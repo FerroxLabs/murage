@@ -88,6 +88,17 @@ afterAll(async () => {
 });
 
 describe("custom MCP probe", () => {
+  it.each([
+    ["nested", ["ab" + "c", "abc" + "def"], "abc" + "def", "[redacted]"],
+    ["crossing", ["ab" + "cd", "cd" + "ef"], "abc" + "def", "[redacted]"],
+    ["repeated", ["", "ab" + "c"], ["ab" + "c", "ab" + "c", "ab" + "c"].join(" / "), "[redacted] / [redacted] / [redacted]"],
+  ] as const)("redacts %s configured values on original metadata", async (_name, values, text, expected) => {
+    const dirServer = join(dir, "overlap-mcp-server.mjs");
+    writeFileSync(dirServer, FAKE_SERVER.replace('process.env.FAKE_MCP_DESCRIPTION ?? "Read saved notes"', JSON.stringify(`before ${text} after`)));
+    const actual = await probeMcpServer({ command: process.execPath, args: [dirServer], env: Object.fromEntries(values.map((value, i) => [`FIXTURE_VALUE_${i}`, value])), enabled: false }, 5_000);
+    expect(actual).toEqual({ ok: true, tools: [{ name: "read_notes", description: `before ${expected} after` }] });
+  });
+
   it("performs an MCP handshake and returns the bounded public tool list", async () => {
     await expect(probeMcpServer({
       command: process.execPath,

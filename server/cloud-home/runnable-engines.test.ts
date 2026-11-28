@@ -118,13 +118,30 @@ describe("the line the picker shows", () => {
 describe("Cline and Copilot run only on the person's computer", () => {
   const LOCAL_ONLY = Object.keys(CLOUD_LOCAL_ONLY_ENGINES);
   const product = { instances: { claude: { driver: "claudeAgent" }, codex: { driver: "codex" } } } as unknown as AppConfig;
-  it("are Cline, Copilot and DeepSeek Harness, and no cloud engine", () => {
-    expect(sorted(LOCAL_ONLY)).toEqual(["clineAgent", "copilotAgent", "deepseekAgent"]);
+  it("offers the registered desktop-only engines", () => {
+    expect(sorted(LOCAL_ONLY)).toEqual(["clineAgent", "commandCodeAgent", "copilotAgent", "deepseekAgent", "devinAgent", "kiroAgent", "ompAgent"]);
     for (const engine of LOCAL_ONLY) {
       expect(CLOUD_ENGINES.map(driverKind)).not.toContain(engine);
       expect(CLOUD_RUNNABLE_ENGINES as readonly string[]).not.toContain(engine);
       expect(CLOUD_HIDDEN_ENGINES as readonly string[]).not.toContain(engine);
     }
+  });
+  it.each([
+    ["commandCodeAgent", "Command Code"],
+    ["ompAgent", "OMP"],
+    ["kiroAgent", "Kiro"],
+  ])("offers %s on desktop and withholds it from Cloud", (engine, name) => {
+    expect(drivers(instanceConfigs({} as AppConfig, {}))).toContain(engine);
+    expect(drivers(instanceConfigs(product, {}))).toContain(engine);
+    expect(drivers(instanceConfigs({} as AppConfig, { MURAGE_CLOUD_ROLE: "home" }))).not.toContain(engine);
+    expect(cloudEngineChoiceRefusal(true, engine, true)).toBe(cloudHomeCopy.engineNotOnCloud);
+    expect(cloudLocalOnlyEngineNames([engine])).toEqual([name]);
+  });
+  it("offers Devin on desktop and holds it off Cloud", () => {
+    expect(drivers(instanceConfigs({} as AppConfig, {}))).toContain("devinAgent");
+    expect(drivers(instanceConfigs(product, {}))).toContain("devinAgent");
+    expect(drivers(instanceConfigs({} as AppConfig, { MURAGE_CLOUD_ROLE: "home" }))).not.toContain("devinAgent");
+    expect(cloudEngineChoiceRefusal(true, "devinAgent", true)).toBe(cloudHomeCopy.engineNotOnCloud);
   });
   it("a home never puts them in its engine list, so no turn can start on either", () => {
     expect(drivers(allInstanceConfigs(product))).toEqual(expect.arrayContaining(LOCAL_ONLY));

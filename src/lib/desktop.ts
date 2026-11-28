@@ -30,7 +30,8 @@ let cached: DesktopCapabilities | null = null;
 let cacheRevision = 0;
 
 export function initialDesktopCapabilities(): DesktopCapabilities {
-  const platform = window.muragebox?.platform;
+  // No window in a node-rendered suite (a component that reads the capabilities is imported there too).
+  const platform = typeof window === "undefined" ? undefined : window.muragebox?.platform;
   if (!platform) return browserCapabilities;
   const isMac = platform === "darwin";
   const dictation: DesktopCapabilities["dictation"] = {

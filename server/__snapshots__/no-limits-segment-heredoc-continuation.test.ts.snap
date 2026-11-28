@@ -4,11 +4,8 @@ exports[`continued heredoc owner > continued delimiter preserves the later comma
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -32,11 +29,8 @@ exports[`continued heredoc owner > continued delimiter preserves the later comma
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -60,11 +54,8 @@ exports[`continued heredoc owner > substitution across a physical newline > Full
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -87,11 +78,8 @@ exports[`continued heredoc owner > substitution across a physical newline > Full
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -114,11 +102,8 @@ exports[`continued heredoc routine > continued delimiter preserves the later com
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -143,11 +128,8 @@ exports[`continued heredoc routine > continued delimiter preserves the later com
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -172,11 +154,8 @@ exports[`continued heredoc routine > substitution across a physical newline > Fu
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -200,11 +179,8 @@ exports[`continued heredoc routine > substitution across a physical newline > Fu
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,

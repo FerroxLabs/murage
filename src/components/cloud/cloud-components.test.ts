@@ -34,7 +34,7 @@ describe("Cloud UI", () => {
   });
 
   it("the switch offers This computer and Cloud home", () => {
-    const html = renderToStaticMarkup(createElement(WorkspaceSwitchView, { onCloud: noop, pairing: false }));
+    const html = renderToStaticMarkup(createElement(WorkspaceSwitchView, { view: "computer", onComputer: noop, onCloud: noop }));
     expect(html).toContain("This computer");
     expect(html).toContain("Cloud home");
   });
@@ -114,7 +114,9 @@ describe("Cloud UI", () => {
 
     it("idle offers one button and no code entry", () => {
       const html = connect({});
-      expect(html).toContain("Connect to your Cloud home");
+      // 1.0.23 (Sean's top bar): one plain line and a button that says Connect, the word every result line uses.
+      expect(html).toContain("<p>Your Cloud home is not connected yet.</p>");
+      expect(html).toContain(">Connect</button>");
       expect(html).not.toContain("6-digit");
       expect(html).not.toContain("<input");
     });
@@ -147,7 +149,7 @@ describe("Cloud UI", () => {
       const afterwards = connect({ phase: "idle", lastResult: refused });
       expect(afterwards).toContain("Start adding this computer on My Cloud. It can connect after the 72-hour check.");
       expect(afterwards).toContain('role="alert"');
-      expect(afterwards).toContain("Connect to your Cloud home</button>");
+      expect(afterwards).toContain(">Connect</button>");
       const tooLong = connect({ phase: "idle", lastResult: { code: "took-too-long", message: "m", at } });
       expect(tooLong).toContain("That took longer than ten minutes. Press Connect to start again.");
       expect(tooLong).toContain('role="status"');
@@ -171,7 +173,7 @@ describe("Cloud UI", () => {
       const html = connect({ phase: "idle", lastResult: tries, retrySeconds: 581 });
       expect(html).toContain("Too many tries. Wait ten minutes, then press Connect again.");
       expect(html).toContain("9:41");
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect to your Cloud home<\/button>/);
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Connect<\/button>/);
     });
 
     it("every wire reason and outcome has its own words, from en.json, plain and without dashes or banned words", () => {

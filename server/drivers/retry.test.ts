@@ -61,6 +61,40 @@ describe("attempt boundary (A1, U-17)", () => {
 
 describe("classifyError", () => {
   it.each([
+    ["Internal service failure during session/new", "server_error"],
+    ["ServiceUnavailableError: provider startup", "server_error"],
+    ["SSL: UNEXPECTED_EOF_WHILE_READING", "connection_reset"],
+  ])("classifies startup failure %s for retry", (text, reason) => {
+    for (const error of [new Error(text), { text }, { exitCode: 1, stderr: text }]) {
+      expect(classifyError(error)).toEqual({ transient: true, reason });
+    }
+  });
+
+  it("keeps certificate verification failures terminal through a transient wrapper", () => {
+    const text = "SSL: CERTIFICATE_VERIFY_FAILED";
+    for (const error of [
+      new Error("fetch failed", { cause: new Error(text) }),
+      { text: `ServiceUnavailableError: ${text}` },
+      { exitCode: 1, stderr: `UNEXPECTED_EOF_WHILE_READING: ${text}` },
+    ]) expect(classifyError(error)).toEqual({ transient: false, reason: "unknown" });
+  });
+
+  it("keeps certificate verification failures terminal through a 503 wrapper", () => {
+    const error = Object.assign(new Error("service unavailable", { cause: new Error("SSL: CERTIFICATE_VERIFY_FAILED") }), {
+      data: { http_status: 503 },
+    });
+    expect(classifyError(error)).toEqual({ transient: false, reason: "unknown" });
+  });
+
+  it("retries unexpected temporary status reports while keeping request and login failures terminal", () => {
+    for (const error of [new Error("unexpected status 503"), { text: "unexpected status 503" }, { exitCode: 1, stderr: "unexpected status 503" }]) {
+      expect(classifyError(error)).toEqual({ transient: true, reason: "server_error" });
+    }
+    expect(classifyError(new Error("unexpected status 400"))).toEqual({ transient: false, reason: "invalid_request" });
+    expect(classifyError(new Error("unexpected status 401"))).toEqual({ transient: false, reason: "auth" });
+  });
+
+  it.each([
     "503 blocked by our safety systems",
     "429 blocked by the provider's safety systems",
     "503 blocked by the provider’s safety systems",

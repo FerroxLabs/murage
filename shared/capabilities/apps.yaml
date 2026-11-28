@@ -71,7 +71,6 @@ entries:
     engines: [fuigo, claude, codex, grok, cursor, kimi, droid, opencode, qwen, hermes, gemini, cline]
     anchors:
       - settings-card:companion/browser
-      - tool:request_browser_connection
       - file:server/config.ts#export function builtInBrowserEnabled
       - "file:server/drivers/acp/core.ts#browserMcp: !support.ownTools"
     verified: 1.0.10

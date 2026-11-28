@@ -36,11 +36,15 @@ export type AttentionPresentReply =
   | { ok: true; kept: boolean; retired: string[] }
   | { ok: false; stale: true; retired: string[] }
   | { ok: false; stale?: false };
-type Control = { kind: "attention.settled"; threadId: string; requestId: string } | { kind: "attention.config" };
+type Control =
+  | { kind: "attention.settled"; threadId: string; requestId: string }
+  | { kind: "attention.config" }
+  | { kind: "attention.bot"; botId?: string }
+  | { kind: "attention.resync"; gen: number };
 export interface AttentionBridge {
   hello(payload: { session: string }): Promise<{ ok: true; ledgerMax: number; retired: string[] } | { ok: false }>;
   offer(payload: AttentionOffer | (Control & { session: string })): Promise<AttentionOfferReply>;
-  visible(payload: { session: string; threadId: string | null; focused: boolean }): Promise<unknown>;
+  visible(payload: { session: string; threadId: string | null; focused: boolean; sounds?: boolean }): Promise<unknown>;
   present(payload: AttentionDisplay & { session: string; ref: string; gen: number }): Promise<AttentionPresentReply>;
   gone(payload: { session: string; ref: string; gen: number }): Promise<{ ok: boolean; retired?: string[] }>;
   freed(payload: { session: string; refs: string[] }): void | Promise<unknown>;
@@ -265,17 +269,17 @@ export function routeNotification(frame: Frame, display: Display, bridge: Attent
 }
 
 /** Visibility is a control invoke, so it also replays retirements and resumes unresolved offers. */
-export function reportAttentionVisible(threadId: string | null, focused: boolean, bridge: AttentionBridge | undefined = attentionBridge()): void {
+export function reportAttentionVisible(threadId: string | null, focused: boolean, bridge: AttentionBridge | undefined = attentionBridge(), sounds?: boolean): void {
   if (!bridge) return;
   const connected = connect(bridge);
-  const key = `${threadId ?? ""}|${focused}`;
+  const key = `${threadId ?? ""}|${focused}|${sounds ?? ""}`;
   if (key === lastVisible) return;
   lastVisible = key;
   const life = lifecycle;
   void connected.then((ok) => {
     if (life !== lifecycle || bridge !== listeningTo) return;
     if (!ok) { lastVisible = ""; return; }
-    invoke(() => bridge.visible({ session: session(), threadId, focused }), undefined, () => { if (lastVisible === key) lastVisible = ""; });
+    invoke(() => bridge.visible({ session: session(), threadId, focused, ...(sounds !== undefined ? { sounds } : {}) }), undefined, () => { if (lastVisible === key) lastVisible = ""; });
   });
 }
 
@@ -290,6 +294,18 @@ export function forwardAttentionSettled(frame: { threadId?: unknown; requestId?:
 }
 export function forwardAttentionConfig(bridge: AttentionBridge | undefined = attentionBridge()): void {
   if (bridge) control({ kind: "attention.config" }, bridge);
+}
+
+export function forwardAttentionBot(botId: unknown, bridge: AttentionBridge | undefined = attentionBridge()): void {
+  if (bridge) control({ kind: "attention.bot", ...(typeof botId === "string" ? { botId } : {}) }, bridge);
+}
+
+export function forwardAttentionResync(gen: number, bridge: AttentionBridge | undefined = attentionBridge()): void {
+  if (bridge) control({ kind: "attention.resync", gen }, bridge);
+}
+
+export function dropReplayedNotify(kind: unknown, replayed: boolean, bridge: AttentionBridge | undefined = attentionBridge()): boolean {
+  return replayed && (kind === "approval" || (kind === "question" && Boolean(bridge)));
 }
 
 /** Tests only. Clearing a listener never changes this document's nonce or reuses a ref. */

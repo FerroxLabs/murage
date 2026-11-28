@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { database, transaction } from "../database.ts";
+import { withSecureDelete } from "../secure-delete.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { requireMemoryOwner } from "./authority.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
@@ -189,7 +190,8 @@ export function deleteBotIdentity(ticket:object,input:z.infer<typeof identityDel
 }
 /** The one delete for every PIP kind (I-11): a version-fenced record tombstone, applied now. */
 export function deletePipRecord(id:string,scopeId:string,expectedVersion:number) {
-  return transaction(db=>{
+  // 1.0.22 item 1a: the delete removes owner-visible text: its freed pages are zeroed (secure_delete=ON, server/secure-delete.ts)
+  return withSecureDelete(database(),()=>transaction(db=>{
     const current=db.prepare("SELECT version,kind FROM memory_records WHERE id=? AND scope_id=? AND state='active'").get(id,scopeId);
     if(!current||!isPipKind(current.kind))throw new Error("MEMORY_NOT_FOUND");
     if(Number(current.version)!==expectedVersion)throw new Error("MEMORY_VERSION_CONFLICT");
@@ -199,7 +201,7 @@ export function deletePipRecord(id:string,scopeId:string,expectedVersion:number)
     const owner=db.prepare("SELECT owner_key FROM memory_scopes WHERE id=? AND kind='bot'").get(scopeId);
     if(owner)invalidatePipRender(db,String(owner.owner_key));
     return {id,deleted:true as const};
-  });
+  }));
 }
 /** The generic "forget" control refuses a continuity row (PIP A8): deletion goes
  * through the dedicated, version-fenced Delete in Continuity, so a caller that
