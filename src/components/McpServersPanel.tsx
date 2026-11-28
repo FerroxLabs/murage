@@ -25,7 +25,11 @@ import { BOX_SAVE_ROW } from "./ui/BoxShell";
 import { t } from "@/lib/i18n";
 import { displayArgs, envForBody, hostOf, probeToolCount, removeServer, signInTo, testServer, testWaitKey, type ProbeView } from "@/lib/mcp-add-flow";
 import { savedProbeSentence } from "@/lib/mcp-card-view";
+import { McpOwnAppForm } from "./McpOwnAppForm";
 import { useMcpBridge } from "@/lib/use-mcp-bridge";
+import { isCloudHome } from "@/lib/cloud-workspace";
+import { showsConnect } from "@/lib/mcp-cloud-connect";
+import { McpConnectButton } from "./McpConnectButton";
 import { api } from "@/state/store";
 import { NETLIFY_TOKEN_ENTRY } from "../../shared/published-sites";
 import { McpAddSection } from "./McpAddSection";
@@ -162,6 +166,7 @@ export function McpServersPanel({ embedded = false, reconnectName }: { embedded?
   const [notice, setNotice] = useState<string | null>(null);
   const [probe, setProbe] = useState<Record<string, ProbeView>>({});
   const [removing, setRemoving] = useState<string | null>(null);
+  const [ownApp, setOwnApp] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ from: string; to: string } | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const loadGeneration = useRef(0);
@@ -308,10 +313,14 @@ export function McpServersPanel({ embedded = false, reconnectName }: { embedded?
     setError(null);
     const signed = await signInTo({ api, bridge: shell }, server.name);
     if (!signed.ok) {
-      if (!signed.cancelled) setError(signed.message || t("mcp.card.signin.desktopOnly"));
+      if (!signed.cancelled) {
+        setError(signed.message || t("mcp.card.signin.desktopOnly"));
+        setOwnApp(signed.ownApp ? server.name : null);
+      }
       setBusy(null);
       return;
     }
+    setOwnApp(null);
     setBusy(null);
     await test(server);
   };
@@ -457,7 +466,7 @@ export function McpServersPanel({ embedded = false, reconnectName }: { embedded?
         )}
 
         {servers === null ? (
-          <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary"><Loader2 size={14} className="animate-spin" /> {t("mcp.panel.loading")}</div>
+          <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary"><Loader2 size={14} className="animate-spin" /><span>{t("mcp.panel.loading")}</span></div>
         ) : servers.length === 0 && !editing && !adding ? (
           <div className="mt-5 flex min-h-64 flex-col items-center justify-center rounded-2xl border border-dashed border-hairline/60 text-center">
             <div className="flex size-11 items-center justify-center rounded-xl bg-raised text-ink-secondary"><ServerCog size={21} /></div>
@@ -469,7 +478,8 @@ export function McpServersPanel({ embedded = false, reconnectName }: { embedded?
             {servers.map((server) => {
               const result = probe[server.name];
               const remote = isRemote(server);
-              const needsSignIn = remote && server.status === "needs-sign-in";
+              const cloudConnect = showsConnect({ cloud: isCloudHome(), server });
+              const needsSignIn = remote && server.status === "needs-sign-in" && !cloudConnect;
               const needsKey = server.status === "needs-key";
               const host = remote ? hostOf(server.url) : "";
               return (
@@ -481,7 +491,7 @@ export function McpServersPanel({ embedded = false, reconnectName }: { embedded?
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-[14px] font-medium text-ink">{server.name}</span>
-                        {needsSignIn ? (
+                        {needsSignIn || cloudConnect ? (
                           <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10.5px] text-warning">{t("mcp.row.needsSignIn")}</span>
                         ) : needsKey ? (
                           <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10.5px] text-warning">{t("mcp.row.needsKey")}</span>
@@ -505,6 +515,10 @@ export function McpServersPanel({ embedded = false, reconnectName }: { embedded?
                       <button type="button" disabled={!idle} onClick={() => void test(server)} title={t("mcp.row.testTip")} className={buttonClass}>
                         {busy === `test:${server.name}` ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />} {t("mcp.row.test")}
                       </button>
+                      {cloudConnect && (
+                        <McpConnectButton name={server.name} host={host} disabled={!idle} onConnected={() => void load()}
+                          signedIn={async () => { const result = await api("/api/mcp/servers"); const row = (result.servers as AnyListing[] | undefined)?.find((s) => s.name === server.name); return row && isRemote(row) ? row.status === "ready" : null; }} />
+                      )}
                       {needsSignIn && (
                         <button type="button" disabled={!idle} onClick={() => void signIn(server)} title={t("mcp.row.signInTip", { host })} className={cn(buttonClass, "text-accent-text")}>
                           {busy === `signin:${server.name}` ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />} {t("mcp.row.signIn")}
@@ -542,6 +556,8 @@ export function McpServersPanel({ embedded = false, reconnectName }: { embedded?
                     </div>
                   )}
                   {busy === `test:${server.name}` && !remote && elapsed >= 2 && <SavedTestWait elapsed={elapsed} />}
+                  {needsSignIn && ownApp === server.name && shell?.useOwnApp &&
+                    <McpOwnAppForm name={server.name} save={shell.useOwnApp} />}
                   {result && (
                     <div role="status" className={cn("mt-3 rounded-lg px-3 py-2 text-[12px]", result.ok ? "bg-success/10 text-success" : "bg-danger/10 text-danger")}>
                       {result.ok ? (

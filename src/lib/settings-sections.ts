@@ -21,12 +21,18 @@ import { SETTINGS_PAGE_GROUPS, type SettingsPage, type SettingsPageGroup } from 
 export type AppSettingsGroup = SettingsPageGroup;
 
 export type AppSettingsSection =
+  | "overview"
   | "general"
   | "calls"
   | "browseBots"
   | "aboutMe"
+  | "bots"
+  | "rules"
+  | "tools"
+  | "messaging"
   | "botDefaults"
   | "houseRules"
+  | "providers"
   | "skills"
   | "memory"
   | "models"
@@ -67,18 +73,23 @@ export const SETTINGS_GROUPS: readonly AppSettingsGroup[] = SETTINGS_PAGE_GROUPS
 // history from the paired phone; Models & engines as a read-only page, its engine list as a readout and every card
 // that takes a key or a command line as the onComputer stub (no key ever renders away from the desktop).
 export const SETTINGS_SECTIONS: readonly SettingsSectionEntry[] = [
+  { id: "overview", group: "you" },
   { id: "general", group: "you" },
   { id: "calls", group: "you" },
   { id: "aboutMe", group: "you", desktopOnly: true },
   // Each bot's list page, past five bots (1.0.19 shell): a route, not one of the 13 pages.
   { id: "browseBots", group: "bots", desktopOnly: true },
+  { id: "bots", group: "allBots", desktopOnly: true },
+  { id: "rules", group: "allBots", desktopOnly: true },
   { id: "botDefaults", group: "allBots", desktopOnly: true },
   { id: "houseRules", group: "allBots", desktopOnly: true },
+  { id: "tools", group: "allBots", desktopOnly: true },
   { id: "skills", group: "allBots", desktopOnly: true },
   // An alias of the Teach a skill card on the Skills page (settings-pages.ts SECTION_ALIASES), grouped with it.
   { id: "experimental", group: "allBots", desktopOnly: true },
   { id: "memory", group: "allBots", desktopOnly: true },
   { id: "models", group: "ai" },
+  { id: "providers", group: "ai" },
   { id: "engines", group: "ai" },
   { id: "images", group: "ai", desktopOnly: true },
   { id: "webSearch", group: "ai", desktopOnly: true },
@@ -86,6 +97,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionEntry[] = [
   // Apps and its legacy Messaging route render remote readouts and guard individual desktop actions.
   { id: "connections", group: "reach" },
   { id: "channels", group: "reach" },
+  { id: "messaging", group: "reach" },
   { id: "companion", group: "reach", desktopOnly: true },
   { id: "computer", group: "reach", desktopOnly: true },
   { id: "backups", group: "app", desktopOnly: true },
@@ -104,13 +116,28 @@ export function normalizeSettingsSection(id: unknown): AppSettingsSection {
   return typeof id === "string" && SECTION_IDS.has(id) ? (id as AppSettingsSection) : "general";
 }
 
+/** The v10 ids that keep their older page's words (and its translations): Rules is Bot defaults, Messaging is Messaging apps. */
+const WORDS_OF: Partial<Record<AppSettingsSection, AppSettingsSection>> = { rules: "botDefaults", messaging: "channels", providers: "models" };
+
+/** The ids v10 adds. Their words are plain English kept here (like the Phone calls card name in the card registry): a locale
+ *  key would owe all seven language packs and their review ledger, which the three words below do not yet have. */
+const NEW_V10 = new Set<AppSettingsSection>(["overview", "bots", "tools"]);
+const V10_ENGLISH: Readonly<Record<string, { label: string; note: string }>> = {
+  overview: { label: "Overview", note: "What changed lately and where to look next." },
+  bots: { label: "Bots", note: "Every bot in one list, with level and Archive for several at once." },
+  tools: { label: "Tools", note: "Which tools bots may use, in one list." },
+};
+const v10Word = (kind: "section" | "page" | "pageNote", id: string): string => V10_ENGLISH[id]![kind === "pageNote" ? "note" : "label"];
+
 export function settingsSectionLabel(id: AppSettingsSection): string {
-  return t(`settings.section.${id}` as LocaleKey);
+  if (NEW_V10.has(id)) return v10Word("section", id);
+  return t(`settings.section.${WORDS_OF[id] ?? id}` as LocaleKey);
 }
 
 /** The sidebar's label for a page ("Tools" for webSearch, "Devices" for companion). */
 export function settingsPageLabel(id: SettingsPage): string {
-  return t(`settings.page.${id}` as LocaleKey);
+  if (NEW_V10.has(id)) return v10Word("page", id);
+  return t(`settings.page.${WORDS_OF[id] ?? id}` as LocaleKey);
 }
 
 export function settingsGroupLabel(group: AppSettingsGroup): string {
@@ -119,7 +146,8 @@ export function settingsGroupLabel(group: AppSettingsGroup): string {
 
 /** One plain line under a page's title: what the page is for. */
 export function settingsSectionNote(id: AppSettingsSection): string {
-  return t(`settings.pageNote.${id}` as LocaleKey);
+  if (NEW_V10.has(id)) return v10Word("pageNote", id);
+  return t(`settings.pageNote.${WORDS_OF[id] ?? id}` as LocaleKey);
 }
 
 /** One plain line for a group heading's tooltip. */

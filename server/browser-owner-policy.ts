@@ -97,7 +97,7 @@ const emptyish = (value: unknown) => value === false || value === null || value 
 /** PATCH /api/bots/:id, field by field (read from the handler in server/index.ts and parseBotProfilePatch). An unknown field is `code`. */
 export const BOT_PATCH_FIELDS: Readonly<Record<string, FieldSpec>> = {
   // profile (server/bot-profile.ts)
-  name: plain, title: plain, description: plain, persona: plain, notifications: plain, avatarUrl: plain, avatarCrop: plain, avatarZoom: plain, avatarFocusX: plain, avatarFocusY: plain, mascotBody: plain,
+  name: plain, title: plain, description: plain, persona: plain, replyLanguage: plain, notifications: plain, avatarUrl: plain, avatarCrop: plain, avatarZoom: plain, avatarFocusX: plain, avatarFocusY: plain, mascotBody: plain,
   voice: plain, voiceProvider: plain, speakReplies: plain,
   // the owner's ordinary settings
   sidebarHidden: plain, section: plain, unread: plain, color: plain, mascotExpression: plain, pinned: plain, hidden: plain, pinnedMessageId: plain,
@@ -281,6 +281,9 @@ export const BROWSER_OWNER_RULES: readonly BrowserOwnerRule[] = [
   needCode("bot_reach", re(`/api/groups/${ID}/project/(?:budget|work-roots|work-profile|settings)`), "A project's budget, folders and work profile.", ["PATCH", "POST", "PUT"]),
   needCode("bot_reach", /^\/api\/teams\/(?:import|export)$/, "Moving whole teams in or out.", ["POST"]),
   needCode("new_skill", "/api/skills/import", "New executable instructions.", ["POST"]),
+  // TEACH-ENTRY D6: reading who may use a taught skill is a read; changing it widens or narrows a bot's reach.
+  ok("/api/skills/taught", "Reading which bots may use a taught skill.", ["GET"]),
+  needCode("bot_reach", re(`/api/skills/taught/[a-z0-9-]+`), "Changing which bots may use a skill.", ["PATCH"]),
   needCode("new_skill", re(`/api/skills/[^/]+/duplicate`), "A copy of a skill into the collection.", ["POST"]),
   ok(re(`/api/skills/collection/[^/]+`), "The skill handler asks for a code bound to the final files, assets and enabled bots before saving.", ["PUT"]),
   ok(re(`/api/skills/[^/]+/revert`), "The skill handler asks for a content-bound code before switching any bot to the original.", ["POST"]),

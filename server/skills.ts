@@ -1,3 +1,5 @@
+import { readSwitchFile, parseSwitchMetadata, checkSwitchDepth, SWITCH_LIMITS, SkillSwitchLimit } from './skill-switch-bounds.ts';
+import { skillVerdictHash } from './skill-switch.ts';
 import { prefixRebaseLinks, removeLink } from "./link-removal.ts";
 import { boundEmailAddress, scrubEmailBytes } from "./email/export-scrub.ts";
 import { scanSkill } from "./skill-guard/scan.ts";
@@ -33,7 +35,7 @@ import { validateProcedureEvaluationReceipt, procedureCandidateHash, procedureSn
 // reviewed.
 import { createHash, randomUUID } from "node:crypto";
 import { writeFileSync } from "./counted-fs.ts";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, opendirSync, rmdirSync, unlinkSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { z } from "zod";
 
@@ -665,7 +667,23 @@ function nativeLinkDirectlyTargetsOwnedSkill(
   }
 }
 
+function switchRevisionIndexPath(botId: string, name: string): string { return join(skillStateDir(botId),'switch-revisions',`${name}.json`); }
 function writeManifest(botId: string, manifest: SkillManifest): void {
+  // Import/update owns this protected index. Settlement never migrates or discovers revisions.
+  const previous = manifestFromFile(manifestPath(botId)) ?? {};
+  for (const [name, entry] of Object.entries(manifest)) {
+    if (previous[name]?.sha256 === entry.sha256 && previous[name]?.storageRevision === entry.storageRevision && existsSync(switchRevisionIndexPath(botId,name))) continue;
+    const path = switchRevisionIndexPath(botId,name);
+    if(directoryEntryState(dirname(path))==='unsafe')throw new Error('The skill revision index needs maintenance. Nothing was changed.');
+    let revisions: Array<{revision:string|null;sha256:string}> = [];
+    // An index left by a deleted skill is stale: only a name the previous manifest still holds carries its revisions forward.
+    if (previous[name] && existsSync(path)) revisions = (parseSwitchMetadata(path) as {revisions:typeof revisions}).revisions;
+    const ref = {revision:entry.storageRevision ?? null,sha256:entry.sha256};
+    if (!revisions.some(r => r.revision === ref.revision && r.sha256 === ref.sha256)) revisions.push(ref);
+    if (revisions.length > SWITCH_LIMITS.revisions) throw new SkillSwitchLimit();
+    mkdirSync(dirname(path),{recursive:true,mode:0o700});
+    writeFileAtomic(path,JSON.stringify({name,revisions}),{mode:0o600});
+  }
   mkdirSync(skillStateDir(botId), { recursive: true, mode: 0o700 });
   writeFileAtomic(manifestPath(botId), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
 }
@@ -841,6 +859,105 @@ function skillListing(botId: string, name: string, entry: SkillManifestEntry): S
       ? visible.warnings
       : [...visible.warnings, "stored SKILL.md changed after review: enablement is blocked"],
   };
+}
+
+export interface SkillSwitchTarget { readonly listing: SkillListing; readonly text: string; readonly rawHash: string; readonly preview:string; readonly previewSha256:string }
+type SwitchTargetState = {botId:string;name:string;manifest:SkillManifest;entry:SkillManifestEntry;directory:string;manifestText:string;deletion?:Array<{path:string;directory:boolean;dev:number;ino:number}>;managed?:string[]};
+const switchTargets = new WeakMap<SkillSwitchTarget, SwitchTargetState>();
+
+/** One selected manifest entry and one bounded descriptor read. No legacy migration or sibling content. */
+export function readSkillSwitchTarget(botId:string,name:string): SkillSwitchTarget | undefined {
+  if (!isSkillName(name)) return;
+  const path=manifestPath(botId);
+  if(!existsSync(path))return;
+  const manifestText=readSwitchFile(path,SWITCH_LIMITS.metadata);
+  const parsed:unknown=JSON.parse(manifestText);
+  checkSwitchDepth(parsed);
+  const result=skillManifestSchema.safeParse(parsed);
+  if(!result.success)throw new Error('The skill metadata is unavailable. Nothing was changed.');
+  const manifest=result.data;
+  if(Object.keys(manifest).length>SWITCH_LIMITS.entries)throw new SkillSwitchLimit();
+  const entry=manifest[name];if(!entry)return;
+  const directory=skillDirectory(botId,name,entry);if(!directory)return;
+  const text=readSwitchFile(join(directory,'SKILL.md'),SWITCH_LIMITS.content);
+  const rawHash=createHash('sha256').update(text).digest('hex');
+  if(rawHash!==entry.sha256)throw new Error('The skill changed after you saw it: nothing was changed. Ask the bot again.');
+  const frontmatter=parseSkillMd(text);
+  const description='error' in frontmatter?entry.description:frontmatter.description;
+  const input={name,description,triggerTerms:[],files:[{path:'SKILL.md',content:text}]};
+  // No unbounded scanner can run inside settlement. A stale scan needs separate Skills maintenance.
+  if(!entry.scan||entry.scan.scannerVersion!==SKILL_SCANNER_VERSION||entry.scan.contentHash!==skillContentHash(input))
+    throw new Error('The skill check needs refreshing in Skills. Nothing was changed.');
+  skillVerdictHash(entry.scan); // Never truncate excessive findings into an apparently clean snapshot.
+  const {appliedStageId,storageRevision:_revision,scopedRevisions:_scoped,privateRevision:_private,origin:_origin,rollbackOf:_rollback,everyTeamRevision:_every,...visible}=entry;
+  const preview=redactSecretsInText(text),previewSha256=createHash('sha256').update(preview).digest('hex');
+  const target=Object.freeze({text,rawHash,preview,previewSha256,listing:structuredClone({name,...visible,editable:entry.source.startsWith(LEARN_SOURCE_PREFIX)&&!!appliedStageId})});
+  switchTargets.set(target,{botId,name,manifest,entry,directory,manifestText});return target;
+}
+
+/** Validate all removal work before the effect fence. Reject historical sets needing more content I/O. */
+export function prepareSkillSwitch(target:SkillSwitchTarget,action:'turn_on'|'turn_off'|'delete'): void {
+  const state=switchTargets.get(target);if(!state)throw new Error('skill-switch-revision-required');
+  const managedPath=managedLinksPath(state.botId);
+  state.managed=existsSync(managedPath)?managedLinksSchema.parse(parseSwitchMetadata(managedPath)):[];
+  if(state.managed.length>SWITCH_LIMITS.entries)throw new SkillSwitchLimit();
+  if(action!=='delete')return;
+  const indexPath=switchRevisionIndexPath(state.botId,state.name);
+  if(directoryEntryState(dirname(indexPath))!=='directory')throw new Error('The skill revision index needs maintenance. Nothing was changed.');
+  const index=parseSwitchMetadata(indexPath) as {name:string;revisions:Array<{revision:string|null;sha256:string}>};
+  if(index.name!==state.name||!Array.isArray(index.revisions)||index.revisions.length!==1
+    ||index.revisions[0]?.revision!==(state.entry.storageRevision??null)||index.revisions[0]?.sha256!==state.entry.sha256)
+    throw new SkillSwitchLimit();
+  const plan:NonNullable<SwitchTargetState['deletion']>=[];
+  let total=0;
+  const walk=(path:string,depth:number)=>{
+    if(depth>SWITCH_LIMITS.deleteDepth||plan.length>=SWITCH_LIMITS.deleteFiles)throw new SkillSwitchLimit();
+    const stat=lstatSync(path);
+    if(stat.isSymbolicLink()||!stat.isDirectory()&&!stat.isFile())throw new Error('Unsafe skill removal plan. Nothing was changed.');
+    total+=stat.isFile()?stat.size:0;if(total>SWITCH_LIMITS.deleteBytes)throw new SkillSwitchLimit();
+    // Reserve the directory slot before enumeration; fetch at most one entry beyond capacity.
+    plan.push({path,directory:stat.isDirectory(),dev:stat.dev,ino:stat.ino});
+    if(stat.isDirectory()){
+      const dir=opendirSync(path);
+      try{for(let child=dir.readSync();child;child=dir.readSync())walk(join(path,child.name),depth+1);}finally{dir.closeSync();}
+    }
+  };
+  walk(state.directory,0);state.deletion=plan.reverse();
+}
+
+/** Private phase handle, actual bytes and manifest revision are rechecked by the primitive defense. */
+export function applySkillSwitchTarget(target:SkillSwitchTarget,action:'turn_on'|'turn_off'|'delete',options:{acknowledged?:string}={}):void {
+  const state=switchTargets.get(target);if(!state||!state.managed)throw new Error('skill-switch-revision-required');
+  switchTargets.delete(target);
+  const {botId,name,entry}=state;
+  if(readSwitchFile(manifestPath(botId),SWITCH_LIMITS.metadata)!==state.manifestText
+    ||createHash('sha256').update(readSwitchFile(join(state.directory,'SKILL.md'),SWITCH_LIMITS.content)).digest('hex')!==entry.sha256)
+    throw new Error('The skill changed before execution.');
+  if(action==='turn_on'){
+    if(entry.scan?.verdict==='blocked')throw new Error(BLOCKED_MESSAGE);
+    if(entry.scan?.verdict!=='clean'&&options.acknowledged!==entry.scan?.contentHash)throw new Error(NEEDS_LOOK_MESSAGE);
+  }
+  if(action==='delete'&&!state.deletion)throw new Error('skill-switch-removal-plan-required');
+  if(state.deletion)for(const item of state.deletion){const stat=lstatSync(item.path);if(stat.dev!==item.dev||stat.ino!==item.ino||stat.isSymbolicLink()||stat.isDirectory()!==item.directory)throw new Error('The skill removal plan changed.');}
+  if(action==='delete')delete state.manifest[name];else entry.enabled=action==='turn_on';
+  const serialized=JSON.stringify(state.manifest,null,2)+'\n';
+  if(Buffer.byteLength(serialized)>SWITCH_LIMITS.metadata)throw new SkillSwitchLimit();
+  writeFileAtomic(manifestPath(botId),serialized,{mode:0o600});
+  // At most three known discovery locations, no startup sweep or directory-wide enumeration.
+  if(!existsSync(join(skillStateDir(botId),'task-discovery.json'))){
+    const root=workspaceDir(botId);
+    for(const dir of NATIVE_SKILL_DIRS){
+      const linkDir=nativeLinkDirectory(root,dir,action==='turn_on');if(!linkDir)continue;
+      const link=join(linkDir,name);
+      if(action!=='turn_on'){
+        if(nativeLinkPointsToSkill(link,state.directory)||nativeLinkDirectlyTargetsOwnedSkill(link,root,name,state.managed.includes(name)))removeLink(link);
+      }else if(!nativeLinkPointsToSkill(link,state.directory)&&!entryExistsWithoutFollowing(link))symlinkSync(state.directory,link,process.platform==='win32'?'junction':'dir');
+    }
+    const names=new Set(state.managed);if(action==='turn_on')names.add(name);else names.delete(name);
+    writeManagedLinks(botId,[...names]);
+  }
+  if(state.deletion)for(const item of state.deletion){if(item.directory)rmdirSync(item.path);else unlinkSync(item.path);}
+  if(action!=='turn_on')notifySkillsSwitchedOff(botId,[name]);
 }
 
 export function listSkills(botId: string): SkillListing[] {
@@ -1074,6 +1191,50 @@ export function installSkillFromLibrary(
   return installPreparedSkill(botId, source, checked.prepared, { enabled: false, assets });
 }
 
+/** The version a bot's library copy was installed from ("library:<id>@<version>"), or null for any other source. */
+export function installedLibraryVersion(listing: Pick<SkillListing, "source">): string | null {
+  if (!listing.source.startsWith(LIBRARY_SOURCE_PREFIX)) return null;
+  const at = listing.source.lastIndexOf("@");
+  return at > LIBRARY_SOURCE_PREFIX.length ? listing.source.slice(at + 1) : null;
+}
+
+const versionParts = (version: string): number[] => version.split(".").map((part) => Number(part) || 0);
+/** True when the shipped version is newer than the installed one. */
+export function libraryUpdateReady(installed: string | null, shipped: string): boolean {
+  if (!installed) return false;
+  const a = versionParts(installed);
+  const b = versionParts(shipped);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    if ((b[i] ?? 0) !== (a[i] ?? 0)) return (b[i] ?? 0) > (a[i] ?? 0);
+  }
+  return false;
+}
+
+/** Settings v10 K3: replace a bot's library copy with the shipped version. It goes
+ * through the same install path and the same check as a first install, which is
+ * disabled; a copy that was on and whose new check is clean is switched back on
+ * in the same call. A copy whose new check needs a look, or is blocked, stays off. */
+export function updateLibrarySkill(
+  botId: string,
+  skillId: string,
+  libraryRoot: string,
+): SkillListing | { error: string; code?: "blocked" | "needs-review" | typeof SKILL_CEILING_CODE; scan?: SkillScan } {
+  const checked = checkLibrarySkill(skillId, libraryRoot);
+  if ("error" in checked) return checked;
+  const listing = listSkills(botId).find((item) => item.name === skillId && item.source.startsWith(`${LIBRARY_SOURCE_PREFIX}${skillId}@`));
+  if (!listing) return { error: `this bot has no library copy of "${skillId}"` };
+  if (!libraryUpdateReady(installedLibraryVersion(listing), checked.manifest.version)) return { error: `"${skillId}" is already the shipped version` };
+  const wasOn = listing.enabled;
+  const removed = removeSkill(botId, skillId);
+  if ("error" in removed) return removed;
+  const installed = installSkillFromLibrary(botId, skillId, libraryRoot);
+  if ("error" in installed) return installed;
+  if (!wasOn || installed.scan?.verdict !== "clean") return installed;
+  // The update is applied either way; a ceiling that now refuses the switch leaves the new copy off.
+  const on = setSkillEnabled(botId, skillId, true);
+  return "error" in on ? installed : on;
+}
+
 const BLOCKED_MESSAGE = "This skill was blocked by the skill check and can't be switched on.";
 const NEEDS_LOOK_MESSAGE = "This skill needs a look before it can be switched on.";
 
@@ -1097,6 +1258,65 @@ export function currentSkillScan(botId: string, name: string): SkillScan | null 
   return fresh;
 }
 
+/** Settings v10 K5: at most this many skills on per bot, and a pin of them at most this many files and bytes. */
+export const SKILL_CEILING = 40;
+export const SKILL_PIN_MAX_FILES = 1_000;
+export const SKILL_PIN_MAX_BYTES = 32 * 1024 * 1024;
+export const SKILL_CEILING_CODE = "SKILL_CEILING" as const;
+
+function skillFootprint(directory: string): { files: number; bytes: number } {
+  let files = 0;
+  let bytes = 0;
+  const walk = (dir: string): void => {
+    let entries: import("node:fs").Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const item of entries) {
+      const path = join(dir, item.name);
+      if (item.isDirectory()) walk(path);
+      else if (item.isFile()) {
+        files += 1;
+        try { bytes += lstatSync(path).size; } catch { /* a file that vanished adds nothing */ }
+      }
+    }
+  };
+  walk(directory);
+  return { files, bytes };
+}
+
+/** What a library skill not on a bot yet weighs when it is switched on: its library folder (nothing, if it has none). */
+export function librarySkillFootprint(name: string): { files: number; bytes: number } {
+  return skillFootprint(join(SKILL_LIBRARY_ROOT, name));
+}
+
+/** Whether a pin of exactly these skills (names in the bot's manifest) is past 1,000 files or 32 MB. One rule for the single
+ * switch and for bulk's per-bot preflight. A name not installed on the bot yet counts as `uninstalled` gives for it (a Yours skill's
+ * own files), else its library folder (nothing, if it has none). */
+export function skillPinTooLarge(botId: string, names: string[], manifest: Record<string, SkillManifestEntry> = readManifest(botId), uninstalled: ReadonlyMap<string, { files: number; bytes: number }> = new Map()): boolean {
+  const root = workspaceDir(botId);
+  let files = 0;
+  let bytes = 0;
+  for (const key of new Set(names)) {
+    const value = manifest[key];
+    // Not installed on this bot yet: a library skill is installed from its library folder when it is switched on, so that folder is its size.
+    const size = value ? skillFootprint(skillTarget(root, key, value)) : uninstalled.get(key) ?? skillFootprint(join(SKILL_LIBRARY_ROOT, key));
+    files += size.files;
+    bytes += size.bytes;
+  }
+  return files > SKILL_PIN_MAX_FILES || bytes > SKILL_PIN_MAX_BYTES;
+}
+
+/** A refusal when switching `name` on would put the bot past 40 skills, or past 1,000 files / 32 MB for a pin of them. */
+export function skillCeilingRefusal(botId: string, name: string, manifest: Record<string, SkillManifestEntry>): { error: string; code: typeof SKILL_CEILING_CODE } | null {
+  const on = Object.entries(manifest).filter(([key, value]) => value.enabled && key !== name);
+  if (on.length + 1 > SKILL_CEILING) {
+    return { error: `This bot already has ${SKILL_CEILING} skills on. Turn one off to add another.`, code: SKILL_CEILING_CODE };
+  }
+  if (skillPinTooLarge(botId, [...on.map(([key]) => key), name], manifest)) {
+    return { error: "These skills together are too large to pin to a task. Turn one off to add another.", code: SKILL_CEILING_CODE };
+  }
+  return null;
+}
+
 /** Switching on goes through Skill Guard: never for a Blocked skill, and
  *  for one that needs a look only with `acknowledged` set to the content
  *  hash of exactly what the owner was shown. Switching off always works. */
@@ -1105,11 +1325,16 @@ export function setSkillEnabled(
   name: string,
   enabled: boolean,
   options: { acknowledged?: string } = {},
-): SkillListing | { error: string; code?: "blocked" | "needs-review"; scan?: SkillScan } {
+): SkillListing | { error: string; code?: "blocked" | "needs-review" | typeof SKILL_CEILING_CODE; scan?: SkillScan } {
   if (!isSkillName(name)) return { error: "invalid skill name" };
   const manifest = readManifest(botId);
   const entry = manifest[name];
   if (!entry) return { error: `no imported skill named "${name}"` };
+  // Settings v10 K5: the ceiling sits here, so every way of switching a skill on meets it. Off is never refused.
+  if (enabled && !entry.enabled) {
+    const refusal = skillCeilingRefusal(botId, name, manifest);
+    if (refusal) return refusal;
+  }
   if (enabled && !skillContentMatches(botId, name, entry)) {
     return { error: "stored SKILL.md changed after review: remove and import or learn it again" };
   }
@@ -1607,6 +1832,10 @@ function installPreparedSkill(
     return { error: `a skill named "${name}" is already imported: choose a different name` };
   }
   if (options.enabled && prepared.scan.verdict === "blocked") return { error: BLOCKED_MESSAGE };
+  // K5: a skill that arrives already on (a learned skill the owner approved) meets the same ceiling as a switch.
+  if (options.enabled && Object.values(manifest).filter((value) => value.enabled).length + 1 > SKILL_CEILING) {
+    return { error: `This bot already has ${SKILL_CEILING} skills on. Turn one off to add another.` };
+  }
   const entry: SkillManifestEntry = {
     scan: prepared.scan,
     description: prepared.parsed.description,
@@ -2016,11 +2245,26 @@ function skillsIndex(botId: string): { text: string; listed: SkillListing[] } {
   // review, integrity filtering below removes it from native discovery too.
   sweepBotSkills(botId);
   syncSkillLinks(botId);
-  const enabled = listSkills(botId).filter((skill) => skill.enabled);
-  if (!enabled.length) {
+  const plan = skillIndexPlan(botId);
+  const omitted = plan.enabled.slice(plan.lines.length);
+  if (omitted.length) {
+    const signature = JSON.stringify([indexOmissionReason(plan.lines.length), omitted.map((skill) => skill.name)]);
+    if (loggedIndexOmissions.get(botId) !== signature) {
+      console.warn(`Skills index for bot ${botId}: ${omitted.length} enabled skills omitted by ${indexOmissionReason(plan.lines.length)}: ${omitted.map((skill) => skill.name).join(", ")}`);
+      loggedIndexOmissions.set(botId, signature);
+    }
+  } else {
     loggedIndexOmissions.delete(botId);
-    return { text: "", listed: [] };
   }
+  return { text: plan.text, listed: plan.enabled.slice(0, plan.lines.length) };
+}
+
+/** The one place the index lines and their fit are decided. skillsIndex renders
+ * them into the prompt; skillIndexPreview reads them for Settings. Both call
+ * this and so the same fitSkillIndex run. It writes nothing. */
+function skillIndexPlan(botId: string): { text: string; lines: string[]; enabled: SkillListing[]; omitted: number } {
+  const enabled = listSkills(botId).filter((skill) => skill.enabled);
+  if (!enabled.length) return { text: "", lines: [], enabled: [], omitted: 0 };
   const root = workspaceDir(botId);
   const manifest = readManifest(botId);
   const intro = "\n\nImported skills:\n";
@@ -2034,17 +2278,20 @@ function skillsIndex(botId: string): { text: string; listed: SkillListing[] } {
     return `- ${skill.name}: ${skill.description} Read ${JSON.stringify(file)}.`;
   });
   const lines = fitSkillIndex(candidates, block);
-  const omitted = enabled.slice(lines.length);
-  if (omitted.length) {
-    const signature = JSON.stringify([indexOmissionReason(lines.length), omitted.map((skill) => skill.name)]);
-    if (loggedIndexOmissions.get(botId) !== signature) {
-      console.warn(`Skills index for bot ${botId}: ${omitted.length} enabled skills omitted by ${indexOmissionReason(lines.length)}: ${omitted.map((skill) => skill.name).join(", ")}`);
-      loggedIndexOmissions.set(botId, signature);
-    }
-  } else {
-    loggedIndexOmissions.delete(botId);
-  }
-  return { text: block(lines, omitted.length), listed: enabled.slice(0, lines.length) };
+  return { text: block(lines, enabled.length - lines.length), lines, enabled, omitted: enabled.length - lines.length };
+}
+
+/** Settings v10 K4: for a new chat with the owner, which of this bot's skills
+ * are lines in "In every message" and which are Looked up, with the size of each
+ * line, read from the same fitSkillIndex run that builds the message. */
+export function skillIndexPreview(botId: string): { inEveryMessage: Array<{ name: string; bytes: number }>; lookedUp: string[]; omitted: number; reason: string | null } {
+  const plan = skillIndexPlan(botId);
+  return {
+    inEveryMessage: plan.lines.map((line, index) => ({ name: plan.enabled[index]!.name, bytes: Buffer.byteLength(line, "utf8") })),
+    lookedUp: plan.enabled.slice(plan.lines.length).map((skill) => skill.name),
+    omitted: plan.omitted,
+    reason: plan.omitted ? indexOmissionReason(plan.lines.length) : null,
+  };
 }
 
 /** Protected history stores exact prior manifest entries; no historical GC. */

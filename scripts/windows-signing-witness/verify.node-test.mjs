@@ -6,8 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { loadEnrollment, main, verifyCase, verifyRun } from './run.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const roots=[];
-afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
+afterEach(()=>{for(const root of roots.splice(0))safeWipeSync(root);});
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 function fixture(){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'signing-witness-'));roots.push(root);

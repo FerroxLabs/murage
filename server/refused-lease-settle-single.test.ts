@@ -52,7 +52,7 @@ it("SETTLE-1 exactly one settle runs per ticket in every meeting order, a re-not
     });
     let closed!: () => void;
     const lease = { providerTurnId: "turn-1", verdict: { state: "checking" }, identity: { threadId: "thread-1", dispatchGeneration: "gen-1" },
-      teardownConfirmed: new Promise<void>(resolve => { closed = resolve; }) };
+      ...((teardownConfirmed: Promise<void>) => ({ teardownConfirmed, teardownEnded: teardownConfirmed.then(() => true) }))(new Promise<void>(resolve => { closed = resolve; })) };
     const takes: string[] = [];
     const ticket = () => ({ owed: true, redispatch: false, afterSubmission: true, take: (how: string) => { takes.push(how); } });
     for (const step of order) step === "note" ? g.noteRefusedLeaseTerminal(lease) : g.registerLateTicket("turn-1", ticket());
@@ -84,7 +84,7 @@ it.each(["note-first", "ticket-first"].flatMap(order => [false, true].map(stoppe
     directRuns: { get: () => undefined }, retryDelegationsWaitingOn: () => {}, drainQueuedSends: () => {},
   });
   const lease = { providerTurnId: "final-turn", verdict: { state: "checking" }, identity: { threadId: "thread-1", dispatchGeneration: "gen-1" },
-    teardownConfirmed: new Promise<void>(resolve => { closed = resolve; }) };
+    ...((teardownConfirmed: Promise<void>) => ({ teardownConfirmed, teardownEnded: teardownConfirmed.then(() => true) }))(new Promise<void>(resolve => { closed = resolve; })) };
   // Evaluate the production final-attempt ticket too, so its owed guard and owner card are part of the witness.
   const ts = await import("typescript"), vm = await import("node:vm");
   const start = source.indexOf("const lastTicket: LateMemoryTicket =");

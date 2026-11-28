@@ -1,7 +1,7 @@
 // Uses only exports present at 91c4d404, so behavioral RED runs on that base.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
@@ -9,6 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {installBindings} from './bindings.mjs';
 import {hashInput as nativeHash} from './oracle-class.mjs';
 import * as native from './native-operation-evidence.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const {readNativeEvents,completedOperations,nativeOperationEvidence}=native;
 const stamp=n=>new Date(n).toISOString();
 const event=(type,turnId,at,extra={})=>({type,turnId,threadId:'routine-thread',provider:'claudeAgent',providerInstanceId:'claude',createdAt:stamp(at),eventId:`${type}-${turnId}`, ...extra});
@@ -70,7 +71,7 @@ test('M1 public history is visited once and later reads visit only appended even
   publicEvents.push({type:'turn.started',threadId:'new',turnId:'fresh'});
   assert.equal(readNativeEvents(root,['new'],publicEvents)[0].turnId,'fresh');assert.equal(visits,10000);
   publicEvents.length=0;assert.deepEqual(readNativeEvents(root,['new'],publicEvents),[]);
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });
 test('M1 tool start and completion joins visit events linearly and preserve duplicate rejection',()=>{
  let visits=0;const count=2000;
@@ -114,5 +115,5 @@ test('H1 standalone peer returns the requested marker through its provider proto
   const frames=result.stdout.trim().split('\n').map(row=>JSON.parse(row));
   assert.ok(frames.some(f=>f.type==='assistant'&&f.message.content.some(c=>c.type==='text'&&c.text==='S3_PEER_REPLY')));
   assert.ok(frames.some(f=>f.type==='result'&&f.is_error===false));
- }finally{rmSync(root,{recursive:true,force:true});}
+ }finally{safeWipeSync(root);}
 });

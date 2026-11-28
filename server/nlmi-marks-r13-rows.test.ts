@@ -29,22 +29,19 @@ function call(bot: object, cmd: string, extra: Record<string, unknown> = {}, fil
   } as unknown as Context;
   return autoVerdict(bot as never, "Bash", cmd, context);
 }
-const cardsProtected = (bot: object, cmd: string, extra: Record<string, unknown> = {}) => {
-  const verdict = call(bot, cmd, extra);
-  expect(verdict.approve, cmd).toBeNull();
-  expect(verdict, cmd).toMatchObject({ source: "always-ask", rule: "protected-path" });
-};
+// OVERREACH #6 (MAIN 2026-11-26): the owner's own Full access turn runs a protected-path row, as No limits does
+const runsProtectedFull = (cmd: string, extra: Record<string, unknown> = {}) => expect(call(FULL, cmd, extra).approve, cmd).toBeTruthy();
 // NOLIM 1.0.19: the owner's No limits turn runs a protected-path row (only the wipe list still cards); Full access keeps the card
 const runsProtected = (cmd: string, extra: Record<string, unknown> = {}) => expectNoLimitsOwnerOutcome(call(NO_LIMITS, cmd, extra), cmd, "protected-path");
 
 describe("Astra r13 H1: a valued ln option moves the link, so no word is exempt", () => {
   it.each(["ln -sf /tmp/blob /etc/marks-link -S .bak", "ln -sf /tmp/blob /etc/marks-link --suffix .bak"])("M-R13-ln-bare %s cards at Full access and runs at No limits", cmd => {
-    cardsProtected(FULL, cmd);
+    runsProtectedFull(cmd);
     // MAIN RULING 2026-11-13 wipe-only (S5-DESIGN.md, section 2.C): a protected link write runs at No limits.
     runsProtected(cmd);
   });
   it.each(["ln -sf /tmp/blob /etc/x", "ln -s -S .bak /tmp/blob /etc/x", "ln -s -t /etc /tmp/blob"])("the link in a system folder cards at Full access, runs at No limits: %s", cmd => {
-    expect(call(FULL, cmd).approve, cmd).toBeNull();
+    expect(call(FULL, cmd).approve, cmd).toBeTruthy(); // OVERREACH #6: the owner's own Full access turn runs it too
     // MAIN RULING 2026-11-13 wipe-only (S5-DESIGN.md, section 2.C): a protected link write runs at No limits.
     runsProtected(cmd);
   });
@@ -58,7 +55,7 @@ describe("Astra r13 M5 (R4): the link text names a protected folder, and only th
     runsProtected(cmd);
   });
   it("a hard link keeps both as write targets", () => {
-    expect(call(FULL, "ln /etc/hosts ./h").approve).toBeNull();
+    expect(call(FULL, "ln /etc/hosts ./h").approve).toBeTruthy(); // OVERREACH #6: runs at Full access as at No limits
   });
 });
 
@@ -101,7 +98,7 @@ describe("Astra r13 H2: the owner-only reliefs need the owner-started proof", ()
 
 describe("Astra r13 H3 (R2): a script a deny rule names cards at every level", () => {
   it.each(["bash /etc/tool.sh", "bash /usr/share/tool.sh", "python3 /usr/lib/tool.py"])("M-R11-unseen-deny Full access %s keeps the card, No limits runs it", cmd => {
-    cardsProtected(FULL, cmd);
+    runsProtectedFull(cmd);
     runsProtected(cmd);
   });
   it.each(["bash ./build.sh", "node tvcall.mjs"])("an allowed-shape script still runs at Full access: %s", cmd => {
@@ -110,8 +107,12 @@ describe("Astra r13 H3 (R2): a script a deny rule names cards at every level", (
 });
 
 describe("Astra r13 L7: a session file the reader cannot read holds in the doubt-free read too", () => {
-  it("python3 ./build.py with no bytes for ./build.py holds at Full access and runs at No limits (could-not-read, not a wipe)", () => {
-    expect(call(FULL, "python3 ./build.py", {}, { "/w/build.py": "unavailable" }).approve).toBeNull();
-    expect(call(NO_LIMITS, "python3 ./build.py", {}, { "/w/build.py": "unavailable" }).approve).toBeTruthy();
+  // MAIN-RULING 2026-11-27 (3): Full access is never looser than No limits, and a written script the wipe check cannot read is a wipe-check
+  // fault at both: the same card (it ran at No limits before, as could-not-read; the wipe check now reads the body, so it cannot be skipped)
+  it("python3 ./build.py with no bytes for ./build.py takes the same wipe-check card at Full access and at No limits", () => {
+    const files = { "/w/build.py": "unavailable" };
+    expect(call(FULL, "python3 ./build.py", {}, files)).toMatchObject({ approve: null, source: "always-ask" });
+    expect(call(NO_LIMITS, "python3 ./build.py", {}, files)).toMatchObject({ approve: null, source: "always-ask", rule: "wipe-check-fault" });
+    expect(call(FULL, "python3 ./build.py", {}, files).rule).toBe("wipe-check-fault");
   });
 });

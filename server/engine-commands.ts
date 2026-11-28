@@ -41,6 +41,10 @@ const ENGINE_LABELS: Record<string, string> = {
   hermesAgent: "Hermes",
   openclawAgent: "OpenClaw",
   clineAgent: "Cline",
+  commandCodeAgent: "Command Code",
+  kiroAgent: "Kiro",
+  ompAgent: "OMP",
+  devinAgent: "Devin",
   museCode: "Muse Code",
   deepseekAgent: "DeepSeek Harness", copilotAgent: "GitHub Copilot",
 };
@@ -93,7 +97,7 @@ const HIDDEN_EVERYWHERE = new Set([
   "clear", "new", "reset", "resume", "continue", "rewind", "fork", "branch", "model",
   "permissions", "allowed-tools", "add-dir", "approvals", "sandbox", "install-github-app", "upgrade",
   "always-approve", "hooks", "hooks-add", "hooks-remove", "hooks-trust", "hooks-untrust", "plugins", "plugin",
-  "learn", "setup",
+  "learn", "setup", "teach",
 ]);
 
 /** Codex's app-server has no command list of its own. These are the useful

@@ -35,7 +35,15 @@ export function cachedKnown(u: Pick<TaskUsage, "cachedInput">): boolean {
 
 export function botUsage(bot: Pick<Bot, "tasks" | "usageTotal">): TaskUsage {
   // The server sums every task; the list a frame carries is only a window of them.
-  return bot.usageTotal ?? sumUsage((bot.tasks ?? []).map((t) => t.usage));
+  const total = bot.usageTotal;
+  if (!total) return sumUsage((bot.tasks ?? []).map((t) => t.usage));
+  // A cache count the server marks incomplete covers only some of the input; reading it as the whole would call the rest new text.
+  // Records saved before the marks carry no mark at all: their split stands by the old rule (cacheUnmarkedOnly).
+  if (total.usageAccounting?.cacheComplete === false && !total.cacheUnmarkedOnly && total.cachedInput !== undefined) {
+    const { cachedInput: _partial, ...unknownSplit } = total;
+    return unknownSplit;
+  }
+  return total;
 }
 
 /** 950 → "950", 12_400 → "12.4k", 2_300_000 → "2.3M" */

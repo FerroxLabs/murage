@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Builds the web UI that the isolated host serves, on the build host (Plan 1's rule:
+# Builds the web UI that the isolated host serves, on Hetzner (Plan 1's rule:
 # no vite build of the full UI on the Mac), and copies dist back.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 APP=$(cd "$HERE/../../../.." && pwd)
 # shellcheck source=scripts/safe-wipe.sh
 source "$APP/scripts/safe-wipe.sh"   # the only recursive delete scripts may use
-HOST=build-host
+HOST=hetzner-dsm
 LANE=/root/mb-mobile/plan2-web
 ssh "$HOST" "df -h / | tail -1; mkdir -p $LANE"
 rsync -a --delete --exclude node_modules --exclude .git --exclude '/dist*' --exclude apps/mobile --exclude release \

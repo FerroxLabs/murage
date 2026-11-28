@@ -8,8 +8,8 @@ import { SETTINGS_SECTIONS, sectionsForSurface, settingsSectionRedirect } from "
 import { ANNOUNCEMENT_ACTION_SECTIONS } from "./announcements";
 
 describe("the Settings pages", () => {
-  it("are thirteen sidebar pages plus the Messaging tab, each heading's pages together", () => {
-    expect(SECTION_PAGES).toHaveLength(13);
+  it("are the 17 v10 rail pages (Messaging, Tools, Bots, Rules and Overview joined the 13), each heading's pages together", () => {
+    expect(SECTION_PAGES).toHaveLength(17);
     const groups = SECTION_PAGES.map((page) => page.group);
     expect(groups.filter((group, index) => group !== groups[index - 1])).toEqual(SETTINGS_PAGE_GROUPS.filter((group) => group !== "bots"));
     expect(settingsPageGroup("webSearch")).toBe("ai");
@@ -17,8 +17,8 @@ describe("the Settings pages", () => {
 
   // 1.0.3 attachment-cap added "storage" (the Composer's "manage storage" link): an alias onto the Backups page's Storage card, so every id
   // still lands on one of the pages. 1.0.19: Calls and Computer & browser became pages, and Browse bots is a route.
-  it("alias resolve: every one of the 22 ids lands on a page, aliases with their anchor", () => {
-    expect(SETTINGS_SECTIONS).toHaveLength(22);
+  it("alias resolve: every one of the 28 ids lands on a page, aliases with their anchor", () => {
+    expect(SETTINGS_SECTIONS).toHaveLength(28);
     const pages = new Set(SECTION_PAGES.map((page) => page.id));
     for (const { id } of SETTINGS_SECTIONS) {
       if (id === BROWSE_BOTS_ROUTE) continue;
@@ -27,14 +27,14 @@ describe("the Settings pages", () => {
       if (isSettingsPage(id)) expect(target).toEqual({ section: id, anchor: null });
       else expect(target).toEqual(SECTION_ALIASES[id as keyof typeof SECTION_ALIASES]);
     }
-    expect(Object.keys(SECTION_ALIASES).sort()).toEqual(["aboutMe", "channels", "engines", "experimental", "houseRules", "images", "storage", "voice"]);
-    expect(new Set(Object.values(SECTION_ALIASES).map((alias) => alias.anchor)).size).toBe(8);
+    expect(Object.keys(SECTION_ALIASES).sort()).toEqual(["aboutMe", "botDefaults", "channels", "engines", "experimental", "houseRules", "images", "providers", "storage", "voice"]);
+    expect(new Set(Object.values(SECTION_ALIASES).map((alias) => alias.anchor)).size).toBe(10);
     expect(SECTION_ALIASES.storage).toEqual({ section: "backups", anchor: "storage-heading" });
   });
 
   it("keeps routing anchors verbatim and lands every announcement target", () => {
     expect(isSettingsPage("channels")).toBe(false);
-    expect(resolveSettingsSection("channels")).toEqual({ section: "connections", anchor: "telegram-settings-title" });
+    expect(resolveSettingsSection("channels")).toEqual({ section: "messaging", anchor: "telegram-settings-title" });
     expect(SECTION_ALIASES.images).toEqual({ section: "webSearch", anchor: "image-settings-heading" });
     expect(SECTION_ALIASES.aboutMe.anchor).toBe("about-me-heading");
     expect(SECTION_ALIASES.houseRules.anchor).toBe("house-rules-heading");
@@ -63,6 +63,6 @@ describe("the Settings pages", () => {
     for (const section of ["calls", "models", "engines"] as const) {
       expect(settingsSectionRedirect(SETTINGS_SECTIONS, section, desktop, sections)).toBeNull();
     }
-    for (const page of ["botDefaults", "skills", "memory", "webSearch", "computer", "companion", "backups"]) expect(pages.map((entry) => entry.id)).not.toContain(page);
+    for (const page of ["rules", "skills", "memory", "webSearch", "computer", "companion", "backups"]) expect(pages.map((entry) => entry.id)).not.toContain(page);
   });
 });

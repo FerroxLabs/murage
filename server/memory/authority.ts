@@ -9,7 +9,9 @@ import { roomRequest } from "../room-requests.ts";
 import { executionStore, partitionOfScope } from "../execution-audience.ts";
 import { randomUUID, createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { database, transaction } from "../database.ts";
+import { database, isDatabaseBusy, transaction } from "../database.ts";
+import { claimMemoryJob, isStaleMemoryPublication, notifyOwnerSave, publishMemoryWork } from "./jobs.ts";
+import { captureWork } from "./chunks.ts";
 import { redactSecretsInText } from "../redact.ts";
 import type { MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
@@ -31,6 +33,8 @@ import { memoryState } from "./repository.ts";
 import { ownerNoteId, type LamDatePrecision } from "../../shared/learn-about-me/origin.ts";
 import type { LamProvider } from "../../shared/learn-about-me/parse.ts";
 import { memoryLookup } from "./deny-read.ts";
+import type { LineageReader } from "./lineage-types.ts";
+import { ownerDirectChat } from "./disclosures.ts";
 import { learningDeletionEpoch } from "./deny.ts";
 import { insertMemoryRecord } from "./record-write.ts";
 
@@ -87,7 +91,7 @@ function saveCandidate(text: string, evidence: MemoryEvidenceHandle[], key: stri
   assertMemoryAccess(access);
   if (!text.trim() || text.length > 4096 || !evidence.length || evidence.length > 20 || !/^[\w-]{1,160}$/.test(key)) throw new Error("INVALID_MEMORY_CANDIDATE");
   return transaction(db => {
-    assertEvidenceAllowed(db,evidence);
+    assertEvidenceAllowed(db,evidence,access);
     const scopes = new Set<string>();
     for (const handle of evidence) {
       const source = db.prepare("SELECT s.scope_id,s.state,s.revision,s.kind,s.outcome,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=? WHERE s.id=?").get(handle.revision,handle.sourceId);
@@ -123,18 +127,54 @@ function saveCandidate(text: string, evidence: MemoryEvidenceHandle[], key: stri
   });
 }
 
-/** Only jobs which can still complete warrant a retry. */
+/** MEMSAVE-1024: the most 64 KiB capture slices one save drives for all the sources it cites together, and the wall time it may
+ * spend on them in all, lock waits included. */
+export const SAVE_CAPTURE_SLICES=32, SAVE_CAPTURE_MS=250;
+/** MEMSAVE-1024 (field 1.0.23: "Source capture is still pending. Try saving this memory again after capture finishes." for as long
+ * as the background budget kept the capture worker out, BG_DEFERRED): a save never waits on the background queue. The capture of a
+ * cited source is the worker's own cheap, synchronous step (chunks.ts captureWork, no model), so the save runs it here, for exactly
+ * the sources it cites, claimed by job id through the same durable lease and publish fence the worker uses. A job that backed off
+ * or that the worker leased and has not published is taken over (the generation moves, so a late publication is fenced as stale).
+ * Bounded: every slice started is counted (the one that completes a job too), and every lock wait is given only the time that is
+ * left, never the handle's own second. Whatever is still open after it does not refuse the save (see assertMemoryCaptureComplete). */
+function captureCitedSourcesNow(jobIds:readonly string[]){
+ const owner=`save-${randomUUID()}`,start=performance.now();
+ const left=()=>Math.max(0,Math.floor(SAVE_CAPTURE_MS-(performance.now()-start)));
+ let slices=0;
+ for(const jobId of jobIds){
+  while(slices<SAVE_CAPTURE_SLICES&&left()>0){
+   slices++;
+   try{
+    transaction(db=>db.prepare("UPDATE memory_jobs SET retry_at=0,lease_until=0 WHERE id=? AND stage='capture' AND status IN ('pending','partial','deferred','leased')").run(jobId),{op:"save-capture",busyMs:left()});
+    const work=claimMemoryJob(owner,Date.now(),undefined,{jobId,busyMs:left()});
+    if(!work)break;
+    const result=captureWork(work);
+    publishMemoryWork(work,owner,result,Date.now(),{busyMs:left()});
+    if(result.status==="complete")break;
+   }catch(error){
+    // "not now" (a held write lock, a source that moved under the claim): the save goes on, the worker finishes this capture later
+    if(isDatabaseBusy(error)||isStaleMemoryPublication(error))break;
+    throw error;
+   }
+  }
+ }
+}
+/** A cited source whose capture can no longer complete is refused (400). A capture that is only waiting never refuses the save
+ * (MEMSAVE-1024, owner turns are never held): it is run now, and if it still could not finish inside the bound the save goes on
+ * with the evidence already linked to the source; the worker completes that capture when it next runs. */
 export function assertMemoryCaptureComplete(evidence:ReadonlyArray<{sourceId:string;revision:number}>,access:MemoryAccess){
- const db=database();
+ const db=database(),open:string[]=[];
  for(const h of evidence){
   const source=db.prepare("SELECT scope_id FROM memory_sources WHERE id=? AND revision=? AND state='active'").get(h.sourceId,h.revision);
   if(!source)continue;
   assertMemoryAccess(access,String(source.scope_id));
-  const jobs=db.prepare("SELECT status FROM memory_jobs WHERE source_id=? AND source_revision=? AND stage='capture'").all(h.sourceId,h.revision);
+  const jobs=db.prepare("SELECT id,status FROM memory_jobs WHERE source_id=? AND source_revision=? AND stage='capture'").all(h.sourceId,h.revision);
   if(jobs.some(j=>j.status==="complete"))continue;
-  if(jobs.some(j=>["pending","leased","partial","deferred"].includes(String(j.status))))throw Object.assign(new Error("Source capture is still pending. Try saving this memory again after capture finishes."),{status:409});
-  throw Object.assign(new Error("This source cannot be used because its capture did not complete."),{status:400});
+  const waiting=jobs.filter(j=>["pending","leased","partial","deferred"].includes(String(j.status)));
+  if(!waiting.length)throw Object.assign(new Error("This source cannot be used because its capture did not complete."),{status:400});
+  for(const j of waiting)open.push(String(j.id));
  }
+ if(open.length)captureCitedSourcesNow(open);
 }
 
 /** S4 supplies a verifier-issued service claim. Callers without a live service
@@ -148,7 +188,8 @@ export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHand
   const id=saveMemoryCandidate(text,cited,key,access);
   const request=openMemoryRequest(options.authority,access,id,1);
   if(request.baseBranch && request.outcome.kind==='card') {
-    await saveGroundedMemoryBase(text,evidence,key,access,claimType,extractor,ownerInvitation,options);
+    // the capture fence above was this save's one capture step (no await lies between it and the base path's own start): not run twice
+    await saveGroundedMemoryBase(text,evidence,key,access,claimType,extractor,ownerInvitation,{budgetGate:options.budgetGate,captureFenced:true});
     if(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(id)?.state==='candidate') presentMemoryRequest(request,request.outcome.ref,access,id,1);
   } else finishMemoryRequest(request,access,id,1);
   return id;
@@ -157,11 +198,11 @@ export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHand
 /** Ground through the configured isolated text-only evaluator. The durable
  * candidate exists before optional synthesis; a changed audience/source/config
  * fences activation, while unavailable synthesis remains honestly provisional. */
-async function saveGroundedMemoryBase(text:string,evidence:MemoryEvidenceHandle[],key:string,access:MemoryAccess,claimType:MemoryClaimType|undefined,extractor:TextOnlyExtractor|null,ownerInvitation?:MemoryEvidenceHandle,options:{budgetGate?:(scopeId:string)=>boolean}={}){
+async function saveGroundedMemoryBase(text:string,evidence:MemoryEvidenceHandle[],key:string,access:MemoryAccess,claimType:MemoryClaimType|undefined,extractor:TextOnlyExtractor|null,ownerInvitation?:MemoryEvidenceHandle,options:{budgetGate?:(scopeId:string)=>boolean;/** The caller (saveGroundedMemory) already ran the capture fence for this same save. */captureFenced?:boolean}={}){
   if(ownerInvitation&&claimType!=="character-canon")throw Object.assign(new Error("Owner invitations can only support character canon."),{status:400});
   assertMemoryAccess(access);
   const cited=ownerInvitation?[...evidence,ownerInvitation]:evidence;
-  assertMemoryCaptureComplete(cited,access);
+  if(!options.captureFenced)assertMemoryCaptureComplete(cited,access);
   const id=saveMemoryCandidate(text,cited,key,access);
   // an external-mail memory is already held for the owner (saveCandidate): no grounding, no other reason in its place
   if(recordEmailDerived(database(),id,1))return id;
@@ -236,19 +277,55 @@ export function readCorrectionTarget(db: DatabaseSync, id: string, version: numb
   return {status:"current",target};
 }
 
-/** Durable source denies and pending lineage apply even while source cleanup has not changed its active state. */
-function assertEvidenceAllowed(db: DatabaseSync, handles: ReadonlyArray<{sourceId:string;revision:number}>) {
-  const refs=handles.map(h=>({kind:"source" as const,id:h.sourceId,version:h.revision}));
-  for(const verdict of memoryLookup(db,refs,{audience:null,ownFlag:true}).values()) {
-    if(verdict.state!=="shown")throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+/** MEMSWEEP-1024: the accesses of a save or correction made in the owner's own typed turn (routes.ts marks them from index.ts ownerDirectLine). */
+const ownerTurnSaves=new WeakSet<MemoryAccess>();
+export function markOwnerTurnSave(access:MemoryAccess){ownerTurnSaves.add(access);}
+/** Whether a save's evidence may be judged by the last settled view: only in the owner's own direct turn (MAIN-RULING
+ * 2026-11-26T20:15:28Z, lineage-types.ts LineageReader.settled), as its recall and replay already are (readable.ts, bundle.ts). Field
+ * 1.0.23 on a real store: thousands of revoke jobs stay open for hours after start-up, their pending window covers the bot's scope, and
+ * every line the owner wrote after it began read checking:pending here, so every memory_save of the owner's new words was refused
+ * MEMORY_EVIDENCE_UNAVAILABLE. */
+function ownerTurnEvidence(access?:MemoryAccess):boolean{
+  return access!==undefined&&ownerTurnSaves.has(access)&&ownerDirectChat(access.threadId,access);
+}
+/** A text line the owner wrote and sent in person (origin attended or channel, the rule of learnable.ts isLearnableSource). capture.ts gives
+ * speaker 'owner' to every user-role line of the owner's thread, an automation's or an unproven one included: those are not the owner's words. */
+function ownerAttendedLine(db:DatabaseSync,sourceId:string):boolean{
+  const source=db.prepare("SELECT v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision WHERE s.id=? AND s.speaker='owner' AND s.kind='text'").get(sourceId);
+  if(!source)return false;
+  let origin:unknown;
+  try{origin=JSON.parse(String(source.payload)).origin;}catch{return false;}
+  if(origin===undefined||origin===null){
+    const binding=db.prepare("SELECT intent FROM memory_scope_bindings WHERE subject_type='source-origin' AND subject_id=? AND state='granted'").get(sourceId);
+    try{origin=binding?JSON.parse(String(binding.intent)):null;}catch{return false;}
+  }
+  const kind=(origin as {kind?:unknown}|null)?.kind;
+  return kind==="attended"||kind==="channel";
+}
+const STRICT_EVIDENCE:LineageReader={audience:null,ownFlag:true}, SETTLED_EVIDENCE:LineageReader={audience:null,ownFlag:true,settled:true};
+/** Durable source denies and pending lineage apply even while source cleanup has not changed its active state. In the owner's own
+ * direct turn, a line the OWNER wrote is judged by the settled view: a revoke walk still in flight is no verdict for the owner's own
+ * words, while durable denies, tombstones and the owner's own flag still refuse them. Every other line (a bot's reply, a tool outcome,
+ * anything that may restate what is being forgotten) and every other save (rooms, outside input, automations, background learning)
+ * keeps every pending window. */
+function assertEvidenceAllowed(db: DatabaseSync, handles: ReadonlyArray<{sourceId:string;revision:number}>, access?: MemoryAccess) {
+  const ownerTurn=ownerTurnEvidence(access);
+  const ownerWords=(sourceId:string)=>ownerTurn&&ownerAttendedLine(db,sourceId);
+  const strict:Array<{kind:"source";id:string;version:number}>=[],settled:typeof strict=[];
+  for(const h of handles)(ownerWords(h.sourceId)?settled:strict).push({kind:"source",id:h.sourceId,version:h.revision});
+  for(const [refs,reader] of [[strict,STRICT_EVIDENCE],[settled,SETTLED_EVIDENCE]] as const) {
+    if(!refs.length)continue;
+    for(const verdict of memoryLookup(db,refs,reader).values()) {
+      if(verdict.state!=="shown")throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+    }
   }
 }
 /** Evidence must still be exactly what the owner reviewed: active sources at
  * the recorded revision, not tombstoned, spans inside the stored text. */
-function assertEvidenceCurrent(db: DatabaseSync, id: string, version: number) {
+function assertEvidenceCurrent(db: DatabaseSync, id: string, version: number, access?: MemoryAccess) {
   const handles = db.prepare("SELECT source_id,source_revision,end_byte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,version);
   if (!handles.length) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
-  assertEvidenceAllowed(db,handles.map(h=>({sourceId:String(h.source_id),revision:Number(h.source_revision)})));
+  assertEvidenceAllowed(db,handles.map(h=>({sourceId:String(h.source_id),revision:Number(h.source_revision)})),access);
   for (const handle of handles) {
     const source = db.prepare("SELECT s.state,s.revision,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=? WHERE s.id=?").get(handle.source_revision,handle.source_id);
     if (!source || source.state !== "active" || source.revision !== handle.source_revision) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
@@ -262,7 +339,9 @@ function assertEvidenceCurrent(db: DatabaseSync, id: string, version: number) {
  * validate the exact recorded target version, revalidate the candidate's
  * evidence, then supersede only that target and activate the replacement in
  * one transaction. A pinned target needs an explicit transfer/unpin choice. */
-export function approveCorrection(db: DatabaseSync, record: Record<string, unknown>, review: CorrectionTargetReview, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice}) {
+export function approveCorrection(db: DatabaseSync, record: Record<string, unknown>, review: CorrectionTargetReview, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice},
+  /** MEMSWEEP-1024: the access of the registered memory request that runs this approval (applyRegisteredMemory); absent everywhere else (strict). */
+  access?: MemoryAccess) {
   // A correction replaces one reviewed fact in its own audience. Promotion and
   // an implicit pin flag are separate owner decisions, never folded in here.
   if (options.pin !== undefined || (options.scopeId !== undefined && options.scopeId !== record.scope_id)) throw new Error("MEMORY_CORRECTION_OPTIONS_INVALID");
@@ -274,13 +353,15 @@ export function approveCorrection(db: DatabaseSync, record: Record<string, unkno
   // B2 (spec r3 2.5): neither the correction nor the fact it replaces may be a forgotten record
   assertNotForgotten(db,String(record.id)); assertNotForgotten(db,target.id);
   if (target.scopeId !== record.scope_id) throw new Error("MEMORY_CORRECTION_SCOPE_MISMATCH");
-  assertEvidenceCurrent(db,String(record.id),Number(record.version));
+  assertEvidenceCurrent(db,String(record.id),Number(record.version),access);
   if (target.ownerPinned && options.correctionPin === undefined) throw new Error("MEMORY_CORRECTION_PIN_CHOICE_REQUIRED");
   // The owner chose for a pin that is no longer there: the review is stale.
   if (!target.ownerPinned && options.correctionPin !== undefined) throw new Error("MEMORY_CORRECTION_PIN_CHANGED");
   const pinUse = target.ownerPinned && options.correctionPin === "transfer" ? ownerPinUse(db,String(record.scope_id)) : undefined;
   const retired = db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id=? AND version=? AND state='active'").run(Date.now(),target.id,target.version);
   if (retired.changes !== 1) throw new Error("MEMORY_CORRECTION_TARGET_CHANGED");
+  // MEMSWEEP-1024 (ASTRA-MEMAUDIT 30): the replaced fact leaves the index as replaced, in the same transaction (as routes.ts and review.ts do)
+  db.prepare("UPDATE memory_projection_receipts SET lexical_status='pending-archive' WHERE record_id=? AND record_version=? AND lexical_status IN ('pending','indexed')").run(target.id,target.version);
   const activated = db.prepare("UPDATE memory_records SET state='active',owner_pinned=? WHERE id=? AND version=? AND state='candidate'")
     .run(target.ownerPinned && options.correctionPin === "transfer" ? 1 : 0,String(record.id),Number(record.version));
   if (activated.changes !== 1) throw new Error("MEMORY_VERSION_CONFLICT");
@@ -321,10 +402,10 @@ function applyRegisteredMemory(call:ServiceCall,access:MemoryAccess,id:string,ve
     if(call.tool!==tool || !isDeepStrictEqual(structuredClone(call.input),expected))throw new Error("MEMORY_REQUEST_MISMATCH");
     const record=db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id,version)!;
     if(db.prepare("SELECT max(version) AS version FROM memory_records WHERE id=?").get(id)?.version!==version)throw new Error("MEMORY_VERSION_CONFLICT");
-    assertMemoryAccess(access,String(record.scope_id)); assertEvidenceCurrent(db,id,version);
+    assertMemoryAccess(access,String(record.scope_id)); assertEvidenceCurrent(db,id,version,access);
     if(record.state==='active')return;
     const target=readCorrectionTarget(db,id,version);
-    applyMemoryApproval(id,version,target?.target?.ownerPinned?{correctionPin:'transfer'}:{});
+    applyMemoryApproval(id,version,target?.target?.ownerPinned?{correctionPin:'transfer'}:{},access);
   });
 }
 
@@ -379,13 +460,31 @@ export function finishMemoryRequest(request:OpenProducerRequest,access:MemoryAcc
   else if(!request.baseBranch) appendDecision(DATA_DIR,{threadId:access.threadId,botId:access.botId,requestId:request.item.ref,tool:request.item.call.tool,summary:request.item.call.tool,decision:'auto-approved',source:'no-limits'});
 }
 
-function applyMemoryApproval(id: string, version: number, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice}) {
-  return transaction(db => {
+/** q1024-memrecall (ASTRA-MEMAUDIT NEW 8): an approved record reaches the index worker's queue (projection.ts PENDING) in the
+ * same transaction that activates it, on every approval path: the desktop route, service RUN and Keep on the queued card.
+ * Without it words still find it, but the helper never embeds it, so a later turn's paraphrase misses it. */
+function queueApprovedProjection(db: DatabaseSync, id: string, version: number) {
+  // Continuity rows never enter the shared recall index (settings.ts reindex).
+  if (isPipKind(db.prepare("SELECT kind FROM memory_records WHERE id=? AND version=?").get(id,version)?.kind)) return;
+  db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL) ON CONFLICT(record_id,record_version,index_generation) DO UPDATE SET lexical_status='pending',embedding_status='pending',error=NULL").run(id,version);
+}
+
+function applyMemoryApproval(id: string, version: number, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice}, access?: MemoryAccess) {
+  const saved = transaction(db => {
+    const approved = approveCandidate(db,id,version,options,access);
+    queueApprovedProjection(db,approved,approved===id?version:1);
+    return approved;
+  });
+  // q1024-memsearch-fable (MAIN-RULING memint-3 (3)): the owner's own save is indexed now, not by a later background batch.
+  notifyOwnerSave(saved,saved===id?version:1);
+  return saved;
+}
+function approveCandidate(db: DatabaseSync, id: string, version: number, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice}, access?: MemoryAccess): string {
     assertNotForgotten(db,id);
     const record = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state='candidate'").get(id,version);
     if (!record) throw new Error("MEMORY_VERSION_CONFLICT");
     const correction = readCorrectionTarget(db,id,version);
-    if (correction) return approveCorrection(db,record,correction,options);
+    if (correction) return approveCorrection(db,record,correction,options,access);
     if (options.correctionPin !== undefined) throw new Error("MEMORY_CORRECTION_PIN_CHOICE_INVALID");
     // A candidate was never in a bundle; approving it ends only receipts that
     // somehow cite it (none, in practice). No policy change: who may read
@@ -405,7 +504,6 @@ function applyMemoryApproval(id: string, version: number, options: {pin?: boolea
     db.prepare("UPDATE memory_records SET state='active',owner_pinned=? WHERE id=? AND version=?").run(options.pin?1:0,id,version);
     if (options.pin) assertOwnerPinsFit(db,String(record.scope_id));
     return id;
-  });
 }
 
 export function correctMemory(ticket: object, id: string, version: number, text: string, options: {correctionPin?: CorrectionPinChoice} = {}) {

@@ -41,7 +41,12 @@ it.each(carded)("CARDED %s", async command => {
   const { prepared, verdict } = await judge(command);
   expect(prepared.rule).toBeTruthy();
   if (command.includes("$")) expect(prepared.local.unknown).toBeTruthy();
-  expect(verdict).toMatchObject({ approve: null, source: command.startsWith("eval ") ? "always-ask" : "sensitive-guard" });
+  // OVERREACH #6: the owner's own Full access turn runs the unreadable eval, as No limits does; the key guard still cards the rest
+  if (command.startsWith("eval ")) {
+    if (verdict.approve === null) expect(["always-ask", "sensitive-guard"]).toContain(verdict.source); // a glob that may name a key file keeps its card
+    else expect(verdict).toMatchObject({ source: "full-access" });
+  }
+  else expect(verdict).toMatchObject({ approve: null, source: "sensitive-guard" });
 });
 it.each(["eacces", "timeout"])("CARDED unreadable anchored glob: %s", async mode => {
   const { prepared, verdict } = await judge("cat /proj/as*e*r*", mode);
@@ -60,8 +65,10 @@ it.each(["cd $DIR", "echo $VAR", "if true; then echo ok; fi", "while false; do e
 it("dynamic eval without a glob has no X3 finding; the existing reader still holds", async () => {
   const { prepared, verdict } = await judge('eval "$X"');
   expect(prepared.rule).toBeNull();
-  expect(verdict).toMatchObject({ approve: null, source: "always-ask" });
+  // OVERREACH #6: the owner's own Full access turn runs the unreadable eval, as No limits does
+  expect(verdict).toMatchObject({ approve: expect.any(String), source: "full-access" });
 });
 it.each(["python3 - < in.txt", "python3 /dev/stdin < in.txt", "python3 script.py < $INPUT", "python3 script.py < in.txt"])("stdin code or dynamic input remains CARDED %s", async command => {
-  expect((await judge(command)).verdict).toMatchObject({ approve: null, source: "always-ask" });
+  // OVERREACH #6: the owner's own Full access turn runs it, as No limits does
+  expect((await judge(command)).verdict).toMatchObject({ approve: expect.any(String), source: "full-access" });
 });

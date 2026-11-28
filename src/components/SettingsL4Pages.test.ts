@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { cardsForSurface } from "@/lib/settings-cards";
 import { ANCHORS_OWED, SETTINGS_CARDS } from "@/lib/settings-card-registry";
-import { SECTION_ALIASES, SECTION_PAGES } from "@/lib/settings-pages";
+import { LIST_PAGES, SECTION_ALIASES, SECTION_PAGES } from "@/lib/settings-pages";
 
 const read = (name: string) => readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), "utf8");
 const modal = read("SettingsModal.tsx");
@@ -44,6 +44,7 @@ describe("the regrouped pages", () => {
     // Every registered page uses the shared Simple/Advanced card renderer once.
     const registry = read("settings/page-registry.tsx");
     for (const page of SECTION_PAGES) {
+      if (LIST_PAGES.includes(page.id)) continue; // a live list, not registry cards (settings-pages.ts LIST_PAGES)
       const file = registry.match(new RegExp(String.raw`${page.id}: \(\) => import\("\./pages/(\w+)"\)`))?.[1];
       expect(file, page.id).toBeTruthy();
       const source = read(`settings/pages/${file}.tsx`);
@@ -82,6 +83,7 @@ describe("the regrouped pages", () => {
   it("renders the anchor every alias lands on", () => {
     const all = [...new Set(Object.values(PAGE_FILES).flat())].map(read).join("\n");
     for (const [alias, target] of Object.entries(SECTION_ALIASES)) {
+      if (target.anchor === null) continue; // a page alias (botDefaults -> rules) names no card
       expect(all.includes(`id="${target.anchor}"`) || all.includes(`id: "${target.anchor}"`) || all.includes(`anchor: "${target.anchor}"`) || PAGE_ANCHORS.has(target.anchor), alias).toBe(true);
     }
   });

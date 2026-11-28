@@ -42,6 +42,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { CleanupRunner } from "./dictation-cleanup-route.ts";
 import {
   TranscriptionUnavailable,
+  UNREADABLE_RECORDING,
   transcribe as transcribeWithFlux,
   type TranscribeOptions,
   type Transcript,
@@ -105,20 +106,20 @@ export const ACCEPTED_CONTAINERS = "ogg, webm, mp4/m4a, mp3, wav or flac";
  *    a deliberately bad bearer answers `401 {"error":{"message":
  *    "unauthorized"}}`.
  */
-const STATUS_FOR: Record<TranscriptionFailure, number> = {
-  key: 409,
-  unavailable: 409,
-  premium: 402,
-  budget: 402,
-  auth: 401,
-  too_large: 413,
-  rate_limit: 429,
-  format: 400,
-  upstream: 502,
+const FAILURES: Record<TranscriptionFailure, { status: number; message: string }> = {
+  key: { status: 409, message: "Add a Flux key in Settings on the computer." },
+  unavailable: { status: 409, message: "Voice typing is not switched on for this account." },
+  premium: { status: 402, message: "Check this provider’s plan and billing limits for voice typing." },
+  budget: { status: 402, message: "This Flux key has reached its budget." },
+  auth: { status: 401, message: "The provider rejected that key. Paste a fresh one in Settings on the computer." },
+  too_large: { status: 413, message: "That recording is too long. Keep it under 8MB." },
+  rate_limit: { status: 429, message: "Voice typing is rate limited. Wait a moment and try again." },
+  format: { status: 400, message: UNREADABLE_RECORDING },
+  upstream: { status: 502, message: "Couldn't transcribe the recording. Check your connection." },
 };
 
 export function statusForFailure(reason: TranscriptionFailure): number {
-  return STATUS_FOR[reason];
+  return FAILURES[reason].status;
 }
 
 /** The three public aliases, as a runtime guard — an unknown `?model=` is a
@@ -594,35 +595,26 @@ export async function handleTranscribeRoute(
   } catch (error) {
     const log = deps.log ?? ((line: string) => console.warn(line));
     if (error instanceof TranscriptionUnavailable) {
-      // The upstream's own words go to the log with what was sent (never the
-      // audio), so a format refusal can be traced without being shown.
+      const reason = Object.hasOwn(FAILURES, error.reason) ? error.reason : "upstream";
+      const provider = error.provider === "flux" || error.provider === "openai" || error.provider === "groq" ? error.provider : "unknown";
+      const status = typeof error.status === "number" && Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : "none";
       log(
-        `[voice-transcribe] refused reason=${error.reason} provider=${error.provider ?? "unknown"} status=${error.status ?? "none"} mime=${container} bytes=${bytes.byteLength} detail=${JSON.stringify(error.detail ?? error.message)}`,
+        `[voice-transcribe] refused reason=${reason} provider=${provider} status=${status} mime=${container} bytes=${bytes.byteLength}`,
       );
-      // Which refusals actually cost anything. `key`, `unavailable`, `auth`
-      // and `premium` are answered before a single second is transcribed;
-      // `format` and `too_large` are the payload being rejected. The two that
-      // may have spent something upstream are charged the conservative
-      // estimate, so a retry storm against a failing provider still runs out.
-      slot.done(
-        error.reason === "upstream" || error.reason === "rate_limit"
-          ? estimateBilledSeconds(bytes.byteLength)
-          : 0,
-      );
-      // The reason travels in the body as well as in the status, so a client
-      // branches on a value rather than re-deriving one from a number that
-      // several reasons could share.
-      json(res, statusForFailure(error.reason), {
-        error: error.message,
-        reason: error.reason,
-        retryable: error.retryable,
+      // These refusals may have spent something upstream.
+      const retryable = reason === "upstream" || reason === "rate_limit";
+      slot.done(retryable ? estimateBilledSeconds(bytes.byteLength) : 0);
+      json(res, statusForFailure(reason), {
+        error: FAILURES[reason].message,
+        reason,
+        retryable,
       });
       return true;
     }
-    log(`[voice-transcribe] failed unexpectedly mime=${container} bytes=${bytes.byteLength} detail=${JSON.stringify(error instanceof Error ? error.message : String(error))}`);
+    log(`[voice-transcribe] failed unexpectedly mime=${container} bytes=${bytes.byteLength}`);
     // Nobody planned for this one, so assume it reached the meter.
     slot.done(estimateBilledSeconds(bytes.byteLength));
-    json(res, 502, { error: error instanceof Error ? error.message : String(error), reason: "upstream" });
+    json(res, 502, { error: FAILURES.upstream.message, reason: "upstream" });
     return true;
   }
 }

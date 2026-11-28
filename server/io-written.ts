@@ -5,7 +5,7 @@
 // pipe/IPC traffic. Coverage gaps are explicit in io-meter.ts and keep Windows
 // verdicts unknown; measured bytes are still charged. WAL/output estimates are
 // retained for source builds without the meter, never added beside native bytes.
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { endianness } from "node:os";
 
 /** The meter installs this narrow adapter after loading. The accounting leaf
@@ -38,6 +38,21 @@ export function noteWrittenBytes(source: string, bytes: number): void {
 /** Charges a finished output file's size (what was just written to it). A missing file charges nothing. */
 export function noteWrittenFile(source: string, path: string): void {
   try { noteWrittenBytes(source, statSync(path).size); } catch { /* gone already: nothing to charge */ }
+}
+/** q1022-ordfiles: the native meter's database buckets moved since the last call (bytes per database file, whoever wrote them). Only the
+ *  budget's minute line reads it, to name bytes no source's transaction took; it never charges anything (the meter total already does). */
+const databasePrevious=new Map<string,number>();
+export function takeDatabaseBuckets(): Array<[string, number]> {
+  const moved: Array<[string, number]> = [];
+  if(!writtenMeter?.active())return moved;
+  const snapshot=writtenMeter.snapshot();
+  if(snapshot)for(const [name,total] of snapshot.buckets){
+    if(!name.startsWith("database:"))continue;
+    const before=databasePrevious.get(name);
+    if(total>(before??0))moved.push([name,total-(before??0)]);
+    databasePrevious.set(name,total);
+  }
+  return moved;
 }
 /** Everything noted since the last call, and clears it. */
 export function takeWrittenBytes(): Array<[string, number]> {
@@ -74,6 +89,92 @@ export function fileGrowthReader(paths: readonly string[]): () => number {
   };
 }
 
+/** The read-only descriptors this process keeps on -shm files, one per shm inode, shared by every reader (1.0.22 fix1022-revoke-ioerr):
+ * walFrameReader, walIndexReader and the session collector's commit sign (memory/session-proof-schema.ts, through readShmHeader).
+ * On POSIX one is never closed while its inode is still the file at its path: closing any descriptor on a file drops every fcntl lock the
+ * process holds on it, and the checkpointer and search worker threads keep connections (and their WAL locks on this shm) after a reader's
+ * owner let go (closeDatabase), so a close here let another process cut the log under them ("disk I/O error"). Once the path no longer
+ * names that inode (SQLite's last connection deleted the sidecar, which it does only with no connection left on it, or the file was
+ * replaced), no lock of this process lives on it: the next lookup of a new inode closes it (releaseGoneShm), so a reopened database never
+ * keeps an old descriptor and the count stays one per live shm inode. Windows locks are per handle, and a held handle leaves a deleted
+ * sidecar delete-pending (the next open fails ERROR_ACCESS_DENIED): there nothing is kept, every reader closes its own. */
+const keptShm = new Map<string, { path: string; fds: number[] }>();
+const KEEP_SHM = process.platform !== "win32";
+function releaseGoneShm(): void {
+  for (const [key, kept] of keptShm) {
+    let now: { dev: bigint; ino: bigint } | undefined;
+    try { now = statSync(kept.path, { bigint: true, throwIfNoEntry: false }); } catch { continue; } // unknown: kept
+    if (now && `${now.dev}:${now.ino}` === key) continue;
+    keptShm.delete(key);
+    for (const fd of kept.fds) { try { closeSync(fd); } catch { /* already closed */ } }
+  }
+}
+function shmDescriptor(shm: string, now: { dev: bigint; ino: bigint }): number {
+  if (!KEEP_SHM) return openSync(shm, "r");
+  const held = keptShm.get(`${now.dev}:${now.ino}`);
+  if (held) return held.fds[0]!;
+  releaseGoneShm(); // a new inode: the ones their paths no longer name go first
+  // keyed by what the descriptor itself holds: a file replaced between the stat and the open is not mislabelled
+  const opened = openSync(shm, "r"), got = fstatSync(opened, { bigint: true }), real = `${got.dev}:${got.ino}`;
+  const kept = keptShm.get(real);
+  if (kept) { kept.fds.push(opened); return kept.fds[0]!; } // a second descriptor on a kept inode stays open with it (closed only with it)
+  keptShm.set(real, { path: shm, fds: [opened] });
+  return opened;
+}
+/** The first `length` bytes of `<db>-shm` (the session collector's commit sign), read through the kept descriptor of its inode. */
+export function readShmHeader(shm: string, into: Buffer, length: number): number {
+  const fd = shmDescriptor(shm, statSync(shm, { bigint: true }));
+  try { return readSync(fd, into, 0, length, 0); } finally { letGo(fd); }
+}
+/** Whether a reader's descriptor on `now` is still the kept one (a reader close may have released it: readerClosed). Off POSIX always. */
+function stillKept(fd: number, now: { dev: bigint; ino: bigint }): boolean { return !KEEP_SHM || keptShm.get(`${now.dev}:${now.ino}`)?.fds.includes(fd) === true; }
+function letGo(fd: number | undefined): void { if (fd !== undefined && !KEEP_SHM) { try { closeSync(fd); } catch { /* already closed */ } } }
+/** The dev:ino of every other descriptor this process has open, or null when they cannot be listed (then nothing is released): only
+ * Linux /proc/self/fd and macOS /dev/fd list them all (a /dev/fd without fdescfs lists 0-2 only, which would read as "none"). */
+function otherInodes(skip: ReadonlySet<number>): Set<string> | null {
+  const list = process.platform === "linux" ? "/proc/self/fd" : process.platform === "darwin" ? "/dev/fd" : null;
+  if (!list) return null;
+  let names: string[];
+  try { names = readdirSync(list); } catch { return null; }
+  const inodes = new Set<string>();
+  for (const name of names) {
+    const fd = Number(name);
+    if (!Number.isInteger(fd) || skip.has(fd)) continue;
+    try { const got = fstatSync(fd, { bigint: true }); inodes.add(`${got.dev}:${got.ino}`); } catch { /* closed meanwhile (the listing's own) */ }
+  }
+  return inodes;
+}
+/** A reader's close (its owner closes it after its own db.close(): memory/index.ts closeAll, index-wal.ts closeForQuarantine, the
+ * io-budget unregister), where SQLite's last connection deletes the sidecar. A kept descriptor is closed here only when BOTH hold:
+ * its sidecar is no longer the file at its path (deleted or replaced: an open racing this close creates or maps a NEW inode, so no
+ * connection can start using this one), and no other descriptor of this process is on its inode (SQLite holds shm locks only through
+ * its own open descriptor: none is left to drop). A sidecar still at its path stays kept even with no descriptor listed: another
+ * thread may open it between the listing and the close, and that close would drop the locks it just took (ASTRA 7357c709c3). The path
+ * is checked BEFORE the listing (ASTRA fc06b149be): once the path no longer names the inode no later open reaches it, so the listing
+ * that follows sees every descriptor that can still be on it. */
+function readerClosed(fd: number | undefined): void {
+  letGo(fd);
+  if (!KEEP_SHM || keptShm.size === 0) return;
+  const gone: string[] = [];
+  for (const [key, kept] of keptShm) {
+    let now: { dev: bigint; ino: bigint } | undefined;
+    try { now = statSync(kept.path, { bigint: true, throwIfNoEntry: false }); } catch { continue; } // unknown: kept
+    if (now && `${now.dev}:${now.ino}` === key) continue; // still at its path: kept
+    gone.push(key);
+  }
+  if (gone.length === 0) return;
+  const skip = new Set<number>();
+  for (const kept of keptShm.values()) for (const kfd of kept.fds) skip.add(kfd);
+  const others = otherInodes(skip);
+  if (!others) return;
+  for (const key of gone) {
+    const kept = keptShm.get(key)!;
+    if (others.has(key)) continue;
+    keptShm.delete(key);
+    for (const kfd of kept.fds) { try { closeSync(kfd); } catch { /* already closed */ } }
+  }
+}
+
 /** WAL frames appended, read from the wal-index header in `<db>-shm`. A WAL
  * that has reached its working size is rewritten in place after each
  * checkpoint, so its file size stops growing while writes continue; the
@@ -93,13 +194,14 @@ export function walFrameReader(databaseFile: string): (() => number) & { close()
     // After close() nothing reads or reopens a descriptor; callers fall back to WAL file growth.
     if (closed) return null;
     try {
-      const now = statSync(shm);
+      const now = statSync(shm, { bigint: true });
       if (held && (held.ino !== now.ino || held.dev !== now.dev)) {
-        // A different file now: the old inode is no longer SQLite's, closing it drops no live lock.
-        try { closeSync(held.fd); } catch { /* already closed */ }
+        // A different file now: stop using the old inode's descriptor (kept, never closed on POSIX: see keptShm).
+        letGo(held.fd);
         held = undefined;
       }
-      if (!held) held = { fd: openSync(shm, "r"), ino: now.ino, dev: now.dev };
+      if (held && !stillKept(held.fd, now)) held = undefined; // released under it: never read through a closed (reusable) number
+      if (!held) held = { fd: shmDescriptor(shm, now), ino: now.ino, dev: now.dev };
       const raw = Buffer.alloc(96);
       if (readSync(held.fd, raw, 0, 96, 0) < 96 || !raw.subarray(0, 48).equals(raw.subarray(48, 96)) || raw[12] !== 1) return null;
       const little = endianness() === "LE";
@@ -118,21 +220,20 @@ export function walFrameReader(databaseFile: string): (() => number) & { close()
     if (next) last = next;
     return total;
   };
-  // Call only after the database handle is closed: closing any descriptor on the shm
-  // drops the process's locks on it. Idempotent; held is cleared before closing so a
-  // second call cannot close a reused descriptor number.
+  // Stops reading. On POSIX the descriptor stays kept (keptShm) while its sidecar is at its path or another descriptor of this process
+  // is on it (a connection that may hold locks on it); otherwise it is closed here (readerClosed). Idempotent; held is cleared first so a second call cannot close a reused descriptor number.
   const close = () => {
     closed = true;
     const fd = held?.fd;
     held = undefined;
-    if (fd !== undefined) { try { closeSync(fd); } catch { /* already closed */ } }
+    readerClosed(fd);
   };
   return Object.assign(read, { close, fd: () => held?.fd });
 }
 
 /** The wal-index header of `<db>-shm` as the MEMW charge needs it (memory/index-wal.ts): mxFrame (frames in the log now), nBackfill
  * (frames already copied back) and the salt. null when the header cannot be read consistently (both copies equal, isInit set).
- * Same descriptor rule as walFrameReader: one read-only descriptor per shm inode, never closed while that inode is current. */
+ * Same descriptor rule as walFrameReader: the process-wide kept descriptor of the shm inode (keptShm). */
 export function walIndexReader(databaseFile: string): (() => { mxFrame: number; nBackfill: number; salt: string } | null) & { close(): void } {
   const shm = `${databaseFile}-shm`;
   let held: { fd: number; ino: number | bigint; dev: number | bigint } | undefined;
@@ -140,9 +241,10 @@ export function walIndexReader(databaseFile: string): (() => { mxFrame: number; 
   const read = () => {
     if (closed) return null;
     try {
-      const now = statSync(shm);
-      if (held && (held.ino !== now.ino || held.dev !== now.dev)) { try { closeSync(held.fd); } catch { /* already closed */ } held = undefined; }
-      if (!held) held = { fd: openSync(shm, "r"), ino: now.ino, dev: now.dev };
+      const now = statSync(shm, { bigint: true });
+      if (held && (held.ino !== now.ino || held.dev !== now.dev)) { letGo(held.fd); held = undefined; }
+      if (held && !stillKept(held.fd, now)) held = undefined;
+      if (!held) held = { fd: shmDescriptor(shm, now), ino: now.ino, dev: now.dev };
       const raw = Buffer.alloc(100);
       if (readSync(held.fd, raw, 0, 100, 0) < 100 || !raw.subarray(0, 48).equals(raw.subarray(48, 96)) || raw[12] !== 1) return null;
       const little = endianness() === "LE";
@@ -150,6 +252,6 @@ export function walIndexReader(databaseFile: string): (() => { mxFrame: number; 
       return { mxFrame, nBackfill, salt: raw.subarray(32, 40).toString("hex") };
     } catch { return null; }
   };
-  const close = () => { closed = true; const fd = held?.fd; held = undefined; if (fd !== undefined) { try { closeSync(fd); } catch { /* already closed */ } } };
+  const close = () => { closed = true; const fd = held?.fd; held = undefined; readerClosed(fd); };
   return Object.assign(read, { close });
 }

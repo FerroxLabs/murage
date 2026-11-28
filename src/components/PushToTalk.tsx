@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { desktopCallerHeaders } from "@/lib/live-events";
 import { cleanupEnabled, type CleanupTarget } from "@/lib/dictation-cleanup";
+import { useStoreIfAny } from "@/state/store";
 
 // Voice typing for every surface the native macOS helper cannot reach.
 //
@@ -404,6 +405,7 @@ export async function postClip(
  * microphone open with nothing listening for the release.
  */
 export function PushToTalk({ onTranscript, onNote, facts, transcribe, cleanup, onCleanupStart }: PushToTalkProps) {
+  const store = useStoreIfAny();
   const [phase, setPhase] = useState<Phase>("idle");
   const recorder = useRef<MediaRecorder | null>(null);
   const startedAt = useRef(0);
@@ -418,7 +420,9 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe, cleanup, o
   // to a stale draft and overwrite whatever the person typed in the meantime.
   const latest = useRef({ onTranscript, onNote, cleanup, onCleanupStart });
   latest.current = { onTranscript, onNote, cleanup, onCleanupStart };
-  const gate = pushToTalkGate(facts);
+  // The server also accepts an own transcription key. Read the same route
+  // the call screen uses, including after a key is saved or removed.
+  const gate = pushToTalkGate({ ...facts, fluxConfigured: facts.fluxConfigured || Boolean(store?.state.config?.tts?.routes?.transcribe) });
 
   const release = useCallback(() => {
     if (timer.current) {

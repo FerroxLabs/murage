@@ -42,16 +42,25 @@ it('GNL-A1 saved write/tool/account limits do not block real No limits dispatch,
   try {
     const env = turn.dump.mcpConfig.mcpServers.murage_connectors.env;
     const token = env.MURAGE_CONNECTORS_TOKEN;
-    const sent = await rpc(token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', arguments: { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', account: 'fixture-account', arguments: { to: 'fixture@example.invalid', body: 'GNL fixture' } }] } } });
+    const send = (id: number, body: string) => rpc(token, { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', arguments: { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', account: 'fixture-account', arguments: { to: 'fixture@example.invalid', body } }] } } });
+    const sent = await send(1, 'GNL fixture');
     expect(sent.status, JSON.stringify(sent.body)).toBe(200);
     expect(sent.body.result?.isError).not.toBe(true);
     expect(sent.body.result?.content).toBeTruthy();
     expect(env.MURAGE_CONNECTOR_INITIAL_TOOLS).toBeUndefined();
     const current=await desktopApi('GET',`/api/bots/${bot.id}/access`);
     expect((await desktopApi('PUT',`/api/bots/${bot.id}/access`,{action:'configure',revision:current.body.policy.revision,mode:'restricted',allowWrites:false,grants:[]})).status).toBe(200);
-    const again = await rpc(token, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', arguments: { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', account: 'fixture-account', arguments: { to: 'fixture@example.invalid', body: 'GNL fixture' } }] } } });
+    const replay = await send(2, 'GNL fixture');
+    expect(replay.status, JSON.stringify(replay.body)).toBe(200);
+    expect(replay.body.result?.isError).not.toBe(true);
+    expect(replay.body).toMatchObject({ id: 2, result: { content: [
+      { type: 'text', text: expect.stringContaining('was not run again') },
+      ...sent.body.result.content,
+    ] } });
+    const again = await send(3, 'GNL fixture after saving access');
     expect(again.status, JSON.stringify(again.body)).toBe(200);
     expect(again.body.result?.isError).not.toBe(true);
+    expect(again.body.result?.content).toEqual(sent.body.result.content);
     expect(JSON.stringify(again.body)).not.toContain('not run again');
     expect((await desktopApi('GET', `/api/bots/${bot.id}/access`)).body.policy).toMatchObject({ mode: 'restricted', allowWrites: false, grants: [] });
   } finally { await stopFixtureTurn(bot.id, turn); }

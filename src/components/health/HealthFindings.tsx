@@ -3,12 +3,12 @@
 //
 // The findings column of the Health page (designs/HEALTH-DOCTOR.md): one card per thing to fix, in the order
 // health-findings.ts decides, each with exactly one fix and, where a bot can help, a quiet Ask your bot link.
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { api, useStore } from "@/state/store";
 import { t } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { StatusDot } from "@/components/shell/StatusDot";
-import { answersRunning, askYourBot, backUpNow, recheckFlux, switchEngineOn } from "@/lib/health-actions";
+import { answersRunning, askYourBot, backUpNow, readHealthLedger, recheckFlux, subscribeHealthLedger, switchEngineOn, withHealthAction } from "@/lib/health-actions";
 import type { BackupScheduleBridge } from "@/components/backups-section-ui";
 import type { NextAction } from "../../../shared/sentinel-view";
 import type { FindingEntry, HealthFinding } from "./health-findings";
@@ -31,13 +31,29 @@ export function AskBotLink({ question }: { question: string }) {
   </button>;
 }
 
-/** A button that does the fix and says how it went in one line. */
-function DoButton({ label, run }: { label: string; run: () => Promise<string> }) {
+/** The ledger key of the action a finding's button runs (switch:<engine> or flux-recheck); null when it has none. */
+export function findingActionKey(fix: HealthFinding["fix"], desktop: boolean | undefined): string | null {
+  if (fix.kind === "do") return desktop === true ? `switch:${fix.engineId}` : null;
+  return fix.kind === "step" && fix.then === "flux-recheck" ? "flux-recheck" : null;
+}
+
+/** A button that does the fix and says how it went in one line. With a ledger `actionKey` (Check again, Switch on) it
+ * runs under the ledger: busy and the line come from it, so both survive the card unmounting or the page being left.
+ * Without one (Back up now) it keeps its own busy state and line. */
+function DoButton({ label, run, actionKey }: { label: string; run: () => Promise<string>; actionKey?: string }) {
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<string | null>(null);
+  const ledger = useSyncExternalStore(subscribeHealthLedger, readHealthLedger, readHealthLedger);
+  const keyed = actionKey !== undefined;
+  const isBusy = keyed ? ledger.pendingKeys.has(actionKey) : busy;
+  const line = keyed ? ledger.results.get(actionKey)?.line ?? null : said;
+  const go = () => {
+    if (keyed) { void withHealthAction(actionKey, run); return; }
+    setBusy(true); setSaid(null); void run().then(setSaid).finally(() => setBusy(false));
+  };
   return <>
-    <button type="button" className={needButton} disabled={busy} onClick={() => { setBusy(true); setSaid(null); void run().then(setSaid).finally(() => setBusy(false)); }}>{label}</button>
-    {said && <p role="status" className="mt-2 basis-full text-[13px] text-ink-secondary">{said}</p>}
+    <button type="button" className={needButton} disabled={isBusy} onClick={go}>{label}</button>
+    {line && <p role="status" className="mt-2 basis-full text-[13px] text-ink-secondary">{line}</p>}
   </>;
 }
 
@@ -52,12 +68,12 @@ function FindingCard({ finding, desktop }: { finding: HealthFinding; desktop: bo
     {/* Pages a go button opens are desktop only: the phone says the step in words instead. */}
     {(fix.kind === "step" || (fix.kind === "go" && !here)) && <p className="mt-2 text-ink">{t(fix.step)}</p>}
     <div className="mt-3 flex flex-wrap items-center gap-3">
-      {fix.kind === "do" && desktop === true && <DoButton label={t("ux.l2a.health.switchOn")} run={() => switchEngineOn(fix.engineId, answersRunning(state), api)} />}
+      {fix.kind === "do" && desktop === true && <DoButton label={t("ux.l2a.health.switchOn")} run={() => switchEngineOn(fix.engineId, answersRunning(state), api)} actionKey={`switch:${fix.engineId}`} />}
       {fix.kind === "do" && desktop !== true && <p className="text-ink">{t("ux.l2b.health.doc.engineOff.step")}</p>}
       {fix.kind === "go" && here && <button type="button" className={needButton} onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: fix.section })}>
         {t(fix.section === "models" ? "ux.l2b.health.go.flux" : "ux.l2a.health.openEngines")}
       </button>}
-      {fix.kind === "step" && fix.then === "flux-recheck" && <DoButton label={t("ux.l2a.health.checkAgain")} run={() => recheckFlux(api)} />}
+      {fix.kind === "step" && fix.then === "flux-recheck" && <DoButton label={t("ux.l2a.health.checkAgain")} run={() => recheckFlux(api)} actionKey="flux-recheck" />}
       {finding.ask && <AskBotLink question={finding.ask} />}
     </div>
   </li>;

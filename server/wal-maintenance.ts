@@ -13,8 +13,9 @@ import { windowsHidePrelude } from "../shared/win-hide-child-process.mjs";
 //    A restart discards copy credit; a fully copied log counts as zero.
 //    backlogKiB is the current sample. maxWalFileKiB reports the largest file size, including already copied bytes.
 //  - A worker thread runs only `wal_checkpoint(PASSIVE)`, which copies pages into the database file and never touches the
-//    writer lock. The server connection itself has `journal_size_limit=0`, so the first commit after a fully copied log
-//    restarts the log and cuts the file back to its own frames: an ordinary write does the shrinking.
+//    writer lock. The server connection itself has `journal_size_limit` 16 MiB (1.0.22), so the first commit after a fully copied log
+//    restarts the log and cuts the file back to 16 MiB: an ordinary write does the shrinking. While a deletion's scrub is owed (and
+//    during a nudging settle) the limit is 0, so whichever commit restarts the log cuts it to its own frames (scrubLimit).
 //  - After a deletion the module copies the log with PASSIVE, then makes one tiny write (a "nudge": the same schema
 //    version written again, one page-1 frame). That commit restarts the log, and the check below proves the old bytes are gone.
 //  - Nudges never wait on a lock. New owner transactions above the WAL ceiling
@@ -30,12 +31,13 @@ import { windowsHidePrelude } from "../shared/win-hide-child-process.mjs";
 import { checkpointLedger } from "./admission-shared.ts";
 import { ioBudget } from "./io-budget.ts";
 import { ioMeterNativeId, ioMeterNativePath, ioMeterPageSize } from "./io-meter.ts";
-import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statfsSync, statSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 import { DatabaseBusyError } from "./db-busy.ts";
 // Its own line: the test transform (server/testing/wal-seam-edits.json, wal-maintenance.ts@36) anchors on the import above as it stands.
 import { DiskFloorRefusal } from "./db-busy.ts";
 import { isReadOnly } from "./read-only-start.ts";
+import { WAL_HALF_GATE_BYTES } from "./io-budget.ts";
 
 export interface PassiveResult { busy: number; log: number; checkpointed: number }
 /** The salt pair in the log header: a new pair means the log was restarted. */
@@ -54,6 +56,28 @@ export interface WalState {
 export const STEP_BYTES = 4 * 1024 * 1024;
 export const STEP_POLL_MS = 25;
 export const DUE_MS = 250;
+/** 1.0.22 (q1022-sqlite item 2): a timed pass for small commits waits until the log has been still this long (no commit seen); 4 MiB of growth
+ * (STEP_BYTES) still copies at once, and a restarted log is no longer a pass by itself. A burst of small owner writes is copied once, after it.
+ * The supervisor's 1 s tick asks for a pass only after the same quiet, or once the file moved by TICK_ASK_BYTES. */
+export const IDLE_DUE_MS = 5_000;
+/** ... but never longer than this after the last pass: a steady trickle of commits closer than the quiet is still copied twice a minute. */
+export const IDLE_MAX_MS = 30_000;
+export const TICK_ASK_BYTES = 1024 * 1024;
+/** The server connection's journal_size_limit (database.ts JOURNAL_SIZE_LIMIT_BYTES): the most a restarted log keeps of its file. */
+const KEPT_TAIL_MAX_BYTES = 16 * 1024 * 1024;
+/** The pace a new worker is given (IDLE_DUE_MS); suites written against the pre-1.0.22 pace may lower it (0 = the old 250 ms rule). */
+export const WAL_PACE = { quietMs: IDLE_DUE_MS, maxMs: IDLE_MAX_MS };
+/** 1.0.22 (q1022-sqlite): the worker's own poll when the ports offer a commit notice but none could be had (the wake bus is down): was
+ * STEP_POLL_MS (25 ms) for good. Ports with no notice at all (a test-driven checkpointer) keep STEP_POLL_MS. */
+export const FALLBACK_POLL_MS = 1_000;
+/** 1.0.22 (q1022-sqlite): two supervisor ticks (1 s apart) further apart than this mean the process was asleep (a Mac lid) or its loop was held:
+ * the heartbeat could not be observed, so the stall deadline starts again instead of counting the gap as a stall. */
+export const TICK_RESUME_GAP_MS = 5_000;
+/** 1.0.21 W4/B2: with a commit notice, how often the worker looks at the log with no commit seen: one stat, no SQL. It catches writes on
+ * other connections (workers, the helper) and is the heartbeat's pace, so it is kept under half the stall bound. */
+export const WAL_IDLE_CHECK_MS = 30_000;
+/** The idle check a new worker is given (WAL_IDLE_CHECK_MS). Tests may lower it. */
+export const WAL_IDLE_CHECK = { ms: WAL_IDLE_CHECK_MS };
 /** Stop admitting another owner transaction at this retained-WAL size until an
  * off-thread pass catches up. One transaction may cross the ceiling by its own
  * bytes; subsequent turns never extend an indefinitely pinned/dead log. */
@@ -88,10 +112,72 @@ export function assertWalWriteAdmission(file: string | null = portsFile): void {
   const copiedBytes = current ? Atomics.load(current.copied, 0) : 0n;
   // The worker's disk verdict (free below FLOOR_BYTES) is low disk, not a lagging log: its own type, kept through every wrapper.
   if (copiedBytes < 0n) throw new DiskFloorRefusal("disk-floor");
-  if (size >= admissionBytes && (!current || copiedBytes !== BigInt(size))) {
+  // 1.0.22 item 1b: a restarted log in a kept file is measured by its own frames (the worker publishes the kept tail as copied)
+  // (a kept tail is never above the 16 MiB limit: a larger value is a stale "fully copied" reading of a file that has since regrown)
+  const live = current && copiedBytes > 0n && copiedBytes < BigInt(size) && copiedBytes <= BigInt(KEPT_TAIL_MAX_BYTES) ? size - Number(copiedBytes) : size;
+  // (a reading larger than the file predates a cut: the first commit after a fully copied log restarted it and cut the file to the kept
+  // limit, so the debt is no more than the file itself, at most 16 MiB, until the worker reads the restarted log)
+  const cutSinceReading = current !== null && copiedBytes > BigInt(size) && size <= KEPT_TAIL_MAX_BYTES;
+  if (live >= admissionBytes && !cutSinceReading && (!current || copiedBytes !== BigInt(size))) {
     if (writesPaused) throw new DatabaseBusyError("wal-recovery-paused", 0, WAL_PAUSED_MESSAGE);
-    throw new DatabaseBusyError("wal-recovery", 0);
+    // B5: the owner is told which reader holds the log when one is known
+    const holders = walReaderHolders();
+    throw new DatabaseBusyError("wal-recovery", 0, ...(holders.length ? [`Busy for a moment, try again (the database log is held open by ${holders.join(", ")})`] : []));
   }
+}
+/** 1.0.21 B5 (MEMORY-V2-DESIGN 4.8, AF-H8, F21; owner: memv2-D): a reader that keeps a read snapshot pins the log, so no pass can reset it and
+ * the owner meets the hard gate. Long readers register here. At the half gate (256 MiB un-copied, the same reading the hard gate uses) the
+ * main thread's watch asks memory's own readers once to end their snapshot (`release`, which calls `done` when it has); one that has not
+ * within WAL_READER_RELEASE_MS is restarted (`restart`: it is a child memory owns). A reader memory does not own (`memory: false`) cannot be
+ * ended by memory: background memory writes stop at the half gate (io-budget B4), the hard gate stays for it (disk safety) and its
+ * refusal names it. */
+export const WAL_READER_RELEASE_MS = 5000;
+export interface WalReader { readonly name: string; readonly memory: boolean; release?(done: () => void): void; restart?(): void }
+const walReaders = new Set<WalReader>();
+/** One episode per stretch at or past the half gate, bound to the checkpointer that saw it (a restarted one starts clean). Every memory
+ * reader is asked once per episode (one registered during it is asked at the next look); each has its own 5 s bound. */
+let halfGateEpisode: { owner: object; asked: Set<WalReader>; waiting: Map<WalReader, number>; logged: boolean } | null = null;
+export function registerWalReader(reader: WalReader): () => void {
+  walReaders.add(reader);
+  return () => { walReaders.delete(reader); halfGateEpisode?.waiting.delete(reader); halfGateEpisode?.asked.delete(reader); };
+}
+/** The readers that may be holding the log now: those memory does not own, then memory's own still asked to let go. */
+export function walReaderHolders(): string[] {
+  const out: string[] = [];
+  for (const r of walReaders) if (!r.memory) out.push(r.name);
+  if (halfGateEpisode && halfGateEpisode.owner === active) for (const r of halfGateEpisode.waiting.keys()) out.push(r.name);
+  return out.slice(0, 8);
+}
+/** One step of the half-gate release, from the main thread's 1 s watch (no SQL). */
+function releaseWalReaders(owner: object, backlog: number, now: number): void {
+  if (backlog < WAL_HALF_GATE_BYTES) { halfGateEpisode = null; return; }
+  if (halfGateEpisode?.owner !== owner) halfGateEpisode = { owner, asked: new Set(), waiting: new Map(), logged: false };
+  const ep = halfGateEpisode;
+  for (const r of [...walReaders]) {
+    if (!r.memory || !r.release || ep.asked.has(r)) continue;
+    ep.asked.add(r); ep.waiting.set(r, now);
+    try { r.release(() => { ep.waiting.delete(r); }); } catch { /* not released: restarted at its bound */ }
+  }
+  if (!ep.logged) {
+    ep.logged = true;
+    const foreign = [...walReaders].filter(r => !r.memory).map(r => r.name);
+    console.warn(`[wal] ${Math.ceil(backlog / 1048576)} MB of the log not copied: background memory writes stopped; memory's readers asked to let go${foreign.length ? `; held by readers memory does not own: ${foreign.join(", ")}` : ""}`);
+  }
+  for (const [r, at] of [...ep.waiting]) {
+    if (now - at < WAL_READER_RELEASE_MS) continue;
+    ep.waiting.delete(r);
+    try { r.restart?.(); console.warn(`[wal] ${r.name} did not end its read snapshot within ${WAL_READER_RELEASE_MS} ms: restarted`); } catch { /* its own failure path restarts it */ }
+  }
+}
+/** recalldesign-1020-n1 (owner: recallcap-1020-n3c, the recall reclaimer's WAL yield): the log's size and the bytes the off-thread pass has not
+ *  copied yet, by the same reading assertWalWriteAdmission uses. Null when no log is open. */
+export function walBacklog(file: string | null = portsFile): { size: number; backlog: number } | null {
+  if (!file) return null;
+  let size: number;
+  try { size = statSync(file + "-wal").size; } catch { return { size: 0, backlog: 0 }; }
+  const current = active?.file === file && active.ready && !active.failed ? active : null;
+  const copied = current ? Atomics.load(current.copied, 0) : 0n;
+  return { size, backlog: copied < 0n ? size : Math.max(0, size - Number(copied)) };
 }
 /** The worker's live disk verdict: true while free space is under the floor and every guarded write is refused (shown to the owner as diskLow "refusing"). */
 export function diskFloorRefusing(): boolean {
@@ -178,6 +264,8 @@ const checkpointStatement = db.prepare("PRAGMA wal_checkpoint(PASSIVE)");
 const version = () => Number(versionStatement.all()[0].data_version);
 const head = Buffer.alloc(32), headCheck = Buffer.alloc(32), frame = Buffer.alloc(24);
 let diskSampleAt = 0, diskLow = false;
+// W4: the commit notice the event-driven clock waits on (declared here: header() wakes the clock through it)
+const noticeCells = workerData.notice ? new Int32Array(workerData.notice) : null;
 const nativeLittle = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
 const indexHead = Buffer.alloc(100);
 function checksum(bytes, length, little) {
@@ -225,7 +313,9 @@ function headerOnce(fd) {
     return frame.readUInt32BE(8) === salt1 && frame.readUInt32BE(12) === salt2;
   };
   let liveFrames = frames;
-  if (body % frameSize === 0 && frames && !currentFrame(frames)) {
+  // 1.0.22 item 1b: a file cut back to the 16 MiB limit ends mid-frame (the cut is in bytes), so a kept tail is searched for whether or not
+  // the file is a whole number of frames; a partial frame after a current last frame is still a spill in progress (the whole file counts)
+  if (frames && !currentFrame(frames)) {
     let low = 0, high = frames - 1;
     while (low < high) {
       const mid = low + Math.ceil((high - low) / 2);
@@ -238,14 +328,18 @@ function headerOnce(fd) {
   const snapshot = { stat, size, salt, salt1, pageSize, sequence: original.readUInt32BE(12), valid, index };
   if (readSync(fd, headCheck, 0, 32, 0) !== 32 || !original.equals(headCheck) || index.salt !== salt)
     throw Object.assign(Error("WAL generation changed"), { snapshot });
-  return { ...snapshot, logSize: body % frameSize ? size : 32 + liveFrames * frameSize, frameSize, pageSize };
+  return { ...snapshot, logSize: liveFrames < frames || body % frameSize === 0 ? 32 + liveFrames * frameSize : size, frameSize, pageSize };
 }
 function header() {
   if (Date.now() - diskSampleAt >= 1000) {
     diskSampleAt = Date.now();
+    const wasLow = diskLow;
     try { const disk = statfsSync(workerData.file); diskLow = disk.bavail * disk.bsize < 64*1048576; }
     catch { diskLow = true; }
     if (diskLow) Atomics.store(copied,0,-1n);
+    // W4: a verdict that turns low in a pass the main thread requested finds the clock parked on its idle wait; wake it, so it looks again
+    // at the disk cadence (waitMs) and a freed disk clears the refusal with no commit
+    if (diskLow && !wasLow && noticeCells) Atomics.notify(noticeCells, 0);
   }
   let fd;
   try { fd = openSync(workerData.file + "-wal", "r"); }
@@ -279,7 +373,9 @@ function sampleBacklog(h, dv) {
   const fullyCopied = copiedVersion !== null && dv === copiedVersion && h.size === copiedSize;
   const backlog = fullyCopied ? 0 : Math.ceil(Math.max(0, h.logSize - checkpointedBytes) / 1024);
   Atomics.store(shared, 10, backlog);
-  Atomics.store(copied,0,diskLow ? -1n : fullyCopied ? BigInt(h.size) : 0n);
+  // 1.0.22 item 1b: the file's kept tail past the live frames (an older salt, up to the 16 MiB limit) is no copy debt: walBacklog and the
+  // tick read size - copied, so a restarted log in a kept file counts only its own frames
+  Atomics.store(copied,0,diskLow ? -1n : fullyCopied ? BigInt(h.size) : BigInt(Math.max(0, h.size - h.logSize)));
   const top = Atomics.load(shared, 5);
   if (backlog > top) { // keep the fields of the sample that set the maximum, so a failing bound can print them
     Atomics.store(shared, 18, Math.ceil(checkpointedBytes / 1024)); Atomics.store(shared, 19, Math.ceil(h.logSize / 1024));
@@ -289,11 +385,18 @@ function sampleBacklog(h, dv) {
   Atomics.store(shared, 5, Math.max(top, backlog));
 }
 let lastVersion = version(), lastSalt = null, base = 0, lastAt = Date.now();
+// 1.0.22 item 2: the newest data_version seen and when it was first seen (the quiet clock of a timed pass)
+const quietMs = workerData.quietMs ?? 0, quietMaxMs = workerData.quietMaxMs ?? 30000;
+let seenVersion = lastVersion, lastChangeAt = 0;
+// 1.0.22 q1022-sqlite: a worker whose commit notice could not be had (the wake bus is down) polls at FALLBACK_POLL_MS, not every 25 ms
+const fallbackPollMs = workerData.fallbackPollMs || 0;
 let readFailed = false, retry = false, deferredAt = null;
 try { const h = header(); sampleBacklog(h, lastVersion); lastSalt = h.salt; base = h.logSize; } catch { readFailed = true; }
 let requested = null, timed = false, unsyncedBytes = 0, debtRetryAt = 0;
 function close() {
   clearInterval(timer);
+  stopped = true;
+  if (noticeCells) Atomics.notify(noticeCells, 0);
   try { db.close(); } catch {}
   parentPort.close();
 }
@@ -419,7 +522,15 @@ function runPass(kind, reqId = null, sample = null) {
   }
   finish();
 }
-const timer = setInterval(() => {
+// 1.0.21 W4/B2 (MEMORY-V2-DESIGN 4.8, 4.9; owner lane D): with the main thread's commit notice (wake.ts commitNotice, lane W) the clock is
+// event-driven: the worker waits on the notice cell and polls (data_version, the log header) only after a commit, while a pass is owed
+// (250 ms after the last commit of a burst, a retry, a held end, an unsynced debt), or when the log's size moved at the 30 s check (a
+// writer on another connection). An idle machine costs one stat of the log every 30 s and no SQL. Without a notice (tests that drive this
+// clock themselves) it is the 25 ms interval as before.
+const idleCheckMs = workerData.idleCheckMs || 30000;
+let owed = false;
+function poll() {
+  Atomics.add(shared, 11, 1); // slot 11: polls (each one a data_version read and a log header read), diagnostics and G-IDLE-PROCESS
   if (pendingEnd) retryPendingEnd();
   if (Atomics.load(shared, 7) || Atomics.load(shared, 3)) return;
   const now = Date.now(), wasTimed = timed, lastThen = lastAt;
@@ -434,18 +545,75 @@ const timer = setInterval(() => {
     const saltChanged = h.salt !== lastSalt;
     if (saltChanged) base = 0;
     changedNow = changed;
-    work = changed && (saltChanged || h.logSize - base >= stepBytes);
-    due ||= work || (changed && now - lastAt >= dueMs);
+    if (dv !== seenVersion) { seenVersion = dv; lastChangeAt = now; }
+    // 1.0.22 item 2: a restarted log holds only the commits since its restart: work when they reach a step, else after the quiet
+    work = changed && (quietMs <= 0 && saltChanged || h.logSize - base >= stepBytes);
+    due ||= work || (changed && now - lastAt >= dueMs && (now - lastChangeAt >= quietMs || now - lastAt >= quietMaxMs));
   } catch { readFailed = true; }
   const retrying = retry || readFailed;
   due ||= retrying && now - lastAt >= dueMs;
   // A failed flush stays due even when subsequent passes copy no new bytes.
   due ||= debtFd >= 0 && unsyncedBytes >= debtBytes && now >= debtRetryAt;
+  owed = (changedNow || retrying) && !due;
   if (due) runPass("timed", null, sample);
+}
+let stopped = false, seen = noticeCells ? Atomics.load(noticeCells, 0) : 0, walSizeSeen = -1, retryWait = dueMs;
+// 1.0.22 item 1b: the log keeps up to 16 MiB of its file across a restart and new frames overwrite it in place, so the size alone no longer
+// moves on every commit of another connection: the WAL-index's frame count and salt (one 100-byte read, no SQL) are part of the mark
+const walSize = () => { let size; try { size = statSync(workerData.file + "-wal").size; } catch { return -1; }
+  try { const index = indexHeader(); return size + ":" + index.mxFrame + ":" + index.salt; } catch { return String(size); } };
+// Heartbeat: the main thread replaces a worker whose count stops moving (a thread stuck in a loop or a call never returns to this clock).
+const beat = () => { Atomics.add(shared, HEARTBEAT_SLOT, 1); };
+/** What is owed before the next commit, and when: a pass DUE_MS after the last one or a held end; a failed flush at its retry; a pass a
+ * reader holds back at a doubling wait (a retry cannot move a reader; a commit or a size change resets it); else only the idle check. */
+function waitMs() {
+  const at = Date.now();
+  // a low-disk verdict refuses the owner's writes, so no commit comes to wake this clock: whatever else waits, it looks again at the disk
+  // cadence (1 s) until the verdict clears
+  const disk = diskLow ? Math.max(pollMs, diskSampleAt + 1000 - at) : idleCheckMs;
+  // never faster than the old 25 ms clock: a pass the reset fence defers (timed) or a held end retries at that pace at most
+  if (owed && !timed && !pendingEnd && !requested && quietMs > 0) return Math.min(disk, Math.max(pollMs, Math.max(lastAt + dueMs, Math.min(lastChangeAt + quietMs, lastAt + quietMaxMs)) - at));
+  if (owed || timed || pendingEnd || requested) return Math.min(disk, Math.max(pollMs, Math.min(dueMs, lastAt + dueMs - at)));
+  if (debtFd >= 0 && unsyncedBytes >= debtBytes) return Math.min(disk, Math.max(pollMs, Math.min(idleCheckMs, debtRetryAt - at)));
+  if (retry || readFailed) return Math.min(disk, Math.max(pollMs, Math.min(retryWait, lastAt + retryWait - at)));
+  return Math.min(disk, idleCheckMs);
+}
+function step() {
+  if (stopped) return;
+  beat();
+  const cell = Atomics.load(noticeCells, 0), committed = cell !== seen;
+  seen = cell;
+  const size = walSize(), grew = size !== walSizeSeen;
+  walSizeSeen = size;
+  if (committed || grew) retryWait = dueMs;
+  const due = owed || timed || pendingEnd || requested || (debtFd >= 0 && unsyncedBytes >= debtBytes && Date.now() >= debtRetryAt)
+    || ((retry || readFailed) && Date.now() - lastAt >= retryWait);
+  // W4: the verdict is refreshed only in header(); with the log unchanged and the owner refused, only this re-sample can clear it
+  const diskDue = diskLow && Date.now() - diskSampleAt >= 1000;
+  if (committed || grew || due || diskDue) {
+    const retrying = (retry || readFailed) && !committed && !grew;
+    poll();
+    if (retrying && (retry || readFailed)) retryWait = Math.min(idleCheckMs, retryWait * 2);
+  }
+  wait();
+}
+function wait() {
+  if (stopped) return;
+  const waiting = Atomics.waitAsync(noticeCells, 0, seen, waitMs());
+  if (waiting.async) waiting.value.then(step); else setImmediate(step);
+}
+const timer = setInterval(() => {
+  poll();
 }, pollMs);
 timer.unref();
-// Heartbeat: the main thread replaces a worker whose count stops moving (a thread stuck in a loop or a call never returns to this clock).
-setInterval(() => { Atomics.add(shared, HEARTBEAT_SLOT, 1); }, pollMs).unref();
+// A test-driven clock (the WAL test transform) keeps driving the poll itself.
+const testClock = typeof __walManual !== "undefined" && __walManual;
+// a fresh worker (a replacement after a stall or a kill) looks once at start, as the clock did within its first 25 ms: a log left behind
+// while writes were refused gets no commit to wake it
+if (noticeCells && !testClock) { clearInterval(timer); walSizeSeen = walSize(); poll(); wait(); }
+// 1.0.22 q1022-sqlite: no commit notice (the wake bus is down): poll and beat at the fallback pace, never under half the stall bound's beat
+else if (!testClock && fallbackPollMs > 0) { clearInterval(timer); setInterval(() => { beat(); poll(); }, Math.min(fallbackPollMs, idleCheckMs)).unref(); }
+else setInterval(beat, pollMs).unref();
 parentPort.on("message", (m) => {
   if (m.op === "close") {
     Atomics.store(shared, 7, 1);
@@ -525,7 +693,7 @@ export function walMaintenanceCounters() {
   const s = active.shared;
   return { growthWarnings, admissionBlocked: Atomics.load(s, 23) < 0, gen: Atomics.load(s, 0), passSeq: Atomics.load(s, 1), passDone: Atomics.load(s, 2),
     running: Atomics.load(s, 3), resetWant: Atomics.load(s, 4), maxBacklogKiB: Atomics.load(s, 5),
-    timedPasses: Atomics.load(s, 6), closing: Atomics.load(s, 7),
+    timedPasses: Atomics.load(s, 6), closing: Atomics.load(s, 7), polls: Atomics.load(s, 11), eventDriven: active.notice !== null,
     maxWalFileKiB: Atomics.load(s, 9), backlogKiB: Atomics.load(s, 10), maxPassMs: Atomics.load(s, 12),
     unsyncedKiB: Atomics.load(s, 13), maxUnsyncedKiB: Atomics.load(s, 14), debtSyncs: Atomics.load(s, 15), maxPassCopyKiB: Atomics.load(s, 16), debtSyncFailures: Atomics.load(s, 17),
     maxSample: { checkpointedKiB: Atomics.load(s, 18), walKiB: Atomics.load(s, 19), priorSampledKiB: Atomics.load(s, 20), saltLow: Atomics.load(s, 21), atMs: Atomics.load(s, 22) } };
@@ -561,11 +729,18 @@ interface Maintenance {
   waiting: Map<number, Pending>;
   inflight: Promise<PassiveResult> | null;
   timer: ReturnType<typeof setInterval> | undefined;
+  /** W4: the commit notice this worker waits on (null: it polls). */
+  notice: SharedArrayBuffer | null;
   lastSize: number;
+  /** 1.0.22 item 2: the size at the tick's last ask, and when the size last moved. */
+  askedSize?: number;
+  movedAt?: number;
   lastResult: PassiveResult | null;
   /** Last heartbeat count seen by tick and when it last moved. */
   lastBeat: number;
   beatAt: number;
+  /** 1.0.22: when tick last ran (a gap over TICK_RESUME_GAP_MS is a resume). */
+  tickAt?: number;
   /** Marks this worker failed, ends it and schedules its replacement (the supervisor's own failure path). */
   fail: (error?: unknown) => void;
 }
@@ -581,14 +756,22 @@ export interface WalMaintenancePorts {
   setAutocheckpoint(pages: number): void;
   /** One tiny committed write on the server connection (same schema version); false when it met a lock or the handle is gone. */
   nudge(): Promise<boolean>;
-  /** The server connection's `journal_size_limit` (prod: JOURNAL_SIZE_LIMIT_BYTES = 0, database.ts:429, set at open in database.ts:295). */
+  /** The server connection's `journal_size_limit` (prod: JOURNAL_SIZE_LIMIT_BYTES = 16 MiB, set at open in database.ts). */
   journalSizeLimit?(): number | null;
   /** Pins `journal_size_limit` to the prod value on the server connection. */
   pinJournalSizeLimit?(): void;
+  /** 1.0.22 item 1b: sets the server connection's `journal_size_limit` (0 while a deletion scrub is owed or a nudging settle runs). */
+  setJournalSizeLimit?(bytes: number): void;
+  /** 1.0.21 W4 (lane D): the main thread's commit notice (wake.ts commitNotice, bumped at every commit the wake bus observes on the server
+   * connection), or null when the bus is not installed there. With it the worker waits on commits and checks the log's size every
+   * WAL_IDLE_CHECK_MS; without it the worker polls every STEP_POLL_MS as before (a commit nobody observes is never left unseen). */
+  commitNotice?(): SharedArrayBuffer | null;
 }
 
 // What outlives any one worker: where the log is, how to reach the server connection, and the scrubs still owed.
 let ports: WalMaintenancePorts | null = null;
+/** The commit notice the current ports hand out (null: none, the worker polls). */
+function noticeOf(): SharedArrayBuffer | null { try { return ports?.commitNotice?.() ?? null; } catch { return null; } }
 let portsFile: string | null = null;
 /** True once the caller stopped the module; no worker is restarted and no retry runs. */
 let stopped = true;
@@ -602,13 +785,21 @@ let owed: WalSince[] = [];
 const sameSince = (a: WalSince, b: WalSince) => a === b || (a !== null && b !== null && a !== "unknown" && b !== "unknown" && a.salt1 === b.salt1 && a.salt2 === b.salt2);
 function owe(mark: WalSince) {
   if (!owed.some(item => sameSince(item, mark))) owed.push(mark);
+  scrubLimit();
   armRetry();
 }
 function settleOwed() {
   if (!portsFile) return;
   const file = `${portsFile}-wal`;
   owed = owed.filter(mark => !walScrubbed(file, mark));
+  scrubLimit();
   if (!owed.length && retryTimer) { clearTimeout(retryTimer); retryTimer = undefined; }
+}
+/** 1.0.22 item 1b (MAIN-RULING SQLITE-1022): the server connection keeps a 16 MiB log file across restarts, except while a deletion's scrub
+ * is owed (or a nudging settle runs): then any commit that restarts a copied log, its own nudge or an ordinary write that got there first,
+ * cuts the file to its own frames, so no old-salt frame holding deleted text is kept behind the new log. Back to the prod value once proven. */
+function scrubLimit(zero = owed.length > 0) {
+  try { if (zero) ports?.setJournalSizeLimit?.(0); else ports?.pinJournalSizeLimit?.(); } catch { /* the handle is gone: the next open sets its own */ }
 }
 
 /** Starts off-thread copying. Autocheckpoint stays disabled through readiness,
@@ -617,9 +808,24 @@ export function startWalMaintenance(file: string, given: WalMaintenancePorts): v
   if (active) void retire(active);
   if (portsFile !== file) owed = [];
   ports = given; portsFile = file; stopped = false; restartAttempts = 0; refusalLogged = false; writesPaused = false; lastStallReplaceAt = null; // each start session reports its own refusal once
+  // 1.0.22 item 1b: a scrub still owed from before this open holds the new handle's limit at 0 too (it opened at 16 MiB)
+  if (owed.length) scrubLimit(true);
   if (restartTimer) { clearTimeout(restartTimer); restartTimer = undefined; }
   try { given.setAutocheckpoint(0); } catch { /* handle closed */ }
   watchGrowth();
+  // B4 (lane D): background admission reads the un-copied log through the same reading the hard gate uses
+  ioBudget.setWalBacklog(() => {
+    // an unreadable log (any stat error but ENOENT) throws, which the half gate reads as past it (fail closed); walBacklog itself reads it as 0
+    try { statSync(file + "-wal"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+    return walBacklog(file)?.backlog ?? null;
+  });
+  // W5 (lane D, D-R4 1.5): the index-debt copy's disk door reads the worker's low-disk verdict and the volume's free space (asked only on an
+  // index-debt ask, never on a timer)
+  ioBudget.setIndexDebtDisk(() => {
+    let free: number | null = null;
+    try { const disk = statfsSync(file); free = disk.bavail * disk.bsize; } catch { /* the verdict decides */ }
+    return { refusing: diskFloorRefusing(), free };
+  });
   spawnWorker();
   armRetry();
 }
@@ -654,17 +860,20 @@ function spawnWorker(): void {
   const shared = new Int32Array(new SharedArrayBuffer((HEARTBEAT_SLOT + 1) * Int32Array.BYTES_PER_ELEMENT));
   const copied = new BigInt64Array(new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT));
   const gen = ++generation;
+  const notice = noticeOf();
+  // 1.0.22 q1022-sqlite: ports that offer a commit notice but gave none (the wake bus is down) get the 1 s fallback poll
+  const fallbackPoll = !notice && typeof ports?.commitNotice === "function" ? FALLBACK_POLL_MS : 0;
   Atomics.store(shared, 0, gen);
   let worker: Worker;
   try { worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: {
-    file, shared: shared.buffer, copied: copied.buffer, admission:(ioBudget.rebuildAdmissionIfPoisoned(), ioBudget.checkpointAdmissionBuffer()), admissionSource:checkpointLedger.toString(), nativeMeterPath:ioMeterNativePath(), nativeMeterId:ioMeterNativeId(), osPageSize:ioMeterPageSize(), stepBytes: STEP_BYTES, pollMs: STEP_POLL_MS, dueMs: DUE_MS, debtBytes: DEBT_SYNC_BYTES, debtFd: { debt: debtFdFor(file), index: indexFdFor(file) },
+    file, shared: shared.buffer, copied: copied.buffer, admission:(ioBudget.rebuildAdmissionIfPoisoned(), ioBudget.checkpointAdmissionBuffer()), admissionSource:checkpointLedger.toString(), nativeMeterPath:ioMeterNativePath(), nativeMeterId:ioMeterNativeId(), osPageSize:ioMeterPageSize(), stepBytes: STEP_BYTES, pollMs: STEP_POLL_MS, dueMs: DUE_MS, quietMs: WAL_PACE.quietMs, quietMaxMs: WAL_PACE.maxMs, notice, fallbackPollMs: fallbackPoll, idleCheckMs: Math.min(WAL_IDLE_CHECK.ms, Math.floor(stallMs / 2)), debtBytes: DEBT_SYNC_BYTES, debtFd: { debt: debtFdFor(file), index: indexFdFor(file) },
   } }); }
   catch (error) { logFailure(error); scheduleRestart(Date.now()); return; }
   worker.unref();
   let markExited!: () => void;
   const m: Maintenance = {
     gen, shared, copied, handler: () => {}, file, walFile: `${file}-wal`, worker, startedAt: Date.now(), ready: false, failed: false, exitedFlag: false, nextId: 0, waiting: new Map(),
-    inflight: null, timer: undefined, lastSize: -1, lastResult: null, lastBeat: -1, beatAt: Date.now(), fail: () => {},
+    inflight: null, timer: undefined, notice, lastSize: -1, lastResult: null, lastBeat: -1, beatAt: Date.now(), fail: () => {},
     exited: new Promise<void>(resolve => { markExited = resolve; }),
   };
   const threadId = worker.threadId;
@@ -900,12 +1109,14 @@ export async function settleWal(options: SettleOptions = {}): Promise<boolean> {
     // header, is the one exception and is not a scrub), so a slow disk cannot stall it. The scrub stays owed and the restarted
     // checkpointer carries it out.
     if (!m || !m.ready || m.failed) return false;
+    if (options.nudge) scrubLimit(true);
     const result = await within(checkpointPassive(), left(), UNAVAILABLE);
     if (result.log < 0 || result.busy !== 0 || result.log !== result.checkpointed) return false;
     if (!options.nudge) return true;
     if (!ports) return false;
     return await within(ports.nudge(), left(), false);
   } catch { return false; }
+  finally { if (options.nudge) scrubLimit(); }
 }
 
 /** After a deletion has committed: gets the deleted text out of messages.db's log within `ms`. True once it is provably gone;
@@ -923,7 +1134,7 @@ export async function scrubWalAfterDelete(ms = 5000): Promise<boolean> {
     for (;;) {
       if (await settleWal({ nudge: true, deadlineAt: deadline }) && walScrubbed(walFile, mark)) {
         owed = owed.filter(item => !sameSince(item, mark));
-        settleOwed();
+        settleOwed(); // also puts the 16 MiB limit back once nothing is owed
         return true;
       }
       const left = deadline - Date.now();
@@ -966,15 +1177,27 @@ function replaceStalled(m: Maintenance, why: string): boolean {
 function tick(m: Maintenance) {
   if (m.failed || active !== m) return;
   // A worker that is alive but not running its clock (stuck in a loop or a call) never copies and never exits: replace it through the failure path.
-  const beat = Atomics.load(m.shared, HEARTBEAT_SLOT);
-  if (beat !== m.lastBeat) { m.lastBeat = beat; m.beatAt = Date.now(); writesPaused = false; }
-  else if (Date.now() - m.beatAt >= stallMs && replaceStalled(m, `checkpointer stalled for ${Date.now() - m.beatAt} ms`)) return;
+  const beat = Atomics.load(m.shared, HEARTBEAT_SLOT), tickAt = Date.now();
+  // 1.0.22 (q1022-sqlite): after a sleep (or a held loop) the wall clock jumped while neither thread ran: start the deadline again, never a stall
+  const resumed = m.tickAt !== undefined && tickAt - m.tickAt > TICK_RESUME_GAP_MS;
+  m.tickAt = tickAt;
+  if (beat !== m.lastBeat) { m.lastBeat = beat; m.beatAt = tickAt; writesPaused = false; }
+  else if (resumed) m.beatAt = tickAt;
+  else if (tickAt - m.beatAt >= stallMs && replaceStalled(m, `checkpointer stalled for ${tickAt - m.beatAt} ms`)) return;
   // A rebuild that found the lock busy at the checkpointer start is retried here (an atomic read when the ledger is clean).
   ioBudget.admissionTick();
   let size = 0;
   try { size = statSync(m.walFile).size; } catch { size = 0; }
-  const behind = Boolean(m.lastResult && m.lastResult.log > m.lastResult.checkpointed);
-  if ((size !== m.lastSize || behind) && !m.inflight) void checkpointPassive();
+  const copied = m.copied ? Atomics.load(m.copied, 0) : 0n;
+  releaseWalReaders(m, copied < 0n ? size : Math.max(0, size - Number(copied)), Date.now());
+  // W4: an event-driven worker retries a held-back log itself at a doubling wait; re-requesting it here every second would undo that
+  const behind = !m.notice && Boolean(m.lastResult && m.lastResult.log > m.lastResult.checkpointed);
+  // 1.0.22 item 2: asked once the file moved by TICK_ASK_BYTES since the last ask, or once it has been still for the quiet after a move;
+  // never every second while small commits keep coming
+  if (size !== m.lastSize) m.movedAt = tickAt;
+  const moved = size !== (m.askedSize ?? -1);
+  const ask = behind || (moved && (Math.abs(size - (m.askedSize ?? 0)) >= TICK_ASK_BYTES || tickAt - (m.movedAt ?? tickAt) >= WAL_PACE.quietMs));
+  if (ask && !m.inflight) { m.askedSize = size; void checkpointPassive(); }
   m.lastSize = size;
 }
 
@@ -1026,6 +1249,7 @@ async function retire(m: Maintenance, grace = 0, kill = 0): Promise<boolean> {
  * alive after `kill` more ms. Stops restarts and retries. Idempotent. Must run AFTER the server connection has closed. */
 export async function stopWalMaintenance(grace = 3000, kill = 1500): Promise<boolean> {
   stopped = true; ports = null;
+  ioBudget.setWalBacklog(null); ioBudget.setIndexDebtDisk(null);
   if (growthTimer) { clearInterval(growthTimer); growthTimer = undefined; }
   if (restartTimer) { clearTimeout(restartTimer); restartTimer = undefined; }
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = undefined; }

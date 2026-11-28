@@ -22,10 +22,12 @@ import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // - Armed at start (index.ts setReadTimeJudgeRetired). Objects other lanes retired register by name (registerRetiredObjects).
 // - The validator accepts a v10 file with any of these objects gone (schema.ts ROOT_SET_RECLAIM_TABLES); a downgrade to v9 makes them again,
 //   empty, and marks every generated line unprovable (lineage-backfill.ts), so an older build withholds what it can no longer prove.
+import { adoptWorker, writeSetGuardCall } from "./wake.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { statfsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { Worker } from "node:worker_threads";
+import { sealedForShutdown, trackFileWorker } from "../shutdown-seal.ts";
 
 /** The v6 member index, then the tables, in drop order (a table's own indexes and triggers go with it). */
 export const ROOT_SET_MEMBER_INDEX = "memory_root_set_members_root";
@@ -264,6 +266,8 @@ const WORKER_BODY = `
 let db;
 try {
   db = new DatabaseSync(workerData.file);
+  db.exec("PRAGMA busy_timeout=5000"); // the guard's one schema read waits for a writer; the batches below do not (their own retry)
+  ${writeSetGuardCall("root-set-reclaim")}
   db.exec("PRAGMA busy_timeout=0");
   db.exec("PRAGMA secure_delete=FAST");
   // no checkpoint inside a batch's COMMIT (it copies the whole log under the write lock): the log is checkpointed between batches, PASSIVE, outside the lock
@@ -299,6 +303,7 @@ let db;
 try {
   db = new DatabaseSync(workerData.file);
   db.exec("PRAGMA busy_timeout=60000");
+  ${writeSetGuardCall("root-set-vacuum")}
   db.exec("PRAGMA secure_delete=FAST");
   const started = performance.now();
   db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); db.exec("PRAGMA auto_vacuum=INCREMENTAL"); db.exec("VACUUM"); db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -335,8 +340,11 @@ function runWorker(source: string, workerData: Record<string, unknown>, poll?: (
   return new Promise(resolve => {
     let settled = false, timer: ReturnType<typeof setInterval> | undefined;
     const finish = (value: { ok: boolean; stats?: ReclaimStats; ms?: number; message?: string }) => { if (settled) return; settled = true; if (timer) clearInterval(timer); resolve(value); };
+    if (sealedForShutdown()) { finish({ ok: false, message: "the server is shutting down" }); return; } // the worker opens the file by name: not after the shutdown close
     try {
       const worker = new Worker(windowsHidePrelude + source, { eval: true, workerData });
+      adoptWorker(worker, "root-set-reclaim");
+      trackFileWorker(worker);
       worker.on("message", (message: { ok: boolean; stats?: ReclaimStats; ms?: number; message?: string }) => finish(message));
       worker.on("error", (error: Error) => finish({ ok: false, message: error.message }));
       worker.on("exit", () => finish({ ok: false, message: "the worker ended early" }));

@@ -164,10 +164,13 @@ describe("Murage's own tools through Grok Build's use_tool", () => {
     expect(verdictAt(AUTO, site).source).not.toBe("own-unasked");
     expect(verdictAt(ASK, site).approve).toBeNull();
 
-    // an own write keeps Ask's card (Auto answers it), in plain words
+    // 1.0.24 memhold (MAIN-RULING memory, LINUXMEM-1023): the bot writing its own memory is never an edge, so no card at Ask either
+    // (this row asserted Ask's card before the ruling); the plain words stay for any surface that names the call
     const save = await asked("t-own-write", useTool("murage-memory__memory_save", { text: "the launch is Friday" }));
-    expect(verdictAt(ASK, save).approve).toBeNull();
+    expect(verdictAt(ASK, save)).toMatchObject({ source: "own-unasked" });
     expect(verdictAt(AUTO, save)).toMatchObject({ source: "own-unasked" });
+    const correct = await asked("t-own-correct", useTool("murage-memory__memory_propose_correction", { id: "m-1", version: 1, replacement: "the launch is Monday" }));
+    expect(verdictAt(ASK, correct)).toMatchObject({ source: "own-unasked" });
     expect(plainApproval(save.tool, cardDetail(save))?.action).toBe("save a note to its memory");
     const create = await asked("t-own-create", useTool("agents__create_bot", { name: "Helper" }));
     expect(verdictAt(ASK, create).approve).toBeNull();

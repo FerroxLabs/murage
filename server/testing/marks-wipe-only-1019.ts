@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { expect } from "vitest";
-import { cell as legacyCell, provenInitiator, type CellSpec } from "./marks-nlh0.ts";
+import { cell as legacyCell, fullOwnerRunAllowed, provenInitiator, type CellSpec } from "./marks-nlh0.ts";
 
 /** These matrices supply stored owner provenance at the policy boundary.
  * MAIN RULING 2026-11-13 wipe-only: non-wipes run on admitted No limits
@@ -9,10 +9,10 @@ import { cell as legacyCell, provenInitiator, type CellSpec } from "./marks-nlh0
  * selected exemption. Wipe expectations remain literal fixture data. */
 // MAIN RULING 2026-11-13 wipe-only: only declared wipe cells retain their card.
 export function wipeOnlyCell(
-  id: string, bot: { noLimits?: boolean }, patch: Record<string, unknown>,
+  id: string, bot: { noLimits?: boolean; fullAccess?: boolean }, patch: Record<string, unknown>,
   verdict: unknown, ask: unknown, spec: CellSpec,
 ): void {
-  if (!bot.noLimits) { legacyCell(id, bot, patch, verdict, spec); return; }
+  if (!bot.noLimits) { if (!fullOwnerRunAllowed(id, bot, patch, verdict, spec)) legacyCell(id, bot, patch, verdict, spec); return; }
   if (!provenInitiator(patch)) {
     expect(verdict, `${id}: an unproven turn stays Ask`).toEqual(ask);
     expect((verdict as { approve: unknown }).approve).toBeNull();

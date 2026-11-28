@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "cifix1024-copyrev",
+    "account": "claude opus 5.5 subagent, independent read-only copy review of the 1.0.24 cifix strings (not their author)"
+  },
+  "author": "claude-sonnet-5-5",
+  "date": "2026-11-28",
+  "base": "7c52412a6a",
+  "scope": "cifix 1.0.24: invalidMindMap without vendor name",
+  "strings": {
+    "de:composer.files.invalidMindMap": {
+      "text": "Die Mindmap konnte nicht gelesen werden. Verwende eine kleinere Mindmap-Datei oder exportiere sie als Markdown.",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass",
+      "note": "vendor name dropped on purpose; fr first wording failed on gender, fixed as the reviewer suggested"
+    },
+    "es:composer.files.invalidMindMap": {
+      "text": "No se pudo leer el mapa mental. Usa un archivo de mapa mental más pequeño o expórtalo como Markdown.",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass",
+      "note": "vendor name dropped on purpose; fr first wording failed on gender, fixed as the reviewer suggested"
+    },
+    "fr:composer.files.invalidMindMap": {
+      "text": "Cette carte mentale n’a pas pu être lue. Utilise un fichier de carte mentale plus petit ou exporte-la en Markdown.",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass",
+      "note": "vendor name dropped on purpose; fr first wording failed on gender, fixed as the reviewer suggested"
+    },
+    "hi:composer.files.invalidMindMap": {
+      "text": "यह माइंड मैप पढ़ा नहीं जा सका। छोटी माइंड मैप फ़ाइल इस्तेमाल करें या इसे Markdown के रूप में निर्यात करें।",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass",
+      "note": "vendor name dropped on purpose; fr first wording failed on gender, fixed as the reviewer suggested"
+    },
+    "ja:composer.files.invalidMindMap": {
+      "text": "このマインドマップを読み取れませんでした。小さいマインドマップのファイルを使うか、Markdown として書き出してください。",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass",
+      "note": "vendor name dropped on purpose; fr first wording failed on gender, fixed as the reviewer suggested"
+    },
+    "pt-br:composer.files.invalidMindMap": {
+      "text": "Não foi possível ler o mapa mental. Use um arquivo de mapa mental menor ou exporte-o como Markdown.",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass",
+      "note": "vendor name dropped on purpose; fr first wording failed on gender, fixed as the reviewer suggested"
+    },
+    "zh:composer.files.invalidMindMap": {
+      "text": "无法读取此思维导图。请使用较小的思维导图文件，或将其导出为 Markdown。",
+      "en": "That mind map could not be read. Use a smaller XMind file or export it as Markdown.",
+      "verdict": "pass",
+      "note": "vendor name dropped on purpose; fr first wording failed on gender, fixed as the reviewer suggested"
+    }
+  },
+  "files": {}
+}

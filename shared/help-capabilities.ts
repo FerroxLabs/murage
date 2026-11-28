@@ -170,12 +170,6 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "tool",
-    "name": "request_browser_connection",
-    "term": "request_browser_connection",
-    "source": "server/drivers/agents-proxy.ts"
-  },
-  {
-    "kind": "tool",
     "name": "ask_user",
     "term": "ask_user",
     "source": "server/drivers/agents-proxy.ts"
@@ -593,6 +587,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "source": "src/locales/en.json"
   },
   {
+    "kind": "place",
+    "name": "nav.teachSkill",
+    "term": "Teach a skill",
+    "source": "src/locales/en.json"
+  },
+  {
     "kind": "label",
     "name": "PEER_CONTACT_LABEL",
     "term": "Ask me before contacting other bots",
@@ -770,12 +770,6 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "route",
     "name": "/api/help",
     "term": "help",
-    "source": "server/index.ts"
-  },
-  {
-    "kind": "route",
-    "name": "/api/highlevel",
-    "term": "HighLevel",
     "source": "server/index.ts"
   },
   {

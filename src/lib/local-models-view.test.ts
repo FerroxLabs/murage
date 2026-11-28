@@ -226,3 +226,35 @@ describe("engines say where they stand on local models (spec V4)", () => {
     expect(engineLocalLine("boxAgent")).toBe("");
   });
 });
+
+// M10 (1.0.23) P4: no Ollama card claims that nothing leaves the machine, and a
+// cloud model is never offered a copy that cannot help.
+describe("M10 Ollama cloud models on the card", () => {
+  const ollama = server({ kind: "ollama", label: "Ollama on this computer" });
+  const cloud = model({ model: "fixture-model:70b-cloud", loaded: false, cloud: true });
+
+  it("W8 the untested help names ollama.com for every Ollama model and keeps today's text elsewhere", () => {
+    const cloudHelp = nextActionFor(ollama, cloud).help;
+    expect(cloudHelp).toBe("Runs seven checks through your Ollama. This model runs on ollama.com, so the checks are sent there."); // W8-cloudhelp
+    expect(cloudHelp).not.toContain("Nothing is sent to a cloud provider");
+    const localHelp = nextActionFor(ollama, model({ model: "fixture-model:big" })).help;
+    expect(localHelp).toBe("Runs seven checks through your Ollama. Models it runs itself stay on that machine; an ollama.com model sends the checks to ollama.com.");
+    expect(nextActionFor(server(), model()).help).toBe("Runs seven checks on this computer. Nothing is sent to a cloud provider.");
+  });
+
+  it("W8 a cloud model that is too small is pointed at another model, never at a copy", () => {
+    const tooSmall = { ...cloud, test: test("context-too-small", { context: { contextWindow: 16_384, source: "ollama-cloud", cloud: true } }) };
+    expect(nextActionFor(ollama, tooSmall)).toEqual({ // W8-toosmall
+      kind: "pick-other-model",
+      label: "Try another model",
+      help: "This model runs on ollama.com and its context is too small for bots. Pick another model on this server and test it.",
+    });
+    expect(testOutcomeLine(tooSmall.test)).toBe("Context too small for bots (16K; bots need 32K+)");
+    expect(nextActionFor(ollama, { ...tooSmall, cloud: undefined }).kind).toBe("ollama-context-copy");
+  });
+
+  it("W8 a cloud context line never says loaded", () => {
+    expect(contextLine({ ...cloud, context: { contextWindow: 131_072, source: "ollama-cloud", cloud: true } })).toBe("128K context"); // W8-context
+    expect(contextLine({ ...cloud, context: { source: "ollama-cloud", cloud: true } })).toBe("Context size not reported by this server");
+  });
+});

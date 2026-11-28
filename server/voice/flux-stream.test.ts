@@ -1,18 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import type { Duplex } from "node:stream";
+import type WebSocket from "ws";
 
 import { scriptedProvider } from "../../tools/flux-stream-sim/providers/scripted.ts";
 import { createSimServer } from "../../tools/flux-stream-sim/server.ts";
 import { FluxStreamRefused, failureForClose, fluxStreamBase, openFluxStream } from "./flux-stream.ts";
 import { installFluxStartGate } from "../flux-start-gate.ts";
+import { isBudgetReached, resetUnavailable } from "./voice-routes.ts";
 
 // Count construction while retaining the real transport to the loopback fake.
-const sockets = vi.hoisted(() => ({ created: 0 }));
+const sockets = vi.hoisted(() => ({ created: 0, latest: undefined as WebSocket | undefined }));
 vi.mock("ws", async importOriginal => {
   const actual = await importOriginal<typeof import("ws")>();
   return { ...actual, default: new Proxy(actual.default, {
     construct(target, args) {
       sockets.created++;
-      return Reflect.construct(target, args);
+      return sockets.latest = Reflect.construct(target, args);
     },
   }) };
 });
@@ -137,4 +142,72 @@ it("a memoized key never opens a transcription socket", async () => {
   try {
     await expect(openFluxStream({ key: "spent", query: new URLSearchParams(), env: { MURAGE_FLUX_STREAM_API: "ws://127.0.0.1:9/v1" } })).rejects.toMatchObject({ closeCode: 4402, error: { code: "key_budget_reached" } });
   } finally { resetUnavailable(); }
+});
+
+async function withHandshakeRefusal(witness: (fixture: {
+  socket: Duplex;
+  env: NodeJS.ProcessEnv;
+  head: Promise<void>;
+  outcome: Promise<FluxStreamRefused>;
+  held: (baseUrl?: string) => boolean;
+}) => Promise<void>) {
+  const server = createServer();
+  const connected = new Promise<Duplex>(resolve => server.once("upgrade", (_req, socket) => resolve(socket)));
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  const env = { MURAGE_FLUX_STREAM_API: base };
+  const outcome = openFluxStream({ key: "fixture", query: new URLSearchParams(), env }).catch(error => error);
+  const socket = await connected;
+  const head = new Promise<void>(resolve => sockets.latest!.once("unexpected-response", () => resolve()));
+  const held = (baseUrl = base) => isBudgetReached({ via: "flux", baseUrl, key: "fixture", model: "host", label: "Flux" });
+  try {
+    await witness({ socket, env, head, outcome, held });
+  } finally {
+    socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    resetUnavailable();
+  }
+}
+
+const premiumBody = '{"error":{"code":"premium_locked"}}';
+const refusalHead = (bytes: number) => `HTTP/1.1 402 Payment Required\r\nContent-Length: ${bytes}\r\n\r\n`;
+
+it("settles a stalled handshake 402 at one second without accepting a premium prefix", async () => {
+  await withHandshakeRefusal(async ({ socket, head, outcome, held }) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      let failure: FluxStreamRefused | undefined;
+      void outcome.then(error => { failure = error; });
+      socket.write(refusalHead(Buffer.byteLength(premiumBody) + 1) + premiumBody);
+      await head;
+      await vi.advanceTimersByTimeAsync(999);
+      expect(failure).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(failure).toMatchObject({ closeCode: 4503, error: { code: "call_admission_unknown" } });
+      expect(held()).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+it.each([
+  ["over-byte", JSON.stringify({ error: "premium_locked", padding: "é".repeat(8192) }), 0],
+  ["over-depth", JSON.stringify({ error: "premium_locked", padding: [[[[[[0]]]]]] }), 0],
+  ["truncated", premiumBody, 1],
+])("rejects a %s premium handshake body", async (_label, body, missing) => {
+  await withHandshakeRefusal(async ({ socket, outcome, held }) => {
+    socket.end(refusalHead(Buffer.byteLength(body) + missing) + body);
+    expect(await outcome).toMatchObject({ closeCode: 4503, error: { code: "call_admission_unknown" } });
+    expect(held()).toBe(false);
+  });
+});
+
+it("records a handshake refusal against the origin that received the request", async () => {
+  await withHandshakeRefusal(async ({ socket, env, outcome, held }) => {
+    env.MURAGE_FLUX_STREAM_API = "ws://127.0.0.1:9/v1";
+    const body = '{"error":"key_budget_reached"}';
+    socket.end(refusalHead(Buffer.byteLength(body)) + body);
+    expect(await outcome).toMatchObject({ closeCode: 4402, error: { code: "key_budget_reached" } });
+    expect(held()).toBe(true);
+    expect(held(env.MURAGE_FLUX_STREAM_API)).toBe(false);
+  });
 });

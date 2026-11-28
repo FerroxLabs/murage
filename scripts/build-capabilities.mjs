@@ -81,7 +81,7 @@ for (const match of botSections.matchAll(/\{ id: "([a-z]+)", label: "([^"]+)"/g)
 }
 
 // 4. The places in the sidebar.
-for (const key of ["nav.routines", "nav.files", "nav.apps", "nav.mapName"]) {
+for (const key of ["nav.routines", "nav.files", "nav.apps", "nav.mapName", "nav.teachSkill"]) {
   if (!en[key]) throw new Error(`missing locale key ${key}`);
   add("place", key, en[key], "src/locales/en.json");
 }
@@ -138,8 +138,6 @@ const ROUTE_TERMS = {
   "flux-connection": "Flux",
   "folder-trust": "working folder",
   groups: "channels",
-  // /api/highlevel: Settings > HighLevel token, location and per-bot read access (HL-S2 read only, 1.0.18)
-  highlevel: "HighLevel",
   "house-rules": "house rules",
   images: "image generation",
   inbox: "inbox",
@@ -190,6 +188,8 @@ const ROUTE_PLUMBING = new Set([
   "signal",
   // Owner-authenticated prepared-context inspection; no standalone navigation surface.
   "delegation-packs",
+  // The one-time 1.0.20 line (HighLevel moved to connected apps); the app shows it, no Settings surface.
+  "notices",
   "announcements", "automation-admission", "config", "desktop", "desktop-secret", "deletion-preview", "deletions", "diagnostics",
   "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "owner-prefs", "presence", "restore-holds", "setup", "shared-results", "spend", "subscribe", "terms",
 ]);

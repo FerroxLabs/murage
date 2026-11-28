@@ -71,7 +71,7 @@ describe("one way out of a bot's settings page", () => {
     ["Routines", { type: "showRoutines" }],
     ["the Team map", { type: "showTeamMap" }],
     ["All chats", { type: "showAllChats" }],
-    ["the skill recorder", { type: "showSkillRecorder" }],
+    ["the skill recorder", { type: "showSkillRecorder", via: "entry" }],
   ];
   it.each(entryPoints)("%s with unsaved edits asks; No keeps the page, Yes runs it once", (_name, action) => {
     expect(leavesBotPage(open, action)).toBe(true);

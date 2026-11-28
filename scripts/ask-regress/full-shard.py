@@ -1,19 +1,24 @@
 """Eight complete Vitest shards; each compares isolated baseline and fixed source."""
-import json, os, pathlib, re, shutil, subprocess, sys, tarfile, time
+import json, os, pathlib, re, shutil, subprocess, sys, tarfile, tempfile, time
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from evidence_path import evidence_path, external_evidence_path
+
 shard = int(sys.argv[1])
 assert 1 <= shard <= 8
 phases = sys.argv[2:] or ['base', 'head']
 assert phases in [['base', 'head'], ['base'], ['head']]
-work = pathlib.Path('/work')
-inputs = work / os.environ.get('ASK_FULL_EVIDENCE_ROOT', 'evidence/ask-regress/raw')
-publish = inputs / 'full'
+work = pathlib.Path(__file__).resolve().parents[2]
+override = os.environ.get('ASK_FULL_EVIDENCE_ROOT')
+inputs = external_evidence_path(override) if override else evidence_path('evidence/ask-regress/raw')
 label = os.environ.get('ASK_FULL_EVIDENCE_LABEL')
-if label:
-    assert re.fullmatch('[a-z0-9-]+', label)
-out = pathlib.Path('/tmp') / f'ask-full-output-{shard}'
+if label and not re.fullmatch('[a-z0-9-]+', label):
+    raise ValueError('Invalid Ask capture label')
+destinations = [external_evidence_path(inputs / name) for name in ([label] if label else []) + ['full']]
+scratch = tempfile.TemporaryDirectory(prefix='.ask-full-', dir=inputs)
+out = pathlib.Path(scratch.name) / 'output'
 out.mkdir(parents=True, exist_ok=True)
 for phase in phases:
-    root = pathlib.Path('/tmp') / f'ask-full-{phase}-{shard}'
+    root = pathlib.Path(scratch.name) / phase
     root.mkdir()
     with tarfile.open(inputs / (phase + '.tar.gz')) as archive:
         archive.extractall(root)
@@ -25,7 +30,7 @@ for phase in phases:
     env = {**os.environ, 'HOME': str(home), 'USERPROFILE': str(home), 'GIT_CONFIG_GLOBAL': str(config), 'GIT_CONFIG_SYSTEM': str(config)}
     for args in [['init'], ['add', '-f', '.'], ['-c', 'user.name=ci', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Exact source fixture']]:
         subprocess.run(['git', *args], cwd=root, env=env, check=True, stdout=subprocess.DEVNULL)
-    os.symlink('/work/node_modules', root / 'node_modules')
+    os.symlink(work / 'node_modules', root / 'node_modules')
     inventory_path = out / f'{phase}-{shard}.inventory.json'
     with (out / f'{phase}-{shard}.inventory.log').open('w') as log:
         listed = subprocess.run(['node', 'node_modules/vitest/vitest.mjs', 'list', '--filesOnly', '--shard', f'{shard}/8', '--json', str(inventory_path)], cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -42,12 +47,12 @@ for phase in phases:
     result_path = out / f'{phase}-{shard}.json'
     with (out / f'{phase}-{shard}.log').open('w') as log:
         result = subprocess.run(['node', 'node_modules/vitest/vitest.mjs', 'run', '--shard', f'{shard}/8', '--maxWorkers=1', '--reporter=json', '--outputFile=' + str(result_path)], cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
-    (out / f'{phase}-{shard}.exit.json').write_text(json.dumps({'sourceCommit': source_commit, 'phase': phase, 'shard': shard, 'exit': result.returncode, 'seconds': time.time()-start, 'report': result_path.exists()}) + '\n')
+    # sourceRoot lets the comparator map Vitest's absolute suite paths back to checkout-relative files.
+    (out / f'{phase}-{shard}.exit.json').write_text(json.dumps({'sourceCommit': source_commit, 'sourceRoot': str(root), 'phase': phase, 'shard': shard, 'exit': result.returncode, 'seconds': time.time()-start, 'report': result_path.exists()}) + '\n')
 
 # Publish once all source uploads are long finished; the container owns every
 # report privately throughout execution, so another workspace sync cannot delete it.
-destinations = ([work / 'evidence/ask-regress/raw' / label] if label else []) + [publish]
 for destination in destinations:
     destination.mkdir(parents=True,exist_ok=True)
     for artifact in out.iterdir():
-        shutil.copy2(artifact,destination/artifact.name)
+        shutil.copy2(artifact, external_evidence_path(destination / artifact.name))

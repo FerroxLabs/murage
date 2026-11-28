@@ -1,3 +1,4 @@
+import { fixtureDisplayedResponse, fixtureDisplayRequest } from "./testing/display-http-fixture.ts";
 import { fakeEngineServerArgs } from "./testing/fake-engine-server.ts";
 // What Settings says about folder trust, proved on the outcome and not the
 // sentence: a Forget does what its row says (test 18, 13(e)), the engine's own
@@ -17,7 +18,6 @@ import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
-const posixOnly = describe.skipIf(process.platform === "win32");
 
 let base: string;
 let desktopHeaders: Record<string, string>;
@@ -30,9 +30,10 @@ const homeOf = (name: string) => join(home, `home-${name}`);
 const trustFile = (name: string) => join(homeOf(name), "trusted_folders.toml");
 
 const request = async (method: string, path: string, body?: unknown): Promise<{ status: number; text: string; body: any }> => {
+  body = fixtureDisplayRequest(join(home, ".murage/messages.db"), path, body);
   const res = await fetch(`${base}${path}`, { method, headers: { ...desktopHeaders, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
-  return { status: res.status, text, body: text ? JSON.parse(text) : null };
+  return { status: res.status, text, body: fixtureDisplayedResponse(join(home, ".murage/messages.db"), text ? JSON.parse(text) : null) };
 };
 const messages = async (threadId: string) => (await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const openCard = async (threadId: string) => (await messages(threadId)).filter((m) => m.card?.folderTrust && !m.card.answered).at(-1);
@@ -47,6 +48,16 @@ async function bootServer(port: number): Promise<{ child: ChildProcess; desktop:
   mkdirSync(join(home, ".murage"), { recursive: true });
   mkdirSync(join(home, ".fuigo"), { recursive: true });
   writeFileSync(join(home, ".fuigo", "auth.json"), "{}");
+  // F15 (1.0.24): the owner's own turn is never carded, so the decisions (18) and 13(e) build on are the ones 1.0.23 cards left: Murage's consent-2
+  // records, and the grants the engine persisted in the homes that said yes (fake-acp-cli.ts persistGrant format).
+  const card = (decision: "trust" | "reject", key: string) => ({ decision, decidedAt: Date.now(), source: "card", folder: key, consent: 2 });
+  writeFileSync(join(home, ".murage", "folder-trust.json"), JSON.stringify({ version: 1, folders: {
+    [K("forgotten")]: card("trust", K("forgotten")), [K("parent")]: card("trust", K("parent")),
+    [K("declined")]: card("reject", K("declined")), [K("only")]: card("reject", K("only")) } }));
+  for (const [name, key] of [["own", K("forgotten")], ["trust-p", K("parent")]] as const) {
+    mkdirSync(homeOf(name), { recursive: true });
+    writeFileSync(trustFile(name), `[folders.${JSON.stringify(key)}]\ntrusted = true\nconsent = 2\ndecided_at = ${Math.floor(Date.now() / 1000)}\n`);
+  }
   const engine = (name: string, workspace?: string) => {
     mkdirSync(homeOf(name), { recursive: true });
     writeFileSync(join(homeOf(name), "auth.json"), "{}");
@@ -137,25 +148,19 @@ async function turn(bot: Bot, text = "go") {
   await send(bot, text);
   await settled(bot);
 }
-async function card(bot: Bot) {
-  await expect.poll(async () => Boolean(await openCard(bot.threadId)), { timeout: 20_000 }).toBe(true);
-  return (await openCard(bot.threadId))!.card;
-}
-const answer = (bot: Bot, requestId: string, label: string) =>
-  request("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "answer", answers: [{ id: "folderTrust", selected: [label] }] });
-const skip = (bot: Bot, requestId: string) => request("POST", `/api/bots/${bot.id}/respond`, { requestId, behavior: "skip" });
-async function decide(bot: Bot, label: "Trust this folder" | "Don't trust") {
-  await send(bot);
-  const open = await card(bot);
-  const delivered = await answer(bot, open.requestId, label);
-  expect(delivered, JSON.stringify(delivered)).toMatchObject({ status: 200, body: { outcome: "answered" } });
-  await settled(bot);
-}
-async function skipCard(bot: Bot, text: string) {
+/** F15: the owner's own turn, waited on until it settles OR a card shows, then required to have shown none (a card holds the turn
+ * busy, so a plain settle would time out before the no-card assertion is reached). */
+async function turnWithoutCard(bot: Bot, text = "go") {
   await send(bot, text);
-  const open = await card(bot);
-  expect((await skip(bot, open.requestId)).status).toBe(200);
+  const busy = async () => (await request("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id)?.busy;
+  await expect.poll(async () => Boolean(await openCard(bot.threadId)) || (await busy()) === false, { timeout: 30_000 }).toBe(true);
+  expect((await messages(bot.threadId)).filter((m) => m.card?.folderTrust)).toEqual([]);
   await settled(bot);
+}
+/** F15: a turn the engine asks about with no decision to answer it from runs withheld: no card, the engine is told reject. */
+async function withheldTurn(bot: Bot, text: string) {
+  await turnWithoutCard(bot, text);
+  expect(lastReply()).toContain('"outcome":"reject"');
 }
 const noteFor = async (bot: Bot) => {
   mkdirSync(workspaceOf(bot), { recursive: true });
@@ -163,7 +168,7 @@ const noteFor = async (bot: Bot) => {
 };
 const forget = (key: string) => request("DELETE", `/api/folder-trust?key=${encodeURIComponent(key)}`);
 
-posixOnly("what Settings promises, through the harness", () => {
+describe("what Settings promises, through the harness", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1]);
     base = `http://127.0.0.1:${port}`;
@@ -191,9 +196,37 @@ posixOnly("what Settings promises, through the harness", () => {
     writeFileSync(trustFile("store-empty"), "");
   });
 
+  // F15 (1.0.24, q1024-trustquiet r4): runs before (18) now. Its two rejects are seeded at boot, and (18)'s Rule 3 control needs
+  // every decline written or gone (core.ts Rule 3), which this test leaves true by forgetting both.
+  it("(13e) the reject row's sentence holds both ways: with a trust still standing Fuigo continues without asking, with none it asks", async () => {
+    // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4): the three decisions were card answers (now seeded 1.0.23 records)
+    // and "with none it asks" was a card; with none the turn now runs withheld, with no card.
+    // no other trust decision covers it: withheld
+    const alone = await makeBot("Alone", "reject-only");
+    expect(stored()[K("only")]).toMatchObject({ decision: "reject", consent: 2 });
+    expect((await forget(K("only"))).status).toBe(200);
+    await withheldTurn(alone, "two");
+
+    // another trust decision stands
+    expect(stored()[K("parent")]).toMatchObject({ decision: "trust", consent: 2 });
+    expect(stored()[K("declined")]).toMatchObject({ decision: "reject", consent: 2 });
+    const bot = await makeBot("Asks", "ask-p");
+    // control: while the reject stands it may sit inside the trust, so the turn is withheld
+    await withheldTurn(bot, "one");
+    const asked = requestsFor(K("parent"));
+    expect((await forget(K("declined"))).status).toBe(200);
+    await turn(bot, "two");
+    expect(requestsFor(K("parent"))).toBe(asked + 1);
+    expect(lastReply()).toContain('"outcome":"trust"');
+    expect(await openCard(bot.threadId)).toBeUndefined();
+    expect(stored()[K("declined")]).toBeUndefined();
+    expect((await forget(K("parent"))).status).toBe(200);
+  }, 90_000);
+
   it("(18) Forget of a trust: the owner's own Fuigo keeps it and does not ask; a home that never trusted it does", async () => {
+    // CHANGED-EXPECTATIONS F15 (1.0.24, q1024-trustquiet r4): the Trust was a card answer (now the seeded 1.0.23 record and the
+    // own home's persisted grant), and the home that never trusted it used to be carded and skipped; it now runs withheld.
     const owner = await makeBot("Owner", "own");
-    await decide(owner, "Trust this folder");
     expect(stored()[K("forgotten")]).toMatchObject({ decision: "trust", consent: 2 });
     expect(readFileSync(trustFile("own"), "utf8")).toContain(K("forgotten"));
     // the row's copy reads these: consent 2, own home, the real file
@@ -204,7 +237,7 @@ posixOnly("what Settings promises, through the harness", () => {
     // control: while the record stands, a home with no grant is answered with no card
     const control = await makeBot("Control", "fresh-control");
     const before = requestsFor(K("forgotten"));
-    await turn(control);
+    await turnWithoutCard(control);
     expect(requestsFor(K("forgotten"))).toBe(before + 1);
     expect(lastReply()).toContain('"outcome":"trust"');
     expect(await openCard(control.threadId)).toBeUndefined();
@@ -214,38 +247,15 @@ posixOnly("what Settings promises, through the harness", () => {
 
     // own home: the engine's grant stands, so it does not ask
     const asked = requestsFor(K("forgotten"));
-    await turn(owner, "two");
+    await turnWithoutCard(owner, "two");
     expect(requestsFor(K("forgotten"))).toBe(asked);
     expect(await openCard(owner.threadId)).toBeUndefined();
 
-    // a home with no grant: the engine asks and the owner decides
+    // a home with no grant: the engine asks and the turn runs withheld, with no card
     const fresh = await makeBot("Fresh", "fresh-after");
-    await skipCard(fresh, "go");
+    await withheldTurn(fresh, "go");
     expect(requestsFor(K("forgotten"))).toBe(asked + 1);
   }, 60_000);
-
-  it("(13e) the reject row's sentence holds both ways: with a trust still standing Fuigo continues without asking, with none it asks", async () => {
-    // no other trust decision covers it: the card returns
-    const alone = await makeBot("Alone", "reject-only");
-    await decide(alone, "Don't trust");
-    expect((await forget(K("only"))).status).toBe(200);
-    await skipCard(alone, "two");
-
-    // another trust decision stands
-    await decide(await makeBot("Trusts", "trust-p"), "Trust this folder");
-    await decide(await makeBot("Declines", "reject-d"), "Don't trust");
-    const bot = await makeBot("Asks", "ask-p");
-    // control: while the reject stands it may sit inside the trust, so the card shows
-    await skipCard(bot, "one");
-    const asked = requestsFor(K("parent"));
-    expect((await forget(K("declined"))).status).toBe(200);
-    await turn(bot, "two");
-    expect(requestsFor(K("parent"))).toBe(asked + 1);
-    expect(lastReply()).toContain('"outcome":"trust"');
-    expect(await openCard(bot.threadId)).toBeUndefined();
-    expect(stored()[K("declined")]).toBeUndefined();
-    expect((await forget(K("parent"))).status).toBe(200);
-  }, 90_000);
 
   it("(19) stored engine no rows are the file's own keys with the real path; a broken file is named and says no more than that", async () => {
     const yes = (await noteFor(await makeBot("Stored", "store-no"))).body;

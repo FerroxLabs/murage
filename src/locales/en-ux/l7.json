@@ -1,5 +1,12 @@
 {
   "ux.l7.sheet.close": "Close",
+  "ux.l7.plus.title": "Add to your message",
+  "ux.l7.plus.camera": "Camera",
+  "ux.l7.plus.cameraHint": "Take a photo",
+  "ux.l7.plus.photos": "Photos",
+  "ux.l7.plus.photosHint": "Choose from your photos",
+  "ux.l7.plus.files": "Files",
+  "ux.l7.plus.filesHint": "Choose a file",
   "ux.l7.needs.next": "Next",
   "ux.l7.level.title": "Level for {bot}",
   "ux.l7.level.routineTitle": "Level for the routine {routine}",

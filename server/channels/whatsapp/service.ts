@@ -172,6 +172,7 @@ export class WhatsAppService {
   private chats = new Map<string, ChatEntry>();
   private ledgers = new Map<string, DurableDelivery>();
   private generation = 0;
+  private moving = false;
   private live = false;
   private authorised = false;
   private timer?: ReturnType<typeof setTimeout>;
@@ -873,14 +874,26 @@ export class WhatsAppService {
   private async stopLive(): Promise<void> {
     this.live = false; this.authorised = false; this.generation++;
     clearTimeout(this.timer); clearTimeout(this.retryTimer);
+    this.state = "idle"; this.qr = null; this.pairingCode = null;
     await Promise.all([...this.ledgers.values()].map(ledger => ledger.stop()));
     this.ledgers.clear(); this.connectedAt = undefined; this.runningMode = null;
-    this.state = "idle"; this.qr = null; this.pairingCode = null;
     await this.releaseTransport();
   }
 
   async stop(): Promise<void> { await this.stopLive(); }
-  async pause(): Promise<void> { await this.disable(false); }
+  /** CHIEF-TRANSFER D4: the synchronous prefix of stopLive(), no await and no file write; while `moving`, pause() is a no-op (see SlackService.quiesce). */
+  quiesce(): void { this.moving = true; this.live = false; this.authorised = false; this.generation++; clearTimeout(this.timer); clearTimeout(this.retryTimer); }
+  endMove(): void { this.moving = false; }
+  /** CHIEF-TRANSFER: the saved pairing now names `to`: chiefBotId and binding.chiefBotId together (the connection refine), unpaused. */
+  retarget(to: string): void {
+    const c = this.read();
+    if (!c?.enabled) throw new Error("WhatsApp connection is not enabled");
+    this.save({ ...c, chiefBotId: to, binding: c.binding ? { ...c.binding, chiefBotId: to } : null, paused: false });
+  }
+  savedTarget(): string | null { try { return this.read()?.chiefBotId ?? null; } catch { return null; } }
+  savedConnectionId(): string | null { try { const c = this.read(); return c?.binding ? c.connectionId : null; } catch { return null; } }
+  savedPaused(): boolean { try { const c = this.read(); return !c?.enabled || c.paused; } catch { return true; } }
+  async pause(): Promise<void> { if (this.moving) return; await this.disable(false); }
   async revoke(): Promise<void> { await this.disable(true); }
 
   /** Logs out of WhatsApp (10 s at most), stops the bridge, deletes its data and the receipt ledgers, and forgets the binding. */
@@ -904,10 +917,11 @@ export class WhatsAppService {
   private async disable(revoke: boolean): Promise<void> {
     let failed = false;
     for (const ledger of this.ledgers.values()) { try { ledger.revoke(); } catch { failed = true; } }
-    try { await this.stopLive(); } catch { failed = true; }
+    const stopped = this.stopLive().catch(() => { failed = true; });
     this.state = revoke ? "idle" : "blocked"; this.error = revoke ? null : "chief-changed";
     try { this.connection ??= this.read(); } catch { failed = true; }
-    try { if (this.connection) this.save({ ...this.connection, ...(revoke ? { enabled: false, pairing: [] } : {}), paused: true }); } catch { failed = true; }
+    try { if (this.connection && (revoke || !this.connection.paused)) this.save({ ...this.connection, ...(revoke ? { enabled: false, pairing: [] } : {}), paused: true }); } catch { failed = true; }
+    await stopped;
     try { if (this.connection?.binding) await this.options.revokeRuns(this.connection.binding.connectionId); } catch { failed = true; }
     if (failed) { this.state = "blocked"; this.error = "revoke-recovery-required"; throw new Error("WhatsApp shutdown or saved revocation needs recovery."); }
   }

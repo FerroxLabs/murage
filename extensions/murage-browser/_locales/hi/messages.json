@@ -417,5 +417,24 @@
   },
   "spErrStorageUnavailable": {
     "message": "Chrome का स्टोरेज पढ़ा नहीं जा सका। Chrome फिर से शुरू करें, फिर अपने टैब दोबारा साझा करें।"
+  },
+  "spGrantTitle": {
+    "message": "आपका ब्राउज़र"
+  },
+  "spGrantOn": {
+    "message": "$BOT$ आपका ब्राउज़र इस्तेमाल कर सकता है।",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spGrantOff": {
+    "message": "$BOT$ आपका ब्राउज़र इस्तेमाल नहीं कर सकता। चालू करने के लिए अपने कंप्यूटर पर Murage ऐप खोलें।",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
   }
 }

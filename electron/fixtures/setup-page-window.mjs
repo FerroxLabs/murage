@@ -27,8 +27,9 @@ const home = mkdtempSync(path.join(tmpdir(), "murage-setup-window-"));
 app.setPath("userData", path.join(home, "electron"));
 app.setPath("sessionData", path.join(home, "electron"));
 if (lang) app.commandLine.appendSwitch("lang", lang);
-// The preload asks main for the launch secret synchronously while the page loads.
+// Both synchronous preload requests need a reply before the renderer can load.
 ipcMain.on("desktop:surface-secret", (event) => { event.returnValue = ""; });
+ipcMain.on("desktop:server-launch", (event) => { event.returnValue = ""; });
 
 const freePort = () => new Promise((resolve, reject) => { const s = createServer(); s.once("error", reject); s.listen(0, "127.0.0.1", () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

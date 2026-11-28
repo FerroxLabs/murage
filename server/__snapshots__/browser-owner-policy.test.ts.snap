@@ -53,6 +53,8 @@ exports[`the tier answers (DESIGN 3) > snapshot of the tier table 1`] = `
   "code       PATCH,POST,PUT ^\\/api\\/groups\\/[\\w-]+\\/project\\/(?:budget|work-roots|work-profile|settings)$ [bot_reach]",
   "code       POST ^\\/api\\/teams\\/(?:import|export)$ [bot_reach]",
   "code       POST /api/skills/import [new_skill]",
+  "plain      GET /api/skills/taught",
+  "code       PATCH ^\\/api\\/skills\\/taught\\/[a-z0-9-]+$ [bot_reach]",
   "code       POST ^\\/api\\/skills\\/[^/]+\\/duplicate$ [new_skill]",
   "plain      PUT ^\\/api\\/skills\\/collection\\/[^/]+$",
   "plain      POST ^\\/api\\/skills\\/[^/]+\\/revert$",

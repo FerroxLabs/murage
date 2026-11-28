@@ -9,20 +9,21 @@
 // audio recording off, by default), and the line about Vapi's own connector. Then scheduled calls frozen on older settings, with
 // Cancel, and the result cards: "View in Vapi", the transcript one tap away, and "Share transcript with bot", which puts the
 // fenced transcript in the chat's draft for the owner to send. Outside the desktop app the screen says only that it needs it.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Phone } from "lucide-react";
 import { Card, Switch } from "./SettingsPrimitives";
 import { api, useStore } from "@/state/store";
-import { localeCode, languageCode } from "@/lib/i18n";
-import { localeChoices } from "@/locales";
+import { localeCode, languageCode, t } from "@/lib/i18n";
 import { prefillBotChat } from "@/lib/compose-link";
 import { chiefFor } from "@/lib/help-ask-chief";
 import { FOCUS_COMPOSER_EVENT } from "@/lib/composer-focus";
 import { composerReferenceTarget, type ComposerReferenceTarget } from "@/lib/image-reference";
 import {
-  cancelScheduledCall, costText, dashboardLink, defaultPhoneSettings, editLanguage, findNumbers, keyErrorKey, lengthText, minutesToSeconds,
-  phoneCallsAvailable, phoneErrorKey, phoneKeyBridge, readPhoneStatus, recentCalls, savePhoneSettings, shareTranscript, timeText,
-  usePhoneCopy, watchRecentCalls, withLineWords, type PhoneCallCard, type PhoneCopy, type PhoneCopyKey, type PhoneNumberInfo, type PhoneSettings, type PhoneStatus,
+  CALL_LANGUAGES, cancelHeldCall, cancelScheduledCall, costText, dashboardLink, defaultPhoneSettings, deleteCall, editLanguage, findNumbers, getRetention,
+  keepHeldCall, keyErrorKey, lengthText, listBots, minutesToSeconds, phoneActionEffect, phoneCallsAvailable, phoneErrorKey, phoneKeyBridge, readPhoneStatus,
+  recentCalls, resultReasonKey, savePhoneSettings, setBotAllowed, setRetention, shareTranscript, timeText, usePhoneCopy, watchRecentCalls, withLineWords,
+  type PhoneAction, type PhoneBotRow, type PhoneCallCard, type PhoneCopy, type PhoneCopyKey, type PhoneNumberInfo, type PhoneRetention, type PhoneSettings,
+  type PhoneStatus, type RecentCallsWatch,
 } from "@/lib/phone-calls";
 
 const VAPI_HOME = "https://vapi.ai";
@@ -34,29 +35,53 @@ const input = "min-h-11 w-full min-w-0 rounded-lg border border-hairline/40 bg-i
 const note = "text-[12px] leading-relaxed text-ink-secondary";
 const link = "text-[13px] text-accent underline-offset-2 hover:underline";
 
-type Load = { kind: "loading" } | { kind: "ready"; status: PhoneStatus | null } | { kind: "failed" };
+type Load = { kind: "loading" } | { kind: "ready"; status: PhoneStatus | null } | { kind: "failed"; error?: ReturnType<typeof phoneErrorKey> };
+
+/** The full card needs a connected voice account, or (FABLE-DESIGN 2060 H1) a call history the owner still holds. Without a key
+ *  it holds the key box first, then that history and its controls (Call history, Delete, Keep transcripts for, Upcoming calls,
+ *  Which bots may phone). An owner who never set phone calls up keeps the compact connection entry and nothing reads or polls. */
+export function phoneCallsCardShown(load: Load, bridge: ReturnType<typeof phoneKeyBridge>): boolean {
+  return load.kind === "ready" && (load.status?.keyPresent === true || load.status?.hasCalls === true) && phoneCallsAvailable(load.status, bridge);
+}
 
 export default function PhoneCallsSettings() {
   const copy = usePhoneCopy();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const refresh = useCallback(async () => {
-    try { setLoad({ kind: "ready", status: await readPhoneStatus(api) }); } catch { setLoad({ kind: "failed" }); }
+    try { setLoad({ kind: "ready", status: await readPhoneStatus(api) }); } catch (error) { setLoad({ kind: "failed", error: phoneErrorKey(error) }); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const bridge = phoneKeyBridge();
-  const status = load.kind === "ready" ? load.status : null;
+  if (!bridge) return null;
+  if (load.kind === "loading") return <p role="status" className={note}>{copy("phoneCalls.checking")}</p>;
+  if (load.kind === "failed") return (
+    <div className="flex flex-wrap items-center gap-2">
+      <p role="alert" className="text-[13px] text-danger">{copy(load.error ?? "phoneCalls.error.generic")}</p>
+      <button type="button" className={secondary} onClick={() => { setLoad({ kind: "loading" }); void refresh(); }}>{t("providerError.retry")}</button>
+    </div>
+  );
+  const { status } = load;
+  if (!status) return null;
+  if (!phoneCallsCardShown(load, bridge)) {
+    if (!phoneCallsAvailable(status, bridge)) return null;
+    return (
+      <details className="px-1 text-[13px] text-ink">
+        <summary className="min-h-9 cursor-pointer py-2 font-medium">{copy("phoneCalls.title")}</summary>
+        <p className={note}>{copy("phoneCalls.step.key")}</p>
+        <a className={link} href={VAPI_HOME} target="_blank" rel="noreferrer">{copy("phoneCalls.link.vapi")}</a>
+        <KeyBox copy={copy} keyPresent={false} onChanged={refresh} />
+      </details>
+    );
+  }
   return (
     <Card>
       <div data-setting-control="phone-calls-heading" tabIndex={-1} className="flex items-center gap-2 text-[15px] font-medium text-ink outline-none"><Phone className="h-4 w-4" aria-hidden />{copy("phoneCalls.title")}</div>
       <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{copy("phoneCalls.intro")}</p>
+      {status.storeUnavailable && <p role="alert" className="mt-2 text-[13px] text-danger">{copy("phoneCalls.error.store")}</p>}
+      {status.paused && <p role="alert" className="mt-2 text-[13px] text-danger">{copy("phoneCalls.error.upgrade")}</p>}
       <div className="mt-4 space-y-4">
-        {load.kind === "loading" && <p role="status" className={note}>{copy("phoneCalls.checking")}</p>}
-        {load.kind === "failed" && <p role="alert" className="text-[13px] text-danger">{copy("phoneCalls.error.generic")}</p>}
-        {load.kind === "ready" && !phoneCallsAvailable(status, bridge) && (
-          <p data-testid="phone-calls-desktop-only" className="text-[13px] text-ink">{copy("phoneCalls.desktopOnly")}</p>
-        )}
-        {load.kind === "ready" && status && bridge && phoneCallsAvailable(status, bridge) && <Setup copy={copy} status={status} onChanged={refresh} />}
+        <Setup copy={copy} status={status} onChanged={refresh} />
       </div>
     </Card>
   );
@@ -71,6 +96,17 @@ function Setup({ copy, status, onChanged }: { copy: PhoneCopy; status: PhoneStat
     prefillBotChat({ botId: chief.id, threadId: chief.threadId }, copy("phoneCalls.askBotPrompt"));
     dispatch({ type: "toggleAppSettings", open: false });
   };
+  const history = !status.storeUnavailable;
+  if (!status.keyPresent) return (
+    <>
+      <div>
+        <div className="text-[13px] text-ink">{copy("phoneCalls.step.key")}</div>
+        <a className={link} href={VAPI_HOME} target="_blank" rel="noreferrer">{copy("phoneCalls.link.vapi")}</a>
+        <KeyBox copy={copy} keyPresent={false} onChanged={onChanged} />
+      </div>
+      {history && <OwnerHistory copy={copy} status={status} onChanged={onChanged} />}
+    </>
+  );
   return (
     <>
       {chief && <button type="button" className={secondary} onClick={askBot}>{copy("phoneCalls.askBot")}</button>}
@@ -88,12 +124,23 @@ function Setup({ copy, status, onChanged }: { copy: PhoneCopy; status: PhoneStat
           <div>{copy("phoneCalls.step.key")}</div>
           <KeyBox copy={copy} keyPresent={status.keyPresent} onChanged={onChanged} />
         </li>
-        {status.keyPresent && <SettingsSteps copy={copy} status={status} ownerName={state.config?.profile?.name ?? ""} onChanged={onChanged} />}
+        <SettingsSteps copy={copy} status={status} ownerName={state.config?.profile?.name ?? ""} onChanged={onChanged} />
       </ol>
       <p className={note}>{copy("phoneCalls.mcpNote")}</p>
       <p className={note}>{copy("phoneCalls.askNote")}</p>
-      {status.keyPresent && <OlderScheduled copy={copy} status={status} onChanged={onChanged} />}
-      {status.keyPresent && <RecentCalls copy={copy} />}
+      {history && <OwnerHistory copy={copy} status={status} onChanged={onChanged} />}
+    </>
+  );
+}
+
+/** What the owner keeps with or without a key (S4): upcoming calls, which bots may phone, retention and the call history. */
+function OwnerHistory({ copy, status, onChanged }: { copy: PhoneCopy; status: PhoneStatus; onChanged: () => Promise<void> }) {
+  return (
+    <>
+      <OlderScheduled copy={copy} status={status} onChanged={onChanged} />
+      <BotSwitches copy={copy} />
+      <RetentionPicker copy={copy} />
+      <RecentCalls copy={copy} keyPresent={status.keyPresent} />
     </>
   );
 }
@@ -192,6 +239,7 @@ export function SettingsSteps({ copy, status, ownerName, onChanged }: { copy: Ph
             <p className={note}>{copy("phoneCalls.form.aiLaw")}</p>
           </LineField>
           <LineField copy={copy} label={copy("phoneCalls.form.notice")} line={form.notice} language={language} onChange={(notice) => set({ notice })} />
+          <p data-testid="phone-responsibility" className={note}>{copy("phoneCalls.settings.responsibility")}</p>
           <label className="block space-y-1">
             <span className={note}>{copy("phoneCalls.form.ownerName")}</span>
             <input className={input} maxLength={80} value={form.ownerName} onChange={(event) => set({ ownerName: event.target.value })} />
@@ -200,7 +248,7 @@ export function SettingsSteps({ copy, status, ownerName, onChanged }: { copy: Ph
             <span className={note}>{copy("phoneCalls.form.language")}</span>
             <select className={input} value={form.language} onChange={(event) => set({ language: event.target.value })}>
               <option value="auto">{copy("phoneCalls.form.languageAuto")}</option>
-              {localeChoices.map((choice) => <option key={choice.code} value={choice.code}>{choice.label}</option>)}
+              {CALL_LANGUAGES.map((code) => <option key={code} value={code}>{languageName(code)}</option>)}
             </select>
           </label>
           <label className="block space-y-1">
@@ -214,6 +262,7 @@ export function SettingsSteps({ copy, status, ownerName, onChanged }: { copy: Ph
             </div>
             <Switch checked={form.recordAudio} aria-label={copy("phoneCalls.form.recordAudio")} onClick={() => set({ recordAudio: !form.recordAudio })} />
           </div>
+          {form.recordAudio && !form.notice.on && <p role="note" data-testid="phone-recording-warning" className={note}>{copy("phoneCalls.settings.recordingNoNotice")}</p>}
           <button type="button" className={primary} disabled={saving || !form.phoneNumberId} onClick={() => void save()}>{copy("phoneCalls.form.save")}</button>
           {saved !== null && <p role="status" className="text-[13px] text-ink">{copy("phoneCalls.form.saved")}</p>}
           {error && <p role="alert" className="text-[12px] text-danger">{copy(error)}</p>}
@@ -227,7 +276,7 @@ export function SettingsSteps({ copy, status, ownerName, onChanged }: { copy: Ph
 function LineField({ copy, label, line, language, onChange, children }: { copy: PhoneCopy; label: string; line: PhoneSettings["aiLine"]; language: string; onChange: (line: PhoneSettings["aiLine"]) => void; children?: React.ReactNode }) {
   return (
     <div className="space-y-1">
-      <label className="flex items-center gap-2"><input type="checkbox" checked={line.on} onChange={(event) => onChange({ ...line, on: event.target.checked })} />{label}</label>
+      <label className="flex items-center gap-2"><input type="checkbox" checked={line.on} onChange={(event) => onChange({ ...line, on: event.target.checked })} />{label}<span className="text-ink-secondary">({copy("phoneCalls.settings.recommended")})</span></label>
       {children}
       {line.on && <input className={input} maxLength={300} aria-label={`${label}: ${copy("phoneCalls.form.ownWords")}`} placeholder={copy("phoneCalls.form.ownWords")} value={line.edits[language] ?? ""} onChange={(event) => onChange(withLineWords(line, language, event.target.value))} />}
     </div>
@@ -238,19 +287,20 @@ function OlderScheduled({ copy, status, onChanged }: { copy: PhoneCopy; status: 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<PhoneCopyKey | null>(null);
   const rows = status.olderScheduled;
-  if (rows.length === 0) return null;
+  const count = status.olderScheduledCount ?? rows.length;
+  if (rows.length === 0 && count === 0) return null;
   const cancel = async (id: string) => {
     setBusy(id); setError(null);
     try { await cancelScheduledCall(api, id); await onChanged(); } catch (e) { setError(phoneErrorKey(e)); } finally { setBusy(null); }
   };
   return (
     <div data-testid="phone-older-scheduled" className="rounded-lg bg-control/40 p-3">
-      <p className="text-[13px] font-medium text-ink">{rows.length === 1 ? copy("phoneCalls.older.one") : copy("phoneCalls.older.many", { count: rows.length })}</p>
+      <p className="text-[13px] font-medium text-ink">{count === 1 ? copy("phoneCalls.older.one") : copy("phoneCalls.older.many", { count })}</p>
       <ul className="mt-2 space-y-1">
         {rows.map((row) => (
           <li key={row.id} className="flex items-center justify-between gap-3 text-[13px] text-ink">
             <span>{copy("phoneCalls.calls.to", { number: row.to })}{row.when ? ` · ${copy("phoneCalls.calls.when", { time: timeText(row.when, localeCode()) ?? row.when })}` : ""}</span>
-            <button type="button" className={secondary} disabled={busy === row.id} onClick={() => void cancel(row.id)}>{copy("phoneCalls.cancel")}</button>
+            {status.keyPresent && <button type="button" className={secondary} disabled={busy === row.id} onClick={() => void cancel(row.id)}>{copy("phoneCalls.cancel")}</button>}
           </li>
         ))}
       </ul>
@@ -259,15 +309,99 @@ function OlderScheduled({ copy, status, onChanged }: { copy: PhoneCopy; status: 
   );
 }
 
-function RecentCalls({ copy }: { copy: PhoneCopy }) {
+function RecentCalls({ copy, keyPresent }: { copy: PhoneCopy; keyPresent: boolean }) {
   const [calls, setCalls] = useState<PhoneCallCard[] | null>(null);
-  useEffect(() => watchRecentCalls(api, setCalls), []);
+  const [storeDown, setStoreDown] = useState(false);
+  const watch = useRef<RecentCallsWatch | null>(null);
+  useEffect(() => {
+    // a history that cannot be read says so; it is never shown as "no calls"
+    const stop = watchRecentCalls(api, (next) => { setStoreDown(false); setCalls(next); }, (error) => setStoreDown(phoneErrorKey(error) === "phoneCalls.error.store"));
+    watch.current = stop;
+    return () => { watch.current = null; stop(); };
+  }, []);
   if (!calls) return null;
   return (
     <div className="space-y-2">
       <div className="text-[13px] font-medium text-ink">{copy("phoneCalls.calls.title")}</div>
-      {calls.length === 0 && <p className={note}>{copy("phoneCalls.calls.none")}</p>}
-      {calls.map((card) => <ResultCard key={card.id} copy={copy} card={card} />)}
+      {storeDown && <p role="alert" data-testid="phone-store-down" className="text-[12px] text-danger">{copy("phoneCalls.error.store")}</p>}
+      {calls.length === 0 && !storeDown && <p className={note}>{copy("phoneCalls.calls.none")}</p>}
+      {calls.map((card) => <ResultCard key={card.id} copy={copy} card={card} keyPresent={keyPresent} onRefresh={() => watch.current?.refreshNow()} />)}
+    </div>
+  );
+}
+
+/** One language's name in the app language (the code itself where the platform has none). */
+function languageName(code: string): string {
+  try { return new Intl.DisplayNames([localeCode()], { type: "language" }).of(code) ?? code; } catch { return code; }
+}
+
+const PAGE_KEEP: { days: PhoneRetention; key: PhoneCopyKey }[] = [
+  { days: 30, key: "phoneCalls.settings.keep30" }, { days: 90, key: "phoneCalls.settings.keep90" }, { days: null, key: "phoneCalls.settings.keepForever" },
+];
+
+/** "Keep transcripts for": 30 days, 90 days or until the owner deletes. The select shows what the server holds. */
+function RetentionPicker({ copy }: { copy: PhoneCopy }) {
+  const [days, setDays] = useState<PhoneRetention | undefined>(undefined);
+  const [error, setError] = useState<PhoneCopyKey | null>(null);
+  useEffect(() => { let live = true; getRetention(api).then((d) => { if (live) setDays(d); }, (e) => { if (live) setError(phoneErrorKey(e)); }); return () => { live = false; }; }, []);
+  if (days === undefined) return error ? <p role="alert" className="text-[12px] text-danger">{copy(error)}</p> : null;
+  const change = async (value: string) => {
+    setError(null);
+    try { setDays(await setRetention(api, value === "30" ? 30 : value === "90" ? 90 : null)); } catch (e) { setError(phoneErrorKey(e)); }
+  };
+  return (
+    <label className="block space-y-1">
+      <span className={note}>{copy("phoneCalls.settings.keepTranscripts")}</span>
+      <select data-testid="phone-retention" className={input} value={days === null ? "forever" : String(days)} onChange={(event) => void change(event.target.value)}>
+        {PAGE_KEEP.map((o) => <option key={String(o.days)} value={o.days === null ? "forever" : String(o.days)}>{copy(o.key)}</option>)}
+      </select>
+      {error && <p role="alert" className="text-[12px] text-danger">{copy(error)}</p>}
+    </label>
+  );
+}
+
+/** "Which bots may phone businesses": pages of 200 with Show more, one switch each that shows the server's answer. */
+function BotSwitches({ copy }: { copy: PhoneCopy }) {
+  const [bots, setBots] = useState<PhoneBotRow[] | null>(null);
+  const [next, setNext] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<PhoneCopyKey | null>(null);
+  const [paging, setPaging] = useState(false);
+  const load = useCallback(async (after: string | undefined, restarted = false): Promise<void> => {
+    setPaging(true);
+    try {
+      const page = await listBots(api, after);
+      setNext(page.next);
+      setBots((prev) => (after && prev ? [...prev, ...page.bots] : page.bots));
+    } catch (e) {
+      // a bot deleted between pages: start again from the first page, once
+      if (phoneActionEffect("other", e).restartBots && !restarted) return load(undefined, true);
+      setError(phoneErrorKey(e));
+    } finally { setPaging(false); }
+  }, []);
+  useEffect(() => { void load(undefined); }, [load]);
+  if (!bots) return error ? <p role="alert" className="text-[12px] text-danger">{copy(error)}</p> : null;
+  const flip = async (bot: PhoneBotRow) => {
+    setError(null);
+    try {
+      const allowed = await setBotAllowed(api, bot.id, !bot.allowed);
+      setBots((prev) => prev?.map((b) => (b.id === bot.id ? { ...b, allowed } : b)) ?? prev);
+    } catch (e) {
+      // a bot deleted elsewhere (404) or a lost answer: read the list again, never keep a value the server may not hold
+      const effect = phoneActionEffect("other", e);
+      if (effect.refresh) await load(undefined, true); else setError(phoneErrorKey(e));
+    }
+  };
+  return (
+    <div data-testid="phone-bots" className="space-y-1">
+      <div className="text-[13px] font-medium text-ink">{copy("phoneCalls.settings.whichBots")}</div>
+      {bots.map((bot) => (
+        <div key={bot.id} className="flex items-center justify-between gap-3 text-[13px] text-ink">
+          <span>{bot.name}</span>
+          <Switch checked={bot.allowed} aria-label={copy("phoneCalls.settings.botAria", { bot: bot.name })} onClick={() => void flip(bot)} />
+        </div>
+      ))}
+      {next && <button type="button" className={secondary} disabled={paging} onClick={() => { if (!paging) void load(next); }}>{copy("phoneCalls.settings.showMore")}</button>}
+      {error && <p role="alert" className="text-[12px] text-danger">{copy(error)}</p>}
     </div>
   );
 }
@@ -280,9 +414,10 @@ const OUTCOME_KEYS: Record<string, PhoneCopyKey> = {
 };
 
 /** Section 4, the owner's card: everything the engine gets plus the reference, the Vapi link and the transcript one tap away. */
-export function ResultCard({ copy, card: initialCard }: { copy: PhoneCopy; card: PhoneCallCard }) {
+export function ResultCard({ copy, card: initialCard, keyPresent = true, onRefresh }: { copy: PhoneCopy; card: PhoneCallCard; keyPresent?: boolean; onRefresh?: () => void }) {
   const [card, setCard] = useState(initialCard);
   const [cancelling, setCancelling] = useState(false);
+  const [actionLine, setActionLine] = useState<PhoneCopyKey | null>(null);
   useEffect(() => setCard(initialCard), [initialCard]);
   const { state, dispatch } = useStore();
   const [open, setOpen] = useState(false);
@@ -293,15 +428,36 @@ export function ResultCard({ copy, card: initialCard }: { copy: PhoneCopy; card:
   const length = lengthText(card.length_seconds);
   const cost = costText(card.cost, locale);
   const dashboard = dashboardLink(card);
-  const cancel = async () => {
-    setCancelling(true); setShareLine(null);
+  // Every owner action: a refusal shows its own line under the row, a 404 only reads the list again, and the fresh list (never the
+  // action's answer) decides whether the row exists and in which state.
+  const act = async (action: PhoneAction, run: () => Promise<void>) => {
+    setCancelling(true); setShareLine(null); setActionLine(null);
     try {
-      await cancelScheduledCall(api, card.id);
-      const refreshed = (await recentCalls(api)).find(row => row.id === card.id);
-      if (refreshed) setCard(refreshed);
-    } catch (error) { setShareLine(phoneErrorKey(error)); }
-    finally { setCancelling(false); }
+      await run();
+      if (onRefresh) onRefresh();
+      else {
+        const refreshed = (await recentCalls(api)).find(row => row.id === card.id);
+        if (refreshed) setCard(refreshed);
+      }
+    } catch (error) {
+      const effect = phoneActionEffect(action, error);
+      setActionLine(effect.line);
+      if (effect.refresh) onRefresh?.();
+    } finally { setCancelling(false); }
   };
+  const cancel = () => act("cancel", () => (card.state === "held" ? cancelHeldCall(api, card.id) : cancelScheduledCall(api, card.id)));
+  const keep = () => act("keep", () => keepHeldCall(api, card.id));
+  const remove = () => act("delete", () => deleteCall(api, card.id));
+  // Controls come from the server's `state` alone. A card with no `state` (an older server) keeps the shipped rule.
+  const rowState = card.state;
+  const canCancel = rowState === undefined ? (card.status === "scheduled" || card.status === "uncertain") : rowState === "held" || (rowState === "live" && keyPresent);
+  const canKeep = rowState === "held" && card.canKeep === true && keyPresent;
+  const canDelete = rowState === "settled";
+  const stateLine: PhoneCopyKey | null = rowState === "live" && !keyPresent ? "phoneCalls.delete.needKey"
+    : rowState === "checking" ? (keyPresent ? "phoneCalls.delete.checking" : "phoneCalls.delete.needKey")
+    : rowState === "cancelling" ? (keyPresent ? "phoneCalls.delete.cancelPending" : "phoneCalls.delete.needKey") : null;
+  const reasonKey = resultReasonKey(card.reason);
+  const language = card.language ? languageName(card.language) : null;
   const share = async () => {
     setShareLine(null);
     // the chat on screen, else the Chief's chat
@@ -322,13 +478,17 @@ export function ResultCard({ copy, card: initialCard }: { copy: PhoneCopy; card:
     } catch (error) { setShareLine(phoneErrorKey(error)); }
   };
   return (
-    <div data-testid="phone-result-card" className="rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
+    <div data-testid="phone-result-card" data-call-id={card.id} className="rounded-lg border border-hairline/40 p-3 text-[13px] text-ink">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-medium">{outcome ? copy(outcome) : statusKey ? copy(statusKey) : card.status}</span>
         <span className="text-ink-secondary">{copy("phoneCalls.calls.to", { number: card.to })}</span>
         {card.status === "scheduled" && card.when && <span className="text-ink-secondary">{copy("phoneCalls.calls.when", { time: timeText(card.when, locale) ?? card.when })}</span>}
       </div>
       {card.goal && <p className="mt-1 text-ink-secondary">{card.goal}</p>}
+      {reasonKey && <p data-testid="phone-result-reason" className="mt-1 text-ink-secondary">{copy(reasonKey)}</p>}
+      {card.bookingState && <p data-testid="phone-booking" className="mt-1 text-ink-secondary">{copy(card.bookingState === "unclear" ? "phoneCalls.booking.unclear" : `phoneCalls.booking.${card.bookingState}`)}</p>}
+      {language && <p className="mt-1 text-[12px] text-ink-secondary">{copy("phoneCalls.card.language", { language })}</p>}
+      {card.languageFallback && <p data-testid="phone-language-fallback" className="mt-1 text-[12px] text-ink-secondary">{copy("phoneCalls.card.languageFallback", { wanted: languageName(card.languageFallback.wanted), language: languageName(card.languageFallback.language) })}</p>}
       <div className="mt-1 flex flex-wrap gap-x-3 text-[12px] text-ink-secondary">
         {card.reference && <span>{copy("phoneCalls.calls.reference", { reference: card.reference })}</span>}
         {card.time && <span>{timeText(card.time, locale)}</span>}
@@ -336,7 +496,9 @@ export function ResultCard({ copy, card: initialCard }: { copy: PhoneCopy; card:
         {cost && <span>{copy("phoneCalls.calls.cost", { cost })}</span>}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        {(card.status === "scheduled" || card.status === "uncertain") && <button type="button" className={secondary} disabled={cancelling} onClick={() => void cancel()}>{copy("phoneCalls.cancel")}</button>}
+        {canCancel && <button type="button" className={secondary} disabled={cancelling} onClick={() => void cancel()}>{copy("phoneCalls.cancel")}</button>}
+        {canKeep && <button type="button" className={secondary} disabled={cancelling} onClick={() => void keep()}>{copy("phoneCalls.held.keep")}</button>}
+        {canDelete && <button type="button" className={secondary} disabled={cancelling} onClick={() => void remove()}>{copy("phoneCalls.delete.action")}</button>}
         {dashboard && <a className={link} href={dashboard} target="_blank" rel="noreferrer">{copy("phoneCalls.viewInVapi")}</a>}
         <button type="button" className={link} aria-expanded={open} onClick={() => setOpen(!open)}>{copy(open ? "phoneCalls.calls.hideTranscript" : "phoneCalls.calls.showTranscript")}</button>
         {card.transcript && <button type="button" className={secondary} onClick={() => void share()}>{copy("phoneCalls.shareTranscript")}</button>}
@@ -344,6 +506,8 @@ export function ResultCard({ copy, card: initialCard }: { copy: PhoneCopy; card:
       {open && (card.transcript
         ? <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-control/40 p-2 text-[12px]">{card.transcript}</pre>
         : <p className={`${note} mt-2`}>{copy("phoneCalls.calls.noTranscript")}</p>)}
+      {stateLine && <p data-testid="phone-state-line" className="mt-1 text-[12px] text-ink-secondary">{copy(stateLine)}</p>}
+      {actionLine && <p role="status" data-testid="phone-action-line" className="mt-1 text-[12px] text-ink-secondary">{copy(actionLine)}</p>}
       {shareLine && <p role="status" className="mt-1 text-[12px] text-ink-secondary">{copy(shareLine)}</p>}
     </div>
   );

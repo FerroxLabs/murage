@@ -15,6 +15,10 @@ The desktop app starts Murage's background service and shows its screens from th
 
 On macOS, packaged logs are under `~/Library/Logs/Murage`. On Windows they are under the Murage log directory in `%APPDATA%`.
 
+## The start screen names its step
+
+If opening takes more than a few seconds, the start screen adds a quiet line such as "Step 37 · Opening your memory". The words say what Murage is doing: finishing what was saved last time, opening your memory, updating your data for this version, opening your conversations, loading your teams, projects or routines, checking your messages or skills, or "Getting things ready" for anything else. A fast start shows no line. A long step is normal after an update or a large history; Murage keeps waiting while the step number keeps moving, up to a limit; if the step stops moving for 5 minutes the start is treated as failed. Note the step shown if you open an issue.
+
 ## Development port overrides
 
 Use `MURAGE_PORT` for a source-run harness. A packaged desktop build owns its server lifecycle and may choose a fallback if the preferred port is unavailable.

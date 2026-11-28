@@ -3414,11 +3414,18 @@ def write_fuigo_seed(source, home):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp, target)
-    except BaseException:
+        # The name is only a complete decline store once its directory entry is on disk; the turn fails before Fuigo starts otherwise.
+        dfd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
-            os.unlink(temp)
-        except FileNotFoundError:
-            pass
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except BaseException:
+        for leftover in (temp, target):
+            try:
+                os.unlink(leftover)
+            except FileNotFoundError:
+                pass
         raise
 
 def validate_mcp(engine, mcp):
@@ -3865,12 +3872,24 @@ def agy_relay_hooks_text(home, env_text):
     command += " --env-sha256 " + hashlib.sha256(env_text.encode("utf-8")).hexdigest()
     return json.dumps({"murage-relay": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": AGY_RELAY_TIMEOUT}]}]}}, indent=2) + "\n"
 
+def route_is_flux(route):
+    """Mirrors fluxRouteFor (shared/flux-route.ts): http(s) and host fluxrouter.ai or a subdomain."""
+    try:
+        parsed = urllib.parse.urlsplit(str(route.get("baseUrl", "")))
+        host = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return parsed.scheme in ("http", "https") and (host == "fluxrouter.ai" or host.endswith(".fluxrouter.ai"))
+
 def codex_config_text(render):
     text = "check_for_update_on_startup = false\n"
     route = render["route"]
     if route:
         text += "[model_providers." + route["provider"] + "]\nname = " + toml_string(route.get("label", "Selected provider")) + "\nbase_url = " + toml_string(route["baseUrl"]) + \
             "\nwire_api = \"responses\"\nenv_key = \"MURAGE_PROVIDER_API_KEY\"\n"
+        if route_is_flux(route):
+            # Same two caps as fluxRetryCapArgs (server/flux-routing.ts): codex's defaults held a busy Flux turn ~14.5 min.
+            text += "request_max_retries = 2\nstream_max_retries = 2\n"
         if route.get("headers"):
             text += "http_headers = { " + ", ".join(toml_string(k) + " = " + toml_string(v) for k, v in sorted(route["headers"].items())) + " }\n"
     for name, stanza in render["mcp"].items():

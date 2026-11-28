@@ -28,14 +28,14 @@ const verdict = (bot: object, command: string) => autoVerdict(bot as never, "Bas
 describe("MARKS-ACCEPTED-1 byDesign held=waived", () => {
   // the exemption in nlmi-marks-r16-rows.test.ts `cards()` is only legitimate while the product really answers a could-not-read on the
   // owner's clean No limits turn with a run tagged held=waived, and Full access cards that same command
-  it.each(['cp a "$OUT"', 'echo x > "$LOG"'])("MARKS-ACCEPTED-1 %s runs tagged held=waived, Full access cards it", (command) => {
+  it.each(['cp a "$OUT"', 'echo x > "$LOG"'])("MARKS-ACCEPTED-1 %s runs tagged held=waived, Full access runs it", (command) => {
     // 27bc69112e (Sean ruling 2026-11-12 02:05Z, No limits wipe-only): the owner's No limits turn takes noLimitsOnlyVerdict,
     // which runs every non-wipe call as a plain no-limits run; the could-not-read waiver and its held=waived tag are gone.
-    // The strict read still doubts it, and Full access still cards it.
+    // The strict read still doubts it; OVERREACH #6: the owner's own Full access turn runs it too.
     const owner = verdict(OWNER, command);
     expect(owner).toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
     expect(alwaysAskCommand(command, "/w")).toMatchObject({ rule: "unreadable" });
-    expect(verdict(FULL, command).approve).toBeNull();
+    expect(verdict(FULL, command)).toMatchObject({ source: "full-access", approve: expect.any(String) });
   });
 });
 
@@ -111,10 +111,11 @@ describe("MARKS-ACCEPTED-4 shell/wipe-vocab.ts", () => {
   it("MARKS-ACCEPTED-4 N5 inline code holding a wipe word is unknown-target", () => {
     const command = `perl -e 'unlink($x); mystery()'`;
     // the reader still names the deny (raw strict read); 27bc69112e wipe-only: unknown-target is not on the wipe list, so the
-    // owner's No limits turn runs it and Full access still cards it
+    // owner's No limits and Full access turns run it
     expect(alwaysAskCommand(command, "/w")).toMatchObject({ classification: "deny", rule: "unknown-target" });
     expectNoLimitsOwnerOutcome(verdict(OWNER, command), command, "unknown-target");
-    expect(verdict(FULL, command).approve).toBeNull();
+    // OVERREACH #6: the owner's own Full access turn runs an unknown-target that is not a wipe
+    expect(verdict(FULL, command)).toMatchObject({ source: "full-access", approve: expect.any(String) });
   });
 });
 

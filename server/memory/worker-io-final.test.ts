@@ -6,7 +6,7 @@ vi.mock("./index.ts",()=>({MemoryIndex:class{
   static async create(){return new this();}
   resetDone(){return null;}stopInfo(){return null;}rebuilt=false;prepareModel(){}
   purgeRolledCheckpoints(){return {removed:0,examined:0,merged:false,done:true};}maintenanceOwed(){return false;}
-  async prepareExit(){state.seals++;state.bytes+=8192;}
+  async prepareExit(){state.seals++;state.bytes+=8192; return "sealed" as const; }
 }}));
 vi.mock("./eligibility.ts",()=>({MemoryEligibility:class{pipRecordIds(){return [];}warm(){}close(){}}}));
 vi.mock("../io-meter.ts",async real=>({...await real<typeof import("../io-meter.ts")>(),ioMeterActive:()=>true,ioMeterTotal:()=>state.bytes,ioMeterSnapshot:()=>({known:true,total:state.bytes,buckets:[]})}));

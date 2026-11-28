@@ -10,7 +10,7 @@ import { Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore, t
 import { ChevronDown } from "lucide-react";
 import { api, useStore, type Bot, type ModelSelection } from "@/state/store";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
-import { modelMetadataReady, preloadModelMetadata, subscribeModelMetadata } from "@/lib/model-metadata";
+import { modelMetadataRevision, preloadModelMetadata, subscribeModelMetadata } from "@/lib/model-metadata";
 import { pickerModels, pickerConnectionsToRefresh, pickerKey, unavailableSelectionLabel, pickerTriggerTitle } from "@/lib/provider-model-picker";
 import { InstanceProviderMark } from "./ProviderIcons";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
@@ -82,13 +82,18 @@ export function ModelPicker({bot,threadId,className,contained=false,label,hideTr
     // The load-failure frame has no search box: Escape closes it at once.
     if(query&&!root.current?.querySelector("[data-model-picker-load-error]"))setQuery("");else{setOpen(false);focusTrigger();}
   };
-  // The bundled price snapshot arrives after the first paint (1.0.18); the rows are rebuilt once when it does.
-  const metadataReady=useSyncExternalStore(subscribeModelMetadata,modelMetadataReady,modelMetadataReady);
-  const rows=useMemo(()=>engine?pickerModels(engine,connections):[],[engine,connections,metadataReady]);
+  const metadataRevision=useSyncExternalStore(subscribeModelMetadata,modelMetadataRevision,modelMetadataRevision);
+  const rows=useMemo(()=>engine?pickerModels(engine,connections):[],[engine,connections,metadataRevision]);
   const selectedKey=pickerKey(bot.modelSelection);const selected=rows.find(row=>row.key===selectedKey);const selectedConnection=connections.find(c=>c.id===bot.modelSelection.connectionId);const selectedLabel=selected?.label??active?.models.options.find(o=>o.id===bot.modelSelection.model)?.label??unavailableSelectionLabel(bot.modelSelection.model);
   const threadModelMutationLocked=isThreadModelMutationLocked(threadId,bot.busy);
   const save=(next:typeof prefs)=>{setPrefs(next);try{localStorage.setItem(PREFS,JSON.stringify(next));}catch{}};
-  const pick=(selection:ModelSelection)=>{if(threadModelMutationLocked)return;save({...prefs,recent:[pickerKey(selection),...prefs.recent.filter(k=>k!==pickerKey(selection))].slice(0,12)});dispatch({type:'setModel',botId:bot.id,threadId,selection:{...selection,...(selection.instanceId===bot.modelSelection.instanceId&&bot.modelSelection.effort?{effort:bot.modelSelection.effort}:{})}});setOpen(false);focusTrigger();};
+  const pick=(selection:ModelSelection)=>{if(threadModelMutationLocked)return;
+    const key=pickerKey(selection), previous=bot.modelSelection;
+    const choice=previous.variant!==undefined?{variant:previous.variant}:{effort:previous.effort};
+    save({...prefs,recent:[key,...prefs.recent.filter(k=>k!==key)].slice(0,12)});
+    dispatch({type:'setModel',botId:bot.id,threadId,selection:key===pickerKey(previous)?{...selection,...choice}:selection});
+    setOpen(false);focusTrigger();
+  };
   const manage=()=>navigate(()=>{setOpen(false);dispatch({type:'toggleAppSettings',open:true,section:'models'});});
   // The Local rail's empty row lands on the Local models section itself, with
   // "Add a server" focused — not on the Models pane for the user to hunt through.

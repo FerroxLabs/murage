@@ -40,6 +40,7 @@ import { CONNECTED_APPS_SERVER, exposedToolName, serviceToolName } from "./conne
 import { dispatchedCall, slugOf } from "./connected-app-calls.ts";
 import { APP_ACTION_PREFIX, APP_LOOKUPS, isGenericTool, ownAppTool } from "./app-action-words.ts";
 import { SCAN_DEPTH, SCAN_NODES, SCAN_TOTAL, WRAP_DEPTH } from "./scan-limits.ts";
+import { aliasCall } from "./connected-app-aliases.ts";
 import { acpToolKey, isMountRecord, isOwnConnector, type McpMountRecord } from "./mount-identity.ts";
 
 /** Which driver filed the ask; its Rule 55 contract table applies. */
@@ -324,6 +325,12 @@ export function actionGrantRead(tool: string, call?: GrantCall): ActionGrantRead
     case "mcp": {
       if (resolved.own) {
         const app = ownAppTool(`mcp__${CONNECTED_APPS_SERVER}__${resolved.tool}`);
+        // F11-V3: a plain-name call the intake did not rewrite is refused (the bridge refuses it too) or skipped intake:
+        // either way unread, the outcome a malformed raw execute call gets. A proven alias never reaches here as one.
+        if (app !== undefined && app !== EXECUTE && APP_LOOKUPS[app] === undefined) {
+          const called = aliasCall(resolved.tool, resolved.input);
+          if (called) return { set: null, unread: "refused" in called ? called.refused : "its list of actions is missing, empty or not in the shape Murage reads" };
+        }
         return app === undefined ? { set: null } : ownGrant(app, resolved.input);
       }
       // Murage's other own servers keep the keys they are judged by today

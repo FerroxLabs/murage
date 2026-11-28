@@ -10,11 +10,14 @@ import { RESERVED_TEAM_NAMES, TEAM_NAME_MAX } from "./new-team";
 import { userSectionId } from "./sidebar-layout";
 import { carryAnswerTag } from "@/state/answer-tag";
 
+/** A member's saved app choices as the owner reviews them before a team delete. */
+export interface TeamMemberChoices { saved: boolean; mode: "unrestricted" | "restricted"; allowWrites: boolean; apps: string[] }
+
 export interface TeamView {
   name: string;
   revision: string;
   leadId: string | null;
-  members: Array<{ id: string; name: string; lead: boolean; chief: boolean; archived: boolean }>;
+  members: Array<{ id: string; name: string; lead: boolean; chief: boolean; archived: boolean; choices: TeamMemberChoices; accessRevision: number }>;
   channels: Array<{ id: string; name: string; archived: boolean }>;
   hasInstructions: boolean;
   /** The team's stable id (SPEC-X 12.2); null before anything named it. */
@@ -179,6 +182,21 @@ export function teamDeleteSummary(team: TeamView, choice: TeamDeleteChoice): str
   return lines;
 }
 
+/** One line per member (archived ones too): the saved app choices both delete
+ * choices clear, or that nothing is saved. Delete clears them either way. */
+export function teamDeleteChoicesReview(team: TeamView): Array<{ id: string; name: string; archived: boolean; text: string }> {
+  return team.members.map((bot) => {
+    const { choices } = bot;
+    const what = choices.mode === "unrestricted" ? "All apps" : choices.apps.length ? `Only ${choices.apps.join(", ")}` : "Only chosen apps, none chosen";
+    return {
+      id: bot.id,
+      name: bot.name,
+      archived: bot.archived,
+      text: choices.saved ? `${what}${choices.allowWrites ? ", can make changes" : ""}. Cleared: it goes back to Only chosen apps with none.` : "Nothing saved, nothing lost.",
+    };
+  });
+}
+
 /** The sidebar remembers each heading's place and whether it is closed, by
  * name. A renamed team keeps both. */
 export function renameSidebarLayout(
@@ -213,6 +231,8 @@ export async function saveTeamMembers(
 }
 
 export async function removeTeam(team: TeamView, choice: TeamDeleteChoice, request: Request): Promise<{ changed: TeamChanges }> {
-  const body = JSON.stringify({ section: team.name, revision: team.revision, bots: choice });
+  // The revisions the owner reviewed, one per member; the server refuses the delete if any moved.
+  const accessRevisions = Object.fromEntries(team.members.map((bot) => [bot.id, bot.accessRevision]));
+  const body = JSON.stringify({ section: team.name, revision: team.revision, bots: choice, accessRevisions });
   return (await request("/api/team-sections/delete", { method: "POST", body })) as { changed: TeamChanges };
 }

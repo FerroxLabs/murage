@@ -18,6 +18,7 @@ import { copyTextOrThrow } from "@/lib/copy-text";
 import { EngineSignInButton } from "./EngineSignInButton";
 import { isCloudHome } from "@/lib/cloud-workspace";
 import { InboxEngineSignIn } from "./cloud/InboxEngineSignIn";
+import { setSettingsMode, useSettingsMode } from "@/lib/settings-mode";
 
 type Platform = "darwin" | "win32" | "linux";
 
@@ -190,6 +191,7 @@ export function EngineSetup({
   authRequired = false,
   setUp = false,
   signInSecondary = false,
+  commandInAdvanced = false,
   onReady,
 }: {
   instance: InstanceInfo;
@@ -202,9 +204,13 @@ export function EngineSetup({
   setUp?: boolean;
   /** 1.0.14 F0: "Use Fuigo instead" is the primary action above this card, so the sign-in button is the secondary one. */
   signInSecondary?: boolean;
+  /** 1.0.21: Settings' "More engines" shows the install command (and its Node.js line) only in Advanced. */
+  commandInAdvanced?: boolean;
   onReady?: () => void;
 }) {
   const { dispatch } = useStore();
+  const settingsMode = useSettingsMode();
+  const showCommand = !commandInAdvanced || settingsMode === "advanced";
   const openLocalModels = () => {
     dispatch({ type: "toggleAppSettings", open: true, section: "models", anchor: "local-models-heading" });
     setTimeout(() => window.dispatchEvent(new Event(OPEN_LOCAL_MODELS_EVENT)), 0);
@@ -340,6 +346,8 @@ export function EngineSetup({
         <EngineSignInButton className="mt-3" quiet={signInSecondary} instanceId={instance.instanceId} name={instance.displayName} command={signInCommand} onDone={() => void checkAgain()} />
       ) : install.native ? (
         desktop ? <EngineManagement instance={instance} /> : <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">{t("projects.work.needsApp")}</p>
+      ) : installCommand && !showCommand ? (
+        <button type="button" data-show-install-command onClick={() => setSettingsMode("advanced")} className="mt-3 rounded-lg border border-hairline/40 px-3 py-2 text-[12px] text-ink hover:bg-raised-hover">Show how to install it</button>
       ) : installCommand ? (
         <CommandRow key={installCommand} command={installCommand} instanceId={instance.instanceId} action="install" onTerminalOpened={() => { installStarted.current = true; }} actionLabel={t("setup.openInstall")} />
       ) : instance.driverKind === "copilotAgent" ? (
@@ -361,7 +369,7 @@ export function EngineSetup({
       {checkMessage && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{checkMessage}</p>}
       {checkError && <p role="alert" className="mt-2 text-[12px] text-danger">{checkError}</p>}
 
-      {!signInOnly && install.needsNode && (
+      {!signInOnly && install.needsNode && showCommand && (
         <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary/70">
           Requires Node.js and <code className="font-mono">npm</code>.
         </p>

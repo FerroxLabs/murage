@@ -487,8 +487,13 @@ describe("1.0.8 owner Full access corpus (classification only)", () => {
     // NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn runs what its bots decide; only the wipe list (the reader's wipe rules, a
     // named catastrophe, or the plainWipe proxy over the text) stays a card, so a control that is not such a text is allowed there. Every
     // other level still holds every wipe/secret control.
-    const violations = controls.filter(row => row.result === "allowed" && row.level !== "No limits");
+    // MAIN-RULING NOLIMITS-1022 H1: Full access runs an unseen PowerShell script it cannot read (not wipe-shaped by its text), as it
+    // runs an unseen POSIX script; that one control is allowed at Full access and pinned here
+    const fullRuns = (row: typeof controls[number]) => row.level === "Full access" && row.control === "unseen-pwsh";
+    const violations = controls.filter(row => row.result === "allowed" && row.level !== "No limits" && !fullRuns(row));
     expect(violations).toEqual([]);
+    expect(controls.filter(fullRuns).map(row => row.result)).toEqual(controls.filter(fullRuns).map(() => "allowed"));
+    expect(controls.filter(fullRuns).length).toBeGreaterThan(0);
     for (const row of controls.filter(row => row.level === "No limits" && row.result !== "allowed")) {
       // MAIN RULING 1114-NOLIMITS-OLD-ORACLES: these frozen literals
       // encode Remove-Item -Recurse -Force ~ or rm -rf ~. The approved
@@ -502,8 +507,13 @@ describe("1.0.8 owner Full access corpus (classification only)", () => {
       for (const dialect of dialects) {
         const selected = ordinary.filter(row => row.level === level && row.dialect === dialect.dialect && row.nativeSyntax);
         expect(selected.length).toBeGreaterThan(0);
-        // Full access still cards what it cannot read; the owner's No limits turn runs it (NOLIM 1.0.19)
-        if (level === "Full access") expect(selected.filter(row => row.result === "asks-because-unreadable").length).toBeGreaterThan(0);
+        // MAIN-RULING NOLIMITS-1022 H1 (was: Full access still cards what it cannot read): Full access runs what it cannot read
+        // unless it is wipe-shaped, so an ordinary row asks there because unreadable only when the No limits twin keeps a card too
+        if (level === "Full access") for (const row of selected.filter(row => row.result === "asks-because-unreadable")) {
+          const twin = ordinary.find(other => other.level === "No limits" && other.command === row.command && other.dialect === row.dialect);
+          expect(twin, JSON.stringify(row)).toBeDefined();
+          expect(twin!.result, JSON.stringify(row)).not.toBe("allowed");
+        }
         expect(selected.filter(row => row.result !== "allowed").length).toBeLessThanOrEqual(NATIVE_ASK_CEILINGS[dialect.dialect]!);
       }
     }

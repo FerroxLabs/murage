@@ -1295,7 +1295,7 @@ export const FIRST_RUN_COPY = {
   hire: {
     heading: "Hire your first teammates",
     /** {chief} is the Chief's name. Three sentences, no money, no promise about where anything goes. */
-    lead: "I am {chief}. I run the day and I ask before I send, buy or change anything. These three cover what most people ask for first, and each one starts on Ask.",
+    lead: "I am {chief}. I run the day and I always ask before the few things that need you, like deleting a lot or messaging someone new. These three cover what most people ask for first, and each one starts in Automatic.",
     greatFit: "Great fit",
     later: "Later, maybe",
     pickNone: "Pick at least one",

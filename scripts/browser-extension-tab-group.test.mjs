@@ -4,13 +4,16 @@ import { groupTitle, groupColor, MAX_TITLE } from '../extensions/murage-browser/
 import { createBrowserExtensionRuntime } from '../extensions/murage-browser/runtime.mjs';
 
 describe('tab group title builder', () => {
-  it('one bot is plain Murage, orange', () => {
-    expect(groupTitle({ botName: 'Dax', state: 'active' })).toBe('Murage');
+  // Journey 1024 section 20 (Sean 2a) replaced "plain Murage, always orange": a group is titled with the bot's own name and takes
+  // the nearest of Chrome's colours to the bot's colour. These rows were changed for that ruling; none was dropped.
+  it('a nameless binding is plain Murage, orange', () => {
+    expect(groupTitle({ state: 'active' })).toBe('Murage');
     expect(groupColor()).toBe('orange');
   });
-  it('two bindings in a window carry the bot name', () => {
-    expect(groupTitle({ botName: 'Dax', showBot: true, state: 'active' })).toBe('Murage · Dax');
-    expect(groupTitle({ botName: 'Ivy', showBot: true, state: 'active' })).toBe('Murage · Ivy');
+  it('a bot\'s group carries the bot name, one bot or two', () => {
+    expect(groupTitle({ botName: 'Dax', state: 'active' })).toBe('Dax');
+    expect(groupTitle({ botName: 'Dax', showBot: true, state: 'active' })).toBe('Dax');
+    expect(groupTitle({ botName: 'Ivy', showBot: true, state: 'active' })).toBe('Ivy');
   });
   it('each suffix', () => {
     expect(groupTitle({ state: 'paused' })).toBe('Murage · paused');
@@ -19,13 +22,13 @@ describe('tab group title builder', () => {
     expect(groupTitle({ state: 'active', full: true })).toBe('Murage · full');
     expect(groupTitle({ state: 'active', activity: 'working' })).toBe('Murage · working');
     expect(groupTitle({ state: 'active', activity: 'done' })).toBe('Murage · done');
-    expect(groupTitle({ botName: 'Dax', showBot: true, state: 'paused', full: true })).toBe('Murage · Dax · paused · full');
+    expect(groupTitle({ botName: 'Dax', showBot: true, state: 'paused', full: true })).toBe('Dax · paused · full');
   });
   it('trims a long bot name to fit and keeps the suffix', () => {
     const t = groupTitle({ botName: 'A'.repeat(200), showBot: true, state: 'paused' });
     expect(t.length).toBeLessThanOrEqual(MAX_TITLE);
     expect(t.endsWith(' · paused')).toBe(true);
-    expect(t.startsWith('Murage · AAA')).toBe(true);
+    expect(t.startsWith('AAA')).toBe(true);
   });
   it('never contains a bot id, only the name', () => {
     expect(groupTitle({ botName: 'Dax', bindingId: 'bot_secret_123', id: 'bot_secret_123', showBot: true })).not.toContain('bot_secret_123');
@@ -56,14 +59,14 @@ describe('runtime group titles', () => {
     const bind = async (bindingId, botName) => runtime.handleRequest({ version: 1, type: 'command', id: `${nonce}_${++seq}`, bindingId, generation: 1, operation: 'bind', params: { profileId: 'profile_1', botName, approvedOrigins: ['https://allowed.test'] } });
     return { api, runtime, bind, boot: async () => { await runtime.initialize(); await runtime.connection(true); } };
   }
-  it('titles Murage, then names the bots once two share a window, always orange, never collapsing or moving', async () => {
+  it('titles each group with its bot (orange with no bot colour), never collapsing or moving', async () => {
     const r = rig(); await r.boot();
     await r.bind('bot_a', 'Dax');
     let last = r.api.tabGroups.update.mock.calls.at(-1);
-    expect(last[1]).toEqual({ title: 'Murage', color: 'orange' });
+    expect(last[1]).toEqual({ title: 'Dax', color: 'orange' });
     await r.bind('bot_b', 'Ivy');
     const titles = r.api.tabGroups.update.mock.calls.map(c => c[1].title);
-    expect(titles).toContain('Murage · Ivy');
+    expect(titles).toContain('Ivy');
     await r.bind('bot_a', 'Dax').catch(() => {});
     for (const [, props] of r.api.tabGroups.update.mock.calls) { expect(props.color).toBe('orange'); expect(props).not.toHaveProperty('collapsed'); expect(JSON.stringify(props)).not.toMatch(/bot_[ab]/); }
     expect(r.api.tabGroups.move).not.toHaveBeenCalled();

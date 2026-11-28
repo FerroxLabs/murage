@@ -125,6 +125,9 @@ describe('P4 press: only what the preview lists as eligible is answered, in prev
     const [button] = buttons();
     expect(button.textContent).toBe('Approve 2 · 1 need a look');
     await click(button);
+    // T12: the desktop press opens the review first (nothing answered yet); its Approve then sends the ticked cards
+    expect(applied).toEqual([]);
+    await click(document.querySelector<HTMLButtonElement>('[data-review-approve]')!);
     expect(applied).toEqual([{ batchId: 'b1', requestIds: ['r1', 'r2'] }]);
   });
 

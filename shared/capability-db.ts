@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "30de51dc810235d88f77532ceb231d1827521f4c08e93957fcbc25ef77c20503";
+export const CAPABILITY_DB_REV = "714fe8fc14e29beea367b3c114ad61312a5a1eded73c5ff9937520573af79fa6";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -142,7 +142,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "description": "Murage can do this.",
     "heading": "Can my bot open a web result and read the page? / Can a bot read a link? / Can my bot read a whole web page?",
     "breadcrumb": "Murage capabilities",
-    "where": "Murage docs → Features → What bots can do for themselves",
+    "where": "Settings → Search, images and dictation → Web search service",
     "url": "https://murage.ai/docs/features/bot-tools#reading-web-pages",
     "text": "Yes. After a web search or a link, a bot can open the page and read it with Murage, instead of only seeing the search snippet. Murage saves the full page once. A long page comes in pieces of up to 16,000 characters. The page is read as untrusted text. OpenClaw and Box Agent read pages with their own tools, so long pages may be cut short; so may some agent engines.",
     "capability": "apps.web-read",
@@ -234,11 +234,11 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "breadcrumb": "Murage capabilities",
     "where": "Settings → Models & engines → Use a plan you already have",
     "url": "https://murage.ai/docs/providers#use-a-plan-you-already-have",
-    "text": "One sign-in, nothing to install: your bots use the plan on Fuigo. Press Continue with ChatGPT or Continue with Grok, then pick the plan's model. Not there? Say what shows. The Codex and Grok apps are separate. To set up Codex or Grok on a plan, reply with [Continue with ChatGPT](murage://plan/chatgpt) or [Continue with Grok](murage://plan/supergrok), and say Grok is Unofficial. Nothing switches a bot by itself, and a bot on Claude Code moves to Fuigo first. Desktop app only: finish on the computer running Murage. Grok is marked Unofficial and needs SuperGrok or X Premium. Never put a sign-in code or key in a chat.",
+    "text": "One sign-in, nothing to install: your bots use the plan on Fuigo. Press Continue with ChatGPT or Continue with Grok, then pick the plan's model. Not there? Say what shows. The Codex and Grok apps are separate. To set up Codex or Grok on a plan, reply with [Continue with ChatGPT](murage://plan/chatgpt) or [Continue with Grok](murage://plan/supergrok), and say xAI has not published this sign-in for other apps yet. Nothing switches a bot by itself, and a bot on Claude Code moves to Fuigo first. Desktop app only: finish on the computer running Murage. xAI has not published the Grok sign-in for other apps yet, so it can be turned off; it needs SuperGrok or X Premium. Never put a sign-in code or key in a chat.",
     "capability": "engines.continue-with-chatgpt-grok",
     "status": "can",
-    "answer": "One sign-in, nothing to install: your bots use the plan on Fuigo. Press Continue with ChatGPT or Continue with Grok, then pick the plan's model. Not there? Say what shows. The Codex and Grok apps are separate. To set up Codex or Grok on a plan, reply with [Continue with ChatGPT](murage://plan/chatgpt) or [Continue with Grok](murage://plan/supergrok), and say Grok is Unofficial. Nothing switches a bot by itself, and a bot on Claude Code moves to Fuigo first.",
-    "limits": "Desktop app only: finish on the computer running Murage. Grok is marked Unofficial and needs SuperGrok or X Premium. Never put a sign-in code or key in a chat.",
+    "answer": "One sign-in, nothing to install: your bots use the plan on Fuigo. Press Continue with ChatGPT or Continue with Grok, then pick the plan's model. Not there? Say what shows. The Codex and Grok apps are separate. To set up Codex or Grok on a plan, reply with [Continue with ChatGPT](murage://plan/chatgpt) or [Continue with Grok](murage://plan/supergrok), and say xAI has not published this sign-in for other apps yet. Nothing switches a bot by itself, and a bot on Claude Code moves to Fuigo first.",
+    "limits": "Desktop app only: finish on the computer running Murage. xAI has not published the Grok sign-in for other apps yet, so it can be turned off; it needs SuperGrok or X Premium. Never put a sign-in code or key in a chat.",
     "askYourBot": "",
     "platforms": [
       "mac",
@@ -254,7 +254,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "openai-compatible"
     ],
     "applies": "Applies to Mac, Windows, Linux; Fuigo, Codex, Grok, Qwen, Hermes, OpenAI-compatible engines.",
-    "rev": "fd2ef241d92a819e0750597f887af87ae4c0abc6993c872d532c31a528d81557"
+    "rev": "5f42c50514f1974990908ff23eeff7959fcbf799fc66091011517d9c9e02e2c9"
   },
   {
     "id": "cap:engines.use-my-subscription",
@@ -264,11 +264,11 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "breadcrumb": "Murage capabilities",
     "where": "Settings → Models & engines → Use a plan you already have",
     "url": "https://murage.ai/docs/providers#use-a-plan-you-already-have",
-    "text": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say it is Unofficial: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first. What you use depends on the one you pay for. Grok is marked Unofficial and needs SuperGrok or X Premium. A Claude plan cannot be used through Fuigo.",
+    "text": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say xAI has not published it for other apps yet: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first. What you use depends on the one you pay for. xAI has not published the Grok sign-in for other apps yet; it needs SuperGrok or X Premium. A Claude plan cannot be used through Fuigo.",
     "capability": "engines.use-my-subscription",
     "status": "can",
-    "answer": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say it is Unofficial: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first. What you use depends on the one you pay for.",
-    "limits": "Grok is marked Unofficial and needs SuperGrok or X Premium. A Claude plan cannot be used through Fuigo.",
+    "answer": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say xAI has not published it for other apps yet: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first. What you use depends on the one you pay for.",
+    "limits": "xAI has not published the Grok sign-in for other apps yet; it needs SuperGrok or X Premium. A Claude plan cannot be used through Fuigo.",
     "askYourBot": "",
     "platforms": [
       "mac",
@@ -279,7 +279,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "all"
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
-    "rev": "3305b5090644c38f2d47febf9991455528b4ca3f467a5fa2ce0e879c942fe01d"
+    "rev": "b5f54d3585eab036a662394db045e04b93989ace6dc6ff71f882a02c6a2cff1d"
   },
   {
     "id": "cap:engines.set-up-claude-code",
@@ -389,11 +389,11 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "breadcrumb": "Murage capabilities",
     "where": "Settings → Models & engines → Engines",
     "url": "https://murage.ai/docs/providers#default-models-and-saved-choices",
-    "text": "For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation. Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
+    "text": "For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback recommends GPT-6.1 Sol, supported by the Codex 0.162.1 and Codex 0.167.0 catalogs. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation. Desktop Murage bundles Fuigo 1.0.48; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
     "capability": "engines.default-models",
     "status": "can",
-    "answer": "For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation.",
-    "limits": "Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
+    "answer": "For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback recommends GPT-6.1 Sol, supported by the Codex 0.162.1 and Codex 0.167.0 catalogs. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation.",
+    "limits": "Desktop Murage bundles Fuigo 1.0.48; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
     "askYourBot": "",
     "platforms": [
       "mac",
@@ -406,7 +406,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "codex"
     ],
     "applies": "Applies to Mac, Windows, Linux, Murage Cloud; Claude, Codex.",
-    "rev": "b4166648c939679c2a273bbf6c1f4aff7d0ccdcd5e2d51b8380e16ed676428e8"
+    "rev": "2c8557ba02c6f8141afc0d25c0c95b8647aa83f0ad7eefa2c3502612d2808a11"
   },
   {
     "id": "cap:engines.muse-code",
@@ -432,6 +432,106 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     ],
     "applies": "Applies to Mac, Windows, Linux; Muse Code.",
     "rev": "1c17f3e557c185a10f51168b62779a04e75198654516459850808515ab24e60e"
+  },
+  {
+    "id": "cap:engines.command-code",
+    "title": "Command Code",
+    "description": "Murage can do this.",
+    "heading": "Set up Command Code / How do I sign in to Command Code? / Can Command Code see images in Murage? / Is Command Code on Murage Cloud?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs",
+    "text": "Yes, in the desktop app. Install Command Code (npm install -g command-code, which needs Node.js), then run cmd login in a terminal or set COMMAND_CODE_API_KEY. Command Code bills your own account. Murage always runs it in its ask mode at every level, so each write or command reaches Murage's approvals. A bot can send it images, and your Murage tools and MCP servers are handed to it. Not on Murage Cloud yet. Murage lists the models Command Code offers; a reasoning level shows only when Command Code offers one with a model. Install and update it yourself.",
+    "capability": "engines.command-code",
+    "status": "can",
+    "answer": "Yes, in the desktop app. Install Command Code (npm install -g command-code, which needs Node.js), then run cmd login in a terminal or set COMMAND_CODE_API_KEY. Command Code bills your own account. Murage always runs it in its ask mode at every level, so each write or command reaches Murage's approvals. A bot can send it images, and your Murage tools and MCP servers are handed to it.",
+    "limits": "Not on Murage Cloud yet. Murage lists the models Command Code offers; a reasoning level shows only when Command Code offers one with a model. Install and update it yourself.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "commandcode"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; Command Code.",
+    "rev": "fa7fbb6156faf8cf676664ac793d04416af0abcfd144ed1eb3f12fbdb6f37357"
+  },
+  {
+    "id": "cap:engines.kiro",
+    "title": "Kiro",
+    "description": "Murage can do this.",
+    "heading": "Set up Kiro / How do I sign in to Kiro? / Can Kiro see images in Murage? / Does Kiro take over without asking?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs",
+    "text": "Yes, in the desktop app. Install Kiro CLI from Kiro's own installer, then run kiro-cli login in a terminal or set KIRO_API_KEY. Kiro bills your own account. Murage keeps Kiro's Autopilot off at every level, so it asks before each write or command and Murage's approvals answer. Your Murage tools and MCP servers are handed to it. Not on Murage Cloud yet. Kiro takes text only, so Murage sends it no images, and a reasoning level shows only when the engine offers one with a model. Install and update it yourself.",
+    "capability": "engines.kiro",
+    "status": "can",
+    "answer": "Yes, in the desktop app. Install Kiro CLI from Kiro's own installer, then run kiro-cli login in a terminal or set KIRO_API_KEY. Kiro bills your own account. Murage keeps Kiro's Autopilot off at every level, so it asks before each write or command and Murage's approvals answer. Your Murage tools and MCP servers are handed to it.",
+    "limits": "Not on Murage Cloud yet. Kiro takes text only, so Murage sends it no images, and a reasoning level shows only when the engine offers one with a model. Install and update it yourself.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "kiro"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; Kiro.",
+    "rev": "d38a4b2464e3911a01d0cce60a08f64707d87861c158d4fd830df33bd89aa219"
+  },
+  {
+    "id": "cap:engines.omp",
+    "title": "OMP",
+    "description": "Murage can do this.",
+    "heading": "Set up OMP / How do I sign in to OMP? / Can OMP see images in Murage? / Does OMP ask before it runs a command?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs",
+    "text": "Yes, in the desktop app. Install OMP (npm install -g @oh-my-pi/pi-coding-agent, which needs Node.js), then run omp login in a terminal or set up a provider in OMP itself. OMP has no permission mode over Murage, so every write or command asks and Murage's approvals answer at your level. A bot can send it images, and your Murage tools and MCP servers are handed to it. Not on Murage Cloud yet. OMP sits with the custom engines, uses the providers you set up in it, and a reasoning level shows only when the engine offers one with a model. Install and update it yourself.",
+    "capability": "engines.omp",
+    "status": "can",
+    "answer": "Yes, in the desktop app. Install OMP (npm install -g @oh-my-pi/pi-coding-agent, which needs Node.js), then run omp login in a terminal or set up a provider in OMP itself. OMP has no permission mode over Murage, so every write or command asks and Murage's approvals answer at your level. A bot can send it images, and your Murage tools and MCP servers are handed to it.",
+    "limits": "Not on Murage Cloud yet. OMP sits with the custom engines, uses the providers you set up in it, and a reasoning level shows only when the engine offers one with a model. Install and update it yourself.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "omp"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; OMP.",
+    "rev": "c2f117a7f17e175c6295c58782a450508247d4ea74c36bd44d2f9b6ef3188618"
+  },
+  {
+    "id": "cap:engines.devin",
+    "title": "Devin",
+    "description": "Murage can do this.",
+    "heading": "Set up Devin / How do I sign in to Devin? / Can Devin see images in Murage? / Does Devin ask before it runs a command?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs",
+    "text": "Yes, in the desktop app. Install Devin's CLI from Devin's own installer, then run devin auth login in a terminal or set WINDSURF_API_KEY. Devin bills your own account. Murage keeps Devin in its Ask mode at every level and refuses the turn if Devin does not confirm it, so each command reaches Murage's approvals. A bot can send it images, and your Murage tools and MCP servers are handed to it. Not on Murage Cloud yet. Devin's approvals allow once only, and a reasoning level shows only when the engine offers one with a model. Install and update it yourself.",
+    "capability": "engines.devin",
+    "status": "can",
+    "answer": "Yes, in the desktop app. Install Devin's CLI from Devin's own installer, then run devin auth login in a terminal or set WINDSURF_API_KEY. Devin bills your own account. Murage keeps Devin in its Ask mode at every level and refuses the turn if Devin does not confirm it, so each command reaches Murage's approvals. A bot can send it images, and your Murage tools and MCP servers are handed to it.",
+    "limits": "Not on Murage Cloud yet. Devin's approvals allow once only, and a reasoning level shows only when the engine offers one with a model. Install and update it yourself.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "devin"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; Devin.",
+    "rev": "2bdd87ff054fdf7a4a09433edb6f659e3cafe4d1caa7cb38ca6be1f56e96a5a6"
   },
   {
     "id": "cap:install-account.ubuntu-computer-control",

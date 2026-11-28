@@ -12,11 +12,12 @@ import { threadPartition } from "./execution-audience.ts";
 import { teamIdFor, teamMemoryKey } from "./team-identities.ts";
 import { ensureScope } from "./memory/policy.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
-import { renameTeam, deleteTeam, teamRevision, changeTeamMembers } from "./team-sections.ts";
+import { renameTeam, deleteTeam, teamRevision, changeTeamMembers, describeTeam } from "./team-sections.ts";
 import { readSectionContext, writeSectionContext } from "./section-context.ts";
 import { sharingRoute } from "./sharing-routes.ts";
 import { reconcileTeamIdentities, reconcileTeamJournalFiles, setTeamJournalCheckpoint } from "./team-lifecycle.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+const reviewed=(store:Store,section:string)=>Object.fromEntries(describeTeam(store,section).members.map(m=>[m.id,m.accessRevision]));
 const fresh = () => new Store(() => ({instanceId:"fixture",model:"fixture"}));
 const deps = {memoryTicket:ownerMemoryTicket(),leadershipError:()=>null,groupWorking:()=>false,channelArchived:()=>{},reachabilityChanged:()=>{}};
 beforeEach(()=>{setTeamJournalCheckpoint(undefined);closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
@@ -33,7 +34,7 @@ it.each(["rename:1","rename:2","rename:bots","rename:3","rename:4","rename:5","r
 });
 it.each(["delete:1","delete:2","delete:bots","delete:3","delete:4","delete:5","delete:6"])("delete recovery after hard stop at %s retires the identity",phase=>{
  const f=fixture();setTeamJournalCheckpoint(at=>{if(at===phase)throw Error("HARD_STOP");});
- expect(()=>deleteTeam(f.store,{section:"Sales",bots:"keep",revision:teamRevision(f.store)},deps)).toThrow("HARD_STOP");
+ expect(()=>deleteTeam(f.store,{section:"Sales",bots:"keep",revision:teamRevision(f.store),accessRevisions:reviewed(f.store,"Sales")},deps)).toThrow("HARD_STOP");
  setTeamJournalCheckpoint(undefined);closeDatabase();const restored=fresh();reconcileTeamIdentities(restored);
  expect(restored.bot(f.bot.id)?.section).toBeUndefined();expect(restored.bot(f.bot.id)?.sharedWith?.mode??"none").toBe("none");
  expect(teamMemoryKey(f.id)).toBeNull();expect(teamIdFor("Sales")).not.toBe(f.id);
@@ -95,7 +96,7 @@ it("phase 2 with only the old scope is treated as phase 1 and undone",()=>{
 it("an open journal locks membership, filing and another team operation",()=>{
  const f=fixture();setTeamJournalCheckpoint(at=>{if(at==="rename:1")throw Error("HARD_STOP");});expect(()=>renameTeam(f.store,{section:"Sales",name:"Revenue",revision:teamRevision(f.store)},deps)).toThrow("HARD_STOP");
  expect(()=>f.store.patchGroup(f.group.id,{memberIds:[]})).toThrow("still finishing");expect(()=>f.store.patchBot(f.bot.id,{section:"New"})).toThrow("still finishing");
- expect(()=>deleteTeam(f.store,{section:"Sales",bots:"keep",revision:teamRevision(f.store)},deps)).toThrow("still finishing");
+ expect(()=>deleteTeam(f.store,{section:"Sales",bots:"keep",revision:teamRevision(f.store),accessRevisions:reviewed(f.store,"Sales")},deps)).toThrow("still finishing");
 });
 
 it("restored journal recovery changes only the supplied restored files and database",async()=>{
@@ -154,7 +155,7 @@ it("R4e: renaming a 61-character legacy team succeeds without a journal, as it d
  expect(()=>teamIdFor("Heritage")).not.toThrow();
 });
 it("R4e: deleting a 61-character legacy team succeeds without a journal, as it did before identities",()=>{
- const f=legacy(),result=deleteTeam(f.store,{section:f.long,bots:"archive",revision:teamRevision(f.store)},deps);
+ const f=legacy(),result=deleteTeam(f.store,{section:f.long,bots:"archive",revision:teamRevision(f.store),accessRevisions:reviewed(f.store,f.long)},deps);
  expect(result).toMatchObject({bots:2,channels:1});
  for(const id of [f.lead.id,f.mate.id]){const bot=f.store.bot(id)!;expect(bot.section).toBeUndefined();expect(bot.hidden).toBe(true);expect(bot.chiefOfStaff??false).toBe(false);}
  expect(f.store.bot(f.mate.id)?.sharedWith?.mode).toBe("none");
@@ -167,7 +168,7 @@ it("R4e: a legacy team still waits while another team's journal is open",()=>{
  const f=legacy(),sales=teamIdFor("Sales");
  database().prepare("UPDATE team_identities SET op='rename',op_label='Revenue',op_phase=1,op_records='{\"bots\":[],\"groups\":[]}',op_since=1 WHERE team_id=?").run(sales);
  expect(()=>renameTeam(f.store,{section:f.long,name:"Heritage",revision:teamRevision(f.store)},deps)).toThrow(expect.objectContaining({status:409,message:expect.stringContaining("still finishing")}));
- expect(()=>deleteTeam(f.store,{section:f.long,bots:"keep",revision:teamRevision(f.store)},deps)).toThrow(expect.objectContaining({status:409}));
+ expect(()=>deleteTeam(f.store,{section:f.long,bots:"keep",revision:teamRevision(f.store),accessRevisions:reviewed(f.store,f.long)},deps)).toThrow(expect.objectContaining({status:409}));
  expect(f.store.bot(f.lead.id)?.section).toBe(f.long);
 });
 it("R4e: a 61-character team an all-mode bot covers renames, and then the work opens and mints the team",async()=>{

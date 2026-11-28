@@ -47,8 +47,9 @@ beforeAll(async()=>{
       }
       if(!url.endsWith('/server/index.ts'))return loaded;
       let source=String(loaded.source);
-      const route='    const accessRoute =';
-      if(!source.includes(route))throw Error('native shell fixture anchor missing');
+      const route='    // GET/PUT /api/bots/:id/access lives in server/settings/access-routes.ts';
+      // A moved anchor leaves the route out; the first fixture assertion in each test (status 200) reports it.
+      if(!source.includes(route)){console.error('[native-shell-fixture] anchor missing');return loaded;}
       return {...loaded,source:source.replace(route,${JSON.stringify(bridge)}+route)};
     }});
   `});
@@ -76,7 +77,10 @@ it.each([
   bots.push(bot.id);
   await api('PATCH',`/api/bots/${bot.id}`,{computer:'off',browser:false,composio:false});
   if(noLimits)expect((await raiseLevel(request,bot.id,{noLimits:true,acknowledgeNoLimits:true})).status).toBe(200);
-  expect(await api('POST','/api/native-shell-fixture',{botId:bot.id,tool})).toEqual({marked:'marked'});
+  // Raw request with its own assertions: a missing fixture route or a refused mark fails here, not in api().
+  const marked=await request('POST','/api/native-shell-fixture',{botId:bot.id,tool});
+  expect(marked.status,'native shell fixture route is seated in the production router: '+JSON.stringify(marked.body)).toBe(200);
+  expect(marked.body).toEqual({marked:'marked'});
   await api('POST',`/api/bots/${bot.id}/messages`,{threadId:bot.threadId,text:'__fixture_permission_tool__'});
   const messages=async()=> (await api('GET',`/api/threads/${bot.threadId}/messages?limit=100`)).messages as any[];
   // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / ee7826ac02: use the public opaque card handle end to end, without native ids.
@@ -87,7 +91,9 @@ it.each([
       return card?.card.tool;
     },{timeout:30_000}).toBe(tool);
     expect(card.card.options).toEqual(['Allow','Deny']);
-    await api('POST',`/api/threads/${bot.threadId}/respond`,{requestHandle:card.card.requestHandle,action:'allow'});
+    // Raw request with its own assertion: a refused public card handle fails here, not in api().
+    const answered=await request('POST',`/api/threads/${bot.threadId}/respond`,{requestHandle:card.card.requestHandle,action:'allow'});
+    expect(answered.status,JSON.stringify(answered.body)).toBeLessThan(300);
   }
   await expect.poll(async()=> (await messages()).some(row=>row.text==='permission: allowed'),{timeout:30_000}).toBe(true);
   if(noLimits)expect((await messages()).filter(row=>row.card?.requestHandle)).toEqual([]);

@@ -226,6 +226,29 @@ describe("Approve all in Inbox > Approvals", () => {
     expect((await cardById(one.bot.threadId, one.requestId)).answered).toBe("deny");
   }, 180_000);
 
+  it("W2e (T12 review, GUARD): applying a subset answers exactly those cards; the rest stay open and are listed by a fresh preview", async () => {
+    // BATCH-APPROVE-REVIEW-1023: the desktop review sends only the ticked cards. The server contract it relies on: a subset of the
+    // frozen batch is answered, nothing else is, and the cards left out wait for the next preview. (One card per bot here:
+    // a bot's thread raises one card at a time in this harness.)
+    const bots = [await askedBot("Subset one"), await askedBot("Subset two"), await askedBot("Subset three"), await askedBot("Subset four")];
+    const all = bots.map((b) => b.requestId);
+    const shown = await previewWith(all, desktopHeaders);
+    expect((shown.body.eligible as any[]).map((c) => c.requestId)).toEqual(expect.arrayContaining(all));
+    const chosen = [bots[0]!, bots[2]!];
+    const left = [bots[1]!, bots[3]!];
+    const done = await apply({ batchId: shown.body.batchId, requestIds: chosen.map((b) => b.requestId) }, desktopHeaders);
+    expect(done.status).toBe(200);
+    expect(done.body.results).toHaveLength(2); // TARGET:W2e
+    expect(done.body.results.map((r: any) => [r.requestId, r.result]).sort()).toEqual(chosen.map((b) => [b.requestId, "approved"]).sort());
+    for (const b of chosen) expect((await cardById(b.bot.threadId, b.requestId)).answered).toBe("allow");
+    for (const b of left) expect((await cardById(b.bot.threadId, b.requestId)).answered).toBeUndefined();
+    const again = await previewWith(left.map((b) => b.requestId), desktopHeaders);
+    const listed = (again.body.eligible as any[]).map((c) => c.requestId);
+    expect(listed).toEqual(expect.arrayContaining(left.map((b) => b.requestId)));
+    expect(listed).not.toContain(chosen[0]!.requestId);
+    for (const b of left) await desktopApi("POST", `/api/threads/${b.bot.threadId}/respond`, { requestId: b.requestId, behavior: "deny" });
+  }, 300_000);
+
   it("the phone signs exactly the ticked set once; a paired browser and a keyless app are refused", async () => {
     // card one needs a fresh proof on a single phone Allow, so the cross-use check below reaches the fresh-auth gate
     const one = await askedBot("Bulk phone one", "builder");

@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import type { ModelCatalog } from "../contracts.ts";
 import {
+  isOllamaCloudModel,
   llamaCppModelId,
   LOCAL_ENGINE_SURFACE,
   localServerDisplayLabel,
@@ -25,8 +26,9 @@ import {
   type LocalServerKind,
   type LocalToolTestOutcome,
 } from "../../shared/local-models.ts";
+import { codexProviderTableArgs } from "../flux-routing.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
-import { cachedLocalToolTest, readLocalServers, userLocalServer, type StoredLocalServer } from "../local-servers.ts";
+import { cachedLocalToolTest, localAddressGeneration, localAddressOwner, readLocalServers, userLocalServer, type StoredLocalServer } from "../local-servers.ts";
 
 export interface LocalHost {
   id: string;
@@ -83,21 +85,47 @@ export function allLocalHosts(): LocalHost[] {
   return [...LOCAL_HOSTS, ...readLocalServers().map(hostFromStored)];
 }
 
-// Loaded-context readings (spec T2), keyed host+model. Filled by every probe
-// and by the Local models test; read synchronously by the engine writers that
-// size a model's window (Pi, Kimi, Fuigo) instead of hardcoding one.
-const contextReadings = new Map<string, LocalContextReading>();
+// Loaded-context readings (spec T2). Filled by every probe and by the Local
+// models test; read synchronously by the engine writers that size a model's
+// window (Pi, Kimi, Fuigo) instead of hardcoding one.
+//
+// One key per server address and kind, never per host id: the built-in
+// `ollama` and `local_ollama` ids (and an added server on the same address)
+// are one server, so a probe, a test and an engine writer all read and write
+// the same reading whichever id the pick carries (M10, Astra r2 High).
+// Each reading carries the address generation its read started under
+// (local-servers.ts). A writer takes its fence from the host it sends to,
+// before its first await, and never re-resolves a host id at write time: a
+// reply from a server's old address, or one that lands after an add, edit or
+// delete at its address, is dropped (Astra 49db4e1188 High). OLLAMA-NOTE r4.
+const contextReadings = new Map<string, { reading: LocalContextReading; generation: number }>();
 
-function contextKey(hostId: string, model: string): string {
-  return `${hostId}${INJECT_SEP}${model}`;
+export interface LocalContextFence {
+  owner: string;
+  generation: number;
 }
 
-export function rememberLocalContext(hostId: string, model: string, reading: LocalContextReading): void {
-  contextReadings.set(contextKey(hostId, model), reading);
+/** Taken from the host a read is sent to, before the read's first await. */
+export function contextFence(host: LocalHost): LocalContextFence {
+  const owner = localAddressOwner(host.kind, host.baseUrl);
+  return { owner, generation: localAddressGeneration(owner) };
+}
+
+export function rememberLocalContext(fence: LocalContextFence, model: string, reading: LocalContextReading): void {
+  if (localAddressGeneration(fence.owner) !== fence.generation) return;
+  contextReadings.set(`${fence.owner}${INJECT_SEP}${model}`, { reading, generation: fence.generation });
+}
+
+/** The reading at a host's address, when it was taken under the address's current generation. */
+export function cachedHostContext(host: LocalHost, model: string): LocalContextReading | undefined {
+  const owner = localAddressOwner(host.kind, host.baseUrl);
+  const entry = contextReadings.get(`${owner}${INJECT_SEP}${model}`);
+  return entry && entry.generation === localAddressGeneration(owner) ? entry.reading : undefined;
 }
 
 export function cachedLocalContext(hostId: string, model: string): LocalContextReading | undefined {
-  return contextReadings.get(contextKey(hostId, model));
+  const host = localHost(hostId);
+  return host ? cachedHostContext(host, model) : undefined;
 }
 
 /** The probed window for an inject pick, when Murage has read one. */
@@ -108,6 +136,25 @@ export function localContextWindow(hostId: string, model: string): number | unde
 
 export function clearLocalContextCacheForTests(): void {
   contextReadings.clear();
+}
+
+/**
+ * M10 R2d: Ollama runs this model on ollama.com. True for the cloud tag, or
+ * when an `/api/show` read this server session stored a cloud reading for it
+ * at this host's address (any of its ids). Memory only; false for every other
+ * server kind, whatever the model is called (M10 scope guard). Keyed by the
+ * host object's address, so a reply checked after an await is checked against
+ * the address it came from.
+ */
+export function isKnownOllamaCloudHost(host: LocalHost, model: string): boolean {
+  if (host.kind !== "ollama") return false;
+  if (isOllamaCloudModel(model)) return true;
+  return cachedHostContext(host, model)?.cloud === true;
+}
+
+export function isKnownOllamaCloud(hostId: string, model: string): boolean {
+  const host = localHost(hostId);
+  return host ? isKnownOllamaCloudHost(host, model) : false;
 }
 
 export interface InjectedModel {
@@ -132,7 +179,7 @@ export interface InjectedModel {
 /** Ollama's /api/ps lists running models with their context_length; a
  * small model's real window matters more than a big one's — an 8k model
  * guessed at 32k gets a rebuild it cannot hold. */
-export function contextWindowsFromPs(extra: unknown): Map<string, number> {
+export function contextWindowsFromPs(extra: unknown, isKnownCloud?: (id: string) => boolean): Map<string, number> {
   const out = new Map<string, number>();
   const rec = extra && typeof extra === "object" ? (extra as { models?: unknown }) : null;
   if (!rec || !Array.isArray(rec.models)) return out;
@@ -141,6 +188,9 @@ export function contextWindowsFromPs(extra: unknown): Map<string, number> {
     const row = m as { name?: unknown; model?: unknown; context_length?: unknown };
     const id = typeof row.model === "string" ? row.model : typeof row.name === "string" ? row.name : null;
     const ctx = typeof row.context_length === "number" && Number.isFinite(row.context_length) && row.context_length > 0 ? row.context_length : null;
+    // M10 R2b: a cloud model's row is neither its own reading nor part of the
+    // base-name minimum, so it can never shrink a local sibling (P2).
+    if (id && (isOllamaCloudModel(id) || isKnownCloud?.(id))) continue;
     if (id && ctx) {
       out.set(id, ctx);
       const baseId = id.split(":")[0]!;
@@ -233,14 +283,7 @@ export async function codexLocalProviderArgs(
   if (!(await checkLocalServerUrl(host.baseUrl)).ok) return [];
   const envKey = `MURAGE_LOCAL_${host.id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
   env[envKey] = hostApiKey(host, env);
-  return [
-    "-c",
-    `model_providers.${host.id}.name=${JSON.stringify(host.label)}`,
-    "-c",
-    `model_providers.${host.id}.base_url=${JSON.stringify(host.baseUrl)}`,
-    "-c",
-    `model_providers.${host.id}.env_key=${JSON.stringify(envKey)}`,
-  ];
+  return codexProviderTableArgs(host.id, { name: host.label, baseUrl: host.baseUrl, envKey });
 }
 
 function firstUnslothToken(row: unknown): string | null {
@@ -619,6 +662,9 @@ async function probeHostGroup(
   fetchImpl: typeof fetch,
 ): Promise<LocalHostPage> {
   let host = group[0]!;
+  // Fences before the first await: whichever row answers, its readings are
+  // stored under this address as it was when the probe started.
+  const fences = new Map(group.map((row) => [row.kind, contextFence(row)]));
   const root = anthropicBaseUrl(host);
   const catalogUrl = `${host.baseUrl.replace(/\/$/, "")}/models`;
   const llama = group.find((row) => row.kind === "llamacpp");
@@ -681,7 +727,12 @@ async function probeHostGroup(
 
   const contexts = new Map<string, LocalContextReading>(contextWindowsFromModelRows(catalog));
   if (host.kind === "ollama") {
-    for (const [id, window] of contextWindowsFromPs(extra)) contexts.set(id, { contextWindow: window, source: "ollama-ps", loaded: true });
+    const known = (id: string) => isKnownOllamaCloudHost(host, id);
+    for (const [id, window] of contextWindowsFromPs(extra, known)) contexts.set(id, { contextWindow: window, source: "ollama-ps", loaded: true });
+    // A cloud model's window is only its /api/show reading: no page source (a
+    // catalog row's length, a sibling's base-name minimum) becomes its reading
+    // or overwrites the cached cloud one. Applied last, to the whole page.
+    for (const id of [...contexts.keys()]) if (known(id)) contexts.delete(id);
   } else if (host.kind === "lmstudio") {
     for (const [id, reading] of contextWindowsFromLmStudio(extra)) contexts.set(id, reading);
     if (native) for (const [id, reading] of native.contexts) contexts.set(id, reading);
@@ -690,7 +741,8 @@ async function probeHostGroup(
     if (window) for (const id of loaded) contexts.set(id, { contextWindow: window, source: "llamacpp-props", loaded: true });
   }
   const aliases = group.filter((row) => row.kind === host.kind).map((row) => row.id);
-  for (const [id, reading] of contexts) for (const alias of aliases) rememberLocalContext(alias, id, reading);
+  const fence = fences.get(host.kind)!;
+  for (const [id, reading] of contexts) rememberLocalContext(fence, id, reading);
   const page: LocalHostPage = { host, aliases, reachable: catalog !== null || extra !== null || native !== null, ids, loaded, contexts };
   if (group.some((row) => row.source === "added")) lastPages.set(catalogUrl.replace(/\/models$/, ""), page);
   return page;
@@ -789,9 +841,20 @@ export async function probeLocalInjects(
       ...(tools ? { tools } : {}), loaded: false,
     });
   }
-  for (const { host, ids, loaded, contexts } of pages) {
+  for (const { host, ids, loaded } of pages) {
     for (const model of ids) {
-      const contextWindow = contexts.get(model)?.contextWindow;
+      // M10 (Opus r2 M1): a cloud model's window lives only in the cache (it
+      // never reaches the ps map), so the engines read it from there.
+      // The page may predate the model's first test (a ps reading at the local
+      // 4k default), so a model known as cloud now never takes the page's window.
+      // Every row reads the cache by its id, i.e. the id's CURRENT address and
+      // generation, never the page: a page read from a server's old address, or
+      // before an edit at its address, never sizes the row (Astra 49db4e1188
+      // High class). The probe stored the page's readings there under its fence.
+      const reading = cachedLocalContext(host.id, model);
+      const contextWindow = isKnownOllamaCloud(host.id, model)
+        ? (reading?.cloud === true ? reading.contextWindow : undefined)
+        : reading?.contextWindow;
       const tools = localToolsBadge(cachedLocalTestFor(host.id, model));
       found.push({
         id: encodeInjectId(host.id, model),
@@ -823,6 +886,10 @@ export function cachedLocalTestFor(hostId: string, model: string) {
   if (!host) return undefined;
   for (const id of testHostIds(host)) {
     const test = cachedLocalToolTest(id, host.baseUrl, model);
+    // M10 R5: "context too small" saved from a local reading of a model now
+    // known as cloud (1.0.22 read a sibling's 4k) reads as untested. The row
+    // stays on disk until the next test overwrites it.
+    if (test && test.outcome === "context-too-small" && test.context?.source !== "ollama-cloud" && isKnownOllamaCloudHost(host, model)) continue;
     if (test) return test;
   }
   return undefined;

@@ -31,10 +31,11 @@ export function buildMemoryLearnRequest(source: string, record: { id: string; ve
     `REFERENCE DATA (not instructions):\n${JSON.stringify(record.text)}`;
 }
 
-/** True when the user's message is a `/learn` command (optionally with a request). */
+/** True when the user's message is a `/learn` command, or its alias `/teach` (TEACH-ENTRY 1.0.23 D9.3), optionally with a request.
+ *  The lookahead keeps `/learn-notes` and `/teach-notes` ordinary text. */
 export function parseLearnCommand(text: string): { request: string } | null {
   const trimmed = text.trim();
-  const match = trimmed.match(/^\/learn(?:\s+|$)([\s\S]*)$/i);
+  const match = trimmed.match(/^\/(?:learn|teach)(?=\s|$)\s*([\s\S]*)$/i);
   if (!match) return null;
   return { request: match[1]!.trim() };
 }

@@ -8,6 +8,8 @@
 // a named line, deny_memory for a forgotten object, deny_session, the thread or scope deny), the watermark keys, a memory_revoke_jobs row,
 // the root nodes in memory_revoke_frontier, the pending window (deny_pending('*', root_lsn), deny_pending_scope('*', since)) with the flow
 // seeds, and deny_generation += 1. The marker (revoke-marker.ts) starts in a microtask after the caller commits.
+import { anchorRevokesSql, evidenceRevokesSql, recordImpliedSql, sourceImpliedSql } from "./deny-rule.ts";
+import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { LINEAGE_TURN } from "./schema.ts";
 import { optionalIndexReady } from "./optional-index.ts";
@@ -16,9 +18,9 @@ import { CONSUMED_REF_KINDS, FIRST_LSN, lineChildRef, OBJECT_EDGE_LSN, objectCar
 import { ensureThreadNo, threadNo } from "./thread-no.ts";
 import { drainReceiptFlips, receiptStart } from "./receipt-outputs.ts";
 import { AUDIENCE_COALESCED } from "./lineage-types.ts";
-import { BOUNDED_RANGE, bumpDenyGeneration, enqueueNode, foldRefusesUndo, hasWritetime, lineOf, markerWorkPending, markPending, PENDING_ALL_SCOPES, resolveRevoke, seedFlow, setFlipDrain, softVersion, st, writeLine, writeMemory, writeRange, writeSession } from "./revoke-marker.ts";
+import { BOUNDED_RANGE, bumpDenyGeneration, enqueueNode, foldRefusesUndo, LATE_PREFIX, LATE_RESCAN, LATE_REVOKE, setLateRescan, hasWritetime, lineOf, markerSlice, markerWorkPending, markPending, totalChanges, PENDING_ALL_SCOPES, resolveRevoke, seedFlow, setFlipDrain, softVersion, st, writeLine, writeMemory, writeRange, writeSession } from "./revoke-marker.ts";
 import { INLINE_REVOCATION, wakeIfStarted } from "./memory-revocation.ts";
-import { budgetedMarkerSlice, revokeFlipCutoffRows } from "./revoke-budget.ts";
+import { budgetedMarkerSlice, chargeRevokeRows, revokeFlipCutoffRows, walIndexMark } from "./revoke-budget.ts";
 import "./revoke-fold.ts"; // the revoke fold registers with the marker (revoke-marker.ts setFoldHooks), as the flip drain does below
 
 /** Memory roots that remove the object itself (deny_memory); the others (archive, correct, revise) withdraw what was shown from it, and
@@ -78,9 +80,12 @@ export function openBulkRevoke(tx: DatabaseSync, cause: string, audience: boolea
  * (drainFlipsIntoBulk), so no prompt is built in between. */
 export function activateBulkRevoke(tx: DatabaseSync, revokeId: number): void {
   if (!(revokeId > 0) || !hasWritetime(tx)) return;
-  if (st(tx, "SELECT 1 AS x FROM memory_revoke_jobs WHERE revoke_id=? AND state='seeding'").get(revokeId))
+  // MEMORY V2 V15 (F4): the generation moves only when this call changed what a reader can see. A job that is not seeding (already
+  // activated, finished, or gone) is left as it is: no row is written, so no held fence is made to walk again.
+  if (st(tx, "SELECT 1 AS x FROM memory_revoke_jobs WHERE revoke_id=? AND state='seeding'").get(revokeId)) {
     st(tx, "UPDATE memory_revoke_jobs SET state='active',started_lsn=? WHERE revoke_id=?").run(takeCommitLsn(tx), revokeId);
-  bumpDenyGeneration(tx);
+    bumpDenyGeneration(tx);
+  }
   wakeIfStarted();
 }
 
@@ -106,7 +111,7 @@ const FORGET_SEED_SEEKS = 256, BULK_FORGET_SEED_SEEKS = 4096;
 /** The flow seeds of a forgotten record's supporting sources (R1): every source's scope, and its capture thread from the capture line, under
  * the walker's own predicate (revoke-marker.ts sourceNode: a thread and a message, and a lineage row for the line; a source with no message
  * or no row is never entered by the walk and gets no thread seed). True when the read completed under its row bound. */
-function seedForgetSupport(tx: DatabaseSync, id: string, version: number | undefined, seeds: Array<[string, number | null]>, inBulk: boolean): boolean {
+function seedForgetSupport(tx: DatabaseSync, id: string, version: number | undefined, seeds: Array<[string, number | null]>, inBulk: boolean, mark?: { revokeId: number; until: number; reason: string }): boolean {
   const maxRows = inBulk ? BULK_FORGET_SEED_ROWS : FORGET_SEED_ROWS, maxSeeks = inBulk ? BULK_FORGET_SEED_SEEKS : FORGET_SEED_SEEKS;
   const where = version && version > 0 ? "record_id=? AND record_version=?" : "record_id=?", args: unknown[] = version && version > 0 ? [id, version] : [id];
   // one bounded read: at most maxRows+1 evidence rows (one row each, the source joined by its primary key), so the row count is
@@ -118,10 +123,69 @@ function seedForgetSupport(tx: DatabaseSync, id: string, version: number | undef
     if (typeof row.thread === "string" && typeof row.message === "string") lines.set(`${row.thread}\u0000${row.message}`, [row.thread, row.message]);
   }
   for (const scope of scopes) seeds.push([scopeFlowNode(scope), FIRST_LSN]);
-  if (lines.size > maxSeeks) for (const thread of new Set([...lines.values()].map(pair => pair[0]))) seeds.push([thread, FIRST_LSN]);
-  else for (const [thread, message] of lines.values()) { const line = lineOf(tx, thread, message); if (line) seeds.push([thread, line.lsn]); }
+  // past maxSeeks the flow seeds are per thread from its first line (no seek for a seed); the durable rows below are still written per
+  // capture line, on a single forget and in a bulk alike (OPUS 60fe2e2655 HIGH-1: the owner's own turn reads no pending window, so a
+  // forget with more capture lines than the seed cap, or one inside a bulk, showed it the forgotten lines until the walk). The read
+  // above bounds the lines (maxRows + 1 evidence rows).
+  const perLine = lines.size <= maxSeeks;
+  if (!perLine) for (const thread of new Set([...lines.values()].map(pair => pair[0]))) seeds.push([thread, FIRST_LSN]);
+  if (perLine || mark) for (const [thread, message] of lines.values()) {
+    const line = lineOf(tx, thread, message);
+    if (!line) continue;
+    if (perLine) seeds.push([thread, line.lsn]);
+    // 1.0.23 deny rule (a deny rule = one durable row checked at read): the capture line and the lines after it are withheld by rows this
+    // commit writes, the same point and range rows under the same revoke id that the walk's sourceNode writes when it reaches the source
+    // (and that a source forget writes at its commit, below in commitRevoke). So a reader of the last settled view (the owner's own
+    // turn, lineage-types.ts LineageReader.settled) and the session rule (deny-read.ts heldSpanRevoked) do not wait for that walk.
+    if (mark) { writeLine(tx, mark.revokeId, thread, Number(line.lsn), mark.reason); writeRange(tx, mark.revokeId, thread, Number(line.lsn), mark.until, mark.reason); }
+  }
   return rows.length <= maxRows;
 }
+/** CTXREV H2 A-2: the stored reply of an owner turn whose held context an own privacy revoke withdrew mid-turn is withheld from every
+ * bot reader by its own line mark (deny_line, read by the door whatever the reader's ownFlag), and by nothing else: no range, no walk, no
+ * session stage. A line revoke (commitRevoke) would also deny the running owner turn's own engine session and later lines of the thread,
+ * stopping the turn Sean's revokekeep rule keeps (index.ts:16986-16993). Idempotent from the stored marks (a rolled-back write leaves none,
+ * so the next write of the reply adds it). A line with no lineage row already reads "checking" (withheld). True when a mark was added. */
+export function hideReplyLine(tx: DatabaseSync, threadId: string, messageId: string): boolean {
+  if (!hasWritetime(tx)) return false;
+  const line = lineOf(tx, threadId, messageId);
+  if (!line || st(tx, "SELECT 1 AS x FROM memory_deny_point WHERE thread_id=? AND lsn=? AND reason='hide-reply' LIMIT 1").get(threadId, line.lsn)) return false;
+  const now = takeCommitLsn(tx);
+  const R = Number(st(tx, "SELECT coalesce(max(revoke_id),0)+1 AS r FROM memory_revoke_jobs").get()!.r);
+  st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,?,?,?,?,'done','','done')")
+    .run(R, "line", compactRoot({ kind: "line", threadId, messageIds: [messageId], cause: "hide" }), line.lsn, now);
+  writeLine(tx, R, threadId, line.lsn, "hide-reply");
+  bumpDenyGeneration(tx);
+  return true;
+}
+
+/** CTXREV H2 A-2: a note, record, lesson or claim saved by an owner turn whose held context an own privacy revoke withdrew mid-turn (before
+ * or after its reply is written) may carry the revoked detail, as the reply may: it is withheld from every bot by its own mark, nothing
+ * else (a just-written object has no readers to walk). Idempotent per object version. A Murage object with no version (a note, card, skill
+ * or file path: every version is one object, prompt-parts.ts fileRef) is withheld whole, as a forget carried onto it would be (DECISIONS D7). */
+export function hideTurnRecord(tx: DatabaseSync, record: MemoryRef): void {
+  if (!hasWritetime(tx)) return;
+  const version = record.version ?? 0;
+  // already denied to every reader (a done job's row may be pruned, so the mark itself is the test; an audience-only mark is not enough)
+  if (st(tx, `SELECT 1 AS x FROM memory_deny_object m WHERE m.kind=? AND m.id=? AND m.version=?
+    AND NOT EXISTS (SELECT 1 FROM memory_revoke_audience a WHERE a.revoke_id=m.revoke_id) LIMIT 1`).get(record.kind, record.id, Math.max(0, version))) return;
+  // (1.0.23 deny rule, deny-rule.ts: or denied to every reader with no row of its own, through its anchor line or an evidence source)
+  if (record.kind === "source" && Number(st(tx, `SELECT ${sourceImpliedSql("?1", true)} AS m`).get(record.id)?.m) === 1) return;
+  if (record.kind === "record" && version > 0 && Number(st(tx, `SELECT ${recordImpliedSql("?1", "?2", true)} AS m`).get(record.id, version)?.m) === 1) return;
+  const now = takeCommitLsn(tx);
+  const R = Number(st(tx, "SELECT coalesce(max(revoke_id),0)+1 AS r FROM memory_revoke_jobs").get()!.r);
+  st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,?,?,?,?,'done','','done')")
+    .run(R, "memory", JSON.stringify({ kind: "memory", ref: record, cause: "hide" }), now, now);
+  writeMemory(tx, R, record.kind, record.id, version);
+  bumpDenyGeneration(tx);
+}
+/** CTXREV H2 A-2: whether a stored line carries a reply's hide mark (hideReplyLine): it is never a memory source with its words. */
+export function replyHiddenFromBots(tx: DatabaseSync, threadId: string, messageId: string): boolean {
+  if (!hasWritetime(tx)) return false;
+  const line = lineOf(tx, threadId, messageId);
+  return Boolean(line && st(tx, "SELECT 1 AS x FROM memory_deny_point WHERE thread_id=? AND lsn=? AND reason='hide-reply' LIMIT 1").get(threadId, line.lsn));
+}
+
 export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: RevokeOptions = {}): number {
   if (!hasWritetime(tx)) return 0;
   // the commit's own lsn: the cap of its ranges and of the walk's session stage is this slot, so a prompt built after the commit (head =
@@ -216,7 +280,7 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
         // and capture threads can sit outside the closure the record's own scope reaches; they are seeded here, with the walker's own
         // predicate, so the closure the flow gate proves is whole (READER-PRIVACY-104 R1, R2). Over FORGET_SEED_ROWS the job stays
         // uncertified and its late children are held to its tidy (R3).
-        if (removing && root.cause === "forget" && !st(tx, "SELECT 1 FROM memory_records WHERE id=? AND kind='checkpoint' LIMIT 1").get(ref.id)) certified = seedForgetSupport(tx, ref.id, ref.version, seeds, bulk !== undefined);
+        if (removing && root.cause === "forget" && !st(tx, "SELECT 1 FROM memory_records WHERE id=? AND kind='checkpoint' LIMIT 1").get(ref.id)) certified = seedForgetSupport(tx, ref.id, ref.version, seeds, bulk !== undefined, { revokeId: R, until: now, reason });
         // a forgotten record's supporting material is older than the record: everything resting on it may be (A2)
         rootLsn = removing ? FIRST_LSN : recordCreated(tx, ref.id, ref.version);
         scopeSince = removing ? FIRST_LSN : rootLsn;
@@ -286,7 +350,9 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
   if (!bulk && certified) st(tx, "UPDATE memory_revoke_jobs SET root=json_set(root,'$.seeded',1) WHERE revoke_id=?").run(R);
   bumpDenyGeneration(tx);
   if (bulk) return R; // held 'seeding' until activateBulkRevoke
-  if (options.inline !== false) markInline(tx, R);
+  // 1.0.21 cause5: a memory root (a changed record or source: a notebook re-import, a correction) may finish its walk under the inline
+  // floor when the marker's minute is spent, so a walk with nothing to mark leaves no all-threads window behind (revoke-budget.ts)
+  if (options.inline !== false) markInline(tx, R, root.kind === "memory");
   wakeIfStarted();
   return R;
 }
@@ -342,16 +408,104 @@ function itemHoldPlan(tx: DatabaseSync, bundleId: string): HoldItem[] | null {
   }
   return plan;
 }
+/** Most queued flips the import's shown-probe reads (revocation.ts importShownProbe); more, and it cannot tell. */
+const FLIP_CITED_LIMIT = 64;
+/** 1.0.21 mem-f3 c: the records and sources the queued receipt flips cite, from the receipts' own rows (a queued flip has left
+ * memory_disclosure_refs and has no consumer edge yet: holdRevokedReceipt writes those when it drains, from these same lists). null: it
+ * cannot tell, so the caller counts everything as shown: more than FLIP_CITED_LIMIT flips, a flip with no receipt row, lists that do not
+ * parse, an entry with no string id, or more than RECEIPT_HOLD_CAP items (itemHoldPlan answers the wildcard pair for each of those). */
+export function queuedFlipCites(db: DatabaseSync): { records: Set<string>; sources: Set<string> } | null {
+  const flips = st(db, "SELECT bundle_id FROM memory_receipt_flips WHERE thread_no>=-9223372036854775808 LIMIT ?").all(FLIP_CITED_LIMIT + 1);
+  if (flips.length > FLIP_CITED_LIMIT) return null;
+  const records = new Set<string>(), sources = new Set<string>();
+  for (const flip of flips) {
+    const plan = itemHoldPlan(db, String(flip.bundle_id));
+    if (!plan) return null;
+    for (const item of plan) { if (item.id === "*") return null; (item.kind === "record" ? records : sources).add(item.id); }
+  }
+  return { records, sources };
+}
 /** The marker inline, in the committing transaction (1.0.3 revoke storm, M3): the owner's own revoke only, under the marker's write budget
- * and within INLINE_REVOCATION.ms from here. It never drains the queued receipt flips or walks another revoke (the runner carries that
- * backlog), and while a flip waits it walks nothing (revoke-marker.ts runMarkerSlice); what it leaves is the runner's. */
-function markInline(tx: DatabaseSync, revokeId: number): void {
+ * and within INLINE_REVOCATION.ms from here. It never walks another revoke (the runner carries that backlog). While receipt flips wait it
+ * commits those first, inside the same budget and deadline (1.0.21 mem-f3 c, revoke-marker.ts MarkerSliceOptions.headFlips), and walks its
+ * own revoke only once none is left; what it leaves is the runner's. */
+function markInline(tx: DatabaseSync, revokeId: number, floor = false): void {
   if (!(INLINE_REVOCATION.ms > 0)) return;
   const deadline = performance.now() + INLINE_REVOCATION.ms;
   while (performance.now() < deadline && markerWorkPending(tx)) {
-    const moved = budgetedMarkerSlice(tx, INLINE_REVOCATION.rows, Math.max(0, deadline - performance.now()), null, { only: revokeId });
+    const moved = budgetedMarkerSlice(tx, INLINE_REVOCATION.rows, Math.max(0, deadline - performance.now()), null, { only: revokeId, floor });
     if (!moved || moved === "budget") break;
   }
+}
+/** Tests only (the oracle of the differential witnesses, as REVOKE_COVER): `inline` false leaves a fresh inherit job queued for the runner,
+ * as before 1.0.21; `share` false gives every child its own job. */
+export const INHERIT_CLOSE = { inline: true, share: true };
+/** Rows an inline inherit close may change before it stops; the marker may run one step (MARKER_STEP_RESERVE) past it: 576 in all. */
+const INHERIT_CLOSE_CHANGES = 64;
+/** MEMORY V2 V3: an inherit job this write created is walked at once, in the writer's transaction, by the marker itself (markerSlice with
+ * `only`: the same steps the runner would run later, mark, hold, tidy, and the same tidy that removes its pending rows; no other close).
+ * Bounded by INLINE_REVOCATION (rows read, ms) and 576 changed rows, whatever the minute's ledger holds; what it changed is charged to
+ * the ledger. A walk that does not fit, a queued receipt flip (no revoke advances before it: the runner drains it) or a step that throws
+ * leaves the job queued with its window open, exactly as before; a throw is rolled back to the rows the writer wrote. */
+function closeInherit(tx: DatabaseSync, revokeId: number): boolean {
+  if (!INHERIT_CLOSE.inline || !(INLINE_REVOCATION.ms > 0)) return false;
+  const deadline = performance.now() + INLINE_REVOCATION.ms, start = totalChanges(tx);
+  tx.exec("SAVEPOINT memory_inherit_close");
+  try {
+    for (;;) {
+      const left = INHERIT_CLOSE_CHANGES - (totalChanges(tx) - start);
+      if (left <= 0 || performance.now() >= deadline) break;
+      if (markerSlice(tx, INLINE_REVOCATION.rows, Math.max(0, deadline - performance.now()), null, left, { only: revokeId }) !== true) break;
+    }
+    tx.exec("RELEASE memory_inherit_close");
+  } catch (error) {
+    // Only a marker step that failed inside the savepoint is absorbed (the job stays queued, window open). An error that ended the
+    // writer's WHOLE transaction (disk full, I/O, out of memory, interrupt: SQLite rolls everything back itself) took the child's own
+    // rows, mark and hold with it: it is the writer's to see, as it was when no walk ran here. Swallowing it would let the writer's
+    // next statements commit one by one with no hold behind them.
+    if ((tx as { isTransaction?: boolean }).isTransaction !== true) throw error;
+    try { tx.exec("ROLLBACK TO memory_inherit_close"); tx.exec("RELEASE memory_inherit_close"); } catch { throw error; }
+  } finally { chargeRevokeRows(tx, Math.max(0, totalChanges(tx) - start)); }
+  const state = st(tx, "SELECT state FROM memory_revoke_jobs WHERE revoke_id=?").get(revokeId)?.state;
+  return state === undefined || state === "done";
+}
+/** MEMORY V2 V3b: the inherit job each coalesced parent (revoke -1 or the audience row, per thread) got in the OPEN transaction. An entry
+ * is used only while the WAL index header is the one read when the job was made: any commit, by this or another connection, moves it, so
+ * a matching job row was written by the transaction still open and nothing is folded across transactions (N-8). No WAL, no header: no
+ * entry, one job per child as before. */
+type SharedJob = { job: number; started: number; frames: number; salt: string };
+let sharedJobs = new WeakMap<DatabaseSync, Map<string, SharedJob>>();
+/** The entries also end with the synchronous run that made them: no turn begins (lineage-write.ts openTurnLineage) between two children
+ * unless the writer itself begins it, so the first child's cap stands for the caps the later children would have taken. */
+let sharedRun = false;
+const sameRun = (): void => { if (sharedRun) return; sharedRun = true; queueMicrotask(() => { sharedRun = false; sharedJobs = new WeakMap(); }); };
+const shareKey = (child: InheritChild, R: number, ranges: readonly CarryRange[]): string | null => {
+  const thread = child.kind === "line" || child.kind === "turn" ? child.threadId : child.kind === "session" ? child.session.threadId : ranges.length === 1 ? ranges[0]!.threadId : null;
+  return thread === null ? null : `${R}\u0000${thread}`;
+};
+function sharedJob(tx: DatabaseSync, key: string | null, audience: boolean): number | undefined {
+  if (key === null || !INHERIT_CLOSE.share || (tx as { isTransaction?: boolean }).isTransaction !== true) return undefined;
+  const entry = sharedJobs.get(tx)?.get(key);
+  if (!entry) return undefined;
+  const now = walIndexMark(tx);
+  if (!now || now.mxFrame !== entry.frames || now.salt !== entry.salt) { sharedJobs.get(tx)!.delete(key); return undefined; }
+  const row = st(tx, "SELECT kind,state,started_lsn FROM memory_revoke_jobs WHERE revoke_id=?").get(entry.job);
+  if (!row || row.kind !== "inherit" || Number(row.started_lsn) !== entry.started || (row.state !== "active" && row.state !== "done")) { sharedJobs.get(tx)!.delete(key); return undefined; }
+  // A ROLLBACK moves neither the log header nor this map, and a job id is taken again after one (max+1): the row under the entry's id may
+  // then be another parent's job from the next transaction of the same run. Its marks bind the readers its audience row says, so a job is
+  // shared only when that row is what this parent's own job would have (content readers skip an audience-only revoke: never weaker).
+  if (Boolean(st(tx, "SELECT 1 AS x FROM memory_revoke_audience WHERE revoke_id=?").get(entry.job)) !== audience) { sharedJobs.get(tx)!.delete(key); return undefined; }
+  return entry.job;
+}
+function shareJob(tx: DatabaseSync, key: string | null, job: number, started: number): void {
+  if (key === null || !INHERIT_CLOSE.share || (tx as { isTransaction?: boolean }).isTransaction !== true) return;
+  const now = walIndexMark(tx);
+  if (!now) return;
+  sameRun();
+  let map = sharedJobs.get(tx);
+  if (!map) sharedJobs.set(tx, map = new Map());
+  if (map.size >= 64) map.clear();
+  map.set(key, { job, started, frames: now.mxFrame, salt: now.salt });
 }
 
 /** Undo (unhide, restore): the revoke stops and every mark, pending row and queue row with its id goes, through the `_revoke` indexes, as
@@ -361,7 +515,10 @@ export function undoRevoke(tx: DatabaseSync, revokeId: number): void {
   // a folded id, a fold bulk (also once its job row was pruned or recreated) or a member of a seeding fold: the fold bulk's marks are shared
   // by every root it took over and cannot be withdrawn for one (1.0.3 REVOKE-FOLD-DESIGN F1.7, r4 A2): withholds more, never less
   if (foldRefusesUndo(tx, revokeId)) throw new Error("MEMORY_REVOKE_UNDO_BULK");
-  const held = st(tx, "SELECT state FROM memory_revoke_jobs WHERE revoke_id=?").get(revokeId);
+  const held = st(tx, "SELECT state,phase FROM memory_revoke_jobs WHERE revoke_id=?").get(revokeId);
+  // MEMORY V2 V15 (F4): an undo already under way keeps its cursor and moves no generation (nothing a reader sees changes here; the
+  // first call moved it, and the undo's own steps report what they remove)
+  if (held && held.state === "undoing" && held.phase === "undo") { wakeIfStarted(); return; }
   if (held) st(tx, "UPDATE memory_revoke_jobs SET phase='undo',cursor='',state='undoing' WHERE revoke_id=?").run(revokeId);
   else { const now = currentLsn(tx); st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'undo','{}',?,?,'undo','','undoing')").run(revokeId, now, now); }
   bumpDenyGeneration(tx);
@@ -382,6 +539,8 @@ export type InheritChild =
   | { readonly kind: "session"; readonly session: SessionKey; readonly lsn: number };
 
 type Found = Map<number, boolean>;
+/** Stored lines of a carried run in lsn order (turn: null for an owner or person line); whole = every line asked for was read. */
+interface Span { readonly rows: ReadonlyArray<{ readonly lsn: number; readonly turn: number | null }>; readonly whole: boolean }
 function addRows(out: Found, rows: Array<Record<string, unknown>>, denied: boolean): void {
   for (const row of rows) { const r = Number(row.revoke_id); out.set(r, denied || (out.get(r) ?? false)); }
 }
@@ -390,27 +549,53 @@ function addRows(out: Found, rows: Array<Record<string, unknown>>, denied: boole
 function rangeRevokes(tx: DatabaseSync, range: CarryRange, out: Found): void {
   const T = range.threadId, to = range.to;
   const unknown = to >= UNKNOWN_LSN;
-  addRows(out, (unknown ? st(tx, "SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn<>? LIMIT 64").all(T, FIRST_LSN)
-    : st(tx, "SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn<>? AND lsn BETWEEN ? AND ? LIMIT 64").all(T, FIRST_LSN, range.from, to)) as Array<Record<string, unknown>>, true);
+  // CTXREV H2 A-2: a reply's hide mark (hideReplyLine) is no revoke of the thread. The door withholds the reply from every bot, so no later
+  // turn's line, note or session rests on it; what the hidden reply's own turn saves takes its own mark at its write (hideTurnRecord)
+  addRows(out, (unknown ? st(tx, "SELECT revoke_id FROM memory_deny_point WHERE thread_id=? AND lsn<>? AND reason<>'hide-reply' LIMIT 64").all(T, FIRST_LSN)
+    : st(tx, "SELECT revoke_id FROM memory_deny_point WHERE thread_id=? AND lsn<>? AND lsn BETWEEN ? AND ? AND reason<>'hide-reply' LIMIT 64").all(T, FIRST_LSN, range.from, to)) as Array<Record<string, unknown>>, true);
   // a positional range denies a carried line only when the read rule does (deny-read.ts): the line is after the range's start and its turn
   // began before the range's end. A clean reply written after the forget lies outside it (Astra audit P1 6); the carried run is checked for
   // such a line in one seek per range row. A thread with no number has no lines to look at: any range of it counts (fail closed).
   const no = unknown ? null : threadNo(tx, T);
   const indexed = no !== null && optionalIndexReady(tx, LINEAGE_TURN.name);
+  // MEMAUDIT F4: the carried run's own lines, position first, read ONCE for every range row and every pending window below (it was one
+  // read per row and per window: a stored line cost one read per queued job). At most 257 rows are read whatever the thread holds. A run
+  // of at most 256 lines (a capture's is one) is known whole, so each row and window is then judged in memory by the read rule itself
+  // (deny-read.ts lookupPage), and a long thread cannot overflow it: the turn-first read counted every generated line of the thread
+  // begun before the cap, and past 256 of them it denied or held a line outside every range and window.
+  const position = new Map<number, Span>();
+  const read = (lo: number): Span => {
+    let span = position.get(lo);
+    if (!span) {
+      const rows = st(tx, `SELECT l.lsn,l.turn_lsn FROM memory_line_lineage l
+        WHERE l.thread_no=? AND l.lsn>=? AND l.lsn<=? ORDER BY l.lsn LIMIT 257`).all(no, lo, to)
+        .map(row => ({ lsn: Number(row.lsn), turn: row.turn_lsn === null ? null : Number(row.turn_lsn) }));
+      position.set(lo, span = { rows, whole: rows.length <= 256 });
+    }
+    return span;
+  };
+  /** The run's lines at or after `lo` (never below the run's start): from the one read when it covers them, else a bounded read of its own. */
+  const linesFrom = (lo: number): Span => {
+    const run = read(range.from);
+    if (lo <= range.from) return run;
+    if (run.whole) return { rows: run.rows.filter(line => line.lsn >= lo), whole: true };
+    return lo <= run.rows[0]!.lsn ? run : read(lo);
+  };
   const ranged = (unknown || no === null ? st(tx, "SELECT revoke_id FROM memory_deny_range WHERE thread_id=? LIMIT 256").all(T)
     : st(tx, "SELECT revoke_id,from_lsn,until_turn_lsn FROM memory_deny_range WHERE thread_id=? AND from_lsn<? LIMIT 256").all(T, to).filter(denial => {
       // Bound examined lineage rows BEFORE residual position/turn predicates.
       // An outer denial-row LIMIT does not bound a correlated EXISTS scan.
-      // Overflow conservatively denies; failed pre-listen index builds use the
-      // same bounded position fallback as pending-window inheritance below.
-      if (indexed) {
-        const candidates = st(tx, `SELECT l.lsn FROM memory_line_lineage l INDEXED BY memory_line_lineage_turn
-          WHERE l.thread_no=? AND l.turn_lsn IS NOT NULL AND l.turn_lsn<? LIMIT 257`).all(no, Number(denial.until_turn_lsn));
-        return candidates.length > 256 || candidates.some(line => Number(line.lsn) > Number(denial.from_lsn) && Number(line.lsn) >= range.from && Number(line.lsn) <= to);
-      }
-      const candidates = st(tx, `SELECT l.lsn,l.turn_lsn FROM memory_line_lineage l
-        WHERE l.thread_no=? AND l.lsn>? AND l.lsn>=? AND l.lsn<=? LIMIT 257`).all(no, Number(denial.from_lsn), range.from, to);
-      return candidates.length > 256 || candidates.some(line => line.turn_lsn !== null && Number(line.turn_lsn) < Number(denial.until_turn_lsn));
+      const start = Number(denial.from_lsn), until = Number(denial.until_turn_lsn);
+      const span = linesFrom(start + 1);
+      if (span.rows.some(line => line.turn !== null && line.turn < until)) return true;
+      if (span.whole) return false;
+      // more than 256 lines of the run lie after the range's start and none of the first 257 is denied: the turn-first read decides when
+      // it is whole. When neither read is whole nothing proves the run clean and the child is denied (fail closed, as before). A failed
+      // pre-listen index build has only the position read.
+      if (!indexed) return true;
+      const candidates = st(tx, `SELECT l.lsn FROM memory_line_lineage l INDEXED BY memory_line_lineage_turn
+        WHERE l.thread_no=? AND l.turn_lsn IS NOT NULL AND l.turn_lsn<? LIMIT 257`).all(no, until);
+      return candidates.length > 256 || candidates.some(line => Number(line.lsn) > start && Number(line.lsn) >= range.from && Number(line.lsn) <= to);
     })) as Array<Record<string, unknown>>;
   addRows(out, ranged, true);
   // the deletion's receipt (commitRevoke's thread case: a line row at FIRST_LSN) denies a carried prefix only where no range row does: next
@@ -418,7 +603,7 @@ function rangeRevokes(tx: DatabaseSync, range: CarryRange, out: Found): void {
   // two walks for one late child); with none (owner lines only, which the range test passes over: a prefix, or one quoted owner line at
   // its own lsn) it is the denial (Astra r5, Grok r2). The receipt exists only for a deleted conversation, every line of which is denied,
   // so any carried span of the thread takes it, wherever it starts
-  if (!ranged.length) addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn=? LIMIT 64").all(T, FIRST_LSN) as Array<Record<string, unknown>>, true);
+  if (!ranged.length) addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_point WHERE thread_id=? AND lsn=? LIMIT 64").all(T, FIRST_LSN) as Array<Record<string, unknown>>, true);
   // A human line has no inherited ancestry. A global window of a known line root in another
   // thread cannot reach it. Targeted windows, unknown roots, seeding jobs and missing lineage
   // still hold it; direct deny marks above always bind. Generated parents keep the turn cap.
@@ -434,38 +619,65 @@ function rangeRevokes(tx: DatabaseSync, range: CarryRange, out: Found): void {
     FROM memory_deny_pending p LEFT JOIN memory_revoke_jobs j ON j.revoke_id=p.revoke_id
     WHERE p.thread_id IN (?,?) AND p.since_lsn<=?`).all(T, PENDING_ALL_THREADS, to) as Array<Record<string, unknown>>;
   if (!pending.length) return;
+  // the windows that need the run's lines: every other one holds by its own row (no cap, seeding, a hold written after the commit)
+  const open: Array<{ window: Record<string, unknown>; cap: number; from: number; owners: boolean }> = [];
   for (const window of pending) {
     const cap = Number(window.started_lsn), from = Math.max(Number(window.since_lsn), range.from);
-    let held = window.started_lsn === null || !Number.isFinite(cap) || window.state === "seeding" || Number(window.since_lsn) > cap;
-    if (!held) {
-      let owners = window.thread_id === T || window.kind !== "line";
-      if (!owners) {
-        // Only a proven line root in another thread can exclude owner ancestry.
-        try {
-          const root: unknown = JSON.parse(String(window.root));
-          const thread = root && typeof root === "object" ? (root as { threadId?: unknown }).threadId : undefined;
-          owners = typeof thread !== "string" || !thread || thread === T;
-        } catch { owners = true; }
-      }
-      // Seek by turn before reading positions. Returning at most 257 candidates
-      // keeps actual writer work bounded without temporary SQL rowset scans.
-      // Overflow holds conservatively; no position predicate may precede LIMIT
-      // on the turn index, because it could skip arbitrarily many old turns.
-      if (indexed) {
-        const candidates = st(tx, `SELECT l.lsn FROM memory_line_lineage l INDEXED BY memory_line_lineage_turn
-          WHERE l.thread_no=? AND l.turn_lsn IS NOT NULL AND l.turn_lsn<? LIMIT 257`).all(no, cap);
-        held = candidates.length > 256 || candidates.some(line => Number(line.lsn) >= from && Number(line.lsn) <= to);
-        if (!held && owners) held = Boolean(st(tx, `SELECT 1 FROM memory_line_lineage l INDEXED BY memory_line_lineage_turn
-          WHERE l.thread_no=? AND l.turn_lsn IS NULL AND l.lsn BETWEEN ? AND ? LIMIT 1`).get(no, from, to));
-        if (!held) held = !st(tx, "SELECT 1 FROM memory_line_lineage l WHERE l.thread_no=? AND l.lsn BETWEEN ? AND ? LIMIT 1").get(no, from, to);
-      } else {
-        // A failed pre-listen build never forces a history scan in a turn.
-        const candidates = st(tx, `SELECT l.lsn,l.turn_lsn FROM memory_line_lineage l
-          WHERE l.thread_no=? AND l.lsn BETWEEN ? AND ? LIMIT 257`).all(no, from, to);
-        held = !candidates.length || candidates.length > 256 || candidates.some(line => line.turn_lsn === null ? owners : Number(line.turn_lsn) < cap);
-      }
+    if (window.started_lsn === null || !Number.isFinite(cap) || window.state === "seeding" || Number(window.since_lsn) > cap) { addRows(out, [window], false); continue; }
+    let owners = window.thread_id === T || window.kind !== "line";
+    if (!owners) {
+      // Only a proven line root in another thread can exclude owner ancestry.
+      try {
+        const root: unknown = JSON.parse(String(window.root));
+        const thread = root && typeof root === "object" ? (root as { threadId?: unknown }).threadId : undefined;
+        owners = typeof thread !== "string" || !thread || thread === T;
+      } catch { owners = true; }
     }
-    if (held) addRows(out, [window], false);
+    open.push({ window, cap, from, owners });
+  }
+  if (!open.length) return;
+  /** The read rule on known lines: one at or after the window's since whose turn began before its cap (an owner line: only for a window
+   * that reaches owner ancestry). */
+  const inside = (span: Span, w: { cap: number; from: number; owners: boolean }) => span.rows.some(line => line.lsn >= w.from && (line.turn === null ? w.owners : line.turn < w.cap));
+  const run = read(range.from);
+  if (run.whole) {
+    // the whole run is known (the narrow case): every window is judged from the one read; a window over no stored line of it holds
+    for (const w of open) if (!run.rows.some(line => line.lsn >= w.from) || inside(run, w)) addRows(out, [w.window], false);
+    return;
+  }
+  if (!indexed) {
+    // A failed pre-listen build never forces a history scan in a turn: the bounded position read per distinct start, overflow holds.
+    for (const w of open) { const span = linesFrom(w.from); if (!span.rows.length || !span.whole || inside(span, w)) addRows(out, [w.window], false); }
+    return;
+  }
+  // a run of more than 256 lines: the windows are read aggregated (MEMAUDIT F4). Three reads answer all of them when the generated
+  // lines begun before the latest cap number at most 256; only past that does a window pay a read of its own, as each did before.
+  // Seek by turn before reading positions; no position predicate may precede LIMIT on the turn index, because it could skip
+  // arbitrarily many old turns.
+  const turnFirst = (cap: number): Span => {
+    const rows = st(tx, `SELECT l.lsn,l.turn_lsn FROM memory_line_lineage l INDEXED BY memory_line_lineage_turn
+      WHERE l.thread_no=? AND l.turn_lsn IS NOT NULL AND l.turn_lsn<? LIMIT 257`).all(no, cap).map(row => ({ lsn: Number(row.lsn), turn: Number(row.turn_lsn) }));
+    return { rows, whole: rows.length <= 256 };
+  };
+  // the last stored line of the run, and its last owner line: a window holds over no stored line, or (owner ancestry) over an owner line
+  const last = st(tx, "SELECT l.lsn FROM memory_line_lineage l WHERE l.thread_no=? AND l.lsn>=? AND l.lsn<=? ORDER BY l.lsn DESC LIMIT 1").get(no, range.from, to)?.lsn;
+  const lastOwner = open.some(w => w.owners) ? st(tx, `SELECT l.lsn FROM memory_line_lineage l INDEXED BY memory_line_lineage_turn
+    WHERE l.thread_no=? AND l.turn_lsn IS NULL AND l.lsn>=? AND l.lsn<=? ORDER BY l.lsn DESC LIMIT 1`).get(no, range.from, to)?.lsn : undefined;
+  // (a loop: a spread over a queue of 100,000 windows passes the engine's argument limit)
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const w of open) if (w.cap > latest) latest = w.cap;
+  const all = turnFirst(latest);
+  const byCap = new Map<number, Span>();
+  for (const w of open) {
+    let held = last === undefined || last === null || Number(last) < w.from
+      || (w.owners && lastOwner !== undefined && lastOwner !== null && Number(lastOwner) >= w.from);
+    if (!held) {
+      let span = all;
+      if (!all.whole) { span = byCap.get(w.cap) ?? turnFirst(w.cap); byCap.set(w.cap, span); }
+      // Overflow holds conservatively.
+      held = !span.whole || span.rows.some(line => line.lsn >= w.from && line.lsn <= to && line.turn !== null && line.turn < w.cap);
+    }
+    if (held) addRows(out, [w.window], false);
   }
 }
 /** The revokes that deny or hold one memory or receipt ref. */
@@ -473,7 +685,12 @@ function refRevokes(tx: DatabaseSync, ref: LineageRef, out: Found, edge = false)
   switch (ref.kind) {
     case "memory": {
       const m = ref.ref;
-      addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_memory WHERE kind=? AND id=? AND version IN (0,?)").all(m.kind, m.id, m.version ?? 0) as Array<Record<string, unknown>>, true);
+      addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_object WHERE kind=? AND id=? AND version IN (0,?)").all(m.kind, m.id, m.version ?? 0) as Array<Record<string, unknown>>, true);
+      // 1.0.23 deny rule (deny-rule.ts): the marks the marker no longer writes are the parent's all the same, under the same revoke ids. A
+      // source rests on the line rows and range rows that deny its anchor line; a record version on those of its evidence sources (and
+      // their own rows). An unversioned record ref reads whole-record rows only, as above: the rule's rows are per version.
+      if (m.kind === "source") addRows(out, st(tx, anchorRevokesSql("?1", false)).all(m.id) as Array<Record<string, unknown>>, true);
+      else if (m.kind === "record" && (m.version ?? 0) > 0) addRows(out, st(tx, evidenceRevokesSql("?1", "?2", false)).all(m.id, m.version!) as Array<Record<string, unknown>>, true);
       const created = m.kind === "record" ? recordCreated(tx, m.id, m.version) : 0;
       const bound = created > FIRST_LSN ? created : Number.MAX_SAFE_INTEGER;
       if (edge && m.scopeId !== undefined) {
@@ -513,6 +730,77 @@ function childPending(child: InheritChild): [string, number] | null {
     case "record": return child.ref.scopeId ? [scopeFlowNode(child.ref.scopeId), child.lsn] : null;
   }
 }
+/** The child's mark under revoke R and its node in R's frontier (the writers' inherit, and the late rescan). */
+function markChild(tx: DatabaseSync, R: number, child: InheritChild, node: FrontierNode | null): void {
+  if (child.kind === "turn") { const line = child.line ?? child.holdFrom; if (line !== undefined) writeLine(tx, R, child.threadId, line, "inherit"); }
+  else if (child.kind === "line") writeLine(tx, R, child.threadId, child.lsn, "inherit");
+  if (node) enqueueNode(tx, R, node);
+  else if (child.kind === "record") {
+    writeMemory(tx, R, child.ref.kind, child.ref.id, child.ref.version ?? 0); // a lesson, a claim, a Murage object: the mark is the whole of it
+    if (CONSUMED_REF_KINDS.has(child.ref.kind)) enqueueNode(tx, R, { kind: "object", objectKind: child.ref.kind, id: child.ref.id }); // and its readers
+  }
+}
+interface LateNote { c: InheritChild; f?: number; r: readonly LineageRef[]; g: readonly CarryRange[]; e: boolean }
+/** D3: what a late child's lookup needs, ONE row per write however many revokes hold the child (LATE_REVOKE,
+ * `late:<head lsn>:<count>:<hash>:<json>`, in write order). q1023-leftout (real copy fe46050e8c, 4474 revokes in flight): a row of its own under every revoke that held the child
+ * was one b-tree leaf per revoke in the writer's transaction, 5-23 MiB for each appended line and the same again for the log copy
+ * (78-110 MiB written in a turn minute). Each job reads this one list at its hold step instead (rescanLateChildren, its own cursor). */
+function lateNote(tx: DatabaseSync, child: InheritChild, from: number | undefined, refs: readonly LineageRef[], ranges: readonly CarryRange[], edge: boolean): void {
+  const note: LateNote = { c: child, ...(from !== undefined ? { f: from } : {}), r: refs, g: ranges, e: edge };
+  const text = JSON.stringify(note);
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 32);
+  // write order, never backwards (a job's cursor is a key): the store's lsn head now (a patched line's own lsn is older than notes already
+  // read), then a count under that head; the head outlives the notes, so a key is never reused after they are removed
+  const head = `${LATE_PREFIX}${String(Math.max(0, Number(st(tx, "SELECT next FROM memory_lsn WHERE id=1").get()?.next ?? 0))).padStart(16, "0")}:`;
+  const last = st(tx, "SELECT thread_id FROM memory_revoke_reached WHERE revoke_id=? AND thread_id>=? AND thread_id<? ORDER BY thread_id DESC LIMIT 1").get(LATE_REVOKE, head, `${head.slice(0, -1)};`)?.thread_id;
+  const seq = typeof last === "string" ? Number(last.slice(head.length, head.length + 8)) + 1 : 1;
+  st(tx, "INSERT INTO memory_revoke_reached(revoke_id,thread_id,from_lsn) VALUES(?,?,?)").run(LATE_REVOKE, `${head}${String(seq).padStart(8, "0")}:${hash}:${text}`, child.lsn);
+}
+/** Whether another revoke is still in flight (its walk may yet deny a noted child's parent, so the notes stay for it). */
+const otherRevokeInFlight = (tx: DatabaseSync, R: number): boolean => Boolean(st(tx, "SELECT 1 AS x FROM memory_revoke_jobs WHERE state IN ('active','seeding') AND revoke_id<>? LIMIT 1").get(R));
+/** D3 late-child rescan, run by the background job at its hold step with every mark of its walk written (revoke-marker.ts advance): up to
+ * `limit` noted children past the job's cursor `after` are looked up again exactly as their writer looked (rangeRevokes, refRevokes). One
+ * whose parent R now denies takes its mark and enters R's frontier; the others were rightly shown under R. The notes are shared by every
+ * revoke in flight, so a read removes nothing: the job keeps its place (`after`, the last note read) in its cursor. Returns the rows spent. */
+function rescanLateChildren(tx: DatabaseSync, R: number, limit: number, after: string): { spent: number; after: string } {
+  const rows = st(tx, "SELECT thread_id FROM memory_revoke_reached WHERE revoke_id=? AND thread_id>? AND thread_id>=? AND thread_id<? ORDER BY thread_id LIMIT ?").all(LATE_REVOKE, after, LATE_PREFIX, "late;", Math.max(1, limit));
+  // the last revoke in flight removes each note as it reads it (nobody else will), and its place starts over below
+  const alone = !otherRevokeInFlight(tx, R);
+  let spent = rows.length, wrote = false;
+  for (const row of rows) {
+    const key = String(row.thread_id), body = /^late:(?:\d{16}:\d{8}:)?[0-9a-f]{32}:([\s\S]*)$/.exec(key)?.[1];
+    // a note that cannot be read cannot be judged: the job stays (never skipped silently, as an unreadable frontier node is not)
+    if (body === undefined) throw new Error("MEMORY_REVOKE_LATE_NOTE_MISSING");
+    let note: LateNote;
+    try { note = JSON.parse(body) as LateNote; } catch { throw new Error("MEMORY_REVOKE_LATE_NOTE_UNREADABLE"); }
+    const found: Found = new Map();
+    for (const range of note.g) rangeRevokes(tx, range, found);
+    for (const ref of note.r) refRevokes(tx, ref, found, note.e);
+    spent += note.g.length + note.r.length;
+    let denied = false;
+    for (const [X, d] of found) if (d && (X > 0 ? resolveRevoke(tx, X) : X) === R) { denied = true; break; }
+    if (denied) {
+      const child = note.c;
+      const node: FrontierNode | null = note.f !== undefined && child.kind === "line" ? { kind: "line", threadId: child.threadId, lsn: child.lsn, from: note.f } : childNode(child);
+      markChild(tx, R, child, node);
+      wrote = true;
+    }
+    LATE_RESCAN.judged++;
+    if (alone) st(tx, "DELETE FROM memory_revoke_reached WHERE revoke_id=? AND thread_id=?").run(LATE_REVOKE, key);
+    after = key;
+  }
+  if (alone) {
+    // every note past its place is read: what is left lies at or before it (read by this revoke while others were in flight) and goes, a
+    // page a step. Its place then starts over: a note written after a removal may take a removed note's key again (the count under an lsn
+    // head restarts), and a place kept past that key would remove it unread (Opus self-review of cbd526caf8). A note is never removed
+    // while another revoke is in flight, so no other job's place is ever ahead of a later write.
+    if (rows.length < Math.max(1, limit)) spent += Number(st(tx, "DELETE FROM memory_revoke_reached WHERE revoke_id=?1 AND thread_id IN (SELECT thread_id FROM memory_revoke_reached WHERE revoke_id=?1 AND thread_id>=?3 AND thread_id<=?5 AND thread_id<?4 LIMIT ?2)").run(LATE_REVOKE, Math.max(1, limit), LATE_PREFIX, "late;", after).changes);
+    after = "";
+  }
+  if (wrote) bumpDenyGeneration(tx);
+  return { spent, after };
+}
+setLateRescan(rescanLateChildren);
 /** Inheritance at write, called by the writers in the writer's transaction (DESIGN-WRITETIME 2.3): when a carried parent is denied, the
  * child enters that revoke's frontier (a finished revoke is reopened); when it is denied or pending, the child is held pending, so it reads
  * "checking" until the revoke's last mark. A parent under a coalesced range (revoke -1, no job) makes the child the root of a new revoke.
@@ -554,15 +842,16 @@ export function inheritMarks(tx: DatabaseSync, child: InheritChild, refs: readon
   // lower) or capped the turn's range below the output. The row denies exactly the line (nothing positional, so a member's turn begun
   // between the turn's head and this output is untouched) and reads withheld from here on, whichever marker pops the node and however the
   // job row ends (active, done, pruned). The node and the hold are enqueued as before.
-  const mark = (R: number) => {
-    if (child.kind === "turn") { const line = child.line ?? child.holdFrom; if (line !== undefined) writeLine(tx, R, child.threadId, line, "inherit"); }
-    else if (child.kind === "line") writeLine(tx, R, child.threadId, child.lsn, "inherit");
-    if (node) enqueueNode(tx, R, node);
-    else if (child.kind === "record") {
-      writeMemory(tx, R, child.ref.kind, child.ref.id, child.ref.version ?? 0); // a lesson, a claim, a Murage object: the mark is the whole of it
-      if (CONSUMED_REF_KINDS.has(child.ref.kind)) enqueueNode(tx, R, { kind: "object", objectKind: child.ref.kind, id: child.ref.id }); // and its readers
-    }
-  };
+  // MEMAUDIT F4: deny_generation moves only when this write changed what a reader can see (a mark, a frontier node, a job row, a new or
+  // earlier hold). A carry that found windows and wrote nothing (the child already held, the window's job finished or being undone)
+  // used to bump it all the same, which sent every other turn's send fence off its unchanged path to look the same facts up again.
+  let wrote = false;
+  // V3: the inherit jobs this write made (closed inline below); queued: something is left for the runner
+  const made: number[] = [];
+  let queued = false;
+  const mark = (R: number) => { wrote = true; markChild(tx, R, child, node); };
+  // D3: the child is noted once (lateNote, one row) when an in-flight revoke only holds a parent of it so far
+  let late = false;
   for (const [R, denied] of byDest) {
     // a late edge's child (inheritEdge) under a revoke that has finished (its job row gone or done, or the coalesced audience row) takes the
     // mark at its write and nothing else: a just-written child has no consumers, so there is nothing to walk and nothing to hold. Reopening
@@ -570,27 +859,56 @@ export function inheritMarks(tx: DatabaseSync, child: InheritChild, refs: readon
     // (1.0.3 drain reopen)
     if (edge && denied && child.kind === "record" && R !== -1) {
       const job = R === AUDIENCE_COALESCED ? undefined : st(tx, "SELECT state FROM memory_revoke_jobs WHERE revoke_id=?").get(R);
-      if (R === AUDIENCE_COALESCED || !job || job.state === "done") { writeMemory(tx, R, child.ref.kind, child.ref.id, child.ref.version ?? 0); continue; }
+      if (R === AUDIENCE_COALESCED || !job || job.state === "done") {
+        // (F4: a mark already there changes nothing a reader sees, so the generation stays)
+        const before = totalChanges(tx);
+        writeMemory(tx, R, child.ref.kind, child.ref.id, child.ref.version ?? 0);
+        if (totalChanges(tx) > before) wrote = true;
+        continue;
+      }
     }
     if (R === -1 || R === AUDIENCE_COALESCED) {
-      const fresh = Number(st(tx, "SELECT coalesce(max(revoke_id),0)+1 AS r FROM memory_revoke_jobs").get()!.r);
-      st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'inherit',?,?,?,'mark','','active')").run(fresh, JSON.stringify({ kind: "inherit", cause: "inherit" }), child.lsn, startedLsn());
-      if (R === AUDIENCE_COALESCED) st(tx, "INSERT OR IGNORE INTO memory_revoke_audience(revoke_id) VALUES(?)").run(fresh);
+      // V3b: a child written in the transaction that already made this parent's inherit job joins it (its node, its mark and its hold
+      // under that job, at that job's cap); a job closed inline meanwhile is reopened, as a finished revoke is below
+      const key = shareKey(child, R, ranges);
+      let fresh = sharedJob(tx, key, R === AUDIENCE_COALESCED);
+      if (fresh !== undefined) st(tx, "UPDATE memory_revoke_jobs SET phase='mark',cursor='',state='active' WHERE revoke_id=? AND (state='done' OR phase IN ('hold','tidy'))").run(fresh);
+      else {
+        fresh = Number(st(tx, "SELECT coalesce(max(revoke_id),0)+1 AS r FROM memory_revoke_jobs").get()!.r);
+        st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'inherit',?,?,?,'mark','','active')").run(fresh, JSON.stringify({ kind: "inherit", cause: "inherit" }), child.lsn, startedLsn());
+        if (R === AUDIENCE_COALESCED) st(tx, "INSERT OR IGNORE INTO memory_revoke_audience(revoke_id) VALUES(?)").run(fresh);
+        shareJob(tx, key, fresh, startedLsn());
+      }
       mark(fresh);
       if (hold) markPending(tx, fresh, hold[0], hold[1]);
-      continue;
+      made.push(fresh);
+      continue; // (a job row and its mark: written)
     }
-    const job = st(tx, "SELECT state,phase FROM memory_revoke_jobs WHERE revoke_id=?").get(R);
+    const job = st(tx, "SELECT state,phase,kind FROM memory_revoke_jobs WHERE revoke_id=?").get(R);
     if (job && (job.state === "undoing" || job.state === "undone")) continue;
     if (denied) {
-      if (!job) st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'inherit',?,?,?,'mark','','active')").run(R, JSON.stringify({ kind: "inherit", cause: "inherit" }), child.lsn, startedLsn());
-      else if (job.state === "done" || job.phase === "hold" || job.phase === "tidy") st(tx, "UPDATE memory_revoke_jobs SET phase='mark',cursor='',state='active' WHERE revoke_id=?").run(R);
+      if (!job) { st(tx, "INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(?,'inherit',?,?,?,'mark','','active')").run(R, JSON.stringify({ kind: "inherit", cause: "inherit" }), child.lsn, startedLsn()); made.push(R); }
+      else if (job.state === "done" || job.phase === "hold" || job.phase === "tidy") {
+        st(tx, "UPDATE memory_revoke_jobs SET phase='mark',cursor='',state='active' WHERE revoke_id=?").run(R);
+        // V3: a finished inherit job reopened for this child holds this write's rows only (its frontier, visits and windows went at its
+        // tidy), as one made here does: it closes here too. A job of any other kind, or one still queued, stays the runner's.
+        if (job.state === "done" && job.kind === "inherit") made.push(R);
+      }
       mark(R);
     } else if (!job || job.state === "done") continue; // pending rows of a finished revoke are already gone: nothing holds the parent
-    if (hold) markPending(tx, R, hold[0], hold[1]);
+    // D3: the parent is only held so far (its mark, if the walk finds one, is not written yet): the job looks this child up again at its hold
+    // step, once its marks are in (a job at its hold or tidy with an empty frontier has written them all: nothing to note)
+    else if ((job.state === "active" || job.state === "seeding") && job.phase !== "tidy" && R > 0) {
+      if (!late) { lateNote(tx, child, from, refs, ranges, edge); late = true; }
+    }
+    if (hold && markPending(tx, R, hold[0], hold[1])) wrote = true;
+    if (!made.includes(R)) queued = true;
   }
+  if (!wrote) return;
   bumpDenyGeneration(tx);
-  wakeIfStarted();
+  // V3: each inherit job made here closes now, after every mark and hold of this write is in (the marker's own steps and tidy)
+  for (const R of made) if (!closeInherit(tx, R)) queued = true;
+  if (queued) wakeIfStarted();
 }
 
 /** A late edge's parent: a memory object, or a stored line (a capture's message). */

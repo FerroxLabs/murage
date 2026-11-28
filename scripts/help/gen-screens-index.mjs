@@ -37,11 +37,14 @@ function ids(text) {
 }
 
 const settingsSource = read("src/lib/settings-pages.ts");
-const settingsPages = ids(block(settingsSource, "export const SECTION_PAGES", "settings-pages.ts"));
+// Settings v10 pages with no help screen of their own yet (their help copy is owed in all eight languages): Rules keeps the
+// Bot defaults screen (settings:botDefaults, a retained alias route below); the others open the general Settings help.
+const NO_OWN_HELP_SCREEN = new Set(["overview", "bots", "tools", "rules", "messaging"]);
+const settingsPages = ids(block(settingsSource, "export const SECTION_PAGES", "settings-pages.ts")).filter((page) => !NO_OWN_HELP_SCREEN.has(page));
 // Channels keeps its own help while it is a published alias into Connected apps.
 // Derive that retained route from SECTION_ALIASES; removing the alias must expose its orphan copy.
 const settingsAliases = settingsSource.slice(settingsSource.indexOf("export const SECTION_ALIASES"), settingsSource.indexOf("const PAGE_IDS"));
-const retainedSettingsPages = [...settingsAliases.matchAll(/^  (channels): \{ section:/gm)].map(match => match[1]);
+const retainedSettingsPages = [...settingsAliases.matchAll(/^  (channels|botDefaults): \{ section:/gm)].map(match => match[1]);
 const botSections = ids(block(read("src/components/bot-settings-sections.ts"), "export const BOT_SETTINGS_SECTIONS", "bot-settings-sections.ts"));
 const setupMatch = /SETUP_STEPS = \[([^\]]+)\]/.exec(read("shared/setup.ts"));
 if (!setupMatch) throw new Error("shared/setup.ts: cannot find SETUP_STEPS");

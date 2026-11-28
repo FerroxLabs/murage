@@ -19,8 +19,10 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { ClaudeDriver, claudeMcpStartupEnv, resetClaudeMcpReadinessForTests } from "./claude.ts";
 import { resetClaudeVersionGate } from "./claude-guards.ts";
-import { mountNeverConnectedLine } from "./stop-copy.ts";
-import { MCP_OPTIONAL_WAIT_MS, toolsMayBeLoadingNotice } from "./mcp-readiness.ts";
+import { mountNeverConnectedLine, mountStoppedLine } from "./stop-copy.ts";
+import { REPLY_MEMORY_CHECK_FAILED } from "../../shared/memory-reply-copy.ts";
+import { CliMountRelay } from "./cli-mount-relay.ts";
+import { toolsMayBeLoadingNotice } from "./mcp-readiness.ts";
 import { windowsPerfBudget } from "../testing/windows-hosted.ts";
 import { bindFixtureAdapter } from "../testing/mcp-admission-fixture.ts";
 
@@ -213,10 +215,8 @@ describe("Claude turns wait for their required MCP servers", () => {
     expect(dumped.env).toMatchObject(claudeMcpStartupEnv());
   }, 60_000);
 
-  it("a required connected app that never connects ends the turn within one deadline with a plain notice, and nothing is sent", async () => {
-    // REPLACES "reconnects connected apps that failed, within one deadline, then runs the turn with a plain notice" (ruling 2:
-    // fail closed is accepted because the owner is told). The CLI gives up on the server at its MCP_TIMEOUT: failed. The one
-    // reconnect fails too; the relay seals (the required mount's connection closed) and the process ends before any prompt.
+  it("finishes the reply with one plain notice when connected apps cannot connect within the recovery deadline", async () => {
+    // MAIN 11:08Z permits retiring a tool transport for either audience. The same single reconnect and recovery deadline still apply.
     process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: -1 });
     process.env.FAKE_CLAUDE_MCP_RECONNECT_MS = JSON.stringify({ murage_connectors: -1 });
     process.env.MURAGE_MCP_REQUIRED_WAIT_MS = "1500";
@@ -228,15 +228,14 @@ describe("Claude turns wait for their required MCP servers", () => {
     try {
       const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-never-apps", text: "Founders sweep", integrations: { composio } });
       const done = await completed(turnId);
-      expect(done).toMatchObject({ ok: false });
-      // The owner reads why, in plain words: the notice event, not an exit code.
-      const errors = recorder.events.filter((e) => e.turnId === turnId && e.type === "runtime.error") as Array<Extract<RuntimeEvent, { type: "runtime.error" }>>;
-      expect(errors.map((e) => e.message)).toEqual([mountNeverConnectedLine("Claude")]);
-      expect(errors[0]!.message).toBe("Claude stopped because a connected app this bot needs did not connect. Nothing was sent. Send your message again in a moment.");
-      expect(errors[0]!.message).not.toMatch(/exit code|composio|\bsafe/i);
-      // Nothing reached the engine: no prompt, and the close is the relay's seal.
-      expect(existsSync(dump)).toBe(false);
-      await vi.waitFor(() => expect(logged.some((l) => l.includes("claude close thread=t-never-apps reason=mount-relay-sealed"))).toBe(true));
+      expect(done).toMatchObject({ ok: true });
+      expect(recorder.events.filter(e => e.turnId === turnId && e.type === "runtime.error")).toEqual([]);
+      expect(recorder.events.filter(e => e.turnId === turnId && e.type === "item.started" && e.itemType === "tool" && e.toolKind === "notice"))
+        .toEqual([expect.objectContaining({ title: "Murage couldn't use the connected apps for this reply." })]);
+      const dumped = seen();
+      expect(dumped.prompt.message.content).toContain("Founders sweep");
+      expect(dumped.mcpAtPrompt.murage_connectors).toBe("failed");
+      expect(logged).toContainEqual(expect.stringMatching(/^claude mcp gate thread=t-never-apps .* reconnected=murage_connectors /));
     } finally { spy.mockRestore(); }
     const reconnects = controls().filter((c) => c.request.subtype === "mcp_reconnect");
     expect(reconnects.map((c) => c.request.serverName)).toEqual(["murage_connectors"]);
@@ -244,18 +243,126 @@ describe("Claude turns wait for their required MCP servers", () => {
     expect(Date.now() - started).toBeLessThan(3_000 + 6_000);
   }, 60_000);
 
-  it("does not hold a turn past the short budget for a slow optional server", async () => {
+  // 1.0.20 item 5 (owner's card, 11-19): a relay that the memory fence sealed (no app failed) read "a connected app this bot needs
+  // did not connect". The real relay is sealed the way the fence seals it, right after the CLI starts and before any prompt.
+  const sealAtAttach = (sealArgs: () => [unknown?, unknown?]) => {
+    const attach = CliMountRelay.prototype.attach;
+    return vi.spyOn(CliMountRelay.prototype, "attach").mockImplementationOnce(function (this: CliMountRelay, ...args: Parameters<typeof attach>) {
+      attach.apply(this, args); this.seal(...sealArgs());
+    });
+  };
+  const errorsOf = (turnId: string) => recorder.events.filter((e) => e.turnId === turnId && e.type === "runtime.error") as Array<Extract<RuntimeEvent, { type: "runtime.error" }> & { details?: string }>;
+  it("a terminal native mount failure still includes the cause code in Technical details", async () => {
+    const error = Object.assign(new Error("closed"), { code: "MCP_TRANSPORT_CLOSED" });
+    const spy = sealAtAttach(() => [error]);
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-native-mount-failed", text: "Founders sweep", integrations: { composio } });
+      expect(await completed(turnId)).toMatchObject({ ok: false });
+      const errors = errorsOf(turnId);
+      expect(errors.map(e => e.message)).toEqual([mountNeverConnectedLine("Claude")]);
+      expect(errors[0]!.details).toBe(`${mountNeverConnectedLine("Claude")}\nCause code: MCP_TRANSPORT_CLOSED`);
+      expect(existsSync(dump)).toBe(false);
+    } finally { spy.mockRestore(); }
+  }, 60_000);
+  it("a relay sealed by the memory fence says memory, never a connected app, and Technical details carries the fence code", async () => {
+    const refusal = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: { state: "checking", reason: "not-built" } });
+    const spy = sealAtAttach(() => [undefined, refusal]);
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence-apps", text: "Founders sweep", integrations: { composio } });
+      expect(await completed(turnId)).toMatchObject({ ok: false });
+      const errors = errorsOf(turnId);
+      expect(errors.map((e) => e.message)).toEqual(["Claude stopped because this conversation's memory was not ready yet, so Murage held your message back. Nothing was sent. Send your message again in a moment."]);
+      expect(errors[0]!.message).not.toMatch(/connected app|did not connect/i);
+      expect(errors[0]!.details).toBe(`${errors[0]!.message}\nCause code: memory-fence:not-built`);
+      expect(existsSync(dump)).toBe(false);
+    } finally { spy.mockRestore(); }
+  }, 60_000);
+  // Row 66 W1a: only an owner's foreground turn gets the compact memory-check line (and the chat's Retry); a background turn and a
+  // non-owner audience keep the train line. Same real relay seal as above, driven through the real driver dispatch.
+  const fenceTrainLine = mountStoppedLine("Claude", { kind: "memory", code: "memory-fence:not-built" });
+  for (const [name, extra, expected] of [
+    ["owner foreground", { warmIdentity: { botId: "fixture-bot", audience: "owner" } }, REPLY_MEMORY_CHECK_FAILED],
+    ["owner background", { warmIdentity: { botId: "fixture-bot", audience: "owner" }, background: true }, fenceTrainLine],
+    ["non-owner audience", { warmIdentity: { botId: "fixture-bot", audience: "non-owner" } }, fenceTrainLine],
+  ] as const) it(`a fence-sealed relay on an ${name} turn ends with ${expected === REPLY_MEMORY_CHECK_FAILED ? "the compact memory-check line" : "the train memory line"}`, async () => {
+    const refusal = Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: { state: "checking", reason: "not-built" } });
+    const spy = sealAtAttach(() => [undefined, refusal]);
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-fence-${name.replace(/ /g, "-")}`, text: "Founders sweep", integrations: { composio }, ...extra } as Parameters<typeof instance.adapter.sendTurn>[0]);
+      expect(await completed(turnId)).toMatchObject({ ok: false });
+      const errors = errorsOf(turnId);
+      expect(errors.map((e) => e.message)).toEqual([expected]);
+      expect(errors[0]!.details).toBe(`${expected}\nCause code: memory-fence:not-built`);
+      expect(existsSync(dump)).toBe(false);
+    } finally { spy.mockRestore(); }
+  }, 60_000);
+  it("a bare relay seal with no app failure never blames a connected app", async () => {
+    const spy = sealAtAttach(() => []);
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bare-seal", text: "Founders sweep", integrations: { composio } });
+      expect(await completed(turnId)).toMatchObject({ ok: false });
+      const errors = errorsOf(turnId);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.message).not.toMatch(/connected app|did not connect/i);
+      expect(errors[0]!.details).toMatch(/\nCause code: mount-relay-sealed$/);
+      expect(existsSync(dump)).toBe(false);
+    } finally { spy.mockRestore(); }
+  }, 60_000);
+
+  // 1.0.24 warmmcprace (FRICTION-1025 P7 / F38: tools that are not ready never hold the reply; a missing one is named once).
+  // REPLACES "does not hold a turn past the short budget for a slow optional server", which allowed a 3 s hold (MCP_OPTIONAL_WAIT_MS
+  // + 1.5 s) and asserted that the bot was told nothing. The optional wait and its env knob are deleted, so the bound is now the
+  // required server's own start (200 ms here) and the bot hears once which tools were still loading.
+  /** The one line the bot gets for optional tools still connecting (toolsStillLoadingNotice), spelled out so this file runs unchanged on the base sha. */
+  const LOADING_LINE = "[Murage: the tools for browser were still loading when this turn started.";
+  /** Far below the 3 s the deleted wait held every such turn, with room for a busy box. */
+  const NOT_HELD_MS = 2_000;
+  const optionalRows: Array<{ row: string; env?: string; readyMs: Record<string, number> }> = [
+    { row: "a slow optional server next to a required one", readyMs: { murage_connectors: 200, browser: 20_000 } },
+    { row: "an optional server that never connects", readyMs: { murage_connectors: 200, browser: -1 } },
+    { row: "the old MURAGE_MCP_OPTIONAL_WAIT_MS knob set to 4 s (no longer read)", env: "4000", readyMs: { murage_connectors: 200, browser: 20_000 } },
+  ];
+  it.each(optionalRows)("W-NOHOLD: the prompt is not held for an optional server still connecting: $row", async ({ env, readyMs }) => {
+    if (env) process.env.MURAGE_MCP_OPTIONAL_WAIT_MS = env;
+    process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify(readyMs);
+    // Its own driver, without this suite's FAKE_CLAUDE_MCP_BASELINE_MS (the scripted CLI then plays a first prompt no sooner than
+    // 2 s after its servers start, which would hide the hold): promptAtMs is when the driver's prompt reached the CLI.
+    const cold = await ClaudeDriver.create({ instanceId: "claude-mcp-nohold", displayName: "Claude", environment: {}, enabled: true, config: { cli: FAKE_CLI, permissionMode: "bypassPermissions" } });
+    bindFixtureAdapter(cold.adapter);
+    const events = recordEvents(cold.adapter);
+    try {
+      const { turnId } = await cold.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slow-browser", text: "hi", integrations: { composio, browser } });
+      const done = await events.until((e) => e.type === "turn.completed" && e.turnId === turnId, 60_000) as Extract<RuntimeEvent, { type: "turn.completed" }>;
+      expect(done).toMatchObject({ ok: true });
+      expect(done.toolsUnavailable).toBeUndefined();
+      const dumped = seen();
+      expect(dumped.mcpAtPrompt).toMatchObject({ murage_connectors: "connected", browser: "pending" });
+      expect(dumped.promptAtMs).toBeLessThan(NOT_HELD_MS);
+      expect(controls().some((c) => c.request.subtype === "mcp_reconnect")).toBe(false);
+    } finally {
+      events.stop();
+      await cold.dispose();
+    }
+  }, 60_000);
+
+  it("W-NAMED: an optional server still connecting when the prompt goes out is named to the bot exactly once, in front of the user's text", async () => {
     process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: 200, browser: 20_000 });
-    const started = Date.now();
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slow-browser", text: "hi", integrations: { composio, browser } });
-    const done = await completed(turnId);
-    expect(done).toMatchObject({ ok: true });
-    expect(done.toolsUnavailable).toBeUndefined();
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-named-browser", text: "open the page", integrations: { composio, browser } });
+    expect(await completed(turnId)).toMatchObject({ ok: true });
     const dumped = seen();
     expect(dumped.mcpAtPrompt).toMatchObject({ murage_connectors: "connected", browser: "pending" });
-    expect(dumped.promptAtMs).toBeLessThan(MCP_OPTIONAL_WAIT_MS + 1_500);
-    expect(Date.now() - started).toBeLessThan(MCP_OPTIONAL_WAIT_MS + 6_000);
-    expect(controls().some((c) => c.request.subtype === "mcp_reconnect")).toBe(false);
+    const prompt = dumped.prompt.message.content;
+    expect(prompt.split(LOADING_LINE).length - 1).toBe(1);
+    expect(prompt.indexOf(LOADING_LINE)).toBeLessThan(prompt.indexOf("open the page"));
+    expect(prompt.split("[Murage:").length - 1).toBe(1);
+  }, 60_000);
+
+  it("W-QUIET: optional servers that are connected when the prompt goes out add no line", async () => {
+    process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: 200, browser: 0 });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-quiet-browser", text: "hi", integrations: { composio, browser } });
+    expect(await completed(turnId)).toMatchObject({ ok: true });
+    const dumped = seen();
+    expect(dumped.mcpAtPrompt).toMatchObject({ murage_connectors: "connected", browser: "connected" });
     expect(dumped.prompt.message.content).not.toContain("[Murage:");
   }, 60_000);
 

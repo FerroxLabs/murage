@@ -30,6 +30,10 @@ import { reuseStats } from "./reuse-stats.ts";
 import { TurnSubmissionBoundary } from "../turn-dispatch-guard.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
 import { HOOK_CONTROL_FRAMES, hookSocketPath } from "./codex-hook.ts";
+import { setWarmS2rSource, warmS2rOn } from "./warm-s2r-flag.ts";
+import { HELD_RELAY_PID, holdBotRelay } from "../testing/held-relay-fixture.ts";
+import { decorateOwnerTurnInstance, setOwnerTurnResolver } from "../harness/power-owner-adapter.ts";
+import { assertRelayAvailable } from "./cli-mount-relay.ts";
 
 // The process probe, replaceable per test: `probe.override` answers instead of `ps`.
 const probe = vi.hoisted(() => ({ override: null as null | ((pid: number) => Promise<Set<number> | null>) }));
@@ -49,6 +53,8 @@ vi.mock("./process-tree.ts", async (original) => {
 const hooks = vi.hoisted(() => ({ stuck: false, failClear: false, clears: 0,
   stores: [] as Array<{ path: string; mode: number; dirMode: number; isFile: boolean; writes: Array<Record<string, Record<string, string>>> }>,
   keyParts: [] as unknown[], hang: null as null | Promise<boolean>, releaseStops: async () => {} }));
+// q1024-steerquar: the held relay's stand-in engine and mount children (testing/held-relay-fixture.ts HELD_RELAY_PID; a literal, as a mock factory may not import procs' importers).
+const heldRelayPid = vi.hoisted(() => 2_000_000_017);
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
   const held = new Set<Parameters<typeof actual.killCliTree>[0]>();
@@ -63,10 +69,12 @@ vi.mock("../procs.ts", async (original) => {
     ...actual,
     // a process that ignores the kill: nothing is signalled and it never reports stopped
     killCliTree: (...args: Parameters<typeof actual.killCliTree>) => {
+      if (args[0].pid === heldRelayPid) return;
       if (hooks.stuck) held.add(args[0]); else actual.killCliTree(...args);
     },
     // a close still in flight: the answer comes when the test says so
-    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (hooks.hang ? hooks.hang : hooks.stuck ? Promise.resolve(false) : actual.awaitCliTreeStopped(...args)),
+    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => (args[0].pid === heldRelayPid ? Promise.resolve(false) : hooks.hang ? hooks.hang : hooks.stuck ? Promise.resolve(false) : actual.awaitCliTreeStopped(...args)),
+    cliTreeStoppedSignal: (...args: Parameters<typeof actual.cliTreeStoppedSignal>) => (args[0].pid === heldRelayPid ? new Promise<true>(() => {}) : actual.cliTreeStoppedSignal(...args)),
   };
 });
 vi.mock("./turn-credentials.ts", async (original) => {
@@ -115,7 +123,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     catalogSpawns = allSpawns().length;
   };
   const agents = (token: string, bot = "b1") => ({
-    agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: bot, MURAGE_COMMS_TOKEN: token, MURAGE_TURN_DEPTH: "0" } },
+    agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: bot, MURAGE_COMMS_TOKEN: token } },
   });
   let botNamespace = "";
   const identity = (botId = "b1", audience: "owner" | "non-owner" = "owner") => ({ botId: `${botNamespace}:${botId}`, audience });
@@ -206,6 +214,68 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await removeTempDir(scratch);
   });
 
+  // MAIN-RULING warm-active-only through the real send path (OPUS 38cebb4cde High): an owner turn wakes its own bot and maps
+  // its thread on the shared warm pool; a non-owner (channel audience) turn wakes no bot and marks its thread non-owner.
+  it("W-DRV-X: an owner turn wakes its bot on the warm pool and maps its thread; a non-owner turn wakes none", async () => {
+    await create();
+    await run("t-drv-owner", "one", base);
+    expect(warmPool.activityFor("t-drv-owner")).toEqual({ bot: base.warmIdentity.botId, active: true, nonOwner: false }); // W-DRV-X:owner
+    await run("t-drv-guest", "one", { ...base, warmIdentity: identity("b-guest", "non-owner") });
+    expect(warmPool.activityFor("t-drv-guest")).toEqual({ bot: undefined, active: false, nonOwner: true }); // W-DRV-X:non-owner
+  });
+
+  // q1024-steerquar (Codex driver path, OPUS 583d64b809 H3 + H2): through the registry's owner decorator, the owner's mounted send
+  // runs past a held bot relay, and its relay starts no second copy of the integration whose held mount child is unconfirmed; an
+  // integration the held relay did not have starts, and a guest send and the held relay stay fenced.
+  it("q1024-steerquar Codex: the owner's mounted send passes a held relay without a second copy of its unconfirmed integration", async () => {
+    expect(HELD_RELAY_PID, "fixture: the mocked pid is the held engine").toBe(heldRelayPid);
+    await create();
+    const marks = join(scratch, "marks"); mkdirSync(marks);
+    const integration = (name: string) => ({ command: process.execPath, args: ["-e", "require('fs').appendFileSync(process.argv[1], 'started\\n'); process.stdin.resume()", join(marks, name)], env: {} });
+    const starts = (name: string) => existsSync(join(marks, name)) ? readFileSync(join(marks, name), "utf8").split("\n").filter(Boolean).length : 0;
+    const held = await holdBotRelay(base.warmIdentity.botId, { notes: integration("notes-held") });
+    setOwnerTurnResolver(threadId => threadId.startsWith("owner-"));
+    try {
+      const adapter = decorateOwnerTurnInstance(instance).adapter;
+      const integrations = { custom: { notes: integration("notes"), calendar: integration("calendar") } };
+      const guest = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "guest-quar", text: "one", integrations, warmIdentity: identity("b1", "non-owner") })
+        .then(() => "sent", (error: unknown) => String(error));
+      expect(guest, "a guest send to the held bot is still refused").toContain("MOUNT_RELAY_STOP_UNCONFIRMED");
+      const owner = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "owner-quar", text: "one", integrations, warmIdentity: base.warmIdentity })
+        .then(({ turnId }) => turnId, (error: unknown) => `refused: ${String(error)}`);
+      expect(owner, "the owner's send is never refused by the held relay").not.toMatch(/^refused:/);
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === owner, 20_000), "the owner's turn runs to its reply").toMatchObject({ threadId: "owner-quar", ok: true });
+      expect(starts("calendar"), "an integration the held relay did not have starts for the owner").toBe(1);
+      expect(starts("notes"), "no second copy of the integration whose held child is unconfirmed").toBe(0);
+      expect(() => assertRelayAvailable(held), "the held relay stays quarantined").toThrow("MOUNT_RELAY_STOP_UNCONFIRMED");
+    } finally { setOwnerTurnResolver(() => false); }
+  }, 40_000);
+
+  // q1024-steerquar (ASTRA 0faec876bb High, cli-mount-relay.ts #skipHeldMount): a bot switched from Antigravity to Codex. The held relay
+  // ran each integration under Antigravity's key (murage-computer, murage-agents, murage-custom-<name>); Codex mounts the same process
+  // as computer, agents, <name>, with this turn's own env. The owner's send gets no second copy of the held one; one key per row, the
+  // other two start.
+  it.each([["murage-computer", "computer"], ["murage-agents", "agents"], ["murage-custom-notes", "notes"]])("q1024-steerquar Codex after Antigravity: no second copy of a held %s child as %s", async (heldKey, codexName) => {
+    expect(HELD_RELAY_PID, "fixture: the mocked pid is the held engine").toBe(heldRelayPid);
+    await create();
+    const marks = join(scratch, "marks"); mkdirSync(marks);
+    const integration = (name: string) => ({ command: process.execPath, args: ["-e", "require('fs').appendFileSync(process.argv[1], 'started\\n'); process.stdin.resume()", join(marks, name)], env: {} });
+    const starts = (name: string) => existsSync(join(marks, name)) ? readFileSync(join(marks, name), "utf8").split("\n").filter(Boolean).length : 0;
+    const held = await holdBotRelay(base.warmIdentity.botId, { [heldKey]: { ...integration(codexName), env: { FIXTURE_TURN_TOKEN: "earlier-turn" } } });
+    setOwnerTurnResolver(threadId => threadId.startsWith("owner-"));
+    try {
+      const adapter = decorateOwnerTurnInstance(instance).adapter;
+      const integrations = { localComputer: integration("computer"), agents: integration("agents"), custom: { notes: integration("notes") } };
+      const owner = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "owner-switch", text: "one", integrations, warmIdentity: base.warmIdentity })
+        .then(({ turnId }) => turnId, (error: unknown) => `refused: ${String(error)}`);
+      expect(owner, "the owner's send is never refused by the held relay").not.toMatch(/^refused:/);
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === owner, 20_000), "the owner's turn runs to its reply").toMatchObject({ threadId: "owner-switch", ok: true });
+      expect(["computer", "agents", "notes"].filter(name => name !== codexName).map(starts), "the integrations the held relay did not have start for the owner").toEqual([1, 1]);
+      expect(starts(codexName), "no second copy of the integration whose held Antigravity child is unconfirmed").toBe(0);
+      expect(() => assertRelayAvailable(held), "the held relay stays quarantined").toThrow("MOUNT_RELAY_STOP_UNCONFIRMED");
+    } finally { setOwnerTurnResolver(() => false); }
+  }, 40_000);
+
   it("a second mounted turn starts a fresh app-server and resumes the conversation", async () => {
     pinQuietProbe();
     await create();
@@ -224,6 +294,24 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     expect(methods.filter((m) => m === "turn/start")).toHaveLength(1);
     expect(closes()).toEqual(["codex close thread=t-hot reason=mounted-single-use", "codex close thread=t-hot reason=mounted-single-use"]);
     expect(recorder.events.filter((e) => e.type === "turn.completed" && (e as any).ok === true)).toHaveLength(2);
+  });
+
+  // WARM W1 r3.5 W-FLAG (Codex part) [R3.1-2]: the flag reads OFF with no setting written, and in this build `warm.s2r` ON keeps every
+  // mounted Codex turn single use too (fail closed: the CODEX-REUSE short design has no Fable AGREE yet, warm1022-codex QUESTIONS.md).
+  it.each([false, true])("W-FLAG warm.s2r=%s: mounted Codex turns 2+ spawn fresh (mounted-single-use) and resume", async (flag) => {
+    expect(warmS2rOn()).toBe(false);
+    if (flag) setWarmS2rSource(() => ({ warmS2r: true }));
+    try {
+      expect(warmS2rOn()).toBe(flag);
+      pinQuietProbe();
+      await create();
+      const first = await run("t-flag", "one", base);
+      const second = await run("t-flag", "two", { ...base, integrations: agents("tok-2") });
+      const third = await run("t-flag", "three", { ...base, integrations: agents("tok-3") });
+      expect(new Set([first.pid, second.pid, third.pid]).size).toBe(3);
+      expect(closes()).toEqual(Array(3).fill("codex close thread=t-flag reason=mounted-single-use"));
+      expect((third.seen.calls as Array<{ method: string }>).filter((c) => c.method === "thread/resume")).toHaveLength(1);
+    } finally { setWarmS2rSource(() => undefined); }
   });
 
   it("memory r3: a submission fence that refuses during adapter setup sends no turn/start, cold or on the reused app-server", async () => {
@@ -806,7 +894,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     });
 
     it("8. binds a Windows credential path so its backslashes survive in the generated config", () => {
-      const winPath = "C:\\Users\\sean\\AppData\\Local\\Temp\\murage-cred-ab12\\cred.json";
+      const winPath = "C:\\Users\\exampleuser\\AppData\\Local\\Temp\\murage-cred-ab12\\cred.json";
       const arg = `mcp_servers.agents.env.MURAGE_CRED_FILE=${JSON.stringify(CRED_FILE_PLACEHOLDER)}`;
       const [bound] = bindCredentialPathInArgs([arg], winPath);
       const value = bound!.slice(bound!.indexOf("=") + 1);
@@ -856,7 +944,8 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       const methods = readFileSync(callLog, "utf8").split("\n").filter((l) => l.startsWith(`${secondPid} `)).map((l) => l.split(" ")[1]);
       expect(methods).toContain("thread/resume");
       expect(methods.filter((m) => m === "thread/start" || m === "thread/compact/start" || m === "turn/start")).toEqual([]);
-      expect(recorder.events.filter((e) => e.type === "runtime.error").map((e: any) => e.message)).toEqual(["The model for this conversation changed. Send a message first, then run /compact again."]);
+      // resume_model_changed is presented by the server as a localized send notice.
+      expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
       expect(sessions.get("t-f16")).toBe("codex-thread-1");
     });
 
@@ -1091,7 +1180,7 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
   let catalogSpawns = 0;
   const sessions = new Map<string, string>();
   const base = {
-    integrations: { agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok-1", MURAGE_TURN_DEPTH: "0" } } },
+    integrations: { agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_BOT_ID: "b1", MURAGE_COMMS_TOKEN: "tok-1" } } },
     warmIdentity: { botId: "b1", audience: "owner" as const },
   } satisfies Partial<SendTurnInput>;
   const spawns = () => readFileSync(spawnLog, "utf8").split("\n").filter(Boolean).slice(catalogSpawns);
@@ -1291,7 +1380,10 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     await warming;
   });
 
-  it("unmounted: a takeover that cannot end the prewarm fails the send clearly within its bound, never already running", async () => {
+  // Changed with presence P-FENCE 2 (MAIN-RULING presence-held 2026-11-22T21:52Z, "an owner send never fails behind a prewarm"): this cell
+  // used to expect the send to FAIL with TAKEOVER_FAILED_MESSAGE when the prewarm would not stop. The send now detaches the hung prewarm
+  // and dispatches cold at once; the same setup (a prewarm whose process ignores the kill) is kept.
+  it("unmounted: a prewarm that cannot be ended never fails the send: it is detached and the send dispatches cold within its bound, never already running", async () => {
     await create();
     await goColdUnmounted("t-pw-stuck");
     process.env.FAKE_CODEX_RESUME_GATE = join(scratch, "never-opens");
@@ -1301,19 +1393,24 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     await eventually(() => spawns().length === 2);
     hooks.stuck = true;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let sent: { turnId: string } | null = null;
     try {
       const t0 = Date.now();
-      const error = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pw-stuck", text: "two", ...unmounted }).then(() => null, (e: Error) => e);
-      expect(error?.message).toMatch(/did not stop in time/);
-      expect(error?.message).not.toMatch(/already running/);
+      const before = dispatches().filter((l) => l.startsWith("codex dispatch thread=t-pw-stuck ")).length;
+      const result = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pw-stuck", text: "two", ...unmounted }).then((r) => ({ r, error: null }), (e: Error) => ({ r: null, error: e }));
+      expect(result.error?.message ?? null).toBeNull();
+      sent = result.r;
+      await eventually(() => dispatches().filter((l) => l.startsWith("codex dispatch thread=t-pw-stuck ")).length === before + 1);
       expect(Date.now() - t0).toBeLessThan(3_000);
-      expect(warn.mock.calls.some(([l]) => String(l).startsWith("codex prewarm takeover thread=t-pw-stuck failed=true"))).toBe(true);
+      expect(lines.some((l) => l === "codex prewarm detach thread=t-pw-stuck reason=hung")).toBe(true);
+      expect(warn.mock.calls.some(([l]) => String(l).startsWith("codex prewarm takeover thread=t-pw-stuck failed=true"))).toBe(false);
     } finally {
       warn.mockRestore();
       hooks.stuck = false;
       writeFileSync(process.env.FAKE_CODEX_RESUME_GATE!, "open");
       delete process.env.MURAGE_PREWARM_TAKEOVER_MS;
     }
+    if (sent) await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent!.turnId);
     await warming;
   });
 

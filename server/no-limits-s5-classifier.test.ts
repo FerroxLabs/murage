@@ -28,7 +28,8 @@ for (const [id, command] of [
   const context = { commandCwd: id === 'A4' ? fixture() : '/w', commandText: command,
     fullAccessOrigin: 'owner' as const, ownerStarted: true, outsideRead: null };
   expect(noLimitsProtectedWrite(command, context)).toMatchObject({ rule: 'protected-path' });
-  expect(autoVerdict({ autoApprove: true, fullAccess: true }, 'Bash', command, context).approve).toBeNull();
+  // OVERREACH #6: the owner's own Full access turn runs a protected-path write, as No limits does
+  expect(autoVerdict({ autoApprove: true, fullAccess: true }, 'Bash', command, context).approve).toBeTruthy();
 });
 for (const command of [
   'tar -xf /tmp/a.tar -C "$dest"', 'unzip /tmp/a.zip -d "$dest"',

@@ -49,6 +49,8 @@ export class TelegramService {
   private nextRetryAt: number | null = null;
   private receiverConflict = false;
   private tokenRejected = false;
+  /** CHIEF-TRANSFER D4: set by quiesce(); while set the Chief-change pause (revalidateTarget) is a no-op. */
+  private moving = false;
   private readonly options: TelegramServiceOptions;
   constructor(options: TelegramServiceOptions) { this.options = options; }
   /** The paired owner's chat and account (server/stop-line.ts). */
@@ -184,9 +186,15 @@ export class TelegramService {
     return this.resume(token, targetBotId);
   }
   /** A roster change removes authority immediately and never chooses a replacement. */
-  async revalidateTarget() {
+  async revalidateTarget(force = false) {
+    if (this.moving) return;
+    // Boot recovery pauses before resume() has loaded the connection.
+    if (force) {
+      this.connection = this.readConnection();
+      this.identity = this.connection?.botIdentityId;
+    }
     const target = this.verifyingTarget ?? (this.connection?.enabled ? this.connection.targetBotId : undefined);
-    if (!target || this.options.isCurrentTarget?.(target) !== false || this.connection?.paused) return;
+    if (!target || (!force && this.options.isCurrentTarget?.(target) !== false) || this.connection?.paused) return;
     this.stop(); this.verifyingTarget = undefined;
     this.resumeState = "blocked";
     this.resumeMessage = "The paired Chief changed or is unavailable. Revoke this connection, then pair the current workspace Chief.";
@@ -242,5 +250,21 @@ export class TelegramService {
     if (this.identity) await this.options.revokeRuns(this.identity);
     if (failed) { this.resumeState = "blocked"; this.resumeMessage = "Telegram stopped, but its saved connection could not be fully revoked. Restore access to the saved data and try Revoke again."; throw new Error(this.resumeMessage); }
   }
+  /** CHIEF-TRANSFER D4: the synchronous prefix of stop(): no file write, no revoke; the Chief-change pause is held off until endMove(). */
+  quiesce() { this.moving = true; this.stop(); }
+  endMove() { this.moving = false; }
+  /** Today's Chief-changed pause (the same writes the store listener makes), by name. */
+  pause() { return this.revalidateTarget(true); }
+  /** CHIEF-TRANSFER: rewrite the connection file AND the channel state file to `to` (paused:false). Runtime untouched; stop() first. */
+  retarget(to: string) {
+    const connection = this.readConnection();
+    if (!connection?.enabled) throw new Error("Telegram connection is not enabled");
+    if (!TelegramChannel.retargetFile(join(this.options.dataDir, "telegram", connection.botIdentityId + ".json"), to)) throw new Error("Telegram channel state is unavailable");
+    this.saveConnection({ version: 1, botIdentityId: connection.botIdentityId, targetBotId: to, enabled: true });
+  }
+  savedTarget(): string | null { try { return this.readConnection()?.targetBotId ?? null; } catch { return null; } }
+  savedPaused(): boolean { try { const c = this.readConnection(); return !c?.enabled || c.paused === true; } catch { return true; } }
+  /** The bot token's identity and the connection id the runs are keyed by. */
+  connectionId(): string | undefined { return this.identity ?? (() => { try { return this.readConnection()?.botIdentityId; } catch { return undefined; } })(); }
   stop() { ++this.generation; this.receiverConflict = false; this.tokenRejected = false; this.connecting = false; this.controller?.abort(); if (this.timer) clearTimeout(this.timer); this.channel?.stop(); this.resumeState = "idle"; this.nextRetryAt = null; }
 }

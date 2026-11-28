@@ -150,7 +150,7 @@ export function presenceMain(config, logic) {
       ':host{all:initial}' +
       '*{box-sizing:border-box;font-family:Inter,-apple-system,"Segoe UI",system-ui,sans-serif}' +
       '.layer{position:absolute;inset:0;pointer-events:none}' +
-      '.frame{position:absolute;inset:6px;border:2px solid ' + T.accent + ';box-shadow:0 0 0 1px ' + K + ',inset 0 0 0 1px ' + K + '}' +
+      '.frame{position:absolute;inset:6px;border:2px solid ' + T.frame + ';box-shadow:0 0 0 1px ' + K + ',inset 0 0 0 1px ' + K + '}' +
       '.frame.full{border-color:' + T.warning + '}' +
       '.br{position:absolute;display:block}' +
       '.haz{position:absolute;left:6px;right:6px;top:6px;height:7px;background:repeating-linear-gradient(135deg,' + T.warning + ' 0 9px,' + K + ' 9px 18px)}' +
@@ -163,7 +163,8 @@ export function presenceMain(config, logic) {
       '.mask{position:absolute;background:#2b2b2b;pointer-events:auto}' +
       '.pill{position:absolute;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;min-height:52px;padding:7px 8px 7px 12px;border-radius:12px;background:' + T.panel + ';border:1px solid ' + T.hairline + ';outline:1px solid rgba(10,10,10,.55);color:' + T.ink + ';font:600 13px/1.35 Inter,system-ui,sans-serif;pointer-events:auto;white-space:nowrap}' +
       '.pill.bottom{bottom:20px}.pill.top{top:20px}' +
-      '.av{width:18px;height:18px;border-radius:50%;background:' + T.bot + ';color:' + T.botInk + ';display:inline-flex;align-items:center;justify-content:center;font:700 11px/1 Inter,system-ui,sans-serif;flex:none}' +
+      '.pic{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover}' +
+      '.av{position:relative;width:18px;height:18px;border-radius:50%;background:' + T.bot + ';color:' + T.botInk + ';display:inline-flex;align-items:center;justify-content:center;font:700 11px/1 Inter,system-ui,sans-serif;flex:none}' +
       '.chip{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;background:' + T.warning + ';color:' + T.warningInk + ';font:700 11px/1 Inter,system-ui,sans-serif;letter-spacing:.04em;text-transform:uppercase}' +
       '.sep{width:1px;height:22px;background:' + T.hairline + '}' +
       '.btn{all:unset;box-sizing:border-box;cursor:pointer;height:36px;padding:0 12px;border-radius:8px;border:1px solid ' + T.hairline + ';background:' + T.control + ';color:' + T.ink + ';font:600 13px/1 Inter,system-ui,sans-serif;display:inline-flex;align-items:center;gap:6px}' +
@@ -183,7 +184,7 @@ export function presenceMain(config, logic) {
       svg.setAttribute('class', 'br'); svg.setAttribute('width', '48'); svg.setAttribute('height', '48'); svg.setAttribute('viewBox', '0 0 48 48'); svg.setAttribute('aria-hidden', 'true');
       svg.style.cssText = pos + ';' + flip;
       const under = document.createElementNS(ns, 'path'), over = document.createElementNS(ns, 'path');
-      for (const [p, w, c] of [[under, '9', K], [over, '5', T.accent]]) { p.setAttribute('d', 'M4 44V4H44'); p.setAttribute('fill', 'none'); p.setAttribute('stroke', c); p.setAttribute('stroke-width', w); p.setAttribute('stroke-linecap', 'square'); }
+      for (const [p, w, c] of [[under, '9', K], [over, '5', T.frame]]) { p.setAttribute('d', 'M4 44V4H44'); p.setAttribute('fill', 'none'); p.setAttribute('stroke', c); p.setAttribute('stroke-width', w); p.setAttribute('stroke-linecap', 'square'); }
       svg.append(under, over); outline.appendChild(svg); corners.push(over);
     }
     const haz = el('div'); haz.className = 'haz'; haz.style.display = 'none'; outline.appendChild(haz);
@@ -193,10 +194,18 @@ export function presenceMain(config, logic) {
     const trail = [0, 1].map(() => { const d = el('span'); d.className = 'trail'; ptr.appendChild(d); return d; });
     const main = el('span', '', labels.initial); main.className = 'main';
     const tag = el('div', '', labels.name); tag.className = 'tag';
+    // The bot's own picture over its initial; a page that refuses the image keeps the initial.
+    const picture = (node) => {
+      if (!config.avatar) return;
+      const img = el('img'); img.className = 'pic'; img.alt = '';
+      img.addEventListener('error', () => { try { img.remove(); } catch { /* ignore */ } });
+      img.src = config.avatar; node.appendChild(img);
+    };
+    picture(main);
     const typing = el('div'); typing.className = 'typing'; typing.style.display = 'none';
     ptr.append(main, tag, typing);
     const pill = el('div'); pill.className = 'pill bottom'; pill.setAttribute('role', 'status');
-    const dot = el('span', '', labels.initial); dot.className = 'av';
+    const dot = el('span', '', labels.initial); dot.className = 'av'; picture(dot);
     const text = el('span');
     const chip = el('span', '', labels.full); chip.className = 'chip'; chip.style.display = 'none';
     const sepA = el('span'); sepA.className = 'sep';
@@ -244,7 +253,7 @@ export function presenceMain(config, logic) {
     parts.glow.style.display = l.glow ? '' : 'none';
     parts.frame.className = full ? 'frame full' : 'frame';
     parts.haz.style.display = full && l.outline && core.snapshot().state !== 'done' ? '' : 'none';
-    for (const c of parts.corners) c.setAttribute('stroke', core.snapshot().state === 'done' ? config.theme.success : config.theme.accent);
+    for (const c of parts.corners) c.setAttribute('stroke', core.snapshot().state === 'done' ? config.theme.success : config.theme.frame);
     parts.ptr.style.display = l.pointer ? '' : 'none';
     parts.ptr.style.opacity = core.snapshot().state === 'waiting' ? '0.7' : '1';
     parts.pill.style.display = l.pill ? '' : 'none';
@@ -450,13 +459,19 @@ const DEFAULT_LABELS = { name: 'Murage', working: 'Murage is working', waiting: 
 //   options.bindingName: Runtime.addBinding name scoped to the presence world (payloads 'pause',
 //     'stop', 'fallback'); optional.
 //   options.botName: shown on the pointer label and in the pill.
+//   options.botColor: #rrggbb, the bot's own colour: the Frame border, the corners and the avatar dot. Murage orange / teal without it.
+//   options.avatar: the bot's picture (a small data: image URL) for the pointer and the chip; its initial without it.
 //   options.labels: localised strings (name, working, waiting, pause, stop, full, continue, stopTask).
 //   options.leaseMs / options.tickMs: for tests; defaults 3000 and 250.
 export function presenceSource(options = {}) {
   const botName = options.botName || DEFAULT_LABELS.name;
   const labels = { ...DEFAULT_LABELS, name: botName, working: botName + ' is working', waiting: 'Your turn: ' + botName + ' is waiting for you', ...(options.labels || {}) };
   labels.initial = (Array.from(String(botName).trim())[0] || 'M').toUpperCase();
-  const config = { orange: PRESENCE_ORANGE, theme: PRESENCE_THEME, labels, bindingName: options.bindingName || '', leaseMs: options.leaseMs ?? PRESENCE_LEASE_MS, tickMs: options.tickMs ?? 250 };
+  const rgb = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(typeof options.botColor === 'string' ? options.botColor : '')?.slice(1).map(h => parseInt(h, 16));
+  // Ink on the bot's colour: dark on a light colour, white on a dark one.
+  const theme = rgb ? { ...PRESENCE_THEME, frame: options.botColor, bot: options.botColor, botInk: (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) > 150 ? PRESENCE_THEME.botInk : '#ffffff' } : { ...PRESENCE_THEME, frame: PRESENCE_THEME.accent };
+  const avatar = typeof options.avatar === 'string' && options.avatar.length <= 16384 && /^data:image\/(?:webp|png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(options.avatar) ? options.avatar : '';
+  const config = { orange: PRESENCE_ORANGE, theme, avatar, labels, bindingName: options.bindingName || '', leaseMs: options.leaseMs ?? PRESENCE_LEASE_MS, tickMs: options.tickMs ?? 250 };
   const logic = `{createPresenceCore:${createPresenceCore},moveDuration:${moveDuration},curvePoints:${curvePoints},pillPlacement:${pillPlacement}}`;
   return `(${presenceMain})(${JSON.stringify(config)},${logic})`;
 }

@@ -5,6 +5,7 @@ import {resolveReleaseStep,rememberReleaseResult} from './fakes/common.mjs';
 import {validateHeadlessBrowserCall} from '../../server/browser-engine-policy.ts';
 import {declaredRequests} from './declared-requests.mjs';
 import {classifyRequest,hashInput} from './oracle-class.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 
 test('H-workflow long page reads follow the real saved-handle contract',()=>{
  const url='http://127.0.0.1:12345/long/fixture',text=`Use browser tools to fetch ${url}. Read again with offset 12000 and report the exact end marker.`;
@@ -57,7 +58,7 @@ test('H-workflow native empty-shell and Pi Write declarations bind exact normali
 
 for(const allowed of [false,true])test(`H-workflow Hermes fixture emits execution only after its ${allowed?'allow':'deny'} receipt`,async()=>{
  const {spawn}=await import('node:child_process'),{createInterface}=await import('node:readline');
- const {mkdtempSync,mkdirSync,existsSync,rmSync}=await import('node:fs'),{tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const {mkdtempSync,mkdirSync,existsSync}=await import('node:fs'),{tmpdir}=await import('node:os'),{join}=await import('node:path');
  const root=mkdtempSync(join(tmpdir(),'nolim-live-harness-')),cwd=join(root,'work');mkdirSync(cwd);
  const path=new URL('./launchers/release-acp.mjs',import.meta.url);
  const child=spawn(process.execPath,[path.pathname],{cwd,env:{...process.env,NOLIM_RELEASE_FAKE:'1',NOLIM_FIXTURE_ROOT:root,GNL_FAKE_KIND:'hermesAgent'},stdio:['pipe','pipe','pipe']});
@@ -80,5 +81,5 @@ for(const allowed of [false,true])test(`H-workflow Hermes fixture emits executio
   await done;assert.equal(asked,1);
   assert.equal(updates.filter(u=>u.sessionUpdate==='tool_call').length,allowed?1:0);
   assert.equal(existsSync(join(cwd,'action.done')),allowed);
- }finally{clearTimeout(timeout);const exited=new Promise(resolve=>child.once('exit',resolve));child.stdin.end();child.kill();await exited;rmSync(root,{recursive:true,force:true});}
+ }finally{clearTimeout(timeout);const exited=new Promise(resolve=>child.once('exit',resolve));child.stdin.end();child.kill();await exited;safeWipeSync(root);}
 });

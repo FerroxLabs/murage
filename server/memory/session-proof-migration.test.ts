@@ -1,4 +1,5 @@
 // Owners: recall-s1s2g owns checkpoint migration; warm-keep owns resume consumers.
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import {mkdirSync} from 'node:fs';
 import {beforeEach,afterEach,expect,it} from 'vitest';
 import {DATA_DIR} from '../config.ts';
@@ -28,5 +29,5 @@ for(const size of [200,3000])for(const seeded of [false,true])it(`T-MIG: ${size}
   downgradeMemorySchema(db,13);
   expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_session_checks'").get()).toBeUndefined();
   migrateMemorySchema(db,'active');expect(()=>validateMemorySchema(db)).not.toThrow();
-  expect(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()!.schema_version).toBe(13);
+  expect(db.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()!.schema_version).toBe(MEMORY_SCHEMA_VERSION);
 });

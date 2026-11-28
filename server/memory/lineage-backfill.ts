@@ -33,6 +33,7 @@ import { internFootprint, readyImportedThreads } from "./lineage-write.ts";
 import { ensureThreadNo, threadIdOf, threadNo } from "./thread-no.ts";
 import { activateBulkRevoke, commitRevoke, openBulkRevoke } from "./revoke-commit.ts";
 import { threadCheckpointId } from "./checkpoints.ts";
+import { DENY_POINT } from "./deny-rule.ts";
 import { rootSetMembers } from "./schema.ts";
 import { noteReceiptOutput } from "./receipt-outputs.ts";
 import { rowToMessage } from "../transcript-seq.ts";
@@ -1041,9 +1042,13 @@ export function lineageDowngradeSlice(db: DatabaseSync, options: { budgetMs?: nu
         }
       }
       if (c.step === 1) {
-        // deny_line: the named lines
+        // deny_line: the named lines. This slice runs only inside a step back to schema 9 or lower (schema.ts downgradeMemorySchema), after
+        // the 14 -> 13 step has rebuilt the 1.0.22 table with every mark the deny rule implies (deny-rule-migrate.ts): it reads that table.
+        // A store still at 14 (the slice called on its own) has the same named lines under the 1.0.23 name; its implied lines are the range
+        // rows, which step 2 mirrors
         const [t, l, r] = c.key ? JSON.parse(c.key) as [string, number, number] : ["", -Number.MAX_SAFE_INTEGER, 0];
-        const rows = stmt(db, "SELECT d.thread_id AS t,d.lsn AS l,d.revoke_id AS r,ll.message_id AS m FROM memory_deny_line d LEFT JOIN memory_thread_no tn ON tn.thread_id=d.thread_id LEFT JOIN memory_line_lineage ll ON ll.thread_no=tn.no AND ll.lsn=d.lsn WHERE (d.thread_id,d.lsn,d.revoke_id)>(?,?,?) ORDER BY d.thread_id,d.lsn,d.revoke_id LIMIT ?").all(t, l, r, FIX_BATCH);
+        const named = stmt(db, "SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name='memory_deny_line'").get() ? "memory_deny_line" : DENY_POINT;
+        const rows = stmt(db, "SELECT d.thread_id AS t,d.lsn AS l,d.revoke_id AS r,ll.message_id AS m FROM " + named + " d LEFT JOIN memory_thread_no tn ON tn.thread_id=d.thread_id LEFT JOIN memory_line_lineage ll ON ll.thread_no=tn.no AND ll.lsn=d.lsn WHERE (d.thread_id,d.lsn,d.revoke_id)>(?,?,?) ORDER BY d.thread_id,d.lsn,d.revoke_id LIMIT ?").all(t, l, r, FIX_BATCH);
         for (const row of rows) if (row.m !== null) hide(String(row.t), String(row.m));
         if (rows.length < FIX_BATCH) c = { ...c, step: 2, key: "", thread: "", lsn: 0 };
         else { const last = rows[rows.length - 1]!; c.key = JSON.stringify([String(last.t), Number(last.l), Number(last.r)]); }

@@ -1,8 +1,0 @@
-PASS success-desktop
-PASS success-handoff
-PASS child-receipt
-PASS child-failure
-PASS cleanup-failure
-PASS job-nonempty
-PASS validator-failure
-PASS pair-failure

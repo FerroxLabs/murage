@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import * as badgeSurfaces from "./badge-surfaces.mjs";
 import { badgeCountFor, createBadgeSurfaces, parseMurageTask, routeMurageTask } from "./badge-surfaces.mjs";
 import { notifySurfaceDefaults } from "../shared/notify-surfaces.mjs";
 
@@ -90,7 +91,7 @@ test("menus use exactly three allowlisted tasks on their own platform and clear 
       assert.deepEqual(r.tasks, ids);
     } else assert.deepEqual(r.calls, []);
     r.calls.length = 0;
-    r.prefs.badgeMenu = false;
+    r.prefs.surfaces.badge = false;
     r.surfaces.refreshMenu();
     assert.deepEqual(r.calls, platform === "win32" ? [["tasks", []]] : platform === "darwin" ? [["menu", []]] : []);
   }
@@ -154,4 +155,31 @@ test("main second-instance dispatches tasks and preserves the backup-only early 
   calls.length = 0;
   handler(null, ["--murage-task=nope"]);
   assert.deepEqual(calls, ["activate"]);
+});
+
+test("an upgraded profile with the badge on and the legacy menu off gets both Dock surfaces", () => {
+  const r = rig("darwin", "upgrade");
+  r.setPrefs({ ...r.prefs, badgeMenu: false });
+  r.surfaces.apply({ unread: 81, needsYou: 12 });
+  r.surfaces.refreshMenu();
+  assert.deepEqual(r.calls[0], ["count", 81]);
+  assert.deepEqual(r.calls[1][1].map(item => item.label), labels);
+  r.setPrefs({ ...r.prefs, badgeMenu: true, surfaces: { ...r.prefs.surfaces, badge: false } });
+  r.surfaces.refreshMenu();
+  assert.deepEqual(r.calls.at(-1), ["menu", []]);
+});
+
+test("the Windows overlay is a transparent red dot at both native scales", () => {
+  const representations = [];
+  const icon = { addRepresentation: value => representations.push(value) };
+  const nativeImage = { createEmpty: () => icon };
+  assert.equal(badgeSurfaces.createUnreadBadgeIcon?.(nativeImage), icon);
+  assert.deepEqual(representations.map(({ scaleFactor }) => scaleFactor), [1, 2]);
+  for (const { buffer, width, height, scaleFactor } of representations) {
+    assert.equal(width, 16 * scaleFactor);
+    assert.equal(height, width);
+    assert.deepEqual([...buffer.subarray(0, 4)], [0, 0, 0, 0]);
+    const center = (height / 2 * width + width / 2) * 4;
+    assert.deepEqual([...buffer.subarray(center, center + 4)], [50, 50, 220, 255]);
+  }
 });

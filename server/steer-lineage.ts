@@ -11,7 +11,7 @@ import { onRollback } from "./tx-scope.ts";
 import type { Message } from "./store.ts";
 import type { SteerDelivery } from "./contracts.ts";
 import { LineageAllowance, mergeOutputRoots, outputRootsBad, outputRootsFor, outputRootsShallow, recordSessionRoots, type OutputRoots } from "./memory/replay-lineage.ts";
-import { steerBusyDesk } from "./project-card-executor.ts";
+import { ACP_STEER_READY_WAIT_MS, STEER_READY_WAIT_MS, steerBusyDesk } from "./project-card-executor.ts";
 import { collectRendered, type EgressOrigin, type SourceRange } from "./released-text.ts";
 import { storedPosition, threadRangeNow, turnSourceCopiesBackfilled, type HeldRange } from "./turn-source-holds.ts";
 import { database } from "./database.ts";
@@ -34,12 +34,18 @@ export interface RunningTurnLineage { roots: OutputRoots; instanceId: string; se
   /** Thread recall (THREAD-SEAL 3.2): the seal generation this turn's session started under, captured at dispatch before the prompt goes
    * (a resumed session inherits the generation bound to its cursor), and the two records the fold and the acceptance step share: the
    * provider turn this dispatch was handed back, and a session.started that folded before that hand-back. */
-  startGeneration: number; acceptedTurnId?: string; pendingSeal?: { turnId: string; cursor: string };
+  startGeneration: number; acceptedTurnId?: string; pendingSeal?: { turnId: string; cursor: string }; partialReplay?: true;
   /** A resumed turn's raw cursor and the incarnation it was started under (S6 rule 27): `session` is the memory key formed from both. */
   cursor?: string; incarnation?: number;
   /** Whole stretches of conversations the turn carries (server/turn-source-holds.ts): its own conversation up to the newest line when it began,
    * however long, and any a note it was shown rests on. A line it takes in that one of these already covers is not named again. */
-  ranges?: HeldRange[] }
+  ranges?: HeldRange[];
+  /** cause23: an owner turn that keeps its session under exactly checking:pending (index.ts ownerMayKeepPending); its steer door keeps the
+   * owner's own words the same way (memory/steer-door.ts). */
+  ownerKeepsPending?: boolean;
+  /** MEMSWEEP-1024 (MAIN-RULING memory G/H): the turn is the owner's own typed line in the owner's direct chat (index.ts directHumanInput).
+   * Narrower than ownerKeepsPending: a routine, a delegation run and a card continuation are not it. Read only by the memory tool route. */
+  ownerDirectLine?: boolean }
 /** A line a turn's context showed. `quoted`: shown in full by a renderer that judged it on its own (the working context's
  * quotes), so a replay that withheld the same id does not take its roots away. */
 export type ShownLine = { threadId: string; id: string; role?: string; copyOf?: Message["copyOf"]; quoted?: boolean };
@@ -268,7 +274,8 @@ function rollbackRunningAttribution(lineage: RunningTurnLineage): void {
   });
 }
 
-type SteerAdapter = Parameters<typeof steerBusyDesk>[0];
+/** The busy desk's adapter, plus the provider id `steerReadyWaitMs` reads (every real adapter carries it). */
+type SteerAdapter = (NonNullable<Parameters<typeof steerBusyDesk>[0]> & { provider?: string }) | undefined;
 
 /** The write-time refs of a steer's quote (DESIGN-WRITETIME 2.2): the quoted line, and the originals of a quoted copy. A same-thread line is
  * positional (writeLineage carries nothing for it) but is listed, so the fence asks about it. */
@@ -302,6 +309,9 @@ export function freshClockSteer(adapter: { provider?: string } | undefined): boo
   return adapter?.provider === "fuigoAgent" || adapter?.provider === "grokAgent";
 }
 
+/** How long the desk waits for an engine to be ready for a steer: longer for the engines whose adapters wait for their own prompt. */
+export const steerReadyWaitMs = (adapter: { provider?: string } | undefined): number => freshClockSteer(adapter) ? ACP_STEER_READY_WAIT_MS : STEER_READY_WAIT_MS;
+
 export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, text: string, allowed: boolean, opts: {
   holds: () => boolean;
   steerId?: string;
@@ -319,7 +329,10 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
    *  line was written, so it carries a fresh one on top of the owner's words. */
   now?: string;
 }): Promise<"steer" | "queue" | "uncertain"> {
-  if (!opts.turn) return Promise.reject(Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" }));
+  // No running turn to take the words yet (the bot is already busy for a turn that has not started, e.g. the follow-up a
+  // delegated reply opens): nothing is written to the engine, and the line waits in the durable queue as its own turn.
+  // It used to reject here with no status, which the send route reported as "could not record that message" (503).
+  if (!opts.turn) return Promise.resolve("queue");
   // the steer's own allowance: its quote is checked when it is rendered and again at the write boundary
   const allowance = LineageAllowance.steer();
   const quoted = opts.quote ? shownLinesRoots(allowance, [opts.quote]) : undefined;
@@ -346,11 +359,14 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
       catch { verdict = undefined; }
       if (steerQuoteRefused(verdict)) throw new Error("MEMORY_CONTEXT_REVOKED");
     }
-    const proposal = opts.turn ? proposeTurnParents(opts.turn, refs) : undefined;
+    // cause23 r2: a steer with no quote adds no parents, so there is nothing to propose. Proposing the turn's held parents again would
+    // validate them as NEW context (prospective) and refuse the owner's running turn while a revoke walk is still pending (the A-5 and
+    // revokekeep rules only apply to held context). What the turn already holds is re-checked by the engine-input fence at this write.
+    const proposal = opts.turn && refs.length ? proposeTurnParents(opts.turn, refs) : undefined;
     if (proposal) commitTurnParents(proposal);
     if (quoted) addRootsToRunningTurn(threadId, opts.lineage, quoted);
     if (opts.quote) addSourcesToRunningTurn(opts.lineage, [opts.quote]);
     // a steer adds parents to the running turn (every later reply and its session carry them); it never moves the turn's turnLsn
     opts.onFence?.();
-  }, opts.steerId, undefined, opts.onLate, { reader, retained: opts.turn }).finally(() => allowance.close());
+  }, opts.steerId, steerReadyWaitMs(adapter), opts.onLate, { reader, retained: opts.turn }).finally(() => allowance.close());
 }

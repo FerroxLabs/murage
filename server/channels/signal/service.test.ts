@@ -121,6 +121,57 @@ function fixture(existing?: string) {
     capture: () => ({ generation, spawnToken: token }), event: (e: HostEvent) => event?.(e),
   };
 }
+test("W8e persists an unchecked Signal pause across a return to the original Chief and restart", async () => {
+  const f = fixture(), service = f.make();
+  let chief = "chief";
+  f.options.isCurrentChief = id => id === chief;
+  await service.start();
+  expect(service.status().state).toBe("linked");
+  chief = "next";
+  await service.pauseForChiefChange?.();
+  expect(JSON.parse(readFileSync(f.record, "utf8"))).toMatchObject({ paused: true, binding: { chiefBotId: "chief" } });
+  await service.stop();
+  expect(f.host.stop).toHaveBeenCalledTimes(2);
+  chief = "chief";
+  const restarted = f.make();
+  const spawns = f.host.spawn.mock.calls.length;
+  await restarted.start();
+  expect(f.host.spawn).toHaveBeenCalledTimes(spawns);
+  f.emit();
+  await restarted.tick();
+  expect(f.turns).toEqual([]);
+});
+
+test("W10b a moved Signal reader starts once with run admission bound to the incoming Chief", async () => {
+  const f = fixture();
+  const targets: string[] = [];
+  const runs = f.options.runs;
+  f.options.runs = context => {
+    const adapter = runs(context);
+    return { ...adapter, enqueue: input => { targets.push(context.binding.chiefBotId); return adapter.enqueue(input); } };
+  };
+  let chief = "chief";
+  f.options.isCurrentChief = id => id === chief;
+  const service = f.make();
+  await service.start();
+  f.emit();
+  await service.tick();
+  expect(targets).toEqual(["chief"]);
+
+  service.quiesce?.();
+  chief = "next";
+  await service.stopForChiefTransfer?.();
+  service.retarget?.("next");
+  service.endMove?.();
+  await service.start();
+  f.advance(1000);
+  f.emit();
+  await service.tick();
+  expect(targets).toEqual(["chief", "next"]);
+  expect(f.host.spawn).toHaveBeenCalledTimes(2);
+  expect(f.host.stop).toHaveBeenCalledTimes(1);
+});
+
 const state = (f: ReturnType<typeof fixture>) => stored(f.ledgerFile);
 /** The committed ledger text; never empty, so a "does not contain" check cannot pass on a missing ledger. */
 const ledgerText = (f: ReturnType<typeof fixture>) => { const text = rawText(f.ledgerFile); expect(text).not.toBe(""); return text; };

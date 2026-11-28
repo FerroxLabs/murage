@@ -18,7 +18,7 @@ describe("push revocation queue", () => {
     const q = createPushRevocations({ file: file(), send, retryMs: 10 });
     q.add("d1");
     await q.flush();
-    expect(send).toHaveBeenCalledWith("d1");
+    expect(send).toHaveBeenCalledWith("d1", expect.any(Number));
     expect(q.pending()).toEqual([]);
   });
   it("keeps an unacknowledged device on disk across a restart", async () => {
@@ -26,11 +26,12 @@ describe("push revocation queue", () => {
     const q = createPushRevocations({ file: path, send: async () => false, retryMs: 60_000 });
     q.add("d1");
     await q.flush();
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(["d1"]);
+    // settings v10 P1: the file is now {version, entries} keyed by generation; the legacy bare list is still read (see push-removal-generation.test.ts)
+    expect(JSON.parse(readFileSync(path, "utf8")).entries).toMatchObject([{ id: "d1", step: "not-sent" }]);
     const again = vi.fn(async () => true);
     const reborn = createPushRevocations({ file: path, send: again, retryMs: 60_000 });
     await reborn.flush();
-    expect(again).toHaveBeenCalledWith("d1");
+    expect(again).toHaveBeenCalledWith("d1", expect.any(Number));
     expect(reborn.pending()).toEqual([]);
   });
   it("holds at most 200 ids", () => {

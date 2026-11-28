@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { claudeAccountChanger, claudeAccountsAfterChange, claudeAccountsFrom, claudeAccountsListOrder, type ClaudeAccount, type ClaudeAccountChangeSection } from "./ClaudeAccountsSettings";
+import { bedrockBindBody, bedrockCheckAgainBody, claudeAccountChanger, claudeAccountsAfterChange, claudeAccountsFrom, claudeAccountsListOrder, type ClaudeAccount, type ClaudeAccountChangeSection } from "./ClaudeAccountsSettings";
 
 const account: ClaudeAccount = {
   instanceId: "claude-work", displayName: "Work", managed: true, isDefault: false,
@@ -225,4 +225,17 @@ describe("claudeAccountChanger", () => {
   // section's own requests only, GET /api/instances after busy clears, one
   // probe out at a time — FOLLOW6); the real browser by
   // claude-accounts.human.spec.ts.
+});
+
+describe("Bedrock bind request (M9 r3, ASTRA H1)", () => {
+  it("R3-B1-UI the first Save and check of a new account names the profile and region; Check again names them until the account is bound", () => {
+    expect(bedrockBindBody({ profile: "personal", region: "us-east-1" }), "R3-B1-UI new account bind body").toEqual({ profile: "personal", region: "us-east-1" }); // R3-B1-UI
+    expect(bedrockCheckAgainBody({ profile: "personal", region: "us-east-1", bound: false, label: "Claude on Bedrock (not set up)" }), "R3-B1-UI unbound Check again").toEqual({ profile: "personal", region: "us-east-1" }); // R3-B1-UI-again
+    expect(bedrockCheckAgainBody({ profile: "personal", region: "us-east-1", bound: true, label: "bound" }), "a bound account re-checks what is bound").toEqual({});
+    expect(bedrockBindBody({ profile: "", region: "us-east-1" })).toEqual({});
+    // the add flow and the Check again button send these bodies, never a literal empty object
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "ClaudeAccountsSettings.tsx"), "utf8");
+    expect(source, "R3-B1-UI no bind call sends {}").not.toMatch(/bindBedrock\([^)]*,\s*\{\}\)/); // R3-B1-UI-src
+    expect(source).toContain("bindBedrock(receipt.account.instanceId, bedrockBindBody(");
+  });
 });

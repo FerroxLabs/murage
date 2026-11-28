@@ -353,7 +353,9 @@ describe("ownerNoLimits reads stored fields, each condition alone", () => {
     const provenOwner = bot.noLimits === true && (context as { fullAccessOrigin?: string }).fullAccessOrigin === "owner" && (context as { unattended?: boolean }).unattended !== true && (context as { automated?: boolean }).automated !== true;
     for (const cmd of ['rm -rf "$X"', "cat ~/.aws/credentials"]) {
       const verdict = autoVerdict(bot, "Bash", cmd, { stopLine: null, ...context, commandText: cmd });
-      if (provenOwner) expect(verdict.approve, `${_name}: ${cmd}`).toBeTruthy(); else expect(verdict.approve, `${_name}: ${cmd}`).toBeNull();
+      // OVERREACH #6 (MAIN 2026-11-26): the owner's own Full access turn runs the unknown delete target; the key read keeps its card
+      if (_name === "Full access" && cmd === 'rm -rf "$X"') expect(verdict.approve, `${_name}: ${cmd}`).toBeTruthy();
+      else if (provenOwner) expect(verdict.approve, `${_name}: ${cmd}`).toBeTruthy(); else expect(verdict.approve, `${_name}: ${cmd}`).toBeNull();
     }
   });
   it("all true is true", () => expect(ownerNoLimits(NO_LIMITS, OWNER)).toBe(true));

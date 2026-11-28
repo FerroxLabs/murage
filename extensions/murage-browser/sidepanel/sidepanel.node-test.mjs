@@ -494,3 +494,19 @@ test('stage 2: the contract file lists the new fields and actions', () => {
   const c = readFileSync(new URL('PANEL-CONTRACT.md', here), 'utf8');
   for (const w of ['newtask', 'phase', 'recovery', 'persistenceFailed']) assert.match(c, new RegExp(w));
 });
+
+// Journey 1024, section 3: the extension side of the one-time per-bot OK. The panel shows what the app reports and can only turn it off.
+test('per-bot OK: shown as reported, Turn off only when on and listed, and it sends grantoff; never a way to turn it on', () => {
+  const on = draw({ grant: 'on' }, { supports: ['grantoff'] });
+  assert.match(one(on.root, 'grant-state')?.textContent ?? '', /«spGrantOn\|Ember»/);
+  const off = one(on.root, 'grantoff'); assert.ok(off);
+  off.onclick(); assert.deepEqual(on.calls.at(-1), ['grantoff', {}]);
+  // Not listed by the runtime: no button, the action is never faked.
+  assert.equal(byRole(draw({ grant: 'on' }, { supports: ['setMode'] }).root, 'grantoff').length, 0);
+  const denied = draw({ grant: 'off' }, { supports: ['grantoff'] });
+  assert.match(one(denied.root, 'grant-state')?.textContent ?? '', /«spGrantOff\|Ember»/);
+  assert.equal(byRole(denied.root, 'grantoff').length, 0);
+  for (const r of [on.root, denied.root]) assert.equal(byRole(r, 'granton').length, 0);
+  // The app has not said: nothing is drawn.
+  assert.equal(byRole(draw({}, { supports: ['grantoff'] }).root, 'grant-state').length, 0);
+});

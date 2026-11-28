@@ -29,6 +29,19 @@ it('T12: deferred peer work preserves the admitted depth and audience ceilings',
   expect(queued.mock.calls[0]?.[5]).toEqual(peer);
 });
 
+// PHONEAUD (Astra 4): held peer work keeps its holding turn's automation ancestry; a record written before the field releases as automation.
+it('held peer work carries its automation ancestry, and a record without it releases as automation', () => {
+  const { dispatch, target, queued } = dispatcher();
+  for (const [peer, expected] of [
+    [{ ...snapshot(), automationAncestry: false }, false], [{ ...snapshot(), automationAncestry: true }, true], [snapshot(), true],
+  ] as const) {
+    queued.mockClear();
+    dispatch(target, { kind: 'delegate', fromBotId: 'lead', fromThreadId: 'caller', text: 'Review the onboarding flow.', peer });
+    expect(queued.mock.calls[0]?.[1], JSON.stringify((peer as { automationAncestry?: boolean }).automationAncestry)).toMatchObject({ automationAncestry: expected });
+  }
+  expect(() => restoreHeldPeerAuthority({ ...snapshot(), automationAncestry: 'yes' }, 'lead', 'caller')).toThrow();
+});
+
 function snapshot() {
   return { version: 1 as const, handoffId: 'held-original', depth: 3, notOwnerAudience: true, unattended: true, eventId: 'event-fixture',
     routineAuthority: { permissionMode: 'ask' as const, triggerSource: 'schedule' as const },

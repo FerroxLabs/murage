@@ -61,7 +61,7 @@ const FLUX_EMAIL: SettingsGate = { feature: "flux-email", reason: () => SETTINGS
 /** Gates on app cards, by card id: their card renders a stub while the feature is off (S1). */
 const APP_GATES: Readonly<Record<string, SettingsGate>> = {
   "connections.bot-email": FLUX_EMAIL,
-  "skills.recorder": OFF_BY_CHOICE("learn a skill from a recording or /learn"),
+  "skills.recorder": OFF_BY_CHOICE("learn a skill from a recording or from chat"),
   "companion.browser": OFF_BY_CHOICE("use a browser tab you can watch and take over"),
 };
 
@@ -89,6 +89,7 @@ export const BOT_SETTINGS_CARDS: readonly BotIndexEntry[] = [
   bot("identity", "title", () => t("settings.bot.identity.title"), { keywords: ["title", "job title", "position"] }),
   bot("identity", "instructions", () => t("settings.bot.identity.instructions"), { keywords: ["instructions", "description", "prompt", "system prompt", "about", "job", "tell it", "brief"] }),
   bot("identity", "personality", () => t("settings.bot.identity.personality"), { keywords: ["personality", "persona", "tone", "style", "character", "vibe", "snarky"] }),
+  bot("identity", "archive", () => "Archive or delete", { keywords: ["archive", "delete", "remove", "hide", "retire", "bring back", "restore", "delete bot", "delete this bot"] }),
   bot("shapes", "shapes", () => "What shapes this bot", { keywords: ["what it reads", "house rules", "team brief", "instructions order", "read order", "locked", "prompt", "system prompt", "guide"] }),
   bot("skills", "skills", () => sectionLabel("skills"), { keywords: ["skills", "skill", "add a skill", "enable", "disable", "learned skills", "library", "tools", "knowledge"] }),
   bot("learning", "learning", () => sectionLabel("learning"), { keywords: ["learning", "lessons", "feedback", "teach", "undo", "learn", "nudge", "suggestions"] }),

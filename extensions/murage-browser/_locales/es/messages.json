@@ -417,5 +417,24 @@
   },
   "spErrStorageUnavailable": {
     "message": "No se pudo leer el almacenamiento de Chrome. Reinicia Chrome y comparte tus pestañas otra vez."
+  },
+  "spGrantTitle": {
+    "message": "Tu navegador"
+  },
+  "spGrantOn": {
+    "message": "$BOT$ puede usar tu navegador.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spGrantOff": {
+    "message": "$BOT$ no puede usar tu navegador. Para activarlo, abre la app de Murage en tu ordenador.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
   }
 }

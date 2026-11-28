@@ -4,6 +4,7 @@
 //  3. the owner's recorded deletions (source conversation, sender, target) are checked independently of each other, at import, queue, drain and start;
 //  4. going back to 1.0.1 drops every 1.0.2 application object (frozen list), verified against the REAL 1.0.1 inspector extracted from git (d950cbf67).
 import { MESSAGE_ID_103_OBJECTS } from "./message-id-index.ts"; // 1.0.3: removed by the downgrade's own step too
+import { L5H_OBJECTS } from "./app-trigger-store.ts"; // 1.0.23: removed by downgradeL5hObjects before this step (l5h-downgrade-1023.test.ts)
 import { SEQ_103_OBJECTS } from "./transcript-seq.ts"; // 1.0.3: removed by the downgrade's own step before this one (installation-memory-downgrade.ts)
 import { isInboxProjectionObject } from "./inbox.ts";
 import { UPGRADE_104_TABLES, UPGRADE_108_TABLES } from "./memory/upgrade-app-tables.ts"; // 1.0.4 and 1.0.8: dropped by the memory downgrade (schema.ts UPGRADE_DERIVED_TABLES)
@@ -423,7 +424,7 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
     // It is not an application object. Pin its whole shape before excluding it from the application census.
     const sequence = head.find(row => row.name === "sqlite_sequence");
     expect(sequence).toEqual({ type: "table", name: "sqlite_sequence", tbl_name: "sqlite_sequence", sql: "CREATE TABLE sqlite_sequence(name,seq)" });
-    const unlisted = head.filter((row) => row !== sequence && row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !SEQ_103_OBJECTS.includes(row.name) && !MESSAGE_ID_103_OBJECTS.includes(row.name) && !(UPGRADE_104_TABLES as readonly string[]).includes(row.name) && !(UPGRADE_108_TABLES as readonly string[]).includes(row.tbl_name) && !PUSH_RETENTION_103_INDEXES.some(([name]) => name === row.name) && !BOT_CALLS_109_OBJECTS.includes(row.name) && !APP_TRIGGER_OBJECTS.includes(row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
+    const unlisted = head.filter((row) => row !== sequence && row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !SEQ_103_OBJECTS.includes(row.name) && !(L5H_OBJECTS as readonly string[]).includes(row.name) && !MESSAGE_ID_103_OBJECTS.includes(row.name) && !(UPGRADE_104_TABLES as readonly string[]).includes(row.name) && !(UPGRADE_108_TABLES as readonly string[]).includes(row.tbl_name) && !PUSH_RETENTION_103_INDEXES.some(([name]) => name === row.name) && !BOT_CALLS_109_OBJECTS.includes(row.name) && !APP_TRIGGER_OBJECTS.includes(row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
     expect(unlisted, "a 1.0.2 object that downgradeApplicationSchemaTo101 would leave behind").toEqual([]);
     for (const name of listed) expect(known.has(name), `${name} is in both lists`).toBe(false);
     if (!haveV101) return;

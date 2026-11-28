@@ -1,0 +1,87 @@
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// OPEN COPY (sv10-tools): the English words of the Settings v10 Tools page and the hosted-computers row. They are NOT in the
+// settings language pack on purpose: every string there needs the seven translations and a copy-review record, which a build
+// lane cannot sign for itself (copy-final.test.ts). The copy-review seat moves these into src/locales/en-settings/settings.json
+// with the translations and records, and `tw` then reads `sw`; no caller changes.
+const WORDS: Record<string, string> = {
+  "settings.tools.title": "Tools",
+  "settings.tools.summary": "{on} of {known} switches here are on.",
+  "settings.tools.sheetClose": "Close",
+  "settings.tools.whichBots": "Which bots",
+  "settings.tools.whichBotsNote": "Turn this tool off for one bot without changing the others.",
+  "settings.tools.botsOff": "Off for {count} bots",
+  "settings.tools.botsOffOne": "Off for 1 bot",
+  "settings.tools.botsOffNone": "On for every bot",
+  "settings.tools.open": "Open",
+  "settings.tools.always": "Always on",
+  "settings.tools.saveError": "That did not save. Nothing changed.",
+  "settings.tools.askPaid": "Turning this on brings back {provider}, which uses credit. Turn it on?",
+  "settings.tools.askYes": "Turn on",
+  "settings.tools.readersTitle": "Read web pages, by engine",
+  "settings.tools.readerEnforced": "Murage follows this switch.",
+  "settings.tools.searchOffNote": "When Web search is off, Murage refuses each new search for every bot, and reading web pages stops with it. Turning it on again brings back your last choice.",
+  "settings.tools.readOffNote": "When Read web pages is off, Murage refuses every page read for every bot, more of a page already opened too.",
+  "settings.tools.row.web-search.title": "Web search",
+  "settings.tools.row.web-search.note": "Bots look things up on the web.",
+  "settings.tools.row.web-read.title": "Read web pages",
+  "settings.tools.row.web-read.note": "Murage opens a link and reads the page.",
+  "settings.tools.row.images.title": "Images",
+  "settings.tools.row.images.note": "Makes pictures. Paid per image.",
+  "settings.tools.row.voice-notes.title": "Voice notes",
+  "settings.tools.row.voice-notes.note": "Bots send spoken replies.",
+  "settings.tools.row.browser.title": "Browser",
+  "settings.tools.row.browser.note": "A built-in browser bots can drive.",
+  "settings.tools.row.computer.title": "Computer",
+  "settings.tools.row.computer.note": "A bot clicks and types on a computer.",
+  "settings.tools.row.files-shell.title": "Files and shell",
+  "settings.tools.row.files-shell.note": "The engine's own file and command tools, limited by each bot's folder and approvals.",
+  "settings.tools.row.memory.title": "Memory",
+  "settings.tools.row.memory.note": "Bots remember what you tell them.",
+  "settings.tools.row.past-chats.title": "Past chats",
+  "settings.tools.row.past-chats.note": "Bots look things up in earlier conversations.",
+  "settings.tools.row.routines.title": "Routines",
+  "settings.tools.row.routines.note": "Bots run on a schedule. Each new routine needs your yes.",
+  "settings.tools.row.talk-to-bots.title": "Talk to other bots",
+  "settings.tools.row.talk-to-bots.note": "Hand work to another bot.",
+  "settings.tools.row.skills.title": "Skills",
+  "settings.tools.row.skills.note": "Saved know-how a bot can follow.",
+  "settings.tools.row.publish-site.title": "Publish a site",
+  "settings.tools.row.publish-site.note": "Always asks you first.",
+  "settings.tools.row.projects-channels.title": "Projects and channels",
+  "settings.tools.row.projects-channels.note": "Shared work and shared rooms.",
+  "settings.tools.row.connected-apps.title": "Connected apps",
+  "settings.tools.row.connected-apps.note": "Mail, calendar, notes and chat apps you connected.",
+  "settings.tools.row.bot-email.title": "Bot email",
+  "settings.tools.row.bot-email.note": "Each bot can have its own address.",
+  "settings.tools.row.custom-tools.title": "Custom tools (MCP)",
+  "settings.tools.row.custom-tools.note": "Servers you added.",
+  "settings.tools.row.messaging.title": "Messaging",
+  "settings.tools.row.messaging.note": "Telegram, Slack and the other places people reach a bot.",
+  "settings.tools.row.phone-tools.title": "Phone tools",
+  "settings.tools.row.phone-tools.note": "Reminders, contacts, calendar and location on your phone.",
+  "settings.tools.row.calls.title": "Calls",
+  "settings.tools.row.calls.note": "Bots call you when it is urgent.",
+  "settings.tools.row.other-programs.title": "Let other programs use a bot",
+  "settings.tools.row.other-programs.note": "Scripts and outside agents.",
+  "settings.tools.setOn": "Set on {page}.",
+  "settings.tools.page.computer": "Computer & browser",
+  "settings.tools.page.memory": "Memory",
+  "settings.tools.page.skills": "Skills",
+  "settings.tools.page.rules": "Rules for every bot",
+  "settings.tools.page.connections": "Connected apps",
+  "settings.tools.page.messaging": "Messaging",
+  "settings.tools.page.companion": "Phone & remote access",
+  "settings.computer.hostedTitle": "Hosted computers",
+  "settings.computer.hostedOn": "Bots on your Cloud can be given a hosted computer.",
+  "settings.computer.hostedOff": "Hosted computers are off on your Cloud. Turn them on to give a bot one.",
+  "settings.computer.hostedError": "That did not save. Nothing changed.",
+};
+
+export function tw(key: string, params?: Record<string, string | number>): string {
+  const template = WORDS[key];
+  if (template === undefined) throw new Error(`no words for ${key}`);
+  return params ? template.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match)) : template;
+}
+export const TOOLS_WORD_KEYS: readonly string[] = Object.keys(WORDS);

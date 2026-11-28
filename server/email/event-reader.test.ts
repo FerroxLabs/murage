@@ -10,7 +10,8 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DatabaseBusyError } from "../db-busy.ts";
 import { FluxEmailClient } from "./flux-email-client.ts";
 import { emailCredentialProvider } from "./email-secrets.ts";
 import { EmailStore, type BindingState } from "./email-store.ts";
@@ -260,5 +261,90 @@ describe("what the bot sees of filtered and held mail (5.2)", () => {
     const result = await tools().handle("email_read", record, "gen-1", { message_id: "msg_spam" });
     expect(result.text).toBe(EMAIL_LINES.noMatch);
     expect(isFilteredMail({ direction: "outbound", spam: true })).toBe(false);
+  });
+});
+
+describe("1.0.22 idle: an empty long-poll writes nothing (q1022-idlerest W-EMAIL-CURSOR-IDLE)", () => {
+  beforeEach(() => bind());
+  it("ten idle minutes of empty 25 s polls make 0 cursor writes; an event still advances the cursor", async () => {
+    fake.on("GET", /\/v1\/email\/events$/, page([received("eev_1", "alex@example.com")], "c_1"));
+    expect(await reader.pollOnce()).toBe("ok");
+    expect(store.getCursor(EVENT_CURSOR_SCOPE)).toBe("c_1");
+    const stamp = () => store.db.prepare("SELECT updated_at FROM email_event_cursor WHERE scope=?").get(EVENT_CURSOR_SCOPE)?.updated_at;
+    const changes = () => Number(store.db.prepare("SELECT total_changes() AS n").get()!.n);
+    const before = { stamp: stamp(), changes: changes() };
+    fake.on("GET", /\/v1\/email\/events$/, page([], "c_1"), 24);
+    for (let polls = 0; polls < 24; polls++) { clock += 25_000; expect(await reader.pollOnce()).toBe("ok"); }
+    expect(fake.calls("GET", /\/v1\/email\/events$/).length).toBe(25);
+    expect({ stamp: stamp(), writes: changes() - before.changes }).toEqual({ stamp: before.stamp, writes: 0 });
+    // the effect is kept: a moved cursor on an empty page and a real event are both still written
+    fake.on("GET", /\/v1\/email\/events$/, page([], "c_2"));
+    clock += 25_000; expect(await reader.pollOnce()).toBe("ok");
+    expect(store.getCursor(EVENT_CURSOR_SCOPE)).toBe("c_2");
+    fake.on("GET", /\/v1\/email\/events$/, page([received("eev_2", "sam@example.org")], "c_3"));
+    clock += 25_000; expect(await reader.pollOnce()).toBe("ok");
+    expect(store.getCursor(EVENT_CURSOR_SCOPE)).toBe("c_3");
+    expect(store.hasEvent("eev_2")).toBe(true);
+  });
+});
+
+describe("the loop on a local database refusal (TRAIN-1024 S06)", () => {
+  beforeEach(() => bind());
+  const logs: string[] = [];
+  const run = (stopAfterSleeps: number) => {
+    const sleeps: number[] = [];
+    logs.length = 0;
+    const looped = new EmailEventReader({ store, client, send, bindings, enabled: () => enabled, now: () => clock, log: line => logs.push(line),
+      sleep: async ms => { sleeps.push(ms); if (sleeps.length >= stopAfterSleeps) looped.stop(); } });
+    return { looped, sleeps };
+  };
+  const settle = () => new Promise<void>(resolve => setTimeout(resolve, 50));
+
+  it("a busy gate under the batch is retried at a short fixed wait, never doubled and never logged as an outage", async () => {
+    fake.always("GET", /\/v1\/email\/events$/, page([received("eev_1", "alex@example.com")]));
+    const tx = vi.spyOn(store, "tx").mockImplementation(() => { throw new DatabaseBusyError("email-events", 1000); });
+    const { looped, sleeps } = run(5);
+    looped.start();
+    await settle();
+    tx.mockRestore(); looped.stop();
+    expect(sleeps).toEqual([1_000, 1_000, 1_000, 1_000, 1_000]);
+    expect(looped.backoff()).toBe(0);
+    expect(logs.filter(line => /Busy for a moment/.test(line))).toHaveLength(0);
+  });
+
+  it("a batch that met a busy gate lands once the gate opens (same events, same cursor)", async () => {
+    fake.on("GET", /\/v1\/email\/events$/, page([received("eev_1", "alex@example.com")], "c_9"), 3);
+    let refusals = 2;
+    const real = store.tx.bind(store);
+    const tx = vi.spyOn(store, "tx").mockImplementation(((fn: () => unknown) => { if (refusals-- > 0) throw new DatabaseBusyError("email-events", 1000); return real(fn); }) as typeof store.tx);
+    const { looped, sleeps } = run(3);
+    looped.start();
+    await settle();
+    tx.mockRestore(); looped.stop();
+    expect(sleeps.slice(0, 2)).toEqual([1_000, 1_000]);
+    expect(store.hasEvent("eev_1")).toBe(true);
+    expect(store.getCursor(EVENT_CURSOR_SCOPE)).toBe("c_9");
+  });
+
+  it("a closed handle ends the loop: no further poll, no retry on the closed database", async () => {
+    fake.always("GET", /\/v1\/email\/events$/, page([received("eev_1", "alex@example.com")]));
+    const closed = Object.assign(new Error("database is not open"), { code: "ERR_INVALID_STATE" });
+    const tx = vi.spyOn(store, "tx").mockImplementation(() => { throw closed; });
+    const { looped, sleeps } = run(5);
+    looped.start();
+    await settle();
+    tx.mockRestore(); looped.stop();
+    expect(fake.requests.filter(request => /\/v1\/email\/events/.test(request.path))).toHaveLength(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("any other failure still backs off and doubles", async () => {
+    fake.always("GET", /\/v1\/email\/events$/, page([received("eev_1", "alex@example.com")]));
+    const tx = vi.spyOn(store, "tx").mockImplementation(() => { throw new Error("disk exploded"); });
+    const { looped, sleeps } = run(3);
+    looped.start();
+    await settle();
+    tx.mockRestore(); looped.stop();
+    expect(sleeps).toEqual([2_000, 4_000, 8_000]);
   });
 });

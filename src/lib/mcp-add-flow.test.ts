@@ -21,6 +21,7 @@ function recorder(answers: Record<string, unknown> = {}) {
     mode: vi.fn(async () => "desktop" as const),
     saveSecrets: vi.fn(async (name) => { order.push(`saveSecrets ${name}`); return { ok: true } as const; }),
     signIn: vi.fn(async (name) => { order.push(`signIn ${name}`); return { ok: true } as const; }),
+    useOwnApp: vi.fn(async () => ({ ok: true, redirectUri: "http://127.0.0.1:4321/callback", tokenHost: "auth.example" }) as const),
     cancelSignIn: vi.fn(async () => true),
     signOut: vi.fn(async () => ({ ok: true, revoked: true, message: "Signed out." }) as const),
     remove: vi.fn(async (name) => { order.push(`remove ${name}`); return { ok: true, revoked: true, message: "Removed. Murage also signed you out of cloud.comfy.org." } as const; }),

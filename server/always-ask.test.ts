@@ -84,8 +84,8 @@ const CATASTROPHIC: Array<[string, AlwaysAskRule | null]> = [
   ["rm -rf $HOME", "delete-home"],
   ['rm -rf "$HOME"', "delete-home"],
   ["rm -rf ${HOME}/", "delete-home"],
-  ["rm -rf /Users/alex", "delete-home"],
-  ["rm -rf /home/sean/", "delete-home"],
+  ["rm -rf /Users/exampleuser", "delete-home"],
+  ["rm -rf /home/exampleuser/", "delete-home"],
   ["rm -rf /usr", "delete-system-folder"],
   ["sudo rm -rf /etc/", "delete-system-folder"],
   ["rm -rf /System", "delete-system-folder"],
@@ -273,7 +273,7 @@ const CATASTROPHIC: Array<[string, AlwaysAskRule | null]> = [
   ['cmd /c "rd /s /q C:\\"', "delete-root"],
   ["rd /s /q %USERPROFILE%", "delete-home"],
   ["Remove-Item -Recurse -Force 'C:\\'", "delete-root"],
-  ["Remove-Item -Recurse -Force \"C:\\Users\\sean\"", "delete-home"],
+  ["Remove-Item -Recurse -Force \"C:\\Users\\exampleuser\"", "delete-home"],
   ["Get-ChildItem; Remove-Item -Recurse C:\\", "delete-root"],
   ["Remove-Item -Recurse ~", "delete-home"],
   ["pwsh -Command \"rm -r -fo C:\\\"", "delete-root"],
@@ -307,10 +307,10 @@ const FROM_FOLDER: Array<[string, string, AlwaysAskRule]> = [
   ["find . -delete", "/", "delete-root"],
   ["rm -rf .", "~", "delete-home"],
   ["rm -rf *", "~", "delete-home"],
-  ["rm -rf *", "/Users/alex", "delete-home"],
-  ["rm -rf .", "/home/sean/", "delete-home"],
+  ["rm -rf *", "/Users/exampleuser", "delete-home"],
+  ["rm -rf .", "/home/exampleuser/", "delete-home"],
   ["rm -rf *", homedir(), "delete-home"],
-  ["rm -rf ..", "/Users/alex", "delete-system-folder"],
+  ["rm -rf ..", "/Users/exampleuser", "delete-system-folder"],
   ["rm -rf *", "/usr", "delete-system-folder"],
   ["Remove-Item -Recurse -Force *", "C:\\", "delete-root"],
   ["(cd / && rm -rf *)", "/tmp", "delete-root"],
@@ -322,7 +322,7 @@ const FROM_FOLDER: Array<[string, string, AlwaysAskRule]> = [
   ["cd \"$(mktemp -d)\" && rm -rf *", "/", "unreadable"],
 ];
 const ORDINARY_FROM_FOLDER: Array<[command: string, cwd: string, rule?: AlwaysAskRule]> = [
-  ["rm -rf .", "/Users/alex/projects/app/build"],
+  ["rm -rf .", "/Users/exampleuser/projects/app/build"],
   ["rm -rf *", "/tmp/murage-test"],
   ["rm -rf ./node_modules", "/"],
   ["rm -rf build", "~"],
@@ -339,7 +339,7 @@ const ORDINARY: Array<string | NowAsks> = [
   "rm -rf build dist",
   "rm -rf /tmp/murage-test",
   "rm -rf ~/projects/app/node_modules",
-  "rm -rf /Users/alex/Documents/old",
+  "rm -rf /Users/exampleuser/Documents/old",
   // "rm /" asks under A+ (protected-path): always-ask-protected-path.test.ts
   "rm -f ~/.cache/thing",
   'echo "rm -rf /"',
@@ -462,7 +462,7 @@ const ORDINARY: Array<string | NowAsks> = [
   "echo \\$HOME",
   "rm -rf ./~",
   "Remove-Item -Recurse .\\build",
-  "rd /s /q C:\\Users\\sean\\project\\out",
+  "rd /s /q C:\\Users\\exampleuser\\project\\out",
   // "dir C:\\" asks under A+ (protected-path): always-ask-protected-path.test.ts
   "rmdir empty",
   "del old.txt",
@@ -863,9 +863,9 @@ const ASTRA_R4_TWINS: Array<string | NowAsks> = [
   "powershell -c 'Get-ChildItem | Where-Object { $_.Name -eq 1 }'",
   "rmdir build",
   "del old.txt",
-  "rd /s /q C:\\Users\\sean\\project\\out",
+  "rd /s /q C:\\Users\\exampleuser\\project\\out",
   "Remove-Item -Recurse .\\build",
-  "Remove-Item -Recurse -Force C:\\Users\\sean\\project\\out",
+  "Remove-Item -Recurse -Force C:\\Users\\exampleuser\\project\\out",
   "echo $'\\x41' $'\\101' $'\\u00e9' $'\\cA' $'\\e' $'\\?'",
   "grep -c $'x\\ty' f",
 ];
@@ -1169,7 +1169,7 @@ const NO_CWD_ORDINARY: NoCwd = [
   ["rm -rf build dist", "unreadable", "value-path"],
   ["rm -rf /tmp/murage-test", null],
   ["rm -rf ~/projects/app/node_modules", null],
-  ["rm -rf /Users/alex/Documents/old", null],
+  ["rm -rf /Users/exampleuser/Documents/old", null],
   ["rm -f ~/.cache/thing", "unreadable", "value-path"],
   ["echo \"rm -rf /\"", null],
   ["echo 'rm -rf ~'", null],
@@ -1273,7 +1273,7 @@ const NO_CWD_ORDINARY: NoCwd = [
   ["echo \\$HOME", null],
   ["rm -rf ./~", "unreadable", "value-path"],
   ["Remove-Item -Recurse .\\build", "unreadable", "value-path"],
-  ["rd /s /q C:\\Users\\sean\\project\\out", null],
+  ["rd /s /q C:\\Users\\exampleuser\\project\\out", null],
   ["rmdir empty", "unreadable", "value-path"],
   ["del old.txt", "unreadable", "value-path"],
   ["powershell -c \"Get-ChildItem\"", null],
@@ -1367,9 +1367,9 @@ const NO_CWD_R4_TWINS: NoCwd = [
   ["powershell -c 'Get-ChildItem | Where-Object { $_.Name -eq 1 }'", null],
   ["rmdir build", "unreadable", "value-path"],
   ["del old.txt", "unreadable", "value-path"],
-  ["rd /s /q C:\\Users\\sean\\project\\out", null],
+  ["rd /s /q C:\\Users\\exampleuser\\project\\out", null],
   ["Remove-Item -Recurse .\\build", "unreadable", "value-path"],
-  ["Remove-Item -Recurse -Force C:\\Users\\sean\\project\\out", null],
+  ["Remove-Item -Recurse -Force C:\\Users\\exampleuser\\project\\out", null],
   ["echo $'\\x41' $'\\101' $'\\u00e9' $'\\cA' $'\\e' $'\\?'", null],
   ["grep -c $'x\\ty' f", null],
 ];
@@ -1618,8 +1618,8 @@ describe("5.5 unreadable: asks, and its twin does not", () => {
   });
 
   it("reads a non-command summary as text: a stray apostrophe does not ask", () => {
-    expect(alwaysAskCommand("Edit /Users/alex/it's notes.md", undefined, "text")).toBeNull();
-    expect(alwaysAskCommand("Edit /Users/alex/it's notes.md", undefined, "command")?.rule).toBe("unreadable");
+    expect(alwaysAskCommand("Edit /Users/exampleuser/it's notes.md", undefined, "text")).toBeNull();
+    expect(alwaysAskCommand("Edit /Users/exampleuser/it's notes.md", undefined, "command")?.rule).toBe("unreadable");
     expect(alwaysAskCommand("rm -rf ~", undefined, "text")?.rule).toBe("delete-home");
   });
 });
@@ -2065,6 +2065,9 @@ const approvedHomeCards = new Set([
   'Remove-Item --% -Recurse ~', 'read HOME; rm -rf "$HOME"',
   'Remove-Item -Recurse "$dir\\"', 'echo $(rm -rf ~', 'echo `rm -rf ~',
   'sudo --unknown-opt rm -rf ~', 'sudo -Z rm -rf ~',
+  // MAIN-RULING NOLIMITS-1022 H1 correction (2026-11-25T18:57:03Z): No limits asks for an obfuscated wipe; printf %b and
+  // echo -e turn \x7e into ~ before the shell reads `rm -rf ~`
+  "printf '%b' 'rm -rf \\x7e' | sh", "echo -e 'rm -rf \\x7e' | sh",
 ]);
 
 describe("always ask, at every access level", () => {

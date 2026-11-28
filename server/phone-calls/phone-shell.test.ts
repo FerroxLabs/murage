@@ -47,6 +47,9 @@ describe("phone key boot and shell push", () => {
     expect(mcp).toBeGreaterThan(0);
     expect(phone).toBeGreaterThan(mcp);
     expect(phone - mcp).toBeLessThan(400);
-    expect(index).toContain("if (isPhoneShellMessage(message)) { applyPhoneShellMessage(message); return; }");
+    const push = index.slice(index.indexOf("if (isPhoneShellMessage(message)) {"), index.indexOf("// Quit:"));
+    expect(push).toContain("if (applyPhoneShellMessage(message) && phoneCallsListening)");
+    expect(push).toContain("void startPhoneCalls();");
+    expect(push).toMatch(/return;\s+}\s*$/);
   });
 });

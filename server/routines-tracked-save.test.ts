@@ -151,6 +151,11 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   cardOpened: f => expect(f.m.cardOpened(f.thread, "card-1", "Approve the write")).toBe(true),
   cardClosed: f => { f.m.cardOpened(f.thread, "card-1", "Approve the write"); f.m.cardClosed(f.thread, "card-1"); },
   routineRunForThread: f => f.m.routineRunForThread(f.thread),
+  // L5H 2.3: a run with no result marker has nothing owed, held or to clear (the unrouted base path)
+  clearEventResult: f => expect(f.m.clearEventResult(f.running.id, "written")).toBe(false),
+  eventResultsOwed: f => expect(f.m.eventResultsOwed()).toEqual([]),
+  hasMovedWebhookResults: f => expect(f.m.hasMovedWebhookResults(f.webhook.id)).toBe(false),
+  holdEventResult: f => expect(f.m.holdEventResult(f.running.id, "bot_shared")).toBe(false),
   routineForConversation: f => f.m.routineForConversation(f.thread),
   grantAlwaysAllow: f => expect(f.m.grantAlwaysAllow(f.a.id, GRANT)?.alwaysAllow).toEqual([GRANT]),
   revokeAlwaysAllow: f => { f.m.grantAlwaysAllow(f.a.id, GRANT); expect(f.m.revokeAlwaysAllow(f.a.id, GRANT)?.alwaysAllow ?? []).toEqual([]); },
@@ -233,6 +238,15 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
     f.m.markRunDelivered(f.failing.id);
     expect(f.m.runById(f.failing.id)?.delivery).toEqual({ state: "sent", threadId: "chat-delivered" });
     expect(f.m.pendingDeliveries().some(run => run.id === f.failing.id)).toBe(false);
+  },
+  // q1024-routinebusy: the owner-visible waiting note of an owed result, set and cleared
+  noteResultWaiting: f => {
+    f.m.noteResultWaiting(f.failing.id);
+    expect(f.m.runById(f.failing.id)?.attention).toContain("Waiting for the database");
+    // the note lives in memory only (a rollback to v1.0.20 could not take it off a sent result), so the driver ends where the note ends: the result is sent
+    f.m.recordRunDelivery(f.failing.id, "chat-delivered");
+    f.m.markRunDelivered(f.failing.id);
+    expect(f.m.runById(f.failing.id)?.attention).toBeUndefined();
   },
   nextRunStartAfter: f => { const run = f.m.runById(f.failing.id)!; expect(f.m.nextRunStartAfter(run)).toBeUndefined(); },
   preparePackageAddition: f => {

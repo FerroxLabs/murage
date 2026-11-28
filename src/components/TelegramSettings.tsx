@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
+import { endPairingNote } from "@/lib/telegram-end-pairing";
 import { shouldPollTelegramStatus, telegramAutoPairPlan, telegramHealthLabel, telegramStatusFrom, type TelegramStatus } from "@/lib/telegram-status";
 import { copyTextOrThrow } from "@/lib/copy-text";
 import type { SettingsMode } from "@/lib/settings-mode";
@@ -121,11 +122,12 @@ export function TelegramSettings({ mode }: { mode?: SettingsMode } = {}) {
   const saveButton = <button type="button" disabled={Boolean(busy) || tokenLocked || !status || !token.trim()} onClick={() => void save()} className="rounded-lg bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-50">{busy === "save" ? "Saving…" : replaceable ? "Replace token" : "Save token"}</button>;
   const lockedLine = tokenLocked && <p className="mt-1 text-[12px] text-ink-secondary">Revoke the connection before changing its token.</p>;
   const replaceLine = replaceable && <p className="mt-1 text-[12px] text-ink-secondary">{piped ? "Paste a new token for the same bot. Your pairing is kept." : "Paste a new token for the same bot from BotFather. Your pairing and owner link are kept. A token for a different bot is refused."}</p>;
-  const pairButtons = <div className="mt-3 flex flex-wrap gap-2">
+  const pairButtons = <><div className="mt-3 flex flex-wrap gap-2">
     <button type="button" disabled={Boolean(busy) || !status?.configured || (Boolean(linked) && !expired)} onClick={() => void startPair()} className="rounded-lg bg-accent px-3 py-2 text-[12px] text-accent-ink disabled:opacity-50">{busy === "pair" ? "Pairing…" : expired ? "Create new pairing code" : "Pair with Chief"}</button>
     {refreshButton}
     <button type="button" disabled={Boolean(busy) || (!linked && !pair)} onClick={() => void run("revoke", async version => { await api("/api/telegram/revoke", { method: "POST", body: "{}" }); if (version !== actionVersion.current) return; setPair(null); await refresh(version); if (version === actionVersion.current) setNotice("Telegram connection revoked."); })} className="rounded-lg px-3 py-2 text-[12px] text-danger disabled:opacity-50">Revoke</button>
-  </div>;
+  </div>
+    {linked && <p className="mt-2 text-[12px] text-ink-secondary">{endPairingNote(status)}</p>}</>;
   const codeBox = pair && !expired && <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] text-ink">
     <p>Send this command to your Telegram bot:</p><code className="mt-2 block break-all select-all">/pair {pair.code}</code>
     <button type="button" className="mt-2 rounded-lg border border-hairline/40 px-3 py-2" onClick={() => void run("copy", async () => { await copyTextOrThrow(`/pair ${pair.code}`); setNotice("Pairing command copied."); })} disabled={Boolean(busy)}>Copy pairing command</button>

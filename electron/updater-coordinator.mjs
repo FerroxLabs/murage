@@ -9,6 +9,7 @@ import { isUpdateVerificationError, updateErrorMessage, updateVerificationError 
 import { assertCandidateManifest, captureUpdateCandidate, validateUpdateCandidate } from "./updater-candidate.mjs";
 import { releaseNotesText } from "./release-notes-text.mjs";
 import { createCheckHealth, describeCheckFailure, isNoPublishedVersions } from "./updater-health.mjs";
+import { RING_PAUSED_MESSAGE as RING_PAUSED, RING_UNCONFIRMED_MESSAGE as RING_UNCONFIRMED } from "./updater-rings.mjs";
 
 // The notes ride in the state only when the feed has some (electron/updater.mjs setState drops an older update's notes when a
 // newer "available" arrives without any).
@@ -39,7 +40,9 @@ export function createInstallWitness(events) {
 //   recover({version, reason, staged})  bring the app back after the install stopped it (main.mjs relaunches)
 //   events               the native updater; its "update-downloaded" restarts the wait, "before-quit-for-update" ends it
 //   stallMs              how long Squirrel may stay silent after quitAndInstall
-export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null, verifyDownload = null, fallbackFeed = null, installerFallback = null, returnAuthority = null, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now, staleAfterMs } = {}) {
+// `launchPause` (electron/update-launch-pause.mjs) takes down the OS jobs that start the executable on a timer just
+// before quitAndInstall, and puts them back if the install stalls or fails (the next start puts them back otherwise).
+export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null, launchPause = null, verifyDownload = null, fallbackFeed = null, ringFeed = null, installerFallback = null, returnAuthority = null, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now, staleAfterMs } = {}) {
   let checkOperation = null;
   // The version the staged download carries; the installer offer names it.
   let downloadedVersion = null;
@@ -54,6 +57,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     onRecovered: () => setState({ staleCheckSince: undefined }),
   });
   let retryAction = "check";
+  let ringRefusedOffer = false; // R6: the last check's feed offered a version that is not the ring target
   // Set from downloadUpdate's resolution: the paths electron-updater staged.
   // Only the hand-off needs them; quitAndInstall reads its own copy.
   let downloadedFiles = null;
@@ -82,6 +86,17 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     setState(installerFallback.offer(version));
   }
 
+  const pauseLaunches = operation => {
+    if (!launchPause) return;
+    operation.launchPaused = true;
+    try { launchPause.pause(); } catch (error) { logWarn(`update launch pause failed: ${updateErrorMessage(error)}`); }
+  };
+  const resumeLaunches = operation => {
+    if (!operation?.launchPaused) return;
+    operation.launchPaused = false;
+    try { launchPause.resume(); } catch (error) { logWarn(`update launch resume failed: ${updateErrorMessage(error)}`); }
+  };
+
   // quitAndInstall was called and the app is still here: the server is stopped, so never leave it like this.
   function stallInstall(operation, reason) {
     operation.staged = operation.witness?.state().staged ?? operation.staged;
@@ -90,6 +105,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     operation.detachWatch?.();
     if (installOperation === operation) installOperation = null;
     if (returnAuthority?.userQuitRequested) return;
+    resumeLaunches(operation);
     try { operation.onFailure?.(new Error(`Update installation needs review: ${reason}`)); } catch { /* the startup observer owns fallback */ }
     offerInstaller(operation.version, reason);
     try {
@@ -138,6 +154,16 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   }
 
   const routeError = (manual, error) => {
+    // A check that refused the restart before anything stopped (work-in-progress probe, backup check): the card message stays
+    // plain, the reason code and message go to updater.log so a "could not check current work" has a cause to read.
+    const refusedBeforeRestart = Boolean(installOperation && !installOperation.launched);
+    const reasonIsCode = /^[A-Z][A-Z0-9_]{3,}$/.test(String(error?.message));
+    if (refusedBeforeRestart) {
+      const cause = error instanceof Error && error.cause ? ` cause=${error.cause?.name ?? "Error"}: ${error.cause?.message ?? error.cause}` : "";
+      // a refusal without a .code (the backup host throws Error("BACKUP_REVIEW_REQUIRED")) is its own code when its message reads as one
+      const reason = error?.code ?? (reasonIsCode ? error.message : "none");
+      logWarn(`restart to update refused before it started: code=${reason} message=${String(error?.message ?? error)}${cause}`);
+    }
     // After quitAndInstall the server is already stopped; an install error must bring the app back, not strand it.
     if (installerFallback && installOperation?.launched) {
       logWarn(`install failed after the restart was requested: ${updateErrorMessage(error)}`);
@@ -146,9 +172,11 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       return;
     }
     if(installOperation&&!installOperation.launched)returnAuthority?.releasePendingInstall?.();
+    // a refusal that is only a reason code (the backup host's) never reaches the card as that token: the log has it
+    const shown = refusedBeforeRestart && reasonIsCode ? "Murage could not start the update because a check before restarting did not pass. Try again later; the reason is in the update log." : updateErrorMessage(error);
     const message = installOperation?.prepared && !isUpdateVerificationError(error)
-      ? `Murage has finished closing. Retry the update, or quit and reopen Murage. ${updateErrorMessage(error)}`
-      : updateErrorMessage(error);
+      ? `Murage has finished closing. Retry the update, or quit and reopen Murage. ${shown}`
+      : shown;
     if (installOperation) retryAction = "install";
     else if (downloadOperation) retryAction = "download";
     actionOwnsState = manual;
@@ -156,6 +184,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     if (downloadOperation) downloadOperation.failed = true;
     if (checkOperation) checkOperation.failed = true;
     const continuationFailure = installOperation?.onFailure;
+    resumeLaunches(installOperation);
     if (installOperation) {
       installOperation.failed = true;
       clearTimeout(installOperation.timer);
@@ -208,6 +237,13 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     if (checkOwnsState()) setState({ status: "checking" });
   });
   updater.on("update-available", (info) => {
+    // R6: under a signed ring target, the unsigned feed may only offer that exact version.
+    if (ringFeed && !ringFeed.offerAllowed(info?.version)) {
+      ringRefusedOffer = true;
+      logWarn(`rings: refused offer ${info?.version ?? "unknown"} (not the ring target)`);
+      if (checkOwnsState()) setState({ status: "idle" });
+      return;
+    }
     if (checkOwnsState()) {
       setState({ status: "available", version: info?.version, message: undefined, ...notesPatch(info) });
     }
@@ -252,13 +288,24 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
 
   async function runCheck(operation) {
     try { fallbackFeed?.reset(); } catch (error) { logCheckFailure(error, "feed-reset"); }
+    ringRefusedOffer = false;
+    let ring = null;
+    if (ringFeed) {
+      try { ring = await ringFeed.prepare(); } catch (error) { logCheckFailure(error, "rings"); ring = null; }
+      // A manifest in force that names nothing newer: offer nothing, not even GitHub latest (R4/R5).
+      if (ring?.mode === "none") {
+        health.succeeded();
+        if (checkOwnsState()) setState({ status: "idle" });
+        return { isUpdateAvailable: false, updateInfo: null };
+      }
+    }
     try {
       const result = await updater.checkForUpdates();
       health.succeeded();
       return result;
     } catch (error) {
       logCheckFailure(error, "provider");
-      if (fallbackFeed && isNoPublishedVersions(error) && !operation.supersededByDownload) {
+      if (fallbackFeed && ring?.mode !== "ring" && isNoPublishedVersions(error) && !operation.supersededByDownload) {
         operation.fallbackTried = true;
         let switched = false;
         try { switched = await fallbackFeed.activate(); } catch (lookupError) { logCheckFailure(lookupError, "fallback-lookup"); }
@@ -309,6 +356,9 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
 
   function download() {
     if (installOperation) return Promise.resolve();
+    if (ringRefusedOffer) return Promise.resolve();
+    // Admission in flight vouches for the staged files: nothing may replace them until it settles.
+    if (ringAdmission) return ringAdmission;
     retryAction = "download";
     if (checkOperation) checkOperation.supersededByDownload = true;
     if (downloadOperation) return downloadOperation.promise;
@@ -390,7 +440,44 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     return operation.promise;
   }
 
+  // R8: one admission point before anything installs. Paused: the staged download is discarded. Unconfirmed: it stays
+  // staged and the next check or Try again retries. Returns true only when the signed manifest (or, on the legacy path,
+  // GitHub latest) still names exactly this version.
+  async function admitRing(version) {
+    if (!ringFeed) return true;
+    const verdict = await ringFeed.admit(version);
+    if (verdict?.ok === true) return true;
+    if (verdict?.reason === "paused") {
+      const files = downloadedFiles;
+      downloadedFiles = null;
+      downloadedCandidate = null;
+      verifiedDownload = null;
+      downloadedVersion = null;
+      const removals = await Promise.allSettled((files ?? []).filter(file => typeof file === "string").map(file => rm(file, { force: true })));
+      for (const result of removals) if (result.status === "rejected") updater.logger?.error("Update cache removal failed", result.reason);
+      logWarn(`rings: install refused, ${version ?? "unknown"} is paused`);
+      throw Object.assign(new Error(RING_PAUSED), { ringRetry: "check" });
+    }
+    logWarn(`rings: install not confirmed for ${version ?? "unknown"}`);
+    throw Object.assign(new Error(RING_UNCONFIRMED), { ringRetry: "install" });
+  }
+  let ringAdmission = null;
   function install() {
+    if (!ringFeed || installOperation || downloadOperation || !downloadedFiles?.length || returnAuthority?.userQuitRequested) return installAdmitted();
+    if (ringAdmission) return ringAdmission;
+    const admittedFiles = downloadedFiles;
+    ringAdmission = admitRing(downloadedVersion)
+      .then(() => {
+        ringAdmission = null;
+        // Only the exact staged download that was admitted may launch.
+        if (downloadedFiles !== admittedFiles) throw Object.assign(new Error(RING_UNCONFIRMED), { ringRetry: "install" });
+        return installAdmitted();
+      })
+      .catch((error) => { ringAdmission = null; actionOwnsState = true; routeError(true, error); retryAction = error?.ringRetry ?? "install"; });
+    return ringAdmission;
+  }
+
+  function installAdmitted() {
     if (returnAuthority?.userQuitRequested) return Promise.resolve({status:"stopped"});
     if (installOperation) return installOperation.promise;
     if (downloadOperation) return downloadOperation.promise;
@@ -436,6 +523,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       returnAuthority?.markNativeLaunch?.();
       if (revoked(operation)) return stop(operation);
       operation.launched = true;
+      pauseLaunches(operation);
       try { updater.quitAndInstall(true, true); }
       catch (error) { routeError(true, error); return; }
       // Start this bound only after readiness and owned shutdown have completed.
@@ -473,9 +561,9 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       if (typeof admit !== "function" || handOffInstall || nativeUpdater) throw new Error("This update cannot resume a pre-upgrade installation.");
       if (installOperation?.candidateId === candidate.candidateId) return installOperation.promise;
       if (resumeRequested) throw new Error("The update installation was already requested. Review its outcome.");
-      if (installOperation || downloadOperation || checkOperation) throw new Error("Another updater operation is active.");
+      if (installOperation || downloadOperation || checkOperation || ringAdmission) throw new Error("Another updater operation is active.");
     } catch (error) { return Promise.reject(error); }
-    if(installerFallback){const problem=installerFallback.blocked();if(problem){offerInstaller(candidate.version,problem);return Promise.resolve({status:"installer-offered"});}}
+    if(installerFallback){const problem=installerFallback.blocked();if(problem)return offerAdmitted(candidate.version,problem).then(shown=>shown?{status:"installer-offered"}:Promise.reject(shown===false?new Error(RING_UNCONFIRMED):new Error(RING_PAUSED)));}
     const operation = { generation:returnAuthority?.generation, candidateId: candidate.candidateId, failed: false, timer: null, promise: null, onFailure, launched: false, version: candidate.version };
     installOperation = operation;
     returnAuthority?.markInstallPending?.();
@@ -486,6 +574,15 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     };
     operation.promise = Promise.resolve().then(async () => {
       active();
+      if (ringFeed) {
+        // R8 before anything closes: the backup hook below shuts the desktop down, so a refusal must come first.
+        await admitRing(candidate.version);
+        active();
+        // A fresh process starts on the github provider; point it at the ring tag that names this candidate.
+        const ring = await ringFeed.prepare();
+        active();
+        if (ring?.mode === "none" || (ring?.mode === "ring" && ring.target !== candidate.version)) throw Object.assign(new Error(RING_UNCONFIRMED), { ringRetry: "install" });
+      }
       const checked = await updater.checkForUpdates();
       active();
       if (checked?.isUpdateAvailable !== true) throw new Error("The pending update is unavailable.");
@@ -517,6 +614,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       returnAuthority?.markNativeLaunch?.();
       if (revoked(operation)) return stop(operation);
       operation.launched = true;
+      pauseLaunches(operation);
       updater.quitAndInstall(true, true);
       if (operation.failed && operation.launched) return { status: "install-requested" };
       active();
@@ -557,11 +655,24 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   }
 
   const retry = () => retryAction === "download" ? download() : retryAction === "install" ? install() : check(true);
-  // The relaunched app shows the offer its previous run made (installerFallback.takePendingOffer).
+  // R8 also gates the dmg offer: an offer for a paused or unconfirmed version is never shown. Resolves true when the
+  // offer was shown, false when admission could not be confirmed (nothing shown, the offer stays pending), null when the
+  // version is paused (nothing shown, the offer is spent). Without a ring feed it offers at once, as before rings.
+  function offerAdmitted(version, reason) {
+    if (!ringFeed) { offerInstaller(version, reason); return Promise.resolve(true); }
+    if (ringAdmission) return Promise.resolve(false);
+    const admission = ringAdmission = admitRing(version).then(
+      () => { offerInstaller(version, reason); return true; },
+      (error) => { actionOwnsState = true; routeError(true, error); retryAction = "check"; return error?.message === RING_PAUSED ? null : false; },
+    ).finally(() => { if (ringAdmission === admission) ringAdmission = null; });
+    return admission;
+  }
+  // The relaunched app shows the offer its previous run made (installerFallback.takePendingOffer). True when the pending
+  // offer is spent (shown, or its version is paused), false when it stays pending; a promise of that with a ring feed.
   const showInstallerOffer = (version, reason = "previous-run") => {
     if (!installerFallback || installOperation || downloadOperation) return false;
-    offerInstaller(version, reason);
-    return true;
+    if (!ringFeed) { offerInstaller(version, reason); return true; }
+    return offerAdmitted(version, reason).then((shown) => shown !== false);
   };
   return Object.freeze({ check, download, install, retry, resumeInstall, showInstallerOffer, supportsInstallContinuation: !handOffInstall && !nativeUpdater });
 }

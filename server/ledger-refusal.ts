@@ -5,9 +5,9 @@ import { SEND_NOTICE_ENGLISH, type NativeTurnNoticeCode } from "../shared/send-n
 import { afterCommit, inTxScope, onRollback } from "./tx-scope.ts";
 import { beginRefusalTurn, bindRefusalTurn, inFenceCall, refusalForVerdict, type CloseResult, type FencedRefusal } from "./drivers/engine-input.ts";
 
-import { LEDGER_REFUSAL_LINE } from "./ledger-refusal-line.ts";
+import { BUDGET_REFUSAL_LINE, LEDGER_REFUSAL_LINE, REFUSAL_KIND_HEADER, refusalLineFor } from "./ledger-refusal-line.ts";
 // Defined in a leaf module: a spawned proxy needs the line and must not load this module's lease graph (engine-input.ts) to get it.
-export { LEDGER_REFUSAL_LINE };
+export { BUDGET_REFUSAL_LINE, LEDGER_REFUSAL_LINE, REFUSAL_KIND_HEADER, refusalLineFor };
 const refusalReasons = new Set(["own-flag", "tombstone", "thread-deny", "deny-line", "deny-range", "watermark", "footprint",
   "deny-session", "session-forgotten", "deny-memory", "scope-deny", "murage-anchor", "door-epoch", "pack-ineligible",
   "no-lineage", "thread-not-ready", "pending", "footprint-wide", "lookup-error", "not-built", "retained-over", "retained-budget"]);
@@ -31,12 +31,20 @@ export interface LedgerRefusalPorts {
   present(line: string, notice?: NativeTurnNoticeCode): void;
   quarantine(): void;
   confirmed?(): void;
+  /** q1024-steerhang: the interrupt could not confirm the close (unconfirmed, failed, or not answered within the bound). Called at most once. */
+  unconfirmed?(): void;
 }
 export function createLedgerRefusal(identity: ConsumingIdentity, ports: LedgerRefusalPorts) {
   const binding = Object.freeze({ ...identity, lineageTurnIds: Object.freeze([...identity.lineageTurnIds]) });
   let state: "open" | "refusing" | "settled" = "open";
   let first: LineageVerdict | undefined;
   let quarantined = false;
+  let unconfirmedTold = false;
+  const unconfirmed = () => {
+    if (unconfirmedTold) return;
+    unconfirmedTold = true;
+    try { ports.unconfirmed?.(); } catch { /* the quarantine below still holds */ }
+  };
   const quarantine = () => {
     if (quarantined) return;
     quarantined = true;
@@ -55,7 +63,8 @@ export function createLedgerRefusal(identity: ConsumingIdentity, ports: LedgerRe
       if (inTxScope()) { afterCommit(persist); onRollback(persist); return; }
       persisted = true;
       try { ports.settle("memory-refused", first!); } catch { quarantine(); }
-      try { ports.present(LEDGER_REFUSAL_LINE); } catch { quarantine(); }
+      // cause22: a bookkeeping refusal (the release budget) never says context became unavailable
+      try { ports.present(refusalLineFor(first)); } catch { quarantine(); }
     };
     persist();
   };
@@ -76,14 +85,14 @@ export function createLedgerRefusal(identity: ConsumingIdentity, ports: LedgerRe
       try { ports.seal(); } catch { quarantine(); }
       try {
         const stopping = ports.interrupt();
-        const timer = setTimeout(() => { quarantine(); settle(); }, 5000);
+        const timer = setTimeout(() => { quarantine(); settle(); unconfirmed(); }, 5000);
         timer.unref?.();
         void stopping.then(confirmed => {
-          if (confirmed !== true) quarantine();
-          else { try { ports.confirmed?.(); } catch { quarantine(); } }
-        }, quarantine)
+          if (confirmed !== true) { quarantine(); unconfirmed(); }
+          else { try { ports.confirmed?.(); } catch { quarantine(); unconfirmed(); } }
+        }, () => { quarantine(); unconfirmed(); })
           .finally(() => { clearTimeout(timer); settle(); });
-      } catch { quarantine(); }
+      } catch { quarantine(); unconfirmed(); }
       settle();
     },
   });
@@ -101,6 +110,13 @@ export function createLedgerLease(identity: ConsumingIdentity, ports: Omit<Ledge
   let admissionNotice: NativeTurnNoticeCode | undefined;
   let confirmTeardown!: () => void;
   const teardownConfirmed = new Promise<void>(resolve => { confirmTeardown = resolve; });
+  // q1024-steerhang (MAIN-RULING 2026-11-27T10:14:50Z (1), option B): the end of the refusal's close, confirmed (true) or not (false), whichever
+  // comes first. A close that can never confirm must still end the refused turn: its waiters release the run on false and never rebuild into
+  // that session (the lease stays quarantined, the memory fence). A later confirmation still resolves teardownConfirmed (A5).
+  let endTeardown!: (confirmed: boolean) => void;
+  // unconfirmed only until a confirmation: a confirmed close is never reported unconfirmed again (a late timer after it keeps the fence)
+  let closeUnconfirmed = false, closeConfirmed = false;
+  const teardownEnded = new Promise<boolean>(resolve => { endTeardown = confirmed => { closeConfirmed ||= confirmed; closeUnconfirmed = !closeConfirmed; resolve(confirmed); }; });
   let handedBack!: (id: string | undefined) => void;
   const ready = new Promise<string | undefined>(resolve => { handedBack = resolve; });
   // M3 fallback = today's body as ONE ConfirmedClose (await ready; not launched -> confirmed; else the turnId-checked interrupt). A throw is stop-failed.
@@ -127,9 +143,10 @@ export function createLedgerLease(identity: ConsumingIdentity, ports: Omit<Ledge
   };
   const lifecycle = createLedgerRefusal(identity, { ...ports, interrupt,
     present(line) { ports.present(admissionNotice ? SEND_NOTICE_ENGLISH[admissionNotice] : line, admissionNotice); },
-    confirmed() { ports.confirmed?.(); confirmTeardown(); },
+    confirmed() { ports.confirmed?.(); confirmTeardown(); endTeardown(true); },
+    unconfirmed() { ports.unconfirmed?.(); endTeardown(false); },
   });
-  lifecycleConfirmed = () => { ports.confirmed?.(); confirmTeardown(); };
+  lifecycleConfirmed = () => { ports.confirmed?.(); confirmTeardown(); endTeardown(true); };
   const refuse = (verdict: LineageVerdict): void => { register(verdict); lifecycle.onLedgerRefused(verdict); };
   return Object.freeze({
     ...lifecycle,
@@ -140,6 +157,9 @@ export function createLedgerLease(identity: ConsumingIdentity, ports: Omit<Ledge
     get quarantined() { return lifecycle.quarantined; },
     get providerTurnId() { return providerTurnId; },
     teardownConfirmed,
+    teardownEnded,
+    /** q1024-steerhang: the refusal's close ended without a confirmation (and none came since): its session is never continued. */
+    get closeUnconfirmed() { return closeUnconfirmed; },
     admissionNotLaunched(notice?: NativeTurnNoticeCode): void {
       if (providerTurnId !== undefined) throw new Error("ADMISSION_ALREADY_LAUNCHED");
       if (lifecycle.state === "open") admissionNotice ??= notice;

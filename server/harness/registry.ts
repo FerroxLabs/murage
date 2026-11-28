@@ -20,6 +20,7 @@ import { runInLocalProbeScope } from "../drivers/local-inject.ts";
 import { decorateMemoryInstance } from "./memory-adapter.ts";
 import { decorateHoldInstance, InstanceHolds, type HoldResult } from "./instance-holds.ts";
 import { decorateAskNoteInstance } from "./ask-note-adapter.ts";
+import { decorateOwnerTurnInstance } from "./power-owner-adapter.ts";
 import { decorateConsumingMcpInstance } from "./consuming-mcp-policy.ts";
 import { decorateDraftOnlyInstance } from "./draft-only-adapter.ts";
 import type {
@@ -241,7 +242,7 @@ export class ProviderRegistry {
       });
       const live = decorateConsumingMcpInstance(created);
       // Outermost: every engine call for a draft-only bot is judged here before any other wrapper runs (draft-only-adapter.ts).
-      const decorated = decorateDraftOnlyInstance(decorateAskNoteInstance(decorateHoldInstance(decorateMemoryInstance(live), this.holds)));
+      const decorated = decorateDraftOnlyInstance(decorateOwnerTurnInstance(decorateAskNoteInstance(decorateHoldInstance(decorateMemoryInstance(live), this.holds))));
       this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
       return [instanceId, { instanceId, builtFrom, live: decorated }];
     } catch (e) {
@@ -306,6 +307,11 @@ export class ProviderRegistry {
 
   get(instanceId: InstanceId): ProviderInstance | null {
     return this.byId.get(instanceId)?.live ?? null;
+  }
+
+  /** The driver this registry dispatches for a driver kind (boot `[fuigo-mode]` driver= field). */
+  driverFor(driverKind: string): AnyProviderDriver | undefined {
+    return this.driversByKind.get(driverKind);
   }
 
   /** Is this engine still set up (running or not); a removed one is not. */

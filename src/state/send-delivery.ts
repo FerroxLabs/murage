@@ -54,6 +54,8 @@ export interface OutboxEntry {
   sendAction?: ResendAction;
   /** Help runs as one isolated owner turn, including after reload. */
   noSteer?: boolean;
+  /** TEACH-ENTRY D9.2: this client drew a Teach card under the message; the server adds its note only on its own match. */
+  teachCard?: true;
   /** Maintenance never expires an acknowledged local save. */
   indexing?: boolean;
   /** Scope undrafted Help/actions to the signed-in account. */

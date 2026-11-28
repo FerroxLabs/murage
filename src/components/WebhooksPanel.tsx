@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { HELD_COPY, heldActions, isHeldReason } from "../../shared/event-results";
 import {
   Check,
   ChevronDown,
@@ -172,6 +173,9 @@ export function WebhooksPanel({ bots }: { bots: Bot[] }) {
 
   const selected = state.webhooks.find((webhook) => webhook.id === selectedId) ?? null;
   const selectedBot = selected ? bots.find((bot) => bot.id === selected.botId) : undefined;
+  const heldRun = selected ? state.routineRuns.filter(run => run.webhookId === selected.id && run.eventResult?.state === "held")
+    .sort((a, b) => (b.finishedAt ?? b.scheduledFor) - (a.finishedAt ?? a.scheduledFor))[0] : undefined;
+  const reason = heldRun?.eventResult?.reason;
   const attemptsByRun = useMemo(() => new Set(state.webhookAttempts.map((attempt) => attempt.runId).filter(Boolean)), [state.webhookAttempts]);
   const activity = useMemo<ActivityItem[]>(() => {
     if (!selected) return [];
@@ -215,6 +219,18 @@ export function WebhooksPanel({ bots }: { bots: Bot[] }) {
         const response = await api(`/api/webhooks/${webhook.id}`, { method: "PATCH", body: JSON.stringify({ enabled: enabling, verificationPending: false }) });
         dispatch({ type: "webhookPatched", webhook: response.webhook });
       }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const recreate = async (webhookId: string) => {
+    setWorking(`${webhookId}:recreate`);
+    setError("");
+    try {
+      await api(`/api/webhooks/${encodeURIComponent(webhookId)}/results/recreate`, { method: "POST" });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -321,6 +337,13 @@ export function WebhooksPanel({ bots }: { bots: Bot[] }) {
                   <details className="relative"><summary className="list-none rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"><MoreHorizontal size={17} /></summary><div className="absolute right-0 top-full z-20 mt-1 w-[180px] rounded-xl border border-hairline/50 bg-card p-1.5 shadow-2xl"><button onClick={() => setEditor(selected)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-ink hover:bg-raised">Edit settings</button><button onClick={() => void invoke(selected, "delete")} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-danger hover:bg-danger/10"><Trash2 size={13} />Delete</button></div></details>
                 </div>
               </div>
+
+              {isHeldReason(reason) && (
+                <div className="mx-5 mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-hairline/45 px-3.5 py-2.5 text-[12px] text-ink-secondary md:mx-7">
+                  <p role="status">{HELD_COPY[reason]}</p>
+                  {heldActions(reason).map(action => <button key={action} type="button" disabled={Boolean(working)} onClick={() => void recreate(selected.id)} className="rounded-lg bg-raised px-3 py-1.5 font-medium text-ink disabled:opacity-40">{action}</button>)}
+                </div>
+              )}
 
               <div className="mt-5 flex gap-5 border-b border-hairline/35 px-5 md:px-7">
                 <button onClick={() => setTab("setup")} className={cn("border-b-2 px-0.5 pb-3 text-[12px] font-medium", tab === "setup" ? "border-accent text-ink" : "border-transparent text-ink-secondary hover:text-ink")}>Setup</button>

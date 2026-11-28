@@ -16,7 +16,8 @@ import { redactSecretsInText } from "../redact.ts";
 
 /** Servers the turn needs when they are mounted: connected apps, memory and
  * the bot-to-bot tools. Everything else (computer, browser, phone, custom
- * servers) is optional and never holds a turn past MCP_OPTIONAL_WAIT_MS. */
+ * servers) is optional and never holds a turn: its prompt goes out with the
+ * ones that are ready, and one still connecting is named to the bot once. */
 export const REQUIRED_MCP_SERVERS: Readonly<Record<string, string>> = {
   // murage_connectors is the mount; composio is the name releases before 1.0.2 mounted it
   // under, still mounted for a session one of them started (shared/connected-app-names.ts).
@@ -44,15 +45,11 @@ export const MCP_TURN_RECOVERY_MS = 20_000;
  * the CLI, custom servers included, so it stays at 15 s: the connector bridge's absolute list
  * deadline (CONNECTOR_LIST_DEADLINE_MS, 8 s) plus its margin is still below it. */
 export const MCP_RECONNECT_WAIT_MS = 15_000;
-/** Optional servers: never hold the turn longer than this. */
-export const MCP_OPTIONAL_WAIT_MS = 3_000;
 /** When the wait becomes visible: a chip says what the turn is waiting for. */
 export const MCP_WAIT_CHIP_AFTER_MS = 1_500;
 /** A reconnect is only started with at least this much of the deadline left. */
 const MIN_RECONNECT_WINDOW_MS = 1_000;
 const POLL_MS = 250;
-/** The status check after a reconnect only optional servers needed. */
-const OPTIONAL_RECHECK_MS = 500;
 export const MCP_STATUS_ANSWER_MS = 3_000;
 /** How long a fresh engine's FIRST status answer is waited for. A Claude CLI on
  * Windows takes longer to start reading its control requests: on the 1.0.3 gate
@@ -72,7 +69,20 @@ const envMs = (name: string, fallback: number): number => {
 export const mcpRequiredWaitMs = (): number => envMs("MURAGE_MCP_REQUIRED_WAIT_MS", MCP_REQUIRED_WAIT_MS);
 export const mcpRecoveryMs = (): number => envMs("MURAGE_MCP_RECOVERY_MS", MCP_TURN_RECOVERY_MS);
 export const mcpReconnectWaitMs = (): number => envMs("MURAGE_MCP_RECONNECT_WAIT_MS", MCP_RECONNECT_WAIT_MS);
-export const mcpOptionalWaitMs = (): number => envMs("MURAGE_MCP_OPTIONAL_WAIT_MS", MCP_OPTIONAL_WAIT_MS);
+/** 1.0.22 winfu: a turn bound to its mounts (acp/core.ts boundMounted) is never prompted without them, so when its window ends it
+ * is refused, and the owner reads "Murage couldn't start this reply". A mount the engine itself still lists as STARTING is not a
+ * failed mount: on a cold computer (the first Fuigo turn of a fresh Windows install starts two new processes per mount) the 15 to
+ * 20 s above ran out with every mount still coming up, and each proxy reached the server just after its turn was refused. Such a
+ * turn waits this long in all, measured from its first readiness check, for as long as the engine keeps reporting the mount as
+ * starting (a mount its list does not name keeps the first window). Three reconnect waits (the "roughly 3x" start-up stretch measured above), below the 60 s floor
+ * of the stall watchdog and the 90 s release wait. It never lengthens anything else: a mount the engine reports failed is decided
+ * at once, and one still not ready when this ends is refused as before (fail closed). */
+export const MCP_BOUND_STARTING_WAIT_MS = 3 * MCP_RECONNECT_WAIT_MS;
+const envGiven = (name: string): boolean => process.env[name] !== undefined && process.env[name] !== "";
+/** A box (or a test) that set the turn's own window (MURAGE_MCP_RECOVERY_MS, MURAGE_MCP_RECONNECT_WAIT_MS) asked for exactly that
+ * window: nothing is added to it unless this wait is named itself. */
+export const mcpBoundStartingWaitMs = (): number => envGiven("MURAGE_MCP_BOUND_STARTING_WAIT_MS") ? envMs("MURAGE_MCP_BOUND_STARTING_WAIT_MS", MCP_BOUND_STARTING_WAIT_MS)
+  : envGiven("MURAGE_MCP_RECOVERY_MS") || envGiven("MURAGE_MCP_RECONNECT_WAIT_MS") ? 0 : MCP_BOUND_STARTING_WAIT_MS;
 
 /** The plain name of a required server, or null for an optional one. */
 export function requiredMcpLabel(name: string): string | null {
@@ -131,6 +141,13 @@ export function toolsUnavailableNotice(labels: string[]): string {
 export function toolsMayBeLoadingNotice(labels: string[]): string {
   const list = joinLabels(labels);
   return `[Murage: the tools for ${list} may still have been loading when this turn started. If they are there, use them as usual. ${ifNeeded(list, wasOrWere(labels))}]`;
+}
+
+/** An optional server still connecting when the prompt goes out: the turn is
+ * not held for it, and the bot hears once which tools may arrive late. */
+export function toolsStillLoadingNotice(names: string[]): string {
+  const list = joinLabels(names);
+  return `[Murage: the tools for ${list} were still loading when this turn started. If they are there when you need them, use them as usual. If you need them and they are not there, tell the user once that ${list} ${names.length > 1 ? "are" : "is"} still loading, and do the rest of the task.]`;
 }
 
 /** The routine outcome for a run whose task needed tools that were not there. */
@@ -226,22 +243,21 @@ export interface McpGateResult {
 
 /** Wait (bounded) for the turn's required servers, reconnect the failed ones
  * (all at once), and report which are still missing. One deadline covers the
- * whole recovery; optional servers are waited for only within the optional
- * budget. A kept process never meets a failed server again by itself, so its
- * caller asks for `reconnectOptional`: a failed optional server then gets one
- * reconnect, inside the optional budget. On a new process they are left alone.
+ * whole recovery. An optional server is never waited for and never
+ * reconnected here: a new process connects it by itself, and a kept process
+ * reconnects every mount at its reuse barrier before this runs (a failure there
+ * sends the turn to a new process).
  * A server still connecting is not reconnected (that would restart its
  * connect): it is reported missing at the deadline. */
 export async function awaitRequiredMcp(
   servers: { required: string[]; optional: string[] },
   io: McpGateIo,
-  budgets: { requiredMs?: number; optionalMs?: number; recoveryMs?: number; firstAnswerMs?: number; reconnectOptional?: boolean } = {},
+  budgets: { requiredMs?: number; recoveryMs?: number; firstAnswerMs?: number } = {},
 ): Promise<McpGateResult> {
   const now = io.now ?? Date.now;
   const sleep = io.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms).unref?.(); }));
   const recoveryMs = budgets.recoveryMs ?? mcpRecoveryMs();
   const requiredMs = Math.min(budgets.requiredMs ?? mcpRequiredWaitMs(), recoveryMs);
-  const optionalMs = Math.min(budgets.optionalMs ?? mcpOptionalWaitMs(), recoveryMs);
   const started = now();
   const deadline = started + recoveryMs;
   const backoffKey = (name: string) => io.backoff?.key(name) ?? name;
@@ -288,22 +304,11 @@ export async function awaitRequiredMcp(
       if (left < MIN_RECONNECT_WINDOW_MS) continue;
       reconnecting.set(name, io.reconnect(name, left).catch(() => {}));
     }
-    if (budgets.reconnectOptional) {
-      for (const name of servers.optional) {
-        if (states.get(name) !== "failed" || reconnecting.has(name)) continue;
-        const left = started + optionalMs - at;
-        if (left < MIN_RECONNECT_WINDOW_MS) continue;
-        reconnecting.set(name, io.reconnect(name, left).catch(() => {}));
-      }
-    }
     const requiredPending = live.filter((name) => states!.get(name) === "pending" && !reconnecting.has(name));
-    const optionalPending = servers.optional.filter((name) => states!.get(name) === "pending");
-    const waitRequired = requiredPending.length > 0 && at - started < requiredMs;
-    const waitOptional = optionalPending.length > 0 && at - started < optionalMs;
-    if (!waitRequired && !waitOptional) break;
+    if (!requiredPending.length || at - started >= requiredMs) break;
     if (!slowShown && at - started >= MCP_WAIT_CHIP_AFTER_MS) {
       slowShown = true;
-      io.onSlow?.([...(waitRequired ? requiredPending : []), ...(waitOptional ? optionalPending : [])]);
+      io.onSlow?.(requiredPending);
     }
     await sleep(Math.max(0, Math.min(POLL_MS, deadline - at)));
   }
@@ -321,9 +326,7 @@ export async function awaitRequiredMcp(
     }
     if (!settled) await Promise.race([all, sleep(Math.max(0, deadline - now()))]);
     if (io.stopped()) return result({ missing: notConnected(states!), reconnected: [...reconnecting.keys()], stopped: true });
-    // Only optional reconnects: a quick look, they never hold the turn past their own budget.
-    const onlyOptional = ![...reconnecting.keys()].some((name) => live.includes(name));
-    const after = deadline - now() > 0 ? await (onlyOptional ? io.status(OPTIONAL_RECHECK_MS) : statusNow()) : null;
+    const after = deadline - now() > 0 ? await statusNow() : null;
     // No answer after a reconnect: the engine is still busy with it, so
     // nothing it reconnected can be counted on for this turn.
     if (after instanceof Map) states = after;

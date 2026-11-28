@@ -227,12 +227,12 @@ it.skipIf(process.platform === "win32")("runs the turn when 'this computer' is c
   expect(await activities(bot.threadId, "error:")).toEqual([]);
   expect(String(reached?.systemPrompt ?? "")).toContain("local control is not enabled yet");
   expect(reached?.mcpConfig?.mcpServers?.computer).toBeUndefined();
-  // One status note on the first such turn, not on every turn.
+  // No status line on any turn: the bot says it only when asked (the prompt instruction above).
   const note = "Local control is off, so this bot can't use the computer yet. Turn it on in Settings > Computer.";
   const notes = async () => (await messages(bot.threadId)).filter((m: any) => m.text === note && m.murage?.kind === "status");
-  expect(await notes()).toHaveLength(1);
+  expect(await notes()).toHaveLength(0);
   await runTurn(bot, "use my computer again");
-  expect(await notes()).toHaveLength(1);
+  expect(await notes()).toHaveLength(0);
 }, 60_000);
 
 // A room member's turn binds its browser through the same path, and it used
@@ -256,7 +256,10 @@ it("lets a room member's turn go on without the browser when the check times out
   expect(versionSpawns()).toBe(before + 1);
 }, 60_000);
 
-it("a bot set to the owner's browser gets a short hint instead of browser tools when Murage for Chrome is not connected", async () => {
+// W3 (DESIGN-JOURNEY-1024 section 6, P3: no setup inside a job; MAIN-RULING 2026-11-27T15:16:59Z): FLIPPED. The hint used to tell
+// the bot to call request_browser_connection and end its turn (base b99bdb6a0e: RED at the two W3 assertions below).
+// Mutant M-W3p (put the request/end-your-turn sentence back in extensionBrowserUnavailablePrompt): RED at the W3 prompt assertion.
+it("W3: a bot set to the owner's browser gets a short hint instead of browser tools, and is never told to request setup or end its turn", async () => {
   setEngine("ok");
   const bot = await createBot("Owner browser not connected fixture");
   expect((await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: true, browserTransport: "extension" })).status).toBe(200);
@@ -264,7 +267,8 @@ it("a bot set to the owner's browser gets a short hint instead of browser tools 
   expect(captured.mcpConfig?.mcpServers?.browser).toBeUndefined();
   expect(captured.systemPrompt).not.toContain(UNIFIED_BROWSER_SYSTEM_PROMPT.trim().slice(0, 60));
   expect(captured.systemPrompt).toContain("Murage for Chrome");
-  expect(captured.systemPrompt).toContain("request_browser_connection");
+  expect(captured.systemPrompt, "W3 prompt: no setup request tool").not.toContain("request_browser_connection");
+  expect(captured.systemPrompt, "W3 prompt: no end-your-turn or send-again setup ask").not.toMatch(/end your turn; Murage continues|send the task again/i);
   expect((await activities(bot.threadId, "error:")).map((m) => m.tool.name)).toEqual([]);
 }, 60_000);
 

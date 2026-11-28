@@ -73,7 +73,7 @@ describe("the window asks, and uses the answer", () => {
   const store = readFileSync(join(here, "store.tsx"), "utf8");
   it("asks the server what is owed on every connect and reconnect, and after every snapshot", () => {
     expect(store).toMatch(/api\("\/api\/deletions\/owed"\)\.then\(\(response\) => \{ if \(alive\) rawDispatch\(\{ type: "deletionOwed", notices: response\?\.notices, rev: response\?\.rev \}\)/);
-    expect(store).toMatch(/onOpen: \(\) => \{ rawDispatch\(\{ type: "connected", value: true \}\); requestMemoryWake\("RECONNECT"\); refreshOwed\(\); deleteControl\.current\.kick\(\); \}/);
+    expect(store).toMatch(/onOpen: \(\) => \{ attentionGen = \+\+attentionStreamGeneration; forwardAttentionResync\(attentionGen\); rawDispatch\(\{ type: "connected", value: true \}\); requestMemoryWake\("RECONNECT"\); refreshOwed\(\); deleteControl\.current\.kick\(\); \}/);
     expect(store).toMatch(/hydrated = true;\s+refreshOwed\(\);/);
   });
   it("the live frame goes through the same action, so an empty list clears", () => {

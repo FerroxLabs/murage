@@ -9,8 +9,6 @@ import { removeTempDirSync } from '../testing/cleanup.ts';
 import { fixtureMemoryAccess as memoryAccess } from '../testing/recall-access-fixture.ts';
 import { settleTestHandles } from '../test-handle-registry.ts';
 import { captureSource } from './capture.ts';
-import { captureWork } from './chunks.ts';
-import { claimMemoryJob, publishMemoryWork } from './jobs.ts';
 import { reconcileMemoryRoster } from './policy.ts';
 import { RecallViewLost } from './recall-recovery.ts';
 import { stopRecallViewMaintenance } from './recall-view.ts';
@@ -34,13 +32,13 @@ it('C7 close lesson saves a bot-scoped candidate backed by the project, without 
   const access=memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);
   const evidence=[{sourceId:'project-evidence',revision:1,startByte:0,endByte:Buffer.byteLength('Project closed: what I learned')}];
   const body={text:'Project closed: what I learned',evidence,idempotencyKey:'close-lesson',claimType:'owner-statement'};
-  // R7-9: the lesson path refuses evidence whose capture is still pending, as every other save does
-  await expect(memoryAgentRoute('/api/internal/memory/save',body,access,{search:async()=>({hits:[],vectorRows:0})},undefined,null,{executingRequestId:requestId})).rejects.toThrow('Source capture is still pending. Try saving this memory again after capture finishes.');
-  expect(Number(database().prepare("SELECT COUNT(*) AS n FROM memory_records").get()!.n)).toBe(0);
-  for(let job=claimMemoryJob('fixture');job;job=claimMemoryJob('fixture'))publishMemoryWork(job,'fixture',captureWork(job));
+  // MEMSAVE-1024 (was R7-9, which pinned the refusal "Source capture is still pending..." here): the lesson path runs the same
+  // capture step every other save runs, and a capture that is only waiting never refuses the save: the cited source is captured now.
+  expect(database().prepare("SELECT status FROM memory_jobs WHERE source_id='project-evidence' AND stage='capture'").get()).toEqual({status:'pending'});
   const result=await memoryAgentRoute('/api/internal/memory/save',body,access,{search:async()=>({hits:[],vectorRows:0})},undefined,null,{executingRequestId:requestId}) as {candidateId:string};
   expect(database().prepare('SELECT s.kind,s.owner_key,r.state FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE r.id=?').get(result.candidateId)).toEqual({kind:'bot',owner_key:'bot',state:'candidate'});
   expect(database().prepare('SELECT source_id FROM memory_evidence WHERE record_id=?').all(result.candidateId)).toEqual([{source_id:'project-evidence'}]);
+  expect(database().prepare("SELECT status FROM memory_jobs WHERE source_id='project-evidence' AND stage='capture'").get()).toEqual({status:'complete'});
   expect(await memoryAgentRoute('/api/internal/memory/save',body,access,{search:async()=>({hits:[],vectorRows:0})},undefined,null,{executingRequestId:requestId})).toMatchObject({candidateId:result.candidateId,state:'candidate'});
   // R5: a Reopen while the lesson body is read revokes the lesson path; the save never
   // falls through to an ordinary grounded (project-scoped, possibly active) save.

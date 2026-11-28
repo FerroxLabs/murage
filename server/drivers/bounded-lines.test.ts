@@ -1,15 +1,15 @@
-// Unit contract for the byte-bounded engine stdout splitter (audit A4).
+// Unit contract for the engine stdout line splitter (audit A4). Engine frames have no size limit (MAIN-RULING
+// cause22-no-transport-caps); the limited cases below are a caller's own maxBytes.
 import { describe, expect, it } from "vitest";
 
-import { createBoundedLineSplitter, ENGINE_FRAME_MAX_BYTES, frameOverflowMessage, type FrameOverflow } from "./bounded-lines.ts";
+import { createBoundedLineSplitter, type FrameOverflow } from "./bounded-lines.ts";
 
 const collect = (maxBytes?: number) => {
   const lines: string[] = [];
   const overflows: FrameOverflow[] = [];
   const splitter = createBoundedLineSplitter({
     onLine: (line) => lines.push(line),
-    onOverflow: (overflow) => overflows.push(overflow),
-    maxBytes,
+    ...(maxBytes === undefined ? {} : { maxBytes, onOverflow: (overflow: FrameOverflow) => overflows.push(overflow) }),
   });
   return { splitter, lines, overflows };
 };
@@ -96,7 +96,6 @@ describe("createBoundedLineSplitter", () => {
         seen.push(line);
         if (line === "boom") throw new Error("handler failed");
       },
-      onOverflow: () => {},
     });
     expect(() => splitter.push("a\nboom\npartial")).toThrow("handler failed");
     splitter.push("-rest\n");
@@ -112,24 +111,20 @@ describe("createBoundedLineSplitter", () => {
     expect(splitter.bufferedBytes).toBe(0);
   });
 
-  it("admits a 10 MiB image as a base64 frame at the default limit", () => {
+  it("delivers a 40 MiB frame whole when no limit is given (no engine frame cap)", () => {
     const { splitter, lines, overflows } = collect();
-    const base64 = Buffer.alloc(10 * 1024 * 1024, 7).toString("base64");
-    const frame = JSON.stringify({ type: "image", data: base64 });
-    expect(Buffer.byteLength(frame)).toBeLessThan(ENGINE_FRAME_MAX_BYTES);
-    for (let i = 0; i < frame.length; i += 65_536) splitter.push(frame.slice(i, i + 65_536));
+    const frame = JSON.stringify({ type: "image", data: "a".repeat(40 * 1024 * 1024) });
+    expect(() => { for (let i = 0; i < frame.length; i += 1024 * 1024) splitter.push(frame.slice(i, i + 1024 * 1024)); }, "no engine frame cap").not.toThrow();
+    expect(splitter.bufferedBytes).toBe(frame.length);
     splitter.push("\n");
     expect(overflows).toEqual([]);
+    expect(splitter.closed).toBe(false);
     expect(lines).toHaveLength(1);
     expect(lines[0]!.length).toBe(frame.length);
   });
 
-  it("rejects a non-positive limit", () => {
+  it("rejects a non-positive limit, and a limit without onOverflow", () => {
     expect(() => createBoundedLineSplitter({ onLine: () => {}, onOverflow: () => {}, maxBytes: 0 })).toThrow(RangeError);
-  });
-
-  it("describes the stop without echoing frame content", () => {
-    expect(frameOverflowMessage("Codex", { bytes: ENGINE_FRAME_MAX_BYTES + 1, limit: ENGINE_FRAME_MAX_BYTES, terminated: false }))
-      .toBe("Codex sent a protocol message larger than 32 MiB, so Murage stopped this turn instead of reading it. Other conversations were not affected.");
+    expect(() => createBoundedLineSplitter({ onLine: () => {}, maxBytes: 16 })).toThrow(RangeError);
   });
 });

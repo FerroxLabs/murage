@@ -65,18 +65,24 @@ for (const saved of [undefined, false, true]) for (const unattended of [false, t
   });
 }
 
+// CHANGED-EXPECTATIONS (FRICTION-1025 F13, q1024-trustquiet r6): below No limits the saved denial now runs the turn with the
+// repository's settings left out (--setting-sources user) instead of refusing it; the stale No limits hint still lets nothing in.
 it('current Ask permission keeps a saved sign-in denial despite a stale No limits launch hint', async () => {
   const project = join(root, '.claude', 'settings.json');
   mkdirSync(join(root, '.claude'));
   writeFileSync(project, JSON.stringify({ apiKeyHelper: '/fixture/not-executed' }));
   claudeSigninAnswers.remember(claudeSigninScope(process.platform, [{ path: project, source: 'project' }]), false);
+  const dump = join(root, 'launch.json');
+  process.env.FAKE_CLAUDE_DUMP = dump;
   instance = await admittedFixtureInstance(ClaudeDriver.create({ instanceId: 'p', displayName: 'Fixture', enabled: true, environment: {}, config: { cli, permissionMode: 'acceptEdits' } }));
   recorder = recordEvents(instance.adapter);
   await instance.adapter.sendTurn({ threadId: 't', cwd: root, text: 'fixture-only', noLimits: true,
     permissionNow: () => ({ noLimits: undefined, stopLine: undefined, routeAsks: true }),
   });
-  expect(await recorder.until(event => event.type === 'turn.completed')).toMatchObject({ ok: false });
+  expect(await recorder.until(event => event.type === 'turn.completed')).toMatchObject({ ok: true });
   expect(recorder.events.filter(event => event.type === 'request.opened')).toEqual([]);
+  const argv = (JSON.parse(readFileSync(dump, 'utf8')) as { argv: string[] }).argv;
+  expect(argv[argv.indexOf('--setting-sources') + 1]).toBe('user');
 });
 
 for (const noLimits of [false, true]) for (const tool of ['Read', 'Bash']) {

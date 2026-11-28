@@ -6,7 +6,7 @@
 // first asks which bot it is for. Runs in the MAIN (local) window only. No token or key is ever held here.
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 
-import { agySignInConfirmCopy, engineLoginNeedsBot, type EngineLoginAction, type EngineLoginEngine } from "@/lib/engine-login-terminal";
+import { BOT_LOGIN_ENGINES, agySignInConfirmCopy, engineLoginNeedsBot, type EngineLoginAction, type EngineLoginEngine } from "@/lib/engine-login-terminal";
 import { HOME_CLAUDE_BUTTON, OWN_CLAUDE_BUTTON, botsToSignIn, canSignInHere, engineName, firstOffer, queueOfferButton, skipKey, queueOfferCopy, signInLine, type HomeBot } from "@/lib/cloud-signin-status";
 import type { CloudHomeBridge } from "@/lib/cloud-workspace";
 import { BotChoice } from "./BotChoice";
@@ -32,9 +32,31 @@ export const SIGN_INS: { engine: EngineLoginEngine; action: EngineLoginAction; l
   { engine: "opencodeGo", action: "enroll-key", label: "Save an OpenCode API key" },
 ];
 
+/** E1/S1: what the home says about one sign-in engine (cloud-home:list-engines). */
+export interface HomeEngine { engine: string; installed: boolean; signedIn: boolean }
+
+/**
+ * The sign-in rows to offer. The home said which engines it has (E1/S1): an engine it does not have gets no row. Claude's
+ * sign-in is the home's own: signed out it offers "Sign in to Claude", signed in "Sign out of Claude". A per-bot engine
+ * (Codex, Grok, Kimi, OpenCode) keeps "Sign in to <engine>" while installed, since another bot may still need it; each bot's
+ * own state and sign-out stay on its bot line. The home could not say (null): every row, as before.
+ */
+export function signInRows(engines: HomeEngine[] | null | undefined): typeof SIGN_INS {
+  if (!engines) return SIGN_INS;
+  const state = (engine: string) => engines.find((entry) => entry.engine === engine);
+  return SIGN_INS.flatMap((row) => {
+    const home = state(row.engine);
+    if (!home?.installed) return [];
+    if (row.action !== "login" || BOT_LOGIN_ENGINES.includes(row.engine)) return [row];
+    return home.signedIn ? [{ engine: row.engine, action: "logout" as EngineLoginAction, label: row.label.replace(/^Sign in to /, "Sign out of ") }] : [row];
+  });
+}
+
 const button = "rounded-md bg-control px-3 py-1.5 text-[13px] font-medium text-ink hover:bg-inset disabled:opacity-50";
 
 export interface EngineSignInsViewProps {
+  /** E1/S1: the engines the home has (null or absent: the home could not say, every row is offered). */
+  engines?: HomeEngine[] | null;
   homeId: string;
   /** How the home is named in the Antigravity confirmation (its address); a generic phrase when absent. */
   homeName?: string;
@@ -56,15 +78,16 @@ export interface EngineSignInsViewProps {
   onSkipOffer?(): void;
 }
 
-/** A sign-in the Cloud window asked for (a new bot's "Sign <bot> in to <engine>"): started once, then cleared. */
-export interface SignInRequest { homeId: string; bot: string; engine: string }
+/** A sign-in the Cloud window asked for, started once, then cleared: a new bot's "Sign <bot> in to <engine>", or (S2, no bot)
+ * an engine's own sign-in from the Cloud window's setup card. */
+export interface SignInRequest { homeId: string; bot?: string; engine: string }
 
 export function EngineSignInsView(props: EngineSignInsViewProps) {
   const { homeId, busy, signIn } = props;
   return (
     <>
       <div className="flex flex-wrap gap-2">
-        {SIGN_INS.map(({ engine, action, label }) => (
+        {signInRows(props.engines).map(({ engine, action, label }) => (
           <button key={engine + action} type="button" className={button} disabled={busy} onClick={() => props.onSignIn(homeId, engine, action)}>{label}</button>
         ))}
       </div>
@@ -135,15 +158,37 @@ export function EngineSignIns({ bridge, homeId, homeName, busy, onError, request
   const [botChoices, setBotChoices] = useState<{ id: string; name: string }[] | null>(null);
   const [bots, setBots] = useState<HomeBot[] | null>(null);
   const [offer, setOffer] = useState<{ bot: HomeBot; engine: string; label: string } | null>(null);
+  const [engines, setEngines] = useState<HomeEngine[] | null>(null);
+  // The home this panel row shows now: a late inventory answer for an earlier home is dropped.
+  const shownHome = useRef(homeId);
+  shownHome.current = homeId;
   // Bots the owner said "Not now" to for this visit; they are not offered again until the panel is reopened.
   const skipped = useRef<Set<string>>(new Set());
   const refresh = async (): Promise<HomeBot[] | null> => {
+    // The home's engines are read beside its bots: a sign-in that just finished turns its row into "Sign out of".
+    const asked = homeId;
+    void Promise.resolve(bridge.listEngines?.(asked)).then(
+      (next) => { if (shownHome.current === asked) setEngines(Array.isArray(next) ? next : null); },
+      () => { if (shownHome.current === asked) setEngines(null); });
     try { const next = await bridge.listBots(homeId); setBots(next); return next; } catch { return null; }
   };
   useEffect(() => { void refresh().then((next) => { if (next) setOffer(firstOffer(next, skipped.current)); }); }, [homeId]);
-  // The Cloud window asked for this bot's sign-in: open the same per-bot sign-in the offer opens, once.
+  /** The engine's own sign-in row (its button here): Claude opens at once; a per-bot engine first asks which bot. */
+  const startSignIn = (target: string, engine: EngineLoginEngine, action: EngineLoginAction = "login") => {
+    setSignIn({ homeId: target, engine, action, bot: null });
+    setBotChoices(null);
+    setOffer(null);
+    if (!engineLoginNeedsBot(engine, action, null)) return;
+    // A per-bot sign-in names its bot: read the home's bots (id and name only) to choose from.
+    void (async () => {
+      try { setBotChoices(await bridge.listBots(target)); } catch (cause) { setBotChoices([]); onError(messageOf(cause)); }
+    })();
+  };
+  // The Cloud window asked for this bot's sign-in: open the same per-bot sign-in the offer opens, once. With no bot (S2, the
+  // Cloud window's setup card) it is the engine's own row, exactly as if its button here was pressed.
   useEffect(() => {
     if (!request || request.homeId !== homeId || !canSignInHere(request.engine)) return;
+    if (request.bot === undefined) { onRequestHandled?.(); startSignIn(homeId, request.engine as EngineLoginEngine); return; }
     void refresh().then((next) => {
       const bot = next?.find((candidate) => candidate.id === request.bot);
       onRequestHandled?.();
@@ -164,17 +209,8 @@ export function EngineSignIns({ bridge, homeId, homeName, busy, onError, request
   };
   return (
     <EngineSignInsView
-      homeId={homeId} homeName={homeName} busy={busy} signIn={signIn} botChoices={botChoices} bots={bots} offer={offer}
-      onSignIn={(target, engine, action = "login") => {
-        setSignIn({ homeId: target, engine, action, bot: null });
-        setBotChoices(null);
-        setOffer(null);
-        if (!engineLoginNeedsBot(engine, action, null)) return;
-        // A per-bot sign-in names its bot: read the home's bots (id and name only) to choose from.
-        void (async () => {
-          try { setBotChoices(await bridge.listBots(target)); } catch (cause) { setBotChoices([]); onError(messageOf(cause)); }
-        })();
-      }}
+      homeId={homeId} homeName={homeName} busy={busy} signIn={signIn} botChoices={botChoices} bots={bots} offer={offer} engines={engines}
+      onSignIn={(target, engine, action = "login") => startSignIn(target, engine, action)}
       onSignInBot={(bot, engine, action = "login") => { setOffer(null); setSignIn({ homeId, engine, action, bot: { id: bot.id, name: bot.name } }); }}
       onSkipOffer={() => {
         if (!offer) return;

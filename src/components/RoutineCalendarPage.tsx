@@ -58,6 +58,7 @@ import { NewRoutineSheet, type SentenceChange } from "@/components/routines/NewR
 import { PhoneRoutineList } from "@/components/phone/PhoneRoutineList";
 import { routineHealthNotes, routineOverlapHelp } from "@/lib/routine-health";
 import { routineInstructionsLimit } from "@/lib/routine-instructions-limit";
+import { routineErrorText } from "@/lib/routine-error";
 import { isUnseenRoutineProblem } from "../../shared/routine-problems";
 import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/lib/calendar-calls";
 import { botRole } from "@/lib/bot-role";
@@ -214,6 +215,24 @@ function nextHour(): number {
   const date = new Date(Date.now() + 60 * 60_000);
   date.setMinutes(0, 0, 0);
   return date.getTime();
+}
+
+/** The server's answer to a one-time moment that is not in the future, told by its code (never by the server's wording). */
+function onceMomentReply(cause: unknown): { offer: string | null; refusal: string | null } {
+  const code = (cause as { body?: { code?: unknown } } | null)?.body?.code;
+  if (code === "once_just_passed") return { offer: t("ux.l5b.once.justPassed"), refusal: null };
+  if (code === "once_in_past") return { offer: null, refusal: t("ux.l5b.once.inPast") };
+  return { offer: null, refusal: null };
+}
+
+function RunNowOffer({ message, working, onRunNow, onPick }: { message: string; working: boolean; onRunNow: () => void; onPick: () => void }) {
+  return <div role="alert" className="space-y-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[12px] text-ink">
+    <div>{message}</div>
+    <div className="flex gap-2">
+      <button onClick={onRunNow} disabled={working} className="rounded-lg bg-accent px-3 py-1.5 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50">{t("ux.l5b.once.runNow")}</button>
+      <button onClick={onPick} disabled={working} className="rounded-lg px-3 py-1.5 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50">{t("ux.l5b.once.pickTime")}</button>
+    </div>
+  </div>;
 }
 
 function niceTime(at: number): string {
@@ -484,6 +503,7 @@ export function EventEditor({ lifecycle,
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [runNowOffer, setRunNowOffer] = useState<string | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const cloudInstance = state.instances.find((instance) => instance.driverKind === "boxAgent");
@@ -551,9 +571,10 @@ export function EventEditor({ lifecycle,
     if (result.notice) setAttachmentNotice(result.notice);
   };
 
-  const save = async () => {
+  const save = async (runNow = false) => {
     setSaving(true);
     setError("");
+    setRunNowOffer(null);
     try {
       if (kind === "routine") {
         const nextSchedule = makeRoutineSchedule(recurrence, at, weekdays, intervalMinutes, limitEngineKey || botLimitKey);
@@ -573,6 +594,7 @@ export function EventEditor({ lifecycle,
           ...(routineTarget === "bot" ? { deliverTo } : {}),
           ...(!existingRoutine && routineTarget === "bot" && recurrence !== "none" ? { carryLastReport: true } : {}),
           ...(routineTarget === "bot" ? routinePermissionPatch(permissionMode,existingRoutine) : {}),
+          ...(runNow ? { runNow: true } : {}),
         };
         const response = await api(existingRoutine ? `/api/routines/${existingRoutine.id}` : "/api/routines", {
           method: existingRoutine ? "PATCH" : "POST",
@@ -599,7 +621,9 @@ export function EventEditor({ lifecycle,
       }
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      const reply = onceMomentReply(cause);
+      if (reply.offer) setRunNowOffer(reply.offer);
+      else setError(reply.refusal ?? (cause instanceof Error ? cause.message : String(cause)));
     } finally {
       setSaving(false);
     }
@@ -904,12 +928,13 @@ export function EventEditor({ lifecycle,
             disabledReason={description!==instructionBase?"Save or discard your instruction edits before restoring a version.":undefined}
             onRestored={routine=>{dispatch({type:"routinePatched",routine});setDescription(routine.prompt);setInstructionBase(routine.prompt);}}/></div>}
 
+          {runNowOffer && <div className="ml-10"><RunNowOffer message={runNowOffer} working={saving} onRunNow={() => void save(true)} onPick={() => setRunNowOffer(null)} /></div>}
           {error && <div className="ml-10 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2.5 text-[12.5px] text-danger"><CircleAlert size={15} className="mt-0.5 shrink-0" />{error}</div>}
         </BoxBody>
 
         <BoxFoot className="border-t border-hairline/40 px-5 py-3.5">
           <button onClick={onClose} className="rounded-lg px-4 py-2 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
-          <button onClick={save} disabled={saving || !valid} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{existingRoutine || existingCall ? "Save" : kind === "call" ? "Schedule call" : isRoomGoal ? "Schedule team goal" : "Schedule routine"}</button>
+          <button onClick={() => void save()} disabled={saving || !valid} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{existingRoutine || existingCall ? "Save" : kind === "call" ? "Schedule call" : isRoomGoal ? "Schedule team goal" : "Schedule routine"}</button>
         </BoxFoot>
       </div>
     </div></LayerSurface>;
@@ -943,6 +968,7 @@ export function QuickComposer({ lifecycle,
   const [recurrence, setRecurrence] = useState<CalendarRecurrenceChoice>(seed.recurrence ?? "none");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const [runNowOffer, setRunNowOffer] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const quickDirty = useDirtyBaseline({ kind, name, description, botIds, recurrence });
   const layer = useCalendarLayer(dialogRef, "routine-quick-create", () => quickDirty.closeWithAsk(onClose), lifecycle, "input");
@@ -973,9 +999,10 @@ export function QuickComposer({ lifecycle,
     return () => window.removeEventListener("resize", place);
   }, [kind, seed.anchor]);
 
-  const save = async () => {
+  const save = async (runNow = false) => {
     setWorking(true);
     setError("");
+    setRunNowOffer(null);
     try {
       if (kind === "routine") {
         const response = await api("/api/routines", {
@@ -989,6 +1016,7 @@ export function QuickComposer({ lifecycle,
             schedule: makeCalendarSchedule(recurrence, seed.at, [new Date(seed.at).getDay()]),
             durationMinutes: seed.durationMinutes,
             attachments: [],
+            ...(runNow ? { runNow: true } : {}),
           } satisfies RoutineInput),
         });
         onSavedRoutine(response.routine);
@@ -1009,7 +1037,9 @@ export function QuickComposer({ lifecycle,
       }
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      const reply = onceMomentReply(cause);
+      if (reply.offer) setRunNowOffer(reply.offer);
+      else setError(reply.refusal ?? (cause instanceof Error ? cause.message : String(cause)));
     } finally {
       setWorking(false);
     }
@@ -1069,11 +1099,12 @@ export function QuickComposer({ lifecycle,
             {instructionsLimit && <p id="quick-routine-instructions-limit" role={instructionsLimit.over ? "alert" : undefined} className={cn("mt-1 text-[11.5px]", instructionsLimit.over ? "text-danger" : "text-ink-secondary")}>{instructionsLimit.line}</p>}
           </div>
         </div>
+        {runNowOffer && <RunNowOffer message={runNowOffer} working={working} onRunNow={() => void save(true)} onPick={() => { layer?.release(); onMore({ ...seed, kind, botIds, name, description, recurrence }); }} />}
         {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
       </BoxBody>
       <BoxFoot className="border-t border-hairline/40 px-4 py-3">
         <button onClick={() => { layer?.release(); onMore({ ...seed, kind, botIds, name, description, recurrence }); }} className="rounded-lg px-3 py-2 text-[12px] font-medium text-accent hover:bg-accent/10">More options</button>
-        <button onClick={save} disabled={!valid || working} className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{working && <Loader2 size={13} className="animate-spin" />}Save</button>
+        <button onClick={() => void save()} disabled={!valid || working} className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{working && <Loader2 size={13} className="animate-spin" />}Save</button>
       </BoxFoot>
     </div>
     </></LayerSurface>;
@@ -1489,7 +1520,7 @@ export function EventDetails({ lifecycle,
           {!isCall && <div className="flex items-start gap-3"><Clock3 size={17} className="mt-1 shrink-0 text-ink-secondary" /><div><div className="text-[11px] font-medium uppercase tracking-wider text-ink-secondary">Run limit</div><div className="mt-1 text-[12.5px] text-ink">{safetyLimit == null ? "No time limit" : `Stops if still running after ${durationLabel(safetyLimit)}`}</div></div></div>}
           {routine?.carryLastReport === true && routine.schedule.type !== "once" && <div className="flex items-start gap-3"><FileText size={17} className="mt-1 shrink-0 text-ink-secondary" /><div className="text-[12px] text-ink-secondary">{t("routines.carryLastReport")}</div></div>}
           {routine && routineHealthNotes(routine).map((note) => <div key={note.text} className={cn("flex items-start gap-2 text-[11.5px] leading-relaxed", note.tone === "danger" ? "text-danger" : "text-ink-secondary")}><CircleAlert size={13} className="mt-0.5 shrink-0" />{note.text}</div>)}
-          {run && <div className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium capitalize text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{run.goalStatus ? goalStatusLabel(run.goalStatus) : run.status.replace("waiting", "needs you").replace("needs-you", "waiting on you")}</div>{runWaitLabel && <div className="mt-2 text-[11.5px] leading-relaxed text-ink-secondary">{runWaitLabel}</div>}{run.output && <div className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[11.5px] text-danger">{run.error}</div>}{run.notes?.map((note) => <div key={note} className="mt-2 break-words text-[11.5px] leading-relaxed text-ink-secondary">{note}</div>)}{run.notesMore ? <div className="mt-2 text-[11.5px] text-ink-secondary">{run.notesMore === 1 ? "1 more command like these ran." : `${run.notesMore} more commands like these ran.`}</div> : null}</div>}
+          {run && <div className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium capitalize text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{run.goalStatus ? goalStatusLabel(run.goalStatus) : run.status.replace("waiting", "needs you").replace("needs-you", "waiting on you")}</div>{runWaitLabel && <div className="mt-2 text-[11.5px] leading-relaxed text-ink-secondary">{runWaitLabel}</div>}{run.output && <div className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[11.5px] text-danger">{routineErrorText(run.error)}</div>}{run.notes?.map((note) => <div key={note} className="mt-2 break-words text-[11.5px] leading-relaxed text-ink-secondary">{note}</div>)}{run.notesMore ? <div className="mt-2 text-[11.5px] text-ink-secondary">{run.notesMore === 1 ? "1 more command like these ran." : `${run.notesMore} more commands like these ran.`}</div> : null}</div>}
           {run?.attention && run.status === "queued" && run.limitWait && <div data-routine-limit-wait className="rounded-xl border border-hairline/40 bg-inset px-3 py-2.5 text-[11.5px] text-ink-secondary"><div className="font-semibold text-ink">{limitWaitLabel(run.limitWait.engineKey, state.instances)}</div><div className="mt-1">{run.attention}</div></div>}
           {run?.attention && !(run.status === "queued" && run.limitWait) && <div className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning"><CircleAlert size={15} className="mt-0.5 shrink-0" /><div className="min-w-0"><div className="text-[11.5px] font-semibold">Needs your attention</div><div className="mt-1 whitespace-pre-wrap text-[11.5px] leading-relaxed">{run.attention}</div></div></div>}
           {run?.status === "needs-you" && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">This run reached its time limit while waiting on you{run.attention ? `: ${run.attention}` : ""}. Answer it in the routine's conversation and the run carries on.</div>}
@@ -1501,7 +1532,7 @@ export function EventDetails({ lifecycle,
           {roomId && <button onClick={() => onOpenRoom(roomId)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110"><ExternalLink size={13} />Join channel</button>}
           {call && call.botIds.length > 1 && <button onClick={joinRoom} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><ExternalLink size={13} />Join channel</button>}
           {isRoomGoal && goalGroup && !executionThreadId && <button onClick={() => { onOpenRoom(goalGroup.id); onClose(); }} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110"><ExternalLink size={13} />Open channel</button>}
-          {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}/run`)} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><Play size={13} />Run now</button>}
+          {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}/run`)} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><Play size={13} />{t("ux.l5b.once.runNow")}</button>}
           {executionThreadId && (isRoomGoal ? goalGroup : primary) && <button onClick={openRunTask} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />{isRoomGoal ? "Open channel task" : "Open task"}</button>}
           {run && ["queued", "running", "waiting", "needs-you"].includes(run.status) && <button onClick={() => void invoke(`/api/routine-runs/${run.id}/cancel`)} disabled={working} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"><X size={13} />Cancel run</button>}
           {!canEdit && (routine || call) && <p className="w-full text-[12px] text-ink-secondary">Create or change schedules in the desktop app. You can also ask the bot to propose a routine for your review here.</p>}

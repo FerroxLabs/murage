@@ -143,12 +143,14 @@ const DIRECT_TURN_PERSONA = `  return [
     bot.title && \`Role: \${bot.title}.\`,
     bot.description && \`About: \${bot.description}\`,
     \`Personality: \${personalityImprint(bot.persona)}\`,
+    replyLanguageLine(bot.replyLanguage),
   ]`;
 
 const ROOM_TURN_PERSONA = `    \`You are \${bot.name}, a bot in the room "\${roomName}" in Murage.\`,
     bot.title && \`Role: \${bot.title}.\`,
     bot.description && \`About: \${bot.description}\`,
-    \`Personality: \${personalityImprint(bot.persona)}\`,`;
+    \`Personality: \${personalityImprint(bot.persona)}\`,
+    replyLanguageLine(bot.replyLanguage),`;
 
 describe("persona is spoken to the bot and read by nothing that routes", () => {
   const index = readSource("./index.ts");

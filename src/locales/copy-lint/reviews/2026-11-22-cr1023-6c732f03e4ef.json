@@ -1,0 +1,580 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "cr1023-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.23 CHROME-RESUME-FROM-APP strings"
+  },
+  "author": "bld1023-chrome-resume",
+  "date": "2026-11-22",
+  "base": "1b3866f67e75e35ce2d2b01a80b10c2efcf79130",
+  "scope": "CHROME-RESUME-FROM-APP",
+  "strings": {
+    "en:browserExt.state.connectionLost": {
+      "text": "Paused because Chrome or Murage closed. Check the page, then press Resume here or in the Murage side panel.",
+      "en": "Paused because Chrome or Murage closed. Check the page, then press Resume here or in the Murage side panel.",
+      "verdict": "pass"
+    },
+    "en:browserExt.updateToResumeApp": {
+      "text": "Update Murage for Chrome to resume from the app.",
+      "en": "Update Murage for Chrome to resume from the app.",
+      "verdict": "pass"
+    },
+    "en:browserExt.resume.button": {
+      "text": "Resume",
+      "en": "Resume",
+      "verdict": "pass"
+    },
+    "en:browserExt.resume.uncertainHint": {
+      "text": "The last step may have run. Check the page in Chrome before you resume.",
+      "en": "The last step may have run. Check the page in Chrome before you resume.",
+      "verdict": "pass"
+    },
+    "en:browserExt.resume.unconfirmed": {
+      "text": "Chrome has not confirmed yet.",
+      "en": "Chrome has not confirmed yet.",
+      "verdict": "pass"
+    },
+    "en:browserExt.owner.errorResumeDesktop": {
+      "text": "Resume needs the Murage app on your computer, or the Murage for Chrome side panel.",
+      "en": "Resume needs the Murage app on your computer, or the Murage for Chrome side panel.",
+      "verdict": "pass"
+    },
+    "en:browserExt.owner.errorResumeChanged": {
+      "text": "This task changed. Check it, then press Resume again.",
+      "en": "This task changed. Check it, then press Resume again.",
+      "verdict": "pass"
+    },
+    "en:browserExt.owner.errorStopped": {
+      "text": "This task was stopped.",
+      "en": "This task was stopped.",
+      "verdict": "pass"
+    },
+    "en:browserExt.owner.errorResumeOffline": {
+      "text": "Chrome is not connected. Open Chrome, then try again.",
+      "en": "Chrome is not connected. Open Chrome, then try again.",
+      "verdict": "pass"
+    },
+    "en:browserExt.owner.errorResumeSlow": {
+      "text": "Chrome has not answered yet. Check the Browser tab in a moment.",
+      "en": "Chrome has not answered yet. Check the Browser tab in a moment.",
+      "verdict": "pass"
+    },
+    "en:browserExt.owner.errorResumeSite": {
+      "text": "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.",
+      "en": "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.",
+      "verdict": "pass"
+    },
+    "en:browserExt.owner.errorResumeIncognito": {
+      "text": "A shared tab is private (incognito). Close it, then resume.",
+      "en": "A shared tab is private (incognito). Close it, then resume.",
+      "verdict": "pass"
+    },
+    "en:browserExt.owner.errorResumeFailed": {
+      "text": "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+      "en": "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+      "verdict": "pass"
+    },
+    "en:browserExt.owner.errorResumeBusy": {
+      "text": "Resuming is already under way.",
+      "en": "Resuming is already under way.",
+      "verdict": "pass"
+    },
+    "de:browserExt.updateToResumeApp": {
+      "text": "Aktualisiere Murage for Chrome, um die Aufgabe in der App fortzusetzen.",
+      "en": "Update Murage for Chrome to resume from the app.",
+      "verdict": "pass"
+    },
+    "de:browserExt.resume.button": {
+      "text": "Fortsetzen",
+      "en": "Resume",
+      "verdict": "pass"
+    },
+    "de:browserExt.resume.uncertainHint": {
+      "text": "Der letzte Schritt wurde möglicherweise ausgeführt. Prüfe die Seite in Chrome, bevor du die Aufgabe fortsetzt.",
+      "en": "The last step may have run. Check the page in Chrome before you resume.",
+      "verdict": "pass"
+    },
+    "de:browserExt.resume.unconfirmed": {
+      "text": "Chrome hat es noch nicht bestätigt.",
+      "en": "Chrome has not confirmed yet.",
+      "verdict": "pass"
+    },
+    "de:browserExt.owner.errorResumeDesktop": {
+      "text": "Zum Fortsetzen brauchst du die Murage-App auf deinem Computer oder den Seitenbereich von Murage for Chrome.",
+      "en": "Resume needs the Murage app on your computer, or the Murage for Chrome side panel.",
+      "verdict": "pass"
+    },
+    "de:browserExt.owner.errorResumeChanged": {
+      "text": "Diese Aufgabe hat sich geändert. Prüfe sie und drücke dann erneut auf Fortsetzen.",
+      "en": "This task changed. Check it, then press Resume again.",
+      "verdict": "pass"
+    },
+    "de:browserExt.owner.errorStopped": {
+      "text": "Diese Aufgabe wurde gestoppt.",
+      "en": "This task was stopped.",
+      "verdict": "pass"
+    },
+    "de:browserExt.owner.errorResumeOffline": {
+      "text": "Chrome ist nicht verbunden. Öffne Chrome und versuche es dann erneut.",
+      "en": "Chrome is not connected. Open Chrome, then try again.",
+      "verdict": "pass"
+    },
+    "de:browserExt.owner.errorResumeSlow": {
+      "text": "Chrome hat noch nicht geantwortet. Sieh gleich im Browser-Tab nach.",
+      "en": "Chrome has not answered yet. Check the Browser tab in a moment.",
+      "verdict": "pass"
+    },
+    "de:browserExt.owner.errorResumeSite": {
+      "text": "Ein geteilter Tab ist auf einer Seite, die dieser Bot nicht nutzen darf. Gehe zu einer erlaubten Seite zurück oder erlaube die Seite und setze die Aufgabe dann fort.",
+      "en": "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.",
+      "verdict": "pass"
+    },
+    "de:browserExt.owner.errorResumeIncognito": {
+      "text": "Ein geteilter Tab ist privat (Inkognito). Schließe ihn und setze die Aufgabe dann fort.",
+      "en": "A shared tab is private (incognito). Close it, then resume.",
+      "verdict": "pass"
+    },
+    "de:browserExt.owner.errorResumeFailed": {
+      "text": "Murage for Chrome konnte diese Aufgabe nicht fortsetzen. Die Aufgabe bleibt pausiert. Versuche es erneut oder nutze den Seitenbereich.",
+      "en": "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+      "verdict": "pass"
+    },
+    "de:browserExt.owner.errorResumeBusy": {
+      "text": "Das Fortsetzen läuft bereits.",
+      "en": "Resuming is already under way.",
+      "verdict": "pass"
+    },
+    "de:browserExt.state.connectionLost": {
+      "text": "Pausiert, weil Chrome oder Murage geschlossen wurde. Prüfe die Seite und drücke dann hier oder im Murage-Seitenbereich auf Fortsetzen.",
+      "en": "Paused because Chrome or Murage closed. Check the page, then press Resume here or in the Murage side panel.",
+      "verdict": "pass"
+    },
+    "es:browserExt.updateToResumeApp": {
+      "text": "Actualiza Murage for Chrome para reanudar desde la app.",
+      "en": "Update Murage for Chrome to resume from the app.",
+      "verdict": "pass"
+    },
+    "es:browserExt.resume.button": {
+      "text": "Reanudar",
+      "en": "Resume",
+      "verdict": "pass"
+    },
+    "es:browserExt.resume.uncertainHint": {
+      "text": "Es posible que el último paso se haya ejecutado. Revisa la página en Chrome antes de reanudar.",
+      "en": "The last step may have run. Check the page in Chrome before you resume.",
+      "verdict": "pass"
+    },
+    "es:browserExt.resume.unconfirmed": {
+      "text": "Chrome aún no lo ha confirmado.",
+      "en": "Chrome has not confirmed yet.",
+      "verdict": "pass"
+    },
+    "es:browserExt.owner.errorResumeDesktop": {
+      "text": "Reanudar requiere la app de Murage en tu ordenador o el panel lateral de Murage for Chrome.",
+      "en": "Resume needs the Murage app on your computer, or the Murage for Chrome side panel.",
+      "verdict": "pass"
+    },
+    "es:browserExt.owner.errorResumeChanged": {
+      "text": "Esta tarea ha cambiado. Revísala y vuelve a pulsar Reanudar.",
+      "en": "This task changed. Check it, then press Resume again.",
+      "verdict": "pass"
+    },
+    "es:browserExt.owner.errorStopped": {
+      "text": "Esta tarea se detuvo.",
+      "en": "This task was stopped.",
+      "verdict": "pass"
+    },
+    "es:browserExt.owner.errorResumeOffline": {
+      "text": "Chrome no está conectado. Abre Chrome y vuelve a intentarlo.",
+      "en": "Chrome is not connected. Open Chrome, then try again.",
+      "verdict": "pass"
+    },
+    "es:browserExt.owner.errorResumeSlow": {
+      "text": "Chrome aún no ha respondido. Revisa la pestaña Navegador en un momento.",
+      "en": "Chrome has not answered yet. Check the Browser tab in a moment.",
+      "verdict": "pass"
+    },
+    "es:browserExt.owner.errorResumeSite": {
+      "text": "Una pestaña compartida está en un sitio que este bot no puede usar. Vuelve a una página permitida o permite el sitio y luego reanuda.",
+      "en": "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.",
+      "verdict": "pass"
+    },
+    "es:browserExt.owner.errorResumeIncognito": {
+      "text": "Una pestaña compartida es privada (incógnito). Ciérrala y luego reanuda.",
+      "en": "A shared tab is private (incognito). Close it, then resume.",
+      "verdict": "pass"
+    },
+    "es:browserExt.owner.errorResumeFailed": {
+      "text": "Murage for Chrome no pudo reanudar esta tarea. Sigue en pausa. Inténtalo de nuevo o usa el panel lateral.",
+      "en": "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+      "verdict": "pass"
+    },
+    "es:browserExt.owner.errorResumeBusy": {
+      "text": "Ya se está reanudando.",
+      "en": "Resuming is already under way.",
+      "verdict": "pass"
+    },
+    "es:browserExt.state.connectionLost": {
+      "text": "En pausa porque Chrome o Murage se cerró. Revisa la página y pulsa Reanudar aquí o en el panel lateral de Murage.",
+      "en": "Paused because Chrome or Murage closed. Check the page, then press Resume here or in the Murage side panel.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.updateToResumeApp": {
+      "text": "Mets à jour Murage for Chrome pour reprendre depuis l'app.",
+      "en": "Update Murage for Chrome to resume from the app.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.resume.button": {
+      "text": "Reprendre",
+      "en": "Resume",
+      "verdict": "pass"
+    },
+    "fr:browserExt.resume.uncertainHint": {
+      "text": "La dernière étape a peut-être été exécutée. Vérifie la page dans Chrome avant de reprendre.",
+      "en": "The last step may have run. Check the page in Chrome before you resume.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.resume.unconfirmed": {
+      "text": "Chrome n'a pas encore confirmé.",
+      "en": "Chrome has not confirmed yet.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.owner.errorResumeDesktop": {
+      "text": "Reprendre demande l'app Murage sur ton ordinateur ou le panneau latéral de Murage for Chrome.",
+      "en": "Resume needs the Murage app on your computer, or the Murage for Chrome side panel.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.owner.errorResumeChanged": {
+      "text": "Cette tâche a changé. Vérifie-la, puis appuie de nouveau sur Reprendre.",
+      "en": "This task changed. Check it, then press Resume again.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.owner.errorStopped": {
+      "text": "Cette tâche a été arrêtée.",
+      "en": "This task was stopped.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.owner.errorResumeOffline": {
+      "text": "Chrome n'est pas connecté. Ouvre Chrome, puis réessaie.",
+      "en": "Chrome is not connected. Open Chrome, then try again.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.owner.errorResumeSlow": {
+      "text": "Chrome n'a pas encore répondu. Regarde l'onglet Navigateur dans un instant.",
+      "en": "Chrome has not answered yet. Check the Browser tab in a moment.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.owner.errorResumeSite": {
+      "text": "Un onglet partagé est sur un site que ce bot ne peut pas utiliser. Reviens sur une page autorisée ou autorise le site, puis reprends.",
+      "en": "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.owner.errorResumeIncognito": {
+      "text": "Un onglet partagé est privé (navigation privée). Ferme-le, puis reprends.",
+      "en": "A shared tab is private (incognito). Close it, then resume.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.owner.errorResumeFailed": {
+      "text": "Murage for Chrome n'a pas pu reprendre cette tâche. Elle reste en pause. Réessaie ou utilise le panneau latéral.",
+      "en": "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.owner.errorResumeBusy": {
+      "text": "La reprise est déjà en cours.",
+      "en": "Resuming is already under way.",
+      "verdict": "pass"
+    },
+    "fr:browserExt.state.connectionLost": {
+      "text": "En pause parce que Chrome ou Murage s'est fermé. Vérifie la page, puis appuie sur Reprendre ici ou dans le panneau latéral de Murage.",
+      "en": "Paused because Chrome or Murage closed. Check the page, then press Resume here or in the Murage side panel.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.updateToResumeApp": {
+      "text": "ऐप से फिर से शुरू करने के लिए Murage for Chrome अपडेट करें।",
+      "en": "Update Murage for Chrome to resume from the app.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.resume.button": {
+      "text": "फिर से शुरू करें",
+      "en": "Resume",
+      "verdict": "pass"
+    },
+    "hi:browserExt.resume.uncertainHint": {
+      "text": "हो सकता है आख़िरी चरण चल चुका हो। फिर से शुरू करने से पहले Chrome में पेज जाँच लें।",
+      "en": "The last step may have run. Check the page in Chrome before you resume.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.resume.unconfirmed": {
+      "text": "Chrome ने अभी पुष्टि नहीं की है।",
+      "en": "Chrome has not confirmed yet.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.owner.errorResumeDesktop": {
+      "text": "फिर से शुरू करने के लिए आपके कंप्यूटर पर Murage ऐप या Murage for Chrome साइड पैनल चाहिए।",
+      "en": "Resume needs the Murage app on your computer, or the Murage for Chrome side panel.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.owner.errorResumeChanged": {
+      "text": "यह काम बदल गया है। इसे जाँचें, फिर दोबारा “फिर से शुरू करें” दबाएँ।",
+      "en": "This task changed. Check it, then press Resume again.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.owner.errorStopped": {
+      "text": "यह काम रोक दिया गया था।",
+      "en": "This task was stopped.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.owner.errorResumeOffline": {
+      "text": "Chrome जुड़ा नहीं है। Chrome खोलें, फिर दोबारा कोशिश करें।",
+      "en": "Chrome is not connected. Open Chrome, then try again.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.owner.errorResumeSlow": {
+      "text": "Chrome ने अभी जवाब नहीं दिया है। थोड़ी देर बाद ब्राउज़र टैब देखें।",
+      "en": "Chrome has not answered yet. Check the Browser tab in a moment.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.owner.errorResumeSite": {
+      "text": "साझा किया गया टैब ऐसी साइट पर है जिसे यह बॉट इस्तेमाल नहीं कर सकता। अनुमत पेज पर लौटें या साइट को अनुमति दें, इसके बाद फिर से शुरू करें।",
+      "en": "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.owner.errorResumeIncognito": {
+      "text": "साझा किया गया टैब निजी (गुप्त) है। उसे बंद करें, इसके बाद फिर से शुरू करें।",
+      "en": "A shared tab is private (incognito). Close it, then resume.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.owner.errorResumeFailed": {
+      "text": "Murage for Chrome यह काम फिर से शुरू नहीं कर सका। यह रुका रहेगा। दोबारा कोशिश करें या साइड पैनल इस्तेमाल करें।",
+      "en": "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.owner.errorResumeBusy": {
+      "text": "यह काम पहले से फिर से शुरू हो रहा है।",
+      "en": "Resuming is already under way.",
+      "verdict": "pass"
+    },
+    "hi:browserExt.state.connectionLost": {
+      "text": "Chrome या Murage बंद होने से रुका हुआ है। पेज जाँचें, फिर यहाँ या Murage साइड पैनल में “फिर से शुरू करें” दबाएँ।",
+      "en": "Paused because Chrome or Murage closed. Check the page, then press Resume here or in the Murage side panel.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.updateToResumeApp": {
+      "text": "アプリから再開するには、Murage for Chrome を更新してください。",
+      "en": "Update Murage for Chrome to resume from the app.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.resume.button": {
+      "text": "再開",
+      "en": "Resume",
+      "verdict": "pass"
+    },
+    "ja:browserExt.resume.uncertainHint": {
+      "text": "最後のステップは実行された可能性があります。再開する前に、Chrome でページを確認してください。",
+      "en": "The last step may have run. Check the page in Chrome before you resume.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.resume.unconfirmed": {
+      "text": "Chrome からまだ確認が届いていません。",
+      "en": "Chrome has not confirmed yet.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.owner.errorResumeDesktop": {
+      "text": "再開には、お使いのコンピューターの Murage アプリか、Murage for Chrome のサイドパネルが必要です。",
+      "en": "Resume needs the Murage app on your computer, or the Murage for Chrome side panel.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.owner.errorResumeChanged": {
+      "text": "このタスクは変更されました。確認してから、もう一度「再開」を押してください。",
+      "en": "This task changed. Check it, then press Resume again.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.owner.errorStopped": {
+      "text": "このタスクは停止されました。",
+      "en": "This task was stopped.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.owner.errorResumeOffline": {
+      "text": "Chrome が接続されていません。Chrome を開いてから、もう一度お試しください。",
+      "en": "Chrome is not connected. Open Chrome, then try again.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.owner.errorResumeSlow": {
+      "text": "Chrome からまだ応答がありません。しばらくしてからブラウザタブを確認してください。",
+      "en": "Chrome has not answered yet. Check the Browser tab in a moment.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.owner.errorResumeSite": {
+      "text": "共有中のタブが、このボットが使えないサイトにあります。許可されたページに戻るか、サイトを許可してから再開してください。",
+      "en": "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.owner.errorResumeIncognito": {
+      "text": "共有中のタブがプライベート（シークレット）です。閉じてから再開してください。",
+      "en": "A shared tab is private (incognito). Close it, then resume.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.owner.errorResumeFailed": {
+      "text": "Murage for Chrome はこのタスクを再開できませんでした。一時停止のままです。もう一度試すか、サイドパネルを使ってください。",
+      "en": "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.owner.errorResumeBusy": {
+      "text": "すでに再開の処理中です。",
+      "en": "Resuming is already under way.",
+      "verdict": "pass"
+    },
+    "ja:browserExt.state.connectionLost": {
+      "text": "Chrome または Murage が閉じたため一時停止しました。ページを確認してから、ここまたは Murage のサイドパネルで「再開」を押してください。",
+      "en": "Paused because Chrome or Murage closed. Check the page, then press Resume here or in the Murage side panel.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.updateToResumeApp": {
+      "text": "Atualize o Murage for Chrome para retomar pelo app.",
+      "en": "Update Murage for Chrome to resume from the app.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.resume.button": {
+      "text": "Retomar",
+      "en": "Resume",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.resume.uncertainHint": {
+      "text": "A última etapa pode ter sido executada. Confira a página no Chrome antes de retomar.",
+      "en": "The last step may have run. Check the page in Chrome before you resume.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.resume.unconfirmed": {
+      "text": "O Chrome ainda não confirmou.",
+      "en": "Chrome has not confirmed yet.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.owner.errorResumeDesktop": {
+      "text": "Retomar exige o app do Murage no seu computador ou o painel lateral do Murage for Chrome.",
+      "en": "Resume needs the Murage app on your computer, or the Murage for Chrome side panel.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.owner.errorResumeChanged": {
+      "text": "Esta tarefa mudou. Confira e toque em Retomar de novo.",
+      "en": "This task changed. Check it, then press Resume again.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.owner.errorStopped": {
+      "text": "Esta tarefa foi interrompida.",
+      "en": "This task was stopped.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.owner.errorResumeOffline": {
+      "text": "O Chrome não está conectado. Abra o Chrome e tente de novo.",
+      "en": "Chrome is not connected. Open Chrome, then try again.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.owner.errorResumeSlow": {
+      "text": "O Chrome ainda não respondeu. Veja a aba Navegador em instantes.",
+      "en": "Chrome has not answered yet. Check the Browser tab in a moment.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.owner.errorResumeSite": {
+      "text": "Uma aba compartilhada está em um site que este bot não pode usar. Volte a uma página permitida ou permita o site e retome.",
+      "en": "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.owner.errorResumeIncognito": {
+      "text": "Uma aba compartilhada é privada (anônima). Feche-a e retome.",
+      "en": "A shared tab is private (incognito). Close it, then resume.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.owner.errorResumeFailed": {
+      "text": "O Murage for Chrome não conseguiu retomar esta tarefa. Ela continua pausada. Tente de novo ou use o painel lateral.",
+      "en": "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.owner.errorResumeBusy": {
+      "text": "A retomada já está em andamento.",
+      "en": "Resuming is already under way.",
+      "verdict": "pass"
+    },
+    "pt-br:browserExt.state.connectionLost": {
+      "text": "Pausada porque o Chrome ou o Murage foi fechado. Confira a página e toque em Retomar aqui ou no painel lateral do Murage.",
+      "en": "Paused because Chrome or Murage closed. Check the page, then press Resume here or in the Murage side panel.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.updateToResumeApp": {
+      "text": "请更新 Murage for Chrome，以便从应用中继续。",
+      "en": "Update Murage for Chrome to resume from the app.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.resume.button": {
+      "text": "继续",
+      "en": "Resume",
+      "verdict": "pass"
+    },
+    "zh:browserExt.resume.uncertainHint": {
+      "text": "最后一步可能已经执行。继续之前，请先在 Chrome 中检查页面。",
+      "en": "The last step may have run. Check the page in Chrome before you resume.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.resume.unconfirmed": {
+      "text": "Chrome 尚未确认。",
+      "en": "Chrome has not confirmed yet.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.owner.errorResumeDesktop": {
+      "text": "要继续此任务，需要使用你电脑上的 Murage 应用，或 Murage for Chrome 侧边栏。",
+      "en": "Resume needs the Murage app on your computer, or the Murage for Chrome side panel.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.owner.errorResumeChanged": {
+      "text": "此任务已发生变化。请先检查，然后再次点击“继续”。",
+      "en": "This task changed. Check it, then press Resume again.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.owner.errorStopped": {
+      "text": "此任务已停止。",
+      "en": "This task was stopped.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.owner.errorResumeOffline": {
+      "text": "Chrome 未连接。请打开 Chrome，然后重试。",
+      "en": "Chrome is not connected. Open Chrome, then try again.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.owner.errorResumeSlow": {
+      "text": "Chrome 尚未响应。请稍后查看“浏览器”标签页。",
+      "en": "Chrome has not answered yet. Check the Browser tab in a moment.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.owner.errorResumeSite": {
+      "text": "共享的标签页位于此机器人不能使用的网站。请回到允许的页面，或允许该网站，然后继续。",
+      "en": "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.owner.errorResumeIncognito": {
+      "text": "共享的标签页是隐私（无痕）模式。请关闭它，然后继续。",
+      "en": "A shared tab is private (incognito). Close it, then resume.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.owner.errorResumeFailed": {
+      "text": "Murage for Chrome 无法继续此任务。它仍处于暂停状态。请重试，或使用侧边栏。",
+      "en": "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.owner.errorResumeBusy": {
+      "text": "已在继续中。",
+      "en": "Resuming is already under way.",
+      "verdict": "pass"
+    },
+    "zh:browserExt.state.connectionLost": {
+      "text": "因 Chrome 或 Murage 已关闭而暂停。请检查页面，然后在此处或 Murage 侧边栏中点击“继续”。",
+      "en": "Paused because Chrome or Murage closed. Check the page, then press Resume here or in the Murage side panel.",
+      "verdict": "pass"
+    }
+  },
+  "files": {
+    "reviewers.json": {
+      "text": "{\n  \"version\": 1,\n  \"reviewers\": [\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol\",\n      \"account\": \"gpt-6.1-sol read-only, codex acct2 and acct6\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"claude-copyrev\",\n      \"account\": \"claude sonnet 5.5, copy-review seat for MurageMain\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"muragemain-copyrev\",\n      \"account\": \"claude opus 5.5, MurageMain copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-sc-issues-r3\",\n      \"account\": \"sc-issues-r3 independent review of inherited sc-issues copy\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-copyrev-m5-followup\",\n      \"account\": \"Independent Sol review session for the copyrev-m5 replacement titles\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"g9-ux-fable\",\n      \"account\": \"Fable copy seat g9-ux-fable, read-only G9 Settings copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"ctxstop-lease-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.20 A-2 refusal line\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"polish-1021-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.21 Settings polish strings\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"held1022-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 held rows 21 (Fuigo Trust) and 29 (Sentinel Health)\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"cr1023-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.23 CHROME-RESUME-FROM-APP strings\"\n    }\n  ]\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

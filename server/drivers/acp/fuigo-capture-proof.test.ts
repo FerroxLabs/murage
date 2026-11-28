@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { FUIGO_ASSETS } from "../../../scripts/prepare-fuigo.mjs";
-import { assertFuigoCapturePin, assertPublishedFuigoCapture, assertTypedCapTurn, loadLanePin, type LanePin, type PublishedCapturePin, type ReleasePin } from "../../testing/fuigo-capture-proof.ts";
+import { assertFuigoCapturePin, assertPublishedFuigoCapture, assertTypedCapTurn, FUIGO_1043_LINUX_X64_BINARY_SHA256, loadLanePin, type LanePin, type PublishedCapturePin, type ReleasePin } from "../../testing/fuigo-capture-proof.ts";
 
 // Synthetic validator inputs, never binary provenance or captured root-cause evidence.
 const source = "1234567890abcdef1234567890abcdef12345678";
@@ -97,7 +96,7 @@ const readJson = (path: string) => JSON.parse(readFileSync(new URL(path, import.
 const laneReceipt: ReleasePin = readJson("../../../scripts/fuigo-1.0.43-provenance.json");
 const dropReceipt: ReleasePin = readJson("./__fixtures__/fuigo-1.0.43/scripts/fuigo-1.0.43-provenance.json");
 const realPin: PublishedCapturePin = readJson("./__fixtures__/fuigo-1.0.43/PROVENANCE-1.0.43.json");
-const laneAsset = FUIGO_ASSETS["linux-x64"].binarySha256;
+const laneAsset = FUIGO_1043_LINUX_X64_BINARY_SHA256;
 const realLane: LanePin = { release: laneReceipt, assetBinarySha256: laneAsset };
 const realBytes = readFileSync(new URL("./__fixtures__/fuigo-1.0.43/frames-S1-1.jsonl", import.meta.url));
 const withLinux = (receipt: ReleasePin, change: Partial<ReleasePin["packages"][number]>): ReleasePin => ({ ...receipt,

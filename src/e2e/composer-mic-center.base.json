@@ -1,0 +1,362 @@
+{
+ "desktop-1280x800-empty": {
+  "pill": {
+   "x": 340,
+   "y": 708,
+   "w": 920,
+   "h": 80
+  },
+  "textarea": {
+   "x": 348,
+   "y": 714,
+   "w": 904,
+   "h": 30
+  },
+  "buttons": [
+   {
+    "label": "Attach a file",
+    "x": 348,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Post in\u2026",
+    "x": 384,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Ask for approval",
+    "x": 420,
+    "y": 750,
+    "w": 66.53,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Voice typing unavailable. Tap to find out why",
+    "x": 1220,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   }
+  ],
+  "lineHeight": 24,
+  "padTop": 4,
+  "padBottom": 2,
+  "firstLineCy": 730,
+  "lastLineCy": 730,
+  "scrolls": false
+ },
+ "desktop-1280x800-typed": {
+  "pill": {
+   "x": 340,
+   "y": 708,
+   "w": 920,
+   "h": 80
+  },
+  "textarea": {
+   "x": 348,
+   "y": 714,
+   "w": 904,
+   "h": 30
+  },
+  "buttons": [
+   {
+    "label": "Attach a file",
+    "x": 348,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Post in\u2026",
+    "x": 384,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Ask for approval",
+    "x": 420,
+    "y": 750,
+    "w": 66.53,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Voice typing unavailable. Tap to find out why",
+    "x": 1184,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Send message",
+    "x": 1220,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   }
+  ],
+  "lineHeight": 24,
+  "padTop": 4,
+  "padBottom": 2,
+  "firstLineCy": 730,
+  "lastLineCy": 730,
+  "scrolls": false
+ },
+ "desktop-1280x800-three": {
+  "pill": {
+   "x": 340,
+   "y": 660,
+   "w": 920,
+   "h": 128
+  },
+  "textarea": {
+   "x": 348,
+   "y": 666,
+   "w": 904,
+   "h": 78
+  },
+  "buttons": [
+   {
+    "label": "Attach a file",
+    "x": 348,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Post in\u2026",
+    "x": 384,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Ask for approval",
+    "x": 420,
+    "y": 750,
+    "w": 66.53,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Voice typing unavailable. Tap to find out why",
+    "x": 1184,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Send message",
+    "x": 1220,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   }
+  ],
+  "lineHeight": 24,
+  "padTop": 4,
+  "padBottom": 2,
+  "firstLineCy": 682,
+  "lastLineCy": 730,
+  "scrolls": false
+ },
+ "narrow-700x800-empty": {
+  "pill": {
+   "x": 72,
+   "y": 732,
+   "w": 608,
+   "h": 56
+  },
+  "textarea": {
+   "x": 84,
+   "y": 738,
+   "w": 548,
+   "h": 44
+  },
+  "buttons": [
+   {
+    "label": "Voice typing unavailable. Tap to find out why",
+    "x": 636,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   }
+  ],
+  "lineHeight": 24,
+  "padTop": 10,
+  "padBottom": 10,
+  "firstLineCy": 760,
+  "lastLineCy": 760,
+  "scrolls": false
+ },
+ "narrow-700x800-typed": {
+  "pill": {
+   "x": 72,
+   "y": 732,
+   "w": 608,
+   "h": 56
+  },
+  "textarea": {
+   "x": 84,
+   "y": 738,
+   "w": 512,
+   "h": 44
+  },
+  "buttons": [
+   {
+    "label": "Voice typing unavailable. Tap to find out why",
+    "x": 600,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Send message",
+    "x": 636,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   }
+  ],
+  "lineHeight": 24,
+  "padTop": 10,
+  "padBottom": 10,
+  "firstLineCy": 760,
+  "lastLineCy": 760,
+  "scrolls": false
+ },
+ "narrow-700x800-three": {
+  "pill": {
+   "x": 72,
+   "y": 684,
+   "w": 608,
+   "h": 104
+  },
+  "textarea": {
+   "x": 84,
+   "y": 690,
+   "w": 512,
+   "h": 92
+  },
+  "buttons": [
+   {
+    "label": "Voice typing unavailable. Tap to find out why",
+    "x": 600,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   },
+   {
+    "label": "Send message",
+    "x": 636,
+    "y": 750,
+    "w": 32,
+    "h": 32,
+    "cy": 766
+   }
+  ],
+  "lineHeight": 24,
+  "padTop": 10,
+  "padBottom": 10,
+  "firstLineCy": 712,
+  "lastLineCy": 760,
+  "scrolls": false
+ },
+ "tell-1280x800-empty": {
+  "pill": {
+   "x": 352,
+   "y": 187.5,
+   "w": 896,
+   "h": 118
+  },
+  "textarea": {
+   "x": 381,
+   "y": 206.5,
+   "w": 838,
+   "h": 30
+  },
+  "buttons": [
+   {
+    "label": "Voice typing unavailable. Tap to find out why",
+    "x": 1121.92,
+    "y": 248.5,
+    "w": 32,
+    "h": 32,
+    "cy": 264.5
+   },
+   {
+    "label": "",
+    "x": 1157.92,
+    "y": 242.5,
+    "w": 61.08,
+    "h": 44,
+    "cy": 264.5
+   }
+  ],
+  "lineHeight": 24,
+  "padTop": 4,
+  "padBottom": 2,
+  "firstLineCy": 222.5,
+  "lastLineCy": 222.5,
+  "scrolls": false
+ },
+ "tell-1280x800-typed": {
+  "pill": {
+   "x": 352,
+   "y": 187.5,
+   "w": 896,
+   "h": 118
+  },
+  "textarea": {
+   "x": 381,
+   "y": 206.5,
+   "w": 838,
+   "h": 30
+  },
+  "buttons": [
+   {
+    "label": "Voice typing unavailable. Tap to find out why",
+    "x": 1121.92,
+    "y": 248.5,
+    "w": 32,
+    "h": 32,
+    "cy": 264.5
+   },
+   {
+    "label": "",
+    "x": 1157.92,
+    "y": 242.5,
+    "w": 61.08,
+    "h": 44,
+    "cy": 264.5
+   }
+  ],
+  "lineHeight": 24,
+  "padTop": 4,
+  "padBottom": 2,
+  "firstLineCy": 222.5,
+  "lastLineCy": 222.5,
+  "scrolls": false
+ }
+}

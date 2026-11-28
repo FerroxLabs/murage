@@ -11,9 +11,10 @@ import { Loader2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import {
-  envValues, headerFor, headerValues, inspectInput, moveArgSecretsToEnv, saveCommand, saveRemote, setEnabled, signInTo, testServer,
+  envValues, headerFor, hostOf, headerValues, inspectInput, moveArgSecretsToEnv, saveCommand, saveRemote, setEnabled, signInTo, testServer,
   type FlowDeps, type HeaderChoice, type LocalKind, type MergedDraft,
 } from "@/lib/mcp-add-flow";
+import { cancelHomeSignIn } from "@/lib/mcp-cloud-connect";
 import { afterSignIn, CHOSE_KEY, newCardState, pasteHoldsSecret, withProbe, type DraftCardState } from "@/lib/mcp-card-view";
 import { useMcpBridge } from "@/lib/use-mcp-bridge";
 import { api } from "@/state/store";
@@ -123,30 +124,33 @@ export function McpAddSection({ onClose, onChanged, onNotice }: {
     onHeader: (header: HeaderChoice, custom) => patch(index, { header, ...(custom !== undefined ? { customHeader: custom } : {}) }),
     onUseKey: () => patch(index, CHOSE_KEY),
     onUseSignIn: () => patch(index, { useKey: false, message: undefined }),
+    saveOwnApp: bridgeRef.current?.useOwnApp,
     onSignIn: async () => {
       const state = cardsRef.current[index]!;
       if (state.draft.kind !== "remote") return;
       const draft = state.draft;
       patch(index, { busy: "saving", message: undefined, signInFailed: false });
       const name = state.name.trim();
-      const saved = await saveRemote(deps(), { name, draft, auth: "oauth", headers: {}, confirmLocal: state.confirmed, existing: state.savedName === name });
+      const saved = state.ownApp && state.savedName === name
+        ? { ok: true } as const
+        : await saveRemote(deps(), { name, draft, auth: "oauth", headers: {}, confirmLocal: state.confirmed, existing: state.savedName === name });
       if (!saved.ok) { patch(index, { busy: null, message: saved.message }); return; }
       onChanged();
       patch(index, { savedName: name, busy: "signing" });
-      const signed = await signInTo(deps(), name);
+      const signed = await signInTo(deps(), name, hostOf(draft.maskedUrl));
       if (!signed.ok) {
-        patch(index, { busy: null, ...afterSignIn(signed) });
+        patch(index, { busy: null, ...afterSignIn(signed), ownApp: signed.ownApp || (signed.cancelled && state.ownApp) });
         return;
       }
       // the saved row's status changed with the sign-in
       onChanged();
-      patch(index, { busy: "testing" });
+      patch(index, { busy: "testing", ownApp: false });
       const probe = await testServer(deps(), name);
       patch(index, { probe, tested: true, busy: null });
     },
     onCancelSignIn: () => {
       const name = cardsRef.current[index]?.savedName;
-      if (name) void bridgeRef.current?.cancelSignIn(name);
+      if (name) { void bridgeRef.current?.cancelSignIn(name); cancelHomeSignIn(name); }
     },
     onSaveKey: () => void saveAndTest(index, async (state) => {
       if (state.draft.kind !== "remote") return { ok: false, message: "" };
@@ -207,7 +211,7 @@ export function McpAddSection({ onClose, onChanged, onNotice }: {
   });
 
   const close = () => {
-    for (const card of cardsRef.current) if (card.busy === "signing" && card.savedName) void bridgeRef.current?.cancelSignIn(card.savedName);
+    for (const card of cardsRef.current) if (card.busy === "signing" && card.savedName) { void bridgeRef.current?.cancelSignIn(card.savedName); cancelHomeSignIn(card.savedName); }
     onClose();
   };
 

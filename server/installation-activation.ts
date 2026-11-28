@@ -60,7 +60,8 @@ function validatePaused(root: string) {
         bot.computer !== "off" || bot.autoStartVps !== false || bot.browser !== false || bot.useMyChrome === true ||
         bot.browserTransport !== undefined || bot.browserExtensionProfileId !== undefined || bot.browserExtensionBrowser !== undefined || bot.composio !== false ||
         bot.speakReplies !== false || !Array.isArray(bot.alwaysAllow) || bot.alwaysAllow.length || !empty(bot.resumeCursors) || bot.lastInstanceId !== undefined ||
-        bot.messageAllow !== undefined || bot.imageApproval === "allow" || bot.browserApproval !== undefined) fail("RESTORE_WORK_NOT_PAUSED");
+        bot.messageAllow !== undefined || bot.imageApproval === "allow" || bot.browserApproval !== undefined ||
+        (bot.chrome !== undefined && bot.chrome !== "off") || bot.screenWithBrowser !== undefined) fail("RESTORE_WORK_NOT_PAUSED");
     for (const task of records(bot.tasks)) if (task.autoApprove !== false || !Array.isArray(task.alwaysAllow) || task.alwaysAllow.length || !empty(task.resumeCursors) || task.lastInstanceId !== undefined) fail("RESTORE_WORK_NOT_PAUSED");
   }
   for (const group of records(json(join(root, "groups.json")))) if (group.working !== false || group.busyBotId !== null) fail("RESTORE_WORK_NOT_PAUSED");
@@ -77,6 +78,12 @@ function validatePaused(root: string) {
   for (const name of ["delegations.json", "browser-cleanups.json"]) if (entry(join(root, name))) fail("RESTORE_WORK_NOT_PAUSED");
   const skillRoot = join(root, "skill-state");
   if (entry(skillRoot)) for (const bot of readdirSync(skillRoot)) {
+    if (bot === "every-bot.json") {
+      const marks = json(join(skillRoot, bot));
+      if (!object(marks) || marks.version !== 1 || !empty(marks.marks)) fail("RESTORE_WORK_NOT_PAUSED");
+      continue;
+    }
+    if (!entry(join(skillRoot, bot))?.isDirectory()) fail("INVALID_REVIEW_FILE");
     if (entry(join(skillRoot, bot, "staged.json"))) fail("RESTORE_WORK_NOT_PAUSED");
     const skills = json(join(skillRoot, bot, "skills.json"));
     if (skills !== undefined && (!object(skills) || Object.values(skills).some(value => !object(value) || value.enabled !== false))) fail("RESTORE_WORK_NOT_PAUSED");

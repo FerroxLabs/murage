@@ -164,6 +164,30 @@ describe("kept owner environment", () => {
     return shell;
   };
 
+  posixIt("uses the complete capture when a login job keeps stdout open", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-capture-pipe-"));
+    dirs.push(dir);
+    const release = join(dir, "release");
+    const shell = fakeShell(dir, "login-shell", `#!/bin/sh
+( for tick in 1 2 3 4 5 6 7 8; do
+    [ ! -f "$MURAGE_TEST_CAPTURE_RELEASE" ] || exit
+    sleep 1
+  done ) &
+printf '%s' "$MURAGE_ENV_MARK"
+printf 'PATH=/fixture/bin\\0HOME=/fixture/home\\0'
+printf '%s' "$MURAGE_ENV_MARK"
+`);
+    vi.stubEnv("MURAGE_TEST_CAPTURE_RELEASE", release);
+    try {
+      const captured = await captureOwnerEnv({ shell });
+      expect(captured.capture).toBe("session");
+      expect(captured.env.PATH).toBe("/fixture/bin");
+    } finally {
+      writeFileSync(release, "");
+      vi.unstubAllEnvs();
+    }
+  }, 9_000);
+
   posixIt("persists the login environment without credentials", async () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-kept-env-"));
     dirs.push(dir);

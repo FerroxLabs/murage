@@ -17,6 +17,9 @@ import { removeTempDirSync } from "../server/testing/cleanup.ts";
 import { SECTION_PAGES } from "../src/lib/settings-pages";
 import { SETTINGS_CARDS, cardLabel } from "../src/lib/settings-card-registry";
 import en from "../src/locales/en.json";
+import { commandCodeSupport } from "../server/drivers/acp/command-code.ts";
+import { kiroSupport } from "../server/drivers/acp/kiro.ts";
+import { ompSupport } from "../server/drivers/acp/omp.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const script = join(root, "scripts", "build-capability-db.mjs");
@@ -56,7 +59,7 @@ const entry = (files: Map<string, { entries: Record<string, unknown>[] }>, id: s
 
 const SLICE = [
   "apps.bot-email", "apps.chat-approval-buttons", "apps.own-browser", "apps.web-read", "apps.webhook-routines", "bots.channel-turns", "bots.rename-chief",
-  "engines.continue-with-chatgpt-grok", "engines.default-models", "engines.grok-images", "engines.muse-code", "engines.openai-compatible-tools", "engines.set-up-claude-code", "engines.set-up-from-the-app", "engines.use-my-subscription",
+  "engines.command-code", "engines.continue-with-chatgpt-grok", "engines.default-models", "engines.devin", "engines.grok-images", "engines.kiro", "engines.muse-code", "engines.omp", "engines.openai-compatible-tools", "engines.set-up-claude-code", "engines.set-up-from-the-app", "engines.use-my-subscription",
   "install-account.policy-lock", "install-account.ubuntu-computer-control", "limits.plan-usage", "limits.spending-per-bot",
   "memory.learn-about-me", "memory.pin",
   "settings.notification-chooser", "settings.review-and-approve-all", "settings.search-chief-fallback",
@@ -171,7 +174,7 @@ describe("capability database", () => {
     expect(models.answer).toContain("Claude Sonnet 5.5");
     expect(models.answer).toContain("Claude Fable 5.2 (whether your Claude Code version accepts it is separate)");
     expect(models.answer).toContain("GPT-6.1 Sol");
-    expect(models.limits).toContain("Fuigo 1.0.43");
+    expect(models.limits).toContain("Fuigo 1.0.48");
     expect(models.platforms).toEqual(["mac", "windows", "linux", "cloud"]);
     expect(models.engines).toEqual(["claude", "codex"]);
     const modelSource = parse(readFileSync(join(SOURCE, "engines.yaml"), "utf8")).entries
@@ -375,5 +378,64 @@ describe("export and diff", () => {
     expect(workflow).toContain("--diff \"$previous\" --current \"assets/capability-db-$VERSION.json\"");
     const verifier = readFileSync(join(root, "scripts", "verify-linux-package.mjs"), "utf8");
     for (const where of ["resources", "debResources", "appImageResources"]) expect(verifier).toContain(`verifyCapabilityDb(${where})`);
+  });
+  // 1.0.23 RC0: the 4 new ACP engines passed --check on a bare id in ENGINES with no entry. Each row is driven through the
+  // generated database a person's bot reads, and through the adapter's own support object where one is exported.
+  /** The anchors live in the YAML only; the generated records drop them. */
+  const yamlAnchors = (capability: string): string[] => {
+    const area = capability.split(".")[0]!;
+    const file = parse(readFileSync(join(SOURCE, `${area}.yaml`), "utf8")) as { entries: { id: string; anchors: string[] }[] };
+    return file.entries.find((candidate) => candidate.id === capability)?.anchors ?? [];
+  };
+  const NEW_ENGINES = [
+    { id: "commandcode", entry: "engines.command-code", file: "command-code", support: commandCodeSupport, signIn: "cmd login", key: "COMMAND_CODE_API_KEY", mode: { source: /COMMAND_CODE_MODE = "default"/, says: "ask mode" } },
+    { id: "kiro", entry: "engines.kiro", file: "kiro", support: kiroSupport, signIn: "kiro-cli login", key: "KIRO_API_KEY", mode: { source: /KIRO_AUTOPILOT = "off"/, says: "Autopilot off" } },
+    { id: "omp", entry: "engines.omp", file: "omp", support: ompSupport, signIn: "omp login", key: undefined, mode: { source: /^(?![\s\S]*session\/set_(mode|config_option))/, says: "has no permission mode" } },
+    { id: "devin", entry: "engines.devin", file: "devin", support: undefined, signIn: "devin auth login", key: "WINDSURF_API_KEY", mode: { source: /PERMISSION_MODE = "ask"/, says: "Ask mode" } },
+  ] as const;
+
+  it.each(NEW_ENGINES)("has a real, desktop-only entry for $id read from its adapter", ({ id, entry, file, support, signIn, key, mode }) => {
+    const anchors = yamlAnchors(entry);
+    const found = CAPABILITY_ENTRIES.find((candidate) => candidate.engines.includes(id as never));
+    expect(found?.id).toBe(`cap:${entry}`);
+    expect(found?.status).toBe("can");
+    expect(found?.platforms).not.toContain("cloud");
+    expect(found?.answer).toContain(signIn);
+    if (key) expect(found?.answer).toContain(key);
+    expect(anchors.some((anchor) => anchor.startsWith(`file:server/drivers/acp/${file}.ts#`))).toBe(true);
+    const source = readFileSync(join(root, "server", "drivers", "acp", `${file}.ts`), "utf8");
+    const sendsImages = /\bimages: true\b/.test(source);
+    expect(/send it images/.test(found?.answer ?? "")).toBe(sendsImages);
+    expect(/sends it no images/.test(found?.limits ?? "")).toBe(!sendsImages);
+    // Effort reaches the picker as a model variant, only when the CLI offers one: never claim it cannot be set.
+    expect(source).toContain("modelVariants: true");
+    expect(found?.limits).toMatch(/a reasoning level shows only when .+ offers one with a model/);
+    expect(`${found?.answer} ${found?.limits}`).not.toMatch(/cannot set a reasoning/);
+    expect(source).toMatch(mode.source);
+    expect(found?.answer).toContain(mode.says);
+    if (support) {
+      expect(support.images === true).toBe(sendsImages);
+      expect(support.install?.signInCommand).toBe(signIn);
+    }
+  });
+
+  it("names every engine id the check knows, apart from the one that never had an entry", () => {
+    const named = new Set(CAPABILITY_ENTRIES.flatMap((entry) => entry.engines as string[]));
+    const ids = readFileSync(script, "utf8").match(/export const ENGINES = \[([^\]]+)\]/)![1]!.match(/"([^"]+)"/g)!.map((id) => id.slice(1, -1));
+    expect(ids.filter((id) => !named.has(id))).toEqual(["openclaw"]);
+  });
+
+  it("says nothing of an Unofficial Grok badge, which 1.0.21 removed from the sign-in", () => {
+    const text = JSON.stringify(CAPABILITY_ENTRIES.filter((entry) => entry.id === "cap:engines.continue-with-chatgpt-grok" || entry.id === "cap:engines.use-my-subscription"));
+    expect(text).not.toMatch(/unofficial/i);
+    expect(text).toContain("has not published");
+    expect(en["modelSignIn.grok.note"]).toContain("has not published this sign-in");
+  });
+
+  it("anchors the Claude Code import's disabled reason to the line the importer still has", () => {
+    const source = readFileSync(join(root, "server", "claude-code-import.ts"), "utf8");
+    const token = yamlAnchors("skills.claude-code-import").find((anchor) => anchor.includes("DISABLED_REASON"))?.split("#")[1];
+    expect(token).toBeTruthy();
+    expect(source).toContain(token!);
   });
 });

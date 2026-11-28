@@ -9,6 +9,7 @@ import type { ExecutionAudience } from "./work-admission.ts";
 // version insert.
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { withSecureDelete } from "./secure-delete.ts";
 
 // ── records ─────────────────────────────────────────────────────────────────
 
@@ -462,7 +463,8 @@ export function insertProjectBriefVersion(
     input.groupId, version, input.summary, input.doneMeans, input.rules,
     JSON.stringify(input.whereWorkIs), JSON.stringify(input.decisions), input.updatedBy, input.change, input.now,
   );
-  db.prepare(`DELETE FROM project_briefs WHERE group_id=? AND version>1 AND version <= ?`).run(input.groupId, version - PROJECT_BRIEF_MAX_VERSIONS + 1);
+  // an owner-written brief version (summary, done means, rules) leaves with its pages zeroed (secure-delete.ts)
+  withSecureDelete(db, () => db.prepare(`DELETE FROM project_briefs WHERE group_id=? AND version>1 AND version <= ?`).run(input.groupId, version - PROJECT_BRIEF_MAX_VERSIONS + 1));
   return projectBriefVersion(db, input.groupId, version)!;
 }
 
@@ -560,7 +562,8 @@ export function unmarkCriteriaForCard(db: DatabaseSync, cardId: string, now: num
     const next = criteria.map(entry => entry.met && entry.evidence?.workItemId === cardId
       ? (() => { const { metBy: _metBy, evidence: _evidence, ...rest } = entry; return { ...rest, met: false }; })()
       : entry);
-    db.prepare("UPDATE project_goals SET criteria=?, revision=revision+1 WHERE id=?").run(JSON.stringify(next), String(row.id));
+    // the criterion's evidence text leaves the row: freed pages are zeroed (server/secure-delete.ts)
+    withSecureDelete(db, () => db.prepare("UPDATE project_goals SET criteria=?, revision=revision+1 WHERE id=?").run(JSON.stringify(next), String(row.id)));
     insertProjectActivity(db, { groupId: String(row.group_id), goalId: String(row.id), kind: "criteria", actor: "server", at: now, detail: { unmarked: cardId } });
   }
 }

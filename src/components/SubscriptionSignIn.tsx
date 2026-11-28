@@ -96,7 +96,7 @@ export function ProviderRow({ status, connection, busy, onStart, onStartDevice, 
       <button type="button" className={`${button} w-full sm:w-auto`} disabled={busy} onClick={onStart}>{status.state === "needs-sign-in" ? t("modelSignIn.signInAgain") : t(COPY[provider].button)}</button>
       {onStartDevice && <button type="button" className={`${button} ml-0 w-full sm:ml-2 sm:w-auto`} disabled={busy} onClick={onStartDevice}>{t("modelSignIn.device.button")}</button>}
     </div>}
-    {provider === "supergrok" && <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary"><span className="mr-1 rounded bg-control px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink">{t("modelSignIn.grok.unofficial")}</span>{t(COPY[provider].note)}</p>}
+    {provider === "supergrok" && <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary">{t(COPY[provider].note)}</p>}
     {provider === "chatgpt" && <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary">{t(COPY[provider].note)}</p>}
     {pausedUntil && status.state === "connected" && <p role="status" className="mt-2 text-[12px] text-warning">{t("modelSignIn.paused", { time: new Date(pausedUntil).toLocaleString() })}</p>}
   </div>;

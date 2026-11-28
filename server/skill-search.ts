@@ -34,6 +34,7 @@ import { DatabaseSync } from "./sqlite-open.ts";
 
 import { DATA_DIR } from "./config.ts";
 import { SKILL_PAGE_SIZE, type SkillPagination } from "../shared/skill-pagination.ts";
+import { frontmatterCategory, plainCategory } from "../shared/skill-category.ts";
 import { noteWrittenFile } from "./io-written.ts";
 import { SKILL_LIBRARY_ROOT, checkLibrarySkill } from "./skills.ts";
 
@@ -44,7 +45,7 @@ import { SKILL_LIBRARY_ROOT, checkLibrarySkill } from "./skills.ts";
  *  bump: an index built by v2 on an unchanged library still fingerprints as
  *  current, so without this an upgraded app would keep serving the very rows
  *  checkLibrarySkill was added to withhold. */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const INDEX_FILE = () => join(DATA_DIR, "skill-index.db");
 
@@ -129,6 +130,8 @@ interface SkillRow {
   name: string;
   description: string;
   terms: string;
+  /** Plain category name (shared/skill-category.ts); Other when the skill has none. */
+  category: string;
 }
 
 /** One indexable row, or null if this entry must not be advertised.
@@ -171,8 +174,12 @@ function readManifest(root: string, entry: string): SkillRow | null {
   if (!existsSync(manifestPath)) return null;
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-      id?: unknown; name?: unknown; description?: unknown; triggerTerms?: unknown;
+      id?: unknown; name?: unknown; description?: unknown; triggerTerms?: unknown; category?: unknown;
     };
+    // K1: the manifest's own category wins; the SKILL.md frontmatter is the source today.
+    const raw = typeof manifest.category === "string" && manifest.category
+      ? manifest.category
+      : frontmatterCategory(readFileSync(join(root, entry, "SKILL.md"), "utf8").slice(0, 4096));
     const terms = Array.isArray(manifest.triggerTerms)
       ? manifest.triggerTerms.filter((term): term is string => typeof term === "string")
       : [];
@@ -181,6 +188,7 @@ function readManifest(root: string, entry: string): SkillRow | null {
       name: typeof manifest.name === "string" && manifest.name ? manifest.name : entry,
       description: typeof manifest.description === "string" ? manifest.description : "",
       terms: terms.join(" "),
+      category: plainCategory(raw),
     };
   } catch {
     // A single unreadable manifest must not cost the other 2,236 skills their
@@ -261,6 +269,8 @@ function createSchema(db: DatabaseSync): void {
   // This side table stores one row per (skill, term) verbatim, joined back to
   // the FTS rows by rowid so descriptions are not stored twice.
   db.exec("CREATE TABLE skill_terms(ref INTEGER NOT NULL, term TEXT NOT NULL)");
+  // K1: one plain category per skill, joined to the FTS rows by rowid.
+  db.exec("CREATE TABLE skill_category(ref INTEGER PRIMARY KEY, category TEXT NOT NULL)");
   db.exec("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)");
 }
 
@@ -347,6 +357,7 @@ async function buildIndexFile(target: string, root: string): Promise<number> {
     createSchema(db);
     const insert = db.prepare("INSERT INTO skills(id, name, description, terms) VALUES (?, ?, ?, ?)");
     const insertTerm = db.prepare("INSERT INTO skill_terms(ref, term) VALUES (?, ?)");
+    const insertCategory = db.prepare("INSERT INTO skill_category(ref, category) VALUES (?, ?)");
     for (let start = 0; start < entries.length; start += BUILD_CHUNK) {
       const slice = entries.slice(start, start + BUILD_CHUNK);
       // One transaction per slice. A transaction left open across an await
@@ -359,6 +370,7 @@ async function buildIndexFile(target: string, root: string): Promise<number> {
           const row = indexRow(root, entry);
           if (!row) continue;
           const { lastInsertRowid } = insert.run(row.id, row.name, row.description, row.terms);
+          insertCategory.run(lastInsertRowid, row.category);
           for (const term of new Set(row.terms.split(" ").filter(Boolean))) {
             insertTerm.run(lastInsertRowid, term);
           }
@@ -373,6 +385,7 @@ async function buildIndexFile(target: string, root: string): Promise<number> {
     }
     db.exec("INSERT INTO skills(skills) VALUES('optimize')");
     db.exec("CREATE INDEX skill_terms_term ON skill_terms(term)");
+    db.exec("CREATE INDEX skill_category_category ON skill_category(category)");
     const meta = db.prepare("INSERT INTO meta(key, value) VALUES (?, ?)");
     // Fingerprint is taken AFTER the read pass, so a library edited while the
     // build was running produces a key that no longer matches on the next
@@ -609,6 +622,89 @@ export async function browseFacets(): Promise<Facet[]> {
   }
   facetCache = { fingerprint: wanted, facets };
   return facets;
+}
+
+// ---------------------------------------------------------------------------
+// Settings v10 K9: one query with filters before paging, counts after
+// ---------------------------------------------------------------------------
+
+export interface SkillQueryOptions {
+  q?: string;
+  /** A plain category name (shared/skill-category.ts). */
+  category?: string;
+  /** Only these ids (a bot's skills, a status set). Applied before paging. */
+  onlyIds?: readonly string[];
+  /** Never these ids (a status set). Applied before paging. */
+  excludeIds?: readonly string[];
+  sort?: "name" | "newest";
+  /** id -> ISO time the id was first seen; read by sort "newest". */
+  firstSeen?: ReadonlyMap<string, string>;
+  offset?: number;
+  limit?: number;
+}
+
+export interface SkillQueryHit extends SkillHit {
+  category: string;
+}
+
+export interface SkillQueryResult {
+  rows: SkillQueryHit[];
+  /** Rows matching every filter, the category included. */
+  total: number;
+  /** Counts per category over every filter except the category itself, so the strip still shows where else the search matches. */
+  facets: Array<{ category: string; count: number }>;
+  offset: number;
+  limit: number;
+}
+
+function queryHit(row: Record<string, unknown>): SkillQueryHit {
+  return { ...rowToHit(row), category: String(row.category ?? "Other") };
+}
+
+/** Filters run in SQLite before the page is cut; `total` and `facets` count the
+ * same filtered set, never the page. A search with no usable words returns
+ * nothing, as searchSkillPage does. */
+export async function querySkillIndex(options: SkillQueryOptions): Promise<SkillQueryResult> {
+  const limit = clampLimit(options.limit ?? SKILL_PAGE_SIZE);
+  const requestedOffset = Number.isSafeInteger(options.offset) && options.offset! > 0 ? options.offset! : 0;
+  const query = (options.q ?? "").trim().slice(0, 200);
+  const expression = toMatchExpression(query);
+  const empty: SkillQueryResult = { rows: [], total: 0, facets: [], offset: 0, limit };
+  if (query && !expression) return empty;
+  const db = await ensureIndex();
+  if (!db) return empty;
+  const from = "FROM skills JOIN skill_category c ON c.ref = skills.rowid";
+  const shared: string[] = [];
+  const bindings: Array<string> = [];
+  if (expression) { shared.push("skills MATCH ?"); bindings.push(expression); }
+  if (options.onlyIds) { shared.push("skills.id IN (SELECT value FROM json_each(?))"); bindings.push(JSON.stringify(options.onlyIds)); }
+  if (options.excludeIds?.length) { shared.push("skills.id NOT IN (SELECT value FROM json_each(?))"); bindings.push(JSON.stringify(options.excludeIds)); }
+  const category = (options.category ?? "").trim().slice(0, 80);
+  const scoped = category ? [...shared, "c.category = ?"] : shared;
+  const scopedBindings = category ? [...bindings, category] : bindings;
+  const whereOf = (clauses: string[]) => (clauses.length ? " WHERE " + clauses.join(" AND ") : "");
+  try {
+    const total = Number((db.prepare(`SELECT count(*) AS n ${from}${whereOf(scoped)}`).get(...scopedBindings) as { n: number }).n);
+    const facets = (db.prepare(`SELECT c.category AS category, count(*) AS n ${from}${whereOf(shared)} GROUP BY c.category ORDER BY n DESC, c.category ASC`)
+      .all(...bindings) as Array<{ category: string; n: number }>).map((row) => ({ category: String(row.category), count: Number(row.n) }));
+    // A page past the end is an empty page, never the last one again.
+    const offset = requestedOffset;
+    const columns = "skills.id AS id, skills.name AS name, skills.description AS description, skills.terms AS terms, c.category AS category";
+    let rows: SkillQueryHit[];
+    if (options.sort === "newest" && options.firstSeen) {
+      const seen = options.firstSeen;
+      const all = (db.prepare(`SELECT ${columns} ${from}${whereOf(scoped)}`).all(...scopedBindings) as Array<Record<string, unknown>>).map(queryHit);
+      all.sort((a, b) => (seen.get(b.id) ?? "").localeCompare(seen.get(a.id) ?? "") || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+      rows = all.slice(offset, offset + limit);
+    } else {
+      const order = expression ? "bm25(skills, 0.0, 8.0, 1.0, 3.0), skills.name, skills.id" : "skills.name COLLATE NOCASE, skills.id";
+      rows = (db.prepare(`SELECT ${columns} ${from}${whereOf(scoped)} ORDER BY ${order} LIMIT ? OFFSET ?`)
+        .all(...scopedBindings, limit, offset) as Array<Record<string, unknown>>).map(queryHit);
+    }
+    return { rows, total, facets, offset, limit };
+  } catch {
+    return empty;
+  }
 }
 
 // ---------------------------------------------------------------------------

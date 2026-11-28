@@ -46,6 +46,7 @@ import {
   invalidatePhonePairingAttempt,
   newlyPairedDeviceForFlow,
   normalizePhoneSetupActionError,
+  phonePairingCodeVisible,
   phonePairingGate,
   phoneSetupBaseline,
   phoneSetupReducer,
@@ -82,7 +83,17 @@ export interface PhoneDevice {
   removalPending?: boolean;
 }
 
+/** P3: one shape for Remove and Check again. `uncertain` means the companion could not tell whether the request landed. */
+export interface CompanionRemovalStatus {
+  state: "pending" | "removed" | "abandoned" | "unknown";
+  notifications: "not-sent" | "harness-queued" | "confirmed" | "abandoned" | "nothing" | "unknown";
+  removalId?: string;
+  uncertain: boolean;
+}
+
 export interface CompanionState {
+  /** Set only on the answer to a revoke. */
+  removal?: CompanionRemovalStatus;
   enabled: boolean;
   keepAwake: boolean;
   port: number;
@@ -260,7 +271,10 @@ export type CompanionBridge = {
   cloudDesktop: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
   /** Switch share and ask on or off for one phone. Off answers "off" only once Murage has acknowledged it. */
   shareAsk: (deviceId: string, allowed: boolean) => Promise<CompanionState>;
+  /** Removes a phone. The answer carries `removal`: the recorded steps, and `uncertain` when the request may have landed without a reply. */
   revoke: (deviceId: string) => Promise<CompanionState>;
+  /** Check again: reads the recorded removal of one phone (read only; still answers after the device row is gone). */
+  removalStatus: (deviceId: string) => Promise<CompanionRemovalStatus>;
   /** Re-read Tailscale now, rather than trusting what was true at boot.
    *
    * The sidecar used to read the MagicDNS name once at startup and cache it
@@ -1672,7 +1686,7 @@ export function PhoneSetupFlowView({
         * be built, which is exactly the case a laptop hits: a code nobody can
         * read is a code nobody can type, and the only route left on screen
         * was one a machine without a camera cannot take. */}
-      {!c.pairingExpired && c.state?.pairing && (
+      {phonePairingCodeVisible({ pairingOpen: Boolean(c.state?.pairing), expired: c.pairingExpired, pairingLink: c.pairingLink, browserLink: c.browserLink }) && c.state?.pairing && (
         <div className="mt-4 w-full max-w-[390px] rounded-xl bg-inset px-4 py-3 text-left text-[12px] leading-relaxed text-ink-secondary">
           <div>
             {typed.lead}

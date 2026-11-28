@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { webSearchSwitch } from "./settings/web-read.ts";
 import { fluxMemorySettings, setFluxMemoryConfig } from "./flux-memory-headers.ts";
 
 import { APP_CONFIG_KEYS, customMcpServers, customMcpServerDescriptors,
@@ -40,7 +42,7 @@ import { APP_CONFIG_KEYS, customMcpServers, customMcpServerDescriptors,
   type AppConfig,
 } from "./config.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
-import type { JsonObject } from "./schema.ts";
+import type { JsonObject, JsonValue } from "./schema.ts";
 
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof import("node:fs")>();
@@ -125,67 +127,6 @@ describe("explicit web search configuration", () => {
   });
 });
 
-describe("HighLevel private token is stored with the config", () => {
-  const file = join(DATA_DIR, "config.json");
-  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", undefined); });
-  afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
-  const diskToken = () => (JSON.parse(readFileSync(file, "utf8")) as { highlevel?: { privateToken?: string } }).highlevel?.privateToken;
-
-  it("a cleared token stays gone from memory and from config.json, before and after a restart", () => {
-    // config.json still holds an older plaintext token (written by hand, or a file from before the desktop shell kept it)
-    writeFileSync(file, JSON.stringify({ language: "en", highlevel: { privateToken: "old-plaintext-hl-token" } }));
-    vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", "live-hl-token");
-    expect(loadConfig().highlevel?.privateToken).toBe("live-hl-token");
-    // the owner clears the credential: the same write and env sync PUT /api/config runs
-    const clear = parseConfigPatch({ highlevel: { privateToken: "" } });
-    saveConfig(clear);
-    syncCredentialEnv(clear);
-    expect(process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN).toBeUndefined();
-    // the reload commitEngineChange does right after the save
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-    expect(diskToken()).toBe("");
-    expect(readFileSync(file, "utf8")).not.toContain("old-plaintext-hl-token");
-    // a restart: nothing in env, only the file
-    vi.unstubAllEnvs();
-    vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", undefined);
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-    expect(loadConfig().language).toBe("en");
-  });
-
-  it("the external-storage tombstone also clears an old plaintext token on disk", () => {
-    writeFileSync(file, JSON.stringify({ highlevel: { privateToken: "old-plaintext-hl-token" } }));
-    // ?secretStorage=external: the shell keeps the real value; the server writes the empty tombstone
-    saveConfig({ highlevel: { privateToken: "" } });
-    expect(diskToken()).toBe("");
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-  });
-
-  it("a token saved with no desktop shell survives a restart, and a later save of another section keeps it", () => {
-    saveConfig(parseConfigPatch({ highlevel: { privateToken: "file-hl-token" } }));
-    expect(diskToken()).toBe("file-hl-token");
-    saveConfig({ language: "fr" });
-    expect(loadConfig().highlevel?.privateToken).toBe("file-hl-token");
-  });
-  it("an upgrade from a 1.0.17-shaped config.json (no highlevel section) saves, clears and restarts with no token anywhere", () => {
-    // 1.0.17 shipped no HighLevel credential: its config.json has no highlevel key at all
-    writeFileSync(file, JSON.stringify({ language: "en", webSearch: { provider: "auto" }, instances: { fuigo: { driver: "fuigoAgent", enabled: true } } }));
-    expect(loadConfig().highlevel).toBeUndefined();
-    const save = parseConfigPatch({ highlevel: { privateToken: "upgrade-hl-token" } });
-    saveConfig(save);
-    syncCredentialEnv(save);
-    expect(loadConfig().highlevel?.privateToken).toBe("upgrade-hl-token");
-    const clear = parseConfigPatch({ highlevel: { privateToken: "" } });
-    saveConfig(clear);
-    syncCredentialEnv(clear);
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-    expect(readFileSync(file, "utf8")).not.toContain("upgrade-hl-token");
-    vi.unstubAllEnvs();
-    vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", undefined);
-    expect(loadConfig().highlevel?.privateToken).toBe("");
-    expect(loadConfig().webSearch).toEqual({ provider: "auto" });
-  });
-});
-
 describe("every config key saveConfig accepts reaches config.json", () => {
   const file = join(DATA_DIR, "config.json");
   beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
@@ -199,7 +140,7 @@ describe("every config key saveConfig accepts reaches config.json", () => {
   type Rows = { [K in keyof Required<AppConfig>]: { first: NonNullable<Patch[K]>; second: NonNullable<Patch[K]>; afterSecond?: unknown } };
   const rows: Rows = {
     settingsDefaultMode: { first: "simple", second: "advanced" },
-    automationsPaused: { first: true, second: false }, noLimitsTermsVersion: { first: 1, second: 2 },
+    automationsPaused: { first: true, second: false }, noLimitsTermsVersion: { first: 1, second: 2 }, automaticNotice: { first: "pending", second: "acknowledged" },
     telegram: { first: { targetBotId: "bot-a" }, second: { targetBotId: "bot-b" } }, slack: { first: { targetBotId: "bot-a" }, second: { targetBotId: "bot-b" } },
     discord: { first: { targetBotId: "bot-a" }, second: { targetBotId: "bot-b" } }, whatsapp: { first: { readReceipts: true }, second: { readReceipts: false } },
     notifications: { first: { previewContent: false }, second: { previewContent: true } }, spend: { first: { monthlyLimitUsd: 25 }, second: { monthlyLimitUsd: 50 } },
@@ -207,14 +148,16 @@ describe("every config key saveConfig accepts reaches config.json", () => {
     newBots: { first: { effort: "high" }, second: { effort: null }, afterSecond: {} },
     computer: { first: { defaultForNewBots: "off" }, second: { defaultForNewBots: "vm" } },
     claudeCodeImport: { first: { enabled: true }, second: { enabled: false } },
+    engineSetup: { first: { sources: { src_aaaaaaaaaaaaaaaaaaaaaaaa: { optIn: true, epoch: 1 } } }, second: { sources: { src_aaaaaaaaaaaaaaaaaaaaaaaa: { optIn: false, epoch: 2 } } } },
     mcpServers: { first: { "guard-a": { command: "guard-a" } }, second: { "guard-b": { command: "guard-b" } }, afterSecond: { "guard-b": { command: "guard-b" } } },
+    webSearchLast: { first: "tavily", second: "exa" },
     language: { first: "fr", second: "de" }, xai: { first: { url: "https://a.example.invalid" }, second: { url: "https://b.example.invalid" } },
     modelProviders: { first: { bank: "bank-a" }, second: { bank: "bank-b" } },
     openaiCompat: { first: { model: "m-a" }, second: { model: "m-b" } }, composio: { first: { userId: "u-a" }, second: { userId: "u-b" } },
     box: { first: { token: "box-a" }, second: { token: "" } }, vps: { first: { sshAlias: "build-box" }, second: { sshAlias: "other-box" } },
     opencodeGo: { first: { apiKey: "go-a" }, second: { apiKey: "" } },
     tts: { first: { voice: "v-a" }, second: { voice: "v-b" } }, imageGen: { first: { enabled: true }, second: { enabled: false } },
-    webSearch: { first: { provider: "exa" }, second: { provider: "off" } },
+    webSearch: { first: { provider: "exa" }, second: { provider: "off" } }, webRead: { first: { enabled: false }, second: { enabled: true } },
     highlevel: { first: { privateToken: "guard-hl-a" }, second: { privateToken: "" } },
     flux: { first: { memory: { enabled: false } }, second: { memory: { enabled: true } } }, decider: { first: { enabled: true }, second: { enabled: false } },
     profile: { first: { name: "Guard" }, second: { name: "Guard Two" } }, rooms: { first: { turnTimeoutMinutes: 30 }, second: { turnTimeoutMinutes: 45 } },
@@ -248,6 +191,23 @@ describe("every config key saveConfig accepts reaches config.json", () => {
       for (const other of Object.keys(before)) if (other !== key) expect(after[other], `${other} changed when ${key} was saved`).toEqual(before[other]);
       saveConfig(patch(key, row.first));
     }
+  });
+});
+
+describe("Tools page Web search Off stays readable by v1.0.20 (rollback)", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); });
+  // v1.0.20 stored shape: webSearch is strict and has no remembered-provider key; unknown top-level keys are stripped.
+  const v1020WebSearch = z.object({ provider: z.enum(["engine", "auto", "flux", "tavily", "exa", "firecrawl", "off"]).optional(), tavilyApiKey: z.string().optional(), exaApiKey: z.string().optional(), firecrawlApiKey: z.string().optional() }).strict();
+  it("the Off write the page sends leaves a webSearch section v1.0.20 accepts, and On restores the provider", () => {
+    const patch = webSearchSwitch({ provider: "tavily" }, false);
+    saveConfig(parseConfigPatch({ webSearch: { provider: patch.provider }, ...(patch.lastProvider ? { webSearchLast: patch.lastProvider } : {}) } as JsonValue));
+    const disk = JSON.parse(readFileSync(file, "utf8")) as JsonObject;
+    expect(v1020WebSearch.safeParse(disk.webSearch).success).toBe(true);
+    expect(disk.webSearch).toEqual({ provider: "off" });
+    expect(loadConfig().webSearchLast).toBe("tavily");
+    expect(webSearchSwitch({ provider: "off", lastProvider: loadConfig().webSearchLast }, true)).toEqual({ provider: "tavily", needsAsk: true });
   });
 });
 

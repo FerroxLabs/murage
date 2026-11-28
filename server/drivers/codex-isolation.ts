@@ -14,7 +14,7 @@
 // switched off by path with `skills.config = [{ path, enabled = false }]`,
 // matched against the skill's SKILL.md path.
 //
-// Rig (build host, codex-cli 0.146.0 and 0.160.0, `codex exec` against a fake
+// Rig (Hetzner, codex-cli 0.146.0 and 0.160.0, `codex exec` against a fake
 // Responses API, owner config.toml with 2 servers of 40+25 tools, a personal
 // skill and an ~/.agents skill): before 13.2k tokens with the owner's server
 // tools and skills in the request; MCP off 9.8k; skills off too, neither
@@ -124,6 +124,50 @@ export const CODEX_APPROVAL_POLICY = "on-request";
  *  config.toml starts under this pin), and the TOML spelling is kebab on every version. */
 export const CODEX_APPROVAL_PIN_ARGS: readonly string[] = ["-c", `approval_policy="${CODEX_APPROVAL_POLICY}"`];
 
+/** 1.0.22 q1022-winterry: Codex on Windows runs every sandboxed command under the sandbox its config names. The owner's config.toml
+ *  (copied into each bot's scoped CODEX_HOME) usually says `[windows] sandbox = "elevated"`, written when the Codex app set the sandbox
+ *  up, but that setup (`.sandbox/setup_marker.json`, `.sandbox-secrets/`) lives in the owner's own CODEX_HOME, never in a scope. So in
+ *  every scope Codex starts its elevated setup again (codex-rs windows-sandbox-rs setup.rs run_elevated_setup): a UAC prompt waited on
+ *  without limit, which an unattended routine never answers, or a helper that exits 1 ("orchestrator_helper_exit_nonzero"), after
+ *  which the read only ran when approved outside the sandbox. The unelevated sandbox (a restricted token, its ACLs applied in-process
+ *  by the app-server: run_windows_sandbox_legacy_preflight) needs no setup helper, no UAC and no Codex app. A `-c` override wins over
+ *  the copied file; Codex reads the `windows` table on Windows only, so the pin is inert on Mac and Linux. Local turns only: a Cloud
+ *  home runs on Linux under its own argv allowlist.
+ *  Three keys, one meaning (carried from fix/1022q-winterry-fable-r3, MAIN-RULING WINTERRY-1022): `windows.sandbox` is what a current
+ *  Codex reads and it wins over the feature keys (core/src/windows_sandbox.rs resolve_windows_sandbox_mode). A Codex from before that key
+ *  reads only the two feature keys, and elevated off alone would leave it with NO sandbox when the owner's file never set the other one
+ *  (legacy_windows_sandbox_mode_from_entries), so the restricted-token one is switched on beside it. Source-derived; never a sandbox off. */
+export const CODEX_WINDOWS_SANDBOX_ARGS: readonly string[] = [
+  "-c", 'windows.sandbox="unelevated"',
+  "-c", "features.elevated_windows_sandbox=false",
+  "-c", "features.experimental_windows_sandbox=true",
+];
+/** Codex's Windows sandbox setup error codes (codex-rs windows-sandbox-rs setup_error.rs SetupErrorCode::as_str): the orchestrator
+ *  side, the elevated helper's own report, and the registered sandbox service. */
+const WINDOWS_SANDBOX_SETUP_CODES = [
+  "orchestrator_sandbox_dir_create_failed", "orchestrator_elevation_check_failed", "orchestrator_elevation_required", "orchestrator_payload_serialize_failed",
+  "orchestrator_helper_launch_failed", "orchestrator_helper_launch_canceled", "orchestrator_helper_exit_nonzero", "orchestrator_helper_report_read_failed",
+  "orchestrator_helper_incomplete", "registered_service_timed_out", "registered_service_pipe_closed", "helper_request_args_failed",
+  "helper_sandbox_dir_create_failed", "helper_log_failed", "helper_user_provision_failed", "helper_users_group_create_failed",
+  "helper_user_create_or_update_failed", "helper_dpapi_protect_failed", "helper_users_file_write_failed", "helper_setup_marker_write_failed",
+  "helper_sid_resolve_failed", "helper_capability_sid_failed", "helper_firewall_com_init_failed", "helper_firewall_policy_access_failed",
+  "helper_firewall_policy_ineffective", "helper_firewall_rule_create_or_add_failed", "helper_firewall_rule_verify_failed",
+  "helper_read_acl_helper_spawn_failed", "helper_sandbox_lock_failed", "helper_unknown_error",
+] as const;
+/** One of those codes as a whole word, followed by Codex's `: ` detail separator (SetupFailure's Display is `<code>: <message>`). */
+const WINDOWS_SANDBOX_SETUP_CODE = new RegExp(`(?<![\\w.])(${WINDOWS_SANDBOX_SETUP_CODES.join("|")}):\\s`);
+/** The setup code of a failed Codex command whose output is a Windows sandbox setup error, or null. */
+export function windowsSandboxSetupFailure(output: unknown): string | null {
+  if (typeof output !== "string") return null;
+  const text = output.slice(0, 4096);
+  const code = WINDOWS_SANDBOX_SETUP_CODE.exec(text)?.[1];
+  return code ?? null;
+}
+/** The one line the owner sees when Codex could not set up its Windows sandbox: the command did not run, and Murage never runs it
+ *  outside the sandbox on its own (an approval card still asks the owner, as for every other escalation). */
+export function windowsSandboxSetupLine(code: string): string {
+  return `Codex could not set up its Windows sandbox on this PC (${code}), so the command did not run. Murage never runs it outside the sandbox on its own; restart Murage, and if it keeps happening, update Codex.`;
+}
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 /** The approval policy and sandbox a Codex thread and every turn on it run under, spelled for the installed version.

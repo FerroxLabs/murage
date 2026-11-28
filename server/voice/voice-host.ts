@@ -975,7 +975,7 @@ export interface HostTiming {
   firstTokenMs: number | null;
   /** Request to the first spoken piece yielded. */
   firstPieceMs: number | null;
-  /** 1, or 2 after a first-token stall. */
+  /** Number of submitted host requests (at most one). */
   attempts: number;
   firstPiece: "clause" | "sentence" | null;
   firstPieceChars: number;
@@ -1037,8 +1037,7 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
     stream: true,
     ...sampling(host, HOST_MAX_TOKENS),
   });
-  // One controller per attempt. The owner hanging up and the whole-turn clock
-  // abort whichever attempt is current; the first-token clock only its own.
+  // Caller, whole-turn and first-token cancellation share this submitted request.
   let controller = new AbortController();
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort, { once: true });
@@ -1050,21 +1049,17 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
   const timeout = { type: "error", reason: "timeout", message: "The fast reply took too long." } as const;
 
   try {
-    // Connect and wait for the first stream part. A first-token stall is the
-    // provider's tail latency, not a refusal: it is asked once more before
-    // the turn fails over to the engine.
+    // A submitted POST may already be billed; a first-token stall cannot authorize replay.
     let res: Response | null = null;
     let parts: AsyncGenerator<StreamPart> | null = null;
     let first: IteratorResult<StreamPart> | null = null;
-    for (let attempt = 1; ; attempt += 1) {
+    {
       if (isBudgetReached(host)) { yield BUDGET_EVENT; return; }
-      timing.attempts = attempt;
-      if (attempt === 1) clock.start = Date.now();
+      timing.attempts = 1;
+      clock.start = Date.now();
       controller = new AbortController();
       const mine = controller;
-      let stalled = false;
       firstToken = setTimeout(() => {
-        stalled = true;
         mine.abort();
       }, FIRST_TOKEN_TIMEOUT_MS);
       try {
@@ -1078,10 +1073,7 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
       } catch {
         clearTimeout(firstToken);
         if (options.signal?.aborted) return;
-        if (stalled && attempt === 1) {
-          console.warn("[voice-host] no first token in time; asking once more");
-          continue;
-        }
+        if (isBudgetReached(host)) { yield BUDGET_EVENT; return; }
         yield mine.signal.aborted ? timeout : { type: "error", reason: "upstream", message: `Couldn't reach ${providerName(host)}.` };
         return;
       }
@@ -1107,15 +1099,11 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
         if (error instanceof VoiceBudgetReached) { yield BUDGET_EVENT; return; }
         clearTimeout(firstToken);
         if (options.signal?.aborted) return;
-        if (stalled && attempt === 1) {
-          console.warn("[voice-host] no first token in time; asking once more");
-          continue;
-        }
+        if (isBudgetReached(host)) { yield BUDGET_EVENT; return; }
         yield mine.signal.aborted ? timeout : { type: "error", reason: "upstream", message: "The fast reply was cut off." };
         return;
       }
       clearTimeout(firstToken);
-      break;
     }
 
     // tool calls arrive in pieces keyed by index; assemble, then act once

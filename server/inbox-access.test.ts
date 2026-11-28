@@ -56,7 +56,7 @@ function world() {
   const owns = (record: { threadId: string; tasks: Titled[] }, threadId: string) =>
     record.threadId === threadId || record.tasks.some(task => task.threadId === threadId);
   const store: InboxRosterStore = {
-    bots, groups,
+    bots, groups, isMailboxSealed: () => false,
     bot: id => bots.find(bot => bot.id === id) ?? null,
     botByThread: threadId => bots.find(bot => owns(bot, threadId)) ?? null,
     group: id => groups.find(group => group.id === id),

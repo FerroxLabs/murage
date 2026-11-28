@@ -1,3 +1,9 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { connect } from "node:net";
+import { applyBrowserNetwork, createBrowserProxyStore, runBrowserNetworkCommand } from "./browser-proxy-settings.mjs";
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 
@@ -59,6 +65,9 @@ function fakeView(partition) {
     },
     setWindowOpenHandler: (handler) => {
       webContents.windowOpenHandler = handler;
+    },
+    setWebRTCIPHandlingPolicy: (policy) => {
+      calls.push(["setWebRTCIPHandlingPolicy", policy]);
     },
     on: (name, handler) => {
       listeners.set(name, handler);
@@ -462,6 +471,37 @@ describe("browser surface manager", () => {
     const emulationCalls = view.calls.filter(([name]) => name === "enableDeviceEmulation");
     expect(emulationCalls).toHaveLength(3);
     expect(emulationCalls.at(-1)[1]).toMatchObject({ viewSize: VIEWPORT, scale: 0.3125 });
+  });
+
+  it("sets the WebRTC policy that keeps UDP off the direct path before a view loads anything", async () => {
+    const { manager, views } = harness();
+    await manager.navigate("bot-a", "example.com");
+    const names = views[0].calls.map(([name]) => name);
+    expect(views[0].calls).toContainEqual(["setWebRTCIPHandlingPolicy", "disable_non_proxied_udp"]);
+    expect(names.indexOf("setWebRTCIPHandlingPolicy")).toBeLessThan(names.indexOf("loadURL"));
+  });
+
+  it("does not keep or load a view whose WebRTC policy could not be set", async () => {
+    const created = [];
+    let failing = true;
+    const { manager } = harness({
+      createView: (viewOptions) => {
+        const view = fakeView(viewOptions.webPreferences.partition);
+        if (failing) {
+          view.webContents.setWebRTCIPHandlingPolicy = () => {
+            throw new Error("policy unavailable");
+          };
+        }
+        created.push(view);
+        return view;
+      },
+    });
+    await expect(manager.navigate("bot-a", "example.com")).rejects.toThrow(/policy unavailable/);
+    expect(created[0].calls.map(([name]) => name)).not.toContain("loadURL");
+    failing = false;
+    await manager.navigate("bot-a", "example.com");
+    expect(created).toHaveLength(2);
+    expect(created[1].calls).toContainEqual(["setWebRTCIPHandlingPolicy", "disable_non_proxied_udp"]);
   });
 
   it("navigates only to web pages and answers with the page's elements plus a scroll hint", async () => {
@@ -1620,5 +1660,177 @@ describe("browser surface manager", () => {
     expect(manager.size()).toBe(0);
     expect(owner.contentView.children).toEqual([]);
     expect(states.at(-1)).toMatchObject({ botId: "bot-b", open: false });
+  });
+});
+
+describe("browser surface network options", () => {
+  it("does nothing about the network unless a hook is given", async () => {
+    const { manager, views } = harness();
+    manager.ensure("bot-n", "");
+    const answer = await new Promise((resolve) => views[0].beforeRequest({ url: "https://example.com/" }, resolve));
+    expect(answer).toEqual({ cancel: false });
+  });
+  it("applies the hook once per shared session, before any request is allowed", async () => {
+    const applied = [];
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const { manager, views } = harness({ applyNetwork: async (ses) => { applied.push(ses); await gate; } });
+    manager.ensure("bot-n", "");
+    manager.ensure("bot-n", "");
+    let answered = null;
+    const pending = new Promise((resolve) => views[0].beforeRequest({ url: "https://example.com/" }, (a) => { answered = a; resolve(a); }));
+    await Promise.resolve();
+    expect(answered).toBeNull();
+    release();
+    expect(await pending).toEqual({ cancel: false });
+    expect(applied).toHaveLength(1);
+  });
+  it("refuses every request when the hook fails instead of going direct", async () => {
+    const { manager, views } = harness({ applyNetwork: async () => { throw new Error("relay down"); } });
+    manager.ensure("bot-n", "");
+    const answer = await new Promise((resolve) => views[0].beforeRequest({ url: "https://example.com/" }, resolve));
+    expect(answer).toEqual({ cancel: true });
+  });
+});
+
+
+
+describe("review regressions: network lifetime and DNS", () => {
+  it("uses remote DNS only after the network gate and retains literal address checks", async () => {
+    const resolveHost = vi.fn(async () => { throw new Error("local DNS unavailable"); });
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const { manager, views } = harness({ resolveHost, applyNetwork: async () => { await gate; return { remoteDns: true, resolveHost: async () => ({ endpoints: [{ address: "93.184.216.34" }] }) }; } });
+    const navigation = manager.navigate("bot-r", "https://remote.example/");
+    await Promise.resolve();
+    expect(resolveHost).not.toHaveBeenCalled();
+    release();
+    await expect(navigation).resolves.toBeDefined();
+    expect(await new Promise(r => views[0].beforeRequest({ url: "https://remote.example/asset" }, r))).toEqual({ cancel: false });
+    expect(await new Promise(r => views[0].beforeRequest({ url: "https://127.0.0.1/" }, r))).toEqual({ cancel: true });
+    expect(resolveHost).not.toHaveBeenCalled();
+    manager.closeAll();
+  });
+  it("closes network resources only after the last shared view closes", async () => {
+    const close = vi.fn();
+    const { manager } = harness({ applyNetwork: async () => ({ close }) });
+    await manager.navigate("bot-a", "https://example.com", "profile-a");
+    await manager.navigate("bot-b", "https://example.com", "profile-a");
+    manager.close("bot-a"); await Promise.resolve();
+    expect(close).not.toHaveBeenCalled();
+    manager.closeAll(); await Promise.resolve(); await Promise.resolve();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+  it("refuses a partition request after its last view closes and resumes when it opens again", async () => {
+    const { manager, views } = harness({ applyNetwork: async () => ({ close() {} }) });
+    await manager.navigate("bot-a", "https://example.com", "profile-a");
+    manager.closeAll();
+    const request = (view) => new Promise((resolve) => {
+      if (view.beforeRequest) view.beforeRequest({ url: "https://example.com" }, resolve);
+      else resolve({ cancel: false });
+    });
+    expect(await request(views[0])).toEqual({ cancel: true });
+    await manager.navigate("bot-a", "https://example.com", "profile-a");
+    expect(await request(views.at(-1))).toEqual({ cancel: false });
+    manager.closeAll();
+  });
+  it("closes a relay even when a guest closes before network setup completes", async () => {
+    const close = vi.fn(); let release;
+    const { manager } = harness({ applyNetwork: async () => new Promise(r => { release = () => r({ close }); }) });
+    manager.ensure("bot-a", GUEST_PROFILE); await Promise.resolve();
+    manager.closeAll(); release();
+    await new Promise(r => setImmediate(r));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("isolated Electron network workflow (fake Electron, loopback relay)", () => {
+  it("configures encrypted options, navigates without local DNS, and releases its relay", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "browser-network-workflow-"));
+    const safeStorage = { isAsyncEncryptionAvailable: async () => true, encryptString: s => Buffer.from(s).reverse(), decryptString: b => Buffer.from(b).reverse().toString() };
+    const store = createBrowserProxyStore({ directory, safeStorage, platform: "darwin" });
+    const output = [];
+    let proxyRules, locale;
+    const resolveHost = vi.fn(async () => { throw Error("Unexpected local DNS"); });
+    const { manager, views } = harness({ resolveHost, applyNetwork: async ses => {
+      ses.setProxy = async options => { proxyRules = options.proxyRules; };
+      ses.setUserAgent = (_ua, language) => { locale = language; };
+      return applyBrowserNetwork(ses, await store.read(), { resolveHost: async () => ({ endpoints: [{ address: "93.184.216.34" }] }) });
+    } });
+    try {
+      await runBrowserNetworkCommand({ argv: ["--browser-network-config"], input: Readable.from(['{"proxyUrl":"socks5://fixture-user:secret@proxy.example:1080","locale":"fr-FR"}']), store, ready: async () => {}, write: s => output.push(s), exit: code => output.push(code) });
+      expect(output.at(-1)).toBe(0);
+      expect(readFileSync(join(directory, "browser-network.json"), "utf8")).toBe('{"proxy":true,"locale":"fr-FR"}');
+      await manager.navigate("bot-workflow", "https://remote.example/", GUEST_PROFILE);
+      expect(views[0].calls).toContainEqual(["loadURL", "https://remote.example/"]);
+      expect(locale).toBe("fr-FR");
+      expect(resolveHost).not.toHaveBeenCalled();
+      expect(proxyRules).toMatch(/^socks5:\/\/127\.0\.0\.1:\d+$/);
+      const port = Number(new URL(proxyRules).port);
+      const client = connect(port, "127.0.0.1");
+      const greeting = new Promise((resolve, reject) => { client.once("data", resolve); client.once("error", reject); });
+      client.write(Buffer.from([5, 1, 0]));
+      expect(await greeting).toEqual(Buffer.from([5, 0]));
+      client.destroy();
+      manager.closeAll(); await new Promise(r => setImmediate(r));
+      const failure = await new Promise(resolve => { const probe = connect(port, "127.0.0.1"); probe.once("error", error => resolve(error.code)); probe.once("connect", () => { probe.destroy(); resolve("still open"); }); });
+      expect(failure).toBe("ECONNREFUSED");
+    } finally { manager.closeAll(); rmSync(directory, { recursive: true, force: true }); }
+  });
+  it("serializes pending session setup across a close and reopen", async () => {
+    let release;
+    const closeFirst = vi.fn(), closeSecond = vi.fn();
+    const applyNetwork = vi.fn().mockImplementationOnce(() => new Promise(r => { release = () => r({ close: closeFirst }); })).mockResolvedValue({ close: closeSecond });
+    const { manager } = harness({ applyNetwork });
+    manager.ensure("bot-a", "profile-a"); await Promise.resolve();
+    manager.close("bot-a");
+    manager.ensure("bot-b", "profile-a"); await Promise.resolve();
+    expect(applyNetwork).toHaveBeenCalledTimes(1);
+    release(); await new Promise(r => setImmediate(r));
+    expect(closeFirst).toHaveBeenCalledTimes(1);
+    expect(applyNetwork).toHaveBeenCalledTimes(2);
+    manager.closeAll(); await new Promise(r => setImmediate(r));
+    expect(closeSecond).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Owner of both the surface gate and the proxy resolver contract: up-browser-proxy.
+describe("proxy public-address boundary", () => {
+  const addresses = ["127.0.0.1", "10.0.0.7", "169.254.169.254", "::1", "fd00::7"];
+  for (const address of addresses) {
+    it(`refuses navigation when the proxy resolves a hostname to ${address}`, async () => {
+      const local = vi.fn(async () => { throw Error("Unexpected local destination DNS"); });
+      const remote = vi.fn(async () => ({ endpoints: [{ address }] }));
+      const { manager, views } = harness({ resolveHost: local, applyNetwork: async () => ({ remoteDns: true, resolveHost: remote }) });
+      try {
+        await expect(manager.navigate("bot-proxy", "https://private.example/")).rejects.toThrow(/private-network/);
+        expect(views[0].calls.filter(call => call[0] === "loadURL" && call[1] !== "about:blank")).toEqual([]);
+        expect(remote).toHaveBeenCalledWith("private.example");
+        expect(local).not.toHaveBeenCalled();
+      } finally { manager.closeAll(); }
+    });
+  }
+  it.each(["mainFrame", "subFrame", "script", "image", "webSocket"])("cancels proxy-private redirect/resource of type %s", async resourceType => {
+    const local = vi.fn(async () => { throw Error("Unexpected local destination DNS"); });
+    const remote = vi.fn(async hostname => ({ endpoints: [{ address: hostname === "public.example" ? "93.184.216.34" : "192.168.1.7" }] }));
+    const { manager, views } = harness({ resolveHost: local, applyNetwork: async () => ({ remoteDns: true, resolveHost: remote }) });
+    try {
+      await manager.navigate("bot-proxy", "https://public.example/");
+      const url = `${resourceType === "webSocket" ? "wss" : "https"}://private.example/resource`;
+      expect(await new Promise(r => views[0].beforeRequest({ url, resourceType }, r))).toEqual({ cancel: true });
+      expect(remote).toHaveBeenCalledWith("private.example");
+      expect(local).not.toHaveBeenCalled();
+    } finally { manager.closeAll(); }
+  });
+  it("fails closed when remote resolution is missing, fails, or mixes public/private answers", async () => {
+    for (const resolveHost of [undefined, async () => { throw Error("Unavailable"); }, async () => ({ endpoints: [] }), async () => ({ endpoints: [{ address: "93.184.216.34" }, { address: "10.0.0.7" }] })]) {
+      const local = vi.fn(async () => { throw Error("Unexpected local destination DNS"); });
+      const { manager } = harness({ resolveHost: local, applyNetwork: async () => ({ remoteDns: true, resolveHost }) });
+      try {
+        await expect(manager.navigate("bot-proxy", "https://private.example/")).rejects.toThrow();
+        expect(local).not.toHaveBeenCalled();
+      } finally { manager.closeAll(); }
+    }
   });
 });

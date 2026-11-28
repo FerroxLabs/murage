@@ -11,6 +11,8 @@ import { ioBudget } from '../io-budget.ts';
 import { removeTempDirSync } from '../testing/cleanup.ts';
 import { setMemoryMode } from './repository.ts';
 import { BgDeferred, isBgDeferred } from '../bg-admission.ts';
+import { stopWalMaintenance, walMaintenanceCounters } from '../wal-maintenance.ts';
+import { stopSearchIndex } from '../message-search-index.ts';
 import { MemoryWorkerController } from './worker-controller.ts';
 
 type Attempt={rows:number;bytes:number;committed:boolean;window:number};
@@ -39,14 +41,16 @@ vi.mock('../database.ts',async original=>{
 });
 type State={child:unknown;ready:boolean;indexing:boolean;indexRequestId:string|null;indexSent:Map<string,string>;later(step:()=>void,delay?:number):void;onWorkerMessage(child:unknown,event:unknown):void};
 let controller:MemoryWorkerController,state:State;
-beforeEach(()=>{
-  closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});setMemoryMode('capture');
+beforeEach(async()=>{
+  closeDatabase();await stopWalMaintenance();await stopSearchIndex();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});setMemoryMode('capture');
   appendMessage('thread',{id:'anchor',at:1,role:'user',kind:'text',text:'Fixture evidence.'});
+  // The fixture rotates a closed admission ledger; a real-clock checkpointer must not race its minute resets.
+  await stopWalMaintenance();await stopSearchIndex();
   controller=new MemoryWorkerController();state=controller as unknown as State;
   state.child={kill(){},on(){},send(){}};state.ready=true;
   probe.on=false;probe.window=0;probe.refuseAt=-1;probe.attempts=[];
 });
-afterEach(async()=>{probe.on=false;state.child=null;await controller.stop();vi.restoreAllMocks();});
+afterEach(async()=>{probe.on=false;state.child=null;await controller.stop();closeDatabase();await stopWalMaintenance();await stopSearchIndex();vi.restoreAllMocks();});
 function seed(n:number){
   const db=database(),scope=String(db.prepare('SELECT id FROM memory_scopes LIMIT 1').get()!.id);
   const records=Array.from({length:n},(_,i)=>({id:`r${i}`,version:1,deleted:false}));
@@ -66,6 +70,7 @@ async function drain(n:number){
   vi.spyOn(ioBudget,'nextAdmissionMs').mockImplementation(()=>{const ms=real();waited.add(ms);return ms;});
   // The last seconds of an admission minute refuse background writes by wall time; start with a whole minute of margin.
   while(real()<45_000)await new Promise(resolve=>setTimeout(resolve,1000));
+  expect(walMaintenanceCounters(),'the closed fixture ledger has no real-clock checkpointer').toBeNull();
   ioBudget.resetAdmissionForFixture();
   state.later=(step,delay=0)=>{queue.push({step,delay});};
   const waits:Array<{window:number;room:number}>=[],windows:number[]=[];
@@ -130,6 +135,7 @@ it.each([1,16,256])('W4 %i receipts commit in one slice with no refused attempt 
 async function runAll(n:number){
   const records=seed(n),queue:Array<()=>void>=[];
   while(ioBudget.nextAdmissionMs()<45_000)await new Promise(resolve=>setTimeout(resolve,1000));
+  expect(walMaintenanceCounters(),'the closed fixture ledger has no real-clock checkpointer').toBeNull();
   ioBudget.resetAdmissionForFixture();
   state.later=step=>{queue.push(step);};
   probe.on=true;

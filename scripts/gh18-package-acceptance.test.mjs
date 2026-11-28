@@ -45,7 +45,7 @@ it('packaged acceptance compares nonowner reader verdicts across the real P1 cle
     fx.db.exec('COMMIT');
     expect(packageReaderProjection(fx.db, 'package-thread')).toEqual(before);
     // This observation must fail if a clear also removes a protected mark.
-    fx.db.exec("DELETE FROM memory_deny_line WHERE thread_id='package-thread'");
+    fx.db.exec("DELETE FROM memory_deny_point WHERE thread_id='package-thread'");
     expect(() => packageReaderProjection(fx.db, 'package-thread')).toThrow(assert.AssertionError);
   } finally { fx.close(); }
 });

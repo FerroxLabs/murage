@@ -28,6 +28,7 @@
 // catch. It is pure: every fact about the machine (the folders, the home
 // folder, the recipients the bot has written to, how links resolve) is passed
 // in, so it is table-tested without touching a disk.
+import { ownPrefixedAlias } from "../shared/connected-app-aliases.ts";
 import { actionGrantSet, resolveCall, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { parseApplyPatch } from "./drivers/codex-hook.ts";
@@ -52,6 +53,9 @@ export interface StopHit {
   /** Everyone a message goes to, normalized, so an approved send can be
    * remembered and the next message to them is not "new". */
   recipients?: string[];
+  /** The stop line could not read the call at all and holds it. The kind is then only how the hold is filed: no delete,
+   * payment or message was found, so the card must not word it as one. */
+  unread?: true;
 }
 
 export interface StopLinePlace {
@@ -1854,6 +1858,15 @@ export function classifyStopLine(tool: string, input: unknown, summary: string, 
   return { kind: hits[0]!.kind, what: `${hits[0]!.what}, and ${hits.length - 1} more`, recipients: hits.flatMap((h) => h.recipients ?? []) };
 }
 
+/** F11-V3: an ask whose tool name is an own-prefixed plain app name (`mcp__murage_connectors__gmail_send_email`) that no
+ * own-mount record proves. A proven alias was rewritten at intake and never reaches here by that name. A bare alias
+ * (a custom server's own `gmail_send_email`) carries no own prefix and keeps today's result. */
+function unprovenOwnAlias(ask: GrantCall & { tool: string }): boolean {
+  if (!ownPrefixedAlias((ask.toolCall?.name ?? ask.tool).trim())) return false;
+  const resolved = resolveCall(ask);
+  return !(resolved.kind === "mcp" && resolved.own);
+}
+
 /** The stop line for one engine ask. An ACP engine's `toolCall.name` is the
  * model-written title, so the tool the engine STAMPED is judged first, the
  * same identity a grant is keyed by (shared/app-action-grant.ts). The name
@@ -1864,7 +1877,7 @@ export function classifyAsk(
   given: StopLinePlace,
 ): StopHit | null {
   const stamped = stampedToolCall(ask);
-  if (stamped === null) return { kind: "delete", what: "Murage could not tell which tool this runs, so it is waiting for you." };
+  if (stamped === null) return { kind: "delete", unread: true, what: "Murage could not tell which tool this runs, so it is waiting for you." };
   // ISSUE-PERMS-1010 Rev 3 G2: the Codex driver's apply_patch ask carries what the patch takes away as `removed` on its
   // edit call; each is a delete, judged from the delivery's folder. A Murage-built input only ever adds a stop: a
   // `removed` that is not a list of paths stops as a delete nobody can place. It is judged BEFORE the contract below
@@ -1881,7 +1894,8 @@ export function classifyAsk(
     : null;
   if (editHit && ask.engine === "codex") return editHit;
   // Rule 25: a call its driver's contract cannot read whole stops too.
-  if (!requiredFields(ask.engine, resolveCall(ask), ask).ok) return { kind: "delete", what: "Murage could not read this call whole, so it is waiting for you." };
+  if (!requiredFields(ask.engine, resolveCall(ask), ask).ok) return { kind: "delete", unread: true, what: "Murage could not read this call whole, so it is waiting for you." };
+  if (unprovenOwnAlias(ask)) return { kind: "delete", what: "Murage could not read this call whole, so it is waiting for you." };
   const first = stamped ? classifyStopLine(stamped.name, stamped.input, ask.summary, given) : null;
   // ISSUE-PERMS-1010 B: a stamped codex apply_patch is judged by what it does to each path: every file it deletes, and the
   // old name of every file it moves, is a delete for the stop line (an unreadable patch already stopped on its contract)

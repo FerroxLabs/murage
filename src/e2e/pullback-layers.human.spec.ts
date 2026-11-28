@@ -579,7 +579,7 @@ const appOwners: Array<{ name: string; file: string; action: Action; kind: 'page
   { name: 'page-all-chats', file: 'AllChatsPage.tsx', action: { type: 'showAllChats' }, kind: 'page', focusAfter: 'composer' },
   { name: 'page-team-map', file: 'TeamMapPage.tsx', action: { type: 'showTeamMap' }, kind: 'page', focusAfter: 'opener' },
   { name: 'page-routines', file: 'RoutinesPage.tsx', action: { type: 'showRoutines' }, kind: 'page', focusAfter: 'composer' },
-  { name: 'page-skill-recorder', file: 'SkillRecorderPage.tsx', action: { type: 'showSkillRecorder' }, kind: 'page', focusAfter: 'opener' },
+  { name: 'page-skill-recorder', file: 'SkillRecorderPage.tsx', action: { type: 'showSkillRecorder', via: 'entry' }, kind: 'page', focusAfter: 'opener' },
   { name: 'computer', file: 'ComputerPanel.tsx', action: { type: 'toggleComputer', open: true }, kind: 'window', focusAfter: 'opener' },
   { name: 'inspector', file: 'InspectorPanel.tsx', action: { type: 'toggleInspector', open: true }, kind: 'window', focusAfter: 'opener' },
 ];

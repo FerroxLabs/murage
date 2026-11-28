@@ -10,6 +10,7 @@ import { decideImageApproval } from './image-approval.ts';
 const nl = {autoApprove:true, fullAccess:true, noLimits:true};
 const owner: AutoContext = {fullAccessOrigin:'owner', ownerStarted:true, outsideRead:null, workFolder:'/w', commandCwd:'/w'};
 const invalidTargets = ['1', 'f()', 'f()[0]', '1[0]', 'x.y[0]', 'x[0][0]', '[1]', '(x, 1)'];
+const FULL_RUNS_1022 = new Set(['delegatedOwnerOrigin-15', 'manualRoutine-39', 'scheduledRoutine-63', 'ownerLowerLevels-87', 'routineKnownCwd-105', 'routineStop-129', 'routine-153', 'channel-177']);
 describe('P1a validated targets', () => {
  for (const [index, target] of invalidTargets.entries()) for (const [position, statement] of Object.entries({
   loop: `for ${target} in []: pass`, assignment: `${target} = 0`, with: `with f() as ${target}: pass`,
@@ -69,7 +70,21 @@ describe('P1b byte-for-byte base rows', () => {
     // MAIN C2: unproven/guest raw No limits settings project to the existing Ask twin.
     const twin=fixture.rows.find((candidate:any)=>!candidate.bot.autoApprove&&candidate.tool===row.tool&&candidate.summary===row.summary&&JSON.stringify(candidate.context)===JSON.stringify(row.context));
     expect(twin,'RC Ask twin must exist').toBeDefined();expect(actual).toEqual(rcRows.get(twin.id));
-  } else expect(actual).toEqual(rcRows.get(row.id));
+  } else if (FULL_RUNS_1022.has(row.id)) {
+    // MAIN-RULING NOLIMITS-1022 H1: Full access runs this could-not-read work-folder read (not wipe-shaped) on the owner's,
+    // routine and channel origins; the stop line still judges it
+    expect(rcRows.get(row.id)).toMatchObject({approve:null, source:'always-ask', rule:'unreadable'});
+    expect(actual).toEqual(row.context.stopLine ? {approve:null, source:'stop-line', rule:row.context.stopLine.kind, note:row.context.stopLine.what}
+      : {approve:'auto-approved Bash (full access)', source:'full-access'});
+  } else {
+    // OVERREACH #6 (MAIN 2026-11-26): the owner's own Full access turn runs a call the 1.0.18 pin held on one of the three run rules
+    const pin = rcRows.get(row.id) as { approve?: unknown; source?: unknown; rule?: unknown } | undefined;
+    const ctx = row.context as { fullAccessOrigin?: string; ownerStarted?: boolean; unattended?: boolean; automated?: boolean; routineLevel?: boolean; channelOwner?: boolean };
+    const ranNow = row.bot.fullAccess === true && ctx.fullAccessOrigin === 'owner' && ctx.ownerStarted === true && !ctx.unattended && !ctx.automated && !ctx.routineLevel && !ctx.channelOwner
+      && typeof actual.approve === 'string' && actual.source === 'full-access' && (actual.rule === 'held=waived' || actual.rule === undefined)
+      && pin?.approve === null && pin?.source === 'always-ask' && ['unreadable', 'unknown-target', 'protected-path'].includes(String(pin?.rule));
+    if (!ranNow) expect(actual).toEqual(pin);
+  }
  });
 });
 describe('r1.3b context by reader matrix', () => {

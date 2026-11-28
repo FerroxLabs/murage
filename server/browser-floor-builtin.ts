@@ -103,6 +103,12 @@ export function floorRefusalText(result: FloorResult): string {
 
 /** Remembers the last snapshot the model saw and the element it last acted on, and decides each step against them. */
 export class BuiltinFloorGate {
+  /** The owner's own turn at No limits skips the floor exactly as the extension executor does (browser-extension-executor.ts noLimits).
+   * Set by the host's per-turn policy (MURAGE_BROWSER_NO_LIMITS), never by a tool argument; guests and email-triggered turns never get it. */
+  private readonly noLimits: boolean;
+  /** Asked live on each step the floor would hold (not a CAPTCHA); false or a failed answer keeps the floor. Absent means the flag alone decides. */
+  private readonly lift: (() => Promise<boolean>) | undefined;
+  constructor(noLimits: boolean = false, lift?: () => Promise<boolean>) { this.noLimits = noLimits; this.lift = lift; }
   private elements: BuiltinElement[] = [];
   private url = "";
   private title = "";
@@ -196,6 +202,14 @@ export class BuiltinFloorGate {
     if (key === "tab" || key === "shift+tab") { this.focus = undefined; return null; }
     const result = await this.evaluate(operation, target, read);
     if (/arrow|^(shift\+)?f6$/.test(key)) this.focus = undefined;
+    // No limits lifts pay, card, password and terms; a CAPTCHA or human check stays a hand-off, and an unsure read goes ahead as on the extension.
+    if (this.noLimits && result.floor) {
+      if (result.floor === "verification" && !result.unsure) return floorRefusalText(result);
+      // MAIN-RULING (tip audit High 1): only the server's own answer for THIS step lifts. A gate built without the callback never lifts.
+      let lifted = false;
+      if (this.lift) { try { lifted = await this.lift(); } catch { lifted = false; } }
+      return lifted ? null : floorRefusalText(result);
+    }
     return result.floor ? floorRefusalText(result) : null;
   }
 
@@ -210,6 +224,9 @@ export class BuiltinFloorGate {
     return stop;
   }
 }
+
+/** The one reading of the host's per-turn No limits flag, shared by every built-in browser proxy. */
+export const builtinNoLimits = (env: NodeJS.ProcessEnv): boolean => env.MURAGE_BROWSER_NO_LIMITS === "1";
 
 /** The result shape a tool call returns when the floor stops it. */
 export const floorToolResult = (text: string) => ({ content: [{ type: "text", text }] });

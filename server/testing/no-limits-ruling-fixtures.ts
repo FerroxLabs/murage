@@ -44,3 +44,13 @@ export function pinnedBaseRulingExpected(row: {id:string;expected:Record<string,
  if (new Set(['unproven-278']).has(row.id)) return {approve:null,source:'destructive-guard',rule:String.raw`\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]`};
  return row.expected;
 }
+
+/** OVERREACH #6 (MAIN 2026-11-26): the owner's own Full access turn runs a call the immutable row held on one of the three run rules
+ * (unreadable, unknown-target, protected-path). Only that cell changes; every other byte keeps its comparison. */
+export function fullOwnerRunsPinnedRow(row: {bot:any;context:any;id:string;expected:Record<string,unknown>}, actual: {approve:string|null;source?:string;rule?:string}): boolean {
+ const ctx=row.context??{};
+ if(row.bot?.fullAccess!==true||row.bot?.noLimits===true||ctx.fullAccessOrigin!=='owner'||ctx.ownerStarted!==true||ctx.unattended||ctx.automated||ctx.routineLevel||ctx.channelOwner)return false;
+ if(typeof actual.approve!=='string'||actual.source!=='full-access'||actual.rule!=='held=waived')return false;
+ const pin=pinnedBaseRulingExpected(row);
+ return pin.approve===null&&pin.source==='always-ask'&&['unreadable','unknown-target','protected-path'].includes(String(pin.rule));
+}

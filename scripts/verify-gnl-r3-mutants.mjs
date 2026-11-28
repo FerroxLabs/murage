@@ -1,3 +1,4 @@
+import { archivedEvidencePath } from './evidence-path.mjs';
 // Executed in network-none test containers; controls and mutants use disposable source copies.
 import {cpSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync,symlinkSync,rmSync} from 'node:fs';
 import {join,dirname,resolve} from 'node:path';
@@ -7,7 +8,7 @@ const source=process.cwd(),out=resolve(process.argv[2]);mkdirSync(out,{recursive
 const root=mkdtempSync(join(tmpdir(),'gnl-r3-mutants-')),results=[];
 const extract=s=>s.slice(s.indexOf('function authority('),s.indexOf('\nconst targetOf=',s.indexOf('function authority(')));
 try{
- for(const file of JSON.parse(readFileSync('evidence/gnl-prod/fixture-files.json','utf8'))){mkdirSync(dirname(join(root,file)),{recursive:true});cpSync(join(source,file),join(root,file));}
+ for(const file of JSON.parse(readFileSync(archivedEvidencePath('evidence/gnl-prod/fixture-files.json'),'utf8'))){mkdirSync(dirname(join(root,file)),{recursive:true});cpSync(join(source,file),join(root,file));}
  // The historical inventory predates imports added to the current runtime.
  // Controls and mutants must both run against the complete current modules.
  for(const directory of ['server','shared'])cpSync(join(source,directory),join(root,directory),{recursive:true});
@@ -15,7 +16,7 @@ try{
  symlinkSync(join(source,'node_modules'),join(root,'node_modules'),'dir');
  const cases=[
   {id:'H2-real-service-projection',file:'server/index.ts',tests:['server/product-routine-ceiling-api.test.ts'],pattern:'H2 real ask',mutate:s=>s.replace('const effective = live && applyResolvedRoutineCeilings(live, [ceiling, opts?.continuationPermissionMode, opts?.askerWakeCeiling]);','const effective = live;')},
-  {id:'H1-recover-before-checks',file:'server/decision/implementation.ts',tests:['server/decision/product-origin.test.ts'],pattern:'H1 owner-owned thread',mutate:s=>s.replace(extract(s),readFileSync('evidence/gnl-prod-r3/unsafe-authority.txt','utf8'))},
+  {id:'H1-recover-before-checks',file:'server/decision/implementation.ts',tests:['server/decision/product-origin.test.ts'],pattern:'H1 owner-owned thread',mutate:s=>s.replace(extract(s),readFileSync(archivedEvidencePath('evidence/gnl-prod-r3/unsafe-authority.txt'),'utf8'))},
   {id:'H2-service-ceiling',file:'server/routine-permissions.ts',tests:['server/routine-permissions.test.ts'],pattern:'survives service, continuation',mutate:s=>s.replace('effectiveRoutinePermissionMode({ permissionMode, permissionExplicit: true }, effective)','effectiveRoutinePermissionMode({ permissionMode }, effective)')},
   {id:'H2-peer-queued-wake',file:'server/routine-permissions.ts',tests:['server/routine-permissions.test.ts'],pattern:'survives immediate peer',mutate:s=>s.replace('effectiveRoutinePermissionMode({ ...parentRun, permissionExplicit: true }, peer)','effectiveRoutinePermissionMode({ permissionMode: parentRun.permissionMode }, peer)')},
   {id:'H2-durable-project-ceiling',file:'server/routine-permissions.ts',tests:['server/project-routine-approval-107.test.ts'],pattern:'H2 No limits preserves',mutate:s=>s.replace('effectiveRoutinePermissionMode(input.run, actor)','effectiveRoutinePermissionMode({permissionMode:input.run.permissionMode}, actor)')},

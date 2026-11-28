@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import readline from "node:readline";
 import { readMcpAccessKey } from "../server/mcp-access.ts";
+import { effortSelectionConflict } from "../shared/effort-choice.ts";
 
 export function validateBaseUrl(url: string): string {
   const trimmed = url.replace(/\/+$/, "");
@@ -217,6 +218,7 @@ export const TOOLS: McpToolDefinition[] = [
         section: { type: "string", description: "Optional sidebar section." },
         instance_id: { type: "string", description: "Optional provider instance ID; model is required with it." },
         model: { type: "string", description: "Optional exact model ID; instance_id is required with it." },
+        variant: { type: "string", description: "Native effort choice advertised by the selected model." },
         effort: { type: "string", enum: ["none", "low", "medium", "high", "xhigh", "max"] },
       },
       required: ["name"],
@@ -414,6 +416,7 @@ export const TOOLS: McpToolDefinition[] = [
         bot_id: { type: "string", description: "The ID of the bot." },
         instance_id: { type: "string", description: "The configured provider instance ID." },
         model: { type: "string", description: "The exact model ID exposed by that instance." },
+        variant: { type: "string", description: "Native effort choice advertised by the selected model." },
         effort: { type: "string", enum: ["none", "low", "medium", "high", "xhigh", "max"] },
       },
       required: ["bot_id", "instance_id", "model"],
@@ -767,20 +770,26 @@ async function checkedModelSelection(
   const instanceId = stringArg(args, "instance_id");
   const model = stringArg(args, "model");
   const effort = optionalStringArg(args, "effort");
+  const variant = optionalStringArg(args, "variant", { max: 200 });
+  const effortConflict = effortSelectionConflict({ effort, variant });
+  if (effortConflict) throw new ToolInputError(effortConflict);
   const described = await fetcher("/api/instances");
   const instance = records(described.instances).find((candidate) => candidate.instanceId === instanceId);
   if (!instance) throw new ToolInputError(`model instance not found: ${instanceId}`);
   if (instance.snapshot?.state !== "available") throw new ToolInputError(`model instance is unavailable: ${instanceId}`);
   const models = isRecord(instance.models) ? instance.models : {};
-  const offered = records(models.options).map((option) => option.id).filter((id) => typeof id === "string");
-  if (models.default !== model && !offered.includes(model)) {
+  const selected = records(models.options).find(option => option.id === model);
+  if (models.default !== model && !selected) {
     throw new ToolInputError(`model '${model}' is not offered by instance '${instanceId}'`);
   }
   const efforts = Array.isArray(instance.capabilities?.effortLevels) ? instance.capabilities.effortLevels : [];
   if (effort && !efforts.includes(effort)) {
     throw new ToolInputError(`effort '${effort}' is not offered by instance '${instanceId}'`);
   }
-  return { instanceId, model, ...(effort ? { effort } : {}) };
+  if (variant && !records(selected?.variants).some(choice => choice.id === variant)) {
+    throw new ToolInputError("Thinking choice is not offered by this model");
+  }
+  return { instanceId, model, ...(effort ? { effort } : {}), ...(variant ? { variant } : {}) };
 }
 
 function taskRoute(targetType: unknown, targetId: string): string {
@@ -876,7 +885,7 @@ export async function handleToolCall(
       const title = optionalStringArg(args, "title", { trim: false, allowEmpty: true, max: 200 });
       const description = optionalStringArg(args, "description", { trim: false, allowEmpty: true, max: 4_000 });
       const section = optionalStringArg(args, "section", { max: 60 });
-      const wantsModel = args.instance_id !== undefined || args.model !== undefined || args.effort !== undefined;
+      const wantsModel = args.instance_id !== undefined || args.model !== undefined || args.effort !== undefined || args.variant !== undefined;
       if (wantsModel && (args.instance_id === undefined || args.model === undefined)) {
         throw new ToolInputError("instance_id and model must be provided together");
       }

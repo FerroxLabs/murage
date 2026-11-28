@@ -12,6 +12,8 @@ const audience = z.discriminatedUnion('kind', [
 export const heldPeerAuthoritySchema = z.object({
   version: z.literal(1), handoffId: id, depth: z.number().int().nonnegative(),
   notOwnerAudience: z.boolean(), unattended: z.boolean(),
+  // PHONEAUD: the holding turn's automation ancestry. Absent (a record written before this field) counts as automation when released.
+  automationAncestry: z.boolean().optional(),
   eventId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u).nullable(),
   routineAuthority: z.object({ permissionMode: z.enum(['ask', 'auto', 'full', 'unlimited']), triggerSource: z.enum(['manual', 'schedule']) }).strict().nullable(),
   executionAudience: audience.nullable(), parentRequestId: id.nullable(),

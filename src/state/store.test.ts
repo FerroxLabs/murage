@@ -538,15 +538,15 @@ describe("Teach a skill feature flag", () => {
   });
 
   it("opens by default and honours an explicit off", () => {
-    expect(reducer({ ...initialState, config: { ...config, features: undefined } }, { type: "showSkillRecorder" }).activeView).toBe("skill-recorder");
-    expect(reducer({ ...initialState, config: { ...config, features: { skillRecorder: false } } }, { type: "showSkillRecorder" }).activeView).toBe("chat");
+    expect(reducer({ ...initialState, config: { ...config, features: undefined } }, { type: "showSkillRecorder", via: "entry" }).activeView).toBe("skill-recorder");
+    expect(reducer({ ...initialState, config: { ...config, features: { skillRecorder: false } } }, { type: "showSkillRecorder", via: "entry" }).activeView).toBe("chat");
   });
 
   it("keeps Cloud out of the recorder even with the switch on", () => {
     vi.stubGlobal("location", { protocol: "murage-home:" });
     try {
-      expect(reducer({ ...initialState, config }, { type: "showSkillRecorder" }).activeView).toBe("chat");
-      expect(reducer({ ...initialState, config: { ...config, features: undefined } }, { type: "showSkillRecorder" }).activeView).toBe("chat");
+      expect(reducer({ ...initialState, config }, { type: "showSkillRecorder", via: "entry" }).activeView).toBe("chat");
+      expect(reducer({ ...initialState, config: { ...config, features: undefined } }, { type: "showSkillRecorder", via: "entry" }).activeView).toBe("chat");
       expect(reducer({ ...initialState, activeView: "skill-recorder" }, { type: "configStatus", config }).activeView).toBe("chat");
     } finally {
       vi.unstubAllGlobals();
@@ -554,7 +554,7 @@ describe("Teach a skill feature flag", () => {
   });
 
   it("opens with an explicit on and returns to chat when disabled", () => {
-    const enabled = reducer({ ...initialState, config }, { type: "showSkillRecorder" });
+    const enabled = reducer({ ...initialState, config }, { type: "showSkillRecorder", via: "entry" });
     expect(enabled.activeView).toBe("skill-recorder");
 
     const disabled = reducer(enabled, {
@@ -1115,7 +1115,11 @@ describe("section Chiefs", () => {
   // flag, and both have a shape the renderer must not persist: "section" is
   // a wire word meaning "drop the tier", and `individual: false` is spelled
   // as an absent field everywhere else in the app.
-  it("mirrors a workspace handover optimistically and demotes the previous holder", () => {
+  // CHIEF-TRANSFER D2 (merged after these rows were written): while a workspace Chief exists the role moves only through a committed
+  // transfer (the server answers 409 chief-transfer-required to a direct PATCH), so the optimistic updateBot never paints a handover.
+  // The three rows that used to assert the painted handover now assert that nothing is painted; the committed transfer arrives as a
+  // botPatched from the server, not as this optimistic patch.
+  it("does not paint a workspace handover while a workspace Chief exists (the transfer sheet owns it)", () => {
     const ember = { ...bot("ember", ""), chiefOfStaff: true, chiefScope: "workspace" as const };
     const rex = { ...bot("rex", "Sales"), chiefOfStaff: true };
     const state = {
@@ -1129,54 +1133,36 @@ describe("section Chiefs", () => {
       patch: { chiefOfStaff: true, chiefTier: "workspace", individual: false },
     });
 
-    expect(next.bots.find((candidate) => candidate.id === rex.id)?.chiefScope).toBe("workspace");
-    // demoted to leader of its own team, not fired — what the harness does
-    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefScope).toBeUndefined();
+    expect(next.bots.find((candidate) => candidate.id === rex.id)?.chiefScope).toBeUndefined();
+    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefScope).toBe("workspace");
     expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(true);
   });
 
-  it("hands over in one change: the former Chief joins its team as a member when its engine cannot lead", () => {
-    const ember = { ...bot("ember", ""), chiefOfStaff: true, chiefScope: "workspace" as const };
-    const rex = { ...bot("rex", "Sales"), chiefOfStaff: false };
-    const state = {
-      ...initialState,
-      instances: [{ instanceId: "codex", capabilities: { agentsMcp: false } }] as unknown as typeof initialState.instances,
-      bots: [ember, rex].map((candidate) => ({ ...candidate, messages: [] })),
-    };
-
-    const next = reducer(state, {
-      type: "updateBot",
-      botId: rex.id,
-      patch: { chiefOfStaff: true, chiefTier: "workspace", individual: false },
-    });
-
-    expect(next.bots.find((candidate) => candidate.id === rex.id)?.chiefScope).toBe("workspace");
-    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefScope).toBeUndefined();
-    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(false);
-  });
-
-  it("makes the former Chief a member when its team already has a leader", () => {
+  it("paints no handover for a member promotion while a workspace Chief exists, whatever its engine or team", () => {
     const ember = { ...bot("ember", "Ops"), chiefOfStaff: true, chiefScope: "workspace" as const };
     const lead = { ...bot("lead", "Ops"), chiefOfStaff: true };
     const rex = { ...bot("rex", "Sales"), chiefOfStaff: false };
-    const state = {
-      ...initialState,
-      instances: [{ instanceId: "codex", capabilities: { agentsMcp: true } }] as unknown as typeof initialState.instances,
-      bots: [ember, lead, rex].map((candidate) => ({ ...candidate, messages: [] })),
-    };
-
-    const next = reducer(state, {
-      type: "updateBot",
-      botId: rex.id,
-      patch: { chiefOfStaff: true, chiefTier: "workspace", individual: false },
-    });
-
-    expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(false);
-    expect(next.bots.find((candidate) => candidate.id === lead.id)?.chiefOfStaff).toBe(true);
+    for (const agentsMcp of [false, true]) {
+      const state = {
+        ...initialState,
+        instances: [{ instanceId: "codex", capabilities: { agentsMcp } }] as unknown as typeof initialState.instances,
+        bots: [ember, lead, rex].map((candidate) => ({ ...candidate, messages: [] })),
+      };
+      const next = reducer(state, {
+        type: "updateBot",
+        botId: rex.id,
+        patch: { chiefOfStaff: true, chiefTier: "workspace", individual: false },
+      });
+      expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefOfStaff).toBe(true);
+      expect(next.bots.find((candidate) => candidate.id === ember.id)?.chiefScope).toBe("workspace");
+      expect(next.bots.find((candidate) => candidate.id === lead.id)?.chiefOfStaff).toBe(true);
+      expect(next.bots.find((candidate) => candidate.id === rex.id)?.chiefOfStaff).toBe(false);
+    }
   });
 
   it("never folds the wire-only tier word into a bot", () => {
-    const rex = { ...bot("rex", "Sales"), chiefOfStaff: true, chiefScope: "workspace" as const };
+    // no workspace Chief exists here, so the ordinary optimistic path runs (D2 blocks only a move while one exists)
+    const rex = { ...bot("rex", "Sales"), chiefOfStaff: true };
     const state = { ...initialState, bots: [{ ...rex, messages: [] }] };
 
     const next = reducer(state, {

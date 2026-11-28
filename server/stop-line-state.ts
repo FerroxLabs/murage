@@ -182,6 +182,19 @@ export function rememberRecipients(dataDir: string, botId: string, recipients: r
   renameSync(temp, file);
 }
 
+/** Settings v10 G2: the owner removes one remembered recipient; the bot's next message to it asks again. Returns whether it was
+ * listed. Same file and atomic rename as rememberRecipients. */
+export function forgetRecipient(dataDir: string, botId: string, recipient: string): boolean {
+  const file = recipientsFile(dataDir, botId);
+  const target = normalizeRecipient(recipient);
+  const known = [...knownRecipients(dataDir, botId)];
+  if (!file || !target || !known.includes(target)) return false;
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, JSON.stringify({ recipients: known.filter((item) => item !== target) }), { mode: 0o600 });
+  renameSync(temp, file);
+  return true;
+}
+
 export interface ChatAllowanceRequest {
   kind: "delete" | "message" | "pay";
   place: string;

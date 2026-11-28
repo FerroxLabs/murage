@@ -90,6 +90,7 @@ function isPreview(messageId: string | undefined): boolean {
 
 export function voiceFailure(status: number, said: unknown): string {
   const text = typeof said === "string" ? said.trim() : "";
+  if (status === 400 && text === "unsupported language") return t("tts.unsupportedLanguage");
   if (status === 404 || status === 403 || /^no such route$/i.test(text)) return VOICE_UNREACHABLE;
   return text || VOICE_NO_ANSWER;
 }

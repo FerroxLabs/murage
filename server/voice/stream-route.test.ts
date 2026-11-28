@@ -2,11 +2,12 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import WebSocket from "ws";
+import WebSocket, { WebSocketServer } from "ws";
 
-import { fatal, parseServerMessage, SUBPROTOCOL, type ServerMessage } from "../../shared/flux-stream-contract.ts";
+import { DEFAULT_MODEL, fatal, MAX_SESSION_CLOSE_REASON, parseServerMessage, SUBPROTOCOL, type ServerMessage } from "../../shared/flux-stream-contract.ts";
 import { scriptedProvider } from "../../tools/flux-stream-sim/providers/scripted.ts";
 import { createSimServer } from "../../tools/flux-stream-sim/server.ts";
+import { isBudgetReached, resetUnavailable } from "./voice-routes.ts";
 import { FluxStreamRefused, openFluxStream } from "./flux-stream.ts";
 import {
   STREAM_WS_PATH,
@@ -70,16 +71,38 @@ async function ticket() {
 function page(query: string) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}${STREAM_WS_PATH}?${query}`, [SUBPROTOCOL]);
   const messages: ServerMessage[] = [];
+  const wire: string[] = [];
   ws.on("message", (d, binary) => {
     if (!binary) {
-      const m = parseServerMessage(String(d));
+      const text = String(d);
+      wire.push(text);
+      const m = parseServerMessage(text);
       if (m) messages.push(m);
     }
   });
   const closed = new Promise<number>((r) => ws.on("close", (code) => r(code)));
+  const reason = new Promise<string>((r) => ws.on("close", (_code, value) => r(String(value))));
   const opened = new Promise<void>((r) => ws.once("open", () => r()));
-  return { ws, messages, closed, opened };
+  return { ws, messages, wire, closed, reason, opened };
 }
+
+async function relayProviderFailure(frame: object | null, code: number, reason: string) {
+  const upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  upstream.on("connection", (ws) => {
+    if (frame) ws.send(JSON.stringify(frame));
+    ws.close(code, reason);
+  });
+  await new Promise<void>((resolve) => upstream.once("listening", resolve));
+  deps.env = { MURAGE_FLUX_STREAM_API: `ws://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1` };
+  try {
+    const p = page(`ticket=${(await ticket()).body.ticket}`);
+    return { code: await p.closed, reason: await p.reason, wire: p.wire };
+  } finally {
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+}
+
+const providerDetail = "fixture-provider-detail";
 
 const tone = () => {
   const b = Buffer.alloc(2048);
@@ -193,6 +216,34 @@ describe("relay", () => {
     expect(await b.closed).toBe(4502);
   });
 
+  it.each([
+    ["empty", ""],
+    ["malformed", '{"error":"premium_locked"'],
+    ["uncertain", '{"error":{"code":"credit_unresolved","message":"fixture provider prose"}}'],
+    ["unstructured", "key_budget_reached"],
+  ])("relays an %s Flux 402 as unknown admission without memoizing exhaustion", async (_kind, body) => {
+    const upstream = createServer();
+    upstream.on("upgrade", (_req, socket) => {
+      socket.end(`HTTP/1.1 402 Payment Required\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+    const baseUrl = `ws://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1`;
+    deps.env = { MURAGE_FLUX_STREAM_API: baseUrl };
+    try {
+      const p = page(`ticket=${(await ticket()).body.ticket}`);
+      expect(await p.closed).toBe(4503);
+      expect(await p.reason).toBe("call_admission_unknown");
+      expect(p.wire.map(frame => JSON.parse(frame))).toEqual([{
+        type: "error", seq: 1, received_audio_ms: 0,
+        error: fatal("call_admission_unknown", "Couldn't reach Flux"),
+      }]);
+      expect(isBudgetReached({ via: "flux", baseUrl, key: "sim_key", model: "host", label: "Flux" })).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      resetUnavailable();
+    }
+  });
+
   it("passes a Flux 503 handshake refusal through with its retry_after_ms", async () => {
     deps.open = async () => {
       throw new FluxStreamRefused(4503, fatal("service_unavailable", "Flux answered 503", { retry_after_ms: 1500 }), "http 503");
@@ -200,6 +251,128 @@ describe("relay", () => {
     const p = page(`ticket=${(await ticket()).body.ticket}`);
     expect(await p.closed).toBe(4503);
     expect(p.messages[0]).toMatchObject({ type: "error", error: { code: "service_unavailable", retry_after_ms: 1500 } });
+  });
+
+  it("projects a real Flux 503 handshake refusal before sending it to the page", async () => {
+    // production handshake: a loopback upstream answers the websocket upgrade with 503 and provider prose
+    const body = JSON.stringify({ error: { code: "overloaded", message: providerDetail, retry_after_ms: 1500 } });
+    const upstream = createServer();
+    upstream.on("upgrade", (_req, socket) => {
+      socket.end(`HTTP/1.1 503 Service Unavailable\r\nRetry-After: 2\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+    deps.env = { MURAGE_FLUX_STREAM_API: `ws://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1` };
+    try {
+      const p = page(`ticket=${(await ticket()).body.ticket}`);
+      expect(await p.closed).toBe(4503);
+      expect(await p.reason).toBe("service_unavailable");
+      expect(p.wire).toEqual([JSON.stringify({
+        type: "error", seq: 1, received_audio_ms: 0,
+        error: fatal("service_unavailable", "Couldn't reach Flux"),
+      })]);
+      expect(logs.join("\n")).not.toContain(providerDetail);
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+
+  it.each([
+    ["budget", "key_budget_reached", 4402, "This Flux key has reached its budget", null],
+    ["rate-limit", "rate_limit_error", 4429, "Flux is rate limiting; try again shortly", 1500],
+    ["unrecognized", providerDetail, 4500, "Couldn't reach Flux", null],
+  ] as const)("relays only the safe %s error fields", async (_label, code, closeCode, message, retry) => {
+    const frame = {
+      type: "error", seq: 1, received_audio_ms: 0,
+      error: { ...fatal(code, providerDetail), retry_after_ms: retry, param: providerDetail, cause: { detail: providerDetail } },
+      providerError: { detail: providerDetail },
+    };
+    const relay = await relayProviderFailure(frame, closeCode, providerDetail);
+    expect(relay.wire).toHaveLength(1);
+    expect(JSON.parse(relay.wire[0])).toEqual({
+      type: "error", seq: 1, received_audio_ms: 0,
+      error: fatal(_label === "unrecognized" ? "internal_error" : code, message, { retry_after_ms: retry ?? undefined }),
+    });
+    expect(logs.join("\n")).not.toContain(providerDetail);
+  });
+
+  const wirePosition = { seq: 1, received_audio_ms: 160 };
+  const usage = {
+    session_seconds: 1, audio_seconds: 0.16, billed_seconds: 10,
+    confirmed_seconds: 6, pending_seconds: 4, unit: "session_second",
+  };
+
+  it.each([
+    ["client_close", "client_close"],
+    [MAX_SESSION_CLOSE_REASON, MAX_SESSION_CLOSE_REASON],
+    ["going_away", "going_away"],
+    [providerDetail, ""],
+  ])("projects a session close with reason %s without exposing provider details", async (reason, expected) => {
+    const relay = await relayProviderFailure({
+      type: "session.closed", ...wirePosition, reason,
+      usage: { ...usage, providerError: { detail: providerDetail } },
+      providerError: { detail: providerDetail },
+    }, 1000, "");
+    expect(relay.code).toBe(1000);
+    expect(relay.wire.map((line) => JSON.parse(line))).toEqual([
+      { type: "session.closed", ...wirePosition, reason: expected, usage },
+    ]);
+  });
+
+  it("projects the dropped-audio warning while preserving its positions", async () => {
+    const warning = {
+      type: "warning", ...wirePosition, code: "audio_dropped", dropped_ms: 40,
+      at_audio_ms: 160, ranges: [{ at_audio_ms: 160, dropped_ms: 40 }],
+    };
+    const relay = await relayProviderFailure({
+      ...warning, message: providerDetail,
+      ranges: [{ ...warning.ranges[0], providerError: { detail: providerDetail } }],
+      providerError: { detail: providerDetail },
+    }, 1000, "");
+    expect(relay.wire.map((line) => JSON.parse(line))).toEqual([
+      { ...warning, message: "audio arrived faster than real time; the excess was dropped" },
+    ]);
+  });
+
+  it("keeps unknown warning codes and provider prose off the page", async () => {
+    const relay = await relayProviderFailure({
+      type: "warning", ...wirePosition, code: providerDetail, message: providerDetail,
+    }, 1000, "");
+    expect(relay.wire.map((line) => JSON.parse(line))).toEqual([
+      { type: "warning", ...wirePosition, code: "", message: "" },
+    ]);
+  });
+
+  it.each(["session.started", "session.updated"])("projects the %s configuration", async (type) => {
+    const config = { sample_rate: 16000, keyterms: ["search term"], min_silence_ms: null };
+    const started = type === "session.started" ? {
+      session_id: "session-fixture", model: DEFAULT_MODEL,
+      limits: { min_frame_ms: 20, max_frame_ms: 1000, prestart_buffer_ms: 3000, burst_ms: 3000 },
+      ignored_params: [], expires_at: 12345,
+    } : {};
+    const relay = await relayProviderFailure({
+      type, ...wirePosition, ...started,
+      ...(type === "session.started" ? { ignored_params: [providerDetail, "sample_rate"], model: providerDetail } : {}),
+      config: { ...config, language: { detail: providerDetail }, providerError: { detail: providerDetail } },
+    }, 1000, "");
+    expect(relay.wire.map((line) => JSON.parse(line))).toEqual([{ type, ...wirePosition, ...started, config }]);
+  });
+
+  it("preserves accepted transcript text and strips extraneous fields", async () => {
+    const frame = {
+      type: "transcript.partial", ...wirePosition, turn: 0,
+      audio_start_ms: 0, audio_end_ms: 160, text: "A transcribed sentence",
+    };
+    const relay = await relayProviderFailure({ ...frame, providerError: { detail: providerDetail } }, 1000, "");
+    expect(relay.wire.map((line) => JSON.parse(line))).toEqual([frame]);
+  });
+
+  it("translates a bare structured 4402 close into a safe premium reason", async () => {
+    const base = JSON.stringify({ code: "premium_locked", detail: providerDetail });
+    const reason = base.slice(0, -2) + "x".repeat(123 - Buffer.byteLength(base)) + base.slice(-2);
+    expect(Buffer.byteLength(reason)).toBe(123);
+    const relay = await relayProviderFailure(null, 4402, reason);
+    expect(relay).toEqual({ code: 4402, reason: "premium_locked", wire: [] });
+    expect(logs.join("\n")).not.toContain(providerDetail);
   });
 
   it("continues Flux's seq when the harness reports a dropped Flux connection", async () => {

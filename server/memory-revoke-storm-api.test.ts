@@ -273,7 +273,9 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     expect(count(text, `re-preparing`) - warned).toBe(2);
     expect(mine).toHaveLength(3);
     expect(all.filter(isReply)).toHaveLength(1);
-    expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
+    // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20): this counted one "remembered context left out" row. The last rebuild is the tier-2 log line; no row.
+    expect(all.filter(message => message.memoryNote === "without-memory" || /remembered context/.test(String(message.tool?.name ?? "")))).toEqual([]);
+    expect(count(log(), `[memory] fence recovery tier=2 thread=${room.threadId} `) + count(log(), `[memory] reply ran without remembered context thread=${room.threadId} `), "the last rebuild is logged").toBeGreaterThan(0);
     expect(errorLines(all)).toEqual([]);
     expect(all.some(message => /MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
@@ -333,9 +335,11 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     expect(count(text, `context revoked during dispatch on thread ${bot.threadId} after`)).toBe(0);
     // one reply for the refused turn, one plain line saying it ran without remembered context, never the card or the raw code
     expect(all.filter(isReply)).toHaveLength(4);
-    expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
+    // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20): this counted one "remembered context left out" row. The last rebuild is the tier-2 log line; no row.
+    expect(all.filter(message => message.memoryNote === "without-memory" || /remembered context/.test(String(message.tool?.name ?? "")))).toEqual([]);
+    expect(count(log(), `[memory] fence recovery tier=2 thread=${bot.threadId} `) + count(log(), `[memory] reply ran without remembered context thread=${bot.threadId} `), "the last rebuild is logged").toBeGreaterThan(0);
     expect(errorLines(all)).toEqual([]);
-    expect(all.some(message => /could not start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
+    expect(all.some(message => /could not start this reply|couldn't start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
   }, 300000);
 
@@ -403,9 +407,11 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     const afterEdit = all.slice(all.findIndex(message => message.role === "user" && message.text === edited) + 1);
     expect(all.filter(message => message.role === "user").at(-1)?.text).toBe(edited);
     expect(afterEdit.filter(isReply)).toHaveLength(1);
-    expect(afterEdit.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
+    // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20): this counted one "remembered context left out" row. The last rebuild is the tier-2 log line; no row.
+    expect(afterEdit.filter(message => message.memoryNote === "without-memory" || /remembered context/.test(String(message.tool?.name ?? "")))).toEqual([]);
+    expect(count(log(), `[memory] fence recovery tier=2 thread=${bot.threadId} `) + count(log(), `[memory] reply ran without remembered context thread=${bot.threadId} `), "the last rebuild is logged").toBeGreaterThan(0);
     expect(errorLines(all)).toEqual([]);
-    expect(all.some(message => /could not start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
+    expect(all.some(message => /could not start this reply|couldn't start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
   }, 300000);
 
@@ -433,7 +439,9 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     expect(count(text, `context revoked during dispatch on thread ${room.threadId}; re-preparing (2 of 2, room member`)).toBe(1);
     const all = await messages(room.threadId);
     expect(all.filter(isReply)).toHaveLength(1);
-    expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
+    // FLIPPED by 1.0.24 q1024-forgetracerace (FRICTION F20): this counted one "remembered context left out" row. The last rebuild is the tier-2 log line; no row.
+    expect(all.filter(message => message.memoryNote === "without-memory" || /remembered context/.test(String(message.tool?.name ?? "")))).toEqual([]);
+    expect(count(log(), `[memory] fence recovery tier=2 thread=${room.threadId} `) + count(log(), `[memory] reply ran without remembered context thread=${room.threadId} `), "the last rebuild is logged").toBeGreaterThan(0);
     expect(errorLines(all)).toEqual([]);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
   }, 300000);

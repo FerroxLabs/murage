@@ -24,6 +24,7 @@ import { labelWorkCollection } from "./work-collections.ts";
 import { isTracked, plainCopy, track, trackedRoot, untracked, type TrackedWrite } from "./tracked-state.ts";
 import { PersistedStateRecoveryError, readPersistedJson } from "./persisted-state.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { ERROR_REASON_WITHHELD } from "./owner-display.ts";
 import { fenceEmailDerived } from "./email/external-marks.ts";
 import { CLOUD_ROUTINE_NOT_YET, PROJECT_CLOSED_COPY, type RoutineRunCardData } from "../shared/routine-run.ts";
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
@@ -94,6 +95,20 @@ export type RoutineRunStatus = typeof ROUTINE_RUN_STATUSES[number];
 const LIVE_RUN_STATUSES: readonly RoutineRunStatus[] = ["running", "waiting", "needs-you"];
 /** A run that is not settled yet. */
 const OPEN_RUN_STATUSES: readonly RoutineRunStatus[] = ["queued", ...LIVE_RUN_STATUSES];
+/** The owner-visible state of a run whose marker or result waits for the database (cleared when it is written). */
+export const DATABASE_WAIT_NOTE = "Waiting for the database; this is written as soon as it is free";
+/** What the file keeps of a run. The "Waiting for the database" note on a settled run whose result is still owed lives in memory only: an older
+ * version (v1.0.20) that sends the result on a rollback marks it sent without taking the note off, and it would stay on a sent result for good. */
+function persistedRun(run: RoutineRun): RoutineRun {
+  const raw = untracked(run);
+  return raw.attention === DATABASE_WAIT_NOTE && raw.delivery?.state === "pending" && !isOpen(raw.status) ? { ...raw, attention: undefined } : raw;
+}
+/** A database refusal, also when a committed write wrapped it (store.ts RosterPostCommitError: the roster was written, a later database step was refused). */
+function isBusyRefusal(error: unknown): boolean {
+  const wrapped = error as { committed?: unknown; original?: unknown } | null;
+  return isDatabaseBusy(error) || (typeof error === "object" && error !== null && wrapped?.committed === true && isDatabaseBusy(wrapped.original));
+}
+
 /** What a locked messages.db says (DatabaseBusyError's sentence, or SQLite's own): never a reason to fail a run. */
 const BUSY_MESSAGE = /Busy for a moment, try again|database is locked|SQLITE_BUSY/i;
 const isLive = (status: RoutineRunStatus) => LIVE_RUN_STATUSES.includes(status);
@@ -157,6 +172,28 @@ export interface RoutineInstructionPromotion {
   prompt: string;
   evaluationReceiptId: string;
   evidence: Array<{ kind: "source" | "record"; id: string; revision: number; scopeId: string }>;
+}
+
+/** Said when a person saves a routine switched on with a one-time moment that passed more than ONCE_JUST_PASSED_MS ago. */
+export const ONCE_IN_PAST_MESSAGE = "That one-time moment has already passed. Choose a time in the future.";
+/** Said (with code once_just_passed) when the moment passed only a moment ago: the app offers to run it now instead. */
+export const ONCE_JUST_PASSED_MESSAGE = "That time just passed. Run it now instead?";
+/** A one-time moment this recent is offered as "run now" rather than refused cold. */
+export const ONCE_JUST_PASSED_MS = 10 * 60_000;
+
+export type RoutineOnceInPast = { code: "once_in_past" | "once_just_passed"; error: string } | { runNowAt: number };
+
+/** A routine created through the app with a one-time moment already gone would fire on the next tick and switch itself off:
+ *  it would come up Paused. The create route answers it here. Passed within ONCE_JUST_PASSED_MS: accepted as a run-now (the
+ *  moment becomes now) when the body says runNow, else refused with code once_just_passed so the app can offer it. Older: refused
+ *  with code once_in_past. (The manager keeps its late-run and missed receipts for a computer that was off, which is a different
+ *  case.) Null when the body is fine. */
+export function routineOnceInPastRefusal(body: { enabled?: unknown; runNow?: unknown; schedule?: { type?: unknown; at?: unknown } | null }, now: number): RoutineOnceInPast | null {
+  if (body.enabled === false || body.schedule?.type !== "once") return null;
+  const at = Number(body.schedule.at);
+  if (!Number.isFinite(at) || at > now) return null;
+  if (now - at > ONCE_JUST_PASSED_MS) return { code: "once_in_past", error: ONCE_IN_PAST_MESSAGE };
+  return body.runNow === true ? { runNowAt: now } : { code: "once_just_passed", error: ONCE_JUST_PASSED_MESSAGE };
 }
 
 export interface Routine {
@@ -243,6 +280,21 @@ function loadRunDelivery(value: unknown): RoutineRunDelivery | undefined {
   return thread?.success && thread.data ? { state, threadId: thread.data } : { state };
 }
 
+/** L5H 2.2: a webhook run's result marker, set when the run is created (same journal commit), so no cross-store transaction
+ * is needed at settlement. owed/held runs are never retired by the run cap; `done` is reached only through clearEventResult. */
+export type RoutineEventResultReason = "target_moved" | "bot_shared" | "cloud_check_unavailable";
+export interface RoutineEventResult { state: "owed" | "held" | "done"; reason?: string }
+/** L5H (Opus r2 H1b, Fable r2 M1): the most HELD results one route keeps; older ones end as held_overflow (the reply stays in the run's task). */
+export const EVENT_RESULT_HELD_CAP = 20;
+
+function loadRunEventResult(value: unknown): RoutineEventResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { state, reason } = value as { state?: unknown; reason?: unknown };
+  if (state !== "owed" && state !== "held" && state !== "done") return undefined;
+  return typeof reason === "string" && reason.length <= 64 ? { state, reason } : { state };
+}
+const eventResultOpen = (run: { eventResult?: RoutineEventResult }) => run.eventResult?.state === "owed" || run.eventResult?.state === "held";
+
 /** The most history lines one run keeps. */
 const RUN_NOTES_MAX = 20;
 
@@ -302,6 +354,8 @@ export interface RoutineRun {
    * only. Absent on runs from before 1.0.10 and on webhook, channel and room
    * runs, which keep their own delivery. */
   delivery?: RoutineRunDelivery;
+  /** L5H 2.2: a webhook run's Results-chat marker (routines.ts loadRunEventResult). Absent = no marker, the base path. */
+  eventResult?: RoutineEventResult;
   threadId?: string;
   /** Provider identity for a Telegram turn in a reused conversation. */
   channelTurnId?: string;
@@ -626,6 +680,9 @@ export interface RoutineManagerOptions {
   threadBusy?: (botId: string, threadId: string) => boolean;
   goalState?: (groupId: string, coordinatorBotId: string) => "ready" | "busy" | "missing" | "staged";
   createTask: (botId: string, title: string, activate?: boolean) => { threadId: string } | null;
+  /** L5H 2.2/2.4 (Fable r2 H2, Opus r2 H1c): whether a new webhook run's result goes to its Results chat. False or absent = the
+   * base path (no marker, the run task activates): a Cloud home with no ResultAudiencePort wired, or no results writer wired. */
+  eventResultRouting?: (webhookId: string, botId: string) => boolean;
   /** Does this bot still have this conversation? A routine's own
    * conversation is reused only while it does. Without it, every run gets a
    * new task as before. */
@@ -635,6 +692,8 @@ export interface RoutineManagerOptions {
   /** A bot routine run is about to start in its conversation; `reused` says
    * an earlier run (or the owner) already worked there. */
   onRunDispatch?: (run: RoutineRun, reused: boolean) => void;
+  /** A run just became live (indexed as running): the server's loop watch wakes from it (observe.ts wakeLoopWatch). Never throws back. */
+  onRunLive?: () => void;
   /** Telegram messages continue the bot's current conversation. */
   channelMessagesOff?: (botId: string, principal?: HumanPrincipal) => { line: string; threadId?: string } | undefined;
   channelThread?: (botId: string, principal?: HumanPrincipal) => { threadId: string } | null;
@@ -1535,7 +1594,8 @@ export class RoutineManager {
       ownerKey: JSON.stringify([run.watch?.ownerBotId ?? run.botId, run.routineId]), scheduledKey,
       listKey: scheduledKey, scheduleKey: !quarantined && source === "schedule" ? scheduledKey : undefined,
       invalidScheduled: !quarantined && source === "schedule" && Number.isNaN(+run.scheduledFor),
-      retireClass: settled ? eligibleBase === -Infinity ? "free" : "owed" : undefined,
+      // L5H 2.2: a result still owed or held is never retired by the run cap, whatever its age (bounded per route by EVENT_RESULT_HELD_CAP)
+      retireClass: settled && !eventResultOpen(run) ? eligibleBase === -Infinity ? "free" : "owed" : undefined,
       owedBase: base, eligibleBase,
       historyKey: settled ? historyKey(scheduledNumber(run.finishedAt ?? run.createdAt), scheduledNumber(run.createdAt), -order) : undefined,
       outcomeKey: outcome && run.finishedAt !== undefined ? historyKey(scheduledNumber(run.finishedAt), order) : undefined,
@@ -1566,6 +1626,7 @@ export class RoutineManager {
     const bucket = (map: Map<string, Set<RoutineRun>>, key: string | undefined) => add ? this.bucketAdd(map, key, run) : this.bucketDelete(map, key, run);
     const trie = (map: Map<string, RoutineHistoryIndex<RoutineRun>>, bucketKey: string | undefined, key: string | undefined) => add ? this.trieAdd(map, bucketKey, key, run) : this.trieDelete(map, bucketKey, key);
     set(into.liveRuns, item.live); set(into.openRuns, item.open); set(into.queuedRuns, item.queued);
+    if (add && item.live) { try { this.options.onRunLive?.(); } catch { /* observation only */ } }
     bucket(into.liveByThread, item.live ? item.threadId : undefined);
     bucket(into.channelTurns, item.channelTurnKey);
     if (item.live && item.threadId !== undefined) {
@@ -1936,7 +1997,9 @@ export class RoutineManager {
               attachments: loadAttachments(run.attachments),
               sourceThreadId: persistedSourceThreadId.parse(run.sourceThreadId),
               delivery: loadRunDelivery(run.delivery),
+              eventResult: loadRunEventResult((run as { eventResult?: unknown }).eventResult),
             };
+            if (loaded.eventResult === undefined) delete loaded.eventResult;
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
             if (loaded.delivery === undefined) delete loaded.delivery;
             loaded.event = routineEventForRun(loaded);
@@ -2944,6 +3007,8 @@ export class RoutineManager {
     }
     run.event = routineEventForRun(run);
     run.eventBudget = newEventActionBudget();
+    // L5H 2.2: the result marker is part of the run record, in the same journal commit (webhook runs only; channel runs keep base)
+    if (run.triggerSource === "webhook" && run.status === "queued" && this.options.eventResultRouting?.(input.webhookId, input.botId) === true) run.eventResult = { state: "owed" };
     this.commitScoped({ append: run }, () => { this.appendRun(run); });
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
@@ -3220,9 +3285,60 @@ export class RoutineManager {
   markRunDelivered(runId: string): void {
     const run = this.lookupRun(runId);
     if (!run || run.delivery?.state !== "pending" || isOpen(run.status)) return;
-    const before = run.delivery;
+    const before = run.delivery, waiting = run.attention === DATABASE_WAIT_NOTE;
     run.delivery = { ...run.delivery, state: "sent" };
-    try { this.save({ runs: [run] }); } catch (error) { run.delivery = before; throw error; }
+    // the waiting note leaves in the same save that marks the result sent: a crash between two saves would leave it on a delivered run
+    if (waiting) run.attention = undefined;
+    try { this.save({ runs: [run] }); } catch (error) { run.delivery = before; if (waiting) run.attention = DATABASE_WAIT_NOTE; throw error; }
+  }
+
+  /** L5H 2.3: settled webhook runs whose result is owed or held (the replay pass). A cancelled run owes no card: it ends here as done. */
+  eventResultsOwed(): RoutineRun[] {
+    const owed: RoutineRun[] = [];
+    for (const run of this.runStore) {
+      if (this.rollbackPending.has(run) || !eventResultOpen(run) || isOpen(run.status)) continue;
+      if (run.status === "cancelled") { this.clearEventResult(run.id, "cancelled"); continue; }
+      owed.push(cloneRun(run));
+    }
+    return owed;
+  }
+
+  hasMovedWebhookResults(webhookId: string): boolean {
+    for (const run of this.runStore) {
+      if (run.webhookId === webhookId && run.triggerSource === "webhook" && run.eventResult?.state === "held"
+        && run.eventResult.reason === "target_moved" && !this.rollbackPending.has(run)) return true;
+    }
+    return false;
+  }
+
+  /** L5H 2.3: OWED -> HELD(reason), or back to OWED with null. Past EVENT_RESULT_HELD_CAP held results on one route, the oldest end
+   * as held_overflow, so a lasting HELD reason never grows the run store without bound. */
+  holdEventResult(runId: string, reason: RoutineEventResultReason | null): boolean {
+    const run = this.lookupRun(runId);
+    if (!run || !eventResultOpen(run)) return false;
+    const before = run.eventResult;
+    run.eventResult = reason === null ? { state: "owed" } : { state: "held", reason };
+    try { this.save({ runs: [run] }); } catch (error) { run.eventResult = before; throw error; }
+    if (before?.state !== run.eventResult.state || before.reason !== run.eventResult.reason) {
+      this.options.emit?.({ kind: "routine.run", run: cloneRun(run) });
+    }
+    if (reason !== null && run.webhookId) {
+      const held = [...this.runStore].filter(other => other.webhookId === run.webhookId && other.eventResult?.state === "held")
+        .sort((a, b) => (b.finishedAt ?? b.createdAt) - (a.finishedAt ?? a.createdAt));
+      for (const older of held.slice(EVENT_RESULT_HELD_CAP)) this.clearEventResult(older.id, "held_overflow");
+    }
+    return true;
+  }
+
+  /** L5H 2.3: the one terminal path of a webhook result: owed or held -> done with its reason. */
+  clearEventResult(runId: string, reason: string): boolean {
+    const run = this.lookupRun(runId);
+    if (!run || !eventResultOpen(run)) return false;
+    const before = run.eventResult;
+    run.eventResult = { state: "done", reason };
+    try { this.save({ runs: [run] }); } catch (error) { run.eventResult = before; throw error; }
+    this.options.emit?.({ kind: "routine.run", run: cloneRun(run) });
+    return true;
   }
 
   /** Settled runs whose result was not written yet (a crash between the run's end and its delivery). Read once at start-up. */
@@ -3336,10 +3452,13 @@ export class RoutineManager {
       // threshold. Recovery itself still runs only in its lifecycle context.
       if (this.recoveryRequired && this.lastTickFault) throw new RecoveryRequired();
       if (writersHeldForIndexBuild()) await awaitWriterGate();
+      this.busyThisTick = false;
+      const waiting = this.now() < this.busyUntil; // a tick that only waited out the delay is not a clean one
       await this.tickBody();
+      if (!this.busyThisTick && !waiting) this.busyStreak = 0;
       if (!this.recoveryRequired) this.tickFailures = 0;
     } catch (error) {
-      if (isDatabaseBusy(error)) this.retrySoon();
+      if (isBusyRefusal(error)) this.retrySoon();
       else {
         this.tickFailures += 1;
         this.lastTickFault = error instanceof Error ? error.message : String(error);
@@ -3364,15 +3483,33 @@ export class RoutineManager {
     return { stalled: this.recoveryRequired && this.tickFailures === 0 || this.tickFailures >= limit || this.saveFaults >= limit, consecutiveFailures: this.tickFailures, saveFaults: this.saveFaults };
   }
 
+  /** Consecutive ticks that met the refusing gate: the retry wait doubles from 1 s to 60 s and starts over at the first tick that meets none. */
+  private busyStreak = 0;
+  private busyThisTick = false;
+  /** No dispatch before this time: the 10 s tick and every event's tick wait out the growing delay instead of meeting the gate again. */
+  private busyUntil = 0;
   private retrySoon(): void {
+    this.busyThisTick = true;
     if (this.busyRetry) return;
-    this.busyRetry = setTimeout(() => { this.busyRetry = null; void this.tick(); }, 1_000);
+    const wait = Math.min(60_000, 1_000 * 2 ** Math.min(this.busyStreak++, 6));
+    this.busyUntil = this.now() + wait;
+    this.busyRetry = setTimeout(() => { this.busyRetry = null; void this.tick(); }, wait);
     this.busyRetry.unref?.();
   }
 
-  /** A run that met a locked database goes back to queued, with nothing of it lost, and the tick runs again. */
+  /** A run whose result card waits for the database says so to its owner (markRunDelivered takes the note off in its own save). */
+  noteResultWaiting(runId: string): void {
+    const run = this.lookupRun(runId);
+    if (!run || run.attention !== undefined) return;
+    run.attention = DATABASE_WAIT_NOTE;
+    this.save({ runs: [run] }); this.emitRun(run);
+  }
+
+  /** A run that met a locked database goes back to queued, with nothing of it lost, says why, and the tick runs again. */
   private requeueBusy(run: RoutineRun): void {
     if (isLive(run.status)) { run.status = "queued"; run.startedAt = undefined; }
+    // a refused turn start (a room goal's group turn, a bot turn's own write) tells the owner, as a refused marker does; the next start clears it
+    if (run.status === "queued" && run.attention === undefined) run.attention = DATABASE_WAIT_NOTE;
     this.save({ runs: [run] });
     this.emitRun(run);
     this.retrySoon();
@@ -3389,6 +3526,7 @@ export class RoutineManager {
     if (this.recoveryRequired || this.halted) return;
     // After the limits, on purpose: runs already going still stop at their limit while new ones wait.
     if (this.options.dispatchHeld?.()) return;
+    if (this.now() < this.busyUntil) return;
     if (this.ticking) return;
     this.ticking = true;
     try {
@@ -3731,7 +3869,8 @@ export class RoutineManager {
         let releaseStart: () => void = () => {};
         try { releaseStart = this.options.beginStart?.() ?? releaseStart; } catch { /* no gate: nothing held */ }
         try {
-        const unsaved = !reusable && !sharedChannel ? this.unsavedStartTasks.get(run.id) : undefined;
+        // a room goal sent back to the queue (its group turn met a locked database) carries on in the room task it already opened
+        const unsaved = !reusable && !sharedChannel ? this.unsavedStartTasks.get(run.id) ?? (run.target === "room-goal" ? run.threadId : undefined) : undefined;
         const keptTask = unsaved && (run.target === "room-goal"
           ? Boolean(run.groupId && this.options.goalTaskExists?.(run.groupId, unsaved))
           : !this.options.taskExists || this.options.taskExists(run.botId, unsaved)) ? unsaved : undefined;
@@ -3746,7 +3885,7 @@ export class RoutineManager {
             ? this.options.channelThread!(run.botId,run.humanPrincipal)
             : reusable
               ? { threadId: reusable }
-              : this.options.createTask(run.botId, run.routineName, run.triggerSource === "webhook");
+              : this.options.createTask(run.botId, run.routineName, run.triggerSource === "webhook" && !run.eventResult);
         if (!task) {
           this.failRun(run, run.target === "room-goal"
             ? "Could not create a room task for this goal"
@@ -3767,6 +3906,7 @@ export class RoutineManager {
         if (countedAutomatic) automaticRunning++;
         if (triggerSource === "schedule" && run.scheduledFor < this.startedAt) this.lastCatchUpAt = this.now();
         if (this.deferrals.delete(run.id) && run.attention?.startsWith("Waiting for connected apps")) run.attention = undefined;
+        if (run.attention === DATABASE_WAIT_NOTE) run.attention = undefined;
         this.heldByStartup.delete(run.id);
         const adopted = owner && this.options.taskExists && owner.threadId !== task.threadId;
         if (adopted) owner.threadId = task.threadId;
@@ -3800,7 +3940,19 @@ export class RoutineManager {
         if (adopted) this.emitRoutine(owner);
         if (owner && !limitRetry) {
           try { this.options.onRunDispatch?.(cloneRun(run), Boolean(reusable)); }
-          catch (error) { console.error("routine: run marker failed", error); }
+          catch (error) {
+            if (isDatabaseBusy(error)) {
+              // The gate refused the marker: the run goes back to queued with its task kept (nothing started, nothing dropped), says why,
+              // and the tick waits out a growing delay; the rest of this pass would meet the same gate.
+              rateLimited("routine-marker-busy", 60_000, (suppressed) => `[routines] run marker waiting for the database${suppressed ? ` (${suppressed} more refusals since the last line)` : ""}: ${error instanceof Error ? error.message.slice(0, 200) : "busy"}`);
+              run.status = "queued"; run.startedAt = undefined; run.slotAt = before.slotAt; run.attention = DATABASE_WAIT_NOTE;
+              this.liveDispatch.delete(run.id); this.openDispatch.delete(run.id);
+              if (!reusable && !sharedChannel) this.unsavedStartTasks.set(run.id, task.threadId);
+              this.requeueBusy(run);
+              break;
+            }
+            console.error("routine: run marker failed", error);
+          }
         }
         const failDispatch = (message: string) => this.settleDispatch({ runId: run.id, seq: dispatchSeq }, message);
         try {
@@ -3859,7 +4011,14 @@ export class RoutineManager {
           // A failed persistence prerequisite holds admission. Keep a failed start's exact task for lifecycle retry.
           if (this.recoveryRequired) { laterFault ??= error; break; }
           // a locked database is contention, not a failure of the run: it stays queued and the tick runs again shortly
-          if (isDatabaseBusy(error)) this.retrySoon();
+          if (isBusyRefusal(error)) {
+            // the refused start (the run's conversation could not be recorded) keeps the run queued, tells its owner, and waits out a growing delay
+            if (live?.status === "queued" && live.attention === undefined) {
+              live.attention = DATABASE_WAIT_NOTE;
+              try { this.save({ runs: [live] }); this.emitRun(live); } catch { live.attention = undefined; }
+            }
+            this.retrySoon();
+          }
           else if (live?.status === "queued") this.failRun(live, error instanceof Error ? error.message : String(error));
           else laterFault ??= error;
           if (this.runsGeneration !== generation) break;
@@ -4122,7 +4281,8 @@ export class RoutineManager {
   /** The event handling shared by every run kind (the rest of handleRuntimeEvent). */
   private applyRunEvent(run: RoutineRun, event: RuntimeEvent): RoutineRun | null {
     const presentation = this.runtimePresentation.get(event) ?? event;
-    const display = (field: string) => (presentation as unknown as Record<string, unknown>)[field] as string ?? "«redacted»";
+    // redact-1020: a field the presentation leaves out (owner-display.ts routinePresentation: a masked reply) is absent, never the bare marker
+    const display = (field: string) => (presentation as unknown as Record<string, unknown>)[field] as string ?? "";
     // A room goal contains several provider turns. Its orchestrator owns the
     // terminal decision and reports it through finishGoalRun; one member's
     // completion and private coordinator envelope are only intermediate
@@ -4172,9 +4332,10 @@ export class RoutineManager {
         run.attention = undefined;
       }
     } else if (event.type === "item.completed" && event.itemType === "assistant_text") {
-      run.output = redactSecretsInText(display("text")).trim().slice(0, 2_000);
+      const text = redactSecretsInText(display("text")).trim().slice(0, 2_000);
+      if (text) run.output = text;
     } else if (event.type === "runtime.error") {
-      run.error = redactSecretsInText(display("message")).slice(0, 500);
+      run.error = redactSecretsInText(display("message") || ERROR_REASON_WITHHELD).slice(0, 500);
     } else if (event.type === "turn.retrying") {
       // the driver will relaunch this same run; a transient blip is not a
       // receipt-worthy failure, so keep the run running and stay quiet
@@ -4405,6 +4566,7 @@ export class RoutineManager {
    * failed in memory, so this process never dispatches it again, and is counted in schedulerStatus().saveFaults; after a
    * restart the run reloads as it was last saved and is evaluated afresh. Owner notification is best-effort. */
   private failRun(run: RoutineRun, message: string) {
+
     this.requiredToolCalls.delete(run.id);
     this.unsavedStartTasks.delete(run.id);
     run.status = "failed";
@@ -4939,7 +5101,7 @@ export class RoutineManager {
         if (!this.lifecycle && !this.fullTransaction) { this.requestRecovery(); throw new RecoveryRequired(); }
         this.saveFull();
       } else {
-        this.journal.append({ runs: [...this.dirtyRuns].map(untracked), routines: [...this.dirtyRoutines].map(untracked), removed: [...this.removedRuns.values()].map(untracked) });
+        this.journal.append({ runs: [...this.dirtyRuns].map(persistedRun), routines: [...this.dirtyRoutines].map(untracked), removed: [...this.removedRuns.values()].map(untracked) });
       }
       this.fullSave = false; this.recoveryRequired = false; this.dirtyRuns.clear(); this.dirtyRoutines.clear(); this.removedRuns.clear();
       this.saveFaults = 0;
@@ -5077,13 +5239,13 @@ export class RoutineManager {
     } satisfies RoutineFile, null, 2);
     // A live state line means routines.json alone is not the whole state: rewrite it even if it reads the same.
     if (this.pendingCommit === null && !this.journal.hasRoutineLines() && this.fileUnchanged(textFor(this.runsCommit, this.generation))) {
-      this.journal.sync([...this.runStore].map(untracked));
+      this.journal.sync([...this.runStore].map(persistedRun));
       return;
     }
     const tag = this.pendingCommit ?? Math.max(this.runsCommit ?? 0, this.journal.highestTag) + 1;
     if (!Number.isSafeInteger(tag) || tag >= Number.MAX_SAFE_INTEGER) throw new RecoveryRequired();
     this.pendingCommit = tag;
-    this.journal.sync([...this.runStore].map(untracked), tag);
+    this.journal.sync([...this.runStore].map(persistedRun), tag);
     const generation = randomUUID();
     const text = textFor(tag, generation);
     writeFileAtomic(this.file, text, { mode: 0o600 });

@@ -1,4 +1,4 @@
-import {expectRulingForPinnedRow,pinnedBaseRulingExpected} from '../testing/no-limits-ruling-fixtures.ts';
+import {expectRulingForPinnedRow,fullOwnerRunsPinnedRow,pinnedBaseRulingExpected} from '../testing/no-limits-ruling-fixtures.ts';
 import {expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {autoVerdict} from '../auto-approve.ts';
@@ -7,7 +7,7 @@ const baseline=JSON.parse(readFileSync('server/testing/fixtures/no-limits-r13b-b
 it('R13 405 frozen 1.0.18 verdicts remain byte equal on BASE',()=>{
  expect(baseline.commit).toBe('292df98d80a1c55db3e6f232166fc05162b632ab');expect(baseline.rows.length).toBeGreaterThanOrEqual(405);
  // MAIN RULING INT-CONFLICT-DEFAULT dd8141d4ed / 77f5566081: apply the reviewed explicit 137 immutable-ID deltas; retain every other byte.
- for(const r of baseline.rows){const actual=autoVerdict(r.bot,r.tool,r.summary,r.context);if(!expectRulingForPinnedRow(r,actual))expect.soft(actual,r.id).toEqual(pinnedBaseRulingExpected(r));}
+ for(const r of baseline.rows){const actual=autoVerdict(r.bot,r.tool,r.summary,r.context);if(!expectRulingForPinnedRow(r,actual)&&!fullOwnerRunsPinnedRow(r,actual))expect.soft(actual,r.id).toEqual(pinnedBaseRulingExpected(r));}
 });
 it.each(['ssh host \'echo fixture\'','cd d && ls','git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp'])('R10 outside-marked owner request runs: %s',command=>{
  const f=fixture();const h=f.open('r',{command},{summary:'mkfs /dev/sda',itemUnseen:true});expect(d.decide(h,baseCard).kind).toBe('run');

@@ -21,6 +21,8 @@ export type HealthIssue = Omit<IssueDetail, "evidence" | "sourceKey" | "relatedF
 export interface HealthSummaryResponse {
   status: "ready" | "waiting" | "unavailable";
   view: SentinelView | null;
+  /** This installation no longer schedules background checks. The view, if present, is historical. */
+  backgroundChecksRetired?: true;
   /** The latest daily summary, shown on the Health screen. */
   digest?: HealthDigest | null;
 }

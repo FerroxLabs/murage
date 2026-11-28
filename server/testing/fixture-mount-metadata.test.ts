@@ -15,11 +15,11 @@ function fixture() {
   const observe = helper?.withFixtureMountMetadata ?? ((entry: MountEntry | null) => entry);
   return { socket, entry, observe };
 }
-it("CROSS-SC-METADATA depth and service flags come from the observed immutable mount", () => {
+it("CROSS-SC-METADATA service flags come from the observed immutable mount", () => {
   const {socket,entry,observe}=fixture();
-  writeFileSync(socket+'.fixture-metadata.json',JSON.stringify({mounts:{agents:{MURAGE_TURN_DEPTH:"1",MURAGE_EMAIL:"read",MURAGE_VENUE_POST:"1",MURAGE_PROJECT_ROLE:"member"}}}));
+  writeFileSync(socket+'.fixture-metadata.json',JSON.stringify({mounts:{agents:{MURAGE_EMAIL:"read",MURAGE_VENUE_POST:"1",MURAGE_PROJECT_ROLE:"member"}}}));
   const view=observe(entry)!;
-  expect(view.env).toEqual([...entry.env,{name:"MURAGE_TURN_DEPTH",value:"1"},{name:"MURAGE_EMAIL",value:"read"},{name:"MURAGE_VENUE_POST",value:"1"},{name:"MURAGE_PROJECT_ROLE",value:"member"}]);
+  expect(view.env).toEqual([...entry.env,{name:"MURAGE_EMAIL",value:"read"},{name:"MURAGE_VENUE_POST",value:"1"},{name:"MURAGE_PROJECT_ROLE",value:"member"}]);
   expect(view.command).toBe(entry.command); expect(view.args).toBe(entry.args);
   expect(entry.env).toHaveLength(2);
 });
@@ -27,7 +27,8 @@ it("CROSS-SC-METADATA the observation cannot add credentials or borrow another m
   const {socket,entry,observe}=fixture();
   writeFileSync(socket+'.fixture-metadata.json',JSON.stringify({mounts:{agents:{MURAGE_TURN_DEPTH:"1",MURAGE_COMMS_TOKEN:"fixture"},other:{MURAGE_EMAIL:"write"}}}));
   const view=observe(entry)!;
-  expect(view.env?.find(row=>row.name==="MURAGE_TURN_DEPTH")?.value).toBe("1");
+  // depth is read from the token record (L2W #5768): a depth in the observation is no longer a mount field
+  expect(view.env?.find(row=>row.name==="MURAGE_TURN_DEPTH")).toBeUndefined();
   expect(view.env?.find(row=>row.name==="MURAGE_COMMS_TOKEN")).toBeUndefined();
   expect(view.env?.find(row=>row.name==="MURAGE_EMAIL")).toBeUndefined();
   expect(observe(null)).toBeNull();

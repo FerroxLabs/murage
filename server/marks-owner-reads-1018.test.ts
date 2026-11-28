@@ -14,7 +14,7 @@
 // Every other level and origin reads as NLH0 (R1): the plain read and the Full access verdict of each row are compared with the
 // answer NLH0 gave, pinned in testing/marks-nlh0-verdicts.json.
 import { describe, expect, it, vi } from "vitest";
-import { nlh0, type Added } from "./testing/marks-nlh0.ts";
+import { fullOwnerRunIn, nlh0, type Added } from "./testing/marks-nlh0.ts";
 import { expectNoLimitsOwnerOutcome, expectNoLimitsProtectedWrite } from "./testing/no-limits-1019.ts";
 
 process.env.HOME = "/home/tester";
@@ -55,7 +55,9 @@ const T4_FULL: Record<string, Added> = {
 /** The other levels: NLH0's answer, pinned (R1). */
 const asNlh0 = (id: string, command: string) => {
   nlh0(`owner-reads|${id}|read`, alwaysAskCommand(command, "/w"));
-  nlh0(`owner-reads|${id}|full`, autoVerdict(FULL, "Bash", command, turn(command)), undefined, T4_FULL[id]);
+  // OVERREACH #6: the owner's own Full access turn runs the run rules (a wipe reason keeps its card)
+  const full = autoVerdict(FULL, "Bash", command, turn(command));
+  if (!fullOwnerRunIn(full, T4_FULL[id])) nlh0(`owner-reads|${id}|full`, full, undefined, T4_FULL[id]);
 };
 const runs = (command: string, cwd?: string) => { expect(read(command, cwd), command).toBeNull(); expect(owner(command, cwd), command).toMatchObject({ source: "no-limits" }); expect(owner(command, cwd).approve).toBeTruthy(); };
 const denies = (command: string, rule: string, cwd?: string) => {

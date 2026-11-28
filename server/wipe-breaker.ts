@@ -15,6 +15,7 @@ import { fromNativeEffects, fromNativeInput } from './wipe/native.ts';
 import { RootClassifier } from './wipe/roots.ts';
 import { registeredWipeProjects } from './wipe/registry.ts';
 import { decide, faultVerdict } from './wipe/decide.ts';
+import { readScriptBody, writtenScriptRuns, SCRIPT_DEPTH_MAX } from './wipe/script-bodies.ts';
 export type { WipeContext } from './wipe/types.ts';
 export const wipeCheckFault=():AlwaysAskHit=>{const {rule,what}=faultVerdict();return {rule,what};};
 const hit=(verdict:Verdict):AlwaysAskHit|null=>verdict.k==='run'?null:{rule:verdict.rule,what:verdict.what};
@@ -46,6 +47,21 @@ const emptyScan=(hit:AlwaysAskHit|null):WipeScan=>({hit,records:[]});
 // The recovery scanner neither tracks same-command assignments nor expands cmd variables: a variable the same
 // text assigns, or a cmd variable, is undecided there. A variable the text never sets stays the scanner's own call.
 const unreadVariable=(text:string)=>{for(const m of text.matchAll(/\$\{?([A-Za-z_]\w*)(?!\w)(?!\s*=(?!=))|%[A-Za-z_]\w*%/g))if(m[1]===undefined||new RegExp('(?:^|[\\s;&|({])\\$?'+m[1]+'\\s*=','i').test(text))return true;return false;};
+/** OVERREACH #6: a session-written script this text runs has its body read, for the wipe check only. A body that cannot be read cards. */
+function scriptBodyScan(scan:WipeScan,text:string,ctx:WipeContext,home:string):WipeScan {
+ const depth=ctx.scriptDepth??0;
+ const runs=writtenScriptRuns(text,ctx,home);
+ if(!runs.length)return scan;
+ if(depth>=SCRIPT_DEPTH_MAX)return emptyScan(wipeCheckFault());
+ for(const run of runs){
+  if(run.overflow)return emptyScan(wipeCheckFault());
+  const body=(ctx.sessionFile??readScriptBody)(run.path);
+  if(body==='unavailable')return emptyScan(wipeCheckFault());
+  const inner=readAs(body.text,{...ctx,scriptDepth:depth+1,lang:run.lang,...(run.cwd?{cwd:run.cwd}:{}),...(run.lang==='sh'?{dialect:'sh' as const}:{})});
+  if(inner.hit)return emptyScan(inner.hit);
+ }
+ return scan;
+}
 function readAs(text:string,ctx:WipeContext):WipeScan {
  let state:import('./wipe/types.ts').ShellState|undefined;
  try{
@@ -65,7 +81,8 @@ function readAs(text:string,ctx:WipeContext):WipeScan {
   state={env,home,platform:ctx.platform,proc:{},exported:new Set(env.keys()),exportedFns:new Set(),noEnv:ctx.env===undefined,vars:new Map(),arrays:new Map(),functions:new Map(),links:new Map(),dirStack:[],drive:/^([a-z]:)/i.exec(cwd??'')?.[1],startCwd:cwd,lexicalProtected:protect,cwd:!ctx.cwdOpaque&&cwd?known(cwd):opaque('cwd'),dialect,depth:0};
   if(ctx.lang==='py'||ctx.lang==='js'){const scan=interpreterEffects(text,env.get('HOME')??env.get('USERPROFILE')??home),nested=[...scan.shells.flatMap(body=>peel([known('sh'),known('-c'),known(body)],state!)),...scan.argv.flatMap(argv=>peel(argv,state!))];const origin:Invocation={program:ctx.lang,argv:[],rawArgv:[],redirects:[],...state};const snapshot=invocationSnapshot(origin);return evaluate([...scan.effects.map(effect=>effectRecord(effect,snapshot)),...nested.flatMap(effectRecordsOf)],ctx);}
   const invocations=walk(parse(cleanText(text),dialect),{...state,env:new Map(state.env)});
-  return evaluate(invocations.flatMap(effectRecordsOf),ctx);
+  const scan=evaluate(invocations.flatMap(effectRecordsOf),ctx);
+  return scan.hit||dialect!=='sh'?scan:scriptBodyScan(scan,text,ctx,home);
  }catch{
   try{const recovery=evaluate(evidenceScan(cleanText(text),state??{home:homedir(),env:new Map(),cwd:opaque('cwd'),dialect:'sh',depth:0}).flatMap(effectRecordsOf),{...ctx,pathPort:{realpath:()=>null,isBlockDevice:()=>null}});return {...recovery,hit:recovery.hit??(unreadVariable(text)&&coarseEvidence(text)?wipeCheckFault():null)};} // recovery tracks no assignments: an unread variable is undecided
   catch{return emptyScan(coarseEvidence(text)?wipeCheckFault():null);}

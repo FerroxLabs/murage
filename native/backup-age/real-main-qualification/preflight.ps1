@@ -2,7 +2,7 @@ param([Parameter(Mandatory=$true)][string]$Parent,[Parameter(Mandatory=$true)][s
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $root=Join-Path $Parent 'real-main-qualification'
-$result=[ordered]@{startedUtc=[DateTime]::UtcNow.ToString('o');parsed=@();jobInstantiated=$false;appLaunched=$false;seedRoot=$root}
+$result=[ordered]@{startedUtc=[DateTime]::UtcNow.ToString('o');parsed=@();jobInstantiated=$false;appLaunched=$false;seedRoot='real-main-qualification'}
 $suffix=''
 if($ResumeAfterCompilerEnvironmentCorrection) {
   $previous=Get-Content -LiteralPath (Join-Path $Parent 'preflight-result.json') -Raw | ConvertFrom-Json

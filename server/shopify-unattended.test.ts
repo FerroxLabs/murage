@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as composio from "./composio.ts";
 import { connectorHealthStore } from "./connected-app-health.ts";
 import type { AppConfig } from "./config.ts";
+import { assertRelayBot, assertRelayStored } from "./connector-relay.ts";
 
 // Shopify actions that run unattended (routines, scheduled or background turns,
 // delegated work) use the GraphQL actions only; attended chat is unchanged. A
@@ -151,11 +152,11 @@ async function route(threadState: { unattended?: boolean; liveRoutine?: boolean;
   const deps = { isUnattended: () => threadState.unattended === true, routines: () => ({ isActiveThread: () => threadState.liveRoutine === true }), routineAuthority: () => threadState.routinePeer === true || threadState.wake === true };
   let reply: { bytes: Uint8Array; delivery?: string } | undefined;
   const manager = { routineRunForThread: () => null };
-  await new Function("composio", "cfg", "routines", "req", "internalClaim", "authorize", "CONNECTED_APP_WAIT_HEADER", "body", "internalCapabilities", "serviceNoLimits", "connectedAppUnattended",
+  await new Function("composio", "cfg", "routines", "req", "internalClaim", "authorize", "CONNECTED_APP_WAIT_HEADER", "body", "internalCapabilities", "serviceNoLimits", "connectedAppUnattended", "assertRelayBot", "assertRelayStored", "relayInventory",
     `return (async () => { ${js} })();`)(
     { relayConnectedAppCall: async (...args: any[]) => (reply = await (composio.relayConnectedAppCall as any)(...args)) }, cfg, manager,
     { headers: {} }, { threadId: "peer-thread", botId: "shopify-fixture", generation: "g" }, () => {}, "x-fixture-wait", body, { providerTurnOf: () => "t" }, () => false,
-    (threadId: string) => connectedAppTurnUnattended(deps, threadId));
+    (threadId: string) => connectedAppTurnUnattended(deps, threadId), assertRelayBot, assertRelayStored, null);
   return reply!;
 }
 const shapes = {
@@ -209,13 +210,16 @@ describe.each(Object.entries(unattendedStates))("route dispatch with %s", (_labe
     expect(textOf(answer)).toMatch(/GraphQL/);
   });
   it("still sends a Shopify GraphQL action", async () => {
-    await route(state, shapes.direct("SHOPIFY_GRAPH_QL_QUERY"));
+    // The production connectors slice must run to a reply with only the names this fixture supplies.
+    const answer = await route(state, shapes.direct("SHOPIFY_GRAPH_QL_QUERY")).catch((error: unknown) => ({ lost: String(error) }));
     expect(calls).toHaveLength(1);
+    expect(answer, "the action was sent and its answer is handed back by the connectors route").toHaveProperty("bytes");
   });
 });
 describe("route dispatch on an attended thread", () => {
   it.each(Object.entries(shapes))("still sends a Shopify REST action sent as %s", async (_shape, make) => {
-    await route({}, make("SHOPIFY_GET_ORDERS"));
+    const answer = await route({}, make("SHOPIFY_GET_ORDERS")).catch((error: unknown) => ({ lost: String(error) }));
     expect(calls).toHaveLength(1);
+    expect(answer, "the action was sent and its answer is handed back by the connectors route on an attended thread").toHaveProperty("bytes");
   });
 });

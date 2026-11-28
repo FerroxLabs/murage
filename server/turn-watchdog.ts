@@ -80,7 +80,14 @@ export interface WatchedTurn {
   /** Set on the turn handed to onStall: "silence" when nothing arrived for
    * the silence limit, "heartbeat-only" when only heartbeats arrived for
    * heartbeatOnlyMs. */
-  stalledBy?: "silence" | "heartbeat-only";
+  stalledBy?: "silence" | "heartbeat-only" | "no-first-response";
+  /** WINTERRY (1.0.22): this turn's first-response limit, when it has one (a routine run: nobody is watching it). The longest it
+   * may run after dispatch with nothing from its engine but lifecycle events (no output, no tool, no card). Never longer than
+   * the turn's silence limit. An engine that takes the turn and then never answers is stopped after this long, with its own
+   * named cause, instead of sitting out the whole silence limit. Setup, waits and an open card are not on this clock. */
+  firstResponseMs?: number;
+  /** When the first-response clock started (dispatch, or the end of a wait); undefined once the engine has shown output or work. */
+  awaitingFirstSince?: number;
   /** The heartbeat-only state was logged once for this turn. */
   heartbeatNoted?: boolean;
   /** The engine's id for this turn once known (room replies and direct
@@ -139,6 +146,7 @@ export class TurnWatchdog {
     for (const turn of this.turns.values()) {
       turn.lastEventAt += delta;
       turn.lastWorkAt += delta;
+      if (turn.awaitingFirstSince !== undefined) turn.awaitingFirstSince += delta;
     }
   }
 
@@ -169,7 +177,7 @@ export class TurnWatchdog {
   }
 
   /** A turn was admitted (`setup: true`) or dispatched on this thread. */
-  watch(threadId: string, botId: string, opts: { generation?: string; setup?: boolean; stallMs?: number } = {}): void {
+  watch(threadId: string, botId: string, opts: { generation?: string; setup?: boolean; stallMs?: number; firstResponseMs?: number } = {}): void {
     const previous = this.turns.get(threadId);
     if (previous) this.turnWaits.delete(previous);
     const at = this.now();
@@ -182,6 +190,8 @@ export class TurnWatchdog {
       waitingOnHuman: false,
       openRequests: new Set(),
       phase: opts.setup ? "setup" : "running",
+      ...(opts.setup ? {} : { awaitingFirstSince: at }),
+      ...(opts.firstResponseMs !== undefined ? { firstResponseMs: opts.firstResponseMs } : {}),
       ...(opts.generation !== undefined ? { generation: opts.generation } : {}),
       ...(opts.stallMs !== undefined ? { stallMs: opts.stallMs } : {}),
     });
@@ -191,17 +201,18 @@ export class TurnWatchdog {
    * restarts at the running ceiling (`stallMs` when the turn has its own
    * silence limit). If something cleared the watch in between, it is
    * re-armed, unless this very turn already stalled. */
-  dispatched(threadId: string, botId: string, generation?: string, opts: { stallMs?: number } = {}): void {
+  dispatched(threadId: string, botId: string, generation?: string, opts: { stallMs?: number; firstResponseMs?: number } = {}): void {
     const turn = this.owned(threadId, generation);
     if (turn && (generation === undefined || turn.generation === generation || turn.generation === undefined)) {
       turn.phase = "running";
-      turn.lastEventAt = turn.lastWorkAt = this.now();
+      turn.lastEventAt = turn.lastWorkAt = turn.awaitingFirstSince = this.now();
       if (opts.stallMs !== undefined) turn.stallMs = opts.stallMs;
+      if (opts.firstResponseMs !== undefined) turn.firstResponseMs = opts.firstResponseMs;
       return;
     }
     if (generation !== undefined && this.stalledGenerations.has(generation)) return;
     if (this.turns.has(threadId)) return; // a newer turn owns the thread
-    this.watch(threadId, botId, { generation, stallMs: opts.stallMs });
+    this.watch(threadId, botId, { generation, stallMs: opts.stallMs, firstResponseMs: opts.firstResponseMs });
   }
 
   /** The turn is waiting for a resource, not working. Returns the release;
@@ -216,7 +227,9 @@ export class TurnWatchdog {
     return () => {
       const current = this.turnWaits.get(turn);
       if (!current?.delete(key)) return;
-      if (this.turns.get(turn.threadId) === turn) turn.lastEventAt = turn.lastWorkAt = this.now();
+      if (this.turns.get(turn.threadId) !== turn) return;
+      turn.lastEventAt = turn.lastWorkAt = this.now();
+      if (turn.awaitingFirstSince !== undefined) turn.awaitingFirstSince = turn.lastEventAt; // the wait was not the engine's silence
     };
   }
 
@@ -228,7 +241,8 @@ export class TurnWatchdog {
 
   /** Any provider event for the thread proves the turn is alive. A
    * heartbeat (an engine's "a tool is still running" tick) keeps it alive for
-   * at most heartbeatOnlyMs past the last real event. */
+   * at most heartbeatOnlyMs past the last real event. Alive is not answered:
+   * the first-response clock ends only at `firstResponse` (WINTERRY). */
   touch(threadId: string, opts: { heartbeat?: boolean } = {}): void {
     const turn = this.turns.get(threadId);
     if (!turn) return;
@@ -237,6 +251,30 @@ export class TurnWatchdog {
       turn.lastWorkAt = turn.lastEventAt;
       turn.heartbeatNoted = false;
     }
+  }
+
+  /** WINTERRY: the engine of the running turn on this thread produced output or work (text, reasoning, a tool, a subtask): its
+   * first response. The engine or its turn merely starting, a retry, usage or a diagnostic is not one. Setup is not counted. */
+  firstResponse(threadId: string): void {
+    const turn = this.turns.get(threadId);
+    if (turn?.phase === "running") turn.awaitingFirstSince = undefined;
+  }
+
+  /** WINTERRY (MAIN-RULING WINTERRY-1022 (b)): the engine announced a retry after this many ms (a rate limit's backoff). That wait is
+   * known, not the engine's silence: the first-response clock stops for it and then runs on. The silence limit still bounds the turn.
+   * Only the watch's own turn is paused: the retry must name the generation that dispatched it (and its provider turn, once bound); a
+   * late retry from a stopped turn, or one nobody can place, leaves the clock running (fail-closed). */
+  pauseFirstResponse(threadId: string, waitMs: number, providerTurnId?: string, generation?: string): void {
+    const turn = this.turns.get(threadId);
+    if (!turn || generation === undefined || (turn.generation !== undefined && turn.generation !== generation)) return;
+    if (turn.providerTurnId && providerTurnId && providerTurnId !== turn.providerTurnId) return;
+    if (turn.phase === "running" && turn.awaitingFirstSince !== undefined && Number.isFinite(waitMs) && waitMs > 0) turn.awaitingFirstSince += waitMs;
+  }
+
+  /** WINTERRY: give this claim's dispatched turn a first-response limit (a routine run). The number alone: no clock moves. */
+  setFirstResponseLimit(threadId: string, generation: string | undefined, firstResponseMs: number): void {
+    const turn = this.owned(threadId, generation);
+    if (turn) turn.firstResponseMs = firstResponseMs;
   }
 
   /** Change this turn's own silence limit while it runs (a room turn with a
@@ -265,7 +303,7 @@ export class TurnWatchdog {
     // neither removes a successor's same-id request nor restarts a successor's clock.
     if (generation !== undefined && turn.generation !== undefined && turn.generation !== generation) return;
     if (generation !== undefined && !waiting && !turn.openRequests.has(requestId)) return;
-    if (waiting) turn.openRequests.add(requestId);
+    if (waiting) { turn.openRequests.add(requestId); if (turn.phase === "running") turn.awaitingFirstSince = undefined; } // a card is the engine's response
     else turn.openRequests.delete(requestId);
     turn.waitingOnHuman = turn.openRequests.size > 0;
     turn.lastEventAt = turn.lastWorkAt = this.now();
@@ -333,14 +371,17 @@ export class TurnWatchdog {
         : undefined;
       const silent = at - turn.lastEventAt >= ceiling;
       const heartbeatOnly = heartbeatCap !== undefined && at - turn.lastWorkAt >= heartbeatCap;
-      if (!silent && !heartbeatOnly) {
+      // WINTERRY: a dispatched turn with its own first-response limit whose engine has shown no output or work yet.
+      const noFirstResponse = !silent && turn.phase === "running" && turn.awaitingFirstSince !== undefined && turn.firstResponseMs !== undefined
+        && at - turn.awaitingFirstSince >= Math.min(running, turn.firstResponseMs);
+      if (!silent && !heartbeatOnly && !noFirstResponse) {
         if (turn.phase === "running" && !turn.heartbeatNoted && at - turn.lastWorkAt >= running) {
           turn.heartbeatNoted = true;
           console.info(`[watchdog] thread ${turn.threadId}: alive on tool heartbeats alone for ${Math.round((at - turn.lastWorkAt) / 60_000)} min`);
         }
         continue;
       }
-      turn.stalledBy = silent ? "silence" : "heartbeat-only";
+      turn.stalledBy = silent ? "silence" : noFirstResponse ? "no-first-response" : "heartbeat-only";
       this.forget(turn);
       if (turn.generation !== undefined) {
         this.stalledGenerations.add(turn.generation);

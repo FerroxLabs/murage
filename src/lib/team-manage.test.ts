@@ -3,6 +3,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  removeTeam,
+  teamDeleteChoicesReview,
   renameSidebarLayout,
   teamCandidateDetail,
   teamDeleteSummary,
@@ -17,9 +19,9 @@ const team: TeamView = {
   revision: "r".repeat(64),
   leadId: "ava",
   members: [
-    { id: "ava", name: "Ava", lead: true, chief: false, archived: false },
-    { id: "ben", name: "Ben", lead: false, chief: false, archived: false },
-    { id: "old", name: "Old", lead: false, chief: false, archived: true },
+    { id: "ava", name: "Ava", lead: true, chief: false, archived: false, accessRevision: 0, choices: { saved: false, mode: "unrestricted", allowWrites: true, apps: [] } },
+    { id: "ben", name: "Ben", lead: false, chief: false, archived: false, accessRevision: 2, choices: { saved: true, mode: "restricted", allowWrites: false, apps: ["mail", "calendar"] } },
+    { id: "old", name: "Old", lead: false, chief: false, archived: true, accessRevision: 1, choices: { saved: true, mode: "restricted", allowWrites: false, apps: [] } },
   ],
   channels: [{ id: "ch", name: "Operations", archived: false }],
   hasInstructions: true,
@@ -81,6 +83,24 @@ describe("teamDeleteSummary", () => {
       "1 bot is archived. You can restore it from Archived bots.",
       "Every conversation is kept.",
     ]);
+  });
+});
+
+describe("delete review (SV0-team, F2-team)", () => {
+  it("lists every member, archived and empty ones included, with what is cleared or that nothing is lost", () => {
+    const rows = teamDeleteChoicesReview(team);
+    expect(rows.map((row) => row.id)).toEqual(["ava", "ben", "old"]);
+    expect(rows[0].text).toBe("Nothing saved, nothing lost.");
+    expect(rows[1].text).toContain("Only mail, calendar");
+    expect(rows[2]).toMatchObject({ archived: true });
+    expect(rows[2].text).toContain("Only chosen apps, none chosen");
+  });
+  it("sends each member's reviewed revision, for both choices", async () => {
+    for (const choice of ["keep", "archive"] as const) {
+      const sent: unknown[] = [];
+      await removeTeam(team, choice, async (_path, init) => (sent.push(JSON.parse(String(init?.body))), { changed: {} }));
+      expect(sent).toEqual([{ section: "Operations", revision: team.revision, bots: choice, accessRevisions: { ava: 0, ben: 2, old: 1 } }]);
+    }
   });
 });
 

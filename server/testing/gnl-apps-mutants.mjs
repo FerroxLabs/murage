@@ -1,7 +1,8 @@
+import { evidencePath } from '../../scripts/evidence-path.mjs';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-const out='evidence/gnl-apps-mutants';mkdirSync(out,{recursive:true});
+const out=evidencePath('evidence/gnl-apps-mutants');mkdirSync(out,{recursive:true});
 const cases=[
  {id:'A1',source:'server/bot-access.ts',old:'if(highlevel.noLimits)return;',replacement:'if(false)return;',test:'server/gnl-apps-api.test.ts',name:'GNL-A1 saved write/tool/account'},
  {id:'A2',source:'server/drivers/acp/core.ts',old:'launch((trustGeneration === 1 || (turn.permissionNow?.() ?? turn).noLimits === true) && folderTrusted === "trust");',replacement:'launch(trustGeneration === 1 && folderTrusted === "trust");',test:'server/service-no-limits-routes-api.test.ts',name:'N7 No limits overrides Fuigo own saved no'},

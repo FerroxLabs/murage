@@ -335,6 +335,13 @@ describe("review fixes", () => {
     expect(card).toEqual({ prompt: "A watercolor mountain", negativePrompt: "blurry hands" });
     expect(imageApprovalSubtitle(details)).toContain("Negative prompt sent in its own field: 12 characters.");
   });
+  it("offers GPT Image 2.6 Sunburst on a saved OpenAI connection and sends it as the model", async () => {
+    const f = fixture("openai");
+    const catalog = await f.service.getCatalog("openai");
+    expect(catalog.models.find(model => model.id === "gpt-image-2.6-sunburst")).toMatchObject({ generate: true, edit: true });
+    await f.service.generate({ ...f.request, model: "gpt-image-2.6-sunburst", quality: "high" }, f.hooks);
+    expect(f.body()).toMatchObject({ model: "gpt-image-2.6-sunburst", quality: "high" });
+  });
   it("follows a 202 job answer only from Flux", async () => {
     const f = fixture("openai");
     f.fetcher.mockResolvedValueOnce(json({ contract: 1, kind: "image-job", id: "imgjob_9", status: "queued" }, { status: 202 }));

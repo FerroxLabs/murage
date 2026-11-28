@@ -97,21 +97,21 @@ it('S1 a No limits routine proposes another routine with no card',async()=>{
   expect((await messages(t.threadId)).filter(m=>m.card?.routineRequest)).toHaveLength(0);
  }finally{await api('POST',`/api/bots/${t.bot.id}/interrupt`,{threadId:t.threadId});}
 },60000);
-it('S2 a No limits webhook requests browser setup with a notice and no hold',async()=>{
+// S2 FLIPPED by W3 (DESIGN-JOURNEY-1024 section 6): no bot raises browser setup, at No limits either; was 201 + a notice.
+it('S2 a No limits webhook cannot request browser setup: the retired route answers 410 and holds nothing',async()=>{
  const t=await webhookTurn('S2 service browser');
  try{
   const result=await api('POST','/api/internal/request-browser-connection',{reason:'Fixture browser'},t.auth);
-  expect(result.status,JSON.stringify(result.body)).toBe(201);
-  expect(result.body.pending).toBe(false);
+  expect(result.status,JSON.stringify(result.body)).toBe(410);
   expect((await messages(t.threadId)).filter(m=>m.card?.browserSetup)).toHaveLength(0);
  }finally{await api('POST',`/api/bots/${t.bot.id}/interrupt`,{threadId:t.threadId});}
 },60000);
-it('S3 a No limits turn loads folder instructions without a folder trust card',async()=>{
+it('S3 a No limits turn on an unpicked service desk withholds folder instructions without a folder trust card (G2)',async()=>{
  const b=await makeBot('S3 service folder','fuigo');
  const desk=join(fixture.info.dataDir,'workspaces',b.id,'threads',b.threadId);mkdirSync(desk,{recursive:true});writeFileSync(join(desk,'AGENTS.md'),'# Fixture instructions\nsvc-folder-witness\n');
  expect((await api('POST',`/api/bots/${b.id}/messages`,{threadId:b.threadId,text:'Read the folder instructions'})).status).toBe(202);
  try{
-  await expect.poll(async()=>{const rows=await messages(b.threadId);return rows.some(m=>m.card?.folderTrust)?'card':rows.some(m=>m.role==='bot'&&m.text?.includes('svc-folder-witness'))?'trusted':'waiting';},{timeout:30000}).toBe('trusted');
+  await expect.poll(async()=>{const rows=await messages(b.threadId);return rows.some(m=>m.card?.folderTrust)?'card':rows.some(m=>m.role==='bot'&&m.text?.includes('svc-folder-witness'))?'loaded':rows.some(m=>m.role==='bot'&&m.text?.includes('agents: withheld'))?'withheld':'waiting';},{timeout:30000}).toBe('withheld');
   expect((await messages(b.threadId)).filter(m=>m.card?.folderTrust)).toHaveLength(0);
  }finally{await api('POST',`/api/bots/${b.id}/interrupt`,{threadId:b.threadId});}
 },60000);
@@ -133,7 +133,7 @@ it('S5 No limits bot creation and update apply immediately while the routine is 
  }finally{await api('POST',`/api/bots/${t.bot.id}/interrupt`,{threadId:t.threadId});}
 },60000);
 
-it('N7 No limits overrides saved Do not trust for this turn and preserves the saved rule',async()=>{
+it('N7 No limits keeps saved Do not trust: configuration withheld for this turn, saved rule preserved (G2, W-T03)',async()=>{
  const b=await makeBot('N7 saved reject','fuigo');
  const folder=join(fixture.info.dataDir,'n7-rejected-folder');
  expect((await api('PATCH',`/api/bots/${b.id}`,{cwd:folder})).status).toBe(200);
@@ -141,15 +141,16 @@ it('N7 No limits overrides saved Do not trust for this turn and preserves the sa
  expect((await record()).body.record).toMatchObject({decision:'reject',source:'card'});
  expect((await api('POST',`/api/bots/${b.id}/messages`,{threadId:b.threadId,text:'Read the folder instructions'})).status).toBe(202);
  try{
-  await expect.poll(async()=>(await messages(b.threadId)).some(m=>m.role==='bot'&&m.text?.includes('svc-rejected-folder-witness')),{timeout:30000}).toBe(true);
+  const withheld=async()=>(await messages(b.threadId)).filter(m=>m.role==='bot'&&m.text?.includes('agents: withheld')).length;
+  await expect.poll(withheld,{timeout:30000}).toBe(1);
   await expect.poll(async()=>(await api('GET','/api/bots?messages=0')).body.bots.find((bot:any)=>bot.id===b.id)?.busy,{timeout:30000}).toBe(false);
   const rows=await messages(b.threadId);
   expect(rows.filter(m=>m.card?.folderTrust)).toHaveLength(0);
-  expect(rows.filter(m=>m.role==='bot').map(m=>m.text??'').join('\n')).toContain('svc-rejected-folder-witness');
+  expect(rows.filter(m=>m.role==='bot').map(m=>m.text??'').join('\n')).not.toContain('svc-rejected-folder-witness');
   expect((await record()).body.record).toMatchObject({decision:'reject',source:'card'});
   expect((await api('PATCH',`/api/bots/${b.id}/tasks/${b.threadId}`,{autoApprove:false,fullAccess:false,noLimits:false})).status).toBe(200);
   expect((await api('POST',`/api/bots/${b.id}/messages`,{threadId:b.threadId,text:'Read the saved rejected folder at Ask'})).status).toBe(202);
-  await expect.poll(async()=>(await messages(b.threadId)).some(m=>m.role==='bot'&&m.text?.includes('agents: withheld')),{timeout:30000}).toBe(true);
+  await expect.poll(withheld,{timeout:30000}).toBe(2);
   expect((await record()).body.record).toMatchObject({decision:'reject',source:'card'});
  }finally{await api('POST',`/api/bots/${b.id}/interrupt`,{threadId:b.threadId});}
 },60000);
@@ -195,19 +196,21 @@ it('H5 other-human content cannot recover owner No limits for own tools',async()
  }finally{await api('POST',`/api/bots/${bot.id}/interrupt`,{threadId:bot.threadId});}
 },60000);
 
-it('N7 No limits overrides Fuigo own saved no for this process and preserves the native record for Ask',async()=>{
+it('N7 No limits keeps Fuigo own saved no: configuration withheld, native record preserved for Ask (G2, W-T03)',async()=>{
  const b=await makeBot('N7 native saved reject','fuigo');
  const folder=join(fixture.info.dataDir,'n7-native-rejected-folder');
  const nativeFile=join(fixture.info.dataDir,'.fuigo','trusted_folders.toml');
  const before=readFileSync(nativeFile,'utf8');
  expect((await api('PATCH',`/api/bots/${b.id}`,{cwd:folder})).status).toBe(200);
  expect((await api('POST',`/api/bots/${b.id}/messages`,{threadId:b.threadId,text:'Read native rejected folder instructions'})).status).toBe(202);
- await expect.poll(async()=>(await messages(b.threadId)).some(m=>m.role==='bot'&&m.text?.includes('svc-native-rejected-folder-witness')),{timeout:30000}).toBe(true);
+ const withheld=async()=>(await messages(b.threadId)).filter(m=>m.role==='bot'&&m.text?.includes('agents: withheld')).length;
+ await expect.poll(withheld,{timeout:30000}).toBe(1);
+ expect((await messages(b.threadId)).some(m=>m.role==='bot'&&m.text?.includes('svc-native-rejected-folder-witness'))).toBe(false);
  await expect.poll(async()=>(await api('GET','/api/bots?messages=0')).body.bots.find((bot:any)=>bot.id===b.id)?.busy,{timeout:30000}).toBe(false);
  expect(readFileSync(nativeFile,'utf8')).toBe(before);
  expect((await api('PATCH',`/api/bots/${b.id}/tasks/${b.threadId}`,{autoApprove:false,fullAccess:false,noLimits:false})).status).toBe(200);
  expect((await api('POST',`/api/bots/${b.id}/messages`,{threadId:b.threadId,text:'Read it at Ask'})).status).toBe(202);
- await expect.poll(async()=>(await messages(b.threadId)).some(m=>m.role==='bot'&&m.text?.includes('agents: withheld')),{timeout:30000}).toBe(true);
+ await expect.poll(withheld,{timeout:30000}).toBe(2);
  expect(readFileSync(nativeFile,'utf8')).toBe(before);
  expect((await messages(b.threadId)).filter(m=>m.card?.folderTrust)).toHaveLength(0);
 });

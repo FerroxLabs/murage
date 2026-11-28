@@ -96,6 +96,8 @@ export interface HandoffHost {
   /** the routine authority and unattended state a peer's turn inherits from the sender */
   peerOptions(target: BotRecord | undefined, sourceThreadId: string, fromBotId: string, queued?: RoutinePeerSource): Record<string, unknown>;
   isUnattended(threadId: string): boolean;
+  /** N3: true when the bot is archived or being archived; a hand-off whose sender or target is fenced is cancelled, never started (absent: nothing is fenced) */
+  fenced?(botId: string): boolean;
   /** the owner's line for a held hand-off (Send again / Dismiss) */
   noticeHeld(held: HeldDelegation): void;
   /** A queued hand-off whose start failed before the engine was handed the turn: the "could not start" chip in the conversation it was made in (the delegating
@@ -188,13 +190,22 @@ const revoke = (ticket: DispatchTicket): void => { minter.revoke(ticket); };
  *    dispatched before its approval wait) and is only checked here;
  *  - nothing starts while the gate is closed, or while an earlier build's record still says the hand-off ran.
  * `held` is the single re-dispatch after a restart: the prompt is already in the thread and the row was reset by settleAfterFailure, which counted the earlier attempt. */
+/** The recovered-start hard zero (L5H C2 with the stored generation). Exported for its witness; startDelegation is its one caller. */
+export function recoveredHandoffRefused(row: { source_thread_id: string; item: string | null }): boolean {
+  const sourceGeneration = storedSourceGeneration(row.item);
+  return refuseAppChild({ threadId: row.source_thread_id, ...(sourceGeneration ? { generation: sourceGeneration } : {}) }, "recovered") !== null;
+}
+function storedSourceGeneration(item: string | null): string | undefined {
+  try { const value = item ? (JSON.parse(item) as { sourceGeneration?: unknown }).sourceGeneration : undefined; return typeof value === "string" && value ? value : undefined; }
+  catch { return undefined; }
+}
 function startDelegation(ticket: DispatchTicket, targetThreadId: string, options: { held?: boolean; now?: number } = {}): StartStamp {
   if (!isLiveTicket(ticket)) throw coded(DELEGATION_NOT_STARTABLE, "this handoff was not dispatched, or its dispatch ended");
   const id = ticket.id;
   const db = database();
   if (gateClosed()) throw coded(DELEGATION_NOT_STARTABLE, "hand-offs wait until the start-up clean-up has finished");
-  const row = db.prepare("SELECT source_thread_id, to_bot_id, from_bot_id, origin, phase, start_attempts, target_thread_id FROM pending_delegations WHERE id=?").get(id) as
-    { source_thread_id: string; to_bot_id: string; from_bot_id: string | null; origin: DelegationOrigin; phase: string; start_attempts: number | null; target_thread_id: string | null } | undefined;
+  const row = db.prepare("SELECT source_thread_id, to_bot_id, from_bot_id, origin, phase, start_attempts, target_thread_id, item FROM pending_delegations WHERE id=?").get(id) as
+    { source_thread_id: string; to_bot_id: string; from_bot_id: string | null; origin: DelegationOrigin; phase: string; start_attempts: number | null; target_thread_id: string | null; item: string | null } | undefined;
   if (!row || row.phase === "started") throw coded(DELEGATION_NOT_STARTABLE, "this handoff already started or is gone");
   if (row.target_thread_id !== targetThreadId || ticket.destination !== targetThreadId) throw coded(DELEGATION_NOT_STARTABLE, "this handoff is stored for another conversation");
   if (unmigratedOwnerRecordRan(db, id)) throw coded(DELEGATION_NOT_STARTABLE, "an earlier build's record says this handoff already ran");
@@ -202,7 +213,9 @@ function startDelegation(ticket: DispatchTicket, targetThreadId: string, options
   if (deletionOf(row.source_thread_id, row.from_bot_id, row.to_bot_id)) throw coded(DELEGATION_DELETED, DELETED_NOTE);
   // The hard zero (app-trigger-zero.ts): a queued or recovered hand-off from a connected-app run never starts, before the
   // started-state mutation and whatever approval it carries.
-  if (refuseAppChild({ threadId: row.source_thread_id }, "recovered")) throw coded(DELEGATION_NOT_STARTABLE, "a connected-app routine never hands work to other bots");
+  // L5H C2 (Fable r2 H1): the queueing turn's stored generation names the run that owned it, also after that run settled or a
+  // restart; a row queued before the generation was kept reads thread-only (no run credited: fail closed).
+  if (recoveredHandoffRefused(row)) throw coded(DELEGATION_NOT_STARTABLE, "a connected-app routine never hands work to other bots");
   const now = options.now ?? Date.now();
   const changed = db.prepare("UPDATE pending_delegations SET phase='started', started_at=?, target_thread_id=?, retry_at=NULL, start_attempts=COALESCE(start_attempts,0)+1 WHERE id=? AND phase<>'started'").run(now, targetThreadId, id);
   if (Number(changed.changes) !== 1) throw coded(DELEGATION_NOT_STARTABLE, "this handoff already started");
@@ -692,6 +705,7 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
         const carried = item.coordination as CoordinationTrace;
         options = { ...options, coordination: carried, commsDepth: carried.path.length - 1 };
       }
+      if (item.automationAncestry === true || item.routineAuthority !== undefined) options = { ...options, automationAncestry: true };
       sharedOps!.mirror(request!, { sourceMessageId: item.sourceMessageId });
     } else {
       release = h.reserveSlot(destination);
@@ -720,6 +734,8 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
         // the prompt rests on the one row that handed it over (rule 7); a legacy item without it keeps the asking conversation's prefix
         ...(item.sourceMessageId ? { handoffOf: { threadId: source, messageId: item.sourceMessageId } } : {}),
         ...(item.notOwnerAudience === true ? { chainNotOwner: true } : {}),
+        // PHONEAUD: a routine-started chain stays one, whatever the source thread runs when this starts
+        ...(item.automationAncestry === true || item.routineAuthority !== undefined ? { automationAncestry: true } : {}),
         eventId: item.eventId,
         coordination: item.coordination as CoordinationTrace | undefined,
         // The delegating bot is the one whose unattended state matters, and a room thread has no owner to look it up from.
@@ -736,6 +752,15 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
     }
   } catch (error) {
     return failure(error);
+  }
+  // N3, checked after the last await (channel, peer approval): an archived sender or target never starts the turn; the hand-off ends cancelled
+  if (h.fenced?.(sender.id) || h.fenced?.(target.id)) {
+    failedOnce = true;
+    revoke(ticket);
+    release();
+    if (watching) h.watch.end(destination);
+    running?.abandon();
+    return apply(id, env, { kind: "cancel", receipt: { status: "cancelled", result: status("receipt_cancelled") }, quiet: true });
   }
   // THE start: nothing else passes a hand-off's run to a turn
   try {

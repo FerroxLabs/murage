@@ -11,6 +11,7 @@
 // an installation with email off keeps exactly the schema it has today.
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { EMAIL_PARKS_DDL, adoptLegacyParks } from "./restore.ts";
+import { withSecureDelete } from "../secure-delete.ts";
 
 export const EMAIL_TABLES = ["email_bindings", "email_sends", "email_payloads", "email_events", "email_event_cursor", "email_policy_sync", "email_trust", "email_trusted", "email_tombstones", "email_parks"] as const;
 export const EMAIL_INDEXES = ["email_sends_spend_wait", "email_sends_hash", "email_sends_due", "email_sends_inbox", "email_sends_generation", "email_sends_settled", "email_sends_replaces", "email_events_reference", "email_events_received"] as const;
@@ -205,7 +206,8 @@ export class EmailStore {
    * settled sends whose bytes are already gone (Astra r2 Medium). A send settles at "now", always past the cursor (which stays older than
    * now - payloadAfter), so nothing is skipped. */
   pruneSettledSends(now: number, payloadAfter = 30 * 86_400_000, rowAfter = 180 * 86_400_000, limit = -1): { payloads: number; rows: number } {
-    return this.tx(() => {
+    // 1.0.22 item 1a: retention removes sent mail bytes: freed pages zeroed (server/secure-delete.ts)
+    return withSecureDelete(this.db, () => this.tx(() => {
       const terminal = "state IN ('sent','refused','withdrawn','declined','expired') AND settled_at IS NOT NULL";
       const mark = this.getCursor(PRUNE_PAYLOADS_SCOPE);
       const split = mark ? mark.indexOf("|") : -1;
@@ -222,7 +224,7 @@ export class EmailStore {
       }
       const rows = Number(this.db.prepare(`DELETE FROM email_sends WHERE send_id IN (SELECT send_id FROM email_sends WHERE ${terminal} AND settled_at<? AND NOT EXISTS (SELECT 1 FROM email_payloads p WHERE p.send_id=email_sends.send_id) ORDER BY settled_at LIMIT ?)`).run(now - rowAfter, limit).changes);
       return { payloads, rows };
-    });
+    }));
   }
 
   // ---- payloads ----

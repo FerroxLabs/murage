@@ -59,7 +59,7 @@ describe("Health's Back and close buttons", () => {
     expect(head).not.toMatch(/md:hidden[^\n]*HealthExitButtons/);
     // the loaded page draws that same header
     const body = read("./HealthPageBody.tsx");
-    expect(body.slice(body.indexOf("<BoxHead"), body.indexOf("</BoxHead>"))).toContain("<HealthHeadTop onLeave={onLeave} menu={<OpenBotListButton />} dot={<StatusDot level={status.level} />} />");
+    expect(body.slice(body.indexOf("<BoxHead"), body.indexOf("</BoxHead>"))).toContain("<HealthHeadTop onLeave={onLeave} menu={<OpenBotListButton />} dot={<StatusDot level={dotLevel} />} />");
     // and so does the loading and failed frame
     expect(top.slice(top.indexOf("export function HealthFrame"))).toContain("<HealthHeadTop onLeave={onLeave} menu={<OpenBotListButton />} />");
   });
@@ -214,7 +214,7 @@ describe("Back goes where the person came from", () => {
     expect(healthReturn(view("needs-you"), { ...state, needsYouTab: "results" as AppState["needsYouTab"] })).toEqual({ type: "showNeedsYou", tab: "results" });
     expect(healthReturn(view("routines"), state)).toEqual({ type: "showRoutines" });
     expect(healthReturn(view("team-map"), state)).toEqual({ type: "showTeamMap" });
-    expect(healthReturn(view("skill-recorder"), state, true)).toEqual({ type: "showSkillRecorder" });
+    expect(healthReturn(view("skill-recorder"), state, true)).toEqual({ type: "showSkillRecorder", via: "return" });
   });
 
   it("goes to Today when the origin is not known or is gone", () => {

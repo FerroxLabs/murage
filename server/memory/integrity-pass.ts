@@ -23,6 +23,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { backgroundWrite, beginBackground } from "../db-busy.ts";
 import { fillReceiptIndexPage, firstLongReceipt, nextBundleBound, outputIndexDiffers, pruneReceiptIndexPage, rebuildOutputIndexSlice, receiptBefore, receiptChangedSinceScan, receiptOutputRowsPage, receiptOutputsPiece, referencesBrokenFrom, rowChecks, startReceiptScan, type BundleRange, type ReceiptScan } from "./schema.ts";
 import { INTEGRITY_TOTAL, integrityHoldOf, readIntegrityPass, writeIntegrityPass, type IntegrityPassRow, type IntegrityPhase } from "./integrity-state.ts";
+import { MEMORY_OPEN_HOLD, memoryOpenHoldMessage } from "./open-set-aside.ts";
 
 /** The most receipts in one slice of the output-index proof. */
 export const INTEGRITY_RECEIPT_SLICE = 1_000;
@@ -84,7 +85,7 @@ export const HOLD_MESSAGES: Record<string, string> = {
   INVALID_MEMORY_LEARNING_EVENT: "Part of what Murage learned from you points at something that is no longer there, so Murage has set memory aside until it is looked at. Your chats work as usual and nothing was deleted. To get help, make a copy of your data with the installation-recovery command (export-damaged) and send it to support.",
   INVALID_MEMORY_LESSON_EVENT: "Part of what Murage learned from you points at something that is no longer there, so Murage has set memory aside until it is looked at. Your chats work as usual and nothing was deleted. To get help, make a copy of your data with the installation-recovery command (export-damaged) and send it to support.",
 };
-export const holdMessage = (code: string): string => HOLD_MESSAGES[code] ?? HOLD_MESSAGES.INVALID_MEMORY_REFERENCE!;
+export const holdMessage = (code: string): string => code === MEMORY_OPEN_HOLD ? memoryOpenHoldMessage() : HOLD_MESSAGES[code] ?? HOLD_MESSAGES.INVALID_MEMORY_REFERENCE!;
 
 const encodeKey = (key: unknown[]): string => JSON.stringify(key.map(value => typeof value === "bigint" ? { i: value.toString() } : value instanceof Uint8Array ? { b: Buffer.from(value).toString("hex") } : value));
 const decodeKey = (text: string): unknown[] => (JSON.parse(text) as unknown[]).map(value => {

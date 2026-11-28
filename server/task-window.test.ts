@@ -5,7 +5,7 @@ import { createTaskDelta } from "./task-delta.ts";
 import { ROSTER_TASK_WINDOW, TASK_WINDOW, decodeTaskCursor, encodeTaskCursor, pageTasks, sumTaskUsage, taskGrants, unreadKeep, windowTasks } from "./task-window.ts";
 
 type Row = { threadId: string; createdAt: number; pinned?: boolean; unread?: boolean; busy?: boolean; activity?: string; unreadCount?: number; usage?: { input: number; output: number; cachedInput?: number; costUsd: number | null; turns: number }; alwaysAllow?: string[] };
-/** The sum the interface made from the whole list before the server made it (src/lib/usage.ts sumUsage), written out again here. */
+/** The interface's full-list sum, including the subtotal of valid cache counts. */
 function reference(items: Array<Row["usage"]>) {
   const out: { input: number; output: number; cachedInput?: number; costUsd: number | null; turns: number } = { input: 0, output: 0, costUsd: null, turns: 0 };
   for (const u of items) {
@@ -14,8 +14,7 @@ function reference(items: Array<Row["usage"]>) {
     if (typeof u.cachedInput === "number") out.cachedInput = (out.cachedInput ?? 0) + u.cachedInput;
     if (typeof u.costUsd === "number") out.costUsd = (out.costUsd ?? 0) + u.costUsd;
   }
-  if (items.some((u) => u && u.input > 0 && typeof u.cachedInput !== "number")) delete out.cachedInput;
-  return out;
+  return { ...out, usageAccounting: { version: 1, inputComplete: !items.some(Boolean), cacheComplete: !items.some(Boolean) } };
 }
 const rows = (n: number): Row[] => Array.from({ length: n }, (_, i) => ({ threadId: `t${i}`, createdAt: 1_000 + i }));
 

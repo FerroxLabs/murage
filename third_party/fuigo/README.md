@@ -1,10 +1,10 @@
 # Fuigo native engine
 
-Murage prepares Fuigo **1.0.43** as a separate native executable. The engine requires no global Node, npm or Fuigo installation inside a packaged app.
+Murage prepares Fuigo **1.0.48** as a separate native executable. The engine requires no global Node, npm or Fuigo installation inside a packaged app.
 
-The [current receipt](../../scripts/fuigo-1.0.43-provenance.json) records the published package checksums and source commit. No 1.0.42 digest or source commit is reused. Packaging refuses pending pins before downloading or reusing a binary.
+The [current receipt](../../scripts/fuigo-1.0.48-provenance.json) records the published package checksums and source commit. No earlier release digest or source commit is reused. Packaging refuses pending pins before downloading or reusing a binary.
 
-After npm publication, run `scripts/fill-fuigo-pin.sh <linux> <win> <darwin>` with the independently reviewed **executable** SHA-256 values for linux-x64, win32-x64 and darwin-arm64. The command checks the exact version's npm SHA-512 integrity and SHA-1 shasum, package identities, wrapper dependency versions and executable headers. It also records digests for the other three existing platform pins. Windows arm64 remains unstageable. No executable or package install script runs during fill; the lockfile refresh is offline. A mismatch stops before writing pins. Reruns verify the same digests. Native release qualification is a separate gate.
+To move to a newer release, run `node scripts/fuigo-pin-move.mjs <x.y.z> <linux> <win> <darwin>` (it rewrites every version site with pending pins, then fills them). After npm publication, `scripts/fill-fuigo-pin.sh <linux> <win> <darwin>` fills a pending pin with the independently reviewed **executable** SHA-256 values for linux-x64, win32-x64 and darwin-arm64. The command checks the exact version's npm SHA-512 integrity and SHA-1 shasum, package identities, wrapper dependency versions and executable headers. It also records digests for the other three existing platform pins. Windows arm64 remains unstageable. No executable or package install script runs during fill; the lockfile refresh is offline. A mismatch stops before writing pins. Reruns verify the same digests. Native release qualification is a separate gate.
 
 The [1.0.42 release pin](../../scripts/fixtures/fuigo-1.0.42-pin.md) and [receipt](../../scripts/fuigo-1.0.42-provenance.json) remain historical evidence, not the current pin.
 

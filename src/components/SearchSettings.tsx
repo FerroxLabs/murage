@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { t } from "@/lib/i18n";
-import { InAdvanced } from "./SettingsPrimitives";
+import { InAdvanced, Switch } from "./SettingsPrimitives";
 
 type SearchProvider = "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off";
 type KeyProvider = "tavily" | "exa" | "firecrawl";
@@ -21,18 +21,25 @@ export function SearchSettings() {
   const [notice, setNotice] = useState("");
   // Where the last result belongs: a key saved under Advanced reports there, a provider choice reports above it.
   const [where, setWhere] = useState<"provider" | "keys">("provider");
+  // Search services are optional: a key field shows for the service in use or a key already saved; the rest wait behind one row.
+  const [showOthers, setShowOthers] = useState(false);
+  const inUse = (provider: KeyProvider) => search?.provider === provider || search?.[configuredFields[provider]] === true;
+  const shown = (["tavily", "exa", "firecrawl"] as const).filter(provider => showOthers || inUse(provider));
+  const others = (["tavily", "exa", "firecrawl"] as const).filter(provider => !inUse(provider));
   const gate = useRef(false);
   const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
-  const choose = async (provider: SearchProvider) => {
-    if (!search || gate.current || provider === search.provider) return;
-    gate.current = true; setBusy("provider"); setWhere("provider"); setError(""); setNotice("");
+  const choose = async (patch: { provider: SearchProvider } | { readEnabled: boolean }) => {
+    if (!search || gate.current) return;
+    const changesProvider = "provider" in patch;
+    gate.current = true; setBusy(changesProvider ? "provider" : "reading"); setWhere("provider"); setError(""); setNotice("");
     try {
-      const config = await api("/api/config", { method: "PUT", body: JSON.stringify({ webSearch: { provider } }) }) as ConfigStatus;
-      if (config.webSearch?.provider !== provider) throw new Error("Provider save was not confirmed");
+      const config = await api("/api/config", { method: "PUT", body: JSON.stringify({ webSearch: patch }) }) as ConfigStatus;
       dispatch({ type: "configStatus", config });
-      setNotice(t("searchSettings.providerSaved"));
-    } catch { setError(t("searchSettings.providerSaveError")); }
+      const confirmed = changesProvider ? config.webSearch?.provider === patch.provider : config.webSearch?.readEnabled === patch.readEnabled;
+      if (!confirmed) throw new Error("Web setting save was not confirmed");
+      if (changesProvider) setNotice(t("searchSettings.providerSaved"));
+    } catch { setError(t(changesProvider ? "searchSettings.providerSaveError" : "settings.workspaceFeature.saveError")); }
     finally { gate.current = false; setBusy(null); }
   };
   const saveKey = async (provider: KeyProvider, clear = false) => {
@@ -58,7 +65,7 @@ export function SearchSettings() {
     {!search && <p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("searchSettings.unavailable")}</p>}
     <label className="mt-3 block text-[12px] font-medium text-ink" htmlFor="web-search-provider">{t("searchSettings.provider")}</label>
     <select id="web-search-provider" data-setting-control="search-settings-heading" value={search?.provider ?? "engine"} disabled={!search || Boolean(busy)}
-      onChange={event => void choose(event.target.value as SearchProvider)}
+      onChange={event => void choose({ provider: event.target.value as SearchProvider })}
       className={"mt-1 min-h-11 w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50 " + focus}>
       <option value="engine">Engine search first, then Parallel and DuckDuckGo if needed</option>
       <option value="auto">No key needed: Parallel, then DuckDuckGo</option>
@@ -68,7 +75,7 @@ export function SearchSettings() {
       <option value="firecrawl">Firecrawl</option>
       <option value="off">{t("searchSettings.offOption")}</option>
     </select>
-    <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{search?.provider === "off"
+    <p id="web-search-provider-help" className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{search?.provider === "off"
       ? t("searchSettings.offHelp")
       : search?.provider === "auto"
         ? "No API key required. Queries go to Parallel and, if it fails, DuckDuckGo. Either service may change what it offers."
@@ -77,15 +84,21 @@ export function SearchSettings() {
       : search?.provider === "engine"
         ? "Use the engine's own search first. If unavailable, failed or limited, the bot can use Murage's backup: Parallel, then DuckDuckGo. Backup queries are sent to those services; your own search keys are never used automatically."
         : t("searchSettings.externalHelp")}</p>
+    {typeof search?.readEnabled === "boolean" && <div className="mt-3 flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
+      <span id="web-page-reading">{t("searchSettings.readPages")}</span>
+      <Switch aria-labelledby="web-page-reading" aria-describedby={search.provider === "off" ? "web-search-provider-help" : undefined}
+        checked={search.readEnabled} disabled={search.provider === "off" || Boolean(busy)}
+        onClick={() => void choose({ readEnabled: !search.readEnabled })} className={focus} />
+    </div>}
     {busy === "provider" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("searchSettings.savingProvider")}</p>}
     {where === "provider" && notice && <p role="status" className="mt-3 text-[12px] text-success">{notice}</p>}
     {where === "provider" && error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
   </section>
-  <InAdvanced part="webSearch.provider-keys"><section tabIndex={-1} aria-label={t("settings.l4.searchKeys.title")} className="rounded-xl bg-card p-4 outline-none">
+  <InAdvanced part="webSearch.provider-keys"><section data-setting-control="search-keys-heading" tabIndex={-1} aria-label={t("settings.l4.searchKeys.title")} className="rounded-xl bg-card p-4 outline-none">
     <h3 className="text-[15px] font-medium text-ink">{t("settings.l4.searchKeys.title")}</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("settings.l4.searchKeys.note")}</p>
     <div className="mt-4 space-y-4">
-      {(["tavily", "exa", "firecrawl"] as const).map(provider => {
+      {shown.map(provider => {
         const configured = search?.[configuredFields[provider]] === true;
         const name = labels[provider];
         return <div key={provider}>
@@ -94,7 +107,7 @@ export function SearchSettings() {
             <span className={"text-[11px] " + (configured ? "text-success" : "text-ink-secondary")}>{t(configured ? "searchSettings.keySaved" : "searchSettings.noKey")}</span>
           </div>
           <div className="mt-1.5 flex flex-wrap gap-2">
-            <input id={provider + "-search-key"} data-setting-control={provider === "tavily" ? "search-keys-heading" : undefined} type="password" value={values[provider]} autoComplete="off" spellCheck={false}
+            <input id={provider + "-search-key"} type="password" value={values[provider]} autoComplete="off" spellCheck={false}
               placeholder={t(configured ? "searchSettings.pasteReplacement" : "searchSettings.pasteKey")} disabled={!search || Boolean(busy)}
               onChange={event => { setValues(current => ({ ...current, [provider]: event.target.value })); setError(""); setNotice(""); }}
               onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void saveKey(provider); } }}
@@ -111,6 +124,8 @@ export function SearchSettings() {
           <p className="mt-1 text-[11px] text-ink-secondary">{t("searchSettings.keyPrivacy")}</p>
         </div>;
       })}
+      {!showOthers && others.length > 0 && <button type="button" aria-expanded="false" onClick={() => setShowOthers(true)}
+        className={"min-h-11 rounded-lg px-1 text-left text-[12px] font-medium text-ink-secondary hover:text-ink " + focus}>{t("searchSettings.otherServices")}</button>}
     </div>
     <p className="mt-3 text-[11px] leading-relaxed text-ink-secondary">{t("searchSettings.charges")}</p>
     {where === "keys" && notice && <p role="status" className="mt-3 text-[12px] text-success">{notice}</p>}

@@ -105,6 +105,19 @@ export async function proposeThroughMcp(server: McpServerEntry, prompt: string, 
   }
 }
 
+/** A mounted server's tool run the way an engine's MCP client runs an allowed call: initialize, then one tools/call with the call's own arguments. */
+export async function callMountedTool(server: McpServerEntry, tool: string, args: unknown): Promise<unknown> {
+  const mcp = session(server);
+  try {
+    await mcp.call("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "fake-engine", version: "1" } });
+    const reply = await mcp.call("tools/call", { name: tool, arguments: args });
+    if (reply.error) throw new Error(String(reply.error.message ?? "MCP call failed"));
+    return reply.result;
+  } finally {
+    mcp.close();
+  }
+}
+
 /** The owner's purpose inside the prompt's quoted data block. */
 function ownerPurpose(prompt: string): string {
   const line = /\nBEGIN PROJECT DATA [a-f0-9]+\n(.*)\nEND PROJECT DATA/.exec(prompt)?.[1];

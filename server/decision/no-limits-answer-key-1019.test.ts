@@ -9,7 +9,7 @@ let evidence:any;
 const dir=process.env.A4_KEY_DIR??mkdtempSync(join(tmpdir(),'a4-keys-'));
 beforeAll(()=>{
  mkdirSync(dir,{recursive:true});
- const r=spawnSync(process.execPath,['--experimental-strip-types',resolve('evidence/nlsym-A4/answer-key-fixture.mjs')],{env:{...process.env,A4_KEY_DIR:dir},encoding:'utf8',timeout:180000,maxBuffer:16*1024*1024});
+ const r=spawnSync(process.execPath,['--experimental-strip-types',resolve('server/testing/no-limits-answer-key-fixture.mjs')],{env:{...process.env,A4_KEY_DIR:dir},encoding:'utf8',timeout:180000,maxBuffer:16*1024*1024});
  expect(r.signal,r.stdout+r.stderr).toBe(null);expect(r.status,r.stdout+r.stderr).toBe(0);
  evidence=JSON.parse(readFileSync(join(dir,'results.json'),'utf8'));expect(evidence.ok,evidence.error).toBe(true);expect(evidence.cleaned).toBe(true);
 },190000);

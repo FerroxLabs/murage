@@ -119,10 +119,13 @@ describe("desk presence reporting", () => {
     await settled();
     t.setIdle("idle");
     t.power("unlock-screen");
-    expect(t.post).toHaveBeenCalledTimes(2);
+    // warm presence P-SIG 3a/5 (designs/WARM-W1-1022-presence.md): an idle unlock is still reported, absent and with no state
+    expect(t.post).toHaveBeenCalledTimes(3);
+    expect(t.last()).toEqual({ clientId: "desk-12345678", visible: false, seq: 3 });
+    await settled();
     t.setIdle("active");
     t.poll();
-    expect(t.last()).toMatchObject({ visible: true, seq: 3 });
+    expect(t.last()).toMatchObject({ visible: true, seq: 4 });
   });
 
   it("the system's own locked answer counts as locked", async () => {
@@ -225,5 +228,54 @@ describe("the host's answer with the desk reporting", () => {
     t.poll();
     await settled();
     expect(presence.present()).toBe(false);
+  });
+});
+
+// Warm presence (designs/WARM-W1-1022-presence.md W-PR7): the desktop's lock and sleep are away EDGES for warm engines. Every move
+// into locked or asleep is posted with its `state`, also from idle; unlock and resume always post (no state), even while idle; a
+// queued state report is never coalesced away by a later report without one.
+describe("W-PR7 desk state on the wire", () => {
+  it("W-PR7a: lock posts state locked, suspend posts state asleep, unlock and resume post with no state even while idle", async () => {
+    const t = harness();
+    await settled();
+    t.power("lock-screen");
+    expect(t.last()).toEqual({ clientId: "desk-12345678", visible: false, seq: 2, state: "locked" }); // W-PR7a:lock
+    await settled();
+    t.setIdle("idle");
+    t.power("unlock-screen");
+    expect(t.last()).toEqual({ clientId: "desk-12345678", visible: false, seq: 3 }); // W-PR7a:idle-unlock
+    await settled();
+    t.power("suspend");
+    expect(t.last()).toEqual({ clientId: "desk-12345678", visible: false, seq: 4, state: "asleep" }); // W-PR7a:asleep
+    await settled();
+    t.power("resume");
+    expect(t.last()).toEqual({ clientId: "desk-12345678", visible: false, seq: 5 }); // W-PR7a:idle-resume
+  });
+
+  it("W-PR7b: idle 2 min (absent already posted), then an auto-lock: a second post with state locked", async () => {
+    const t = harness();
+    await settled();
+    t.setIdle("idle");
+    t.poll();
+    expect(t.last()).toEqual({ clientId: "desk-12345678", visible: false, seq: 2 });
+    await settled();
+    t.setIdle("locked");
+    t.poll();
+    expect(t.post).toHaveBeenCalledTimes(3); // W-PR7b:second-post
+    expect(t.last()).toEqual({ clientId: "desk-12345678", visible: false, seq: 3, state: "locked" });
+  });
+
+  it("W-PR7c: a lock while the previous post is in flight: the queued post carries state locked after it answers", async () => {
+    let release;
+    const t = harness();
+    t.post.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    await settled();
+    t.beat(); // seq 2, held open
+    t.power("lock-screen");
+    t.power("unlock-screen"); // a later report without a state does not drop the queued lock
+    release();
+    await settled();
+    await settled();
+    expect(t.post.mock.calls.map(([body]) => body.state ?? null)).toContain("locked"); // W-PR7c:state-kept
   });
 });

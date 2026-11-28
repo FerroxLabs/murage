@@ -87,6 +87,8 @@ export interface StreamError {
   param?: string;
 }
 
+export const CALL_ADMISSION_UNKNOWN = "call_admission_unknown";
+
 /** 4000 plus the HTTP status Flux returns for the same condition (spec A.11). */
 const HTTP_STATUS_FOR_CODE: Record<string, number> = {
   invalid_request_error: 400,
@@ -116,9 +118,16 @@ const HTTP_STATUS_FOR_CODE: Record<string, number> = {
   internal_error: 500,
   capability_unavailable: 502,
   service_unavailable: 503,
+  [CALL_ADMISSION_UNKNOWN]: 503,
   slow_consumer: 503,
   upstream_timeout: 504,
 };
+
+const NOTICE_CODES = new Set(["config_immutable", "config_unsupported", "unknown_message_type", "invalid_json"]);
+
+export function isStreamErrorCode(code: string): boolean {
+  return Object.hasOwn(HTTP_STATUS_FOR_CODE, code) || NOTICE_CODES.has(code);
+}
 
 export function closeCodeFor(code: string): number {
   const status = HTTP_STATUS_FOR_CODE[code];
@@ -200,6 +209,18 @@ const FIELDS: Record<string, (raw: unknown) => Check> = {
   idle_timeout_s: (raw) => asInt("idle_timeout_s", raw, 5, 300),
   max_session_s: (raw) => asInt("max_session_s", raw, 60, 10_800),
 };
+
+export function projectStreamConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const projected: Record<string, unknown> = {};
+  for (const [name, raw] of Object.entries(config)) {
+    if (!Object.hasOwn(FIELDS, name)) continue;
+    const checked = raw === null && (name === "min_silence_ms" || name === "max_silence_ms")
+      ? { value: null }
+      : FIELDS[name](raw);
+    if ("value" in checked) projected[name] = checked.value;
+  }
+  return projected;
+}
 
 const FORBIDDEN_QUERY: readonly string[] = ["api_key", "apikey", "key", "authorization", "access_token"];
 const TRANSPORT_QUERY: readonly string[] = ["client_token", "flux_test_fault"];

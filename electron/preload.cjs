@@ -89,8 +89,9 @@ const browserSurfaceSupported = process.platform === "darwin" || process.platfor
 let pendingCloudSignIn = null;
 const cloudSignInListeners = new Set();
 if (cloudFlagOn()) ipcRenderer.on("cloud-home:sign-in-requested", (_event, request) => {
-  if (!request || typeof request.homeId !== "string" || typeof request.bot !== "string" || typeof request.engine !== "string") return;
-  const checked = { homeId: request.homeId, bot: request.bot, engine: request.engine };
+  if (!request || typeof request.homeId !== "string" || typeof request.engine !== "string" || (request.bot !== undefined && typeof request.bot !== "string")) return;
+  // S2: an engine's own sign-in (from the Cloud window's setup card) names no bot.
+  const checked = { homeId: request.homeId, ...(typeof request.bot === "string" ? { bot: request.bot } : {}), engine: request.engine };
   if (!cloudSignInListeners.size) pendingCloudSignIn = checked;
   for (const listener of cloudSignInListeners) listener(checked);
 });
@@ -142,6 +143,18 @@ const desktopSurfaceSecret = (() => {
   }
 })();
 
+/** The launch id this launch's engine puts in every answer (x-murage-launch):
+ * the renderer treats a responder without it as "Murage is reconnecting", never
+ * as an answer (src/lib/live-events.ts responderIsOurs). "" when main has none. */
+const serverLaunch = (() => {
+  try {
+    const value = ipcRenderer.sendSync("desktop:server-launch");
+    return typeof value === "string" ? value : "";
+  } catch {
+    return "";
+  }
+})();
+
 // A pop-out must be registered in main before it receives even the bridge.
 // Keep the main-window development fallback unchanged.
 if (new URL(globalThis.location?.search || "/", globalThis.location.origin).searchParams.get("surface") === "browser-popout" && !desktopSurfaceSecret) return;
@@ -150,6 +163,8 @@ contextBridge.exposeInMainWorld("muragebox", {
   platform: process.platform,
   /** CPU architecture ("arm64" | "x64"), for the version line a support message carries. */
   arch: process.arch,
+  /** True in the Mac App Store and Windows Store builds (main passes --murage-store=1): outbound asks stay hidden there. */
+  storeBuild: (() => { try { return (process.argv ?? []).includes("--murage-store=1"); } catch { return false; } })(),
   backup: {
     status: () => ipcRenderer.invoke("backup-mode:status"),
     restart: () => ipcRenderer.invoke("backup-mode:restart"),
@@ -163,7 +178,8 @@ contextBridge.exposeInMainWorld("muragebox", {
     status: () => ipcRenderer.invoke("backup-schedule:status"),
     selectReferences: () => ipcRenderer.invoke("backup-schedule:select"),
     setUp: (options) => options === undefined ? ipcRenderer.invoke("backup-schedule:set-up") : ipcRenderer.invoke("backup-schedule:set-up", options),
-    configure: (revision, choices) => ipcRenderer.invoke("backup-schedule:configure", revision, choices),
+    configure: (revision, choices, changeId) => changeId === undefined ? ipcRenderer.invoke("backup-schedule:configure", revision, choices) : ipcRenderer.invoke("backup-schedule:configure", revision, choices, changeId),
+    changes: (afterRevision) => ipcRenderer.invoke("backup-schedule:changes", afterRevision),
     runNow: (revision) => ipcRenderer.invoke("backup-schedule:run-now", revision),
     clearReview: (revision) => ipcRenderer.invoke("backup-schedule:clear-review", revision),
     finishFirstRun: (choice) => ipcRenderer.invoke("backup-schedule:finish-first-run", choice),
@@ -228,12 +244,15 @@ contextBridge.exposeInMainWorld("muragebox", {
     state: () => invokeShown("cloud-home:state"),
     listHomes: () => invokeShown("cloud-home:list-homes"),
     listBots: homeId => invokeShown("cloud-home:list-bots", homeId),
+    listEngines: homeId => invokeShown("cloud-home:list-engines", homeId),
     connectStart: () => invokeShown("cloud-home:connect-start"),
     connectCancel: () => invokeShown("cloud-home:connect-cancel"),
     /** "Use copied link": no arguments. Main reads the clipboard itself; the link never passes through this window. */
     connectPaste: () => invokeShown("cloud-home:connect-paste"),
     connectStatus: () => invokeShown("cloud-home:connect-status"),
     disconnect: homeId => invokeShown("cloud-home:disconnect", homeId),
+    lendState: () => invokeShown("lent-computer:state"),
+    lendOpenApproval: () => invokeShown("lent-computer:open-approval"),
     open: (homeId, reconnecting) => invokeShown("cloud-home:open", homeId, ...(reconnecting === true ? [true] : [])),
     /** Main tells the window when Cloud goes live (or stops being), so the entry appears without a restart. */
     onLive: cb => { const handler = (_event, state) => cb(state?.live === true); ipcRenderer.on("cloud-home:live", handler); return () => ipcRenderer.removeListener("cloud-home:live", handler); },
@@ -282,6 +301,9 @@ contextBridge.exposeInMainWorld("muragebox", {
   },
   /** Proof, to this launch's harness, that this really is the renderer. */
   desktopSurfaceSecret,
+  serverLaunch,
+  /** The chat on screen, so a window that follows a restarted engine reopens it. */
+  reportOpenChat: (threadId) => ipcRenderer.send("desktop:open-chat", threadId),
   getCapabilities: () => ipcRenderer.invoke("desktop:capabilities"),
   onCapabilitiesChanged: (cb) => {
     const handler = (_event, capabilities) => cb(capabilities);
@@ -325,6 +347,7 @@ contextBridge.exposeInMainWorld("muragebox", {
     pairing: (open, expectedToken) => ipcRenderer.invoke("companion:pairing", open, expectedToken),
     cloudDesktop: (deviceId, allowed) => ipcRenderer.invoke("companion:cloud-desktop", deviceId, allowed),
     revoke: (deviceId) => ipcRenderer.invoke("companion:revoke", deviceId),
+    removalStatus: (deviceId) => ipcRenderer.invoke("companion:removal-status", deviceId),
     shareAsk: (deviceId, allowed) => ipcRenderer.invoke("companion:share-ask", deviceId, allowed),
   },
   /** Optional account-backed HTTPS access for Companion. Secrets stay in the
@@ -598,13 +621,11 @@ contextBridge.exposeInMainWorld("muragebox", {
   /** The owner's own MCP servers (MCP-LINK T11): keys, links, env values and
    * sign-in go to the main process, which keeps them encrypted. Nothing here
    * ever returns a value. */
-  highlevel: {
-    commit: (intent) => ipcRenderer.invoke("highlevel:commit", intent),
-  },
   mcpServers: {
     mode: () => ipcRenderer.invoke("mcp-servers:mode"),
     saveSecrets: (name, input) => ipcRenderer.invoke("mcp-servers:save-secrets", name, input),
     signIn: (name) => ipcRenderer.invoke("mcp-servers:sign-in", name),
+    useOwnApp: (name, input) => ipcRenderer.invoke("mcp-servers:use-own-app", name, input),
     cancelSignIn: (name) => ipcRenderer.invoke("mcp-servers:cancel-sign-in", name),
     signOut: (name) => ipcRenderer.invoke("mcp-servers:sign-out", name),
     remove: (name) => ipcRenderer.invoke("mcp-servers:remove", name),
@@ -631,6 +652,8 @@ contextBridge.exposeInMainWorld("muragebox", {
     download: () => ipcRenderer.invoke("update:download"),
     install: () => ipcRenderer.invoke("update:install"),
     retry: () => ipcRenderer.invoke("update:retry"),
+    getUpdatesEarly: () => ipcRenderer.invoke("update:get-early"),
+    setUpdatesEarly: (early) => ipcRenderer.invoke("update:set-early", early === true),
     /** Step back to the previous version; takes nothing, the app asks before it quits. */
     preparePreviousVersion: () => ipcRenderer.invoke("update:prepare-previous-version"),
     onState: (cb) => {

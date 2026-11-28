@@ -26,6 +26,21 @@ describe("rewriteInitializeCapabilities (decision D10, MCP-ELICITATION-109)", ()
 });
 
 describe("SseFrameReader", () => {
+  it("keeps one multiline frame when each CR and LF arrives in a separate chunk", () => {
+    const reader = new SseFrameReader();
+    expect(reader.push('event: message\r')).toEqual([]);
+    expect(reader.push('\ndata: {"id":1,\r')).toEqual([]);
+    expect(reader.push('\ndata: "result":{}}\r')).toEqual([]);
+    expect(reader.push('\n\r')).toEqual([]);
+    expect(reader.push('\n')).toEqual([{ id: 1, result: {} }]);
+    expect(reader.end()).toEqual([]);
+  });
+  it.each(["", "\r", "\n", "\r\n"])("reads a final frame with no closing blank line (%j)", (ending) => {
+    const reader = new SseFrameReader();
+    expect(reader.push('data: {"id":1,"result":{}}' + ending)).toEqual([]);
+    expect(reader.end()).toEqual([{ id: 1, result: {} }]);
+    expect(reader.end()).toEqual([]);
+  });
   it("returns each frame as soon as its event is complete, across chunk boundaries", () => {
     const reader = new SseFrameReader();
     expect(reader.push('event: message\ndata: {"id":')).toEqual([]);

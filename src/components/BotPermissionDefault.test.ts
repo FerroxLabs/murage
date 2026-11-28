@@ -45,12 +45,25 @@ describe("Bot Settings approval default", () => {
     expect(defaultModeStep(acknowledged, "full", false, true).kind).not.toBe("no-limits-warning");
   });
 
-  it("offers Ask, Auto and Full access, with the current default pressed", () => {
-    expect(pressed(render({ autoApprove: false }))).toEqual(["Ask"]);
+  // CHANGED EXPECTATION (F33, Sean 2026-11-27): the four levels are shown as Automatic (Full access) and Ask first, with Auto and
+  // No limits under Advanced; the stored levels and the pressed-level rule are unchanged.
+  it("offers Automatic and Ask first, Auto and No limits under Advanced, with the current default pressed", () => {
+    expect(pressed(render({ autoApprove: false }))).toEqual(["Ask first"]);
     expect(pressed(render({ autoApprove: true, fullAccess: false }))).toEqual(["Auto"]);
-    expect(pressed(render({ autoApprove: true, fullAccess: true }))).toEqual(["Full access"]);
+    expect(pressed(render({ autoApprove: true, fullAccess: true }))).toEqual(["Automatic"]);
+    expect(pressed(render({ autoApprove: true, fullAccess: true, noLimits: true }))).toEqual(["No limits"]);
     // Full access counts only on top of Auto, as the server reads it
-    expect(pressed(render({ autoApprove: false, fullAccess: true }))).toEqual(["Ask"]);
+    expect(pressed(render({ autoApprove: false, fullAccess: true }))).toEqual(["Ask first"]);
+    // two choices in view, Automatic first; Auto and No limits only inside the Advanced fold, open only when one of them is pressed
+    const markup = render({ autoApprove: false });
+    const fold = markup.indexOf("<details");
+    expect(markup.indexOf(">Automatic<")).toBeLessThan(markup.indexOf(">Ask first<"));
+    expect(markup.indexOf(">Ask first<")).toBeLessThan(fold);
+    expect(markup.indexOf(">Auto<")).toBeGreaterThan(fold);
+    expect(markup.indexOf(">No limits<")).toBeGreaterThan(fold);
+    expect(markup.slice(fold, markup.indexOf(">", fold))).not.toContain("open");
+    const advanced = render({ autoApprove: true, fullAccess: false });
+    expect(advanced.slice(advanced.indexOf("<details"), advanced.indexOf(">", advanced.indexOf("<details")))).toContain("open");
     expect(render({ autoApprove: false })).toContain("New conversations start");
   });
 
@@ -77,24 +90,24 @@ describe("Bot Settings approval default", () => {
       const markup = render({ ...bot, fullAccessChannelMessages: true });
       expect(option(markup, FULL_ACCESS_CHANNEL_OPTION)).toContain(' disabled=""');
       expect(option(markup, FULL_ACCESS_SETUP_OPTION)).toContain(' disabled=""');
-      expect(markup).toContain("Only used when the default is Full access");
+      expect(markup).toContain("Only used when the default is Automatic");
     }
   });
 
   it("offers Full access only on the desktop app, and says so elsewhere", () => {
     // a phone or the browser door: the server would refuse it, so it is not offered
     const remote = render({ autoApprove: true, fullAccess: false }, false, false);
-    expect(radio(remote, "Full access")).toContain(' disabled=""');
+    expect(radio(remote, "Automatic")).toContain(' disabled=""');
     expect(radio(remote, "Auto")).not.toContain(' disabled=""');
     expect(remote).toContain("Full access can only be turned on in the Murage desktop app.");
     // already on Full access: still shown as the default, options not editable here
     const remoteFull = render({ autoApprove: true, fullAccess: true }, false, false);
-    expect(pressed(remoteFull)).toEqual(["Full access"]);
+    expect(pressed(remoteFull)).toEqual(["Automatic"]);
     expect(option(remoteFull, FULL_ACCESS_SETUP_OPTION)).toContain(' disabled=""');
     // the desktop, and not-yet-known, keep it available (the server still decides)
     for (const desktop of [true, undefined]) {
       const markup = render({ autoApprove: true, fullAccess: false }, false, desktop);
-      expect(radio(markup, "Full access")).not.toContain(' disabled=""');
+      expect(radio(markup, "Automatic")).not.toContain(' disabled=""');
       expect(markup).not.toContain("can only be turned on in the Murage desktop app");
     }
   });

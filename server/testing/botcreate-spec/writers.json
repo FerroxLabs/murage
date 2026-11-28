@@ -659,6 +659,7 @@
         "server/index.ts|wouldRunEngineCommand|if ((method === \"PUT\" || method === \"PATCH\") && path === \"/api/config\") {|other|const status = configStatus();",
         "server/index.ts|wouldRunEngineCommand|if (method === \"GET\" && path === \"/api/config\") {|other|// configStatus(), because the same process serves both.",
         "server/index.ts|wouldRunEngineCommand|if (method === \"GET\" && path === \"/api/config\") {|other|return json(res, 200, { ...(surface === \"desktop\" ? configStatus() : scopedConfig(configStatus())), surface, computer: isOwnersComputer(req.headers, url.searchParams), ...(homeView ?? {}) });",
+        "server/index.ts|wouldRunEngineCommand|if (path === \"/api/automatic-notice\" && method === \"POST\") {|engine|return json(res, 200, { automaticNotice: configStatus().automaticNotice });",
         "server/index.ts|wouldRunEngineCommand|if (path === \"/api/no-limits/terms\" && method === \"POST\") {|other|return json(res, 200, { noLimitsTerms: configStatus().noLimitsTerms });"
       ]
     },
@@ -678,6 +679,7 @@
         "server/index.ts|wouldRunEngineCommand|if ((method === \"PUT\" || method === \"PATCH\") && path === \"/api/config\") {|other|const status = configStatus();",
         "server/index.ts|wouldRunEngineCommand|if (method === \"GET\" && path === \"/api/config\") {|other|// configStatus(), because the same process serves both.",
         "server/index.ts|wouldRunEngineCommand|if (method === \"GET\" && path === \"/api/config\") {|other|return json(res, 200, { ...(surface === \"desktop\" ? configStatus() : scopedConfig(configStatus())), surface, computer: isOwnersComputer(req.headers, url.searchParams), ...(homeView ?? {}) });",
+        "server/index.ts|wouldRunEngineCommand|if (path === \"/api/automatic-notice\" && method === \"POST\") {|engine|return json(res, 200, { automaticNotice: configStatus().automaticNotice });",
         "server/index.ts|wouldRunEngineCommand|if (path === \"/api/no-limits/terms\" && method === \"POST\") {|other|return json(res, 200, { noLimitsTerms: configStatus().noLimitsTerms });"
       ]
     },
@@ -1565,13 +1567,13 @@
       "zone": "other",
       "code": "createBot(",
       "callers": [
-        "server/index.ts|wouldRunEngineCommand|if (method === \"GET\") return json(res, 200, { enabled: clients.enabled, clients: clients.list(), profiles: browserExtension?.status().profiles ?? [] });|other|const bot = store.createBot({ name: body.label, title: \"External browser connection\" }, { seedMessages: false });",
-        "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/bots\") {|other|const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven, ...(proven && startComputer.computer ? { computer: startComputer.computer } : {}) });",
+        "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/bots\") {|other|const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven, ...(proven ? { ownerCreated: true as const } : {}), ...(proven && startComputer.computer ? { computer: startComputer.computer } : {}) });",
         "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/hermes/profiles/import\") {|other|const bot = store.createBot({ ...profile.patch, modelSelection: { instanceId: item.instanceId, model: HERMES_CONFIG_MODEL_ID } }, { seedMessages: false });",
         "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/internal/create-bot\") {|engine|const created = store.createBot(",
         "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/teams/import\") {|other|const created = store.createBot(",
         "server/sharing-routes.ts|copyForTeam||other|const copy = store.createBot({",
-        "server/store.ts|seedIfEmpty||other|this.createBot({}, { seedMessages: false, engineAutoPicked: true });"
+        "server/store.ts|seedIfEmpty||other|this.createBot({}, { seedMessages: false, engineAutoPicked: true, ownerCreated: true });",
+        "server/index.ts|wouldRunEngineCommand|if (method === \"GET\") return json(res, 200, { enabled: clients.enabled, clients: clients.list(), profiles: browserExtension?.status().profiles ?? [] });|other|const bot = store.createBot({ name: body.label, title: \"External browser connection\" }, { seedMessages: false });"
       ]
     },
     "classification": "definition",
@@ -1640,8 +1642,6 @@
         "server/index.ts|browserSetupWorkflow||other|store.patchBot(botId,{browser:true});",
         "server/index.ts|rememberHostComputerConsent||other|store.patchBot(botId, { hostComputerConsent: consent });",
         "server/index.ts|replyGuardContext||other|store.patchBot(speakingBot.id, { unread: true });",
-        "server/index.ts|startTurnAdmitting||other|if (bot.localControlOffNoted) store.patchBot(bot.id, { localControlOffNoted: false });",
-        "server/index.ts|startTurnAdmitting||other|store.patchBot(bot.id, { localControlOffNoted: true });",
         "server/index.ts|wouldRunEngineCommand|...(method === \"PUT\" && onOwnerBrowser(req.headers) ? {|other|if (bot && id === \"chief-of-staff\") store.patchBot(botId, { builtinSkills: { ...bot.builtinSkills, [id]: on } });",
         "server/index.ts|wouldRunEngineCommand|const accessMatch = method === \"PUT\" ? /^\\/api\\/highlevel\\/bots\\/([\\w-]+)\\/access$/.exec(path) : null;|other|const saved = store.patchBot(bot.id, { highlevelAccess: access });",
         "server/index.ts|wouldRunEngineCommand|if (m && method === \"PATCH\") {|other|const bot = level.action === \"write\" ? commitLevelChange(store, patchBotId, level, { preserveTaskSettings, ifRev: body.ifRev }) : store.patchBot(patchBotId, level.patch ?? patch,{preserveTaskSettings});",
@@ -2841,21 +2841,6 @@
       "fn": "startTurnAdmitting",
       "route": "",
       "zone": "other",
-      "code": "if (bot.localControlOffNoted) store.patchBot(bot.id, { localControlOffNoted: false });",
-      "callers": [
-        "server/index.ts|startTurn||other|return startTurnAdmitting(allowance, ...args);"
-      ]
-    },
-    "classification": "runtime-bookkeeping",
-    "reason": "Maintains unread/cursor/effort/failover/receipt/partition state, not a bot-management grant. Staged bot execution is independently rejected at admission and before provider submission."
-  },
-  {
-    "site": {
-      "group": "G5",
-      "file": "server/index.ts",
-      "fn": "startTurnAdmitting",
-      "route": "",
-      "zone": "other",
       "code": "if (privateWorkspace && bot.partitionedAt !== undefined && !isHomePartition(threadPartition(bot, threadId)) && task.cwd && partitionFileRefusal(bot, threadId, [task.cwd])) store.patchTask(bot.id, threadId, { cwd: privateWorkspace });",
       "callers": [
         "server/index.ts|startTurn||other|return startTurnAdmitting(allowance, ...args);"
@@ -2908,21 +2893,6 @@
     },
     "classification": "narrowing",
     "reason": "Clears approvals, restricts a human task to its partition, removes a remembered grant or archives imported actors. No new standing authority is written."
-  },
-  {
-    "site": {
-      "group": "G5",
-      "file": "server/index.ts",
-      "fn": "startTurnAdmitting",
-      "route": "",
-      "zone": "other",
-      "code": "store.patchBot(bot.id, { localControlOffNoted: true });",
-      "callers": [
-        "server/index.ts|startTurn||other|return startTurnAdmitting(allowance, ...args);"
-      ]
-    },
-    "classification": "runtime-bookkeeping",
-    "reason": "Maintains unread/cursor/effort/failover/receipt/partition state, not a bot-management grant. Staged bot execution is independently rejected at admission and before provider submission."
   },
   {
     "site": {
@@ -3483,11 +3453,11 @@
       "fn": "wouldRunEngineCommand",
       "route": "if (method === \"POST\" && path === \"/api/bots\") {",
       "zone": "other",
-      "code": "const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven, ...(proven && startComputer.computer ? { computer: startComputer.computer } : {}) });",
+      "code": "const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven, ...(proven ? { ownerCreated: true as const } : {}), ...(proven && startComputer.computer ? { computer: startComputer.computer } : {}) });",
       "callers": []
     },
     "classification": "owner-settings",
-    "reason": "Existing authenticated owner create or browser-client setup route retains desktop proof and access defaults; staged records retain their permission clamp."
+    "reason": "Existing authenticated owner create or browser-client setup route retains desktop proof and access defaults; staged records retain their permission clamp. F33 (1.0.24): ownerCreated marks an owner-created bot, the only creation that takes the fresh-install Automatic seed; it is passed only for a proven owner (proven) here."
   },
   {
     "site": {
@@ -4155,13 +4125,13 @@
       "zone": "other",
       "code": "this.saveBots();",
       "callers": [
-        "server/index.ts|wouldRunEngineCommand|if (method === \"GET\") return json(res, 200, { enabled: clients.enabled, clients: clients.list(), profiles: browserExtension?.status().profiles ?? [] });|other|const bot = store.createBot({ name: body.label, title: \"External browser connection\" }, { seedMessages: false });",
-        "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/bots\") {|other|const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven, ...(proven && startComputer.computer ? { computer: startComputer.computer } : {}) });",
+        "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/bots\") {|other|const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven, ...(proven ? { ownerCreated: true as const } : {}), ...(proven && startComputer.computer ? { computer: startComputer.computer } : {}) });",
         "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/hermes/profiles/import\") {|other|const bot = store.createBot({ ...profile.patch, modelSelection: { instanceId: item.instanceId, model: HERMES_CONFIG_MODEL_ID } }, { seedMessages: false });",
         "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/internal/create-bot\") {|engine|const created = store.createBot(",
         "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/teams/import\") {|other|const created = store.createBot(",
         "server/sharing-routes.ts|copyForTeam||other|const copy = store.createBot({",
-        "server/store.ts|seedIfEmpty||other|this.createBot({}, { seedMessages: false, engineAutoPicked: true });"
+        "server/store.ts|seedIfEmpty||other|this.createBot({}, { seedMessages: false, engineAutoPicked: true, ownerCreated: true });",
+        "server/index.ts|wouldRunEngineCommand|if (method === \"GET\") return json(res, 200, { enabled: clients.enabled, clients: clients.list(), profiles: browserExtension?.status().profiles ?? [] });|other|const bot = store.createBot({ name: body.label, title: \"External browser connection\" }, { seedMessages: false });"
       ]
     },
     "classification": "staged-bot",
@@ -4176,7 +4146,7 @@
       "zone": "other",
       "code": "this.saveGroups();",
       "callers": [
-        "server/comms-visibility.ts|getOrCreateChannel||other|const group=store.createGroup(`${from.name} \u21c4 ${target.name}`, [from.id, target.id], true, dmAudience?.kind === \"team\" ? teamLabel(dmAudience.teamId) ?? from.section : dmAudience?.kind === \"project\" || dmAudience?.kind === \"room\" ? store.group(dmAudience.groupId)?.section : from.section, undefined, dmAudience);",
+        "server/comms-visibility.ts|getOrCreateChannel||other|const group=store.createGroup(`${from.name} ⇄ ${target.name}`, [from.id, target.id], true, dmAudience?.kind === \"team\" ? teamLabel(dmAudience.teamId) ?? from.section : dmAudience?.kind === \"project\" || dmAudience?.kind === \"room\" ? store.group(dmAudience.groupId)?.section : from.section, undefined, dmAudience);",
         "server/index.ts|ensureCalendarCallRoom||other|group ??= store.createGroup(call.name, call.botIds, false, undefined, {",
         "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/groups\") {|other|let group = store.createGroup(name, memberIds.filter(id => !stagedMembers.includes(id)), false, section, setup);",
         "server/index.ts|wouldRunEngineCommand|if (method === \"POST\" && path === \"/api/teams/import\") {|other|group = store.createGroup(roomName, importedBots.map((bot) => bot.id));",
@@ -4463,7 +4433,7 @@
         "server/drivers/acp/core.ts|create||other|emit({ ...base(threadId, turnId), type: \"item.started\", itemId, itemType: \"tool\", origin: \"murage\", title: ASK_STOP_NOTE, toolKind: \"notice\" });",
         "server/drivers/acp/core.ts|create||other|emit({ ...base(threadId, turnId), type: \"item.started\", itemId, itemType: \"tool\", origin: \"murage\", title: name });",
         "server/drivers/acp/core.ts|create||other|emit({ ...base(threadId, turnId), type: \"item.started\", itemId, itemType: \"tool\", origin: \"murage\", toolKind: \"notice\", title: \"The engine stopped before approval delivery could be confirmed.\" });",
-        "server/drivers/acp/core.ts|create||other|emit({ ...base(threadId, turnId), type: \"runtime.error\", message: \"Hermes ran a tool without Murage\u2019s check, so Murage stopped this turn.\" });",
+        "server/drivers/acp/core.ts|create||other|emit({ ...base(threadId, turnId), type: \"runtime.error\", message: \"Hermes ran a tool without Murage’s check, so Murage stopped this turn.\" });",
         "server/drivers/acp/core.ts|create||other|emit({ ...base(threadId, turnId), type: \"runtime.error\", message: FALLBACK_CAP_LINE });",
         "server/drivers/acp/core.ts|create||other|emit({ ...base(threadId, turnId), type: \"runtime.error\", message: HOOK_CHECK_DENIED });",
         "server/drivers/acp/core.ts|create||other|emit({ ...base(threadId, turnId), type: \"runtime.error\", message: engineClosedLine(ENGINE, null) });",
@@ -4989,8 +4959,6 @@
         "server/index.ts|browserSetupWorkflow||other|store.patchBot(botId,{browser:true});",
         "server/index.ts|rememberHostComputerConsent||other|store.patchBot(botId, { hostComputerConsent: consent });",
         "server/index.ts|replyGuardContext||other|store.patchBot(speakingBot.id, { unread: true });",
-        "server/index.ts|startTurnAdmitting||other|if (bot.localControlOffNoted) store.patchBot(bot.id, { localControlOffNoted: false });",
-        "server/index.ts|startTurnAdmitting||other|store.patchBot(bot.id, { localControlOffNoted: true });",
         "server/index.ts|wouldRunEngineCommand|...(method === \"PUT\" && onOwnerBrowser(req.headers) ? {|other|if (bot && id === \"chief-of-staff\") store.patchBot(botId, { builtinSkills: { ...bot.builtinSkills, [id]: on } });",
         "server/index.ts|wouldRunEngineCommand|const accessMatch = method === \"PUT\" ? /^\\/api\\/highlevel\\/bots\\/([\\w-]+)\\/access$/.exec(path) : null;|other|const saved = store.patchBot(bot.id, { highlevelAccess: access });",
         "server/index.ts|wouldRunEngineCommand|if (m && method === \"PATCH\") {|other|const bot = level.action === \"write\" ? commitLevelChange(store, patchBotId, level, { preserveTaskSettings, ifRev: body.ifRev }) : store.patchBot(patchBotId, level.patch ?? patch,{preserveTaskSettings});",
@@ -5709,13 +5677,13 @@
       "fn": "seedIfEmpty",
       "route": "",
       "zone": "other",
-      "code": "this.createBot({}, { seedMessages: false, engineAutoPicked: true });",
+      "code": "this.createBot({}, { seedMessages: false, engineAutoPicked: true, ownerCreated: true });",
       "callers": [
         "server/index.ts|reconcileLateSteer||other|store.seedIfEmpty();"
       ]
     },
     "classification": "boot",
-    "reason": "First-run default bot creation, before an engine turn exists."
+    "reason": "First-run default bot creation, before an engine turn exists. F33 (1.0.24): ownerCreated: the first Chief seeded for the owner at boot takes the fresh-install Automatic seed; every other creation starts at Ask."
   },
   {
     "site": {

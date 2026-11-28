@@ -6,6 +6,7 @@
 // only ever presented to the server's own origin.
 import {
   AGENT_RECOMMENDED_CONTEXT_TOKENS,
+  isOllamaCloudModel,
   isValidLocalModelId,
   type LocalContextReading,
   type LocalServerKind,
@@ -13,11 +14,14 @@ import {
 } from "../shared/local-models.ts";
 import {
   anthropicBaseUrl,
+  cachedHostContext,
+  contextFence,
   contextFromLlamaProps,
   contextWindowsFromLmStudio,
   contextWindowsFromModelRows,
   contextWindowsFromPs,
   decodeInjectId,
+  isKnownOllamaCloudHost,
   isLlamaCppProps,
   isLmStudioNativeCatalog,
   lmStudioNativeCatalog,
@@ -134,14 +138,45 @@ export async function readLoadedContext(
   env: Env = process.env,
   fetchImpl: typeof fetch = fetch,
 ): Promise<LocalContextReading> {
+  // Taken before the first await: the reading is stored only under this
+  // address, and only if no add, edit or delete changed it meanwhile.
+  const fence = contextFence(host);
   const root = anthropicBaseUrl(host);
   const base = host.baseUrl.replace(/\/$/, "");
   const get = (url: string) => localRequestJson(url, env, host, fetchImpl, { timeoutMs: 5_000 });
   let reading: LocalContextReading = { source: "unknown" };
+  // A fresh, non-remote show for a name remembered as cloud: the owner made it
+  // local again, so its local reading replaces the cloud one (M10 R2d).
+  let relearned = false;
   switch (host.kind) {
     case "ollama": {
-      const ps = await get(`${root}/api/ps`);
-      const windows = ps?.ok ? contextWindowsFromPs(ps.json) : new Map<string, number>();
+      // M10 R2a: show is read beside ps (and before any ps window is used), so
+      // an untagged alias of a cloud model is classified even when ps lists it.
+      // A name already known as cloud never takes a ps reading.
+      const knownCloud = isKnownOllamaCloudHost(host, model);
+      const [ps, show] = await Promise.all([
+        knownCloud ? Promise.resolve(null) : get(`${root}/api/ps`),
+        localRequestJson(`${root}/api/show`, env, host, fetchImpl, { method: "POST", body: { model }, timeoutMs: 5_000 }),
+      ]);
+      const shown = show?.ok ? record(show.json) : null;
+      if (shown && isOllamaCloudModel(model, shown)) {
+        const trained = ollamaMaxContext(shown.model_info);
+        reading = trained
+          ? { contextWindow: trained, maxContextWindow: trained, source: "ollama-cloud", loaded: false, cloud: true }
+          : { source: "ollama-cloud", cloud: true };
+        break;
+      }
+      // Re-read after the awaits: a test on another id of this address may
+      // have stored the cloud reading while this read was in flight.
+      if (!shown && (knownCloud || isKnownOllamaCloudHost(host, model))) {
+        // A failed show never turns a cloud model local: keep the cloud reading
+        // this session already has, or record an unknown cloud one.
+        const cached = cachedHostContext(host, model);
+        reading = cached?.cloud ? cached : { source: "ollama-cloud", cloud: true };
+        break;
+      }
+      relearned = Boolean(shown) && knownCloud;
+      const windows = ps?.ok ? contextWindowsFromPs(ps.json, (id) => isKnownOllamaCloudHost(host, id)) : new Map<string, number>();
       const running = windows.get(model) ?? windows.get(model.split(":")[0]!);
       if (running) {
         reading = { contextWindow: running, source: "ollama-ps", loaded: true };
@@ -150,8 +185,6 @@ export async function readLoadedContext(
       // Not loaded: the model's own `num_ctx` parameter is what it will get;
       // without one Ollama's server default applies, which this API cannot
       // report (it depends on VRAM and OLLAMA_CONTEXT_LENGTH).
-      const show = await localRequestJson(`${root}/api/show`, env, host, fetchImpl, { method: "POST", body: { model }, timeoutMs: 5_000 });
-      const shown = show?.ok ? record(show.json) : null;
       const configured = ollamaNumCtx(shown?.parameters);
       const max = ollamaMaxContext(shown?.model_info);
       reading = {
@@ -190,7 +223,8 @@ export async function readLoadedContext(
       }
     }
   }
-  if (reading.contextWindow || reading.maxContextWindow) rememberLocalContext(host.id, model, reading);
+  // A cloud reading is stored even with no window: it is the known-cloud memory (M10 R2a.5).
+  if (relearned || reading.cloud || reading.contextWindow || reading.maxContextWindow) rememberLocalContext(fence, model, reading);
   return reading;
 }
 
@@ -273,6 +307,9 @@ export async function createOllamaContextCopy(
   env: Env = process.env,
   fetchImpl: typeof fetch = fetch,
 ): Promise<OllamaContextCopyResult> {
+  // M10 R3 defence in depth: a cloud-tagged model gets no copy and no Modelfile.
+  if (isOllamaCloudModel(model)) return { status: "refused", reason: "cloud-model", model };
+  const fence = contextFence(host);
   const root = anthropicBaseUrl(host);
   const copy = ollamaContextCopyName(model, numCtx);
   const instructions = (reason: "old-version" | "create-failed" | "not-verified" | "unreachable", ollamaVersion?: string): OllamaContextCopyResult => ({
@@ -302,6 +339,6 @@ export async function createOllamaContextCopy(
   }
   const shown = await localRequestJson(`${root}/api/show`, env, host, fetchImpl, { method: "POST", body: { model: copy }, timeoutMs: 10_000 });
   if (!shown?.ok || ollamaNumCtx(record(shown.json)?.parameters) !== numCtx) return instructions("not-verified", version);
-  rememberLocalContext(host.id, copy, { contextWindow: numCtx, source: "ollama-show", loaded: false });
+  rememberLocalContext(fence, copy, { contextWindow: numCtx, source: "ollama-show", loaded: false });
   return { status: "created", model: copy, numCtx, verified: true };
 }

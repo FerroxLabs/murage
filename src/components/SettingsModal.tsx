@@ -14,7 +14,7 @@ import { DISCARD_SETTINGS_CHANGES, settingsDrafts } from "@/lib/settings-drafts"
 import { waitForAnchor } from "@/lib/anchor-wait";
 import { landOnSetting, type LandingElement } from "@/lib/settings-landing";
 import { Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Archive, BookOpen, Bot, Brain, Coins, Globe, LifeBuoy, Monitor, Phone, Puzzle, Search, Smartphone, Trash2, User, Users, Wrench, X } from "lucide-react";
+import { Archive, BookOpen, Bot, Brain, LayoutDashboard, MessageSquare, SlidersHorizontal, Coins, Globe, LifeBuoy, Monitor, Phone, Puzzle, Search, Smartphone, Trash2, User, Users, Wrench, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type Bot as BotRecord, type ConfigStatus } from "@/state/store";
 import type { BotSettingsLeave } from "./BotSettingsPane";
 import { loadBotSettingsPane, loadedBotSettingsPane } from "@/lib/bot-settings-pane-load";
@@ -58,6 +58,7 @@ import { isAdvancedOnlyCard } from "@/lib/settings-simple-cards";
 import { sw } from "@/lib/settings-words";
 import { settingsPageLink } from "@/lib/settings-link";
 import { ADVANCED_MODE_ANCHOR } from "./settings/AdvancedModeCard";
+import { BotAvatar } from "./Avatar";
 import { BrowseBotsPage } from "./settings/BrowseBotsPage";
 import { SettingsBreadcrumb } from "./settings/SettingsBreadcrumb";
 import { SettingsPageMount, hasPageFile } from "./settings/page-registry";
@@ -75,10 +76,14 @@ const BotPane = retryableLazy(() => loadBotSettingsPane().then((module) => ({ de
 // Settings > Connected apps > Phone calls (BOT-CALLS-1020): its screen and its 8-language words load the first time the page shows.
 
 const PAGE_ICONS: Record<SettingsPage, typeof User> = {
+  overview: LayoutDashboard,
   general: User,
+  bots: Bot,
+  tools: SlidersHorizontal,
+  messaging: MessageSquare,
   calls: Phone,
   computer: Monitor,
-  botDefaults: Users,
+  rules: Users,
   skills: BookOpen,
   memory: Brain,
   models: Globe,
@@ -488,10 +493,8 @@ export function SettingsModal({ bot, onBotClose }: { bot?: BotRecord; onBotClose
   const blocked = cloudSectionBlocked(requested);
   const browsing = !bot && requested === BROWSE_BOTS_ROUTE;
   const resolved = (blocked || browsing ? "" : resolveSettingsSection(requested).section) as SettingsPage;
-  // A page with a file of its own (settings/page-registry.tsx) is mounted from there; `section` is what the legacy blocks
-  // below still match on, so it is empty for a page that has moved out. Pages leave the legacy blocks one at a time.
+  // Every page of the rail is mounted from its own file (settings/page-registry.tsx); a blocked id or Browse bots mounts none.
   const mountedPage = resolved && hasPageFile(resolved) ? resolved : null;
-  const section = (mountedPage ? "" : resolved) as SettingsPage;
   // The nav marks the page the request lands on, blocked or not, so a Cloud window still shows where the person is.
   // Browse bots is a route, not a page: no page is marked while it shows (it would read as General).
   const navPage = browsing ? null : resolveSettingsSection(requested).section;
@@ -772,7 +775,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                       bot?.id === each.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
                     )}
                   >
-                    <Bot size={15} className="shrink-0" aria-hidden="true" />
+                    <BotAvatar bot={each} label="" size={15} animated={false} />
                     <span className="min-w-0 truncate">{each.name}</span>
                   </button>
                 ))}
@@ -864,7 +867,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             </div>
             </>
           ) : (
-          <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]" data-settings-page={mountedPage || section || undefined}>
+          <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]" data-settings-page={mountedPage || undefined}>
             {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} onLeave={() => setQuery("")} />}
             {/* A search hides the open page instead of unmounting it, so words typed and not yet
               * saved there (a skill being written, House rules) are still there when the search clears. */}

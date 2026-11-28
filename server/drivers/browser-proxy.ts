@@ -30,7 +30,7 @@ import { z } from "zod";
 import { safeBrowserUrl } from "../computer-observation.ts";
 import { createControlClient } from "../control-client.ts";
 import { murageToolOnThisServer } from "../murage-tool-surface.ts";
-import { BuiltinFloorGate } from "../browser-floor-builtin.ts";
+import { BuiltinFloorGate, builtinNoLimits } from "../browser-floor-builtin.ts";
 import { turnSecret } from "../turn-credential.ts";
 
 const HOST = (process.env.MURAGE_BROWSER_URL ?? "").replace(/\/$/, "");
@@ -419,7 +419,7 @@ const BROWSER_CONTROL_REFUSAL =
   `Call ${murageToolOnThisServer("browser_request_takeover")} to wait for them to hand control back.`;
 
 // The hard floor (T39): the same steps the extension path stops, stopped here before anything reaches the host.
-const floorGate = new BuiltinFloorGate();
+const floorGate = new BuiltinFloorGate(builtinNoLimits(process.env));
 
 async function observed(request: HostRequest, operation: string, body?: object, gate: BuiltinFloorGate = floorGate): Promise<ToolResult> {
   const page = pageSchema.parse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request(operation, body)));
@@ -561,8 +561,8 @@ export async function callTool(name: string, args: unknown, request: HostRequest
 }
 
 const send = (message: object) => sendProxyFrame("browser", message);
-const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
-const rpcError = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
+const ok = (id: unknown, result: unknown) => NotModelRequest("Browser MCP replies on the local tool protocol.", send({ jsonrpc: "2.0", id, result }));
+const rpcError = (id: unknown, code: number, message: string) => NotModelRequest("Browser MCP replies on the local tool protocol.", send({ jsonrpc: "2.0", id, error: { code, message } }));
 
 async function handle(line: string) {
   const parsed = rpcMessageSchema.safeParse(JSON.parse(line));

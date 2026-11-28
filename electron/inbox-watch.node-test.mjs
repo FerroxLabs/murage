@@ -21,7 +21,7 @@ test("reports a change on connect and for each inbox.changed frame, split across
   const h=harness({chunks:[whole.slice(0,30),whole.slice(30,95),whole.slice(95)]});
   const stop=watchInboxChanges(change=>h.changes.push(change),h.options);
   for(let i=0;i<10;i++)await settle();
-  assert.deepEqual(h.changes,[{},{scale:2},{scale:1}]);
+  assert.deepEqual(h.changes,[{connected:true},{scale:2},{scale:1}]);
   assert.equal(h.requests[0].init.headers["x-murage-surface"],"desktop");
   stop();
 });
@@ -31,7 +31,7 @@ test("a notice that arrives in the same read as a frame over 1 MB is not dropped
   const h=harness({chunks:[frame({kind:"inbox.changed",pollScale:1},1)+big]});
   const stop=watchInboxChanges(change=>h.changes.push(change),h.options);
   for(let i=0;i<10;i++)await settle();
-  assert.deepEqual(h.changes,[{},{scale:1}]);
+  assert.deepEqual(h.changes,[{connected:true},{scale:1}]);
   stop();
 });
 
@@ -46,9 +46,9 @@ test("stop ends the stream and no further change is reported",async()=>{
   const h=harness({chunks:[]});
   const stop=watchInboxChanges(change=>h.changes.push(change),h.options);
   for(let i=0;i<5;i++)await settle();
-  assert.deepEqual(h.changes,[{}]);
+  assert.deepEqual(h.changes,[{connected:true}]);
   stop();for(let i=0;i<5;i++)await settle();
-  assert.deepEqual(h.changes,[{}]);
+  assert.deepEqual(h.changes,[{connected:true}]);
 });
 
 test("onFrame delivers attention.settled, bot and config frames as ids only, and ignores everything else",async()=>{
@@ -63,7 +63,7 @@ test("onFrame delivers attention.settled, bot and config frames as ids only, and
   const stop=watchInboxChanges(change=>h.changes.push(change),{...h.options,onFrame:value=>frames.push(value)});
   for(let i=0;i<10;i++)await settle();
   assert.deepEqual(frames,[{kind:"attention.settled",threadId:"t1",requestId:"r1"},{kind:"bot",botId:"b1"},{kind:"config"}]);
-  assert.deepEqual(h.changes,[{},{scale:1}]);
+  assert.deepEqual(h.changes,[{connected:true},{scale:1}]);
   stop();
 });
 
@@ -71,11 +71,11 @@ test("without onFrame nothing else is parsed and a throwing onFrame never stops 
   const h=harness({chunks:[frame({kind:"attention.settled",threadId:"t",requestId:"r"},1)+frame({kind:"inbox.changed",pollScale:3},2)]});
   const stop=watchInboxChanges(change=>h.changes.push(change),h.options);
   for(let i=0;i<10;i++)await settle();
-  assert.deepEqual(h.changes,[{},{scale:3}]);
+  assert.deepEqual(h.changes,[{connected:true},{scale:3}]);
   stop();
   const g=harness({chunks:[frame({kind:"attention.settled",threadId:"t",requestId:"r"},1)+frame({kind:"inbox.changed",pollScale:4},2)]});
   const stop2=watchInboxChanges(change=>g.changes.push(change),{...g.options,onFrame:()=>{throw new Error("boom");}});
   for(let i=0;i<10;i++)await settle();
-  assert.deepEqual(g.changes,[{},{scale:4}]);
+  assert.deepEqual(g.changes,[{connected:true},{scale:4}]);
   stop2();
 });

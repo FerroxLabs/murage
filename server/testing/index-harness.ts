@@ -19,7 +19,7 @@ import { z } from "zod";
 
 import { removeTempDir, waitForExit } from "./cleanup.ts";
 import { browserSessionId } from "../browser-engine.ts";
-import { FAKE_FLUX_BROKER_PREFIX, FAKE_FLUX_BROKER_TOKEN, handleFakeFluxBroker } from "./fake-flux-broker.ts";
+import { FAKE_FLUX_BROKER_PREFIX, FAKE_FLUX_BROKER_TOKEN, handleFakeFluxBroker, type FakeBrokerFixture } from "./fake-flux-broker.ts";
 import { withTurnSecrets } from "./fixture-dump.ts";
 import { fakeEngineImportArgs, powerBlockTestEnv } from "./power-block-test.ts";
 import { OWNER_FIRST_MAX_DEFER_MS } from "../owner-first.ts";
@@ -115,7 +115,7 @@ export const holdBoxSlowValidation = () => {
   return { entered: enteredPromise, release };
 };
 export let boxStubPort = 0;
-export let connectorAliasFixture: { accounts: { id: string; alias: string; status: string; toolkit: { slug: string } }[]; links: { toolkit: string; alias?: string }[]; calls: number; refuseTakenLabels?: boolean; refuseAfterMs?: number; statusAfterMs?: number } | undefined;
+export let connectorAliasFixture: FakeBrokerFixture | undefined;
 export let home: string;
 let lineageStateDir = "";
 /** Test-only: `skip` sends the fixture turn without the lineage readiness wait (the row that proves the product launches, or lands on the no-memory last resort, anyway). */
@@ -458,7 +458,7 @@ export const fixtureTurnDiagnostics = (botId: string, threadId: string | undefin
  * for it before spawning), so a test that stopped a turn and started another
  * had `startInternalFixtureTurn`'s 5 s launch wait also covering the old
  * engine's teardown — on a loaded 48-worker box that is what timed out
- * ("routes approved image MCP requests", build host full runs). The real state
+ * ("routes approved image MCP requests", Hetzner full runs). The real state
  * to wait on is the stopped process itself: its pid is in the launch dump
  * and it must exit after SIGTERM (a CLI that does not is a genuine defect),
  * so the launch wait measures only the new launch. Bounded by the driver's
@@ -799,6 +799,8 @@ beforeAll(async () => {
         MURAGE_FLUX_COMPOSIO_BROKER_TOKEN: FAKE_FLUX_BROKER_TOKEN,
       } : {}),
       ...(process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET === "1" ? { MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET: "1" } : {}),
+      // routine-owed-landing-http.test.ts runs the owed-result minute pass on a short clock (routine-owed.ts OWED_PASS_MS); no other file sets it
+      ...(process.env.MURAGE_TEST_ROUTINE_OWED_MS ? { MURAGE_TEST_ROUTINE_OWED_MS: process.env.MURAGE_TEST_ROUTINE_OWED_MS } : {}),
       MURAGE_STATIC_DIR: staticDir,
       MURAGE_TEST_LINEAGE_STATE_DIR: lineageStateDir,
       MURAGE_TEST_LINEAGE_STATE_DB: join(home, ".murage", "messages.db"),

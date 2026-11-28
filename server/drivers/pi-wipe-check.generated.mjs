@@ -1263,8 +1263,8 @@ function rubyLoadsFirst(option, next) {
   }
   return false;
 }
-function rReadsProfile(words) {
-  return !words.some((word) => word === "--vanilla" || word === "--no-init-file");
+function rReadsProfile(words2) {
+  return !words2.some((word) => word === "--vanilla" || word === "--no-init-file");
 }
 var PYTHON_TOOL_MODULES = /* @__PURE__ */ new Set(["pip", "pytest", "unittest", "venv", "ensurepip", "http.server", "json.tool"]);
 function pythonModuleLoads(option, next) {
@@ -1524,7 +1524,7 @@ var Parser = class {
   }
   simple() {
     const assigns = [];
-    const words = [];
+    const words2 = [];
     const redirects = [];
     for (; ; ) {
       const token = this.peek();
@@ -1555,7 +1555,7 @@ var Parser = class {
         continue;
       }
       const bare = first?.kind === "lit" && first.quote === "none" ? first : void 0;
-      const assignment = words.length === 0 && bare ? /^([A-Za-z_][A-Za-z0-9_]*)\+?=/.exec(bare.text) : null;
+      const assignment = words2.length === 0 && bare ? /^([A-Za-z_][A-Za-z0-9_]*)\+?=/.exec(bare.text) : null;
       if (assignment && bare) {
         const rest = bare.text.slice(assignment[0].length);
         const value = { parts: rest === "" ? token.word.parts.slice(1) : [{ kind: "lit", text: rest, quote: "none" }, ...token.word.parts.slice(1)] };
@@ -1563,11 +1563,11 @@ var Parser = class {
         this.next();
         continue;
       }
-      words.push(token.word);
+      words2.push(token.word);
       this.next();
     }
-    if (assigns.length === 0 && words.length === 0 && redirects.length === 0) throw new Unreadable("syntax", `unexpected ${this.describe(this.peek())}`);
-    return { kind: "simple", assigns, words, redirects };
+    if (assigns.length === 0 && words2.length === 0 && redirects.length === 0) throw new Unreadable("syntax", `unexpected ${this.describe(this.peek())}`);
+    return { kind: "simple", assigns, words: words2, redirects };
   }
   ifCommand() {
     this.expectReserved("if");
@@ -1624,14 +1624,14 @@ var Parser = class {
     if (name === void 0) throw new Unreadable("syntax", "for without a name");
     this.next();
     this.skipNewlines();
-    let words;
+    let words2;
     if (this.isReserved(this.peek(), "in")) {
       this.next();
-      words = [];
+      words2 = [];
       for (; ; ) {
         const token = this.peek();
         if (token.kind === "word") {
-          words.push(token.word);
+          words2.push(token.word);
           this.next();
           continue;
         }
@@ -1646,7 +1646,7 @@ var Parser = class {
     }
     this.skipNewlines();
     const loop = this.doBlock(name);
-    return words && loop.kind === "for" ? { ...loop, words } : loop;
+    return words2 && loop.kind === "for" ? { ...loop, words: words2 } : loop;
   }
   doBlock(name) {
     this.expectReserved("do");
@@ -1709,14 +1709,14 @@ var Parser = class {
   /** The words inside `[[ … ]]`; nothing in there is a command. */
   condCommand() {
     this.expectReserved("[[");
-    const words = [];
+    const words2 = [];
     for (; ; ) {
       const token = this.next();
       if (token.kind === "eof") throw new Unreadable("syntax", "[[ without ]]");
       if (this.isReserved(token, "]]")) break;
-      if (token.kind === "word") words.push(token.word);
+      if (token.kind === "word") words2.push(token.word);
     }
-    return { kind: "cond", words, redirects: this.redirects() };
+    return { kind: "cond", words: words2, redirects: this.redirects() };
   }
 };
 function parse(text4, unknownUnreadableWords = false) {
@@ -1798,9 +1798,9 @@ var ExpansionProduct = class {
   multiply(heads, options) {
     if (heads.length * options.length > candidateLimit(this.ctx)) throw new Unreadable("expansion", "too many values");
     if (this.ctx?.inspectionExpansion) {
-      const sizes = (words) => {
+      const sizes = (words2) => {
         let parts = 0, chars = 0;
-        for (const word of words) for (const part of word) {
+        for (const word of words2) for (const part of word) {
           parts++;
           if (part.kind === "lit" || part.kind === "glob" || part.kind === "subst" || part.kind === "arith" || part.kind === "procsub") chars += part.text.length;
           else if (part.kind === "tilde") chars += part.user.length + 1;
@@ -2102,9 +2102,9 @@ function deviceInWord(text4) {
     if (!plain2.startsWith("/dev/", i) && !/^[\\/]{2}[.?][\\/]/.test(plain2.slice(i, i + 4))) continue;
     if (i > 0 && /[A-Za-z0-9_~$}\-\/\\]/.test(plain2[i - 1]) && !/^-[A-Za-z]+$/.test(plain2.slice(0, i)) && !plain2.slice(0, i).endsWith("://")) continue;
     let end = i;
-    const posix4 = plain2.startsWith("/dev/", i);
-    while (end < plain2.length && (posix4 ? /[A-Za-z0-9_.+\-/:@%~]/ : /[^\s,;]/).test(plain2[end])) end++;
-    const sub = posix4 ? plain2.slice(i, end).replace(/[.:@%~+\-]+$/, "") : plain2.slice(i, end);
+    const posix5 = plain2.startsWith("/dev/", i);
+    while (end < plain2.length && (posix5 ? /[A-Za-z0-9_.+\-/:@%~]/ : /[^\s,;]/).test(plain2[end])) end++;
+    const sub = posix5 ? plain2.slice(i, end).replace(/[.:@%~+\-]+$/, "") : plain2.slice(i, end);
     if (isDeviceWrite(sub)) return sub;
   }
   return void 0;
@@ -2233,18 +2233,18 @@ function deviceReadPosition(name, texts, index) {
   if (name === "dd") return (texts[index] ?? "").startsWith("if=");
   if (name === "cp" || name === "rsync" || name === "install") {
     if (texts.some((text4) => text4 === void 0)) return false;
-    const words = texts;
+    const words2 = texts;
     if (name === "rsync") {
-      const operands2 = readerOperands(RSYNC_MODE, words);
+      const operands2 = readerOperands(RSYNC_MODE, words2);
       return !!operands2?.includes(index) && index !== operands2[operands2.length - 1];
     }
     const values2 = COPY_VALUES[name];
     const operands = [];
     let target;
-    for (let i = 0; i < words.length; i++) {
-      const text4 = words[i];
+    for (let i = 0; i < words2.length; i++) {
+      const text4 = words2[i];
       if (text4 === "--") {
-        for (let j = i + 1; j < words.length; j++) operands.push(j);
+        for (let j = i + 1; j < words2.length; j++) operands.push(j);
         break;
       }
       if (!text4.startsWith("-") || text4 === "-") {
@@ -2300,10 +2300,10 @@ function diagnosticRead(name, texts, index) {
   const verbRow = DIAGNOSTIC_VERBS[name];
   if (!verbRow && name !== "blockdev" && name !== "partx" && !name.startsWith("fsck")) return false;
   if (texts.some((text4) => text4 === void 0)) return false;
-  const words = texts;
-  const options = words.filter((text4) => text4.startsWith("-") && text4.length > 1);
-  const verbs = words.filter((text4) => !(text4.startsWith("-") && text4.length > 1));
-  if (verbRow) return verbs.length > 0 && verbRow.has(verbs[0].toLowerCase()) && words[index] !== verbs[0];
+  const words2 = texts;
+  const options = words2.filter((text4) => text4.startsWith("-") && text4.length > 1);
+  const verbs = words2.filter((text4) => !(text4.startsWith("-") && text4.length > 1));
+  if (verbRow) return verbs.length > 0 && verbRow.has(verbs[0].toLowerCase()) && words2[index] !== verbs[0];
   if (name === "blockdev") return options.some((text4) => text4.startsWith("--get") || text4 === "--report") && options.every((text4) => text4.startsWith("--get") || text4 === "--report" || text4 === "-q" || text4 === "-v");
   if (name === "partx") return options.some((text4) => text4 === "-s" || text4 === "--show") && options.every((text4) => PARTX_SHOW.has(text4.replace(/=.*$/, "")) || /^-o.+/.test(text4));
   if (name.startsWith("fsck")) {
@@ -2537,8 +2537,8 @@ var ASSIGNS_IN_ARITH = /=|\+\+|--/;
 var NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
 var OPAQUE_EFFECTS = { assigns: /* @__PURE__ */ new Set(), opaque: true, movesCwd: false, defines: [] };
 var SOURCE_EFFECTS = { assigns: /* @__PURE__ */ new Set(), opaque: true, movesCwd: true, defines: [] };
-function plainWords(words, where) {
-  for (const word of words) if (!isPlain(word)) throw new Unreadable("expansion", `a value in ${where}`);
+function plainWords(words2, where) {
+  for (const word of words2) if (!isPlain(word)) throw new Unreadable("expansion", `a value in ${where}`);
 }
 function unreachable(value) {
   throw new Error(`unmodeled node ${JSON.stringify(value)}`);
@@ -2725,12 +2725,12 @@ function simpleCommand(name, args, ctx, extra = {}) {
     ...extra.wholeRead ? { wholeRead: true } : {}
   };
 }
-function xargsOptions(words) {
+function xargsOptions(words2) {
   const options = { nul: false };
   const unescape2 = (d) => d === "\\n" ? "\n" : d === "\\t" ? "	" : d === "\\0" ? "\0" : d;
-  for (let i = 0; i < words.length; i++) {
-    const text4 = literalText(words[i]) ?? "";
-    const next = () => literalText(words[++i] ?? { parts: [] }) ?? "";
+  for (let i = 0; i < words2.length; i++) {
+    const text4 = literalText(words2[i]) ?? "";
+    const next = () => literalText(words2[++i] ?? { parts: [] }) ?? "";
     if (text4 === "-0" || text4 === "--null") options.nul = true;
     else if (text4 === "-d" || text4 === "--delimiter" || text4 === "--delim") options.delimiter = unescape2(next());
     else if (/^-d./.test(text4)) options.delimiter = unescape2(text4.slice(2));
@@ -2795,20 +2795,20 @@ function spliceWord(word, match, replacement) {
   return { parts };
 }
 function splitScript(text4) {
-  const words = [];
+  const words2 = [];
   for (const token of lex(text4)) {
-    if (token.kind === "word") words.push(token.word);
+    if (token.kind === "word") words2.push(token.word);
     else if (token.kind !== "eof") throw new Unreadable("wrapper-option", "an operator in env -S");
   }
-  return words;
+  return words2;
 }
 function gluedWord(text4) {
   const tilde = /^~([A-Za-z0-9._-]*)((?:\/.*)?)$/s.exec(text4);
   if (tilde) return { parts: [{ kind: "tilde", user: tilde[1] }, ...tilde[2] ? [{ kind: "lit", text: tilde[2], quote: "single" }] : []] };
   return { parts: [{ kind: "lit", text: text4, quote: "single" }] };
 }
-function unwrap(words, ctx) {
-  let rest = words;
+function unwrap(words2, ctx) {
+  let rest = words2;
   let xargs;
   let derived = false;
   let elevated = false;
@@ -3005,21 +3005,21 @@ function outputOf(command2, before, ctx) {
   const name = resolveName(command2.words[0]);
   const args = command2.words.slice(1);
   if (name === "echo") {
-    let words = args;
+    let words2 = args;
     let escapes = false;
-    if (/^-[neE]+$/.test(literalText(words[0] ?? { parts: [] }) ?? "")) {
-      escapes = /e/.test(literalText(words[0]));
-      words = words.slice(1);
+    if (/^-[neE]+$/.test(literalText(words2[0] ?? { parts: [] }) ?? "")) {
+      escapes = /e/.test(literalText(words2[0]));
+      words2 = words2.slice(1);
     }
-    const joined = words.map(renderWord).join(" ");
-    if (escapes || joined.includes("\\") || !words.every(isPlain)) return { kind: "value", why: "echo with an escape or a value" };
-    return { kind: "literal", text: joined, words };
+    const joined = words2.map(renderWord).join(" ");
+    if (escapes || joined.includes("\\") || !words2.every(isPlain)) return { kind: "value", why: "echo with an escape or a value" };
+    return { kind: "literal", text: joined, words: words2 };
   }
   if (name === "printf") {
-    const words = args.filter((word, index) => !(index === 0 && literalText(word) === "--"));
-    const joined = words.map(renderWord).join(" ");
-    const format = words[0] ? renderWord(words[0]) : "";
-    if (/[%\\]/.test(format) || joined.includes("\\") || !words.every(isPlain)) return { kind: "value", why: "printf with a directive, an escape or a value" };
+    const words2 = args.filter((word, index) => !(index === 0 && literalText(word) === "--"));
+    const joined = words2.map(renderWord).join(" ");
+    const format = words2[0] ? renderWord(words2[0]) : "";
+    if (/[%\\]/.test(format) || joined.includes("\\") || !words2.every(isPlain)) return { kind: "value", why: "printf with a directive, an escape or a value" };
     return { kind: "literal", text: joined, words: [] };
   }
   if (name === "cat") {
@@ -3102,13 +3102,13 @@ function downloader(name, args) {
   if (name !== "curl" && name !== "wget" && name !== "fetch") return void 0;
   const texts = args.map(literalText);
   if (texts.some((text4) => text4 === void 0)) return void 0;
-  const words = texts;
+  const words2 = texts;
   const operands = [];
   let output;
-  for (let i = 0; i < words.length; i++) {
-    const text4 = words[i];
+  for (let i = 0; i < words2.length; i++) {
+    const text4 = words2[i];
     if (text4 === "--") {
-      operands.push(...words.slice(i + 1));
+      operands.push(...words2.slice(i + 1));
       break;
     }
     if (!text4.startsWith("-") || text4 === "-") {
@@ -3116,7 +3116,7 @@ function downloader(name, args) {
       continue;
     }
     if (DOWNLOAD_READS_FILE.has(text4) || /^--(form|upload-file|config|input-file)=/.test(text4)) return void 0;
-    const out = outputOption(words, i);
+    const out = outputOption(words2, i);
     if (out) {
       if (out.file !== "-") output = out.file;
       i = out.last;
@@ -3125,7 +3125,7 @@ function downloader(name, args) {
     const eq = text4.indexOf("=");
     const option = text4.startsWith("--") && eq > 0 ? text4.slice(0, eq) : text4;
     if (DOWNLOAD_VALUES.has(option)) {
-      const value = option === text4 ? words[++i] : text4.slice(eq + 1);
+      const value = option === text4 ? words2[++i] : text4.slice(eq + 1);
       if (value === void 0) return void 0;
       if (/^-(d|-data)/.test(option) && value.startsWith("@")) return void 0;
       continue;
@@ -3303,8 +3303,8 @@ function shellCScript(args, shell) {
   }
   return void 0;
 }
-function shellOPair(name, args, words, i) {
-  if (name === "fish" || !SHELLS.has(name) || words[i] !== "-o" || !SHELL_O_NAMES.has(words[i + 1] ?? "")) return false;
+function shellOPair(name, args, words2, i) {
+  if (name === "fish" || !SHELLS.has(name) || words2[i] !== "-o" || !SHELL_O_NAMES.has(words2[i + 1] ?? "")) return false;
   try {
     const script = shellCScript(args, name);
     return script !== void 0 && i + 1 < script;
@@ -3789,7 +3789,8 @@ function scanOpaque(text4, elevated, visitor2, ctx, input = {}) {
   if (scanWritten(text4, ctx, input.key) === "incomplete") {
     if (ownerDeny() && wipeWordIn(text4) !== void 0) throw new HardFinding("deny", "unknown-target", "incomplete-executable-code");
     if (input.strict) doubt("tokenizer");
-    if (input.strict) throw new Unreadable("opaque", "runs code the reader cannot follow");
+    if (input.strict && (input.key === void 0 || input.unfollowed)) throw new Unreadable("opaque", "runs code the reader cannot follow");
+    if (input.strict) scanWrittenFamilies(text4, visitor2);
   }
   const key2 = input.key;
   const { code, bare, strings: strings2, ranges, tops } = opaqueParts(text4, key2);
@@ -3808,16 +3809,16 @@ function scanOpaque(text4, elevated, visitor2, ctx, input = {}) {
   if (!runs && !deletes && !writes) return;
   const stemSpans = stems.deletes.length ? callSpans(code, stemPattern(stems.deletes), key2, (at) => !inString(at)) : [];
   const deleteSpans = [...exactSpans, ...stemSpans];
-  const words = [];
+  const words2 = [];
   for (const word of input.rest ?? []) {
-    const literal2 = literalText(word);
-    if (literal2 !== void 0) words.push(literal2);
+    const literal3 = literalText(word);
+    if (literal3 !== void 0) words2.push(literal3);
     else if (runs || deletesExact) throw new Unreadable("opaque", "code given a value");
   }
   if (key2 === "tclsh") {
-    for (const span of [...runSpans, ...deleteSpans]) for (const word of opaqueParts(span, void 0, false).bare.split(/[\s{}]+/)) if (word && !word.startsWith("-")) words.push(word);
+    for (const span of [...runSpans, ...deleteSpans]) for (const word of opaqueParts(span, void 0, false).bare.split(/[\s{}]+/)) if (word && !word.startsWith("-")) words2.push(word);
   }
-  const named = [...strings2, ...words];
+  const named = [...strings2, ...words2];
   if (named.some((s) => deviceInWord(s) !== void 0)) throw new Unreadable("opaque", "names a disk");
   if ((ownerDeny() || OPAQUE_WRITE_INTENT.test(text4)) && strings2.some((s) => /^\/dev\/?$/.test(s.trim()) || /^\/dev\/.*[{$%]/.test(s.trim()))) throw new Unreadable("opaque", "writes and builds a disk path");
   if ((ownerDeny() || OPAQUE_WRITE_INTENT.test(text4)) && strings2.some((s) => s.startsWith("/") && s.length > 1 && !/\s/.test(s) && visitor2.catastrophic?.(s))) throw new Unreadable("opaque", "writes into a protected path");
@@ -3838,7 +3839,7 @@ function scanOpaque(text4, elevated, visitor2, ctx, input = {}) {
     if (OPAQUE_ENV.test(spanCode)) throw new Unreadable("opaque", "code given a value");
     if (spans.some((span) => spanHasValue(span, key2, code))) throw new Unreadable("opaque", "code given a value");
     if (runs) {
-      const shellTexts = [...found.length ? runStrings : strings2, ...words];
+      const shellTexts = [...found.length ? runStrings : strings2, ...words2];
       if (input.stdin?.kind === "literal") shellTexts.push(input.stdin.text);
       else if (input.stdin && input.stdin.kind !== "file" && input.stdin.kind !== "remote") throw new Unreadable("opaque", "code given a value");
       for (const s of shellTexts) {
@@ -4043,6 +4044,28 @@ function namesWritten(named, ctx) {
   }
   return false;
 }
+var WRITTEN_HOME = /\b(HOME|USERPROFILE|expanduser|homedir|GetFolderPath|SpecialFolder|UserProfile)\b/;
+var WRITTEN_EXIT = /\b(os\.execute|execute|system|popen|subprocess|child_process|execSync|execFileSync|execFile|exec|spawnSync|spawn|Start-Process|Invoke-Expression|iex|os\.remove|os\.unlink|unlink|rmtree|rmSync|rimraf|unlinkSync|rmdirSync|Remove-Item)\b|`|%x/;
+function scanWrittenFamilies(text4, visitor2) {
+  for (let i = 0; i < text4.length; i++) {
+    const quote = text4[i];
+    if (quote !== "'" && quote !== '"' && quote !== "`") continue;
+    let s = "";
+    let j = i + 1;
+    for (; j < text4.length && text4[j] !== quote; j++) {
+      if (text4[j] === "\\" && (text4[j + 1] === "\\" || text4[j + 1] === "'" || text4[j + 1] === '"')) {
+        s += text4[j + 1];
+        j++;
+        continue;
+      }
+      s += text4[j];
+    }
+    if (visitor2.catastrophic?.(s) || deviceInWord(s) !== void 0) throw new Unreadable("opaque", "names a catastrophe");
+    i = j;
+  }
+  if (WRITTEN_HOME.test(text4)) throw new Unreadable("opaque", "looks up the home folder");
+  if (WRITTEN_EXIT.test(text4)) throw new Unreadable("opaque", "deletes or runs something the reader cannot see");
+}
 function scanWritten(text4, ctx, key2) {
   if (text4.length > SCAN_GATE_CHARS) doubt("scan-gate");
   if (interpolated(text4)) doubt("tokenizer");
@@ -4050,9 +4073,9 @@ function scanWritten(text4, ctx, key2) {
   for (const value of strings2) {
     if (/^(?:\/|\.\.?\/|~|[a-z]:[\\/])/i.test(value) && canonPath(value, ctx, "write").value) doubt("value-path");
   }
-  const literal2 = String.raw`(?:"[^"\\\n{}]*"|'[^'\\\n{}]*')`;
-  const scalar = `(?:${literal2}|-?\\d+(?:\\.\\d+)?|True|False|None)`;
-  const printValue = `(?:${scalar}|(?:${literal2}|"{}"|'{}')\\.format\\(${scalar}(?:\\s*,\\s*${scalar})*\\))`;
+  const literal3 = String.raw`(?:"[^"\\\n{}]*"|'[^'\\\n{}]*')`;
+  const scalar = `(?:${literal3}|-?\\d+(?:\\.\\d+)?|True|False|None)`;
+  const printValue = `(?:${scalar}|(?:${literal3}|"{}"|'{}')\\.format\\(${scalar}(?:\\s*,\\s*${scalar})*\\))`;
   const body = text4.trim();
   const opened = /^open\(\s*(["'])([^"'\\]*)\1/.exec(body);
   if (key2 === "python" && opened) {
@@ -4063,12 +4086,12 @@ function scanWritten(text4, ctx, key2) {
   if (key2 === "python" && opened && !/^(?:\/|\.\.?\/|~|[a-z]:[\\/])/i.test(opened[2]) && canonPath(opened[2], ctx, "write").value) doubt("value-path");
   if (key2 === "python") {
     if (new RegExp(`^print\\(\\s*${printValue}(?:\\s*,\\s*${printValue})*\\s*\\)\\s*;?$`).test(body)) return "complete";
-    if (new RegExp(`^open\\(\\s*${literal2}\\s*,\\s*["'](?:w|wb|a|ab)["']\\s*\\)\\.write\\(\\s*b?${literal2}\\s*\\)\\s*;?$`).test(body)) return "complete";
+    if (new RegExp(`^open\\(\\s*${literal3}\\s*,\\s*["'](?:w|wb|a|ab)["']\\s*\\)\\.write\\(\\s*b?${literal3}\\s*\\)\\s*;?$`).test(body)) return "complete";
   }
   if ((key2 === "node" || key2 === "bun" || key2 === "deno") && new RegExp(`^console\\.log\\(\\s*${scalar}\\s*\\)\\s*;?$`).test(body)) return "complete";
   if (key2 === "ruby" && new RegExp(`^puts\\s+${scalar}\\s*;?$`).test(body)) return "complete";
-  if (key2 === "perl" && new RegExp(`^print\\s+${ownerDeny() ? scalar : literal2}\\s*;?$`).test(body)) return "complete";
-  if (key2 === "php" && new RegExp(`^echo\\s+${literal2}\\s*;?$`).test(body)) return "complete";
+  if (key2 === "perl" && new RegExp(`^print\\s+${ownerDeny() ? scalar : literal3}\\s*;?$`).test(body)) return "complete";
+  if (key2 === "php" && new RegExp(`^echo\\s+${literal3}\\s*;?$`).test(body)) return "complete";
   if (key2 === "lua" && new RegExp(`^print\\(\\s*${scalar}\\s*\\)\\s*;?$`).test(body)) return "complete";
   if (ownerDeny() && key2 === "rscript" && /^-?\d+(?:\.\d+)?\s*;?$/.test(body)) return "complete";
   return "incomplete";
@@ -4078,6 +4101,13 @@ function shebangInterpreter(text4) {
   if (!first) return void 0;
   const program = (first[1].replace(/^.*\//, "") === "env" ? first[2] ?? "" : first[1]).replace(/^.*\//, "").toLowerCase();
   return SHELLS.has(program) ? void 0 : program;
+}
+var SHEBANG_FOLDERS = "(?:/bin|/usr/bin|/usr/local/bin|/opt/homebrew/bin|/opt/local/bin)";
+var SHEBANG_PLAIN = new RegExp(`^#![ \\t]*(?:${SHEBANG_FOLDERS}/([A-Za-z0-9._+-]+)|(?:/usr/bin|/bin)/env[ \\t]+([A-Za-z0-9._+][A-Za-z0-9._+-]*))[ \\t]*(?:\\n|$)`);
+function shebangFollowed(text4) {
+  const plain2 = SHEBANG_PLAIN.exec(text4);
+  const name = plain2?.[1] ?? plain2?.[2];
+  return name === void 0 || name === "env" ? void 0 : interpreterKey(name);
 }
 function bindPositionals(inner, values2, zero) {
   const empty = [{ parts: [{ kind: "lit", text: "", quote: "none" }] }];
@@ -4105,9 +4135,9 @@ function walkForeignExecutor(program, args, ctx, visitor2, stdin) {
   const name = program === "py" ? "python" : program;
   if (name === "wsl") return walkWsl(args, ctx, visitor2, stdin);
   if (!(SHELLS.has(name) || interpreterKey(name) !== void 0 || Object.hasOwn(WRAPPERS, name) || ELEVATORS.has(name))) return void 0;
-  const words = [lit(name), ...args];
-  const command2 = { kind: "simple", assigns: [], words, redirects: [] };
-  return visitWords(words, command2, stdin, ctx, visitor2, void 0, false, []);
+  const words2 = [lit(name), ...args];
+  const command2 = { kind: "simple", assigns: [], words: words2, redirects: [] };
+  return visitWords(words2, command2, stdin, ctx, visitor2, void 0, false, []);
 }
 function walkWsl(args, ctx, visitor2, stdin) {
   const shell = () => stdin ? walkForeignExecutor("sh", [], ctx, visitor2, stdin) ?? null : null;
@@ -4132,13 +4162,13 @@ function walkWsl(args, ctx, visitor2, stdin) {
   }
   return shell();
 }
-function walkWslText(words, ctx, visitor2, stdin) {
-  if (!words.length) return void 0;
-  plainWords(words, "text wsl runs");
+function walkWslText(words2, ctx, visitor2, stdin) {
+  if (!words2.length) return void 0;
+  plainWords(words2, "text wsl runs");
   const inner = fork(ctx, true);
   if (stdin) inner.stdin = stdin;
   else delete inner.stdin;
-  return walkScript(words.map(renderWord).join(" "), inner, visitor2);
+  return walkScript(words2.map(renderWord).join(" "), inner, visitor2);
 }
 function walkNested(text4, ctx, visitor2) {
   return walkScript(text4, fork(ctx, true), visitor2);
@@ -4228,8 +4258,8 @@ function walkRedirect(redirect, ctx, visitor2) {
   }
   return null;
 }
-function walkWords(words, ctx, visitor2) {
-  for (const word of words) {
+function walkWords(words2, ctx, visitor2) {
+  for (const word of words2) {
     const hit3 = walkParts(word, ctx, visitor2);
     if (hit3) return hit3;
   }
@@ -4257,19 +4287,19 @@ function assignmentOf(word) {
   const parts = rest === "" ? word.parts.slice(1) : [{ kind: "lit", text: rest, quote: "none" }, ...word.parts.slice(1)];
   return { name: match[1], value: { parts }, append: match[2] === "+" };
 }
-function substituteLead(words, ctx) {
-  const word = words[0];
-  if (resolveName(word) !== void 0) return { lists: [words], derived: false };
+function substituteLead(words2, ctx) {
+  const word = words2[0];
+  if (resolveName(word) !== void 0) return { lists: [words2], derived: false };
   const lead = word.parts[0];
   if (!lead || lead.kind !== "var" || lead.op !== void 0 || !ctx.bound.get(lead.name)) throw new Unreadable("dynamic-name", renderWord(word));
   const candidates = expandWord(word, ctx);
-  if (ctx.arrays.has(lead.name) && word.parts.length === 1) return { lists: [[...candidates, ...words.slice(1)]], derived: true };
+  if (ctx.arrays.has(lead.name) && word.parts.length === 1) return { lists: [[...candidates, ...words2.slice(1)]], derived: true };
   const byName2 = /* @__PURE__ */ new Map();
   for (const candidate of candidates) {
     if (lead.quote === "none" && /\s/.test(literalText(candidate) ?? "")) throw new Unreadable("dynamic-name", "a value with spaces");
     const name = resolveName(candidate);
     if (name === void 0) throw new Unreadable("dynamic-name", renderWord(word));
-    if (!byName2.has(name)) byName2.set(name, [candidate, ...words.slice(1)]);
+    if (!byName2.has(name)) byName2.set(name, [candidate, ...words2.slice(1)]);
   }
   if (byName2.size > MAX_NAMES) throw new Unreadable("dynamic-name", "too many programs");
   return { lists: [...byName2.values()], derived: true };
@@ -4337,8 +4367,8 @@ function walkCompound(command2, ctx, visitor2) {
           hit3 = walkWords(command2.words, ctx, visitor2);
           if (hit3) return hit3;
           const values2 = command2.words.flatMap((word) => expandWord(word, ctx));
-          const literal2 = values2.every((word) => word.parts.every((part) => part.kind !== "var" && part.kind !== "subst" && part.kind !== "arith" && part.kind !== "procsub"));
-          if (literal2 && !ctx.readonly.has(command2.name)) ctx.bound.set(command2.name, values2);
+          const literal3 = values2.every((word) => word.parts.every((part) => part.kind !== "var" && part.kind !== "subst" && part.kind !== "arith" && part.kind !== "procsub"));
+          if (literal3 && !ctx.readonly.has(command2.name)) ctx.bound.set(command2.name, values2);
           else unknownName(command2.name, ctx);
         } else if (command2.name) {
           unknownName(command2.name, ctx);
@@ -4374,8 +4404,8 @@ function walkCompound(command2, ctx, visitor2) {
 }
 function calleeName(command2, ctx) {
   try {
-    const { words } = unwrap(command2.words, ctx);
-    return words[0] ? resolveName(words[0]) : void 0;
+    const { words: words2 } = unwrap(command2.words, ctx);
+    return words2[0] ? resolveName(words2[0]) : void 0;
   } catch {
     return void 0;
   }
@@ -4420,7 +4450,7 @@ function bodyEffects(body, ctx) {
       } else if (part.kind === "arith" && /=|\+\+|--/.test(part.text)) effects.opaque = true;
     }
   };
-  const words = (ws) => {
+  const words2 = (ws) => {
     for (const w of ws) word(w);
   };
   const list = (script) => {
@@ -4433,9 +4463,9 @@ function bodyEffects(body, ctx) {
         for (const assign of c.assigns) {
           effects.assigns.add(assign.name);
           word(assign.value);
-          if (assign.elements) words(assign.elements);
+          if (assign.elements) words2(assign.elements);
         }
-        words(c.words);
+        words2(c.words);
         let at = 0;
         let name;
         for (; at < c.words.length; at++) {
@@ -4492,14 +4522,14 @@ function bodyEffects(body, ctx) {
         break;
       case "for":
         effects.assigns.add(c.name);
-        if (c.words) words(c.words);
+        if (c.words) words2(c.words);
         if (c.header) word(c.header);
         list(c.body);
         break;
       case "case":
         word(c.word);
         for (const clause of c.clauses) {
-          words(clause.patterns);
+          words2(clause.patterns);
           list(clause.body);
         }
         break;
@@ -4513,10 +4543,10 @@ function bodyEffects(body, ctx) {
         break;
       case "arith":
         effects.opaque = true;
-        words(c.words);
+        words2(c.words);
         break;
       case "cond":
-        words(c.words);
+        words2(c.words);
         break;
       default:
         unreachable(c);
@@ -4811,8 +4841,10 @@ function runWritten(written, positionals, ctx, visitor2, elevated, direct, hops 
   switch (written.kind) {
     case "literal":
       if (direct && shebangInterpreter(written.text)) {
-        const key2 = interpreterKey(shebangInterpreter(written.text));
-        scanOpaque(written.text, elevated, visitor2, ctx, { strict: true, ...key2 ? { key: key2 } : {} });
+        const named = shebangInterpreter(written.text);
+        const key2 = interpreterKey(named);
+        const followed = key2 !== void 0 && shebangFollowed(written.text) === key2 && !namesWritten([named], ctx);
+        scanOpaque(written.text, elevated, visitor2, ctx, { strict: true, ...key2 ? { key: key2 } : {}, ...followed ? {} : { unfollowed: true } });
         return null;
       }
       return walkWithPositionals(written.text, void 0, positionals, ctx, visitor2, elevated, stdin);
@@ -4958,32 +4990,32 @@ function visitUnwrapped(unwrapped, command2, given, ctx, visitor2, viaXargs, via
     const [zero, ...positionals] = unwrapped.positionals ?? [];
     return walkWithPositionals(renderWord(unwrapped.script), zero, positionals, ctx, visitor2, elevated, stdin);
   }
-  let words = unwrapped.words;
-  if (words.length === 0) return null;
+  let words2 = unwrapped.words;
+  if (words2.length === 0) return null;
   if (xargs) {
     const items = xargsItems(stdin, xargs, ctx);
     stdin = void 0;
     if (xargs.replace !== void 0) {
       const replace = xargs.replace;
       if (!items) {
-        words = words.map((word) => spliceWord(word, replace, APPENDED_VALUE));
+        words2 = words2.map((word) => spliceWord(word, replace, APPENDED_VALUE));
       } else {
         for (const item of items) {
-          hit3 = visitWords(words.map((word) => spliceWord(word, replace, item)), command2, void 0, ctx, visitor2, void 0, derived, before, elevated);
+          hit3 = visitWords(words2.map((word) => spliceWord(word, replace, item)), command2, void 0, ctx, visitor2, void 0, derived, before, elevated);
           if (hit3) return hit3;
         }
         return null;
       }
     } else {
-      words = [...words, ...items ?? [APPENDED_VALUE]];
+      words2 = [...words2, ...items ?? [APPENDED_VALUE]];
     }
   }
-  const name = resolveName(words[0]);
-  if (name === void 0) throw new Unreadable("dynamic-name", renderWord(words[0]));
+  const name = resolveName(words2[0]);
+  if (name === void 0) throw new Unreadable("dynamic-name", renderWord(words2[0]));
   const rulesFirst = () => {
     const probe = fork(ctx, true);
     try {
-      return visitor2.command(simpleCommand(name, words.slice(1), probe, { redirects: command2.redirects, elevated, derived }), probe);
+      return visitor2.command(simpleCommand(name, words2.slice(1), probe, { redirects: command2.redirects, elevated, derived }), probe);
     } catch (error) {
       if (error instanceof HardFinding || !(error instanceof Unreadable)) throw error;
       return null;
@@ -4993,9 +5025,9 @@ function visitUnwrapped(unwrapped, command2, given, ctx, visitor2, viaXargs, via
   if (ctx.windowsForeign && (powershellRunner(name) === "interpreter" || interpreterKey(name) !== void 0)) throw new Unreadable("pwsh", `${name} reached through a wrapper needs approval`);
   if (ctx.windowsBash && (windowsRunner === "interpreter" || windowsRunner === "launcher" && name !== "bash" || /^(cmd|wsl|start-process|set-content|powershell|pwsh)(\.exe)?$/i.test(name) || /\.(ps1|psm1|psd1|py|sh)$/i.test(name))) throw new Unreadable("pwsh", "the nested executor needs approval");
   if (ctx.indirect === "trap") (ctx.trapCalls ??= /* @__PURE__ */ new Set()).add(name);
-  const args = words.slice(1);
+  const args = words2.slice(1);
   const marksArgs = args.map(renderWord);
-  const direct = literalText(words[0]);
+  const direct = literalText(words2[0]);
   const interpreterClass = interpreterKey(name);
   let ambiguous = false;
   if (interpreterClass) for (const arg of marksArgs) {
@@ -5013,7 +5045,7 @@ function visitUnwrapped(unwrapped, command2, given, ctx, visitor2, viaXargs, via
   }), ctx);
   if (protectedHit) return protectedHit;
   const systemProgram = direct !== void 0 && SYSTEM_PROGRAM.test(direct);
-  if (/[\\/]/.test(renderWord(words[0])) && !systemProgram) {
+  if (/[\\/]/.test(renderWord(words2[0])) && !systemProgram) {
     const written = direct === void 0 ? void 0 : ctx.written.get(executionWrittenKey(ctx, direct));
     if (written) {
       runnerStarts(ctx, direct);
@@ -5026,7 +5058,7 @@ function visitUnwrapped(unwrapped, command2, given, ctx, visitor2, viaXargs, via
   try {
     const shape = ctx.functions.get(name);
     if (shape?.forkBomb) return visitor2.forkBomb();
-    if (shape) return callFunction(name, shape, words.slice(1), ctx, visitor2);
+    if (shape) return callFunction(name, shape, words2.slice(1), ctx, visitor2);
     if (compilerResponse(name, marksArgs)) doubt("file-fed-args");
     if (genericResponse(name, marksArgs, PURE_READERS.has(name))) doubt("file-fed-args");
     if ((name === "tar" || name === "rsync") && marksArgs.some((a) => a === "-T" || a === "--files-from" || a.startsWith("--files-from="))) doubt("file-fed-args");
@@ -5320,14 +5352,14 @@ function commaElements(word) {
   if (parts.length) out.push(quotedHome({ parts }));
   return out;
 }
-function splitCommas(words) {
-  return words.flatMap(commaElements);
+function splitCommas(words2) {
+  return words2.flatMap(commaElements);
 }
-function commaList(words) {
+function commaList(words2) {
   const out = [];
   let comma = false;
   let open = false;
-  for (const word of words) {
+  for (const word of words2) {
     const head = word.parts[0];
     const leads = head?.kind === "lit" && head.quote === "none" && head.text.startsWith(",");
     if (open && !leads) return void 0;
@@ -5348,8 +5380,8 @@ function literalArray(inner, legacy) {
     throw error;
   }
   if (lexed.nested.length || lexed.statements.length > 1) return void 0;
-  const words = lexed.statements[0]?.words ?? [];
-  const elements = words.length === 1 ? commaElements(words[0]) : commaList(words);
+  const words2 = lexed.statements[0]?.words ?? [];
+  const elements = words2.length === 1 ? commaElements(words2[0]) : commaList(words2);
   if (!elements) return void 0;
   const plain2 = (word) => word.parts.every((part) => part.kind === "lit" || part.kind === "tilde" || part.kind === "glob" || part.kind === "var" && part.op === void 0);
   return elements.every(plain2) ? elements : void 0;
@@ -5358,7 +5390,7 @@ function lexPwsh(s, legacy = false) {
   const blank = legacy ? LEGACY_BLANK : PWSH_BLANK;
   const statements = [];
   const nested = [];
-  let words = [];
+  let words2 = [];
   let parts = [];
   let i = 0;
   let tailPart;
@@ -5378,15 +5410,15 @@ function lexPwsh(s, legacy = false) {
   };
   const endsWithChar = (part, ch) => part === tailPart ? tailChar === ch : part.text.endsWith(ch);
   const endWord = () => {
-    if (parts.length) words.push(quotedHome({ parts }));
+    if (parts.length) words2.push(quotedHome({ parts }));
     parts = [];
   };
   let piped = false;
   const endStatement = (pipe = false) => {
     endWord();
-    if (!words.length && !pipe) return;
-    if (words.length) statements.push({ words, piped });
-    words = [];
+    if (!words2.length && !pipe) return;
+    if (words2.length) statements.push({ words: words2, piped });
+    words2 = [];
     piped = pipe;
   };
   const closing = (quotes, from) => {
@@ -5516,8 +5548,8 @@ function lexPwsh(s, legacy = false) {
         i += 2;
         continue;
       }
-      if (words.length === 0 && parts.length === 0) {
-        words.push({ parts: [{ kind: "lit", text: "&", quote: "none" }] });
+      if (words2.length === 0 && parts.length === 0) {
+        words2.push({ parts: [{ kind: "lit", text: "&", quote: "none" }] });
       } else {
         endStatement();
       }
@@ -5567,7 +5599,7 @@ function lexPwsh(s, legacy = false) {
       const glued = end + 1 < s.length && !/[\s;|&,)}]/.test(s[end + 1]);
       if (elements && !glued) {
         endWord();
-        elements.forEach((element, k) => words.push(k < elements.length - 1 ? { parts: [...element.parts, { kind: "lit", text: ",", quote: "none" }] } : element));
+        elements.forEach((element, k) => words2.push(k < elements.length - 1 ? { parts: [...element.parts, { kind: "lit", text: ",", quote: "none" }] } : element));
       } else {
         parts.push({ kind: "subst", text: inner, quote: "none" });
       }
@@ -5678,25 +5710,25 @@ var STATIC_CALL = /::|\.[A-Za-z_]\w*\s*\(/;
 var DOTNET_CALL = /::|\.[A-Za-z_]\w*\s*\(|\.\$[\w:{}()]*\s*\(|\.\(/;
 var NUMBER = /^-?\d+(\.\d+)?(kb|mb|gb|tb|pb|l|d)?$/i;
 function assignmentRhs(input) {
-  const words = input.map(starEquals);
+  const words2 = input.map(starEquals);
   const tail = (text4, rest) => {
     const parts = [...text4 ? [{ kind: "lit", text: text4, quote: "none" }] : [], ...rest];
     return parts.length ? [{ parts }] : [];
   };
-  const first = words[0];
+  const first = words2[0];
   for (let p = 1; p < first.parts.length; p++) {
     const part = first.parts[p];
     if (part.kind !== "lit" || part.quote !== "none") continue;
     const m = /(\?\?|[+\-*/%])?=(?!=)/.exec(part.text);
     if (!m) continue;
     const lhs = [...first.parts.slice(0, p), ...m.index ? [{ ...part, text: part.text.slice(0, m.index) }] : []];
-    return { lhs, op: m[0], rhs: [...tail(part.text.slice(m.index + m[0].length), first.parts.slice(p + 1)), ...words.slice(1)], at: 0 };
+    return { lhs, op: m[0], rhs: [...tail(part.text.slice(m.index + m[0].length), first.parts.slice(p + 1)), ...words2.slice(1)], at: 0 };
   }
-  for (let i = 1; i < words.length; i++) {
-    const lead = words[i].parts[0];
+  for (let i = 1; i < words2.length; i++) {
+    const lead = words2[i].parts[0];
     if (!lead || lead.kind !== "lit" || lead.quote !== "none") continue;
     const op = ASSIGNMENT_OP.exec(lead.text);
-    if (op) return { lhs: words.slice(0, i).flatMap((word) => word.parts), op: op[1], rhs: [...tail(lead.text.slice(op[0].length), words[i].parts.slice(1)), ...words.slice(i + 1)], at: i };
+    if (op) return { lhs: words2.slice(0, i).flatMap((word) => word.parts), op: op[1], rhs: [...tail(lead.text.slice(op[0].length), words2[i].parts.slice(1)), ...words2.slice(i + 1)], at: i };
   }
   return void 0;
 }
@@ -5709,10 +5741,10 @@ function starEquals(word) {
   const next = word.parts[at + 1];
   return { parts: [...word.parts.slice(0, at), { kind: "lit", text: `*${next.text}`, quote: "none" }, ...word.parts.slice(at + 2)] };
 }
-function assignmentOf2(words) {
-  const found = assignmentRhs(words);
+function assignmentOf2(words2) {
+  const found = assignmentRhs(words2);
   if (!found) return void 0;
-  const lead = words[0].parts[0];
+  const lead = words2[0].parts[0];
   const leftSide = lead?.kind === "var" || lead?.kind === "lit" && lead.quote === "none" && lead.text.startsWith("[");
   if (leftSide && found.at <= 1) return found;
   if (lead?.kind === "var" || lead?.kind === "subst") throw new Unreadable("pwsh", "an assignment the reader does not model");
@@ -5747,10 +5779,10 @@ function bindable(rhs) {
   }
   return { parts };
 }
-function redirectTargets(words) {
+function redirectTargets(words2) {
   const targets = [];
-  for (let w = 0; w < words.length; w++) {
-    const parts = words[w].parts;
+  for (let w = 0; w < words2.length; w++) {
+    const parts = words2[w].parts;
     for (let p = 0; p < parts.length; p++) {
       const part = parts[p];
       if (part.kind !== "lit" || part.quote !== "none") continue;
@@ -5767,7 +5799,7 @@ function redirectTargets(words) {
       const rest = part.text.slice(end).replace(/^&\d?/, "");
       const tail = [...rest ? [{ kind: "lit", text: rest, quote: "none" }] : [], ...parts.slice(p + 1)];
       if (tail.length) targets.push({ parts: tail });
-      else if (words[w + 1]) targets.push(words[w + 1]);
+      else if (words2[w + 1]) targets.push(words2[w + 1]);
       break;
     }
   }
@@ -5817,19 +5849,19 @@ var valueOutput = (why) => ({ kind: "value", why });
 function stringExpression(word) {
   return word.parts.length > 0 && word.parts.every((part) => part.kind === "lit" && part.quote !== "none");
 }
-function emitted(words, render) {
-  if (!words.every(isPlain)) return valueOutput("emitted text with a value");
-  return { kind: "literal", text: words.map(render).join(" "), words };
+function emitted(words2, render) {
+  if (!words2.every(isPlain)) return valueOutput("emitted text with a value");
+  return { kind: "literal", text: words2.map(render).join(" "), words: words2 };
 }
 function readFile(args, ctx, pwsh) {
   const only = args.length === 1 ? literalText(args[0]) : void 0;
   if (only === void 0 || only.startsWith("-") || !pwsh && only.startsWith("/")) return valueOutput("a file reader with options or a value");
   return { kind: "file", path: resolveWritten(ctx, only.replace(/\\/g, "/")) };
 }
-function pwshOutputOf(words, input, ctx) {
-  if (words.length === 1 && stringExpression(words[0])) return emitted(words, renderPwshWord);
-  const first = literalText(words[0]);
-  const call = first === "&" || first === "." ? words.slice(1) : words;
+function pwshOutputOf(words2, input, ctx) {
+  if (words2.length === 1 && stringExpression(words2[0])) return emitted(words2, renderPwshWord);
+  const first = literalText(words2[0]);
+  const call = first === "&" || first === "." ? words2.slice(1) : words2;
   if (!call.length) return valueOutput("a call");
   const name = resolveName(call[0]);
   const args = call.slice(1);
@@ -5864,10 +5896,10 @@ function pwshOutputOf(words, input, ctx) {
   }
   return valueOutput(`the output of ${name}`);
 }
-function cmdOutputOf(words, ctx) {
-  if (!words?.length) return valueOutput("the output of a block");
-  const name = resolveName(words[0])?.replace(/\.(exe|com)$/, "");
-  const args = words.slice(1);
+function cmdOutputOf(words2, ctx) {
+  if (!words2?.length) return valueOutput("the output of a block");
+  const name = resolveName(words2[0])?.replace(/\.(exe|com)$/, "");
+  const args = words2.slice(1);
   if (name !== void 0 && CMD_EMITTERS.has(name)) return emitted(args, renderCmdWord);
   if (name !== void 0 && CMD_FILE_READERS.has(name)) return readFile(args, ctx, false);
   if (name !== void 0 && CMD_LISTERS.has(name)) {
@@ -6248,7 +6280,7 @@ function foreignFromWindows(program, args, ctx, visitor2, stdin) {
     ctx.windowsForeign = outer;
   }
 }
-var readForm = (words, flags = "", values2 = {}) => ({ words, flags: new Set(flags.split(" ").filter(Boolean)), values: new Map(Object.entries({ erroraction: "name", ...values2 })) });
+var readForm = (words2, flags = "", values2 = {}) => ({ words: words2, flags: new Set(flags.split(" ").filter(Boolean)), values: new Map(Object.entries({ erroraction: "name", ...values2 })) });
 var formsOf = (forms) => new Map(forms.flatMap(([names2, form]) => names2.split(" ").map((name) => [name, form])));
 var WHERE_TO = { path: "path", literalpath: "path" };
 var READ_SOURCES = formsOf([
@@ -6286,7 +6318,7 @@ var nullTarget = (word) => {
   const only = word.parts.length === 1 ? word.parts[0] : void 0;
   return only?.kind === "var" && only.name === "null" && only.op === void 0 || /^nul$/i.test(literalText(word) ?? "");
 };
-var writesOutput = (words) => redirectTargets(words).some((target) => !nullTarget(target));
+var writesOutput = (words2) => redirectTargets(words2).some((target) => !nullTarget(target));
 function itemValue(word) {
   const [item, tail, ...rest] = word.parts;
   if (item?.kind !== "var" || item.op !== void 0 || item.name !== "_" && item.name !== "psitem" || rest.length) return false;
@@ -6295,8 +6327,8 @@ function itemValue(word) {
 function blockReadsItem(body) {
   return [false, true].every((legacy) => {
     const { statements } = lexPwsh(body, legacy);
-    const words = statements[0]?.words ?? [];
-    return statements.length === 1 && words.length === 1 && itemValue(words[0]);
+    const words2 = statements[0]?.words ?? [];
+    return statements.length === 1 && words2.length === 1 && itemValue(words2[0]);
   });
 }
 var PLAIN_PATH = /^(?![-\\/]{2}|-)(?:[A-Za-z]:)?[\w .\-\\/*?~]*$/;
@@ -6319,19 +6351,19 @@ function plainWord(word, kind) {
   if (kind === "number") return /^\d+$/.test(text4);
   return !text4.includes("$") && word.parts.every((part) => part.kind === "glob" || part.kind === "lit" && (part.quote !== "none" || PLAIN_TEXT.test(part.text)));
 }
-function stageWords(words) {
+function stageWords(words2) {
   const kept = [];
-  for (let at = 0; at < words.length; at++) {
-    const lead = words[at].parts.slice(0, 2).map((part) => part.kind === "glob" || part.kind === "lit" && part.quote === "none" ? part.text : "").join("");
-    if (!/^[\d*]?>/.test(lead)) kept.push(words[at]);
-    else if (plainText(words[at])?.endsWith(">")) at++;
+  for (let at = 0; at < words2.length; at++) {
+    const lead = words2[at].parts.slice(0, 2).map((part) => part.kind === "glob" || part.kind === "lit" && part.quote === "none" ? part.text : "").join("");
+    if (!/^[\d*]?>/.test(lead)) kept.push(words2[at]);
+    else if (plainText(words2[at])?.endsWith(">")) at++;
   }
   return kept;
 }
-function fitsForm(words, form) {
+function fitsForm(words2, form) {
   let positional = 0;
-  for (let at = 0; at < words.length; at++) {
-    const word = words[at];
+  for (let at = 0; at < words2.length; at++) {
+    const word = words2[at];
     const text4 = plainText(word);
     if (!text4) return false;
     const head = word.parts[0];
@@ -6340,7 +6372,7 @@ function fitsForm(words, form) {
       if (form.flags.has(name)) continue;
       const kind2 = form.values.get(name);
       at++;
-      if (!kind2 || !plainWord(words[at], kind2)) return false;
+      if (!kind2 || !plainWord(words2[at], kind2)) return false;
       continue;
     }
     const kind = form.words[positional++];
@@ -6348,35 +6380,35 @@ function fitsForm(words, form) {
   }
   return true;
 }
-function pipedStageFits(name, words) {
+function pipedStageFits(name, words2) {
   if (BLOCK_STAGES.has(name)) {
-    const part = words.length === 1 && words[0].parts.length === 1 ? words[0].parts[0] : void 0;
+    const part = words2.length === 1 && words2[0].parts.length === 1 ? words2[0].parts[0] : void 0;
     if (part?.kind === "subst" && part.block === true && blockReadsItem(part.text)) return true;
-    return WHERE_STAGES.has(name) && words.length === 3 && plainWord(words[0], "name") && WHERE_COMPARE.test(literalText(words[1]) ?? "") && plainWord(words[2], "text");
+    return WHERE_STAGES.has(name) && words2.length === 3 && plainWord(words2[0], "name") && WHERE_COMPARE.test(literalText(words2[1]) ?? "") && plainWord(words2[2], "text");
   }
   const form = READ_STAGES.get(name);
-  return form !== void 0 && fitsForm(words, form);
+  return form !== void 0 && fitsForm(words2, form);
 }
-function readStageWords(words, piped, visitor2) {
-  const head = words[0].parts[0];
-  const program = literalText(words[0]);
-  if (program === void 0 || head?.kind !== "lit" || head.quote !== "none" || !visitor2.readOnly || writesOutput(words)) return false;
-  const args = words.slice(1);
+function readStageWords(words2, piped, visitor2) {
+  const head = words2[0].parts[0];
+  const program = literalText(words2[0]);
+  if (program === void 0 || head?.kind !== "lit" || head.quote !== "none" || !visitor2.readOnly || writesOutput(words2)) return false;
+  const args = words2.slice(1);
   const kept = stageWords(args);
   const name = program.toLowerCase();
   const source2 = READ_SOURCES.get(name);
   if (!(piped ? pipedStageFits(name, kept) : source2 !== void 0 && fitsForm(kept, source2))) return false;
   return visitor2.readOnly({ program: { text: program, dialect: "windows" }, args, wholeRead: true });
 }
-function pwshReadStage(words, piped, visitor2) {
+function pwshReadStage(words2, piped, visitor2) {
   try {
-    return readStageWords(words, piped, visitor2);
+    return readStageWords(words2, piped, visitor2);
   } catch (error) {
     if (error instanceof Unreadable) return false;
     throw error;
   }
 }
-var leadValue = (words) => words.length === 1 && (stringExpression(words[0]) || pureMemberCall(words[0]));
+var leadValue = (words2) => words2.length === 1 && (stringExpression(words2[0]) || pureMemberCall(words2[0]));
 var PURE_METHODS = "ToUpper|ToLower|ToUpperInvariant|ToLowerInvariant|Trim|TrimStart|TrimEnd|Substring|StartsWith|EndsWith|PadLeft|PadRight|IndexOf|LastIndexOf|Contains|ToString|Split";
 var PURE_ARGUMENT = String.raw`(?:'[^'"$\x60\u2018-\u201E]*'|"[^'"$\x60\u2018-\u201E]*"|\d+)`;
 var PROPERTIES = /^(?:\.[A-Za-z_]\w*)+$/;
@@ -6423,30 +6455,30 @@ function walkPwshLexed(text4, ctx, visitor2, legacy) {
   let carried;
   for (const [at, statement] of statements.entries()) {
     const stdin = statement.piped ? carried : ctx.stdin;
-    const words = statement.words;
-    const rhs = assignmentOf2(words)?.rhs;
-    const output = rhs ? rhs : words;
+    const words2 = statement.words;
+    const rhs = assignmentOf2(words2)?.rhs;
+    const output = rhs ? rhs : words2;
     carried = output.length ? pwshOutputOf(output, stdin, ctx) : valueOutput("an empty right side");
     if (visitor2.pwshRedirect) {
-      for (const target of redirectTargets(words)) {
+      for (const target of redirectTargets(words2)) {
         if (ctx.pwshStamped && nullTarget(target)) continue;
         const hit4 = visitor2.pwshRedirect(target, candidatesOf(target, ctx), ctx);
         if (hit4) return hit4;
       }
     }
-    const head = (rhs ?? words)[0];
+    const head = (rhs ?? words2)[0];
     const member = (word) => (printedString(word) ? STATIC_CALL : DOTNET_CALL).test(memberText(word)) && !(pureMemberCall(word) && (ctx.pureMembers || wholeRead && (word === head || reads[at])));
-    if (words.some(member)) {
-      if (words.some((word) => PHYSICAL_DRIVE.test(renderPwshWord(word)))) {
-        const hit4 = visitor2.command(simpleCommand(".net-call", words, ctx), ctx);
+    if (words2.some(member)) {
+      if (words2.some((word) => PHYSICAL_DRIVE.test(renderPwshWord(word)))) {
+        const hit4 = visitor2.command(simpleCommand(".net-call", words2, ctx), ctx);
         if (hit4) return hit4;
       }
       throw new Unreadable("pwsh", "a .NET call");
     }
-    if (statements.length === 1 && !statement.piped && blockCall(words)) continue;
-    const hit3 = pwshStatement(words, stdin, ctx, visitor2, 0, !readsOn[at] || writesOutput(words), wholeRead);
+    if (statements.length === 1 && !statement.piped && blockCall(words2)) continue;
+    const hit3 = pwshStatement(words2, stdin, ctx, visitor2, 0, !readsOn[at] || writesOutput(words2), wholeRead);
     if (hit3) return hit3;
-    recordPwshWrites(words, ctx);
+    recordPwshWrites(words2, ctx);
     if (rhs) recordPwshWrites(rhs, ctx);
   }
   return null;
@@ -6504,12 +6536,12 @@ function keepBranchWrites(ctx, branch) {
     else if (known2 !== provenance && JSON.stringify(known2) !== JSON.stringify(provenance)) ctx.written.set(path, UNREAD_WRITE);
   }
 }
-function recordPwshWrites(words, ctx) {
+function recordPwshWrites(words2, ctx) {
   const record = (text4) => {
     if (text4) ctx.written.set(resolveWritten(ctx, text4), UNREAD_WRITE);
   };
-  for (const target of redirectTargets(words)) record(literalText(target));
-  let call = literalText(words[0] ?? { parts: [] }) === "&" ? words.slice(1) : words;
+  for (const target of redirectTargets(words2)) record(literalText(target));
+  let call = literalText(words2[0] ?? { parts: [] }) === "&" ? words2.slice(1) : words2;
   while (call.length > 1 && PIPELINE_KEYWORDS.has(literalText(call[0])?.toLowerCase() ?? "")) call = call.slice(1);
   const program = call[0] ? literalText(call[0])?.toLowerCase().replace(/\.exe$/, "") : void 0;
   if (program === void 0 || !WRITE_CMDLETS.has(program)) return;
@@ -6519,20 +6551,20 @@ function recordPwshWrites(words, ctx) {
     record(text4.startsWith("-") ? text4.includes(":") ? text4.slice(text4.indexOf(":") + 1) : void 0 : text4);
   }
 }
-function blockCall(words) {
-  const block = words[1]?.parts;
-  return words.length === 2 && literalText(words[0]) === "&" && block?.length === 1 && block[0].kind === "subst" && block[0].block === true;
+function blockCall(words2) {
+  const block = words2[1]?.parts;
+  return words2.length === 2 && literalText(words2[0]) === "&" && block?.length === 1 && block[0].kind === "subst" && block[0].block === true;
 }
-function withoutRedirects(words) {
+function withoutRedirects(words2) {
   const kept = [];
-  for (let w = 0; w < words.length; w++) {
-    const word = words[w];
+  for (let w = 0; w < words2.length; w++) {
+    const word = words2[w];
     const text4 = literalText(word);
     const unquoted = word.parts.every((part) => part.kind !== "lit" || part.quote === "none");
     const op = text4 !== void 0 && unquoted ? /^([1-6*]?>>?)(&[1-6])?(.*)$/s.exec(text4) : null;
     if (op) {
       if (!op[2] && !op[3]) {
-        if (!words[w + 1]) return void 0;
+        if (!words2[w + 1]) return void 0;
         w++;
       } else if (op[2] && op[3]) return void 0;
       continue;
@@ -6545,10 +6577,10 @@ function withoutRedirects(words) {
 function printedString(word) {
   return word.parts.length > 0 && word.parts.some((part) => part.kind === "lit") && word.parts.every((part) => part.kind === "lit" && part.quote !== "none" || part.kind === "var" && part.op === void 0 && part.quote === "double");
 }
-function pwshStatement(words, stdin, ctx, visitor2, hops, flows, wholeRead) {
+function pwshStatement(words2, stdin, ctx, visitor2, hops, flows, wholeRead) {
   if (hops > MAX_DEPTH) throw new Unreadable("depth");
-  if (!words.length) return null;
-  const assignment = assignmentOf2(words);
+  if (!words2.length) return null;
+  const assignment = assignmentOf2(words2);
   if (assignment) {
     const name2 = assignedName(assignment.lhs);
     if (name2 === void 0) {
@@ -6579,9 +6611,9 @@ function pwshStatement(words, stdin, ctx, visitor2, hops, flows, wholeRead) {
     }
     return pwshStatement(assignment.rhs, stdin, ctx, visitor2, hops + 1, true, false);
   }
-  const first = literalText(words[0]);
+  const first = literalText(words2[0]);
   const called = first === "&" || first === ".";
-  const call = called ? words.slice(1) : words;
+  const call = called ? words2.slice(1) : words2;
   if (call.length === 0) return null;
   if (!called) {
     const lead = call[0].parts[0];
@@ -6934,7 +6966,7 @@ function walkCmd(text4, ctx, visitor2) {
       lastWords = void 0;
       return hit3;
     }
-    const words = [];
+    const words2 = [];
     const redirects = [];
     for (; ; ) {
       const next = tokens[pos];
@@ -6944,12 +6976,12 @@ function walkCmd(text4, ctx, visitor2) {
         if (next.target) redirects.push({ op: next.op, target: next.target });
         continue;
       }
-      words.push(next.word);
+      words2.push(next.word);
     }
     if (tokens[pos]?.kind === "op" && tokens[pos].op === "(") throw new Unreadable("cmd", "( inside a statement");
     const stdin = piped ? cmdOutputOf(lastWords, state) : state.stdin;
-    lastWords = words;
-    return simple(words, redirects, state, stdin);
+    lastWords = words2;
+    return simple(words2, redirects, state, stdin);
   };
   const forStatement = (state) => {
     pos++;
@@ -6985,8 +7017,8 @@ function walkCmd(text4, ctx, visitor2) {
     pos++;
     const body = fork(state);
     const values2 = items.flatMap((item) => expandWord(item, state));
-    const literal2 = !unknown && values2.every((value) => value.parts.every((part) => part.kind !== "var" && part.kind !== "subst"));
-    body.bound.set(variable, literal2 ? values2 : null);
+    const literal3 = !unknown && values2.every((value) => value.parts.every((part) => part.kind !== "var" && part.kind !== "subst"));
+    body.bound.set(variable, literal3 ? values2 : null);
     const hit3 = statement(body);
     if (!hit3) keepBranchWrites(state, body);
     return hit3;
@@ -7025,13 +7057,13 @@ function walkCmd(text4, ctx, visitor2) {
     }
     return null;
   };
-  const simple = (words, redirects, state, stdin) => {
+  const simple = (words2, redirects, state, stdin) => {
     for (const { op: redirectOp, target } of redirects) {
       if (redirectOp === "<" || !visitor2.pwshRedirect) continue;
       const hit3 = visitor2.pwshRedirect(target, candidatesOf(target, state), state);
       if (hit3) return hit3;
     }
-    let rest = words;
+    let rest = words2;
     for (; ; ) {
       if (rest.length === 0) return null;
       const resolved = resolveName(rest[0]);
@@ -7595,7 +7627,7 @@ var WRAPPERS2 = {
 };
 var SHELLS2 = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash", "ksh", "mksh", "fish", "pwsh", "powershell", "cmd"]);
 var COPY = { flags: "abdfilnprRsuvHTPsT", valued: "tS", long: { ...longs("target-directory suffix"), ...longs("backup", "optional"), ...longs("symbolic no-target-directory", "none") } };
-function commandRoles(words, dialect = "posix", sourceWords) {
+function commandRoles(words2, dialect = "posix", sourceWords) {
   const result = { program: "", wrappers: [], slots: [], known: false, ambiguous: false };
   let base = 0;
   const positions = /* @__PURE__ */ new Map();
@@ -7614,14 +7646,14 @@ function commandRoles(words, dialect = "posix", sourceWords) {
   const nested = (text4, via, cwd = "same") => {
     if (text4 !== void 0) (result.nested ??= []).push({ text: text4, via, cwd });
   };
-  for (let guard = 0; base < words.length && guard < words.length; guard++) {
-    const name2 = basename(words[base]);
-    put(base, words[base], base === 0 ? "name" : "command");
+  for (let guard = 0; base < words2.length && guard < words2.length; guard++) {
+    const name2 = basename(words2[base]);
+    put(base, words2[base], base === 0 ? "name" : "command");
     const spec3 = WRAPPERS2[name2];
     if (!spec3) break;
     result.wrappers.push(name2);
     const start = base + 1;
-    const parsed2 = getopt(words.slice(start), { ...spec3, permute: false });
+    const parsed2 = getopt(words2.slice(start), { ...spec3, permute: false });
     result.ambiguous ||= parsed2.unknown;
     for (const item of parsed2.items.filter((i) => i.kind !== "operand")) {
       const role = name2 === "time" && ["-o", "--output"].includes(item.key ?? "") ? "write" : name2 === "xargs" && ["-a", "--arg-file"].includes(item.key ?? "") ? "read" : item.kind === "flag" ? "flag" : "value";
@@ -7650,8 +7682,8 @@ function commandRoles(words, dialect = "posix", sourceWords) {
     }
     base = start + operands[0].arg;
   }
-  const name = result.program = basename(words[base]);
-  const args = words.slice(base + 1);
+  const name = result.program = basename(words2[base]);
+  const args = words2.slice(base + 1);
   const shift = base + 1;
   const add2 = (item, role) => put(shift + item.arg, item.value, role, item.offset, item.key);
   const archive = archiveRoles(name, args);
@@ -8447,10 +8479,10 @@ function familyMatch(glob, path) {
 function credentialFamilyRule(id) {
   return SENSITIVE_PATHS.find((row) => row.id === id)?.re.source ?? "credential-family:" + id;
 }
-function credentialGlobHit(words, options) {
+function credentialGlobHit(words2, options) {
   const platform = options.platform ?? process.platform;
   const roots2 = options.roots;
-  for (const raw of words) {
+  for (const raw of words2) {
     if (!GLOB_CHARS.test(raw)) continue;
     if (raw === "credential-glob-overflow*") return credentialFamilyRule("murage-cred");
     let word = raw.replace(/\\/g, "/").replace(/^(?:\$\{(?:env:)?(?:TMPDIR|TEMP|TMP)\}|\$(?:env:)?(?:TMPDIR|TEMP|TMP)|%(?:TEMP|TMP)%)(?=\/|$)/i, roots2.temp[0] ?? "/tmp").replace(/^(?:\$\{MURAGE_DATA_DIR\}|\$MURAGE_DATA_DIR)(?=\/|$)/, roots2.data?.[0] ?? "~/.murage").replace(/^(?:~|\$\{(?:env:)?(?:HOME|USERPROFILE)\}|\$(?:env:)?(?:HOME|USERPROFILE)|%USERPROFILE%)(?=\/|$)/i, roots2.home ?? "~");
@@ -8534,29 +8566,29 @@ function patternTokens(segment, runs = false) {
     fewest = most = 0;
     lossy = joined = false;
   };
-  const ascii = (literal2) => {
-    const swallowed = tail && literal2.length === 1 && literal2.charCodeAt(0) < 128;
-    result.push({ star: false, alphabet: literal2.toLowerCase() + literal2.toUpperCase(), ...swallowed ? { optional: true } : {} });
+  const ascii = (literal3) => {
+    const swallowed = tail && literal3.length === 1 && literal3.charCodeAt(0) < 128;
+    result.push({ star: false, alphabet: literal3.toLowerCase() + literal3.toUpperCase(), ...swallowed ? { optional: true } : {} });
     joined = swallowed;
   };
   for (let i = 0; i < segment.length; i++) {
     const c = charAt(i);
     const quoted = c === "\0" && i + 1 < segment.length;
-    const literal2 = quoted ? charAt(i + 1) : c;
-    if (runs && /[^\x00-\x7f]/.test(literal2) && (quoted || c !== "[")) {
-      const [low, high] = charBytes(literal2);
+    const literal3 = quoted ? charAt(i + 1) : c;
+    if (runs && /[^\x00-\x7f]/.test(literal3) && (quoted || c !== "[")) {
+      const [low, high] = charBytes(literal3);
       fewest += low;
       most += high;
       if (low !== high) lossy = true;
       tail = false;
-      i += (quoted ? 1 : 0) + literal2.length - 1;
+      i += (quoted ? 1 : 0) + literal3.length - 1;
       continue;
     }
     if (most) flush();
     else joined = false;
     if (quoted) {
-      i += 1 + literal2.length - 1;
-      ascii(literal2);
+      i += 1 + literal3.length - 1;
+      ascii(literal3);
       tail = false;
       continue;
     }
@@ -8682,7 +8714,7 @@ function collapsedPaths(text4) {
 function rowIn(text4) {
   return GATE_ROWS.find((row) => row.re.test(row.id === "project-tooling" ? text4.replace(LOCAL_TOOLS, " ") : text4));
 }
-function gateHit(texts, commandWords = []) {
+function gateHit(texts, commandWords2 = []) {
   for (const text4 of texts) {
     const row = rowIn(text4) ?? rowIn(collapsedPaths(text4));
     if (row) return row.re.source;
@@ -8695,7 +8727,7 @@ function gateHit(texts, commandWords = []) {
     if (hit3) return hit3;
   }
   const temp = tmpdir();
-  return credentialGlobHit(commandWords, { runtime, roots: {
+  return credentialGlobHit(commandWords2, { runtime, roots: {
     temp: [.../* @__PURE__ */ new Set([temp, "/tmp", "/private/tmp", ...temp.startsWith("/var/") ? ["/private" + temp] : []])],
     home: homedir3(),
     data: dataCredentialRoots(),
@@ -8758,11 +8790,11 @@ var windowsPath = (path) => /^[a-z]:[\\/]|^[\\/]{2}[^\\/]+[\\/][^\\/]+/i.test(pa
 var pathKey = (path, windows2 = windowsPath(path)) => windows2 ? path.replaceAll("\\", "/").toLowerCase() : path;
 var anchoredPath = (path) => path.startsWith("/") || /^[a-z]:\//i.test(path);
 function spellPath(raw, context = {}) {
-  const literal2 = raw.startsWith("\0");
-  const unmarked2 = literal2 ? raw.slice(1) : raw;
+  const literal3 = raw.startsWith("\0");
+  const unmarked2 = literal3 ? raw.slice(1) : raw;
   let path = context.windows || windowsPath(unmarked2) ? unmarked2.replaceAll("\\", "/") : unmarked2;
   const home = context.home ?? homedir4();
-  if (!literal2 && /^~(?:[\\/]|$)/.test(path)) path = home.replaceAll("\\", "/") + path.slice(1).replaceAll("\\", "/");
+  if (!literal3 && /^~(?:[\\/]|$)/.test(path)) path = home.replaceAll("\\", "/") + path.slice(1).replaceAll("\\", "/");
   return path;
 }
 function rootAndParts(path) {
@@ -9119,8 +9151,8 @@ function producerValues(word, walk2, context, budget) {
   if (!word) return Object.freeze([{ unknownCause: "missing-operand" }]);
   const dynamic = dynamicProducerWord(word), values2 = [];
   try {
-    const words = dynamic ? [word] : expandWord(word, walk2).flatMap((expanded) => braceCandidates(expanded, walk2));
-    for (const raw of words) for (const candidate of candidatesOf(raw, walk2)) {
+    const words2 = dynamic ? [word] : expandWord(word, walk2).flatMap((expanded) => braceCandidates(expanded, walk2));
+    for (const raw of words2) for (const candidate of candidatesOf(raw, walk2)) {
       const expanded = candidate.kind === "glob" ? dynamic ? [{ value: candidate.path, unknownCause: "dynamic-producer-value" }] : expandProducerGlob(candidate.path, context, raw, Math.min(4096 - values2.length, budget?.remaining ?? 4096)) : [{
         value: candidate.path,
         ...candidate.kind !== "literal" ? { unknownCause: "unavailable-producer-value" } : {}
@@ -9173,8 +9205,8 @@ function roleText(word) {
 }
 function roleWord(word, offset = 0) {
   if (!word || !offset) return word;
-  const literal2 = literalText(word);
-  if (literal2 !== void 0) return { parts: [{ kind: "lit", text: literal2.slice(offset), quote: "single" }] };
+  const literal3 = literalText(word);
+  if (literal3 !== void 0) return { parts: [{ kind: "lit", text: literal3.slice(offset), quote: "single" }] };
   let left = offset;
   const parts = [];
   for (const part of word.parts) {
@@ -9244,9 +9276,9 @@ function effectiveDestinations(input, context, walk2, cwds, receiverCardinalityU
       budget = { remaining: 4096 };
       wordBudgets.set(origin, budget);
     }
-    const literal2 = text(w);
+    const literal3 = text(w);
     const bracketGlob = w.parts.some((part) => part.kind === "lit" && part.quote === "none" && /\[[^\]]+\]/.test(part.text));
-    if (literal2 !== void 0 && !bracketGlob) return [{ path: literal2.startsWith("~") ? "\0" + literal2 : literal2, unknown: false }];
+    if (literal3 !== void 0 && !bracketGlob) return [{ path: literal3.startsWith("~") ? "\0" + literal3 : literal3, unknown: false }];
     if (!dynamicProducerWord(w)) return producerValues(w, walk2 ?? newContext(context.cwd, context.runtimePaths), context, budget).map((value) => ({ path: value.value ?? "", unknown: !!value.unknownCause }));
     if (index < 0) index = command2.args.indexOf(w);
     const candidates = walk2 ? candidatesOf(w, walk2) : index >= 0 ? command2.operands[index] : void 0;
@@ -10330,16 +10362,16 @@ function protectedCandidates(candidates, ctx, assignments = true, position = "wr
 }
 function protectedInLine(text4, ctx) {
   if (!ownerDeny()) return protectedInLineLegacy(text4, ctx);
-  let words;
+  let words2;
   try {
-    words = lex(text4).flatMap((token) => token.kind === "word" ? [token.word] : []);
+    words2 = lex(text4).flatMap((token) => token.kind === "word" ? [token.word] : []);
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
   }
-  if (words) {
+  if (words2) {
     let heldValue = false;
     let first = null;
-    for (const word of words) {
+    for (const word of words2) {
       let candidates;
       try {
         candidates = candidatesOf(word, ctx);
@@ -10465,9 +10497,9 @@ function protectedPathOf(cmd, ctx) {
   }
   return null;
 }
-function protectedWrapperArgs(words, ctx) {
-  if (!ownerDeny()) return protectedWrapperArgsLegacy(words, ctx);
-  for (const word of words) {
+function protectedWrapperArgs(words2, ctx) {
+  if (!ownerDeny()) return protectedWrapperArgsLegacy(words2, ctx);
+  for (const word of words2) {
     let candidates;
     try {
       candidates = candidatesOf(word, ctx);
@@ -10540,14 +10572,14 @@ function protectedCandidatesLegacy(candidates, ctx, assignments = true) {
   return null;
 }
 function protectedInLineLegacy(text4, ctx) {
-  let words;
+  let words2;
   try {
-    words = lex(text4).flatMap((token) => token.kind === "word" ? [token.word] : []);
+    words2 = lex(text4).flatMap((token) => token.kind === "word" ? [token.word] : []);
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
   }
-  if (words) {
-    for (const word of words) {
+  if (words2) {
+    for (const word of words2) {
       let candidates;
       try {
         candidates = candidatesOf(word, ctx);
@@ -10583,10 +10615,10 @@ function symlinkTargetLegacy(name, texts, index) {
   const text4 = texts[index];
   if (text4 === void 0 || text4.startsWith("-")) return false;
   if (texts.some((one) => one === void 0)) return false;
-  const words = texts;
-  if (!words.some((one) => /^(?:-[A-Za-z]*s[A-Za-z]*|--symbolic)$/.test(one))) return false;
-  if (words.some((one) => one.startsWith("-") && !LN_BARELegacy.test(one))) return false;
-  const lastOperand = words.reduce((last, one, at) => one.startsWith("-") ? last : at, -1);
+  const words2 = texts;
+  if (!words2.some((one) => /^(?:-[A-Za-z]*s[A-Za-z]*|--symbolic)$/.test(one))) return false;
+  if (words2.some((one) => one.startsWith("-") && !LN_BARELegacy.test(one))) return false;
+  const lastOperand = words2.reduce((last, one, at) => one.startsWith("-") ? last : at, -1);
   return index !== lastOperand;
 }
 function archiveDestinationLegacy(name, texts, index) {
@@ -10674,8 +10706,8 @@ function protectedPathOfWithLegacy(cmd, ctx) {
   }
   return null;
 }
-function protectedWrapperArgsLegacy(words, ctx) {
-  for (const word of words) {
+function protectedWrapperArgsLegacy(words2, ctx) {
+  for (const word of words2) {
     let candidates;
     try {
       candidates = candidatesOf(word, ctx);
@@ -10879,8 +10911,8 @@ var visitor = {
   catastrophic(text4) {
     return protectedClass(text4) !== null;
   },
-  wrapperArgs(words, ctx) {
-    const found = deferred ? null : protectedWrapperArgs(words, ctx);
+  wrapperArgs(words2, ctx) {
+    const found = deferred ? null : protectedWrapperArgs(words2, ctx);
     if (found) deferred = protectedDeferred(found, "wrapper");
     return null;
   },
@@ -10894,25 +10926,25 @@ var visitor = {
     unseen.paths.push(path);
     return true;
   },
-  findValues(words) {
+  findValues(words2) {
     if (carved === null) return false;
-    const at = findValuesPassable(words);
+    const at = findValuesPassable(words2);
     if (at < 0) return false;
-    valueTargetIn(true, "expansion", "a value in find's arguments", carveTool("find"), targetExpression(words[at]), true);
+    valueTargetIn(true, "expansion", "a value in find's arguments", carveTool("find"), targetExpression(words2[at]), true);
     return true;
   }
 };
-function findValuesPassable(words) {
-  const texts = words.map(literalText);
+function findValuesPassable(words2) {
+  const texts = words2.map(literalText);
   if (!texts.includes("-delete")) return -1;
   if (texts.some((text4) => text4 !== void 0 && (FIND_RUNS.has(text4) || text4 === ";" || text4 === "+"))) return -1;
-  const values2 = words.flatMap((word, i) => isPlain(word) ? [] : [i]);
+  const values2 = words2.flatMap((word, i) => isPlain(word) ? [] : [i]);
   if (values2.length !== 1) return -1;
   const at = values2[0];
   const next = texts[at + 1];
   if (next === void 0 || !(next.startsWith("-") || next === "!" || next === "(")) return -1;
   if (texts.slice(0, at).some((text4) => text4 !== void 0 && (text4.startsWith("-") || text4 === "!" || text4 === "("))) return -1;
-  const only = words[at].parts.length === 1 ? words[at].parts[0] : void 0;
+  const only = words2[at].parts.length === 1 ? words2[at].parts[0] : void 0;
   return only?.kind === "var" && only.quote === "double" && only.op === void 0 ? at : -1;
 }
 function carvableTargets(cmd, ctx) {
@@ -10959,6 +10991,30 @@ function foreignExecutorIn(text4, powerShell) {
 }
 function alwaysAskCommand(text4, cwd, mode = "command", shell, windowsBash, home, options = {}) {
   if (!text4) return null;
+  unplacedAny = false;
+  return withUnplaced(alwaysAskCommandRead(text4, cwd, mode, shell, windowsBash, home, options), text4, (part) => readWhole(part, cwd, shell, windowsBash, home, options));
+}
+var unplacedAny = false;
+function withUnplaced(found, text4, again) {
+  if (!found || found.rule !== "unreadable" || found.unplacedWrite === true) return found;
+  if (!unplacedAny) {
+    const pieces = [statementsOf(text4), text4.split(/;|&&|\|\||\n|[{}()]|(?<![\w-])(?:do|then|else|elif|if|while|until|fi|done)(?![\w-])/)];
+    for (const parts of pieces) {
+      let bound = functionDefinitions(text4);
+      for (const part of parts) {
+        if (unplacedAny) break;
+        if (!part.trim()) continue;
+        try {
+          withoutDoubts(() => again(bound + part));
+        } catch {
+        }
+        if (/^\s*(?:(?:export|read|declare|local|typeset|readonly|unset|set)\b|[A-Za-z_]\w*\+?=)/.test(part)) bound += part + "; ";
+      }
+    }
+  }
+  return unplacedAny ? { ...found, unplacedWrite: true } : found;
+}
+function alwaysAskCommandRead(text4, cwd, mode, shell, windowsBash, home, options) {
   try {
     const found = readWhole(text4, cwd, shell, windowsBash, home, options);
     const foreignExecutor = foreignExecutorIn(text4, shell !== void 0);
@@ -11079,7 +11135,7 @@ function plainPlacedScript(word, cwd, options) {
 }
 function readWhole(text4, cwd, shell, windowsBash, home, options = {}) {
   const commandVisitor = visitor.command;
-  let projectionUnknown = false;
+  let projectionUnknown = false, placementUnknown = false;
   visitor.command = (cmd, ctx) => {
     const found = commandVisitor(cmd, ctx);
     if (found || ownerDeny() || deferred) return found;
@@ -11088,14 +11144,14 @@ function readWhole(text4, cwd, shell, windowsBash, home, options = {}) {
       archive = boundedLegacyArchiveWrites(cmd.name, cmd.args.map(renderWord), cmd.operands, ctx.cwd);
     } catch (error) {
       if (!(error instanceof Unreadable)) throw error;
-      projectionUnknown = true;
+      projectionUnknown = placementUnknown = unplacedAny = true;
       return null;
     }
     const placement = cmd.name === "ln" ? effectiveDestinations({ ...cmd, args: cmd.args.map((word, i) => {
       const values2 = cmd.operands[i], value = values2?.[0];
       return values2?.length === 1 && value?.kind === "literal" && !value.path.startsWith("~") ? { parts: [{ kind: "lit", text: value.path, quote: "single" }] } : word;
     }) }, { cwd: ctx.cwd }, ctx) : void 0;
-    if (placement?.unknown) projectionUnknown = true;
+    if (placement?.unknown) projectionUnknown = placementUnknown = unplacedAny = true;
     const writes = archive?.map((path) => ({ path, followFinal: true })) ?? placement?.destinations.map((destination) => destination.effect) ?? [];
     for (const write of writes) {
       const resolved = resolveNoLimitsPath(write.path, { cwd: ctx.cwd, followFinal: write.followFinal });
@@ -11117,7 +11173,7 @@ function readWhole(text4, cwd, shell, windowsBash, home, options = {}) {
     const dialect = bashShape !== void 0 ? void 0 : shell;
     const found = read(text4, cwd, dialect, bashShape !== void 0 ? void 0 : windowsBash);
     if (found) return found;
-    if (projectionUnknown) return unreadableHit();
+    if (projectionUnknown) return placementUnknown ? { ...unreadableHit(), unplacedWrite: true } : unreadableHit();
     if (shell === "pwsh" && bashShape === void 0 && windowsBash?.length && !pwshBashIsGitBash("bash", options)) return unreadableHit();
     if (bashShape !== void 0 && (!unseen || unseen.paths.length === 0)) return unreadableHit();
     if (!unseen || unseen.paths.length === 0) return found;
@@ -11169,8 +11225,8 @@ function filterOptions(args, flags, valued, longs2, positional) {
   }
   return true;
 }
-function stdinFilter(words) {
-  const [name, ...args] = words;
+function stdinFilter(words2) {
+  const [name, ...args] = words2;
   const count = (value) => FILTER_COUNT.test(value);
   const list = (value) => FILTER_LIST.test(value);
   const any = () => true;
@@ -11403,8 +11459,8 @@ function placeScript(commands, cwd, home, win, fs) {
       return void 0;
     }
   };
-  for (const words of commands) {
-    const [name, path] = words;
+  for (const words2 of commands) {
+    const [name, path] = words2;
     if (name === "cd") {
       const spelled2 = spelledPath(path ?? "", win);
       if (spelled2 === null) return "shape";
@@ -11425,7 +11481,7 @@ function placeScript(commands, cwd, home, win, fs) {
       continue;
     }
     if (SHAPE_PRINTS.has(name)) {
-      for (const word of words.slice(1)) {
+      for (const word of words2.slice(1)) {
         if (!word.includes("/") && !word.startsWith(HOME_MARK)) continue;
         const spelled2 = spelledPath(word, win);
         if (spelled2 === "dot-dot") return "dot-dot";
@@ -11438,7 +11494,7 @@ function placeScript(commands, cwd, home, win, fs) {
       }
       continue;
     }
-    const script = shapeScript(words);
+    const script = shapeScript(words2);
     if (!script) continue;
     const spelled = spelledPath(script, win);
     if (spelled === null) return "shape";
@@ -11485,15 +11541,15 @@ function shapeCommands(text4) {
       for (const [at, command2] of pipeline.commands.entries()) {
         if (command2.kind !== "simple" || command2.assigns.length > 0 || command2.words.length === 0) return null;
         if (!command2.redirects.every(quietRedirect)) return null;
-        const words = [];
+        const words2 = [];
         for (const word of command2.words) {
-          const literal2 = shapeWord(word);
-          if (literal2 === void 0) return null;
+          const literal3 = shapeWord(word);
+          if (literal3 === void 0) return null;
           if (word.parts.some((part) => part.kind === "lit" && part.quote === "none" && /[*?[\]{}]/.test(part.text))) return null;
-          words.push(literal2);
+          words2.push(literal3);
         }
-        if (pipeline.commands.length > 1 && (at === 0 ? words[0] === "cd" || SHAPE_FILTERS.has(words[0]) : !SHAPE_FILTERS.has(words[0]))) return null;
-        out.push(words);
+        if (pipeline.commands.length > 1 && (at === 0 ? words2[0] === "cd" || SHAPE_FILTERS.has(words2[0]) : !SHAPE_FILTERS.has(words2[0]))) return null;
+        out.push(words2);
       }
     }
   }
@@ -11502,14 +11558,14 @@ function shapeCommands(text4) {
 function joinWhy(text4, commands) {
   const script = parse(text4);
   const orJoin = script.items.some((item) => item.background || item.andOr.ops.includes("||") || item.andOr.pipelines.some((pipeline) => pipeline.negated));
-  if (commands.some((words) => words[0] === "cd") && (orJoin || script.items.length > 1)) return "cd-form";
+  if (commands.some((words2) => words2[0] === "cd") && (orJoin || script.items.length > 1)) return "cd-form";
   return orJoin ? "or-join" : null;
 }
 function shapeWord(word) {
   const [first, ...rest] = word.parts;
   if (first?.kind !== "tilde") {
-    const literal2 = literalText(word);
-    return literal2?.includes("\0") ? void 0 : literal2;
+    const literal3 = literalText(word);
+    return literal3?.includes("\0") ? void 0 : literal3;
   }
   if (first.user !== "") return void 0;
   const slash = rest[0];
@@ -11524,17 +11580,17 @@ function quietRedirect(redirect) {
   if (redirect.op === ">") return (redirect.fd === void 0 || redirect.fd === 1 || redirect.fd === 2) && target === "/dev/null";
   return redirect.op === ">&" && redirect.fd === 2 && target === "1";
 }
-function shapeScript(words) {
-  const [name, path] = words;
-  if (name === "cd") return words.length === 2 && shapePath(path) ? "" : null;
-  if (SHAPE_PRINTS.has(name)) return words.slice(1).some((word) => !word.startsWith(HOME_MARK) && deviceOrProcess(word)) ? null : "";
-  if (SHAPE_FILTERS.has(name)) return stdinFilter(words) ? "" : null;
+function shapeScript(words2) {
+  const [name, path] = words2;
+  if (name === "cd") return words2.length === 2 && shapePath(path) ? "" : null;
+  if (SHAPE_PRINTS.has(name)) return words2.slice(1).some((word) => !word.startsWith(HOME_MARK) && deviceOrProcess(word)) ? null : "";
+  if (SHAPE_FILTERS.has(name)) return stdinFilter(words2) ? "" : null;
   if (!SHAPE_SOURCES.has(name) && !SHAPE_SHELLS.has(name) && !SHAPE_INTERPRETERS.has(name)) return null;
   let at = 1;
-  if (name === "python" || name === "python3") while (at < words.length - 1 && PY_RUN_OPTIONS.test(words[at])) at += 1;
-  const script = words[at];
+  if (name === "python" || name === "python3") while (at < words2.length - 1 && PY_RUN_OPTIONS.test(words2[at])) at += 1;
+  const script = words2[at];
   if (!shapePath(script)) return null;
-  if (name === "php" && words.slice(2).some((word) => word.startsWith("-"))) return null;
+  if (name === "php" && words2.slice(2).some((word) => word.startsWith("-"))) return null;
   return script;
 }
 function spelledOnce(commands, scripts, paths2) {
@@ -11551,9 +11607,9 @@ function unseenShapeAdmits(text4, paths2, cwd, shell, home, options = {}) {
   const { commands, piped } = shaped;
   const win = gitBash(cwd, options);
   const spelledPaths = paths2.map((path) => {
-    const words = commands.flat();
-    if (words.some((word) => baseName(word) === baseName(path))) return path;
-    for (const word of words) {
+    const words2 = commands.flat();
+    if (words2.some((word) => baseName(word) === baseName(path))) return path;
+    for (const word of words2) {
       if (!shapePath(word)) continue;
       try {
         const at = posixPath.resolve(cwd ?? "/", word);
@@ -11594,9 +11650,9 @@ function venvShape(commands, paths2, piped) {
 var VENV_TOOLS = /* @__PURE__ */ new Set(["pip", "pip3", "pytest"]);
 var VENV_PYTHONS = /* @__PURE__ */ new Set(["python", "python3"]);
 var VENV_MODULES = /* @__PURE__ */ new Set(["pip", "pytest", "unittest"]);
-function venvTool(words) {
-  const [name, option, module] = words;
-  if (name === "cd" || SHAPE_PRINTS.has(name)) return shapeScript(words) === "";
+function venvTool(words2) {
+  const [name, option, module] = words2;
+  if (name === "cd" || SHAPE_PRINTS.has(name)) return shapeScript(words2) === "";
   if (VENV_TOOLS.has(name)) return true;
   if (VENV_PYTHONS.has(name)) return option === "-m" && module !== void 0 && VENV_MODULES.has(module);
   return false;
@@ -11617,9 +11673,9 @@ function readRules(text4, cwd) {
     // a device and `>|` for a redirect with no target
     case "cmd": {
       const cmdReads = CMD_RUNS_TEXT.test(text4);
-      let posix4;
+      let posix5;
       try {
-        posix4 = walkScript(text4, fork(ctx), visitor);
+        posix5 = walkScript(text4, fork(ctx), visitor);
       } catch (error) {
         if (!(error instanceof Unreadable) || !cmdReads) throw error;
         let viaCmd = null;
@@ -11631,7 +11687,7 @@ function readRules(text4, cwd) {
         if (viaCmd) return viaCmd;
         throw error;
       }
-      return posix4 ?? (cmdReads ? walkCmd(text4, fork(ctx), visitor) : null);
+      return posix5 ?? (cmdReads ? walkCmd(text4, fork(ctx), visitor) : null);
     }
     // a name both shells have (`rd`, `del`): read under both, first hit wins
     case "both":
@@ -11653,10 +11709,10 @@ function evidenceScan(source2, state) {
   const shells = new Set("sh bash rbash zsh dash ksh ksh93 mksh lksh oksh pdksh ash hush yash posh osh fish nu elvish xonsh csh tcsh pwsh powershell powershell_ise cmd eval".split(" "));
   while (work.length) {
     const input = work.pop();
-    let words = [], globs = [], outputs = [], word = "", quote = "", started = false, wordGlob = false;
+    let words2 = [], globs = [], outputs = [], word = "", quote = "", started = false, wordGlob = false;
     const put = () => {
       if (started) {
-        words.push(word);
+        words2.push(word);
         globs.push(wordGlob);
         word = "";
         started = false;
@@ -11665,29 +11721,29 @@ function evidenceScan(source2, state) {
     };
     const emit = () => {
       put();
-      if (!words.length) return;
-      words = words.map((word2) => word2 === unresolved ? word2 : word2.replaceAll(unresolved, ""));
-      const excluded = new Set(outputs.map((output) => output.at)), keep = words.map((word2, at) => ({ word: word2, glob: globs[at] })).filter((_, at) => !excluded.has(at));
-      const writes = outputs.filter((output) => !["<", "<&"].includes(output.op)).map((output) => ({ op: output.op, target: words[output.at] === unresolved ? opaque("unresolved-variable") : known(words[output.at] ?? "") }));
-      words = keep.map((value) => value.word);
+      if (!words2.length) return;
+      words2 = words2.map((word2) => word2 === unresolved ? word2 : word2.replaceAll(unresolved, ""));
+      const excluded = new Set(outputs.map((output) => output.at)), keep = words2.map((word2, at) => ({ word: word2, glob: globs[at] })).filter((_, at) => !excluded.has(at));
+      const writes = outputs.filter((output) => !["<", "<&"].includes(output.op)).map((output) => ({ op: output.op, target: words2[output.at] === unresolved ? opaque("unresolved-variable") : known(words2[output.at] ?? "") }));
+      words2 = keep.map((value) => value.word);
       globs = keep.map((value) => !!value.glob);
       if (writes.length) out.push({ program: "", argv: [], rawArgv: [], redirects: writes, cwd: state.cwd, dialect: state.dialect, platform: state.platform, drive: state.drive });
       let index = 0;
-      while (index < words.length && /^\w+=/.test(words[index])) index++;
+      while (index < words2.length && /^\w+=/.test(words2[index])) index++;
       if (state.dialect === "pwsh") {
-        const assignment = /^(?:\[[^\]]+\])?\$(?:\{[^}]+\}|[\w:]+)(?:\.[\w]+|\[[^\]]+\])?(?:\?\?=|[+*\/%-]?=)(.*)$/.exec(words[index] ?? "");
+        const assignment = /^(?:\[[^\]]+\])?\$(?:\{[^}]+\}|[\w:]+)(?:\.[\w]+|\[[^\]]+\])?(?:\?\?=|[+*\/%-]?=)(.*)$/.exec(words2[index] ?? "");
         if (assignment) {
-          if (assignment[1]) words[index] = assignment[1];
+          if (assignment[1]) words2[index] = assignment[1];
           else index++;
-        } else if (/^\$/.test(words[index] ?? "") && /^(?:\?\?=|[+*\/%-]?=)$/.test(words[index + 1] ?? "")) index += 2;
+        } else if (/^\$/.test(words2[index] ?? "") && /^(?:\?\?=|[+*\/%-]?=)$/.test(words2[index + 1] ?? "")) index += 2;
       }
-      let program = (words[index++] ?? "").split(/[\\/]/).at(-1).replace(/\.(?:exe|cmd|bat|com)$/i, "").toLowerCase();
-      while (wrappers.has(program) && index < words.length) {
+      let program = (words2[index++] ?? "").split(/[\\/]/).at(-1).replace(/\.(?:exe|cmd|bat|com)$/i, "").toLowerCase();
+      while (wrappers.has(program) && index < words2.length) {
         const wrapper2 = program;
-        while ((words[index] ?? "").startsWith("-")) {
-          const option = words[index++];
+        while ((words2[index] ?? "").startsWith("-")) {
+          const option = words2[index++];
           if (["--help", "--version"].includes(option) || wrapper2 === "command" && /^-[p]*[vV]/.test(option) || wrapper2 === "sudo" && /^-[Vvl]$|^--(?:list|validate)$/.test(option)) {
-            words = [];
+            words2 = [];
             globs = [];
             outputs = [];
             return;
@@ -11695,9 +11751,9 @@ function evidenceScan(source2, state) {
           if (/^(?:-[ughnCDSfoa]|--(?:user|group|host|chdir|split-string|format|output))$/.test(option)) index++;
         }
         if (["timeout", "flock", "chrt", "taskset"].includes(wrapper2)) index++;
-        program = (words[index++] ?? "").split(/[\\/]/).at(-1).toLowerCase();
+        program = (words2[index++] ?? "").split(/[\\/]/).at(-1).toLowerCase();
       }
-      const args = words.slice(index);
+      const args = words2.slice(index);
       if (shells.has(program)) {
         if (program === "eval") work.push(args.join(" "));
         else {
@@ -11713,7 +11769,7 @@ function evidenceScan(source2, state) {
         const at = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
         return { ...known(s), glob: { dir: at < 0 ? "." : s.slice(0, at) || "/", pattern: s.slice(at + 1) } };
       }), rawArgv: [], redirects: [], cwd: state.cwd, dialect: state.dialect, home: state.home, env: new Map(state.env), platform: state.platform, drive: state.drive, links: state.links });
-      words = [];
+      words2 = [];
       globs = [];
       outputs = [];
     };
@@ -11820,7 +11876,7 @@ function evidenceScan(source2, state) {
       const redirect = ch >= "0" && ch <= "9" || ch === "&" || ch === "<" || ch === ">" ? /^(?:\d+)?(&>>|&>|>>|>&|>|<>|<&|<)/.exec(input.slice(i)) : null;
       if (redirect) {
         put();
-        outputs.push({ op: redirect[1], at: words.length });
+        outputs.push({ op: redirect[1], at: words2.length });
         i += redirect[0].length - 1;
         continue;
       }
@@ -11969,13 +12025,13 @@ function fork2(st, kind, host, opts = {}) {
     inheritedFns: st.inheritedFns && new Set(st.inheritedFns)
   };
   if (kind === "subshell") return next;
-  const lang = host?.lang ?? "sh", posix4 = st.dialect === "sh" && st.exported !== void 0;
+  const lang = host?.lang ?? "sh", posix5 = st.dialect === "sh" && st.exported !== void 0;
   next.dialect = lang === "pwsh" ? "pwsh" : lang === "cmd" ? "cmd" : "sh";
   next.family = lang === "fish" ? "fish" : lang === "csh" ? "csh" : void 0;
-  const inherited = posix4 && next.dialect === "sh" && !next.family && st.exported.has("SHELLOPTS");
+  const inherited = posix5 && next.dialect === "sh" && !next.family && st.exported.has("SHELLOPTS");
   next.proc = { nounset: inherited && !!st.proc?.nounset, errexit: inherited && !!st.proc?.errexit, allexport: false, delayed: false, strict: false, ...opts };
   next.locals = void 0;
-  if (!posix4) return next;
+  if (!posix5) return next;
   for (const [name, may] of st.vars ?? []) if (!st.exported.has(name)) next.vars.set(name, { ...may, maybeUnset: true });
   next.arrays = /* @__PURE__ */ new Map();
   next.functions = new Map([...st.functions ?? []].filter(([name]) => st.exportedFns?.has(name)));
@@ -12064,9 +12120,9 @@ function globRegExp(pattern, dialect, ignoreCase = false) {
   }
   return new RegExp("^" + source2 + "$", ignoreCase ? "i" : "");
 }
-function globValue(text4, dialect, literal2 = false) {
+function globValue(text4, dialect, literal3 = false) {
   if (dialect !== "sh") text4 = text4.replace(/^[\\/]{2}[?.][\\/]UNC[\\/]/i, "\\\\").replace(/^[\\/]{2}[?.][\\/](?=[a-z]:[\\/])/i, "");
-  if (literal2) return known(text4);
+  if (literal3) return known(text4);
   const globText = text4;
   if (dialect === "cmd") text4 = text4.replace(/(^|[\\/])\*\.\*(?=[\\/]*$)/, "$1*");
   if (!hasWildcard2(text4, dialect)) return { ...known(unescape(text4, dialect)), globText };
@@ -12198,32 +12254,32 @@ function literalOutput(script, st) {
   if (node4?.k !== "cmd") return opaque("producer");
   const child = { ...st, depth: st.depth + 1 }, args = node4.c.words.map((w) => expandWord2(w, child));
   if (args.some((v) => v.k === "opaque")) return opaque("producer");
-  const words = args.map((v) => v.k === "known" ? v.s : ""), program = words.shift()?.toLowerCase();
+  const words2 = args.map((v) => v.k === "known" ? v.s : ""), program = words2.shift()?.toLowerCase();
   if (program === "pwd") return st.cwd;
   if (program === "cat") {
     const here = node4.c.redirects.find((r) => r.op === "<<<");
     return node4.c.stdinHeredoc !== void 0 ? known(node4.c.stdinHeredoc + "\n") : here ? expandWord2(here.target, child) : opaque("producer");
   }
-  if (program === "ls" && st.dialect === "sh" && words.every((w) => /^-[A-Za-z1]+$/.test(w) && !/[dlR]/.test(w))) return known(".\n");
-  if (program === "ls" && st.dialect === "sh" && words.some((w) => /^-[A-Za-z]*d[A-Za-z]*$/.test(w) || w === "--directory")) {
-    const dirGlob = (j) => /^(?:\.\/)?\*\/$/.test(node4.c.words[j + 1]?.raw ?? ""), picked = words.map((w, j) => ({ w, j })).filter(({ w }) => !w.startsWith("-"));
+  if (program === "ls" && st.dialect === "sh" && words2.every((w) => /^-[A-Za-z1]+$/.test(w) && !/[dlR]/.test(w))) return known(".\n");
+  if (program === "ls" && st.dialect === "sh" && words2.some((w) => /^-[A-Za-z]*d[A-Za-z]*$/.test(w) || w === "--directory")) {
+    const dirGlob = (j) => /^(?:\.\/)?\*\/$/.test(node4.c.words[j + 1]?.raw ?? ""), picked = words2.map((w, j) => ({ w, j })).filter(({ w }) => !w.startsWith("-"));
     if (!picked.length) return opaque("producer");
     const listed = known(picked.map((p) => p.w).join("\n") + "\n");
     return picked.some((p) => dirGlob(p.j)) ? { ...listed, entryAlternatives: picked.map((p) => dirGlob(p.j) ? { ...known("./"), wholeDirGlob: true, dirsOnly: true } : known(p.w)) } : listed;
   }
-  if (program === "join-path" && words.length === 2) return known(words[0].replace(/[\\/]$/, "") + "/" + words[1]);
+  if (program === "join-path" && words2.length === 2) return known(words2[0].replace(/[\\/]$/, "") + "/" + words2[1]);
   if (["echo", "write-output", "write"].includes(program ?? "")) {
     let newline = true, escapes = false;
-    while (words[0] && /^-[neE]+$/.test(words[0])) {
-      const flags = words.shift();
+    while (words2[0] && /^-[neE]+$/.test(words2[0])) {
+      const flags = words2.shift();
       newline && !flags.includes("n") || (newline = false);
       escapes = flags.includes("e");
     }
-    const output = words.join(" ");
+    const output = words2.join(" ");
     return known((escapes ? output.replace(/\\([nrt\\])/g, (_, s) => ({ n: "\n", r: "\r", t: "	", "\\": "\\" })[s] ?? s) : output) + (newline ? "\n" : ""));
   }
   if (program === "printf") {
-    const format = words.shift() ?? "";
+    const format = words2.shift() ?? "";
     if (/%(?![sb%])|\\(?![nrt0\\])/.test(format)) return opaque("printf-format");
     let i = 0, result = "";
     do {
@@ -12231,11 +12287,11 @@ function literalOutput(script, st) {
       result += format.replace(/%([sb%])|\\([nrt0\\])/g, (_, code, escape2) => {
         if (escape2) return { n: "\n", r: "\r", t: "	", "0": "\0", "\\": "\\" }[escape2] ?? escape2;
         if (code === "%") return "%";
-        const value = words[i++] ?? "";
+        const value = words2[i++] ?? "";
         return code === "b" ? value.replace(/\\([nrt\\])/g, (_2, s) => ({ n: "\n", r: "\r", t: "	", "\\": "\\" })[s] ?? s) : value;
       });
       if (i === before) break;
-    } while (i < words.length);
+    } while (i < words2.length);
     return known(result);
   }
   return opaque("producer");
@@ -12396,10 +12452,10 @@ function expandWord2(w, st) {
     const values2 = st.positionals.map((positional) => fromValue(expandWord2(w, { ...st, positional, positionals: void 0 })));
     return asValue(literalSet(values2.flatMap((v) => v.values), values2.some((v) => v.opaque)));
   }
-  const words = expandWords({ ...w, parts: w.parts.map((p) => p.k === "var" ? { ...p, quoted: true } : p) }, st);
-  if (words.length === 1) return words[0];
-  if (words.some((v) => v.k === "opaque")) return opaque("fields");
-  return known(words.map((v) => v.k === "known" ? v.s : "").join(" "));
+  const words2 = expandWords({ ...w, parts: w.parts.map((p) => p.k === "var" ? { ...p, quoted: true } : p) }, st);
+  if (words2.length === 1) return words2[0];
+  if (words2.some((v) => v.k === "opaque")) return opaque("fields");
+  return known(words2.map((v) => v.k === "known" ? v.s : "").join(" "));
 }
 var cleanText = (text4) => text4.replace(/\\\r\n?/g, "\\\n").replace(/[\v\f]/g, " ").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\u0000-\u0008\u000e-\u001f\u007f]/g, "");
 function toAbsolute(value, inv) {
@@ -12518,17 +12574,17 @@ function interpreterEffects(source2, home, language = "") {
   const text4 = code.join(""), result = { effects: [], shells: shellStrings, argv: [] };
   for (const assignment of text4.matchAll(/\b(?:const\s+|let\s+|var\s+)?([a-zA-Z_]\w*)\s*([+*\/%-]?=)(?!=|>)\s*([^;\n]*)/g)) assignments.push({ at: assignment.index, name: assignment[1], value: assignment[2] === "=" ? assignment[3] : "opaque" });
   let assigned = 0;
-  const literal2 = (value) => {
+  const literal3 = (value) => {
     const m = /^@(\d+)@$/.exec(value.trim());
     return m ? literals[Number(m[1]) - 1] : void 0;
   };
   const path = (value) => {
     value = value.trim().replace(/^(?:path|src|name)\s*=\s*/, "");
-    const direct = literal2(value) ?? bindings.get(value);
+    const direct = literal3(value) ?? bindings.get(value);
     if (direct !== void 0) return direct;
     const accessor = /^(?:os\.path\.expanduser\((@\d+@)\)|(?:os\.)?homedir\(\)|(?:Path|pathlib\.Path)\.home\(\)|os\.environ\[(@\d+@)\]|process\.env\.HOME|ENV\[(@\d+@)\]|Dir\.home)$/;
     const match = accessor.exec(value);
-    if (match && match.slice(1).every((token) => token === void 0 || ["~", "HOME"].includes(literal2(token) ?? ""))) return home;
+    if (match && match.slice(1).every((token) => token === void 0 || ["~", "HOME"].includes(literal3(token) ?? ""))) return home;
   };
   const stack = [], bounds = /* @__PURE__ */ new Map();
   for (let i = 0; i < text4.length; i++) {
@@ -12542,7 +12598,7 @@ function interpreterEffects(source2, home, language = "") {
   const calls = /\b(?:shutil\.(?:rmtree|move)|os\.(?:rename|replace|system|popen)|(?:fs(?:\.promises)?|fsExtra|FileUtils|Deno|File::Path(?:::)?|child_process)\s*\.?(?:::)?\s*(?:rmSync|rm|rmdirSync|rmdir|removeSync|remove|emptyDir|rm_rf|rm_r|remove_dir|remove_entry|rmtree|remove_tree|mv|renameSync|rename|execSync|exec|execFile|spawn)|require\(@\d+@\)\.(?:rmSync|rm|rmdirSync|rmdir|removeSync|remove|emptyDir|renameSync|rename|execSync|exec|execFile|spawn)|subprocess\.\w+|rimraf|rmtree|remove_tree|Bun\.spawn|system)\s*\(/g;
   for (const match of text4.matchAll(calls)) {
     while (assigned < assignments.length && assignments[assigned].at < match.index) {
-      const assignment = assignments[assigned++], value = literal2(assignment.value);
+      const assignment = assignments[assigned++], value = literal3(assignment.value);
       if (value === void 0) bindings.delete(assignment.name);
       else bindings.set(assignment.name, value);
     }
@@ -12558,28 +12614,28 @@ function interpreterEffects(source2, home, language = "") {
       result.effects.push({ k: "move-away", source: known(target), destination: destination === void 0 ? opaque("move-destination") : known(destination) });
     }
     if (/(?:os\.(?:system|popen)|execSync|\.exec|^system)$/.test(name) || name.startsWith("subprocess.") && /\bshell\s*=\s*True\b/.test(args.slice(1).join(","))) {
-      const body = literal2(first);
+      const body = literal3(first);
       if (body !== void 0) result.shells.push(body);
     }
     const list = (arg) => {
       const m = /^\[([\s\S]*)\]$/.exec(arg.trim());
       if (!m) return;
       const parts = m[1].trim() ? m[1].split(",").filter((s) => s.trim()) : [];
-      const values2 = parts.map(literal2);
+      const values2 = parts.map(literal3);
       return values2.every((v) => v !== void 0) ? values2.map((v) => known(v)) : void 0;
     };
     if (name.startsWith("subprocess.") || name === "Bun.spawn") {
       const argv = list(first);
       if (argv) result.argv.push(argv);
     } else if (/(?:spawn|execFile)$/.test(name)) {
-      const command2 = literal2(first), argv = list(args[1] ?? "");
+      const command2 = literal3(first), argv = list(args[1] ?? "");
       if (command2 !== void 0 && argv) result.argv.push([known(command2), ...argv]);
     }
   }
   if (/^(?:ruby|perl)$/.test(language)) for (const match of text4.matchAll(/%x\(([^()]*)\)/g)) result.shells.push(match[1].replace(/@(\d+)@/g, (_, id) => "'" + (literals[Number(id) - 1] ?? "").replaceAll("'", "'\\''") + "'"));
   for (const match of text4.matchAll(/\b(FileUtils\.(?:rm_rf|rm_r|remove_dir|remove_entry|mv)|(?:File::Path::)?(?:rmtree|remove_tree))\s+(@\d+@)(?:\s*,\s*(@\d+@))?/g)) {
-    const target = literal2(match[2]);
-    if (target !== void 0) result.effects.push(match[1].endsWith(".mv") ? { k: "move-away", source: known(target), destination: match[3] ? known(literal2(match[3])) : opaque("move-destination") } : { k: "delete", target: known(target), recursive: true });
+    const target = literal3(match[2]);
+    if (target !== void 0) result.effects.push(match[1].endsWith(".mv") ? { k: "move-away", source: known(target), destination: match[3] ? known(literal3(match[3])) : opaque("move-destination") } : { k: "delete", target: known(target), recursive: true });
   }
   return result;
 }
@@ -12599,23 +12655,23 @@ function invocationSnapshot(inv) {
   return immutable(structuredClone({ program: inv.program, argv: inv.argv, redirects: inv.redirects, cwd: inv.cwd, dialect: inv.dialect, platform: inv.platform, home: inv.home, drive: inv.drive, stdin: inv.stdin, env: [...inv.env ?? []], links: [...inv.links ?? []] }));
 }
 function diskDestinations(origin) {
-  const tool = origin.program.toLowerCase(), words = origin.argv;
+  const tool = origin.program.toLowerCase(), words2 = origin.argv;
   const text4 = (index) => {
-    const value = words[index];
+    const value = words2[index];
     return value?.k === "known" ? value.s : "";
   };
-  if (tool === "format") return words.filter((value) => value.k === "known" && /^[a-z]:[\\/]?$/i.test(value.s)).map((value) => value.k === "known" ? known(value.s.slice(0, 2) + "\\") : value);
+  if (tool === "format") return words2.filter((value) => value.k === "known" && /^[a-z]:[\\/]?$/i.test(value.s)).map((value) => value.k === "known" ? known(value.s.slice(0, 2) + "\\") : value);
   if (tool === "format-volume") {
-    const index = words.findIndex((value) => value.k === "known" && /^-driveletter$/i.test(value.s));
+    const index = words2.findIndex((value) => value.k === "known" && /^-driveletter$/i.test(value.s));
     return index >= 0 && /^[a-z]$/i.test(text4(index + 1)) ? [known(text4(index + 1) + ":\\")] : [];
   }
-  if (tool === "diskutil") return text4(0).toLowerCase() === "erasedisk" ? words.slice(3, 4) : text4(0).toLowerCase() === "partitiondisk" ? words.slice(1, 2) : [];
+  if (tool === "diskutil") return text4(0).toLowerCase() === "erasedisk" ? words2.slice(3, 4) : text4(0).toLowerCase() === "partitiondisk" ? words2.slice(1, 2) : [];
   if (!/^mkfs(?:\.|$)|^newfs(?:_|$)|^(?:mke2fs|wipefs)$/.test(tool)) return [];
   const destinations = [];
   const withValue = /* @__PURE__ */ new Set(["-t", "-L", "-U", "-O", "-E", "-b", "-B", "-i", "-I", "-N", "-m", "-o", "-r", "-C", "-G", "-J", "-l", "-M", "-T", "--types", "--label", "--uuid", "--offset", "--backup-file"]);
   const flags = /* @__PURE__ */ new Set(["-a", "--all", "-F", "-f", "--force", "-q", "-v", "-n", "-c", "-cc", "-j", "-S", "-V", "--no-act", "--backup", "--lock", "--parsable", "--json"]);
   let ended = false;
-  for (let index = 0; index < words.length; index++) {
+  for (let index = 0; index < words2.length; index++) {
     const word = text4(index);
     if (!ended && word === "--") {
       ended = true;
@@ -12631,7 +12687,7 @@ function diskDestinations(origin) {
       if (flags.has(word)) continue;
       return [];
     }
-    destinations.push(words[index]);
+    destinations.push(words2[index]);
   }
   return destinations;
 }
@@ -13101,6 +13157,30 @@ function readHost(input, host, raw = []) {
   return finish();
 }
 var shHost = hosts[0];
+function pagerCommands(args) {
+  const commands = [];
+  const valuedLong = /* @__PURE__ */ new Set(["buffers", "color", "max-back-scroll", "jump-target", "lesskey-file", "lesskey-src", "log-file", "LOG-FILE", "pattern", "prompt", "tag", "tag-file", "tabs", "max-forw-scroll", "window", "quotes", "shift", "line-num-width", "rscroll", "status-col-width", "wheel-lines"]);
+  for (let at = 0; at < args.length; at++) {
+    const arg = args[at];
+    if (arg === "--") break;
+    if (["--help", "--version", "-V", "-?"].includes(arg ?? "")) return [];
+    if (arg?.startsWith("--")) {
+      if (!arg.includes("=") && valuedLong.has(arg.slice(2))) at++;
+    } else if (arg?.startsWith("-")) {
+      for (let offset = 1; offset < arg.length; offset++) {
+        if ('bDhjkoOpPtTxyz"#'.includes(arg[offset])) {
+          if (offset === arg.length - 1) at++;
+          break;
+        }
+        if (arg[offset] === "V" || arg[offset] === "?") return [];
+      }
+    } else {
+      const m = /^\+\+?!/.exec(arg ?? "");
+      if (m) commands.push(arg.slice(m[0].length));
+    }
+  }
+  return commands;
+}
 var quoteSh = (word) => /^[\w@%+=:,./-]+$/.test(word) ? word : "'" + word.replaceAll("'", "'\\''") + "'";
 function inspectHost(host, input, x) {
   const read2 = readHost(input, host, x.raw), argv = read2.argv, { child } = x;
@@ -13130,7 +13210,7 @@ function inspectHost(host, input, x) {
   }
   if (host.kind === "cmdlet") {
     if (host.family === "iex") {
-      const words = [...read2.sources.map((s) => s.text), ...read2.positionals], values2 = words.length ? words.map(str) : [x.st.pipeFrom?.program === "\0values" ? str(x.st.pipeFrom.argv[0]) : void 0];
+      const words2 = [...read2.sources.map((s) => s.text), ...read2.positionals], values2 = words2.length ? words2.map(str) : [x.st.pipeFrom?.program === "\0values" ? str(x.st.pipeFrom.argv[0]) : void 0];
       if (values2.every((v) => v !== void 0)) x.run(values2.join(" "), host, child);
       return void 0;
     }
@@ -13219,13 +13299,13 @@ function inspectHost(host, input, x) {
       }
       return void 0;
     }
-    const words = str(rest[0]) === "-" ? rest.slice(1) : rest, readsStdin = str(rest[0]) === "-" || read2.flags.has("s");
+    const words2 = str(rest[0]) === "-" ? rest.slice(1) : rest, readsStdin = str(rest[0]) === "-" || read2.flags.has("s");
     if (read2.sourceFlag) {
-      const source2 = str(words[0]);
-      if (source2) x.run(source2, host, child, read2.setOpts, [words[1] ?? known(x.program), ...words.slice(2)]);
+      const source2 = str(words2[0]);
+      if (source2) x.run(source2, host, child, read2.setOpts, [words2[1] ?? known(x.program), ...words2.slice(2)]);
       return void 0;
     }
-    if (words.length && !readsStdin) return void 0;
+    if (words2.length && !readsStdin) return void 0;
     return stdin(), void 0;
   }
   for (const path of read2.cwd) x.chdir(child, path);
@@ -13257,11 +13337,11 @@ function inspectHost(host, input, x) {
     return rest.length > 1 ? { argv: rest.slice(1), raw: raw.slice(read2.restAt + 1) } : stop;
   }
   if (host.family === "sudo" && read2.shellFlag) {
-    const words = rest.map(str);
-    if (words.length && words.every((v) => v !== void 0)) {
-      x.run(words.join(" "), shHost, child);
-      const exact = words.map(quoteSh).join(" ");
-      if (exact !== words.join(" ")) x.run(exact, shHost, child);
+    const words2 = rest.map(str);
+    if (words2.length && words2.every((v) => v !== void 0)) {
+      x.run(words2.join(" "), shHost, child);
+      const exact = words2.map(quoteSh).join(" ");
+      if (exact !== words2.join(" ")) x.run(exact, shHost, child);
     }
     return void 0;
   }
@@ -13275,9 +13355,9 @@ function inspectHost(host, input, x) {
     const split = [...read2.values.get("S") ?? [], ...read2.values.get("split-string") ?? []].at(-1);
     let next = rest, nextRaw = raw.slice(read2.restAt);
     if (split?.k === "known") {
-      const words = x.split(split.s);
-      next = [...words.argv, ...rest];
-      nextRaw = [...words.raw, ...nextRaw];
+      const words2 = x.split(split.s);
+      next = [...words2.argv, ...rest];
+      nextRaw = [...words2.raw, ...nextRaw];
     }
     while (/^[\w]+=/.test(str(next[0]) ?? "")) {
       const s = str(next[0]), at = s.indexOf("=");
@@ -13386,19 +13466,19 @@ function bindParams(inv, cmdlet = cmdletFor(inv.program)) {
   if (cmdlet?.effect === "delete" && at < bound.positionals.length) for (const value of bound.positionals.slice(at)) add(bound, "path", value);
   return bound;
 }
-function source(value, inv, literal2 = false, rawByValue) {
+function source(value, inv, literal3 = false, rawByValue) {
   if (value.k === "opaque") return [value];
   const candidates = value.candidates ?? [value.s];
   return candidates.flatMap((s) => {
-    if (!literal2 && inv.home && /^~(?=[\\/]|$)/.test(s)) s = inv.home + s.slice(1);
+    if (!literal3 && inv.home && /^~(?=[\\/]|$)/.test(s)) s = inv.home + s.slice(1);
     let model;
-    if (value.entryOf || !literal2 && value.wholeDirGlob) model = { ...value, s, candidates: void 0 };
+    if (value.entryOf || !literal3 && value.wholeDirGlob) model = { ...value, s, candidates: void 0 };
     else {
       const raw = rawByValue?.get(value);
       let pattern = value.globText ?? raw?.replace(/^(['"])([\s\S]*)\1$/, "$2");
       if (!value.globText && (!pattern?.includes("`") || pattern.replace(/`(.)/gs, "$1") !== s)) pattern = s;
       const { glob, wholeDirGlob, dirsOnly, ...plain2 } = value;
-      model = { ...plain2, ...globValue(pattern ?? s, "pwsh", literal2), candidates: void 0 };
+      model = { ...plain2, ...globValue(pattern ?? s, "pwsh", literal3), candidates: void 0 };
     }
     const absolute = operand(model, inv.cwd, inv);
     if (absolute.k === "known" && absolute.glob) {
@@ -13584,15 +13664,15 @@ function cmdOptions(inv) {
 function programRecords(inv) {
   let origin;
   const record = (effect) => effectRecord(effect, origin ??= invocationSnapshot(inv));
-  const p = /^(?:Format-Volume|Clear-Disk|Remove-Partition)$/i.test(inv.program) ? inv.program.toLowerCase() : inv.program, a = inv.argv, words = a.map((v) => str2(v) ?? ""), target = (v) => operand(v, inv.cwd, inv), effects = [], emit = (...items) => effects.push(...items.map(record));
-  if (["remove-item", "move-item", "rename-item", "format-volume", "clear-disk", "remove-partition"].includes(p) && words.some((w) => /^-(?:whatif|whati|what|wha|wh|wi)(?::(?:\$?true))?$/i.test(w))) return effects;
-  if (["format-volume", "clear-disk", "remove-partition"].includes(p) && words.includes("-?")) return effects;
+  const p = /^(?:Format-Volume|Clear-Disk|Remove-Partition)$/i.test(inv.program) ? inv.program.toLowerCase() : inv.program, a = inv.argv, words2 = a.map((v) => str2(v) ?? ""), target = (v) => operand(v, inv.cwd, inv), effects = [], emit = (...items) => effects.push(...items.map(record));
+  if (["remove-item", "move-item", "rename-item", "format-volume", "clear-disk", "remove-partition"].includes(p) && words2.some((w) => /^-(?:whatif|whati|what|wha|wh|wi)(?::(?:\$?true))?$/i.test(w))) return effects;
+  if (["format-volume", "clear-disk", "remove-partition"].includes(p) && words2.includes("-?")) return effects;
   for (const r of inv.redirects) if ([">", ">>", "&>", "&>>", ">|", "<>", ">&"].includes(r.op)) emit({ k: "device-write", target: target(r.target) });
-  if ((/^mkfs(?:\.|$)/.test(p) || ["mke2fs", "wipefs", "diskpart", "diskutil", "format", "format-volume", "clear-disk", "remove-partition"].includes(p)) && ["--help", "--version", "-?"].includes(words[0] ?? "")) return effects;
-  if (/^(?:mkfs(?:\.|$)|newfs(?:_\w+)?$)/.test(p) && !["--help", "--version", "-?"].includes(words[0] ?? "") || ["mke2fs", "wipefs", "diskpart", "format-volume", "clear-disk", "remove-partition"].includes(p)) return [...effects, record({ k: "disk-tool", tool: p })];
-  if (p === "diskutil" && (/^(?:erase.*|partitionDisk|zeroDisk|randomDisk|secureErase|reformat)$/i.test(words.find((w) => !w.startsWith("-")) ?? "") || words[0]?.toLowerCase() === "apfs" && words[1]?.toLowerCase() === "deletecontainer")) return [...effects, record({ k: "disk-tool", tool: p })];
-  if (p === "format" && words.some((w) => /^[a-z]:[\\/]?$/i.test(w))) return [...effects, record({ k: "disk-tool", tool: p })];
-  if (p === "sed") for (const file of sedWrites(words)) emit({ k: "device-write", target: target(known(file)) });
+  if ((/^mkfs(?:\.|$)/.test(p) || ["mke2fs", "wipefs", "diskpart", "diskutil", "format", "format-volume", "clear-disk", "remove-partition"].includes(p)) && ["--help", "--version", "-?"].includes(words2[0] ?? "")) return effects;
+  if (/^(?:mkfs(?:\.|$)|newfs(?:_\w+)?$)/.test(p) && !["--help", "--version", "-?"].includes(words2[0] ?? "") || ["mke2fs", "wipefs", "diskpart", "format-volume", "clear-disk", "remove-partition"].includes(p)) return [...effects, record({ k: "disk-tool", tool: p })];
+  if (p === "diskutil" && (/^(?:erase.*|partitionDisk|zeroDisk|randomDisk|secureErase|reformat)$/i.test(words2.find((w) => !w.startsWith("-")) ?? "") || words2[0]?.toLowerCase() === "apfs" && words2[1]?.toLowerCase() === "deletecontainer")) return [...effects, record({ k: "disk-tool", tool: p })];
+  if (p === "format" && words2.some((w) => /^[a-z]:[\\/]?$/i.test(w))) return [...effects, record({ k: "disk-tool", tool: p })];
+  if (p === "sed") for (const file of sedWrites(words2)) emit({ k: "device-write", target: target(known(file)) });
   if (p === "dd") {
     for (const v of a) if (v.k === "known" && v.s.startsWith("of=")) emit({ k: "device-write", target: target(known(v.s.slice(3))) });
     return effects;
@@ -13604,7 +13684,7 @@ function programRecords(inv) {
   }
   if (p === "sort") {
     for (let i = 0; i < a.length; i++) {
-      const s = words[i];
+      const s = words2[i];
       if (s === "-o" || s === "--output") {
         if (a[i + 1]) emit({ k: "device-write", target: target(a[++i]) });
       } else if (/^-o./.test(s)) emit({ k: "device-write", target: target(known(s.slice(2))) });
@@ -13642,8 +13722,8 @@ function programRecords(inv) {
   }
   if (p === "git") {
     let cwd = inv.cwd, workTree = inv.env?.get("GIT_WORK_TREE"), at = 0;
-    for (; at < words.length; at++) {
-      const word = words[at];
+    for (; at < words2.length; at++) {
+      const word = words2[at];
       if (word === "-C") {
         cwd = asValue(fromValue(operand(a[++at] ?? opaque("git-cwd"), cwd, inv)));
         continue;
@@ -13653,7 +13733,7 @@ function programRecords(inv) {
         continue;
       }
       if (word === "--work-tree") {
-        workTree = words[++at];
+        workTree = words2[++at];
         continue;
       }
       if (word.startsWith("--work-tree=")) {
@@ -13667,7 +13747,7 @@ function programRecords(inv) {
       if (word.startsWith("--git-dir=")) continue;
       if (!word.startsWith("-")) break;
     }
-    if (words[at] === "clean") {
+    if (words2[at] === "clean") {
       const opts2 = readOptions(a.slice(at + 1), grammar("dfxXniq", "e", ["force", "dry-run", "interactive", "quiet", "help", "version"], ["exclude"]));
       const dry = ["n", "dry-run", "i", "interactive", "help", "version"].some((f) => opts2.flags.has(f));
       const paths2 = opts2.positionals;
@@ -13678,7 +13758,7 @@ function programRecords(inv) {
     }
     return effects;
   }
-  if (p === "find" && ["--help", "--version", "-help", "-version"].includes(words[0] ?? "")) return effects;
+  if (p === "find" && ["--help", "--version", "-help", "-version"].includes(words2[0] ?? "")) return effects;
   if (p === "find") return [...effects, ...findRecords(inv)];
   if (inv.dialect === "pwsh" && cmdletFor(p)) return [...effects, ...pwshEffects(inv).map(record)];
   if (["rd", "del", "erase", "move", "ren", "rename", "robocopy"].includes(p) || p === "rmdir" && inv.dialect !== "sh") {
@@ -13712,7 +13792,7 @@ function programRecords(inv) {
     }
   }
   const unknownOptions = ["rm", "srm", "grm"].includes(p) && unknownOptionWord(a);
-  const risky = p === "mv" || ["rm", "srm", "grm"].includes(p) && (unknownOptions || words.some((w) => /^-[^-]*[rR]/.test(w) || w === "--recursive")) || p === "rsync" && words.some((w) => /^--(?:del|remove-source)/.test(w));
+  const risky = p === "mv" || ["rm", "srm", "grm"].includes(p) && (unknownOptions || words2.some((w) => /^-[^-]*[rR]/.test(w) || w === "--recursive")) || p === "rsync" && words2.some((w) => /^--(?:del|remove-source)/.test(w));
   const uncertain = opts.uncertain || unknownOptions;
   const nonDestructive = new Set(opts.consumed);
   if (p === "mv" && !has("t", "target-directory") && opts.positionals.length >= 2 && opts.positionals.at(-1)) nonDestructive.add(opts.positionals.at(-1));
@@ -13852,11 +13932,11 @@ function patternMatches(name, pattern, start) {
   }
 }
 function findRecords(inv, produceOnly = false) {
-  const args = inv.argv.map((value, i) => inv.rawArgv[i]?.raw === "{}" ? known("{}") : value), words = args.map(str3);
+  const args = inv.argv.map((value, i) => inv.rawArgv[i]?.raw === "{}" ? known("{}") : value), words2 = args.map(str3);
   let at = 0;
-  while (at < args.length && /^-[LHP]$/.test(words[at])) at++;
+  while (at < args.length && /^-[LHP]$/.test(words2[at])) at++;
   const roots2 = [];
-  while (at < args.length && !/^[-!(,]/.test(words[at])) roots2.push(operand(args[at++], inv.cwd, inv));
+  while (at < args.length && !/^[-!(,]/.test(words2[at])) roots2.push(operand(args[at++], inv.cwd, inv));
   if (!roots2.length) roots2.push(operand(known("."), inv.cwd, inv));
   const expr = [], ops = [], precedence = { "!": 4, "&": 3, "|": 2, ",": 1 };
   let prior = false;
@@ -13876,7 +13956,7 @@ function findRecords(inv, produceOnly = false) {
   const units = [];
   let minDepth = 0;
   for (let i = at; i < args.length; i++) {
-    const name = words[i];
+    const name = words2[i];
     if (["-a", "-and", "-o", "-or", ","].includes(name)) {
       operator(name === "," ? "," : name === "-a" || name === "-and" ? "&" : "|");
       prior = false;
@@ -13902,10 +13982,10 @@ function findRecords(inv, produceOnly = false) {
     const unit = { op: "test", name };
     if (/^-(?:exec|execdir|ok|okdir)$/.test(name)) {
       const begin = ++i;
-      while (i < args.length && ![";", "+"].includes(words[i])) i++;
+      while (i < args.length && ![";", "+"].includes(words2[i])) i++;
       unit.command = args.slice(begin, i);
     } else if (consuming.test(name)) {
-      unit.value = words[++i] ?? "";
+      unit.value = words2[++i] ?? "";
       if (name === "-mindepth") minDepth = Math.max(minDepth, Number(unit.value) || 0);
     }
     expr.push(unit);
@@ -14967,16 +15047,16 @@ var programName = (s, dialect = "sh", platform = process.platform) => {
   return dialect === "sh" && platform !== "win32" ? name : name.toLowerCase();
 };
 var aliases = { rm: "remove-item", ri: "remove-item", del: "remove-item", erase: "remove-item", rd: "remove-item", rmdir: "remove-item", mv: "move-item", mi: "move-item", move: "move-item", gci: "get-childitem", ls: "get-childitem", dir: "get-childitem", gi: "get-item", ren: "rename-item", rni: "rename-item" };
-var union = (old, next, weak, original, protect, literal2) => {
+var union = (old, next, weak, original, protect, literal3) => {
   const values2 = weak ? [...old.values, ...next.values] : next.values, fault = weak ? old.opaque || next.opaque : next.opaque;
-  return literal2 || next.values.length > 4 || weak && old.values.length > 4 ? literalSet(values2, fault, original) : maySet(values2, fault, original, protect);
+  return literal3 || next.values.length > 4 || weak && old.values.length > 4 ? literalSet(values2, fault, original) : maySet(values2, fault, original, protect);
 };
 var exportName = (st, name, on = true) => {
   if (on) st.exported?.add(name);
   else st.exported?.delete(name);
 };
-var setVar = (st, name, value, weak = false, literal2 = false) => {
-  const old = st.vars?.get(name) ?? maySet(lookup(st, name) === void 0 ? [] : [lookup(st, name)]), next = fromValue(value), merged = union(old, next, weak, old.original ?? next.original, st.lexicalProtected, literal2);
+var setVar = (st, name, value, weak = false, literal3 = false) => {
+  const old = st.vars?.get(name) ?? maySet(lookup(st, name) === void 0 ? [] : [lookup(st, name)]), next = fromValue(value), merged = union(old, next, weak, old.original ?? next.original, st.lexicalProtected, literal3);
   if (weak && old.maybeUnset) merged.maybeUnset = true;
   if (st.proc?.allexport) exportName(st, name);
   assignEnv(st, name, merged.values[0] ?? "\0opaque");
@@ -15123,14 +15203,14 @@ function walk(script, st) {
       }
     }
     if (st.dialect === "cmd") {
-      const lower = (j) => c.words[j]?.raw.toLowerCase() ?? "", rerun = (words) => {
-        const head = words[0], lead = head?.parts[0];
-        if (head && lead?.k === "lit" && lead.s.startsWith("@")) words = [{ raw: head.raw.slice(1), parts: [{ ...lead, s: lead.s.slice(1) }, ...head.parts.slice(1)] }, ...words.slice(1)];
-        if (!words.length) return;
+      const lower = (j) => c.words[j]?.raw.toLowerCase() ?? "", rerun = (words2) => {
+        const head = words2[0], lead = head?.parts[0];
+        if (head && lead?.k === "lit" && lead.s.startsWith("@")) words2 = [{ raw: head.raw.slice(1), parts: [{ ...lead, s: lead.s.slice(1) }, ...head.parts.slice(1)] }, ...words2.slice(1)];
+        if (!words2.length) return;
         const weak = st.weak;
         st.weak = true;
         try {
-          node4({ k: "cmd", c: { assigns: [], words, redirects: c.redirects }, span: n.span, cond: true });
+          node4({ k: "cmd", c: { assigns: [], words: words2, redirects: c.redirects }, span: n.span, cond: true });
         } finally {
           st.weak = weak;
         }
@@ -15145,7 +15225,7 @@ function walk(script, st) {
         else if (/^(?:equ|neq|lss|leq|gtr|geq)$/.test(lower(at + 1))) at += 3;
         else at = c.words.length;
         const rest = c.words.slice(at), split = rest.findIndex((w) => w.raw.toLowerCase() === "else");
-        for (const words of split < 0 ? [rest] : [rest.slice(0, split), rest.slice(split + 1)]) rerun(words);
+        for (const words2 of split < 0 ? [rest] : [rest.slice(0, split), rest.slice(split + 1)]) rerun(words2);
         return;
       }
       if (lower(0) === "else") {
@@ -15407,9 +15487,9 @@ function walk(script, st) {
       state.cwd = asValue(fromValue(operand(path, state.cwd, state)));
       state.drive = /^([a-z]:)/i.exec(state.cwd.k === "known" ? state.cwd.s : "")?.[1] ?? state.drive;
     };
-    const hostCtx = (name, words) => ({
+    const hostCtx = (name, words2) => ({
       program: name,
-      raw: words,
+      raw: words2,
       st,
       child,
       run: (source2, host, from, opts, positional, cwd) => {
@@ -15426,8 +15506,8 @@ function walk(script, st) {
         if (cwd) chdir(next, cwd);
         out.push(...walk(block, next));
       },
-      peel: (words2, from) => {
-        out.push(...peel(words2, from));
+      peel: (words3, from) => {
+        out.push(...peel(words3, from));
       },
       stdin: () => {
         const here = c.redirects.find((r) => r.op === "<<<");
@@ -15435,8 +15515,8 @@ function walk(script, st) {
       },
       chdir,
       split: (source2) => {
-        const row = parseSh(source2).nodes[0], words2 = row?.k === "cmd" ? row.c.words : [];
-        return { argv: words2.map((w) => expandWord2(w, st)), raw: words2 };
+        const row = parseSh(source2).nodes[0], words3 = row?.k === "cmd" ? row.c.words : [];
+        return { argv: words3.map((w) => expandWord2(w, st)), raw: words3 };
       },
       blocks: (name2) => child.blocks?.get(name2),
       setEnv: (state, name2, value) => assignEnv(state, name2, value)
@@ -15475,6 +15555,10 @@ function walk(script, st) {
     if (shellHost?.kind === "shell") {
       inspectHost(shellHost, argv, hostCtx(program, raw));
       return;
+    }
+    if (program === "less" && child.dialect !== "cmd") {
+      const sh2 = hostFor("sh");
+      for (const source2 of pagerCommands(argv.map(text3))) hostCtx(program, raw).run(source2, sh2, child);
     }
     if (program === "trap" && child.dialect === "sh") {
       const args = text3(argv[0]) === "--" ? argv.slice(1) : argv, source2 = text3(args[0]);
@@ -15560,12 +15644,12 @@ function walk(script, st) {
 }
 function peel(argv, state) {
   if (state.depth > 16) {
-    const words2 = argv.map((value) => value.k === "known" ? value.s : "");
-    while (words2.length && (words2[0] === "xargs" || words2[0].startsWith("-"))) words2.shift();
-    return evidenceScan(words2.join(" "), state);
+    const words3 = argv.map((value) => value.k === "known" ? value.s : "");
+    while (words3.length && (words3[0] === "xargs" || words3[0].startsWith("-"))) words3.shift();
+    return evidenceScan(words3.join(" "), state);
   }
-  const words = argv.map((value) => ({ raw: value.k === "known" ? value.s : "opaque", parts: [{ k: "value", value }] }));
-  return walk({ nodes: [{ k: "cmd", c: { assigns: [], words, redirects: [] }, span: [0, 0] }], incompleteTail: false }, { ...fork2(state, "subshell"), depth: state.depth + 1 });
+  const words2 = argv.map((value) => ({ raw: value.k === "known" ? value.s : "opaque", parts: [{ k: "value", value }] }));
+  return walk({ nodes: [{ k: "cmd", c: { assigns: [], words: words2, redirects: [] }, span: [0, 0] }], incompleteTail: false }, { ...fork2(state, "subshell"), depth: state.depth + 1 });
 }
 
 // server/wipe/native.ts
@@ -15811,16 +15895,17 @@ function systemMountPaths() {
   return mountProbe.read();
 }
 var mountedRoots = new MountInventory();
+var refreshedAt = 0;
 var refresh = () => {
+  refreshedAt = Date.now();
   try {
-    void Promise.resolve(mountedRoots.refresh()).catch(() => {
+    return Promise.resolve(mountedRoots.refresh()).catch(() => {
     });
   } catch {
+    return Promise.resolve();
   }
 };
-refresh();
-var timer = setInterval(refresh, 6e4);
-timer.unref();
+void refresh();
 
 // server/wipe/roots.ts
 var windows = (p) => /^(?:[a-z]:|\\\\|\/\/)/i.test(p);
@@ -16236,6 +16321,7 @@ var RootClassifier = class {
     const s = raw.startsWith("/") ? posix3.resolve("/", cleanText(raw)) : canonicalPath(raw, this.ctx.platform);
     if (/^\/dev\/(?:null|zero|full|random|urandom|tty[^/]*|console|ptmx|fuse|std(?:in|out|err))$|^\/dev\/(?:fd|pts|shm|mqueue|net)\//.test(s)) return false;
     if (/^\/dev\/disk\/by-id\/[^/]+$/.test(s)) return true;
+    if (/^\/dev\/(?:mem|kmem)$/.test(s)) return true;
     if (/^\/dev\/(?:r?disk\d|sd[a-z]|hd[a-z]|nvme\d|mmcblk\d|vd[a-z]|xvd[a-z]|dm-\d|md\d|loop\d)/.test(s)) return true;
     let block;
     try {
@@ -16485,6 +16571,102 @@ function decide(effects, classifier) {
 }
 var faultVerdict = () => ({ k: "card", rule: "wipe-check-fault", what: "Murage couldn't finish checking this command for a whole-drive wipe. Run it anyway?" });
 
+// server/wipe/script-bodies.ts
+import { posix as posix4 } from "node:path";
+import { openSync as openSync2, fstatSync as fstatSync2, readSync as readSync2, closeSync as closeSync2, constants as constants2 } from "node:fs";
+var SCRIPT_DEPTH_MAX = 2;
+var CWD_MAX = 32;
+var SHELLS3 = /* @__PURE__ */ new Set(["bash", "sh", "zsh", "dash", "ksh", "source", "."]);
+var PYTHONS = /^python[\d.]*$/;
+var NODES = /* @__PURE__ */ new Set(["node", "nodejs"]);
+var langOf = (path) => /\.py$/i.test(path) ? "py" : /\.(?:m?js|cjs)$/i.test(path) ? "js" : "sh";
+function readScriptBody(path) {
+  let fd;
+  try {
+    fd = openSync2(path, constants2.O_RDONLY | constants2.O_NONBLOCK);
+    if (!fstatSync2(fd).isFile()) return "unavailable";
+    const bytes = Buffer.alloc(131073);
+    let used = 0;
+    while (used < bytes.length) {
+      const count = readSync2(fd, bytes, used, bytes.length - used, used);
+      if (count === 0) break;
+      used += count;
+    }
+    return used > 131072 ? "unavailable" : { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, used)) };
+  } catch {
+    return "unavailable";
+  } finally {
+    if (fd !== void 0) closeSync2(fd);
+  }
+}
+var literal2 = (word) => word.parts.every((part) => part.k === "lit") ? word.parts.map((part) => part.k === "lit" ? part.s : "").join("") : void 0;
+function commandWords(script, out = []) {
+  const visit = (node4) => {
+    if (node4.k === "cmd") out.push(node4.c.words.map(literal2));
+    else if (node4.k === "pipe") node4.stages.forEach(visit);
+    else if (node4.k === "list") node4.items.forEach(visit);
+    else if (node4.k === "block" || node4.k === "func" || node4.k === "group" || node4.k === "subshell") commandWords(node4.body, out);
+  };
+  script.nodes.forEach(visit);
+  return out;
+}
+function writtenScriptRuns(text4, ctx, home) {
+  const edits = ctx.sessionEdits;
+  if (!edits || edits.size === 0) return [];
+  const start = ctx.cwdOpaque ? void 0 : ctx.cwd ?? ctx.workFolder ?? ctx.project;
+  const found = /* @__PURE__ */ new Map();
+  const cwds = new Set(start ? [start] : []);
+  const lastCwd = () => [...cwds].at(-1);
+  let overflowed = false;
+  const addCwd = (dir) => {
+    cwds.delete(dir);
+    if (cwds.size >= CWD_MAX) {
+      overflowed = true;
+      return;
+    }
+    cwds.add(dir);
+  };
+  const take = (raw, lang) => {
+    const spelled = raw.replace(/^~(?=\/|$)/, home);
+    if (overflowed) {
+      const fold = (name) => name.normalize("NFD").toLowerCase().normalize("NFD");
+      const tail = fold(`/${posix4.normalize(spelled).replace(/^(?:\.\.\/)+/, "")}`);
+      const abs = spelled.startsWith("/") ? /* @__PURE__ */ new Set([fold(posix4.normalize(spelled)), fold(raw)]) : void 0;
+      const named = [...edits].some((edit) => abs ? abs.has(fold(edit)) : fold(edit).endsWith(tail));
+      if (named) found.set(`${raw}\0overflow`, { path: raw, lang: lang ?? langOf(raw), overflow: true });
+      return;
+    }
+    const options = [[raw, lastCwd()], ...spelled.startsWith("/") ? [[posix4.normalize(spelled), lastCwd()]] : [...cwds].map((dir) => [posix4.resolve(dir, spelled), dir])];
+    for (const [path, dir] of options) if (edits.has(path)) found.set(`${path}\0${dir ?? ""}`, { path, lang: lang ?? langOf(path), ...dir ? { cwd: dir } : {} });
+  };
+  let commands = [];
+  try {
+    commands = commandWords(parse2(cleanText(text4), "sh"));
+  } catch {
+    commands = [];
+  }
+  for (const words2 of commands) {
+    const name = words2[0]?.split("/").at(-1);
+    if (name === void 0) continue;
+    if (name === "cd" || name === "pushd") {
+      const target = words2.slice(1).find((word) => word === void 0 || !word.startsWith("-"));
+      if (target !== void 0 && target !== "-") for (const dir of [...cwds]) addCwd(target.startsWith("/") ? posix4.normalize(target) : target.startsWith("~") ? posix4.normalize(target.replace(/^~(?=\/|$)/, home)) : posix4.resolve(dir, target));
+      continue;
+    }
+    const lang = SHELLS3.has(name) ? "sh" : PYTHONS.test(name) ? "py" : NODES.has(name) ? "js" : void 0;
+    if (!lang) {
+      if (words2[0] !== void 0 && /^(?:\.{1,2}|~)?\//.test(words2[0])) take(words2[0]);
+      continue;
+    }
+    const args = words2.slice(1);
+    const first = args.findIndex((word) => word === void 0 || word === "-" || !word.startsWith("-"));
+    if (first < 0 || args[first] === "-") continue;
+    if (args.slice(0, first).some((word) => word !== void 0 && (word === "--check" || (lang === "sh" ? /^-[a-zA-Z]*[csn]/ : /^-[a-zA-Z]*[cepm]/).test(word)))) continue;
+    if (args[first] !== void 0) take(args[first], lang);
+  }
+  return [...found.values()];
+}
+
 // server/wipe-breaker.ts
 var wipeCheckFault = () => {
   const { rule, what } = faultVerdict();
@@ -16523,6 +16705,20 @@ var unreadVariable = (text4) => {
   for (const m of text4.matchAll(/\$\{?([A-Za-z_]\w*)(?!\w)(?!\s*=(?!=))|%[A-Za-z_]\w*%/g)) if (m[1] === void 0 || new RegExp("(?:^|[\\s;&|({])\\$?" + m[1] + "\\s*=", "i").test(text4)) return true;
   return false;
 };
+function scriptBodyScan(scan, text4, ctx, home) {
+  const depth = ctx.scriptDepth ?? 0;
+  const runs = writtenScriptRuns(text4, ctx, home);
+  if (!runs.length) return scan;
+  if (depth >= SCRIPT_DEPTH_MAX) return emptyScan(wipeCheckFault());
+  for (const run of runs) {
+    if (run.overflow) return emptyScan(wipeCheckFault());
+    const body = (ctx.sessionFile ?? readScriptBody)(run.path);
+    if (body === "unavailable") return emptyScan(wipeCheckFault());
+    const inner = readAs(body.text, { ...ctx, scriptDepth: depth + 1, lang: run.lang, ...run.cwd ? { cwd: run.cwd } : {}, ...run.lang === "sh" ? { dialect: "sh" } : {} });
+    if (inner.hit) return emptyScan(inner.hit);
+  }
+  return scan;
+}
 function readAs(text4, ctx) {
   let state;
   try {
@@ -16556,13 +16752,14 @@ function readAs(text4, ctx) {
     const dialect = ctx.dialect ?? (ctx.shell === "pwsh" || ctx.lang === "pwsh" ? "pwsh" : /^\s*(?:[&.]\s+)?(?:Remove-Item|Move-Item|ri|mi|Set-Location|Push-Location|Pop-Location|sl|Get-ChildItem|gci|Format-Volume|Clear-Disk|Initialize-Disk|Rename-Item|Get-Item)\b/i.test(text4) ? "pwsh" : /^\s*(?:rd|rmdir|del|erase|move|robocopy|format)\s+\//i.test(text4) ? "cmd" : "sh");
     state = { env, home, platform: ctx.platform, proc: {}, exported: new Set(env.keys()), exportedFns: /* @__PURE__ */ new Set(), noEnv: ctx.env === void 0, vars: /* @__PURE__ */ new Map(), arrays: /* @__PURE__ */ new Map(), functions: /* @__PURE__ */ new Map(), links: /* @__PURE__ */ new Map(), dirStack: [], drive: /^([a-z]:)/i.exec(cwd ?? "")?.[1], startCwd: cwd, lexicalProtected: protect, cwd: !ctx.cwdOpaque && cwd ? known(cwd) : opaque("cwd"), dialect, depth: 0 };
     if (ctx.lang === "py" || ctx.lang === "js") {
-      const scan = interpreterEffects(text4, env.get("HOME") ?? env.get("USERPROFILE") ?? home), nested = [...scan.shells.flatMap((body) => peel([known("sh"), known("-c"), known(body)], state)), ...scan.argv.flatMap((argv) => peel(argv, state))];
+      const scan2 = interpreterEffects(text4, env.get("HOME") ?? env.get("USERPROFILE") ?? home), nested = [...scan2.shells.flatMap((body) => peel([known("sh"), known("-c"), known(body)], state)), ...scan2.argv.flatMap((argv) => peel(argv, state))];
       const origin = { program: ctx.lang, argv: [], rawArgv: [], redirects: [], ...state };
       const snapshot = invocationSnapshot(origin);
-      return evaluate([...scan.effects.map((effect) => effectRecord(effect, snapshot)), ...nested.flatMap(effectRecordsOf)], ctx);
+      return evaluate([...scan2.effects.map((effect) => effectRecord(effect, snapshot)), ...nested.flatMap(effectRecordsOf)], ctx);
     }
     const invocations = walk(parse2(cleanText(text4), dialect), { ...state, env: new Map(state.env) });
-    return evaluate(invocations.flatMap(effectRecordsOf), ctx);
+    const scan = evaluate(invocations.flatMap(effectRecordsOf), ctx);
+    return scan.hit || dialect !== "sh" ? scan : scriptBodyScan(scan, text4, ctx, home);
   } catch {
     try {
       const recovery = evaluate(evidenceScan(cleanText(text4), state ?? { home: homedir6(), env: /* @__PURE__ */ new Map(), cwd: opaque("cwd"), dialect: "sh", depth: 0 }).flatMap(effectRecordsOf), { ...ctx, pathPort: { realpath: () => null, isBlockDevice: () => null } });
@@ -16608,12 +16805,307 @@ function inspectNativeWipe(effects, tool, input, ctx = {}, filePaths) {
     return emptyScan(wipeCheckFault());
   }
 }
+
+// server/outside-scan.ts
+function decodeAnsiC(text4) {
+  return scoped(() => {
+    const ONE = { n: "\n", t: "	", r: "\r", a: "\x07", b: "\b", e: "\x1B", E: "\x1B", f: "\f", v: "\v" };
+    return text4.replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (_whole, body) => body.replace(/\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])/g, (_esc, esc) => {
+      const lead = esc[0];
+      if ((lead === "x" || lead === "u" || lead === "U") && esc.length > 1) {
+        const point = parseInt(esc.slice(1), 16);
+        return point <= 1114111 ? String.fromCodePoint(point) : "";
+      }
+      if (/[0-7]/.test(lead)) return String.fromCharCode(parseInt(esc, 8) & 255);
+      if (lead === "c" && esc.length === 2) return String.fromCharCode(esc.charCodeAt(1) & 31);
+      return ONE[lead] ?? lead;
+    }));
+  });
+}
+var words = (list) => new Set(list.split(/\s+/).filter(Boolean));
+var SCAN_WORK_BASE = 1 << 16;
+var ScanBudgetSpent = class extends Error {
+};
+var workLeft = Infinity;
+var failed = null;
+function reasonOf(error) {
+  return error instanceof ScanBudgetSpent ? error.message : `RangeError: ${error.message}`;
+}
+var WIPE = words(`rm rmdir unlink shred srm dd mkfs newfs wipefs fdisk sfdisk parted gpart diskutil diskpart
+  format-volume clear-disk remove-item ri del erase rd deltree rmtree rmsync rmdirsync unlinksync rimraf removedirs
+  remove removefile deletefile removedirectory delete truncate`);
+var DELETE_OPTIONS = words("delete delete-after delete-before delete-during delete-excluded");
+var RECURSE_AFTER = words("remove-item ri rm del rd gci get-childitem");
+var NET = words(`curl wget aria2c axel http https httpie xh lynx w3m links links2 elinks ftp tftp sftp scp nc ncat netcat
+  socat telnet ssh mosh rsync gh glab hub fetch openssl dig nslookup whois invoke-webrequest iwr invoke-restmethod irm
+  start-bitstransfer bitsadmin certutil mail mailx sendmail npx pnpx uvx pipx docker podman rclone lftp ncftp ncftpget
+  tnftp s3cmd s5cmd aws gsutil gcloud az azcopy kubectl helm oc curlie httpx hurl grpcurl websocat wscat yt-dlp youtube-dl
+  gallery-dl sshfs smbclient ftpget ftpput busybox toybox`);
+var PWSH_NET = `webclient httpclient webrequest restmethod xmlhttp winhttp bitstransfer tcpclient udpclient net.sockets
+  downloadstring downloadfile downloaddata openread -comobject add-type install-module install-package install-script
+  save-module save-package import-module`.split(/\s+/).filter(Boolean);
+var EXTRACT = words(`tar bsdtar gtar unzip funzip 7z 7za 7zz 7zr unrar unar gunzip gzip bunzip2 bzip2 unxz xz unzstd zstd
+  lz4 unlzma lzma cpio pax ar ditto jar expand-archive`);
+var INTERP_WORDS = words(`node nodejs deno bun bunx tsx ts-node pwsh powershell osascript jxa r rscript awk gawk mawk nawk
+  swift jshell groovy julia elixir erl escript runghc expect iex invoke-expression
+  ipython bb clojure clj racket guile sbcl ghci scala kotlin qjs hhvm cscript wscript mshta`);
+var SHELLS4 = words("sh bash zsh dash ksh mksh fish csh tcsh pwsh powershell cmd source .");
+var GIT_LOCAL = words(`status diff log show branch tag rev-parse ls-files blame grep add commit restore checkout switch stash
+  config init mv rm reset merge rebase cherry-pick describe shortlog`);
+var GIT_VALUED = words("-c -C --git-dir --work-tree --namespace --exec-path");
+var INSTALLERS = {
+  npm: words("install i ci add update upgrade dlx create exec link rebuild"),
+  pnpm: words("install i ci add update upgrade dlx create exec link rebuild"),
+  yarn: words("install i ci add update upgrade dlx create exec link rebuild"),
+  bun: words("install i ci add update upgrade dlx create exec link rebuild"),
+  pip: words("install download sync add"),
+  pip3: words("install download sync add"),
+  uv: words("install download sync add"),
+  cargo: words("install add fetch update build"),
+  go: words("get install download"),
+  brew: words("install upgrade tap fetch reinstall"),
+  gem: words("install update"),
+  bundle: words("install update")
+};
+for (const any of "apt apt-get yum dnf apk pacman port winget choco scoop nix composer conda mamba".split(" ")) INSTALLERS[any] = "any";
+var RUNS_ALONE = words("npx pnpx bunx uvx pipx");
+var SHORT_HITS = [...NET, ...EXTRACT].filter((w) => w.length < 3);
+var LONG_HITS = [...NET, ...EXTRACT].filter((w) => w.length >= 3);
+var AWK = words("awk gawk mawk nawk");
+var EVALUATORS = words("invoke-expression iex");
+var INERT_FLAGS_NODE = words("-e -p --eval --print");
+var M2_BUILTINS = words("export declare typeset readonly local setenv read mapfile readarray");
+var M2_PROGRAMS = words("env setx");
+var M2_STARTS = ";&|\n({`";
+var codeSet = (chars) => {
+  const set = new Uint8Array(128);
+  for (const c of chars) set[c.charCodeAt(0)] = 1;
+  return set;
+};
+var M2_START_CODE = codeSet(M2_STARTS);
+var ASSIGN_START_CODE = codeSet(";&|(){}`'\"");
+var DENY_ENV = `node_options node_path pythonstartup pythonpath pythonhome pythoninspect perl5opt perl5lib perllib perl5db rubyopt
+  rubylib lua_init lua_init_5_1 lua_init_5_2 lua_init_5_3 lua_init_5_4 lua_path lua_cpath bash_env ld_preload ld_library_path
+  dyld_insert_libraries dyld_library_path java_tool_options _java_options jdk_java_options phprc php_ini_scan_dir tcllibpath
+  r_profile r_profile_user r_environ julia_load_path julia_depot_path erl_aflags erl_flags erl_zflags elixir_erl_options
+  bun_options zdotdir pythonuserbase gem_home gem_path env`.split(/\s+/).filter(Boolean);
+var DENY_SET = new Set(DENY_ENV);
+var DENY_RE = new RegExp(`(?<![a-z0-9_])(?:${DENY_ENV.join("|")})(?![a-z0-9_])`);
+var ENV_WORDS = words("env export declare typeset setenv readonly local");
+var PY_MINORS = Array.from({ length: 14 }, (_, i) => i + 6);
+var WRAPPERS3 = words(`nice nohup time timeout gtimeout stdbuf ionice chrt taskset env sudo doas exec command builtin caffeinate setsid
+  xargs unbuffer flock chronic nocache watch parallel entr`);
+var FINDERS = words("find gfind fd fdfind");
+var FIND_EXEC = words("-exec -execdir -ok -okdir -x --exec -X --exec-batch");
+var NOT_PROGRAMS = words("cd echo printf pwd test [ true false type export set unset alias read source . eval if then else elif fi for while until do done case esac in function return exit");
+var SHELL_RUNNERS = words("sh bash zsh dash ksh mksh fish");
+var COMMAND_PREFIX = words("builtin command exec then do else elif time ! { sudo");
+var OPTION_LETTERS = "scil";
+var LOGIN_BIT = 1 << OPTION_LETTERS.length;
+var ROOT_MOVERS = {
+  npm: words("--prefix -C -w -ws --workspace --workspaces --include-workspace-root"),
+  pnpm: words("--dir -C --filter -F --recursive -r -w --workspace-root"),
+  yarn: words("--cwd workspace workspaces"),
+  cargo: words("--manifest-path -C -p --package --workspace --all")
+};
+var WORKSPACE_RUNNERS = words("lerna nx turbo");
+var DIR_MOVERS = words("cd pushd popd chdir set-location sl push-location pop-location");
+var SCAN_GATE_CHARS2 = 128 * 1024;
+var FAIL_CLOSED_MARKS = Object.freeze(["interpreter", "downloaded file", "cloned folder", "network command", "package install", "git", "archive"]);
+var I = (flags, valued = "", maxOperands, check2) => ({ flags: words(flags), valued: words(valued), maxOperands, check: check2 });
+var GREP = I("-r -R -n -i -l -L -c -v -w -x -E -F -o -h -H -s -q", "-A -B -C -m -e --include --exclude --exclude-dir --color");
+var SUMS = I("", "-a");
+var INSPECTORS = {
+  cat: I("-n -b -s -v -e -t -A -E -T"),
+  head: I("-q -v -f -F", "-n -c"),
+  tail: I("-q -v -f -F", "-n -c"),
+  wc: I("-l -w -c -m -L"),
+  ls: I("-1 -a -A -l -h -t -r -S -R -d -F -G -i -p -s -u -c", "--color"),
+  pwd: I(""),
+  true: I(""),
+  false: I(""),
+  echo: I("-n -e -E"),
+  printf: I(""),
+  basename: I("", "", 1),
+  dirname: I("", "", 1),
+  realpath: I("-f -e -m -n -z -s"),
+  readlink: I("-f -e -m -n -z -s"),
+  stat: I("-L -x", "-c -f"),
+  file: I("-b -i -L --mime-type"),
+  du: I("-s -h -a -c -k -m", "-d"),
+  df: I("-h -k -P -T"),
+  nl: I("", "-b"),
+  tac: I(""),
+  rev: I(""),
+  uniq: I("-c -d -u -i", "", 1),
+  cut: I("", "-d -f -c -b"),
+  tr: I("-d -s -c"),
+  sort: I("-n -r -u -f -h -V -s -b", "-k -t"),
+  comm: I("-1 -2 -3", "", 2),
+  cmp: I("-s -l", "", 4),
+  diff: I("-u -r -q -N -w -b -B -i", "-U"),
+  column: I("-t", "-s"),
+  grep: GREP,
+  egrep: GREP,
+  fgrep: GREP,
+  rg: I(`-i -n -l -c -v -w -F -S -s -a -H -N -o -u --hidden --no-ignore --files --json --no-heading --heading
+    --fixed-strings --smart-case --count --files-with-matches --line-number`, "-e -g -t -T -A -B -C -m --sort --max-depth --glob --type"),
+  jq: I("-r -c -S -e -n -s -j --tab", "--indent"),
+  find: I("-print -print0 -not ! -o -a -empty -prune", "-name -iname -path -type -newer -mtime -mmin -size -maxdepth -mindepth"),
+  sed: I("-n", "", void 0, (ops) => ops.length >= 1 && /^(\d+|\$)(,(\d+|\$))?p$/.test(ops[0])),
+  which: I(""),
+  type: I(""),
+  date: I("", "", 1, (ops) => ops.every((op) => op.startsWith("+"))),
+  id: I("", "", 0),
+  whoami: I("", "", 0),
+  hostname: I("", "", 0),
+  uname: I("-a -s -r -m"),
+  sw_vers: I(""),
+  md5sum: SUMS,
+  sha1sum: SUMS,
+  sha256sum: SUMS,
+  shasum: SUMS,
+  xxd: I("-p", "-l -s -c -g", 1),
+  od: I("-c -x", "-A -t -N"),
+  hexdump: I("-C", "-n -s"),
+  strings: I("-a", "-n"),
+  cd: I("", "", 1),
+  test: I(""),
+  "[": I("")
+};
+var BUILTINS = words("cd echo printf pwd test [ true false type");
+function scoped(read2) {
+  if (workLeft !== Infinity && failed) throw new ScanBudgetSpent(failed);
+  let out;
+  try {
+    out = read2();
+  } catch (e) {
+    if (workLeft !== Infinity && (e instanceof ScanBudgetSpent || e instanceof RangeError)) failed ??= reasonOf(e);
+    throw e;
+  }
+  if (workLeft !== Infinity && failed) throw new ScanBudgetSpent(failed);
+  return out;
+}
+
+// server/no-limits-wipe.ts
+function noLimitsWipe(text4, options = {}) {
+  return wipeBreaker(text4, options) ?? argvDisk(text4) ?? obfuscatedWipe(text4, (decoded, pwsh) => wipeBreaker(decoded, pwsh ? { ...options, dialect: "pwsh", shell: void 0, lang: void 0 } : options));
+}
+var ARGV_CODE = /\b(?:sys\.argv|process\.argv|ARGV|\$argv|\$ARGV|Bun\.argv)\b|\$\{?[@*0-9]\b/;
+var WRITE_CODE = /(?<!["'\w])(?:write|writeFileSync|writeFile|appendFile(?:Sync)?|createWriteStream|truncate|ftruncate|copyfile|copyFileSync|sendfile|tofile|file_put_contents|fwrite)\s*\(|\bopen\s*\([^)]*(?:["'](?:[wa]|r\+)[bt+]*["']|>)/;
+function argvDisk(text4) {
+  if (!ARGV_CODE.test(text4) || !WRITE_CODE.test(text4) || !/\b(?:python[\d.]*|node|nodejs|deno|bun|ruby|perl|php)\b/.test(text4)) return null;
+  const disk = deviceInWord(text4);
+  return disk === void 0 ? null : { rule: "disk-erase", what: "This would erase or repartition a disk. Run it anyway?" };
+}
+function recursiveForceWord(word) {
+  if (word.length < 3 || word.length > 32 || word[0] !== "-" || word[1] === "-" || !/^-[a-z]+$/i.test(word)) return false;
+  const lower = word.toLowerCase();
+  return lower.includes("r") && lower.includes("f");
+}
+function wordsOf(text4) {
+  return text4.split(/[\s;&|()]+/).filter(Boolean);
+}
+var EXEC_POSITION = /\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b(?!\s+-n\b)|\b(?:ba|z|da|k)?sh\s+-c\b|\beval\b|\b(?:iex|invoke-expression)\b|(?:^|[;&|(]\s*|\b(?:then|do)\s+)(?:\$\(|`)|(?:^|[;&|]\s*)\$\{?\w+\}?(?=\s|;|$)|(?<![.\w$])(?:exec|eval)\s*\(|\bos\.system\s*\(|\bsystem\s*\(|\bsubprocess\.\w+\s*\(|\bexecSync\s*\(|\bnew\s+Function\s*\(/i;
+var base64Text = (literal3) => Buffer.from(literal3, "base64").toString("utf8");
+var hexText = (literal3) => literal3.length % 2 === 0 ? Buffer.from(literal3, "hex").toString("utf8") : void 0;
+var LITERAL_DECODES = [
+  [/\b(?:echo(?:\s+-n)?|printf(?:\s+%s)?)\s+["']?([A-Za-z0-9+/=]{4,8192})["']?\s*\|\s*base64\s+(?:-d|--decode|-D)\b/g, base64Text],
+  [/\b(?:atob|b64decode|b64decodebytes|decodebytes|frombase64string)\s*\(\s*b?["']([A-Za-z0-9+/=]{4,8192})["']/gi, base64Text],
+  [/\b(?:unhexlify|fromhex)\s*\(\s*b?["']([0-9a-fA-F]{2,8192})["']/gi, hexText],
+  [/\bpack\s*\(\s*["']H\*["']\s*,\s*["']([0-9a-fA-F]{2,8192})["']/g, hexText],
+  [/\b(?:echo(?:\s+-n)?|printf(?:\s+%s)?)\s+["']?([0-9a-fA-F]{2,8192})["']?\s*\|\s*xxd\s+-r\s+-p\b/g, hexText]
+];
+var PRINTED_TO_SHELL = /^\s*(echo(?:\s+-[neE]+)?|printf(?:\s+(["']?)%[sb]\2)?)\s+(?:'([^']*)'|"([^"$`\\]*)"|([^\s'"|;&$`]+))\s*(?:\|\s*(base64\s+(?:-d|--decode|-D)|rev|xxd\s+-r\s+-p)\s*)?\|\s*(?:ba|z|da|k)?sh\s*$/;
+var ANSI_C_WORD = /\$'(?:[^'\\]|\\[\s\S])*'/g;
+var singleQuoted = (text4) => `'${text4.replace(/'/g, "'\\''")}'`;
+var HOME_OR_ROOT_UNQUOTED = /^(?:~|\$\{?HOME\}?|"\$\{?HOME\}?"|\/|["']\/["'])\/?\*?[;&|)]*$/;
+function printedToShell(text4) {
+  const match = PRINTED_TO_SHELL.exec(text4);
+  if (!match) return void 0;
+  const [, printer, , single, double, bare, decoder] = match;
+  let printed = single ?? double ?? bare ?? "";
+  if (printer.startsWith("printf") && !/%s/.test(printer) || /^echo\s+-\w*e/.test(printer)) printed = decodeAnsiC(`$'${printed.replace(/'/g, "\\'")}'`);
+  else if (/\\/.test(printed)) return void 0;
+  if (!decoder) return printed;
+  if (decoder.startsWith("rev")) return printed.split("\n").map((line) => [...line].reverse().join("")).join("\n");
+  if (decoder.startsWith("xxd")) return /^(?:[0-9a-f]{2})+$/i.test(printed.trim()) ? Buffer.from(printed.trim(), "hex").toString("utf8") : void 0;
+  return /^[A-Za-z0-9+/=]+$/.test(printed.trim()) ? Buffer.from(printed.trim(), "base64").toString("utf8") : void 0;
+}
+function decodedRuns(text4, start, end) {
+  let quote = -1, double = false;
+  for (let at = 0; at < start; at++) {
+    const char = text4[at];
+    if (quote >= 0) {
+      if (char === "'") quote = -1;
+    } else if (char === "\\") at++;
+    else if (char === '"') double = !double;
+    else if (char === "'" && !double) quote = at;
+  }
+  if (quote >= 0 && !/(?:\b(?:ba|z|da|k)?sh\s+-c|\beval|\b(?:python[\d.]*|perl|ruby|node|deno|bun|php|pwsh|powershell)(?:\s+-\w+)*\s+-[ceE]|\bosascript\s+-e)\s+$/i.test(text4.slice(Math.max(0, quote - 64), quote))) return false;
+  const before = text4.slice(Math.max(0, start - 256), start);
+  const after = text4.slice(end, end + 256);
+  if (/^[^;&\n]*?\|\s*(?:sudo\s+)?(?:(?:ba|z|da|k)?sh\b(?!\s+-n\b)|iex\b|invoke-expression\b|source\s+\/dev\/stdin)/i.test(after)) return true;
+  if (/(?:^|[;&|(]\s*|\b(?:then|do)\s+)(?:\$\(|`)\s*$/.test(before)) return true;
+  if (/(?:\beval|\b(?:ba|z|da|k)?sh\s+-c)\s+["']?(?:\$\(|`)\s*$/.test(before)) return true;
+  const assigned = /(?:^|[\s;&|(])(\w+)=["']?(?:\$\(|`)\s*$/.exec(before)?.[1];
+  if (assigned && new RegExp(`(?:\\beval\\s+["']?|(?:^|[;&|]\\s*))\\$\\{?${assigned}\\}?(?![\\w}])`).test(text4.slice(end))) return true;
+  return /(?<![.\w$])(?:exec|eval|system|os\.system|subprocess\.\w+|execSync|Function)\s*\(\s*(?:[\w.\s(+]|"[^"\n]{0,64}"|'[^'\n]{0,64}')*$/.test(before);
+}
+function obfuscatedWipe(text4, isWipe, depth = 0) {
+  const fault = { rule: "wipe-check-fault", what: "Murage couldn't finish checking this command for a whole-drive wipe. Run it anyway?" };
+  try {
+    if (depth > 2) return fault;
+    const seen = (decoded2) => decoded2 !== void 0 && decoded2 !== text4 ? isWipe(decoded2) ?? obfuscatedWipe(decoded2, isWipe, depth + 1) : null;
+    const spaced = text4.replace(/\$\{?IFS\}?(~)?/g, (_whole, tilde) => tilde ? " '~'" : " ");
+    const decoded = spaced.replace(ANSI_C_WORD, (word) => singleQuoted(decodeAnsiC(word).split("\0")[0]));
+    const found = seen(spaced) ?? seen(decoded);
+    if (found) return found;
+    for (const [, flag, encoded] of text4.matchAll(/(?:^|\s)[-/]([a-z]+)[\s:]+["']?([A-Za-z0-9+/=]{4,})/gi)) {
+      const name = flag.toLowerCase();
+      if (name !== "ec" && !(name.startsWith("e") && "encodedcommand".startsWith(name))) continue;
+      const inner = Buffer.from(encoded, "base64").toString("utf16le");
+      const hit3 = isWipe(inner, true) ?? obfuscatedWipe(inner, isWipe, depth + 1);
+      if (hit3) return hit3;
+    }
+    for (const [, name] of [...text4.matchAll(/(?:\beval|\b(?:ba|z|da|k)?sh\s+-c)\s+["']?\$\{?(\w+)\}?/g)].slice(0, 8)) {
+      const value = new RegExp(`(?:^|[\\s;&|(])${name}=(?:'([^']*)'|"([^"$\`\\\\]*)")`).exec(text4);
+      const literal3 = value?.[1] ?? value?.[2];
+      const hit3 = literal3 !== void 0 ? isWipe(literal3) ?? obfuscatedWipe(literal3, isWipe, depth + 1) : null;
+      if (hit3) return hit3;
+    }
+    const bare = decoded.replace(/'[^']*'/g, "''");
+    const words2 = wordsOf(bare);
+    for (const [at, word] of words2.entries()) {
+      if (!recursiveForceWord(word) || at + 1 >= words2.length || !HOME_OR_ROOT_UNQUOTED.test(words2[at + 1])) continue;
+      const program = words2[at - 1] ?? "";
+      const variable = /^\$\{?(\w+)\}?$/.exec(program)?.[1];
+      const unset = variable !== void 0 && !new RegExp(`(?:^|[\\s;&|(])${variable}=`).test(bare);
+      const built = /^(?:rm|rmdir|unlink|del)$/i.test(program) && /\$\(|`/.test(bare);
+      if (!unset && !built) continue;
+      return /^["']?\//.test(words2[at + 1]) ? { rule: "delete-root", what: "This deletes everything on the computer. Run it anyway?" } : { rule: "delete-home", what: "This deletes your home folder. Run it anyway?" };
+    }
+    const printed = printedToShell(text4);
+    if (printed !== void 0) return isWipe(printed) ?? obfuscatedWipe(printed, isWipe, depth + 1);
+    if (!EXEC_POSITION.test(text4)) return null;
+    for (const [pattern, decode] of LITERAL_DECODES) for (const match of text4.matchAll(pattern)) {
+      if (!decodedRuns(text4, match.index, match.index + match[0].length)) continue;
+      const plain2 = decode(match[1]);
+      const hit3 = plain2 !== void 0 ? isWipe(plain2) ?? obfuscatedWipe(plain2, isWipe, depth + 1) : null;
+      if (hit3) return hit3;
+    }
+    return null;
+  } catch {
+    return fault;
+  }
+}
 export {
   RootRegistry,
   inspectNativeWipe,
   inspectWipe,
   nativeEffectsWipe,
   nativeWipeBreaker,
+  noLimitsWipe,
   wipeBreaker,
   wipeCheckFault
 };

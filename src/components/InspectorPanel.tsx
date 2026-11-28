@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bug, ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { appendInspectorRuntime, formatTime, inspectorCountLabel, toRows, withClaimRows, type ClaimInspectorRow, type InspectorPage, type InspectorRow } from "@/lib/inspector";
+import { appendInspectorRuntime, createInspectorBuffer, formatTime, INSPECTOR_ENTRY_LIMIT, inspectorCountLabel, retainInspectorPage, toRows, withClaimRows, type ClaimInspectorRow, type InspectorPage, type InspectorRow } from "@/lib/inspector";
 import { unmatchedClaims } from "../../shared/chat-engine-notes";
 import { UNMATCHED_ACTION_EXPLANATION, unmatchedActionLabel } from "../../shared/reply-action-claims";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
@@ -44,7 +44,7 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
       // serves prompts and tool traffic, which is exactly what the scoped
       // default withholds.
       await ensureDesktopSurfaceSecret();
-      const res = await fetch(`/api/threads/${threadId}/events?limit=400`, {
+      const res = await fetch(`/api/threads/${threadId}/events?limit=${INSPECTOR_ENTRY_LIMIT}`, {
         signal: controller.signal,
         // The marker alone is a forgery the harness now refuses; the
         // per-launch secret is what makes it the desktop.
@@ -56,7 +56,7 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
       // inspector endpoint; malformed transport data is handled by catch.
       const next = (await res.json()) as InspectorPage;
       if (controller.signal.aborted) return false;
-      setPage(next);
+      setPage(retainInspectorPage(next));
       setError(null);
       return true;
     } catch (e) {
@@ -73,7 +73,6 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
     setPage(null);
     setExpanded(new Set());
     stickToBottom.current = true;
-    void load();
     return () => loadAbort.current?.abort();
   }, [load]);
 
@@ -86,14 +85,14 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
     let settle: ReturnType<typeof setTimeout> | null = null;
     let refreshGeneration = 0;
     let refreshing = false;
-    const pendingRuntime: RuntimeEvent[] = [];
+    const pendingRuntime = createInspectorBuffer();
 
     const appendRuntime = (runtime: RuntimeEvent) => {
       setPage((prev) => appendInspectorRuntime(prev, runtime));
     };
 
     const flushPendingRuntime = () => {
-      for (const runtime of pendingRuntime.splice(0)) appendRuntime(runtime);
+      setPage(pendingRuntime.drain());
     };
 
     const refresh = async (flushLiveOnFailure: boolean): Promise<boolean> => {
@@ -121,10 +120,11 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
       // A refused resume starts a new stream generation. Frames retained by
       // an earlier failed refresh will be present in the new disk snapshot or
       // replayed again, so do not carry them across the generation boundary.
-      pendingRuntime.splice(0);
+      pendingRuntime.clear();
       return refresh(false);
     };
     managedRefresh.current = requestRefresh;
+    void refresh(true);
 
     const stopLive = openLiveEvents({
       screens: false,
@@ -161,11 +161,23 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
   const claims = useMemo(() => unmatchedClaims(bot.messages), [bot.messages]);
   const rows = useMemo(() => (lens === "events" ? withClaimRows(eventRows, claims) : eventRows), [eventRows, claims, lens]);
 
+  useEffect(() => {
+    setExpanded((previous) => {
+      if (!previous.size) return previous;
+      const otherEntries = page?.entries.filter((entry) => entry.kind === (lens === "raw" ? "runtime" : "native")) ?? [];
+      const otherRows = toRows(otherEntries);
+      const otherLens = lens === "raw" ? withClaimRows(otherRows, claims) : otherRows;
+      const retained = new Set([...rows, ...otherLens].map((row) => row.key));
+      const next = new Set([...previous].filter((key) => retained.has(key)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [rows, page, lens, claims]);
+
   // follow the tail unless the user has scrolled up to read
   useEffect(() => {
     const el = listRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
-  }, [page?.entries.length, rows.length, lens]);
+  }, [page?.entries.length, rows.length, rows.at(-1)?.key, lens]);
   const onScroll = () => {
     const el = listRef.current;
     if (!el) return;

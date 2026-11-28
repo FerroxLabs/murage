@@ -35,11 +35,15 @@ describe("the words", () => {
     expect(overviewSentence({ lessons: 1, memories: 0 })).toBe("Learned 1 thing this month");
     expect(overviewSentence({ lessons: 14, memories: 9 })).toBe("Learned 23 things this month");
   });
-  it("the badge is a number or nothing, capped at 99+", () => {
+  // 1.0.21 polish (Sean's live walk): Sable's settings read "Learning 99+" beside Memory "0 waiting for you". A count in
+  // the side list reads as work waiting for the owner, and nothing was. New learning is a quiet dot; the exact number
+  // stays in the accessible label. Replaces "the badge is a number or nothing, capped at 99+".
+  it("the badge is a quiet dot or nothing, never a count that reads as waiting work", () => {
     expect(badgeText(0)).toBeNull();
     expect(badgeLabel(0)).toBeNull();
-    expect(badgeText(3)).toBe("3");
-    expect(badgeText(250)).toBe("99+");
+    expect(badgeText(3)).toBe("•");
+    expect(badgeText(250)).toBe("•");
+    expect(badgeText(250)).not.toMatch(/\d/);
     expect(badgeLabel(3)).toBe("3 new");
   });
 });

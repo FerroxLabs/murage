@@ -3,7 +3,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { readFileSync } from "node:fs";
+import fs, { readFileSync } from "node:fs";
+import nodePath from "node:path";
 import { createGlobalShortcut, enableGlobalShortcutPortal, globalShortcutPortalAvailable, SHORTCUT_PORTAL_REASON } from "./global-shortcut.mjs";
 import { linuxSessionType } from "./notify-capabilities.mjs";
 import { notifySurfaceDefaults } from "../shared/notify-surfaces.mjs";
@@ -108,7 +109,9 @@ for (const failure of ["refuse", "throw"]) test(`write failure clears the reject
 // Run the production ready callback and attention initializer with the real shortcut
 // controller, session detection and portal adapter. Unrelated backup startup exits
 // at its existing blocked branch; all native effects stay inside this VM fixture.
-function startupFixture({ platform, env = {}, available = true, enabled = true, stored = "Alt+F2", needsYou = 0, botId = "bot" }) {
+// devDir: run the REAL ownedDesktopDataDir/unpackagedDevDataDir cut from main.mjs (unpackaged, MURAGE_DEV_DATA_DIR=devDir) instead of the stub.
+function startupFixture({ platform, env = {}, available = true, enabled = true, stored = "Alt+F2", needsYou = 0, botId = "bot", devDir = null, home = "/fixture-home" }) {
+  const receiptPaths = [];
   const events = new Map(), registrations = new Map(), calls = [], opens = [], probes = [], routes = [];
   const state = notifySurfaceDefaults("new", platform);
   Object.assign(state, { shortcut: stored, pinnedBotId: botId }); state.surfaces.shortcut = enabled;
@@ -117,9 +120,9 @@ function startupFixture({ platform, env = {}, available = true, enabled = true, 
   const readiness = new Promise(resolve => { ready = resolve; });
   const noop = () => {};
   const context = vm.createContext({
-    process: { platform, env, argv: [] }, createGlobalShortcut, linuxSessionType,
+    process: { platform, env: devDir ? { ...env, MURAGE_DEV_DATA_DIR: devDir } : env, argv: [] }, fs, createGlobalShortcut, linuxSessionType,
     enableGlobalShortcutPortal, globalShortcutPortalAvailable,
-    app: { isPackaged: false, whenReady: () => readiness, on: (name, cb) => events.set(name, cb),
+    app: { isPackaged: false, getPath: name => (name === "home" ? home : nodePath.join(home, "userData")), whenReady: () => readiness, on: (name, cb) => events.set(name, cb),
       commandLine: { getSwitchValue: () => featureValue, appendSwitch: (name, value) => { featureValue = value; } } },
     globalShortcut: {
       register: (key, cb) => { calls.push(["register", key]); registrations.set(key, cb); return true; },
@@ -143,7 +146,7 @@ function startupFixture({ platform, env = {}, available = true, enabled = true, 
     createAttentionSurfaces: () => ({ sync: async () => {}, changed: noop, botFrame: noop, invalidateAll: noop, dispose: noop, trayPanel: {}, floatSurface: {} }),
     createBannerApprovals: () => ({ dispose: noop }), createMacBanners: () => null, createLinuxBanners: () => null, loadSessionBus: noop,
 // MAIN RULING: connector-notice lane (4f19bb6c6c0) adds a receipt store at startup.
-    createConnectorNoticeReceipts: () => ({}), path: { join: (...parts) => parts.join("/") }, ownedDesktopDataDir: () => "/fixture",
+    createConnectorNoticeReceipts: file => { receiptPaths.push(file); return {}; }, path: devDir ? nodePath : { join: (...parts) => parts.join("/") }, ...(devDir ? {} : { ownedDesktopDataDir: () => "/fixture" }),
     Notification: {}, createWindowsBanners: options => { windowsOptions.push(options); return windows; },
     pickNativeBanner: options => { bannerSelections.push(options); return null; },
     attentionSurfaces: null, bannerNative: null, trayIcon: null, electronIpcMain: {}, screen: {},
@@ -154,12 +157,16 @@ function startupFixture({ platform, env = {}, available = true, enabled = true, 
     initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
     BACKUP_MODE_ARGUMENT: "--backup", backupStartupDispatch: () => ({ blocked: true }), showDesktopRecovery: noop,
   });
+  if (devDir) {
+    const from = Math.min(...["function unpackagedDevDataDir", "function ownedDesktopDataDir"].map(m => source.indexOf(m)).filter(i => i >= 0));
+    vm.runInContext(`let desktopDataOwner = null, desktopDataDir = null;\n${source.slice(from, source.indexOf("function trackOwnedServerChild(", from))}`, context);
+  }
   vm.runInContext(source.slice(source.indexOf("function spawnInherited(")), context);
   const attention = source.slice(source.indexOf("function initializeAttentionActions(){"), source.indexOf("function initializeNotifySurfaces(){"));
   const startup = source.slice(source.indexOf("const desktopStartup = app.whenReady()"), source.indexOf("// With a main window, its first-paint reveal"));
   vm.runInContext(source.match(/^if\(process.platform==="linux".*enableGlobalShortcutPortal.*$/m)[0], context);
   vm.runInContext(`${attention}\n${startup}\n${source.match(/app\.on\("will-quit",\(\)=>shortcutOwner\?\.dispose\(\)\);/)[0]}`, context);
-  return { calls, opens, probes, routes, registrations, state, windowsOptions, bannerSelections, windows, actionCalls, feature: () => featureValue,
+  return { receiptPaths, calls, opens, probes, routes, registrations, state, windowsOptions, bannerSelections, windows, actionCalls, feature: () => featureValue,
     start: async () => { ready(); await vm.runInContext("desktopStartup", context); await vm.runInContext("shortcutReady", context); },
     owner: () => vm.runInContext("shortcutOwner", context),
     repeat: () => vm.runInContext("initializeAttentionActions()", context),
@@ -249,4 +256,16 @@ test("press opens Needs you using the tray Inbox path, or the pinned bot compose
     });
     await trigger(); assert.deepEqual(plain(calls), expected); assert.deepEqual(routes, ["/api/desktop/tray"]);
   }
+});
+
+// MURAGE_DEV_DATA_DIR: an unpackaged dev start used to die in the attention initializer (main.mjs ownedDesktopDataDir at the connector
+// receipts call). Here the real helper runs inside the production ready callback and the receipt store gets a path under the dev folder.
+test("unpackaged startup with MURAGE_DEV_DATA_DIR reaches the connector receipt store under that folder", async () => {
+  const root = fs.mkdtempSync(nodePath.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), "dev-start-"));
+  try {
+    const dev = nodePath.join(root, "dev-data"), home = nodePath.join(root, "home");
+    const f = startupFixture({ platform: "linux", env: { XDG_SESSION_TYPE: "x11" }, devDir: dev, home });
+    await assert.doesNotReject(f.start(), "an unpackaged start with MURAGE_DEV_DATA_DIR must not die");
+    assert.deepEqual(f.receiptPaths, [nodePath.join(dev, "connector-notice-receipts.json")]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

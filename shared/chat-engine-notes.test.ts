@@ -12,11 +12,14 @@ describe("engine notes", () => {
     expect(ENGINE_LABEL_NOTICE).toBe("Replies will be labelled with the engine that wrote them.");
     expect(engineHoverLabel({ instanceId: "a", model: "m1" }, () => "Engine A")).toBe("Engine A, m1");
   });
-  it("divides where the engine changes and before the first labelled row after unlabelled ones", () => {
+  it("divides only where the engine changes between two labelled rows", () => {
     const rows = [bot("0"), bot("1", "a"), bot("2", "a"), { id: "u", role: "user" as const }, bot("3", "b"), bot("4", "a")];
     const out = engineDividers(rows, (e) => e.instanceId.toUpperCase());
-    expect([...out.keys()]).toEqual(["1", "3", "4"]);
+    expect([...out.keys()]).toEqual(["3", "4"]);
     expect(out.get("3")).toContain("Engine changed: B.");
+  });
+  it("no divider on the first labelled reply after an unlabelled greeting", () => {
+    expect(engineDividers([bot("0"), bot("1", "a"), { id: "u", role: "user" as const }, bot("2", "a")], () => "A").size).toBe(0);
   });
   it("no divider when nothing is labelled, or for the very first labelled row of a new thread", () => {
     expect(engineDividers([bot("1"), bot("2")], () => "x").size).toBe(0);

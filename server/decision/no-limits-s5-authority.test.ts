@@ -13,7 +13,7 @@ import {fixture, d, baseCard, baseRun, card} from './fixture.ts';
 
 const roots:string[]=[];
 afterEach(()=>{for(const root of roots.splice(0))removeTempDirSync(root);});
-const shapes=['archive destination','archive member','unknown cwd suffix','link write-through','uncertain link placement','archive projection exhaustion','native write'] as const;
+const shapes=['archive destination','archive member','unknown cwd suffix','link write-through','uncertain link placement','archive projection exhaustion','link then unreadable','unreadable then link','link then doubt','link then value doubt','unreadable blank link','unreadable in group then link','unreadable in branch then link','unreadable then group link','unreadable then branch link','archive then unreadable','unreadable then archive','native write'] as const;
 type Shape=typeof shapes[number];
 function sample(shape:Shape) {
  let command:string|undefined,cwd:string|undefined='/w';
@@ -28,6 +28,29 @@ function sample(shape:Shape) {
   case 'uncertain link placement': {
    cwd=mkdtempSync(join(tmpdir(),'s5-authority-uncertain-'));roots.push(cwd);symlinkSync('/etc',join(cwd,'h'));
    command='d=.; ln -sf /tmp/blob "$d"/h*';break;
+  }
+  case 'link then unreadable': case 'unreadable then link': case 'link then doubt': case 'link then value doubt': {
+   cwd=mkdtempSync(join(tmpdir(),'s5-authority-carry-'));roots.push(cwd);symlinkSync('/etc',join(cwd,'h'));
+   const link='d=.; ln -sf /tmp/blob "$d"/h*';
+   command=shape==='link then unreadable'?`${link}; bash -c "$CMD"`:shape==='unreadable then link'?`bash -c "$CMD"; ${link}`:shape==='link then doubt'?`${link}; $CMD`:`${link}; echo ok > "$O"`;break;
+  }
+  case 'unreadable blank link': {
+   cwd=mkdtempSync(join(tmpdir(),'s5-authority-blank-'));roots.push(cwd);symlinkSync('/etc',join(cwd,'h'));
+   command='bash -c "$CMD";\n\n\nd=.; ln -sf /tmp/blob "$d"/h*';break;
+  }
+  case 'unreadable in group then link': case 'unreadable in branch then link': {
+   cwd=mkdtempSync(join(tmpdir(),'s5-authority-group-'));roots.push(cwd);symlinkSync('/etc',join(cwd,'h'));
+   const body='bash -c "$CMD"; d=.; ln -sf /tmp/blob "$d"/h*';
+   command=shape==='unreadable in group then link'?`{ ${body}; }`:`if true; then ${body}; fi`;break;
+  }
+  case 'unreadable then group link': case 'unreadable then branch link': {
+   cwd=mkdtempSync(join(tmpdir(),'s5-authority-after-'));roots.push(cwd);symlinkSync('/etc',join(cwd,'h'));
+   const write='d=.; ln -sf /tmp/blob "$d"/h*';
+   command=shape==='unreadable then group link'?`bash -c "$CMD"; { ${write}; }`:`bash -c "$CMD"; if true; then ${write}; fi`;break;
+  }
+  case 'archive then unreadable': case 'unreadable then archive': {
+   const tar=`tar -tf /tmp/a.tar ${'-C {a,b} '.repeat(14)}`;
+   command=shape==='archive then unreadable'?`${tar}; bash -c "$CMD"`:`bash -c "$CMD"; ${tar}`;break;
   }
   case 'archive projection exhaustion': command=`tar -tf /tmp/a.tar ${'-C {a,b} '.repeat(14)}`;break;
   case 'native write': break;
@@ -125,7 +148,7 @@ it('S5 feature off refuses once with one line and zero approvals',async()=>{
  }finally{f.dispose();}
 });
 
-for(const shape of ['uncertain link placement','archive projection exhaustion'] as const)it(`S5 authenticated Full access owner holds ${shape}`,()=>{
+for(const shape of ['uncertain link placement','archive projection exhaustion','link then unreadable','unreadable then link','link then doubt','link then value doubt','unreadable blank link','unreadable in group then link','unreadable in branch then link','unreadable then group link','unreadable then branch link','archive then unreadable','unreadable then archive'] as const)it(`S5 authenticated Full access owner holds ${shape}`,()=>{
  const f=fixture('full'),row=sample(shape);
  try{
   expect(d.decide(row.open(f),row.base).kind).toBe('card');

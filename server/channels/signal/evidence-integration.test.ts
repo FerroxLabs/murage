@@ -107,7 +107,7 @@ const SIGNAL_I1_GLOBS = [
  'scripts/fixtures/signal-*', 'scripts/release-workflows.test.mjs',
  '.github/workflows/{release,prepare-release,signal-runtime-inputs,signal-runtime-input-check}.yml',
  'electron-builder.yml', 'electron/vendor/electron-updater.cjs',
- 'docs/verification/evidence/signal-sync/{SYNC-CITATIONS.md,sync-proof.json}',
+ 'docs/verification/{signal-sync-citations.md,signal-sync-proof.json}',
  // Historical/proposed names are included even when not present in S.
  '**/jre-inputs.json',
 ];

@@ -62,7 +62,7 @@ export function auditReleaseMutations(root, overrides = new Map(), files = track
         // The shared guard contains both read and write commands. Its entry
         // prerequisite alone does not authorize callers outside assemble.
         const guard = command.match(/\b(?:node\s+)?scripts\/release-guard\.mjs\s+["']?([^\s"')]+)/);
-        if (guard && !['bootstrap','wait-probe','wait-stage','download','verify-digests','version','should-release','next-version','absent','available','branch','verify-tag','browser-extension','browser-extension-optional','browser-extension-build','update-feed'].includes(guard[1])) add(file, 'release guard command requires assemble', line, owner, guarded);
+        if (guard && !['bootstrap','wait-probe','wait-stage','download','verify-digests','version','should-release','next-version','absent','available','branch','verify-tag','browser-extension','browser-extension-optional','browser-extension-build','update-feed','rings-floor','rings-floor-check','capability-baseline'].includes(guard[1])) add(file, 'release guard command requires assemble', line, owner, guarded);
       }
       if (/\bgh\s+release\s+(?:create|upload|edit|delete|delete-asset)\b/.test(command)) add(file, 'gh release mutation', line, owner, guarded, assembly);
       if (!releaseGetOnly && /\bgh\s+api\b/.test(command) && /\brepos\/\S*\/releases\b/.test(command) &&

@@ -1,3 +1,4 @@
+// Skill receipt producer owner: decision lane. Review/status consumer owner: skills lane.
 import type { ReleaseContext } from "./memory/release-transaction.ts";
 // Canonical harness contracts — ported from upstream
 // (apps/server/src/provider/ProviderDriver.ts, Services/ProviderAdapter.ts,
@@ -156,7 +157,7 @@ export type RuntimeEvent = RuntimeEventBase &
          * The one figure the harness accumulates — thread.token-usage.updated
          * is a live indicator whose meaning differs per driver (a per-call
          * delta, a thread total, a per-step figure) and must never be summed. */
-        usage?: { input: number; output: number; cachedInput?: number };
+        usage?: { input: number; output: number; cachedInput?: number; usageAccounting?: import("../shared/prompt-cache-usage.ts").UsageAccounting };
         /** Plain names ("connected apps", "memory") of required tools that had
          * not loaded when the turn's prompt was written; the bot was told so.
          * Degraded availability: a routine run records it, and fails only when
@@ -176,6 +177,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "item.started"; itemType: "tool"; origin: ItemOrigin; title?: string; summary?: string; input?: unknown;
         /** Murage's own working line for a wait it names itself (origin "murage" only): shown beside the mascot even with Tool
          *  calls off, where the chip is hidden. */
+        folderTrustNoticeIdentity?: string;
         spoken?: string;
         /** Canonical tool kind and identity, separate from display text. */
         toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string };
@@ -224,6 +226,9 @@ export type RuntimeEvent = RuntimeEventBase &
         summary: string;
         choices?: string[];
         approvalScope?: "local-computer";
+        /** A card the engine's turn does not wait on (a held MCP server's approval): the server takes no human-wait hold
+         * for it, so no watchdog or driver timer is paused by it. */
+        ambient?: true;
         /** 0.1.52 ASK1 (additive): the driver's trusted signal that this ask
          * is a question to the owner even though it is filed as a permission
          * (Pi `select`; an ACP tool call named as a question tool). Policy
@@ -365,7 +370,7 @@ export type RuntimeEvent = RuntimeEventBase &
          * stopped because nobody decided". */
         folderTrustLate?: "finished" | "stopped" | "failed" | "timeout";
       }
-    | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
+    | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number; usageAccounting?: import("../shared/prompt-cache-usage.ts").UsageAccounting }
     /** A Flux response named the model that served it (x-flux-routed-model) and the one asked for (x-flux-original-model), read at
      * the start of the response. The reply this turn writes next stores it (Message.servedModel). */
     | { type: "turn.served-model"; routed: string; requested: string }
@@ -418,6 +423,8 @@ export type PrewarmFence = (cursor: string | null) => void;
 export interface SendTurnInput {
   /** Server-owned readiness of this ordinary conversation dispatch. */
   recall?: import('./memory/recall-readiness.ts').RecallMode;
+  /** Server-only: what the dispatch log says recall did (recall-readiness.ts recallLogLabel); removed before the adapter receives it. */
+  recallLog?: string;
   /** Server-only comparison facts, removed before the adapter receives the request. */
   recallPrepared?: import('./memory/recall-readiness.ts').RecallPrepared;
   /** Immutable admission identity and exact lease, propagated through relaunches.
@@ -511,6 +518,9 @@ export interface SendTurnInput {
   fuigoResume?: import("./drivers/acp/fuigo-policy.ts").FuigoResumeContext;
   /** Native ACP thinking choice, scoped to the selected model. */
   variant?: string;
+  /** ACP-EFFORT r9 W7: the live, store-backed record of what Murage ever sent to each engine session (never a snapshot). With none, the driver
+   * keeps a per-process map; after a restart it is empty, and a missing key reads as touched. */
+  effortTouch?: { get(sessionId: string): "clean" | "pending" | "set" | undefined; set(sessionId: string, state: "clean" | "pending" | "set"): boolean };
   resumeCursor?: unknown;
   /** Start without the previous native context, including a retained idle
    * process. Takes precedence over resumeCursor. Set whenever the harness
@@ -580,10 +590,6 @@ export interface SendTurnInput {
     /** The owner's own phone (calendar, reminders, ...) through the harness, only for a turn that holds a live phone authority (1.0.9).
      * Mounted under the server name "phoneJobs"; never the ADB "phone" server above. */
     phoneJobs?: { command: string; args: string[]; env: Record<string, string> };
-    /** Native HighLevel CRM (HL-S2, GAP-HIGHLEVEL-109): a stdio proxy (server/drivers/highlevel-proxy.ts) to the
-     * harness's /api/internal/highlevel/mcp with a per-turn internal token. Mounted under the server name "highlevel"
-     * only for a direct owner turn whose bot holds a native grant on a confirmed location. */
-    highlevel?: { command: string; args: string[]; env: Record<string, string> };
     /** The app's built-in browser: an MCP proxy (server/drivers/browser-proxy)
      * that forwards to the Electron-owned WebContentsView the Browser tab
      * shows. One tab per bot, in its own persistent session partition. */
@@ -613,6 +619,8 @@ export interface SendTurnInput {
    * and the driver raises a question card before the engine starts when
    * `sources` names anything the folder would contribute. */
   folderTrust?: FolderTrustTurnInput;
+  /** Server-owned provenance, never serialized or supplied by a tool/client. */
+  folderTrustAuthorityNow?: () => import('./drivers/acp/fuigo-trust-reply.ts').FolderTrustAuthority | null;
   /** A Full access approve-setup grant took effect for this turn (R5). The core
    * calls it where the grant lands: at the turn's start on generation 1, and on
    * generation 2 only once the seed holding the policy folder is written. Keeps
@@ -637,6 +645,8 @@ export interface SendTurnInput {
    * every other instance mode. Full access and No limits use stopLine above.
    * Engines without a permission setting have nothing to override. */
   routeAsks?: true;
+  /** Native tool names this turn must not offer (Claude's WebSearch when search is off app-wide or for the bot; server/settings/tools-off.ts claudeSearchDeny). Applies at every permission level, No limits included. */
+  nativeDeny?: readonly string[];
   /** The bot is at Ask for this turn (a routine run's effective level included); sent with routeAsks. An engine
    * that cannot ask before every change (Cursor, OpenClaw, Antigravity) runs read-only on this turn: it may read
    * and plan, and every file change or command is refused before it runs (server/drivers/ask-stop.ts). Engines
@@ -650,6 +660,9 @@ export interface SendTurnInput {
    * an open run holds back its routine's next occurrences, so one unanswered question would stop the routine (House
    * Rule 8), and a question, unlike an approval, can be gone past. Permission cards never take the note. */
   unattendedAskNote?: true;
+  /** The owner's own turn (harness/power-owner-adapter.ts, the registry decorator alone): the power block does not wrap it
+   *  (OVERREACH #5). Absent on a guest or unattended turn and whenever the turn is not known to be the owner's, which are wrapped. */
+  hostPowerOwnerTurn?: true;
   /** The Chief's hidden New project proposal turn (lane N/N2): it answers
    * with a proposal block in its reply; where the turn mounts the agents
    * server, project_propose is the one Murage tool it may use. A driver that
@@ -667,6 +680,14 @@ export interface SendTurnInput {
 /** See `SendTurnInput.folderTrust`. `sources` are display names from the
  * server's scan (server/folder-trust.ts): "AGENTS.md", ".mcp.json", …. */
 export interface FolderTrustTurnInput {
+  /** Revision-bound saved records; production turn work never enumerates them. */
+  snapshot?: import('./folder-trust-index.ts').FolderTrustSnapshot;
+  sourceNow?: () => { revision: string; storeRevision?: string; readable: boolean; declined: boolean; seedComplete: boolean; picked: boolean };
+  /** One fresh off-thread stat of the engine's trust file; an automatic grant awaits it so `sourceNow` sees the file as it is now. */
+  sourceRefresh?: () => Promise<void>;
+  upstreamReadable?: boolean;
+  upstreamDeclined?: true;
+  seedComplete?: boolean;
   key: string;
   folder: string;
   decision?: "trust" | "reject";
@@ -714,7 +735,7 @@ export interface IdleHold { release: () => void; confirmed: boolean }
  * A pending duplicate joins the original promise and cannot claim acceptance.
  * A failed attempt can re-send once with the same answerId (A10a).
  */
-export interface RequestDelivery { state: "accepted" | "already" | "failed" }
+export interface RequestDelivery { state: "accepted" | "already" | "failed" | "not-run" | "unconfirmed"; message?: string; code?: string; authorization?: "owner" | "automatic" }
 export interface RequestAnswerOptions { answerId: string }
 export type GateTapEvent =
   | { type: "posture"; threadId: string; generation: string; state: "requested" | "accepted" | "failed" | "interrupted"; level: "ask" | "auto" | "full" | "unlimited" }
@@ -723,7 +744,12 @@ export type GateTapEvent =
 
 /** Strict S3 capability carried through the live ProviderInstance registry. */
 export type DecisionProviderAdapter = Pick<ProviderAdapter<RequestDelivery>,
-  'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'>;
+  'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'> & {
+  /** 1021 Retry: this exact ask is still open in its live generation, unresolved and undelivered. */
+  canRedeliver?(threadId: ThreadId, requestId: string): boolean;
+  /** 1021 Retry: close the failed answer slot and open a fresh one for the next respond (same tick). */
+  rearmRetry?(threadId: ThreadId, requestId: string): boolean;
+};
 
 /** Existing adapters retain their BASE return type until S3 migrates them.
  * S3 implements ProviderAdapter<RequestDelivery>; its fourth argument is
@@ -796,6 +822,8 @@ export interface ProviderAdapter<Delivery extends RequestOutcome | RequestDelive
      * the driver cannot set effort, so the app never offers the control —
      * same rule as computerMcp: never show a knob the driver cannot turn. */
     effortLevels?: readonly EffortLevel[];
+    /** "model": the engine picks effort per model on the live session (ACP model variants), so the engine-wide effort field never gates a turn. */
+    effortMode?: "model";
     /** True when the driver keeps a live session across turns and can take
      * a user message MID-TURN (delivered before the model's next call —
      * "steer"). The composer stays open during a turn on such an engine;
@@ -816,6 +844,7 @@ export interface ProviderAdapter<Delivery extends RequestOutcome | RequestDelive
     folderTrust?: boolean;
     /** The trust protocol this engine speaks, from the version last seen. Read only. */
     readonly folderTrustGeneration?: 1 | 2;
+    readonly folderTrustVersion?: string;
     /** True when the adapter implements textOnlyTurn (PIP reflection): one
      * tool-free structured call, no tools or MCP servers mounted. */
     textOnlyTurn?: true;
@@ -993,6 +1022,8 @@ export interface ModelCatalog {
    * own CLI in this process; a fallback or built-in list is "static" (or absent).
    * Nothing may rewrite a saved model off a catalog that is not "live". */
   source?: "live" | "static";
+  /** One plain line the picker shows under the list, e.g. when the engine advertised more models than Murage lists. */
+  note?: string;
   options: Array<{
     id: string;
     label: string;
@@ -1132,7 +1163,9 @@ export type ScanResult = Readonly<{ text: string; detected: boolean; exhausted: 
 export type TextCarrier = Readonly<{ path: ManifestPath; stream: HostStreamKey; mode: 'delta' | 'whole' | 'snapshot'; text: string }>;
 export type ManifestBatch = Readonly<{ envelope: HostEnvelope; variant: ManifestVariant; carriers: readonly TextCarrier[]; controls: TrustedControlFacts; terminal?: 'complete' | 'cancel' | 'exit' }>;
 export type SafeTextOperation = Readonly<{ path: ManifestPath; stream: HostStreamKey; regionId: HostRegionId; revision: number; op: 'append' | 'replace' | 'omit'; text: string; speech: 'append' | 'none' }>;
-export type PolicyDecision = Readonly<{ masked: boolean; exhausted: boolean; operations: readonly SafeTextOperation[] }>;
+/** withheld: some text of this turn was withheld UNSCANNED (BLIND chain or unredactable field): not masked, yet its raw text is not proven clean. */
+/** latch (1.0.22 cause B): what the policy's own latch found, for the collector's masked-value recorder (redact-turn.ts LatchPayload). */
+export type PolicyDecision = Readonly<{ masked: boolean; exhausted: boolean; operations: readonly SafeTextOperation[]; withheld?: boolean; latch?: Readonly<{ kind: 'hit' | 'unproven'; found: readonly string[] }> }>;
 export interface TurnTextPolicy {
   admit(cap: TurnAdmission): void;
   consume(cap: TurnAdmission | undefined, batch: ManifestBatch): PolicyDecision;
@@ -1155,7 +1188,7 @@ export type AudienceRuntimeVariant = Readonly<{
   | { type: 'session.exited'; reason?: string }
   | { type: 'turn.started' }
   | { type: 'turn.retrying'; reason?: string; attempt?: number; delayMs?: number; maxAttempts?: number }
-  | { type: 'turn.completed'; ok?: boolean; stopReason?: string; denials?: readonly string[]; toolsUnavailable?: readonly string[]; cost?: number; charge?: number; chargePartial?: boolean; usage?: Readonly<{ input?: number; output?: number; cachedInput?: number }> }
+  | { type: 'turn.completed'; ok?: boolean; stopReason?: string; denials?: readonly string[]; toolsUnavailable?: readonly string[]; cost?: number; charge?: number; chargePartial?: boolean; usage?: Readonly<{ input?: number; output?: number; cachedInput?: number; usageAccounting?: import("../shared/prompt-cache-usage.ts").UsageAccounting }> }
   | { type: 'item.started'; itemType: 'tool' | 'reasoning'; origin?: 'engine' | 'murage'; title?: string; summary?: string; spoken?: string; preview?: readonly Readonly<{ key: string; value: string }>[]; toolKind?: string; toolIdentity?: Readonly<{ namespace?: string; name?: string; kind?: string }> }
   | { type: 'item.updated'; itemType: 'tool' | 'reasoning'; tokens?: number }
   | { type: 'item.completed'; itemType: 'tool'; ok?: boolean; detail?: string; preview?: readonly Readonly<{ key: string; value: string }>[] }
@@ -1169,7 +1202,7 @@ export type AudienceRuntimeVariant = Readonly<{
   | { type: 'question.async'; questions: readonly import('../shared/audience-wire.ts').DisplayQuestion[] }
   | { type: 'request.opened'; requestType: 'permission' | 'question'; tool?: string; summary?: string; reason?: string; toolInput?: string; questions?: readonly import('../shared/audience-wire.ts').DisplayQuestion[]; choices?: readonly string[]; filePaths?: readonly string[]; toolResultDirs?: readonly string[] }
   | { type: 'request.resolved'; behavior?: 'allow' | 'deny' | 'answer'; source?: 'user' | 'auto' | 'timeout' | 'system' | 'unavailable' | 'peer'; decidedBy?: string }
-  | { type: 'thread.token-usage.updated'; input?: number; output?: number; cachedInput?: number }
+  | { type: 'thread.token-usage.updated'; input?: number; output?: number; cachedInput?: number; usageAccounting?: import("../shared/prompt-cache-usage.ts").UsageAccounting }
   | { type: 'turn.served-model'; routed?: string; requested?: string }
   | { type: 'runtime.error'; message: string; details?: string; errorKind?: string; engineCode?: string; gatewayCode?: string; localFailureEngine?: string }
 );

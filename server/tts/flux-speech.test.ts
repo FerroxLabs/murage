@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { synthesize, synthesizeClip, FLUX_ELEVEN_VOICES, FLUX_GROK_MODEL, FLUX_VOICES, SpeechBudgetReached, SpeechUnavailable } from "./flux-speech.ts";
 import { availableProviders, describeVoice, listVoices, speak, useVoiceRoutes, voiceProvider } from "./index.ts";
+import { RateLimitedError } from "./rate-limit.ts";
 import type { AppConfig } from "../config.ts";
 import type { VoiceEndpoint } from "../voice/voice-routes.ts";
 
@@ -68,6 +69,25 @@ describe("Flux speech", () => {
       await expect(synthesize("Hi.", "marin", FLUX, call)).rejects.toThrow(words);
     }
     await expect(synthesize("Hi.", "marin", null)).rejects.toThrow("Add a Flux key, or an OpenAI key");
+  });
+
+  it.each([500, 501])("one-attempt speech HTTP %i keeps provider metadata private", async (status) => {
+    const call = vi.fn(async () => new Response(JSON.stringify({ error: { message: "fixture private speech metadata" } }), { status }));
+    await expect(synthesizeClip("Hi.", "marin", FLUX, false, call, 0, { attempts: 1 })).rejects.toThrow(`Speaking failed (${status})`);
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 429 retains validated retry timing and drops provider prose", async () => {
+    const call = vi.fn(async () => new Response(JSON.stringify({ error: { message: "fixture private speech metadata" } }), {
+      status: 429, headers: { "retry-after": "1.5" },
+    }));
+    const error = await synthesizeClip("Hi.", "marin", FLUX, false, call, 0, { attempts: 1 }).catch(e => e);
+    expect(error).toBeInstanceOf(RateLimitedError);
+    expect(error).toMatchObject({
+      message: "Flux is rate-limiting this account. Wait a moment and try again.",
+      retryAfterMs: 1500,
+    });
+    expect(call).toHaveBeenCalledTimes(1);
   });
 
   it("tells a plan without voices apart from an empty balance (Flux 402 codes)", async () => {
@@ -285,11 +305,11 @@ describe("Flux speech resilience", () => {
     expect(audio).toEqual({ bytes: new Uint8Array([1, 2, 3]), mime: "audio/mpeg", timing: { headersMs: expect.any(Number) } });
   });
 
-  it("retries once after a network error", async () => {
+  it("does not retry after a network error with uncertain dispatch", async () => {
     const call = vi.fn().mockRejectedValueOnce(new TypeError("fetch failed")).mockResolvedValueOnce(ok());
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    await synthesize("Hello there.", "cedar", FLUX, call as unknown as typeof fetch);
-    expect(call).toHaveBeenCalledTimes(2);
+    await expect(synthesize("Hello there.", "cedar", FLUX, call as unknown as typeof fetch)).rejects.toThrow("Couldn't reach Flux");
+    expect(call).toHaveBeenCalledOnce();
   });
 
   it("gives up after the one retry", async () => {

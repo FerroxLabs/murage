@@ -138,3 +138,59 @@ test("A3: only a missing marker counts as missing; any other failure to look at 
   const ns = createNotifySurfaces({ profileDir: d, platform: "linux", fs: failing });
   assert.equal(ns.get().origin, "upgrade"); assert.equal(existsSync(join(d, "notify-origin.json")), false);
 });
+
+test("R9: a corrupt or unreadable banner choice stays untrusted across repair and unrelated edits", () => {
+  const options = { profileDir: fixture(), platform: "linux" };
+  const load = fs => createNotifySurfaces({ ...options, fs });
+  const initial = load(nodeFs);
+  assert.equal(initial.trusted, true);
+  initial.set("surfaces.notify", false);
+  const denied = { ...nodeFs, lstatSync(p) {
+    if (p === file(options.profileDir)) throw Object.assign(new Error("denied"), { code: "EACCES" });
+    return nodeFs.lstatSync(p);
+  } };
+  const optedOut = readFileSync(file(options.profileDir), "utf8");
+  assert.equal(load(denied).trusted, false);
+  assert.equal(readFileSync(file(options.profileDir), "utf8"), optedOut);
+  assert.equal(load(nodeFs).trusted, false);
+  writeFileSync(file(options.profileDir), "{damaged");
+  const repaired = load(nodeFs);
+  assert.equal(repaired.trusted, false);
+  assert.equal(JSON.parse(readFileSync(file(options.profileDir), "utf8")).v, 1);
+  repaired.set("surfaces.tray", false);
+  assert.equal(load(nodeFs).trusted, false);
+  repaired.set("surfaces.notify", true);
+  assert.equal(repaired.trusted, true);
+  assert.equal(load(nodeFs).trusted, true);
+  assert.equal(createNotifySurfaces({ profileDir: null, platform: "linux" }).trusted, false);
+});
+
+test("R9 crash fence: write the trust marker before replacing corrupt preferences and clear it after committing the owner's choice", () => {
+  for (const barrierFails of [true, false]) {
+    const options = { profileDir: fixture({ [NOTIFY_SURFACES_FILE]: "{damaged" }), platform: "linux" };
+    const target = file(options.profileDir), marker = join(options.profileDir, "notify-trust.json");
+    const calls = [];
+    const fs = { ...nodeFs, renameSync(from, to) {
+      calls.push(to);
+      if (to === (barrierFails ? marker : target)) throw new Error("interrupted");
+      return nodeFs.renameSync(from, to);
+    } };
+    const loading = createNotifySurfaces({ ...options, fs });
+    assert.deepEqual(calls.filter(path => path === target || path === marker), barrierFails ? [marker] : [marker, target]);
+    assert.equal(loading.trusted, false);
+    assert.equal(readFileSync(target, "utf8"), "{damaged");
+    if (barrierFails) {
+      loading.set("surfaces.tray", false);
+      assert.equal(readFileSync(target, "utf8"), "{damaged");
+    }
+    const relaunched = createNotifySurfaces(options);
+    assert.equal(relaunched.trusted, false);
+    const interrupted = createNotifySurfaces({ ...options, fs: { ...nodeFs, rmSync(p, opts) {
+      if (p === marker) throw new Error("interrupted"); nodeFs.rmSync(p, opts);
+    } } });
+    interrupted.set("surfaces.notify", true);
+    assert.equal(createNotifySurfaces(options).trusted, false);
+    relaunched.set("surfaces.notify", true);
+    assert.equal(createNotifySurfaces(options).trusted, true);
+  }
+});

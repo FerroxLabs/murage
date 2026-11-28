@@ -592,102 +592,11 @@ describe("harness HTTP API", () => {
   // the only election it could ever replay was a tier-less one — which the
   // chart reads as a section lead — and the workspace Chief came back from
   // Undo one rung down with nothing said.
-  it("restores the workspace Chief to the workspace chair, and refuses to seat a second one", async () => {
-    const chief = (await desktopApi("POST", "/api/bots", { name: "Undo Chief" })).body.bot;
-    const promoted = await desktopApi("PATCH", `/api/bots/${chief.id}`, {
-      chiefOfStaff: true,
-      chiefScope: "workspace",
-    });
-    expect(promoted.status).toBe(200);
-    expect(promoted.body.bot).toMatchObject({ chiefOfStaff: true, chiefScope: "workspace" });
-
-    const exported = await desktopApi("POST", "/api/teams/export", { name: "Undo Team" });
-    const beforeReplace = (await api("GET", "/api/bots")).body.bots.filter(
-      (bot: { hidden?: boolean }) => !bot.hidden,
-    );
-    const replaced = await desktopApi("POST", "/api/teams/import?mode=replace", exported.body);
-    expect(replaced.status).toBe(201);
-    try {
-      // the record the undo works from now carries the TIER, not just the role
-      const archivedChief = replaced.body.archived.find((bot: { id: string }) => bot.id === chief.id);
-      expect(archivedChief).toMatchObject({ chiefOfStaff: true, chiefTier: "workspace" });
-      // every entry answers the tier question, one way or the other: a bot
-      // that led nothing says so, rather than leaving the undo to guess
-      for (const entry of replaced.body.archived) {
-        expect(entry.chiefOfStaff ? ["workspace", "section"] : [null]).toContain(entry.chiefTier);
-      }
-
-      const workspaceChiefIds = async (): Promise<string[]> =>
-        (await api("GET", "/api/bots")).body.bots
-          .filter(
-            (bot: { chiefOfStaff?: boolean; chiefScope?: string; hidden?: boolean }) =>
-              !bot.hidden && bot.chiefOfStaff && bot.chiefScope === "workspace",
-          )
-          .map((bot: { id: string }) => bot.id);
-
-      // The body the SHIPPED undo sends names no tier at all. It lands her
-      // back in the workspace chair anyway, because archiving strips the
-      // role and leaves the tier on the record for exactly this.
-      const bare = await desktopApi("PATCH", `/api/bots/${chief.id}`, { hidden: false, chiefOfStaff: true });
-      expect(bare.status).toBe(200);
-      expect(bare.body.bot).toMatchObject({ hidden: false, chiefOfStaff: true, chiefScope: "workspace" });
-      expect(await workspaceChiefIds()).toEqual([chief.id]);
-
-      // Put her away again exactly as the import does, and let a DIFFERENT
-      // bot take the chair in the meantime.
-      expect(
-        (await desktopApi("PATCH", `/api/bots/${chief.id}`, { hidden: true, chiefOfStaff: false })).status,
-      ).toBe(200);
-      const usurper = replaced.body.bots[0];
-      expect(
-        (await desktopApi("PATCH", `/api/bots/${usurper.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status,
-      ).toBe(200);
-
-      // Now the undo is refused outright rather than seating two Chiefs or
-      // quietly filing her as a section lead. 409 because the request is
-      // well-formed and the workspace is simply in a state that will not
-      // accept it — and the message names who has to stand down.
-      const refused = await desktopApi("PATCH", `/api/bots/${chief.id}`, {
-        ...archivedChief.chiefTier ? { chiefScope: archivedChief.chiefTier } : {},
-        hidden: false,
-        chiefOfStaff: true,
-      });
-      expect(refused.status).toBe(409);
-      expect(refused.body.error).toContain(usurper.name);
-      expect(await workspaceChiefIds()).toEqual([usurper.id]);
-
-      // Stand the incumbent down and the same request lands.
-      expect((await desktopApi("PATCH", `/api/bots/${usurper.id}`, { chiefOfStaff: false })).status).toBe(200);
-      const restored = await desktopApi("PATCH", `/api/bots/${chief.id}`, {
-        ...archivedChief.chiefTier ? { chiefScope: archivedChief.chiefTier } : {},
-        hidden: false,
-        chiefOfStaff: true,
-      });
-      expect(restored.status).toBe(200);
-      expect(restored.body.bot).toMatchObject({ hidden: false, chiefOfStaff: true, chiefScope: "workspace" });
-      expect(await workspaceChiefIds()).toEqual([chief.id]);
-    } finally {
-      // put the shared harness back: the imported team goes, everything the
-      // replace archived comes back with the role it went away with
-      for (const bot of replaced.body.bots) await desktopApi("DELETE", `/api/bots/${bot.id}`);
-      for (const entry of replaced.body.archived) {
-        if (entry.id === chief.id) continue;
-        await desktopApi("PATCH", `/api/bots/${entry.id}`, {
-          hidden: false,
-          ...(entry.chiefOfStaff ? { chiefOfStaff: true } : {}),
-        });
-      }
-      await desktopApi("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: false });
-      await desktopApi("DELETE", `/api/bots/${chief.id}`);
-      const after = (await api("GET", "/api/bots")).body.bots.filter((bot: { hidden?: boolean }) => !bot.hidden);
-      expect(after.map((bot: { id: string }) => bot.id).sort()).toEqual(
-        beforeReplace
-          .map((bot: { id: string }) => bot.id)
-          .filter((id: string) => id !== chief.id)
-          .sort(),
-      );
-    }
-  });
+  // CHIEF-TRANSFER-1023 D1 retired the test that stood here ("restores the workspace Chief to the workspace chair, and refuses to seat a
+  // second one"): it archived the workspace Chief through a replace import and then undid it. A replace import now never archives the
+  // workspace Chief (server/index.ts, the team import's archive set), a direct election while a Chief exists is a 409, and the Chief can only
+  // change through the transfer sheet. The replacement coverage is in server/chief-transfer-api.test.ts (W19, W2, W3) and is listed in
+  // CHANGED-EXPECTATIONS.md.
 
   // Three gates can drop the user's connected apps and every one of them
   // used to end in the same silence, which is how an assistant came to deny
@@ -1266,7 +1175,7 @@ describe("harness HTTP API", () => {
       // the asker learns about it the way it is supposed to: in its own reply
       expect(JSON.stringify(await asked.json())).toMatch(/couldn't start that bot/i);
       // the pair channel says so as Murage, never as the target's own words
-      // (0.1.61, O3)
+      // (0.1.61 lane T, O3)
       const pair = (await desktopApi("GET", "/api/bots?messages=50")).body.groups.find((group: { dm?: boolean; memberIds: string[] }) =>
         group.dm && group.memberIds.includes(asker.id) && group.memberIds.includes(target.id));
       expect(pair.messages.some((message: { kind: string; text?: string; from?: { botId: string } }) =>
@@ -1381,11 +1290,11 @@ describe("harness HTTP API", () => {
       // why, from backupRefusalMessage, which passes only the gate's own line).
       const definition = [...before.matchAll(new RegExp(`const ${body} = ([^;]+);`, "g"))].at(-1)?.[1] ?? "";
       expect([
-        "(kind === \"not-started\" ? backupRefusalMessage(submissionBoundary.refusedWith) : undefined) ?? turnRefusedLine(engineNameOf(instance), kind)",
+        "(kind === \"not-started\" ? backupRefusalMessage(submissionBoundary.refusedWith) : undefined) ?? turnRefusedLine(engineNameOf(instance), kind, isOutsideInputSource(opts?.automationSource))",
         "lateMemoryRefusalLine(engine)",
         // refusalKind() answers one of the fixed TurnRefusedKind words, so no engine text reaches the line (the early-refusal path always has a kind).
-        "turnRefusedLine(engineNameOf(instance), refusalKind())",
-        "submissionBoundary.hasReleasedSubmission ? turnRefusedLine(engine, refusalKind()) : lateMemoryRefusalLine(engine)",
+        "turnRefusedLine(engineNameOf(instance), refusalKind(), isOutsideInputSource(opts?.automationSource))",
+        "isOutsideInputSource(opts?.automationSource) ? OUTSIDE_INPUT_REFUSED_LINE : submissionBoundary.hasReleasedSubmission ? turnRefusedLine(engine, refusalKind()) : lateMemoryRefusalLine(engine)",
       ], `turn-failed banner body ${body}`).toContain(definition);
     }
     expect(backupRefusalMessage(new Error("engine refused: Authorization: Bearer sk-live-raw"))).toBeUndefined();

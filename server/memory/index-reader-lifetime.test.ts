@@ -8,7 +8,7 @@
 import { MemoryIndex } from "./index.ts";
 import { openTestIndex, put } from "./testing/open-index.ts";
 import { expect, it, vi } from "vitest";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
@@ -175,7 +175,16 @@ it.runIf(linux)("5. close order: failed db close retains the reader for retry; c
     expect(live).toHaveLength(1);
     for (const suffix of ["", "-wal", "-shm"]) expect(live[0]).toContain(path + suffix);
     expect(live[0].filter(link => link === `${path}-shm`).length).toBeGreaterThanOrEqual(2);
-    expect(shmFds(path)).toEqual([]);
+    // CHANGED-EXPECTATIONS 1.0.22 fix1022-revoke-ioerr r6 (int-1022q-n1 n4:6394; MAIN: keep the descriptor-release intent provable): the
+    // read-only guard closes last, so SQLite leaves the sidecar at its path, and io-written keeps its one read-only descriptor on a sidecar
+    // still at its path (another thread may open it while this closes; that close would drop the WAL locks it took). Nothing on the db or
+    // the -wal, at most that one on the live sidecar, and it goes once the sidecar does: a later open and close of the index releases it.
+    const left = shmFds(path);
+    expect(left.filter(link => link !== `${path}-shm`)).toEqual([]);
+    expect(left.length).toBeLessThanOrEqual(1);
+    rmSync(`${path}-shm`, { force: true }); // what SQLite's last read-write close does
+    (await openTestIndex(path)).close();
+    expect(shmFds(path).filter(link => link.endsWith(" (deleted)"))).toEqual([]);
   } finally { removeTempDirSync(dir); }
 });
 

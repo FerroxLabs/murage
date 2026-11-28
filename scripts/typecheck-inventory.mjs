@@ -70,8 +70,11 @@ export function inventory(base = root) {
           const caps = [...options.matchAll(/--max[-_]old[-_]space[-_]size=(\d+)/g)].map(match => Number(match[1]));
           const cap = variants.length > 1 ? caps[mode === 'full' ? 0 : 1] : caps[0];
           const portable = /macos|macOS/.test(JSON.stringify([job['runs-on'], job.strategy?.matrix?.os]));
-          const ramMiB = variants.length > 1 && mode === 'full' ? 16 * 1024 : portable ? 7 * 1024 : 16 * 1024;
-          for (const program of selected) rows.push({ file: `.github/workflows/${file}`, line, job: id, runner: job['runs-on'], ramMiB, mode, configuredCapMiB: cap ?? null, ...program });
+          // Hosted macOS xlarge runners have 14 GB; standard hosted macOS has 7 GB.
+          const macMiB = /macos-[\w.-]*xlarge/.test(String(job['runs-on'])) ? 14 * 1024 : 7 * 1024;
+          const ramMiB = variants.length > 1 && mode === 'full' ? 16 * 1024 : portable ? macMiB : 16 * 1024;
+          const declaredCapMiB = env.MURAGE_TYPECHECK_CAP_MIB === undefined ? null : Number(env.MURAGE_TYPECHECK_CAP_MIB);
+          for (const program of selected) rows.push({ file: `.github/workflows/${file}`, line, job: id, runner: job['runs-on'], ramMiB, mode, configuredCapMiB: cap ?? null, declaredCapMiB, ...program });
         }
       }
     }
@@ -88,8 +91,12 @@ export function validateAllocation(rows = inventory()) {
     if (!row.managed) throw new Error(`${row.file}:${row.line}: compiler bypasses the resource guard (${row.program})`);
     const entry = budgets.programs[row.program];
     if (!entry) throw new Error(`${row.file}:${row.line}: unrecorded program ${row.program}`);
-    if (row.configuredCapMiB !== null && row.configuredCapMiB < entry.capMiB) throw new Error(`${row.file}:${row.line}: ${row.program} requires ${entry.capMiB} MiB, job supplies ${row.configuredCapMiB}`);
-    if (entry.capMiB > row.ramMiB * 0.6) throw new Error(`${row.file}:${row.line}: cap exceeds 60% of runner RAM`);
+    const declared = row.declaredCapMiB ?? null;
+    if (declared !== null && !(Number.isInteger(declared) && declared >= entry.capMiB)) throw new Error(`${row.file}:${row.line}: ${row.program} declared cap ${declared} is below the recorded ${entry.capMiB} MiB`);
+    const capMiB = declared ?? entry.capMiB;
+    if (declared !== null && row.configuredCapMiB === null) throw new Error(`${row.file}:${row.line}: declared cap ${declared} without a NODE_OPTIONS heap`);
+    if (row.configuredCapMiB !== null && row.configuredCapMiB < capMiB) throw new Error(`${row.file}:${row.line}: ${row.program} requires ${capMiB} MiB, job supplies ${row.configuredCapMiB}`);
+    if (capMiB > row.ramMiB * 0.6) throw new Error(`${row.file}:${row.line}: cap exceeds 60% of runner RAM`);
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

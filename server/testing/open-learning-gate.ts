@@ -10,6 +10,8 @@ export function openLearningGate(purpose: LearningPurpose = "extraction"): OpenL
   let released = 0;
   return {
     purpose,
+    // never refuses, so there is no refusal cause (learning-send.ts LearningGate.cause, 1.0.22 mem-strict)
+    cause: undefined,
     get released() { return released; },
     get sent() { return released; },
     refused: false,

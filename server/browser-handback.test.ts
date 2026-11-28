@@ -12,7 +12,7 @@
 // "sensitive page" (password, code or card), which it never was.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ownedCloseCli } from "./browser-owned-close.ts";
@@ -461,4 +461,38 @@ describe("legacy close receipt observes daemon exit without signal authority", (
     theirs.kill();
     await closing;
   }, 30_000);
+});
+
+describe("get cdp-url gets its own shorter start bound (1.0.24 browserclosing)", () => {
+  it("stops a stuck cdp-url start at its bound, not the 60 s engine start bound, and says which bound", async () => {
+    const logged = captureLog();
+    const { native } = scriptEngine(slowSuccess(3000), { commandBoundMs: 100, startBoundMs: 10_000, cdpUrlStartBoundMs: 300 });
+    await expect(native.command(["get", "cdp-url"])).rejects.toMatchObject({ kind: "timeout" });
+    expect(logged.find(entry => entry.includes("[browser]"))).toMatch(/"get cdp-url" failed \(stopped after 300 ms, its bound for starting the engine\)/);
+  }, 20_000);
+  it("still gives a first launch of another command the full start bound", async () => {
+    const { native } = scriptEngine(slowSuccess(700), { commandBoundMs: 100, startBoundMs: 10_000, cdpUrlStartBoundMs: 300 });
+    await expect(native.command(["open", "about:blank"])).resolves.toMatchObject({ port: 1 });
+  }, 20_000);
+  it("a retry after the stopped start finds the daemon the first command began and answers (only through the running-engine bound)", async () => {
+    // First run: the engine begins. It starts a real detached daemon (its own process, which outlives the stopped command), notes when that start
+    // will be ready (900 ms on), and is stopped at the cdp-url start bound (300 ms) with SIGKILL. The retry answers only when the daemon the first
+    // run left is still alive, once its start is ready (about 600 ms later): longer than the 300 ms start bound, inside the 2000 ms running-engine
+    // bound. It passes only if the stopped command did not take the daemon down and the retry found it (pid file) and took the running bound.
+    const source = `const fs = require("node:fs"), path = require("node:path"), cp = require("node:child_process");
+const dir = process.env.AGENT_BROWSER_SOCKET_DIR, ready = path.join(dir, "ready-at"), pidFile = path.join(dir, "handback.pid");
+if (!fs.existsSync(ready)) {
+  const daemon = cp.spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { detached: true, stdio: "ignore" }); daemon.unref();
+  fs.writeFileSync(ready, String(Date.now() + 900)); fs.writeFileSync(pidFile, String(daemon.pid)); setTimeout(() => process.exit(0), 5000);
+} else {
+  let alive = true; try { process.kill(Number(fs.readFileSync(pidFile, "utf8")), 0); } catch { alive = false; }
+  if (!alive) { process.stdout.write(JSON.stringify({ success: false, error: "daemon gone" }) + "\\n"); process.exit(1); }
+  setTimeout(() => { process.stdout.write(JSON.stringify({ success: true, data: { port: 1 } }) + "\\n"); process.exit(0); }, Math.max(0, Number(fs.readFileSync(ready, "utf8")) - Date.now()));
+}\n`;
+    const { dir, native } = scriptEngine(source, { commandBoundMs: 2000, startBoundMs: 10_000, cdpUrlStartBoundMs: 300 });
+    try {
+      await expect(native.command(["get", "cdp-url"])).rejects.toMatchObject({ kind: "timeout" });
+      await expect(native.command(["get", "cdp-url"])).resolves.toMatchObject({ port: 1 });
+    } finally { try { process.kill(Number(readFileSync(join(dir, "handback.pid"), "utf8")), "SIGKILL"); } catch { /* already gone */ } }
+  }, 20_000);
 });

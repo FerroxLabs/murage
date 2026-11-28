@@ -55,3 +55,32 @@ Anything the panel does not find, it leaves out; it never invents state.
 7. `setMode` only tightens (the panel never offers a looser mode, and never `full`); `turnoff` leaves Full permissive. Both appear only when listed in `panelActions`.
 
 Avatar pictures are memory only: the letter shows after a browser restart until the app binds again. GIF remains letter only.
+
+## The per-bot OK (journey 1024, section 3)
+
+Owners: extension side (this file, `runtime.mjs`, `view.mjs`) = lane q1024-journeyind; app side (the stored `chrome` field, the
+notice handler in `server/browser-extension-integration.ts`) = lane q1024-journeybuild.
+
+- The app may send `panel.grant: 'on' | 'off'` with a bind or a status, and `panel.grantBot`, an opaque key that is the same for
+  every binding of one bot (letters, digits, `_`, `-`, at most 64). Without `grantBot` the extension keys the bot by its name.
+- A binding's panel view carries `grant`, and lists the action `grantoff` while the binding is live and the grant is `on`.
+- `grantoff` only tightens, and it is for the bot, not for one binding. The runtime stops every live binding of that bot at once
+  (connected or not), records the Off durably under a new id, and emits the notice `{ kind: 'owner_grant_off', offId }` on each
+  binding it stopped when the app is connected. From then on:
+  - every summary of those bindings carries `grant: 'off'` and `grantOffId`;
+  - every bind for that bot is refused with `grant_off`, and the refusal's `message` is the Off's id, whatever `panel.grant` says.
+- The Off is lifted only by a bind that carries `panel.grant: 'on'` and `panel.grantAck: <that id>`: the app has seen this Off and
+  the owner has since given a new OK in the desktop app. The stopped bindings stay stopped; a new OK is a new binding.
+- There is no panel action that gives the OK. `granton` is refused with `desktop_required`.
+- An Off the app reports (`panel.grant: 'off'` on a bind or a status) stops every live binding of that bot here too; such a bind is
+  refused with `grant_off`, nothing is bound and no tab is opened. It leaves no durable record here: the app is the authority.
+  This holds whichever binding id carries it: a bind for a new id, or a bind or status on a stopped one, stops the bot's other
+  live bindings as well.
+- An Off is never dropped to make room. With more than 256 Offs standing in one browser profile, a bind for a new binding id is
+  refused with `grant_full` (for every bot) until binds that name their Off (`grantAck`) bring the count back to 256 or fewer.
+- All tabs of one bot in one window sit in one tab group, also when two binds of that bot overlap (the second waits for the first).
+- App side MUST (owner q1024-journeybuild): send `panel.grantBot` on every bind and every status that carries `panel.grant`. The
+  extension matches a bot by that key exactly; a message without it is matched by the bot's name only, so an Off sent without
+  the key does not reach bindings that were bound with one (and the other way round).
+- App side MUST: report an Off on a bind, or on a status of a binding the extension still knows (working, paused or stopped). A
+  status for a binding id that was already retired is answered `unknown_binding` and stops nothing.

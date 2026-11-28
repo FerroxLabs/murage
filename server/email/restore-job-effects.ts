@@ -153,7 +153,7 @@ export function sqliteRestoreEffects(o: SqliteEffectsOptions): RestoreJobEffects
 }
 
 export interface PublishRequest { dbPath: string; jobId: string; cause: string; elapsedMs: number; outcome: "freed" | "gave_up"; at: number; bootId: string; upMs: number }
-export interface PublishHandle { result: Promise<string>; terminate(): void; exited: Promise<void> }
+export interface PublishHandle { result: Promise<string>; terminate(): void; exited: Promise<void>; /** The thread, when there is one: shutdown tracks it (it opens and writes messages.db by name). */ worker?: Worker }
 /** Serialized into a worker. All runtime dependencies are parameters or local literals. */
 export function publishBootWaitRow(open: (path: string, opts?: { timeout?: number }) => DatabaseSync, stat: (path: string, opts: { bigint: true }) => Pick<BigIntStats, "dev" | "ino">, req: PublishRequest): string {
   const DDL = "CREATE TABLE IF NOT EXISTS restore_boot_wait (id INTEGER PRIMARY KEY CHECK (id = 1), job_id TEXT NOT NULL, cause TEXT NOT NULL, elapsed_ms INTEGER NOT NULL, outcome TEXT NOT NULL, at INTEGER NOT NULL, boot_id TEXT NOT NULL, up_ms INTEGER NOT NULL, db_dev TEXT NOT NULL, db_ino TEXT NOT NULL)";
@@ -186,6 +186,6 @@ export function workerPublish(req: PublishRequest): PublishHandle {
     w.unref();
     const result = new Promise<string>(resolve => {w.once("message",resolve);w.once("error",()=>resolve("failed:exit"));w.once("exit",()=>resolve("failed:exit"));});
     const exited = new Promise<void>(resolve => {w.once("exit",()=>resolve());});
-    return {result,terminate:()=>{void w.terminate();},exited};
+    return {result,terminate:()=>{void w.terminate();},exited,worker:w};
   } catch {return {result:Promise.resolve("failed:exit"),terminate:()=>{},exited:Promise.resolve()};}
 }

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Build packaged-layout fixtures from the exact comparison snapshot, never the outer checkout.
 import {spawnSync} from 'node:child_process';
-import {mkdtempSync,mkdirSync,readdirSync,symlinkSync,rmSync,writeFileSync,readFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readdirSync,symlinkSync,writeFileSync,readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const side=process.argv[2];if(!['base','head'].includes(side))throw Error('side');
 const root=mkdtempSync(join(tmpdir(),'truth-runtime-build-'));
 const run=(args)=>{const r=spawnSync(args[0],args.slice(1),{cwd:root,env:process.env,stdio:'inherit'});if(r.status!==0)throw Error(args.join(' ')+' exit '+r.status);};
@@ -26,4 +27,4 @@ try {
  if(result.status!==0)throw Error('Runtime result packing failed');
  process.stdout._handle?.setBlocking(true);
  writeFileSync(1,`BEGIN_RUNTIME ${side}\n`+result.stdout.toString('base64')+`\nEND_RUNTIME ${side}\n`);
-} finally {rmSync(root,{recursive:true,force:true});}
+} finally {safeWipeSync(root);}

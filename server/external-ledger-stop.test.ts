@@ -6,6 +6,7 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { fixtureContract } from "./memory/testing/writetime-fixture.ts";
+import { TURN_RELEASE_WAIT_MS } from "./turn-release-wait.ts";
 const available = existsSync(new URL("./consuming-turn-ingress.ts", import.meta.url));
 const ingress = available ? await import("./consuming-turn-ingress.ts") : undefined;
 const fixtures = available ? await import("./testing/consuming-fixture.ts") : undefined;
@@ -89,7 +90,8 @@ it.each(["error", "exit", "close", "end", "disconnect", "ack-timeout"])("T-EXTER
     channel.request('{"jsonrpc":"2.0","id":1,"method":"tools/call"}', () => {});
     const permit = channel.issue({ instanceId: "transport", sequence: 1, frame: '{"jsonrpc":"2.0","id":1,"result":{}}',
       descriptor: response!.registerConsumingDescriptor("proxy:custom:frame", "body"), refs: [] });
-    if (event === "ack-timeout") await vi.advanceTimersByTimeAsync(5000);
+    // cause14 (1.0.21): the acknowledgement wait is TURN_RELEASE_WAIT_MS, not 5 s.
+    if (event === "ack-timeout") await vi.advanceTimersByTimeAsync(TURN_RELEASE_WAIT_MS);
     else source.emit(event);
     expect(channel.sealed).toBe(true);
     expect(() => channel.deliver(permit, write)).toThrow("MEMORY_CONTEXT_REVOKED");

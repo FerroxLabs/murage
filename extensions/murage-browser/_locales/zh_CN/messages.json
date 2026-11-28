@@ -417,5 +417,24 @@
   },
   "spErrStorageUnavailable": {
     "message": "无法读取 Chrome 存储。请重启 Chrome，然后再次共享你的标签页。"
+  },
+  "spGrantTitle": {
+    "message": "你的浏览器"
+  },
+  "spGrantOn": {
+    "message": "$BOT$ 可以使用你的浏览器。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spGrantOff": {
+    "message": "$BOT$ 不能使用你的浏览器。要开启，请在电脑上打开 Murage 应用。",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
   }
 }

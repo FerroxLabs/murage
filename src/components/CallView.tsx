@@ -1,3 +1,4 @@
+import { isSkillSwitchAction } from "../../shared/skill-request";
 // Call mode — the bot on the line.
 //
 // The loop is deliberately HALF-DUPLEX: the microphone is live only when
@@ -45,6 +46,7 @@ import { CueCache } from "@/lib/tts/cue-cache";
 import type { CallReplyHeard } from "@/lib/tts";
 import { ACK_KEYS, AckGate, cueMayPlay, phaseAfterCue, pickAck, type AckKey } from "@/lib/call-ack";
 import { languageCode, t } from "@/lib/i18n";
+import { CALL_ADMISSION_UNKNOWN } from "../../shared/flux-stream-contract";
 import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, isBudgetFailure, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createFallbackMic, type CallMic, type MicLine } from "@/lib/call-mic";
@@ -54,7 +56,7 @@ import type { NativeClipPlayer } from "@/lib/tts/native-player";
 import { approvalAnswer } from "@/lib/call-answers";
 import { answerCallQuestion, CALL_ENDPOINT_LONG_MS, CALL_ENDPOINT_MS, HeldLine, LONG_ENDPOINT_HOLD_MS, holdsOn, joinsTurn, micEndStep, turnTiming, VAD_ENDPOINT_LONG_MS, VAD_ENDPOINT_MS, MIN_SPEECH_SHARE, talkOverVerdict, UtteranceWords } from "@/lib/call-turns";
 import { callTrace, wordCount } from "@/lib/call-trace";
-import { freshAuthSpoken, type FreshAuthCode } from "@/lib/fresh-auth";
+import { freshAuthCodeOf, freshAuthSpoken, type DeliveryCode, type FreshAuthCode } from "@/lib/fresh-auth";
 import { coveredForCall, FOR_CALL_OFFER, FOR_CALL_SPOKEN } from "@/lib/call-grant";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { dropOldAckCues } from "@/lib/tts/ack-cue";
@@ -623,7 +625,7 @@ export function Call({
     }
   }, []);
 
-  const stopForBudget = useCallback(() => {
+  const stopForBudget = useCallback((reason: "budget" | typeof CALL_ADMISSION_UNKNOWN = "budget") => {
     if (budgetStopped.current || !alive.current || currentCall() !== bot.id) return;
     budgetStopped.current = true;
     // The native microphone owns the audio session: closing it also retires
@@ -649,6 +651,11 @@ export function Call({
     owed.current = [];
     setLookingUp(false);
     move("speaking");
+    if (reason === CALL_ADMISSION_UNKNOWN) {
+      endCall(bot.id);
+      dispatch({ type: "error", message: t("providerError.unavailable.title", { provider: "Flux" }) });
+      return;
+    }
     endCall(bot.id, "budget");
     // If the closing line cannot be spoken, the same words show in the app's banner (the store's, so it outlives the call view that
     // endCall just closed), and the person still reads why the call ended.
@@ -1710,7 +1717,8 @@ export function Call({
               allowedForCall.current = true;
               void sayThenListen(FOR_CALL_SPOKEN);
             },
-            onError: (error: string, code?: FreshAuthCode) => {
+            onError: (error: string, answerCode?: FreshAuthCode | DeliveryCode) => {
+              const code = freshAuthCodeOf(answerCode);
               const pending = askedApproval.current;
               if (
                 !alive.current ||
@@ -1847,7 +1855,7 @@ export function Call({
       }
     });
     offEnd = mic.onEnd(({ code, reason }) => {
-      if (reason === "budget") { stopForBudget(); return; }
+      if (reason === "budget" || reason === CALL_ADMISSION_UNKNOWN) { stopForBudget(reason); return; }
       micLive.current = false;
       // a failed transcription ends its utterance with no line
       if (code !== 0) utteranceBegan.current = 0;
@@ -2136,7 +2144,8 @@ export function Call({
         botName: bot.name,
         // not saved: ask aloud rather than leave the work waiting on a card
         // nobody mentions
-        onError: (_error: string, code?: FreshAuthCode) => {
+        onError: (_error: string, answerCode?: FreshAuthCode | DeliveryCode) => {
+          const code = freshAuthCodeOf(answerCode);
           const pending = askedApproval.current;
           if (!alive.current || currentCall() !== bot.id || pending?.requestId !== requestId) return;
           pending.submitted = false;
@@ -2158,7 +2167,9 @@ export function Call({
         submitted: false,
       };
       spokenIds.current.add(approval.message.id);
-      const skillPrompt = approval.message.card?.skillRequest?.action === "update"
+      const skillPrompt = isSkillSwitchAction(approval.message.card?.skillRequest?.action)
+        ? `${approval.message.card?.title} Open this chat to review the complete skill. You can say no to deny it.`
+        : approval.message.card?.skillRequest?.action === "update"
         ? `${bot.name} wants to update a learned skill. Open this chat to review the complete skill before replacing the current version. You can say no to deny it.`
         : `${bot.name} wants to enable a new learned skill. Open this chat to review the complete skill before enabling it. You can say no to deny it.`;
       // Rule 83c: with more than one waiting the count leads and the owner is

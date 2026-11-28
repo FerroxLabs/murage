@@ -4,3 +4,6 @@
  * the reviewed (Sol r2) text of the key `engine.submission.resendOffer`. ONE constant: the server writes it, src/lib/tool-budget-copy.ts maps it
  * back to the person's language, and the tests compare against it, so the three cannot drift apart. */
 export const RESEND_OFFER_LINE = "The AI may already be working on this message, so Murage did not send it twice. Use Send again to send it now.";
+/** The line for a refused turn whose words came from outside (a webhook, channel or app trigger): no owner message exists to send again. Mapped
+ * back to the person's language by src/lib/tool-budget-copy.ts (key `engine.submission.outsideInput`). */
+export const OUTSIDE_INPUT_REFUSED_LINE = "Stopped: a memory check on outside input did not pass.";

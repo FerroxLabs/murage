@@ -8,18 +8,19 @@ import { createMemoryEmailSecrets } from "../testing/email-store-fixture.ts";
 //   credentials.json  the secret doc int/1019's persist hook handed the shell (owner token B, bot key K_B)
 // Only fake tokens ("tok-owner-B", "tok-bot-B") are used; nothing here touches Flux or any user data.
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { it, expect } from "vitest";
 import { FluxEmailClient } from "./flux-email-client.ts";
 import { emailCredentialProvider, type EmailSecretsDoc } from "./email-secrets.ts";
 import { EmailStore } from "./email-store.ts";
 import { EmailBindingService } from "./binding-service.ts";
 import { FakeFlux } from "../testing/fake-flux-email.ts";
+import { safeWipeSync } from "../testing/safe-wipe.mjs";
 
 it("writes the int/1019 migration fixture", async () => {
   const out = process.env.FIXTURE_OUT!;
   expect(out).toBeTruthy();
-  rmSync(out, { recursive: true, force: true });
+  safeWipeSync(out);
   mkdirSync(out, { recursive: true });
   const db = new DatabaseSync(`${out}/email.db`);
   const store = new EmailStore(db);

@@ -1,3 +1,4 @@
+import { assertExternalEvidencePath, evidencePath } from '../evidence-path.mjs';
 // Read-only English inventory for both proof tools; no entry is product UI.
 import {readFileSync,readdirSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -36,7 +37,7 @@ export function englishInventory(root=resolve(fileURLToPath(new URL('../..',impo
  return entries.sort((a,b)=>a.file.localeCompare(b.file)||a.line-b.line);
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
- const out=resolve(process.argv[2]??'scripts/no-limits-live/evidence/english-inventory.json');
+ const out=assertExternalEvidencePath(resolve(process.argv[2]??evidencePath('scripts/no-limits-live/evidence/english-inventory.json')));
  if(out==='/dev'||out.startsWith('/dev/'))throw Error('Evidence path under /dev');
  writeFileSync(out,JSON.stringify(englishInventory(),null,2)+'\n');
 }

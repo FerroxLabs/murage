@@ -74,3 +74,23 @@ it("a stop finishes even when the kill is not seen to land, and the next start g
   expect(helpers).toHaveLength(2);
   expect(controller.error).toBeNull();
 });
+
+// ASTRA fix1022-schema-shutdown d4a405cfec: a fork that fails to start emits "error" and never "exit"; a handover (haltHelper, index.ts dataWriterGate) must not wait for it.
+it("a helper that failed to start (error, no exit) is not waited for by the handover halt",async()=>{
+  vi.mocked(fork).mockImplementation(()=>{
+    const next=new EventEmitter() as EventEmitter&{send:unknown;kill:unknown;disconnect:unknown};
+    next.send=vi.fn(()=>true);next.kill=vi.fn();next.disconnect=vi.fn();
+    setTimeout(()=>next.emit("error",Object.assign(new Error("spawn EAGAIN"),{code:"EAGAIN"})),0);
+    helpers.push(next as unknown as HeldHelper);
+    return next as unknown as ReturnType<typeof fork>;
+  });
+  captureSource(database(),{id:"source",threadId:"thread",kind:"text",speaker:"owner",outcome:"recorded",text:"The smoke round is two."});
+  controller.start();
+  await vi.advanceTimersByTimeAsync(10);
+  expect(helpers).toHaveLength(1);
+  let settled="pending";
+  const halt=controller.haltHelper().then(ok=>{settled=ok?"clean":"late";});
+  await vi.advanceTimersByTimeAsync(100);
+  expect(settled).toBe("clean");
+  await halt;
+});

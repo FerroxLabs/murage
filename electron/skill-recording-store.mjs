@@ -162,10 +162,21 @@ function assertSkillDataRoot(dataRoot) {
   }
 }
 
+/** TEACH-ENTRY 1.0.23 D5: "Only {bot}" is a list of 1..50 bot ids; absent means All my bots. Anything else is refused. */
+export function skillRecordingBots(value) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length < 1 || value.length > 50
+    || !value.every((id) => typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(id))) {
+    throw new Error("Who can use this skill is not valid.");
+  }
+  return [...new Set(value)];
+}
+
 export function saveSkillRecording(payload, options = {}) {
   if (!payload || typeof payload !== "object") throw new Error("Recording data is required");
   const name = cleanText(payload.name, 100);
   if (!name) throw new Error("Name the skill before creating it");
+  const bots = skillRecordingBots(payload.bots);
   const description = cleanText(payload.description, 300);
   const dataRoot = options.dataRoot;
   assertSkillDataRoot(dataRoot);
@@ -267,6 +278,8 @@ export function saveSkillRecording(payload, options = {}) {
         requiredCapabilities: [],
         // A recording is the owner's: it serves turns that answer the owner (skill-library.ts skillsForAudience).
         audience: "owner",
+        // Only these bots' turns are offered it (server/skill-library.ts skillsForBot); absent = every bot.
+        ...(bots ? { bots } : {}),
       }, null, 2)}\n`,
       { mode: 0o600 },
     );

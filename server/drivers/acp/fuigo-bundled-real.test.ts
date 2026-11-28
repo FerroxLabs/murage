@@ -19,12 +19,13 @@ const output = process.env.FUIGO_BUNDLED_SMOKE_OUT;
 useOutsideStoreFixture();
 
 it.skipIf(process.platform !== "linux" || !binary)("runs the pinned bundled Fuigo, reports it current, and completes an offline model turn", async () => {
-  const proof = JSON.parse(readFileSync(new URL("../../../scripts/fuigo-1.0.43-provenance.json", import.meta.url), "utf8"));
+  const proof = JSON.parse(readFileSync(new URL("../../../scripts/fuigo-1.0.48-provenance.json", import.meta.url), "utf8"));
   const pin = proof.packages.find((row: { target: string }) => row.target === "linux-x64");
   const digest = () => createHash("sha256").update(readFileSync(binary!)).digest("hex");
   expect(digest()).toBe(pin.binarySha256);
   const version = execFileSync(binary!, ["--version"], { windowsHide: true, encoding: "utf8", timeout: 20_000 }).trim();
-  expect(version).toBe(`fuigo ${proof.version} (${proof.source.slice(0, 12)})`);
+  // The parenthesised suffix is a 12-hex build id (a source commit in older releases, a tree id in newer ones), never read as a commit.
+  expect(version).toMatch(new RegExp(`^fuigo ${proof.version.replace(/\./g, "\\.")} \\([0-9a-f]{12}\\)$`));
   expect(QUALIFIED_FUIGO_VERSION).toBe(proof.version);
   expect(JSON.parse(readFileSync(join(dirname(binary!), "manifest.json"), "utf8"))).toMatchObject({
     version: proof.version, binarySha256: pin.binarySha256, tarballSha256: pin.tarballSha256,

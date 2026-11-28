@@ -72,7 +72,7 @@ describe("settings and opening", () => {
   });
   it("both boxes on: firstMessage holds only the ticked lines, never the goal", async () => {
     const { service, vendor } = await ready();
-    await service.place({ to: "+15550123", goal: "Book a table for 2 GOAL-TEXT" });
+    await service.place({ to: "+12025550123", goal: "Book a table for 2 GOAL-TEXT" });
     const o = callBody(vendor).assistantOverrides;
     expect(o.firstMessage).toBe("Hi, this is an AI assistant calling for Sam. This call may be recorded.");
     expect(o.firstMessageMode).toBe("assistant-speaks-first");
@@ -92,7 +92,7 @@ describe("settings and opening", () => {
   });
   it("recording on/off, max length, voice per language reach the outgoing request", async () => {
     const { service, vendor } = await ready({ recordAudio: true, maxSeconds: 60, voices: { es: "es-voice-2" }, language: "es" });
-    await service.place({ to: "+15550123", goal: "x" });
+    await service.place({ to: "+12025550123", goal: "x" });
     const o = callBody(vendor).assistantOverrides;
     expect(o.artifactPlan.recordingEnabled).toBe(true);
     expect(o.maxDurationSeconds).toBe(60);
@@ -101,7 +101,7 @@ describe("settings and opening", () => {
   });
   it("with no chosen voice, each language gets its documented default Azure voice (never a placeholder id), and pt-br maps to Deepgram pt-BR", async () => {
     const { service, vendor } = await ready({ language: "pt-br" });
-    await service.place({ to: "+15550123", goal: "x" });
+    await service.place({ to: "+12025550123", goal: "x" });
     const o = callBody(vendor).assistantOverrides;
     expect(o.voice).toEqual({ provider: "azure", voiceId: "pt-BR-FranciscaNeural" });
     expect(o.transcriber).toEqual({ provider: "deepgram", model: "nova-3", language: "pt-BR" });
@@ -114,11 +114,13 @@ describe("language", () => {
   it("fixed owner language beats the bot", () => expect(resolveLanguage(settings({ language: "ja" }), "es", sup, "en")).toBe("ja"));
   it("auto takes a supported bot language and falls back for an unsupported one", () => {
     expect(resolveLanguage(settings(), "es", sup, "en")).toBe("es");
-    expect(resolveLanguage(settings(), "xx", sup, "fr")).toBe("fr");
+    // D5 5.5 steps 4-5 (P14c): the app language only if supported, else English; never an unsupported language.
+    expect(resolveLanguage(settings(), "xx", sup, "ja")).toBe("ja");
+    expect(resolveLanguage(settings(), "xx", sup, "fr")).toBe("en");
   });
   it("result and place return the resolved language; {{language}} is set", async () => {
     const { service, vendor } = await ready();
-    const r = await service.place({ to: "+15550123", goal: "x", language: "es" });
+    const r = await service.place({ to: "+12025550123", goal: "x", language: "es" });
     expect(r.ok && r.value.language).toBe("es");
     expect(callBody(vendor).assistantOverrides.variableValues.language).toBe("es");
   });
@@ -133,7 +135,7 @@ describe("tool surface", () => {
   });
   it("extra arguments are ignored and the frozen assistant is always named", async () => {
     const { service, vendor } = await ready();
-    await service.place({ to: "+15550123", goal: "x", assistantId: "evil", phoneNumberId: "evil" });
+    await service.place({ to: "+12025550123", goal: "x", assistantId: "evil", phoneNumberId: "evil" });
     expect(callBody(vendor).assistantId).toBe("asst-1");
     expect(callBody(vendor).phoneNumberId).toBe("pn-1");
   });
@@ -142,7 +144,7 @@ describe("tool surface", () => {
 describe("opaque ids and monitor URLs", () => {
   it("engine output, owner card and logs never hold monitor URLs; vendor id only in call table and dashboard link", async () => {
     const { service, logs } = await ready();
-    const placed = await service.place({ to: "+15550123", goal: "x" });
+    const placed = await service.place({ to: "+12025550123", goal: "x" });
     if (!placed.ok) throw new Error(placed.error);
     const id = placed.value.call as string;
     expect(id).toMatch(/^call_[0-9a-f]{24}$/);
@@ -162,7 +164,7 @@ describe("assistant hygiene", () => {
   it("every assistant: monitoring off, no server, end-call only, analysis schema; every call overrides monitorPlan off", async () => {
     const { service, vendor } = await ready();
     await service.saveSettings(settings({ maxSeconds: 120 }));
-    await service.place({ to: "+15550123", goal: "x" });
+    await service.place({ to: "+12025550123", goal: "x" });
     const created = vendor.sent.filter((s) => s.method === "POST" && s.url.endsWith("/assistant")).map((s) => s.body!);
     expect(created.length).toBe(2);
     for (const a of created) {
@@ -188,7 +190,7 @@ describe("revisions", () => {
     const service = new PhoneCallService(new VapiAdapter(vendor.fetchImpl), store, () => "en");
     await service.saveSettings(settings());
     store.save(settings({ recordAudio: true })); // saved, not yet confirmed
-    expect(await service.place({ to: "+15550123", goal: "x" })).toEqual({ ok: false, error: "settings_pending" });
+    expect(await service.place({ to: "+12025550123", goal: "x" })).toEqual({ ok: false, error: "settings_pending" });
   });
   it("two saves confirming in reverse order: newer stays active, older is stale", () => {
     const store = new RevisionStore();
@@ -200,7 +202,7 @@ describe("revisions", () => {
   });
   it("a scheduled call keeps its assistant after later saves; deleted once no call names it", async () => {
     const { service, vendor } = await ready();
-    const placed = await service.place({ to: "+15550123", goal: "x", when: "2026-12-01T10:00:00Z" });
+    const placed = await service.place({ to: "+12025550123", goal: "x", when: "2026-12-01T10:00:00Z" });
     if (!placed.ok) throw new Error(placed.error);
     await service.saveSettings(settings({ maxSeconds: 60 }));
     expect(vendor.deleted).not.toContain("asst-1");
@@ -215,7 +217,7 @@ describe("revisions while a call starts", () => {
     const hold = holdFirst(vendor.fetchImpl, "POST", "/call");
     const service = new PhoneCallService(new VapiAdapter(hold.fetchImpl), new RevisionStore(), () => "en");
     await service.saveSettings(settings());
-    const placing = service.place({ to: "+15550123", goal: "x", when: "2026-12-01T10:00:00Z" });
+    const placing = service.place({ to: "+12025550123", goal: "x", when: "2026-12-01T10:00:00Z" });
     await hold.atHold;
     await service.saveSettings(settings({ maxSeconds: 60 }));
     expect(vendor.deleted).not.toContain("asst-1");
@@ -228,17 +230,20 @@ describe("revisions while a call starts", () => {
     expect(await service.cancel(placed.value.call as string)).toBe("cancelled");
     expect(vendor.deleted).toContain("asst-1");
   });
-  it("a definitively rejected start after a save releases the superseded assistant", async () => {
+  it("a definitively rejected start after a save leaves the superseded assistant to the owner pass", async () => {
     const vendor = fakeVendor({ createStatus: 400 });
     const hold = holdFirst(vendor.fetchImpl, "POST", "/call");
     const service = new PhoneCallService(new VapiAdapter(hold.fetchImpl), new RevisionStore(), () => "en");
     await service.saveSettings(settings());
-    const placing = service.place({ to: "+15550123", goal: "x" });
+    const placing = service.place({ to: "+12025550123", goal: "x" });
     await hold.atHold;
     await service.saveSettings(settings({ maxSeconds: 60 }));
     expect(vendor.deleted).not.toContain("asst-1");
     hold.release();
     expect((await placing).ok).toBe(false);
+    // D5 P8d: a turn's place() never cleans up (changed from "releases it now"): the owner pass releases it.
+    expect(vendor.deleted).not.toContain("asst-1");
+    await service.releaseOldAssistants();
     expect(vendor.deleted).toContain("asst-1");
   });
 });
@@ -249,7 +254,7 @@ describe("cancel", () => {
     const hold = holdFirst(vendor.fetchImpl, "GET", "/call/");
     const service = new PhoneCallService(new VapiAdapter(hold.fetchImpl), new RevisionStore(), () => "en");
     await service.saveSettings(settings());
-    const placed = await service.place({ to: "+15550123", goal: "x", when: "2026-12-01T10:00:00Z" });
+    const placed = await service.place({ to: "+12025550123", goal: "x", when: "2026-12-01T10:00:00Z" });
     if (!placed.ok) throw new Error(placed.error);
     const id = placed.value.call as string;
     const reading = service.result({ call: id });
@@ -264,7 +269,7 @@ describe("cancel", () => {
   });
   it("owner cancel deletes the scheduled call at the pinned endpoint and shows cancelled", async () => {
     const { service, vendor } = await ready();
-    const placed = await service.place({ to: "+15550123", goal: "x", when: "2026-12-01T10:00:00Z" });
+    const placed = await service.place({ to: "+12025550123", goal: "x", when: "2026-12-01T10:00:00Z" });
     if (!placed.ok) throw new Error(placed.error);
     expect(callBody(vendor).schedulePlan).toEqual({ earliestAt: "2026-12-01T10:00:00Z" });
     expect(await service.cancel(placed.value.call as string)).toBe("cancelled");
@@ -275,7 +280,7 @@ describe("cancel", () => {
   });
   it("a cancel racing the call start leaves the real final status", async () => {
     const { service } = await ready({}, { cancelFails: true });
-    const placed = await service.place({ to: "+15550123", goal: "x", when: "2026-12-01T10:00:00Z" });
+    const placed = await service.place({ to: "+12025550123", goal: "x", when: "2026-12-01T10:00:00Z" });
     if (!placed.ok) throw new Error(placed.error);
     expect(await service.cancel(placed.value.call as string)).toBe("ended");
   });
@@ -284,7 +289,7 @@ describe("cancel", () => {
 describe("key", () => {
   it("a vendor error that echoes the key yields a fixed code; key absent from result and logs", async () => {
     const { service, logs } = await ready({}, { echoKey: true });
-    const r = await service.place({ to: "+15550123", goal: "x" });
+    const r = await service.place({ to: "+12025550123", goal: "x" });
     expect(r).toEqual({ ok: false, error: "vendor_refused" });
     expect(JSON.stringify([r, logs])).not.toContain(FAKE_KEY);
   });
@@ -293,7 +298,7 @@ describe("key", () => {
     const service = new PhoneCallService(new VapiAdapter(fakeVendor().fetchImpl), new RevisionStore(), () => "en");
     expect(phoneCallsSupported()).toBe(false);
     expect(service.toolsToRegister()).toEqual([]);
-    expect(await service.place({ to: "+15550123", goal: "x" })).toEqual({ ok: false, error: "not_set_up" });
+    expect(await service.place({ to: "+12025550123", goal: "x" })).toEqual({ ok: false, error: "not_set_up" });
     const env: NodeJS.ProcessEnv = { [PHONE_SECRETS_ENV]: JSON.stringify({ key: FAKE_KEY, origin: "https://api.vapi.ai" }) };
     expect(loadPhoneSecretsFromEnv(env)).toEqual({ desktop: true, loaded: true });
     expect(env[PHONE_SECRETS_ENV]).toBeUndefined();
@@ -322,7 +327,7 @@ describe("key", () => {
 describe("hostile result", () => {
   it("callee-controlled values are dropped: instruction reference, bad time; no transcript or reference text reaches the engine", async () => {
     const { service } = await ready();
-    const placed = await service.place({ to: "+15550123", goal: "x" });
+    const placed = await service.place({ to: "+12025550123", goal: "x" });
     if (!placed.ok) throw new Error(placed.error);
     const r = await service.result({ call: placed.value.call });
     if (!r.ok) throw new Error(r.error);
@@ -339,7 +344,7 @@ describe("hostile result", () => {
   });
   it("a shared transcript is fenced and marked as callee data", async () => {
     const { service } = await ready();
-    const placed = await service.place({ to: "+15550123", goal: "x" });
+    const placed = await service.place({ to: "+12025550123", goal: "x" });
     if (!placed.ok) throw new Error(placed.error);
     await service.result({ call: placed.value.call });
     const shared = service.sharedTranscript(placed.value.call as string)!;
@@ -354,7 +359,7 @@ describe("adapter fail-closed", () => {
     (adapter as any).capabilities = { ...adapter.capabilities, recordAudio: false };
     const service = new PhoneCallService(adapter, new RevisionStore(), () => "en");
     await service.saveSettings(settings());
-    expect(await service.place({ to: "+15550123", goal: "x" })).toEqual({ ok: false, error: "vendor_refused" });
+    expect(await service.place({ to: "+12025550123", goal: "x" })).toEqual({ ok: false, error: "vendor_refused" });
     expect(v.sent.some((s) => s.url.endsWith("/call"))).toBe(false);
     expect(ALL_SETTINGS.length).toBe(10);
   });

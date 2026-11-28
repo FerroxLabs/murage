@@ -149,6 +149,8 @@ export class TextBudget {
   private readFailed = false;
   constructor(fs: FsHooks, limit = TEXT_SYSCALLS) { this.fs = fs; this.left = limit; }
   spent(): boolean { return this.left <= 0; }
+  /** cause22 C2: a budget for one judged item: its own count of 64 and its own memo, exactly what a one-location call has. */
+  alone(): TextBudget { return new TextBudget(this.fs); }
   failed(): boolean { return this.readFailed; }
   lstat(p: string): StatResult {
     const known = this.stats.get(p);

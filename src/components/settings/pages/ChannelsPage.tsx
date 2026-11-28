@@ -33,8 +33,9 @@ function SlotCard({ name, empty }: { name: string; empty?: string }) {
 }
 
 /** The cards of Messaging apps, in page order. */
-export function channelsCards({ desktop, mode, anchor }: Pick<SettingsPageProps, "desktop"> & { mode?: SettingsMode; anchor?: string | null }): SettingsPageCard[] {
-  const live = desktop === true;
+export function channelsCards({ desktop, cloud, mode, anchor }: Pick<SettingsPageProps, "desktop" | "cloud"> & { mode?: SettingsMode; anchor?: string | null }): SettingsPageCard[] {
+  // A Cloud home window draws every app as the on-your-computer stub: a pasted token must never reach the Cloud home's config.
+  const live = desktop === true && cloud !== true;
   return [
     { id: "channels.telegram", anchor: "telegram-settings-title", simple: true, render: () => (live ? <TelegramSettings mode={mode} /> : stub("telegram-settings-title")) },
     { id: "channels.slack", anchor: "slack-settings-title", simple: true, render: () => (live ? <SlackSettings mode={mode} arrivalAnchor={anchor} /> : stub("slack-settings-title")) },
@@ -48,8 +49,8 @@ export function channelsCards({ desktop, mode, anchor }: Pick<SettingsPageProps,
   ];
 }
 
-export function ChannelsPageBody({ mode, desktop, anchor }: Pick<SettingsPageProps, "mode" | "desktop" | "cloud"> & { anchor?: string | null }) {
-  return <AdvancedHost><PageCards cards={channelsCards({ desktop, mode, anchor })} mode={mode} /></AdvancedHost>;
+export function ChannelsPageBody({ mode, desktop, cloud, anchor }: Pick<SettingsPageProps, "mode" | "desktop" | "cloud"> & { anchor?: string | null }) {
+  return <AdvancedHost><PageCards cards={channelsCards({ desktop, cloud, mode, anchor })} mode={mode} /></AdvancedHost>;
 }
 
 export default function ChannelsPage(props: SettingsPageProps) {

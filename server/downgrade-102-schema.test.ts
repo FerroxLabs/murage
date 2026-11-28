@@ -4,6 +4,7 @@
 // "Prepare to reinstall" (memory-downgrade --to 10) must hand 1.0.2 the messages.db schema a fresh 1.0.2 install has, every table and
 // index included. testing/schema-1.0.2-fresh.json is sqlite_master of a fresh 1.0.2 install (afbf549ba started once on an empty data
 // folder, then stopped), so this compares the downgrade's result with what 1.0.2 itself makes, never with the current code.
+import { MEMORY_SCHEMA_VERSION } from "./memory/schema.ts";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -260,7 +261,7 @@ it("target 6 refuses durable send custody before changing its schema or stamp", 
   const after = new DatabaseSync(file);
   try {
     expect(after.prepare("SELECT attempt_id,delivery FROM send_attempts").all()).toEqual([{ attempt_id: 'held-attempt', delivery: 'not_submitted' }]);
-    expect(after.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: 13 });
+    expect(after.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: MEMORY_SCHEMA_VERSION });
   } finally { after.close(); }
 });
 

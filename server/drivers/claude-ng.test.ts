@@ -175,45 +175,45 @@ describe("14.5 the sign-in card remembers the owner's answer (routines and unatt
     writeFileSync(join(cwd, ".claude", "settings.json"), JSON.stringify(settings));
     return cwd;
   };
-  /** A turn with nobody present: it either opens the card or completes; which came first. */
+  /** A turn with nobody present, as a routine sends it (unattendedAskNote, contracts.ts): it either opens the card or
+   * completes; which came first. */
   const unattended = async (threadId: string, cwd: string): Promise<RuntimeEvent> => {
-    void instance!.adapter.sendTurn({ threadId, text: "routine", cwd });
+    void instance!.adapter.sendTurn({ threadId, text: "routine", cwd, unattendedAskNote: true });
     return recorder!.until((e) => e.threadId === threadId && (e.type === "request.opened" || e.type === "turn.completed"));
   };
-  const answer = async (threadId: string, cwd: string, pick: "Allow" | "Don't allow") => {
-    const sent = instance!.adapter.sendTurn({ threadId, text: "hi", cwd });
-    const opened = await recorder!.until((e) => e.type === "request.opened" && e.threadId === threadId) as Extract<RuntimeEvent, { type: "request.opened" }>;
-    await instance!.adapter.respondToRequest(threadId, opened.requestId!, { behavior: "answer", answers: [{ id: "signin", selected: [pick] }] });
-    await sent;
-    return recorder!.until((e) => e.type === "turn.completed" && e.threadId === threadId);
-  };
+  const skipped = (threadId: string) => recorder!.events.filter((e) => e.threadId === threadId && e.type === "item.started" && (e as { title?: string }).title === mod.CLAUDE_SIGNIN_SKIPPED).length;
+  const remember = (cwd: string, allowed: boolean) => mod.claudeSigninAnswers.remember(mod.claudeSigninScope(process.platform, [{ path: join(cwd, ".claude", "settings.json"), source: "project" }]), allowed);
 
-  it("answered once, later unattended turns run with no card; a changed value asks again; a remembered Don't allow refuses with no card; a different file asks", async () => {
+  // CHANGED-EXPECTATIONS (FRICTION-1025 F13, q1024-trustquiet r6): no turn opens the sign-in card any more. Before, a first or
+  // changed sight opened it and a remembered Don't allow refused the turn; now each runs on the owner's settings only with one
+  // line. A remembered Allow (older versions' card) still runs with the repository's values and no line, for those values only.
+  it("F13 unattended turns never open the sign-in card: unremembered, changed, remembered Don't allow and a different file run with one line; a remembered Allow runs with none", async () => {
     await create();
     const cwd = repo("repo", { env: { ANTHROPIC_MODEL: "repo-model" } });
-    expect(await answer("t-first", cwd, "Allow")).toMatchObject({ type: "turn.completed" });
+    // routine-style first sight: nobody present, no card, the turn runs with the one line
+    expect(await unattended("t-first", cwd), "F13 routine first sight").toMatchObject({ type: "turn.completed", ok: true }); // F13-W4
+    expect(skipped("t-first")).toBe(1);
 
-    // routine-style: nobody present, same file and values: no card, the turn runs
-    const second = await unattended("t-routine-1", cwd);
-    expect(second.type).toBe("turn.completed");
-    expect(await unattended("t-routine-2", cwd)).toMatchObject({ type: "turn.completed" });
+    // a remembered Allow for this file and values: no card, no line
+    remember(cwd, true);
+    expect(await unattended("t-routine-1", cwd)).toMatchObject({ type: "turn.completed", ok: true });
+    expect(skipped("t-routine-1")).toBe(0);
 
-    // a changed value asks again; the owner says Don't allow
+    // a changed value is not remembered: no card, the line again
     writeFileSync(join(cwd, ".claude", "settings.json"), JSON.stringify({ env: { ANTHROPIC_MODEL: "repo-model-2" } }));
-    expect((await unattended("t-changed", cwd)).type).toBe("request.opened");
-    const opened = recorder!.events.find((e) => e.type === "request.opened" && e.threadId === "t-changed") as Extract<RuntimeEvent, { type: "request.opened" }>;
-    await instance!.adapter.respondToRequest("t-changed", opened.requestId!, { behavior: "answer", answers: [{ id: "signin", selected: ["Don't allow"] }] });
-    expect(await recorder!.until((e) => e.type === "turn.completed" && e.threadId === "t-changed")).toMatchObject({ ok: false });
+    expect(await unattended("t-changed", cwd)).toMatchObject({ type: "turn.completed", ok: true });
+    expect(skipped("t-changed")).toBe(1);
 
-    // the remembered Don't allow: refused, plain message, no card
-    const refused = await unattended("t-denied", cwd);
-    expect(refused).toMatchObject({ type: "turn.completed", ok: false });
-    expect(JSON.stringify(recorder!.events.filter((e) => e.threadId === "t-denied"))).toContain("you chose not to allow that");
-    expect(recorder!.events.some((e) => e.type === "request.opened" && e.threadId === "t-denied")).toBe(false);
+    // a remembered Don't allow: the repository's values stay out and the turn runs, never refused
+    remember(cwd, false);
+    expect(await unattended("t-denied", cwd)).toMatchObject({ type: "turn.completed", ok: true });
+    expect(skipped("t-denied")).toBe(1);
 
-    // a different repository file with the same values asks
+    // a different repository file with the same values
     const other = repo("repo-other", { env: { ANTHROPIC_MODEL: "repo-model-2" } });
-    expect((await unattended("t-other", other)).type).toBe("request.opened");
+    expect(await unattended("t-other", other)).toMatchObject({ type: "turn.completed", ok: true });
+    expect(skipped("t-other")).toBe(1);
+    expect(recorder!.events.some((e) => e.type === "request.opened"), "F13 no card on any of them").toBe(false);
   }, 60_000);
 
   it("the stored answers hold no path, name or value in plain text", async () => {

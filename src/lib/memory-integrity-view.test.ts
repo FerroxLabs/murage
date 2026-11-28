@@ -117,10 +117,14 @@ describe("the strip in the app (words for the reducer's selection)", () => {
     const calm = renderToStaticMarkup(createElement(MemoryIntegrityStripView, { view: calmView }));
     expect(calm).toContain('role="status"');
     expect(calm).toContain("Checking earlier memory, 42%");
-    // UX-09: the changing visible sentence is not itself the live region; a separate quiet line is
-    expect(calm).toMatch(/<span aria-hidden="true">You can chat as usual[^<]*<\/span>/);
-    expect(calm).toMatch(/<span class="sr-only" role="status" aria-live="polite">/);
-    expect(renderToStaticMarkup(createElement(MemoryIntegrityStripView, { view: calmView, announced: "an earlier sentence" }))).toContain(">an earlier sentence<");
+    // turnpolish-3: while the spoken line says what the screen says (the first reading) one element carries the sentence, once
+    expect(calm).toMatch(/<span role="status" aria-live="polite">You can chat as usual[^<]*<\/span>/);
+    expect(calm.split("Checking earlier memory").length - 1).toBe(1);
+    // UX-09: once the spoken line lags, the changing visible sentence is not itself the live region; a separate quiet line is
+    const lagging = renderToStaticMarkup(createElement(MemoryIntegrityStripView, { view: calmView, announced: "an earlier sentence" }));
+    expect(lagging).toMatch(/<span aria-hidden="true">You can chat as usual[^<]*<\/span>/);
+    expect(lagging).toMatch(/<span class="sr-only" role="status" aria-live="polite">/);
+    expect(lagging).toContain(">an earlier sentence<");
     const alert = renderToStaticMarkup(createElement(MemoryIntegrityStripView, { view: stripView(feed([reading(0, working({ held: true, holdKey: "memoryStrip.hold", capture: "off", recall: "off" }))])) }));
     expect(alert).toContain('role="alert"');
     expect(renderToStaticMarkup(createElement(MemoryIntegrityStripView, { view: null }))).toBe("");

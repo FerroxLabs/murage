@@ -2,7 +2,9 @@
 // Owner: wg-proof owns the Windows launcher (run-windows.ps1); the CI lane owns its caller (ci/wipe-proof.mjs).
 // The launcher writes its summary to the -SummaryPath it is given and to a random temp file otherwise, so the CI caller
 // must pass a path and read that same path back. The real run needs Windows; this keeps the two sides in step everywhere.
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
 const read = name => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8');
@@ -22,6 +24,25 @@ export function summaryContract(caller, launcher) {
 
 it('T-WIPE-PROOF-SUMMARY-PATH: the Windows proof caller passes -SummaryPath and reads that same file', () => {
   expect(summaryContract(read('ci/wipe-proof.mjs'), read('server/wipe-proof/windows-gate/run-windows.ps1'))).toEqual([]);
+});
+
+it.skipIf(process.platform === 'win32')('loads the real staged POSIX driver before checking its arguments', () => {
+  // Reach the staged driver's argument check without requiring a privileged block-node fixture.
+  const preload = String.raw`if (/[/\\]posix[/\\]driver\.mjs$/.test(process.argv[1])) process.argv.push('--check-imports');`;
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('../ci/run-real-proof.mjs', import.meta.url)),
+    fileURLToPath(new URL('..', import.meta.url)),
+  ], {
+    encoding: 'utf8',
+    timeout: 10000,
+    env: {
+      ...process.env,
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=data:text/javascript,${encodeURIComponent(preload)}`].filter(Boolean).join(' '),
+    },
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(2);
+  expect(result.stderr).toContain('Usage: run.sh [--stub [--mutant-bypass]]');
 });
 
 it.each([

@@ -2,11 +2,12 @@
 // Deployment configuration and captured private inventories stay outside Git.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 const script = name => fileURLToPath(new URL(name, import.meta.url));
 
 test('G8 ships no deployment address, account home, SSH key path or captured fixture inventory', () => {
@@ -22,7 +23,7 @@ test('G8 ships no deployment address, account home, SSH key path or captured fix
 
 test('G8 requires an explicit worker before running any remote command', t => {
   const dir = mkdtempSync(join(tmpdir(), 'g8-config-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => safeWipeSync(dir));
   const bin = join(dir, 'bin'); mkdirSync(bin);
   const calls = join(dir, 'calls');
   for (const name of ['git', 'ssh']) writeFileSync(join(bin, name), `#!/bin/sh\necho ${name} >> '${calls}'\necho fixture\n`, { mode: 0o700 });
@@ -37,7 +38,7 @@ test('G8 requires an explicit worker before running any remote command', t => {
 
 test('G8 passes the configured destination, optional identity and worker root to its stand-in transport', t => {
   const dir = mkdtempSync(join(tmpdir(), 'g8-config-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => safeWipeSync(dir));
   const bin = join(dir, 'bin'); mkdirSync(bin);
   copyFileSync(script('g8-smooth.sh'), join(dir, 'g8-smooth.sh'));
   writeFileSync(join(dir, 'g8-overlay.sh'), 'echo fixture-overlay\n');

@@ -13,6 +13,7 @@ import { startBrowserExtensionBroker } from "./browser-extension-broker.ts";
 import { browserExtensionResourcesPath } from "./browser-extension-listing.ts";
 import { createBrowserExtensionService, type YourTurnInfo } from "./browser-extension-service.ts";
 import { BrowserExtensionApprovals, browserActionCardTitle, type ContinuationInfo } from "./browser-extension-approvals.ts";
+import { PayCardFlow } from "./pay-card.ts";
 import { HUMAN_DECISION_MS } from "../shared/browser-extension-protocol.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
 import type { PanelAvatars } from "./browser-extension-panel-avatar.ts";
@@ -41,6 +42,25 @@ export function prepareStateDirectory(directory: string, platform: NodeJS.Platfo
 }
 /** The notices the browser's side panel sends for the app to carry out. Others (owner_revoked, share_requested ...) go to the service. */
 const PANEL_REQUESTS = new Set(["owner_end_task", "owner_new_task", "owner_set_mode", "owner_turn_off"]);
+/** CHROME-RESUME-FROM-APP: the owner-facing answer for each code the app's Resume can end with. Any code not listed is `resume_failed`, never a 500. */
+const RESUME_ERROR_KEY: Record<string, string> = {
+  stale_generation: "browserExt.owner.errorResumeChanged", not_paused: "browserExt.owner.errorResumeChanged", binding_inactive: "browserExt.owner.errorResumeChanged",
+  binding_stopped: "browserExt.owner.errorStopped", handoff_use_continue: "browserExt.owner.errorUseContinue",
+  update_extension: "browserExt.updateToResumeApp", owner_action_required: "browserExt.updateToResumeApp",
+  host_offline: "browserExt.owner.errorResumeOffline", host_lost_uncertain: "browserExt.owner.errorResumeOffline", reconnect_required: "browserExt.owner.errorResumeOffline",
+  deadline_exceeded_uncertain: "browserExt.owner.errorResumeSlow", site_denied: "browserExt.owner.errorResumeSite", incognito_denied: "browserExt.owner.errorResumeIncognito",
+  resume_in_flight: "browserExt.owner.errorResumeBusy", resume_failed: "browserExt.owner.errorResumeFailed",
+};
+const RESUME_REFUSAL_TEXT: Record<string, string> = {
+  stale_generation: "This task changed. Check it, then press Resume again.", not_paused: "This task changed. Check it, then press Resume again.", binding_inactive: "This task changed. Check it, then press Resume again.",
+  binding_stopped: "This task was stopped.", handoff_use_continue: "Press Continue once you have done the step.",
+  update_extension: "Update Murage for Chrome to resume from the app.", owner_action_required: "Update Murage for Chrome to resume from the app.",
+  host_offline: "Chrome is not connected. Open Chrome, then try again.", host_lost_uncertain: "Chrome is not connected. Open Chrome, then try again.", reconnect_required: "Chrome is not connected. Open Chrome, then try again.",
+  deadline_exceeded_uncertain: "Chrome has not answered yet. Check the Browser tab in a moment.",
+  site_denied: "A shared tab is on a site this bot may not use. Go back to an allowed page or allow the site, then resume.", incognito_denied: "A shared tab is private (incognito). Close it, then resume.",
+  resume_in_flight: "Resuming is already under way.", resume_failed: "Murage for Chrome could not resume this task. It stays paused. Try again or use the side panel.",
+};
+
 export class BrowserExtensionIntegration {
   readonly approvals: BrowserExtensionApprovals;
   private broker?: Broker;
@@ -54,6 +74,15 @@ export class BrowserExtensionIntegration {
     ownerInstruction?: (threadId: string) => { id: string; text: string } | undefined;
     /** A6: the owner's own message that started the turn running now in this conversation (explicit owner origin only), or undefined. */
     ownerTurnInstruction?: (threadId: string) => { id: string; text: string } | undefined;
+    /** PAYFULL E1/E3/E4/E6-mark (owner q1024-paybuild): the running turn's generation, owner-typed, audience and email mark. */
+    payTurn?: (threadId: string) => { generation: string; ownerTyped: boolean; ownerAudience: boolean; notOwnerAudience: boolean; emailMark: boolean } | undefined;
+    /** PAYFULL A6: the owner's outcome row after a pay/terms card (one per request). */
+    /** F2c: `rowId` is derived from the request id, so a row written again after a crash (before rowWritten was saved) is the same row. */
+    payRow?: (threadId: string, botId: string, text: string, rowId: string) => void;
+    /** PAYFULL r7 (owner q1024-paybuild, DECISIONS #42): the pay card is OFF on the live path until the event-time press guard and navigation
+     *  hold exist (OPUS 15482d2311 / ASTRA adf932ab28 High). index.ts never sets this, so a pay step hands off as on dev/1024; startup still
+     *  closes or settles any record an earlier build left. Only a build that ships the guard may turn it on. */
+    payCardLive?: boolean;
     readTurn?: (botId: string, threadId: string) => ReturnType<NonNullable<Parameters<typeof createBrowserExtensionService>[0]['readTurn']>>;
     /** The hard floor asked for the owner: post the Your turn note in the conversation and send the push (no page text). */
     yourTurn?: (info: YourTurnInfo & { bot: BotRecord }) => void;
@@ -94,7 +123,11 @@ export class BrowserExtensionIntegration {
       onContinue: info => { const bot = this.options.bot(info.botId); return bot ? this.options.continueCard?.({ ...info, bot }) : true; },
     });
     this.approvals.dismissStale();
+    // PAYFULL A6/A7: pay and terms records in their own file; before anything runs, open or approved cards close and spent ones are uncertain.
+    this.payFlow = new PayCardFlow({ file: join(this.options.dataDir, "browser-extension", "pay-cards.json"), row: (record, text) => this.options.payRow?.(record.thread, record.bot, text, `pay-row-${record.id}`) });
+    this.payFlow.startup();
   }
+  private readonly payFlow: PayCardFlow;
   /** The Allow always sites a failed save turned back into Ask for this bot. Returned once; nothing when the service has not started. */
   avatarChanged(botId: string): void { this.service?.avatarChanged(botId); }
   async takeLoweredSites(botId: string): Promise<string[]> { try { return (await this.service?.takeLowered(botId)) ?? []; } catch { return []; } }
@@ -175,7 +208,7 @@ export class BrowserExtensionIntegration {
         onHandoffFailed: info => { const bot = this.options.bot(info.context.botId); if (bot) this.options.handoffFailed?.({ ...info, bot }); },
         onStateRecovered: info => { this.options.stateRecovered?.(info); },
         // EXT-RESTART 3.7: one chat line per binding that was running a task when Chrome or Murage closed.
-        onConnectionLost: info => { const bot = this.options.bot(info.context.botId); this.ownerLine(info.context, `Chrome or Murage closed while ${bot?.name ?? "your bot"} was using the browser, so the task is paused. Check the page, then press Resume in the Murage side panel.`); },
+        onConnectionLost: info => { const bot = this.options.bot(info.context.botId); this.ownerLine(info.context, `Chrome or Murage closed while ${bot?.name ?? "your bot"} was using the browser, so the task is paused. Check the page, then press Resume in Murage or in the Murage for Chrome side panel.`); },
         onContinue: info => { this.continueWhenFree(info, 0); },
         // The side panel already shows the conversation under the name, so the name is the bot's alone.
         botLabel: context => extensionBindName(this.options.bot(context.botId), context.botId),
@@ -200,6 +233,13 @@ export class BrowserExtensionIntegration {
             : action;
           const state = await this.approvals.ask({ bot, threadId: context.threadId, bindingId: context.bindingId, generation: context.generation, digest: action.digest, call:{tool:action.name,input:queuedAction}, summary: action.summary.slice(0, 12000), ...(action.pushSummary ? { pushSummary: action.pushSummary } : {}), waitMs: HUMAN_WAIT_MS, binding, kind: "action", title: browserActionCardTitle(bot.name, action), ...(action.cardKind ? { cardKind: action.cardKind } : {}) });
           return state === "allow" ? true : state === "waiting" ? "waiting" : false;
+        },
+        ...(this.options.payCardLive === true ? { payFlow: this.payFlow } : {}),
+        payTurn: context => this.options.payTurn?.(context.threadId),
+        askPay: async (context, card) => {
+          const bot = this.options.bot(context.botId);
+          if (!bot) return "cancelled";
+          return this.approvals.ask({ bot, threadId: context.threadId, bindingId: context.bindingId, generation: context.generation, digest: card.digest, summary: card.summary.slice(0, 12000), title: card.rows.title, call: { tool: "agent_browser_pay_card", input: { request: card.id } }, waitMs: 45000 });
         },
         consumeApproval: (context, query) => this.approvals.consume({ bindingId: context.bindingId, kind: query.kind, binding: query.binding }),
       });
@@ -391,8 +431,8 @@ export class BrowserExtensionIntegration {
     const state = status?.state;
     if (state !== "active") throw Object.assign(new Error(state === "stopped" ? "Browser control is stopped for this conversation. The owner stopped it, so do not use the browser here unless the owner starts it again."
       : state === "paused" && status?.pausedReason === "handoff" ? "YOUR TURN: this step needs the owner. Murage has asked them. Ask the owner to press Continue in Murage for Chrome so you can carry on. Do not try another way to do the step."
-      : state === "paused" && status?.pausedReason === "uncertain" ? "Browser control is paused because the owner's browser restarted during the last step, so that step may not have finished. Ask the owner to check the page and resume it in Murage for Chrome before you carry on."
-      : state === "paused" && status?.pausedReason === "connection_lost" ? "Browser control is paused because Chrome or Murage closed while you were using it. Ask the owner to check the page and press Resume in Murage for Chrome before you carry on."
+      : state === "paused" && status?.pausedReason === "uncertain" ? "Browser control is paused because the owner's browser restarted during the last step, so that step may not have finished. Ask the owner to check the page and resume it in Murage or in the Murage for Chrome side panel before you carry on."
+      : state === "paused" && status?.pausedReason === "connection_lost" ? "Browser control is paused because Chrome or Murage closed while you were using it. Ask the owner to check the page and press Resume in Murage or in the Murage for Chrome side panel before you carry on."
       : state === "paused" ? BROWSER_EXTENSION_PAUSED_REASON
       : "The owner's browser is not connected right now."), { code: state === "stopped" ? "stopped" : state === "paused" ? status?.pausedReason ?? "paused" : "host_offline" });
     return binding;
@@ -411,7 +451,7 @@ export class BrowserExtensionIntegration {
   }
   /** The owner's actions. `surface` is where the request came from: the phone and the side panel may only tighten (stop, pause,
    * end the task, revoke, set a site to Ask or Never); raising a site's access is the desktop app's alone. Unknown means tighten only. */
-  async ownerAction(bindingId: string, action: string, input: { origin?: string; access?: "allow" | "ask" | "never"; surface?: "desktop" | "phone" | "panel" } = {}) {
+  async ownerAction(bindingId: string, action: string, input: { origin?: string; access?: "allow" | "ask" | "never"; surface?: "desktop" | "phone" | "panel"; generation?: number } = {}) {
     const service = this.service;
     if (!service) throw new Error("Browser connection is unavailable.");
     if (action === "stop" || action === "pause") { this.approvals.cancelBinding(bindingId); return service[action](bindingId); }
@@ -435,9 +475,17 @@ export class BrowserExtensionIntegration {
       }
     }
     // A plain Resume does not answer a hand-over: the owner says they finished the step with Continue.
+    // CHROME-RESUME-FROM-APP (1.0.23): the owner at the desktop resumes a plainly paused task. Desktop only (D4); a Resume does not end cards.
     if (action === "resume") {
+      if (input.surface !== "desktop") throw Object.assign(new Error("Resume needs the Murage app on your computer, or the Murage for Chrome side panel."), { status: 403, errorKey: "browserExt.owner.errorResumeDesktop" });
       const waiting = service.status().bindings.find(item => item.bindingId === bindingId) as { state?: string; pausedReason?: string } | undefined;
       if (waiting?.state === "paused" && waiting.pausedReason === "handoff") throw Object.assign(new Error("Press Continue once you have done the step."), { status: 409, code: "handoff_use_continue", errorKey: "browserExt.owner.errorUseContinue" });
+      if (typeof input.generation !== "number") throw Object.assign(new Error(RESUME_REFUSAL_TEXT.stale_generation), { status: 409, code: "stale_generation", errorKey: RESUME_ERROR_KEY.stale_generation });
+      try { return await service.resumeFromApp(bindingId, input.generation); }
+      catch (error) {
+        const code = String((error as { code?: string }).code ?? (error as Error)?.message ?? "");
+        throw Object.assign(new Error(RESUME_REFUSAL_TEXT[code] ?? RESUME_REFUSAL_TEXT.resume_failed), { status: 409, code: code in RESUME_ERROR_KEY ? code : (error as { code?: string }).code ?? "resume_failed", errorKey: RESUME_ERROR_KEY[code] ?? "browserExt.owner.errorResumeFailed" });
+      }
     }
     // Ending a task, revoking a site and lowering a site all cancel the cards waiting on the old access before anything else.
     if (action === "end") { this.approvals.cancelBinding(bindingId); return service.endTask(bindingId); }

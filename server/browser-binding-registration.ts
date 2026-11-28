@@ -13,6 +13,9 @@ export async function registerBrowserBinding<P extends { close(): Promise<void> 
   try {
     for (let round = 0; round < 3; round++) {
       await o.controller.waitForTeardown(o.key);
+      // A close that failed earlier (this process or the one before it) leaves the entry closing; a new turn re-judges its
+      // daemon first and goes on when it is verifiably gone. Unconfirmed stays closing (the exclusion is never guessed away).
+      if (o.controller.holdState(o.key)?.closeFailed) await o.controller.recoverClosed(o.key);
       const published = await o.controller.sessionGate.run([o.key], token => {
         if (!o.fresh()) throw Object.assign(new Error(browserCopy("browser.server.browser-binding-registration.1")), { status: 409, code: 'revision_changed' });
         const state = o.controller.holdState(o.key);

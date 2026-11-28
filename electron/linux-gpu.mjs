@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { linuxSessionType } from "./notify-capabilities.mjs";
 
 // Linux GPU rule. Chromium's GPU process crashed twice on the proprietary
 // NVIDIA driver (libGLES) and left an invisible focused window intercepting
@@ -26,4 +27,11 @@ export function linuxGpuDecision({ env = process.env, exists = fs.existsSync } =
 
 export function linuxDisablesGpu(options) {
   return linuxGpuDecision(options).disable;
+}
+
+export function configureWaylandColorManager(commandLine, env = process.env) {
+  if (linuxSessionType(env) !== "wayland" || !String(env.XDG_CURRENT_DESKTOP ?? "").split(":").some(name => name.toLowerCase() === "kde")) return;
+  const flags = commandLine.getSwitchValue("disable-features").split(",").filter(Boolean);
+  const feature = "WaylandWpColorManagerV1";
+  if (!flags.includes(feature)) commandLine.appendSwitch("disable-features", [...flags, feature].join(","));
 }

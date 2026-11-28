@@ -63,7 +63,8 @@ it('ignores prose mentioning Secrets and quoted expression literals', () => {
 it('accepts the three reviewed write capabilities', () => expect(audit(clean()).errors).toEqual([]));
 it('MAIN stage GET changed to POST goes RED', () => {
   const d = clean();
-  const step = d.jobs.stage.steps.find(s => s.run?.includes('/releases/latest'));
+  // Rings B6 moved the capability baseline from releases/latest to the release listing; the mutant and the assertion are unchanged.
+  const step = d.jobs.stage.steps.find(s => s.run?.includes('murage-releases/releases'));
   expect(step).toBeDefined();
   step.run = step.run.replace('curl -fsSL', 'curl -X POST -fsSL');
   const errors = audit(d).errors;
@@ -326,6 +327,7 @@ it.each([
  expect(report.errors.some(e=>e.file===name && e.reason.includes(reason))).toBe(true);
 });
 it.each([
+ ['writer loses artifact-only guard', d=>{d.jobs.assemble.if="needs.prepare.outputs.should_release == 'true'";}],
  ['conditional probe gate', d=>{d.jobs.preflight.steps.at(-1).if='false';}],
  ['ignored probe failure', d=>{d.jobs.preflight['continue-on-error']=true;}],
  ['conditional probe step', d=>{d.jobs.assemble.steps.find(s=>s.run?.endsWith(' probe-prepared')).if='false';}],
@@ -532,3 +534,56 @@ it('R2-16 another workflow cannot claim the qualification environment',()=>{
  const d=clean(); d.jobs.other={environment:'windows-qualsign',permissions:{contents:'read'},steps:[]};
  expect(audit(d).errors.some(e=>e.path==='jobs.other.environment')).toBe(true);
 });
+// Rings (designs/RINGS-DESIGN.md section 5 PUBLISHER HOME; MAIN-RULING 2026-11-27 option A; owner of the boundary:
+// MAIN, owner of the ring steps: rings BUILD lane). The two ring steps are fixed guard commands with their exact
+// condition and env; every release barrier and publish-prepared are skipped only by the complementary RING_OFF.
+const ringStep = (d, command) => d.jobs.assemble.steps.find(s => s.run === `node scripts/release-guard.mjs ${command}`);
+// The reviewed ring shape, written out here (not imported from the audit) so each row starts from exactly that
+// shape on any tree: on a tree whose audit lacks the ring checks the row reaches its assertion and goes RED there.
+const RING_OFF = "needs.prepare.outputs.ring_op == ''";
+const ringKey = { GH_TOKEN: '${{ secrets.RELEASES_PAT }}', GPG_PRIVATE_KEY: '${{ secrets.RELEASE_GPG_PRIVATE_KEY }}', GPG_PASSPHRASE: '${{ secrets.RELEASE_GPG_PASSPHRASE }}' };
+function ringShaped() {
+  const d = clean(), job = d.jobs.assemble, n = RELEASE_COMMANDS.length + 2;
+  job.if = "(needs.prepare.outputs.should_release == 'true' && needs.prepare.outputs.artifact_only == 'false') || needs.prepare.outputs.ring_op != ''";
+  job.steps = job.steps.slice(0, n);
+  for (const step of job.steps.slice(3, n - 1)) step.if = RING_OFF;
+  job.steps[n - 1].if = `\${{ inputs.publish && ${RING_OFF} }}`;
+  job.steps.push(
+    { name: 'Name the published prerelease in the internal ring', if: `\${{ inputs.publish && ${RING_OFF} }}`, env: { ...ringKey, VERSION: '${{ needs.prepare.outputs.version }}' }, run: 'node scripts/release-guard.mjs ring-publish-internal' },
+    { name: 'Ring operation', if: "needs.prepare.outputs.ring_op != ''", env: { ...ringKey, RING_OP: '${{ needs.prepare.outputs.ring_op }}', RING_VERSION: '${{ inputs.ring_version }}',
+      RING_ARGS: '${{ inputs.ring_args }}', RING_RECEIPTS: '${{ inputs.ring_receipts }}', RING_RULING: '${{ inputs.ring_ruling }}' }, run: 'node scripts/release-guard.mjs ring-op' });
+  return d;
+}
+it.each([
+  ['ring-op loses its condition', d => { delete ringStep(d, 'ring-op').if; }, 'ring step ring-op must run on exactly its reviewed condition'],
+  ['ring-op runs on every release', d => { ringStep(d, 'ring-op').if = "always()"; }, 'ring step ring-op must run on exactly its reviewed condition'],
+  ['ring-publish-internal runs in a ring_op run', d => { ringStep(d, 'ring-publish-internal').if = '${{ inputs.publish }}'; }, 'ring step ring-publish-internal must run on exactly its reviewed condition'],
+  ['ring-op gains an env key', d => { ringStep(d, 'ring-op').env.RING_SCRIPT = '${{ inputs.ring_args }}'; }, 'ring step ring-op must hold exactly its reviewed environment'],
+  ['ring-publish-internal holds the ring op input', d => { ringStep(d, 'ring-publish-internal').env.RING_OP = '${{ needs.prepare.outputs.ring_op }}'; }, 'ring step ring-publish-internal must hold exactly its reviewed environment'],
+  ['ring-op token swapped', d => { ringStep(d, 'ring-op').env.GH_TOKEN = '${{ github.token }}'; }, 'ring step ring-op must hold exactly its reviewed environment'],
+  ['ring-op imports the key in a shell', d => { ringStep(d, 'ring-op').run = 'printf "%s\\n" "$GPG_PRIVATE_KEY" | gpg --batch --import\nnode scripts/release-guard.mjs ring-op'; }, 'release steps must be fixed release-guard commands'],
+  ['a barrier skipped on another condition', d => { d.jobs.assemble.steps.find(s => s.run?.endsWith(' wait-stage')).if = "needs.prepare.outputs.ring_op != ''"; }, 'release barriers must be unconditional'],
+  ['bootstrap made conditional', d => { d.jobs.assemble.steps[2].if = "needs.prepare.outputs.ring_op == ''"; }, 'release barriers must be unconditional'],
+  ['publish-prepared runs in a ring_op run', d => { d.jobs.assemble.steps.find(s => s.run?.endsWith(' publish-prepared')).if = '${{ inputs.publish }}'; }, 'publish must run only when asked and never in a ring_op run'],
+  ['extra step after the ring op', d => { d.jobs.assemble.steps.push({ run: 'node scripts/release-guard.mjs ring-op', if: "needs.prepare.outputs.ring_op != ''", env: { ...ringStep(d, 'ring-op').env } }); }, 'release commands must run in the reviewed order'],
+  ['ring steps swapped', d => { const s = d.jobs.assemble.steps, i = s.length - 1; [s[i - 1], s[i]] = [s[i], s[i - 1]]; }, 'release commands must run in the reviewed order'],
+  ['assemble if widened past ring_op', d => { d.jobs.assemble.if += " || inputs.ring_version != ''"; }, 'release writer requires explicit write mode'],
+  ['a build job runs a ring write', d => { d.jobs.linux.steps.push({ run: 'node scripts/release-guard.mjs ring-op' }); }, 'release guard command requires assemble'],
+])('rings capability mutant goes RED: %s', (_name, mutate, reason) => {
+  const d = ringShaped(); mutate(d);
+  expect(audit(d).errors.map(e => e.reason)).toEqual(expect.arrayContaining([expect.stringContaining(reason)]));
+});
+it('rings: the reviewed ring shape is admitted and every ring GitHub write is a guarded release-guard function', async () => {
+  const { auditReleaseMutations } = await import('./release-mutation-audit.mjs');
+  const report = auditReleaseMutations(root);
+  expect(report.errors.filter(e => /release-(?:rings|guard)\.mjs$/.test(e.file))).toEqual([]);
+  // The lint really sees the ring writes, inside guarded guard functions only (not a lint blind spot).
+  const owners = new Set(report.hits.filter(h => h.file === 'scripts/release-guard.mjs').map(h => h.owner));
+  for (const owner of ['promoteRingRelease', 'pinLatest']) expect(owners.has(owner), owner).toBe(true);
+  expect(report.hits.filter(h => h.file === 'scripts/release-rings.mjs')).toEqual([]);
+  const d = clean();
+  expect(audit(d).errors).toEqual([]);
+  expect(d.jobs.assemble.steps.slice(-2).map(s => s.run)).toEqual(['node scripts/release-guard.mjs ring-publish-internal', 'node scripts/release-guard.mjs ring-op']);
+  // release.yml carries exactly the reviewed ring shape the mutant rows start from.
+  expect(JSON.stringify(d.jobs.assemble)).toBe(JSON.stringify(ringShaped().jobs.assemble));
+}, 120_000);

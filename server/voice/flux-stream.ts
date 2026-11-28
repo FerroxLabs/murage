@@ -4,9 +4,12 @@ import { markBudgetReached, isBudgetReached } from "./voice-routes.ts";
 // wss://…/v1/audio/transcriptions/stream with the workspace's Flux key as a
 // Bearer header. The key goes in that header and nowhere else.
 import WebSocket from "ws";
+import { Readable } from "node:stream";
 import { withFluxCallHeaders } from "../flux-memory-headers.ts";
+import { read402Body } from "./refusal-body.ts";
 
 import {
+  CALL_ADMISSION_UNKNOWN,
   HANDSHAKE_TIMEOUT_MS,
   SUBPROTOCOL,
   fatal,
@@ -67,21 +70,23 @@ export function failureForClose(code: number, reason: unknown = null): Transcrip
 
 export async function openFluxStream(opts: { key: string; query: URLSearchParams; env?: NodeJS.ProcessEnv; handshakeMs?: number; signal?: AbortSignal }): Promise<FluxStream> {
   if (opts.signal?.aborted) throw new FluxStreamRefused(4502, fatal("capability_unavailable", "the call ended"), "aborted");
+  const baseUrl = fluxStreamBase(opts.env);
+  const endpoint = { via: "flux" as const, label: "Flux", baseUrl, key: opts.key, model: "flux-voice-stream" };
   const budget = (status: number, body: unknown) => {
-    if (classifyFluxRefusal(status, body) === "budget") markBudgetReached({ via: "flux", label: "Flux", baseUrl: fluxStreamBase(opts.env).replace(/^ws/, "http"), key: opts.key, model: "flux-voice-stream" });
+    if (classifyFluxRefusal(status, body) === "budget") markBudgetReached(endpoint);
   };
-  const url = streamUrl(fluxStreamBase(opts.env), opts.query);
+  const url = streamUrl(baseUrl, opts.query);
   // the Bearer key must never travel in cleartext to a remote host
   if (!isSecureOrLoopback(url)) {
     throw new FluxStreamRefused(4502, fatal("capability_unavailable", "Flux streaming base must be wss://"), "the Flux streaming base must be wss:// (cleartext ws:// is allowed only to a loopback host)");
   }
-  if (isBudgetReached({ via: "flux", label: "Flux", baseUrl: fluxStreamBase(opts.env), key: opts.key, model: "flux-voice-stream" })) throw new FluxStreamRefused(4402, fatal("key_budget_reached", "This Flux key has reached its budget"), "budget");
-  await authorizeFluxDispatch(opts.key); // spend gate
+  if (isBudgetReached(endpoint)) throw new FluxStreamRefused(4402, fatal("key_budget_reached", "This Flux key has reached its budget"), "budget");
+  await authorizeFluxDispatch(endpoint.key); // spend gate
   // Cancellation can arrive while the budget gate is checking this call.
   // Observe it before opening a socket or installing the handshake listener.
   if (opts.signal?.aborted) throw new FluxStreamRefused(4502, fatal("capability_unavailable", "the call ended"), "aborted");
   const ws = new WebSocket(url, [SUBPROTOCOL], {
-    headers: withFluxCallHeaders("voice-stream", { authorization: `Bearer ${opts.key}` }),
+    headers: withFluxCallHeaders("voice-stream", { authorization: `Bearer ${endpoint.key}` }),
     handshakeTimeout: opts.handshakeMs ?? HANDSHAKE_TIMEOUT_MS,
     maxPayload: 1024 * 1024,
   });
@@ -101,13 +106,22 @@ export async function openFluxStream(opts: { key: string; query: URLSearchParams
     if (message.type === "error" && classifyFluxRefusal(0, message.error) === "budget") ws.close(1000);
   });
   const closed = new Promise<{ code: number; reason: string; error: StreamError | null }>((resolve) => {
-    ws.on("close", (code, reason) => { budget(code, lastError ?? String(reason)); resolve({ code, reason: String(reason).slice(0, 120), error: lastError }); });
+    ws.on("close", (code, reason) => {
+      const text = String(reason);
+      budget(code, lastError ?? text);
+      resolve({ code, reason: text, error: lastError });
+    });
   });
   await new Promise<void>((resolve, reject) => {
     const onAbort = () => {
       ws.terminate();
       reject(new FluxStreamRefused(4502, fatal("capability_unavailable", "the call ended"), "aborted"));
     };
+    const onClose = () => {
+      opts.signal?.removeEventListener("abort", onAbort);
+      reject(new FluxStreamRefused(4502, fatal("capability_unavailable", "Couldn't reach Flux"), "closed during handshake"));
+    };
+    ws.once("close", onClose);
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     ws.once("open", () => {
       opts.signal?.removeEventListener("abort", onAbort);
@@ -115,25 +129,35 @@ export async function openFluxStream(opts: { key: string; query: URLSearchParams
     });
     ws.once("unexpected-response", (_req, res) => {
       opts.signal?.removeEventListener("abort", onAbort);
-      const code = res.statusCode === 503 ? 4503 : 4000 + (res.statusCode ?? 500);
-      let body = "";
+      const status = res.statusCode ?? 500;
       let finished = false;
-      const finish = () => {
+      const finish = (body: unknown) => {
         if (finished) return;
         finished = true;
-        budget(res.statusCode ?? 500, body);
-        const refusal = classifyFluxRefusal(res.statusCode ?? 500, body);
-        reject(new FluxStreamRefused(code, fatal(refusal === "budget" ? "key_budget_reached" : refusal === "premium" ? "premium_locked" : code === 4503 ? "service_unavailable" : "capability_unavailable", `Flux answered ${res.statusCode}`), `http ${res.statusCode}`));
+        const refusal = classifyFluxRefusal(0, body);
+        if (refusal === "budget") markBudgetReached(endpoint);
+        const error = fatal(
+          refusal === "budget" ? "key_budget_reached" : refusal === "premium" ? "premium_locked" :
+            status === 402 ? CALL_ADMISSION_UNKNOWN : status === 503 ? "service_unavailable" : "capability_unavailable",
+          `Flux answered ${status}`,
+        );
+        const code = error.code === CALL_ADMISSION_UNKNOWN ? error.close_code! : 4000 + status;
+        reject(new FluxStreamRefused(code, error, `http ${status}`));
         ws.terminate();
       };
-      res.on("data", chunk => { body += String(chunk); if (body.length > 65536) { body = body.slice(0, 65536); finish(); res.destroy(); } });
-      res.once("end", finish);
-      res.once("error", finish);
-      res.setTimeout(opts.handshakeMs ?? HANDSHAKE_TIMEOUT_MS, () => { finish(); res.destroy(); });
-    });
-    ws.once("close", () => {
-      opts.signal?.removeEventListener("abort", onAbort);
-      reject(new FluxStreamRefused(4502, fatal("capability_unavailable", "Couldn't reach Flux"), "closed during handshake"));
+      if (status === 402) {
+        // An observed refusal survives the transport closing mid-body.
+        ws.off("close", onClose);
+        res.setTimeout(opts.handshakeMs ?? HANDSHAKE_TIMEOUT_MS, () => res.destroy());
+        const body = Readable.toWeb(res, { strategy: { highWaterMark: 0 } }) as ReadableStream<Uint8Array>;
+        void read402Body(new Response(body)).then(finish, () => finish(null));
+        return;
+      }
+      let body = "";
+      res.on("data", chunk => { body += String(chunk); if (body.length > 65536) { finish(body.slice(0, 65536)); res.destroy(); } });
+      res.once("end", () => finish(body));
+      res.once("error", () => finish(body));
+      res.setTimeout(opts.handshakeMs ?? HANDSHAKE_TIMEOUT_MS, () => { finish(body); res.destroy(); });
     });
   });
   return {

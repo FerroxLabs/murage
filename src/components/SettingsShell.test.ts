@@ -8,18 +8,19 @@ import { describe, expect, it } from "vitest";
 import { en } from "@/locales";
 import { SECTION_PAGES, SETTINGS_PAGE_GROUPS } from "@/lib/settings-pages";
 import { initialState, reducer } from "@/state/store";
-import type { AppSettingsSection } from "@/lib/settings-sections";
+import { settingsPageLabel, type AppSettingsSection } from "@/lib/settings-sections";
 import { markParts } from "./SettingsSearchResults";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 const modal = read("./SettingsModal.tsx");
 
 describe("the sidebar", () => {
-  it("draws thirteen sidebar pages under six headings, with Messaging inside Apps", () => {
-    expect(SECTION_PAGES).toHaveLength(13);
+  it("draws the 17 v10 rail pages under six headings", () => {
+    expect(SECTION_PAGES).toHaveLength(17);
     expect(SETTINGS_PAGE_GROUPS.map((group) => en[`settings.group.${group}` as keyof typeof en])).toEqual(["You", "Each bot", "All bots", "Models and tools", "Connections", "App"]);
-    expect(SECTION_PAGES.map((page) => en[`settings.page.${page.id}` as keyof typeof en])).toEqual([
-      "General", "Calls", "How every bot behaves", "Skills", "Memory", "Models & engines", "Search, images and dictation", "Connected apps", "Computer & browser", "Phone and other devices", "Backups", "Usage", "About & help",
+    // Rules and Messaging keep their older pages' words; Overview, Bots and Tools are plain English in lib/settings-sections.ts.
+    expect(SECTION_PAGES.map((page) => settingsPageLabel(page.id))).toEqual([
+      "Overview", "General", "Calls", "Bots", "How every bot behaves", "Tools", "Skills", "Memory", "Models & engines", "Search, images and dictation", "Connected apps", "Messaging apps", "Computer & browser", "Phone and other devices", "Backups", "Usage", "About & help",
     ]);
     for (const group of SETTINGS_PAGE_GROUPS) expect(en[`settings.groupNote.${group}` as keyof typeof en], group).toBeTruthy();
     expect(modal).toContain("SECTION_PAGES.map((entry) => ({ ...entry, icon: PAGE_ICONS[entry.id] }))");

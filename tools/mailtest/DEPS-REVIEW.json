@@ -1,0 +1,18 @@
+{
+  "image": {
+    "name": "murage-mailtest",
+    "platform": "linux/amd64",
+    "digest": "sha256:6b349729174907b7d9214d50cd4316d0ed5a9659850609e253bfeee1dd23d1c3",
+    "manifest": "sha256:0bb2f81c1a684200f4bd95eda90607d21636364d3fae857d52b00198183a8d62",
+    "config": "sha256:84af9fb8ef79f49958a5ebe38732c2774a6fc5b8f59d396e4956a0e34f9d2a2a",
+    "base": "node:24-bookworm@sha256:9af606de2e947cfb3f276633b7c5130c4cd22365aa10f5a647b7675d5cfce0c0",
+    "debianSnapshot": "20261001T000000Z"
+  },
+  "packages": {
+    "dovecot-core": "1:2.3.19.1+dfsg1-2.1+deb12u6",
+    "dovecot-imapd": "1:2.3.19.1+dfsg1-2.1+deb12u6",
+    "openssl": "3.0.22-1~deb12u1",
+    "postfix": "3.7.11-0+deb12u1",
+    "sqlite3": "3.40.1-2+deb12u2"
+  }
+}

@@ -11,7 +11,18 @@ export interface ClaudeAccount {
   configDir: string;
   signInCommand: string;
   signInShell: "sh" | "powershell";
+  /** Claude on Amazon Bedrock: the profile, region and the masked account (the full id is shown once, right after Save). */
+  bedrock?: { profile: string; region: string; bound: boolean; label: string; accountSuffix?: string };
   snapshot?: { state: "available" | "unavailable"; authenticated?: boolean; reason?: string };
+}
+/** M9 r3 (ASTRA H1): the body of POST /api/claude-accounts/<id>/bedrock. A new account is not bound yet, so its first Save and check names the
+ * profile and region the owner just entered; an empty body (Check again) only reuses values the server already holds. */
+export function bedrockBindBody(values: { profile?: string; region?: string }): { profile?: string; region?: string } {
+  return values.profile && values.region ? { profile: values.profile, region: values.region } : {};
+}
+/** Check again: a bound account re-checks what is bound (empty body); an account that never bound names its saved profile and region. */
+export function bedrockCheckAgainBody(bedrock: NonNullable<ClaudeAccount["bedrock"]>): { profile?: string; region?: string } {
+  return bedrock.bound ? {} : bedrockBindBody(bedrock);
 }
 /** GET /api/claude-accounts answers { accounts: [...] } on the desktop. Any
  * other body (an older server, a proxy page, an error sent with 200) becomes a
@@ -102,6 +113,8 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<string | null>(null), [removing, setRemoving] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState(""), [configDir, setConfigDir] = useState("");
+  const [bedrockForm, setBedrockForm] = useState(false), [bedrockName, setBedrockName] = useState(""), [bedrockProfile, setBedrockProfile] = useState(""), [bedrockRegion, setBedrockRegion] = useState("us-east-1");
+  const [profileNames, setProfileNames] = useState<string[]>([]);
   const [order] = useState(claudeAccountsListOrder), fleet = useRef(onChanged);
   fleet.current = onChanged;
   const load = async () => {
@@ -130,6 +143,29 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
     setConfigDir(account?.configDir ?? ""); setError(""); setNotice("");
   };
   const current = accounts.find(account => account.instanceId === editing);
+  /** Save (new engine, or Check again with no body): the server runs the identity check and answers the one line Settings shows. */
+  const bindBedrock = async (id: string, body: { profile?: string; region?: string }) => {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const answer = await api(`/api/claude-accounts/${encodeURIComponent(id)}/bedrock`, { method: "POST", body: JSON.stringify(body) }) as { line?: string };
+      setNotice(answer.line ?? ""); setBedrockForm(false);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t("claudeAccounts.changeError")); }
+    finally { setBusy(false); }
+    try { await load(); } catch { setError(t("claudeAccounts.refreshError")); }
+  };
+  const addBedrock = async () => {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const receipt = await api("/api/claude-accounts", { method: "POST", body: JSON.stringify({ displayName: bedrockName.trim(), bedrock: { profile: bedrockProfile.trim(), region: bedrockRegion.trim() } }) }) as { account?: { instanceId?: string } };
+      setBusy(false);
+      if (receipt.account?.instanceId) await bindBedrock(receipt.account.instanceId, bedrockBindBody({ profile: bedrockProfile.trim(), region: bedrockRegion.trim() }));
+      await fleet.current?.();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : t("claudeAccounts.changeError")); setBusy(false); }
+  };
+  const openBedrock = () => {
+    setBedrockForm(true); setEditing(null); setRemoving(null); setError(""); setNotice("");
+    void api("/api/bedrock/profiles").then(answer => setProfileNames(Array.isArray((answer as { profiles?: unknown }).profiles) ? (answer as { profiles: string[] }).profiles : []), () => setProfileNames([]));
+  };
   const copy = async (account: ClaudeAccount) => {
     try { await copyTextOrThrow(account.signInCommand); setNotice(t("claudeAccounts.copied", { name: account.displayName })); }
     catch { setError(t("claudeAccounts.copyError")); }
@@ -138,6 +174,7 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="claude-accounts-title" tabIndex={-1} className="text-[15px] font-medium text-ink outline-none">Claude accounts</h3><div className="flex gap-2">
       <button type="button" className={button} disabled={busy} onClick={() => { setError(""); void load().catch(cause => setError(cause.message)); }}>{t("claudeAccounts.refresh")}</button>
       <button type="button" data-setting-control="claude-accounts-heading" className={button} disabled={busy} onClick={() => edit()}>{t("claudeAccounts.add")}</button>
+      <button type="button" className={button} disabled={busy} onClick={openBedrock}>Add Claude on Amazon Bedrock</button>
     </div></div>
     <p className="text-xs leading-relaxed text-ink-secondary">{t("claudeAccounts.keepsLogin")}</p>
     {error && <p role="alert" className="text-xs text-danger">{error}</p>}
@@ -145,10 +182,12 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
     {!loaded && !error && <p role="status" className="text-xs text-ink-secondary">Loading accounts...</p>}
     {accounts.map(account => <div key={account.instanceId} data-claude-account={account.instanceId} className="space-y-2 rounded-lg border border-hairline/30 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0"><p className="break-words text-sm text-ink">{account.displayName}{account.isDefault ? " · Default" : ""}</p>
-        <p className="text-xs text-ink-secondary">{account.snapshot?.state === "unavailable" ? "CLI unavailable" : account.snapshot?.authenticated === true ? "Signed in" : account.snapshot?.authenticated === false ? "Sign-in required" : "Sign-in not verified"}</p></div>
+        <p className="text-xs text-ink-secondary">{account.bedrock ? account.bedrock.label : account.snapshot?.state === "unavailable" ? "CLI unavailable" : account.snapshot?.authenticated === true ? "Signed in" : account.snapshot?.authenticated === false ? "Sign-in required" : "Sign-in not verified"}</p></div>
         <div className="flex gap-2"><button type="button" className={button} disabled={busy} aria-label={`Edit ${account.displayName} account`} onClick={() => edit(account)}>Edit</button>
           {!account.isDefault && <button type="button" className={button} disabled={busy} aria-label={`Remove ${account.displayName} account`} onClick={() => { setRemoving(account.instanceId); setEditing(null); }}>Remove</button>}</div></div>
-      <p className="break-all text-xs text-ink-secondary">{account.managed ? account.configDir : "Existing default or inherited Claude configuration (unchanged)"}</p>
+      {account.bedrock && <div className="space-y-1"><p className="text-xs text-ink-secondary">Profile <code>{account.bedrock.profile}</code> in {account.bedrock.region}. AWS bills this account for Bedrock use. Murage does not.</p>
+        <button type="button" className={button} disabled={busy} onClick={() => void bindBedrock(account.instanceId, bedrockCheckAgainBody(account.bedrock!))}>Check again</button></div>}
+      {!account.bedrock && <p className="break-all text-xs text-ink-secondary">{account.managed ? account.configDir : "Existing default or inherited Claude configuration (unchanged)"}</p>}
       {account.signInCommand && <div><p className="text-xs text-ink">{t("claudeAccounts.instructionsTitle", { name: account.displayName })}</p>
         <p className="mt-2 text-xs leading-relaxed text-ink-secondary">{t("claudeAccounts.instructions", { shell: account.signInShell === "powershell" ? "PowerShell" : t("claudeAccounts.terminal") })}</p>
         <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-inset p-2 text-xs text-ink">{account.signInCommand}</pre>
@@ -160,6 +199,14 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
       <label className="block text-xs text-ink">Account name<input autoFocus className={input} value={displayName} maxLength={80} required disabled={busy} onChange={event => setDisplayName(event.target.value)} /></label>
       {(editing === "new" || current?.managed) && <label className="block text-xs text-ink">Configuration directory{editing === "new" ? " (optional)" : ""}<input className={input} value={configDir} maxLength={4096} spellCheck={false} required={editing !== "new"} disabled={busy} placeholder="Leave blank for a new isolated directory" onChange={event => setConfigDir(event.target.value)} /><span className="mt-1 block text-ink-secondary">Use an absolute path or ~/ path. Existing credentials are never moved or copied.</span></label>}
       <div className="flex gap-2"><button type="submit" className={button} disabled={busy || !displayName.trim()}>{t(busy ? "claudeAccounts.saving" : editing === "new" ? "claudeAccounts.create" : "claudeAccounts.save")}</button><button type="button" className={button} disabled={busy} onClick={() => setEditing(null)}>{t("claudeAccounts.cancel")}</button></div>
+    </form>}
+    {bedrockForm && <form aria-label="Add Claude on Amazon Bedrock" className="space-y-3 rounded-lg bg-inset p-3" onSubmit={event => { event.preventDefault(); if (bedrockName.trim() && bedrockProfile.trim()) void addBedrock(); }}>
+      <p className="text-xs leading-relaxed text-ink-secondary">Runs Claude through Amazon Bedrock on your own AWS account, using a profile from your AWS files. AWS bills your account; Murage creates nothing in AWS and keeps no AWS secret.</p>
+      <label className="block text-xs text-ink">Account name<input autoFocus className={input} value={bedrockName} maxLength={80} required disabled={busy} onChange={event => setBedrockName(event.target.value)} /></label>
+      <label className="block text-xs text-ink">AWS profile<input className={input} list="bedrock-profile-names" value={bedrockProfile} maxLength={64} spellCheck={false} required disabled={busy} onChange={event => setBedrockProfile(event.target.value)} /></label>
+      <datalist id="bedrock-profile-names">{profileNames.map(name => <option key={name} value={name} />)}</datalist>
+      <label className="block text-xs text-ink">Region<input className={input} value={bedrockRegion} maxLength={32} spellCheck={false} required disabled={busy} onChange={event => setBedrockRegion(event.target.value)} /></label>
+      <div className="flex gap-2"><button type="submit" className={button} disabled={busy || !bedrockName.trim() || !bedrockProfile.trim()}>Save and check</button><button type="button" className={button} disabled={busy} onClick={() => setBedrockForm(false)}>Cancel</button></div>
     </form>}
   </section>;
 }

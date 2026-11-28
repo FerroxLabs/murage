@@ -8,6 +8,8 @@
  * and the newest TASK_WINDOW. Everything older is one request away
  * (`GET /api/bots/:id/tasks?before=`), and `tasksTotal` says how many exist.
  * The window is chosen from the records in memory: no message is read. */
+import { addTokenCounts, cacheSplitUnsound, coverage, reportedCacheRead, tokenCount, type UsageAccounting } from "../shared/prompt-cache-usage.ts";
+
 export const TASK_WINDOW = 50;
 /** The roster (`GET /api/bots`) carries a smaller window than a bot frame: the sidebar shows the newest few, and the rest page in through the tasks route. */
 export const ROSTER_TASK_WINDOW = 10;
@@ -118,7 +120,7 @@ export function pageTasks<T extends WindowTask>(tasks: readonly T[], before: str
   return { tasks: page, next: rest.length > size ? encodeTaskCursor(page[page.length - 1]!) : null, total: tasks.length };
 }
 
-interface UsageLike { input: number; output: number; cachedInput?: number; costUsd: number | null; turns: number }
+interface UsageLike { usageAccounting?: UsageAccounting; cacheUnmarkedOnly?: true; input: number; output: number; cachedInput?: number; costUsd: number | null; turns: number }
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 
@@ -127,18 +129,21 @@ const finite = (value: unknown): value is number => typeof value === "number" &&
  * need not hold the list. */
 export function sumTaskUsage(tasks: ReadonlyArray<{ usage?: UsageLike }>): UsageLike {
   const out: UsageLike = { input: 0, output: 0, costUsd: null, turns: 0 };
-  let uncached = false;
+  let inputComplete = true, cacheComplete = true, unsound = 0;
   for (const { usage } of tasks) {
     if (!usage) continue;
-    out.input += usage.input;
-    out.output += usage.output;
-    out.turns += usage.turns;
-    if (finite(usage.cachedInput)) out.cachedInput = (out.cachedInput ?? 0) + usage.cachedInput;
-    else if (usage.input > 0) uncached = true;
+    const c = coverage(usage);
+    unsound += Number(cacheSplitUnsound(usage));
+    inputComplete &&= c.inputComplete; cacheComplete &&= c.cacheComplete;
+    out.input = addTokenCounts(out.input, usage.input);
+    out.output = addTokenCounts(out.output, usage.output);
+    out.turns = addTokenCounts(out.turns, usage.turns);
+    const read = reportedCacheRead(usage);
+    if (read !== undefined) out.cachedInput = addTokenCounts(out.cachedInput, read);
     if (finite(usage.costUsd)) out.costUsd = (out.costUsd ?? 0) + usage.costUsd;
   }
-  // A record with input but no cache count leaves the whole split unknown.
-  if (uncached) delete out.cachedInput;
+  out.usageAccounting = coverage({ ...out, usageAccounting: { version: 1, inputComplete, cacheComplete } });
+  if (unsound === 0 && !out.usageAccounting.cacheComplete) out.cacheUnmarkedOnly = true;
   return out;
 }
 
@@ -158,7 +163,15 @@ export interface TaskAggregates<T> {
   grants: string[];
 }
 
-interface CachedAggregates { tasks: readonly WindowTask[]; length: number; key: string; value: TaskAggregates<never>; unknownCache:number; costs:number; cachedInput:number }
+function couldRestoreTokenTotal(sum: number, before: number, after: number): boolean {
+  return !tokenCount(sum) && tokenCount(after) && (!tokenCount(before) || after < before);
+}
+
+function replaceTokenCount(sum: number, before: number, after: number): number {
+  return tokenCount(sum) && tokenCount(before) ? addTokenCounts(sum - before, after) : Number.NaN;
+}
+
+interface CachedAggregates { tasks: readonly WindowTask[]; length: number; key: string; value: TaskAggregates<never>; cachedReports: number; unknownInput: number; incompleteCache: number; unsoundCache: number; costs: number }
 
 /** Remembers each bot's window, usage total and grant list until something they were built from changes. `revision` is the
  * caller's counter, moved by any task, usage or grant write (Store.revision) and by any run write (the live run threads the window
@@ -171,14 +184,33 @@ export function createTaskAggregateCache(maxBots = 4096) {
     noteUsage(botId:string, before:UsageLike|undefined, after:UsageLike):void {
       const held=entries.get(botId);if(!held)return;
       const sum=held.value.usage;
-      const unknown=(u:UsageLike|undefined)=>Number(!!u && u.input>0 && !finite(u.cachedInput));
-      held.unknownCache+=unknown(after)-unknown(before);
+      const previousRead = before && reportedCacheRead(before);
+      const nextRead = reportedCacheRead(after);
+      const previousInput = before ? before.input : 0;
+      const previousOutput = before ? before.output : 0;
+      const previousTurns = before ? before.turns : 0;
+      // A correction can restore an invalid subtotal. Ordinary increasing deltas keep the cached entry.
+      if (couldRestoreTokenTotal(sum.input, previousInput, after.input)
+        || couldRestoreTokenTotal(sum.output, previousOutput, after.output)
+        || couldRestoreTokenTotal(sum.turns, previousTurns, after.turns)
+        || couldRestoreTokenTotal(sum.cachedInput ?? 0, previousRead ?? 0, nextRead ?? 0)) {
+        entries.delete(botId);
+        return;
+      }
+      held.cachedReports += Number(nextRead !== undefined) - Number(previousRead !== undefined);
+      held.unknownInput += Number(!coverage(after).inputComplete) - Number(!!before && !coverage(before).inputComplete);
+      held.incompleteCache += Number(!coverage(after).cacheComplete) - Number(!!before && !coverage(before).cacheComplete);
+      held.unsoundCache += Number(cacheSplitUnsound(after)) - Number(!!before && cacheSplitUnsound(before));
       held.costs+=Number(finite(after.costUsd))-Number(finite(before?.costUsd));
-      held.cachedInput+=(finite(after.cachedInput)?after.cachedInput:0)-(finite(before?.cachedInput)?before!.cachedInput!:0);
-      sum.input+=after.input-(before?.input??0);sum.output+=after.output-(before?.output??0);sum.turns+=after.turns-(before?.turns??0);
+      sum.input = replaceTokenCount(sum.input, previousInput, after.input);
+      sum.output = replaceTokenCount(sum.output, previousOutput, after.output);
+      sum.turns = replaceTokenCount(sum.turns, previousTurns, after.turns);
       const cost=(sum.costUsd??0)+(finite(after.costUsd)?after.costUsd:0)-(finite(before?.costUsd)?before!.costUsd!:0);
       sum.costUsd=held.costs>0?cost:null;
-      if(held.unknownCache>0)delete sum.cachedInput;else if(held.cachedInput || finite(after.cachedInput) || finite(before?.cachedInput))sum.cachedInput=held.cachedInput;
+      if (held.cachedReports > 0) sum.cachedInput = replaceTokenCount(sum.cachedInput ?? 0, previousRead ?? 0, nextRead ?? 0);
+      else delete sum.cachedInput;
+      sum.usageAccounting = coverage({ ...sum, usageAccounting: { version: 1, inputComplete: held.unknownInput === 0, cacheComplete: held.incompleteCache === 0 } });
+      if (held.unsoundCache === 0 && !sum.usageAccounting.cacheComplete) sum.cacheUnmarkedOnly = true; else delete sum.cacheUnmarkedOnly;
     },
     get<T extends WindowTask & { usage?: UsageLike; alwaysAllow?: string[] }>(
       botId: string,
@@ -201,9 +233,17 @@ export function createTaskAggregateCache(maxBots = 4096) {
         usage: sumTaskUsage(tasks),
         grants: taskGrants(tasks),
       };
-      let unknownCache=0,costs=0,cachedInput=0;
-      for(const {usage} of tasks){if(!usage)continue;if(usage.input>0&&!finite(usage.cachedInput))unknownCache++;if(finite(usage.costUsd))costs++;if(finite(usage.cachedInput))cachedInput+=usage.cachedInput;}
-      entries.set(botId, { tasks, length: tasks.length, key, value: value as unknown as TaskAggregates<never>,unknownCache,costs,cachedInput });
+      let cachedReports = 0, unknownInput = 0, incompleteCache = 0, unsoundCache = 0, costs = 0;
+      for (const { usage } of tasks) {
+        if (!usage) continue;
+        const c = coverage(usage);
+        unknownInput += Number(!c.inputComplete);
+        incompleteCache += Number(!c.cacheComplete);
+        unsoundCache += Number(cacheSplitUnsound(usage));
+        costs += Number(finite(usage.costUsd));
+        cachedReports += Number(reportedCacheRead(usage) !== undefined);
+      }
+      entries.set(botId, { tasks, length: tasks.length, key, value: value as unknown as TaskAggregates<never>, cachedReports, unknownInput, incompleteCache, unsoundCache, costs });
       if (entries.size > maxBots) entries.delete(entries.keys().next().value as string);
       return value;
     },

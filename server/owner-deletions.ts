@@ -2,6 +2,7 @@
 import { oweFluxBotDeletion, oweFluxThreadForget } from "./flux-memory-spaces.ts";
 import { endLiveRequestsOfThread } from "./handoff-pair.ts";
 import type { DatabaseSync } from "node:sqlite";
+import { secureDeleteOn } from "./secure-delete.ts";
 
 /**
  * The durable record that the OWNER deleted a conversation (a bot, a channel, or one of their
@@ -28,6 +29,9 @@ export const botDeletionKey = (botId: string): string => `bot:${botId}`;
  * the queue rows go (started ones too: their turn needs no second chance once its conversation is gone), in the same commit. A database
  * without the table has nothing to remove. */
 function dropHandoffsOfDeletedThread(db: DatabaseSync, threadId: string): void {
+  // 1.0.22 item 1a: the queued hand-off messages and returned results are owner text: they leave at secure_delete=ON
+  const restoreDelete = secureDeleteOn(db);
+  try {
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='delegation_packs'").get()) {
     db.prepare("DELETE FROM delegation_packs WHERE source_thread_id=? OR destination_thread_id=?").run(threadId, threadId);
   }
@@ -37,6 +41,7 @@ function dropHandoffsOfDeletedThread(db: DatabaseSync, threadId: string): void {
     endLiveRequestsOfThread(db, threadId, "source-deleted");
     db.prepare("DELETE FROM pending_delegations WHERE source_thread_id=?").run(threadId);
   }
+  } finally { restoreDelete(); }
 }
 
 /** `fluxAttempt`: the deletion attempt's token for the Flux tombstones and forgets this writes (a failed bot save withdraws only

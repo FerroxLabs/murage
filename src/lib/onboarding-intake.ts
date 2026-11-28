@@ -595,6 +595,10 @@ export function readIntakeCard(
   };
 }
 
+export function isOpenIntakeCard(message: { kind: string; card?: { intake?: unknown; answered?: string } }): boolean {
+  return message.kind === "options" && !message.card?.answered && Boolean(readIntakeCard(message.card));
+}
+
 /** The question currently on the table, or null.
  *
  *  THE LAST one, not the first: a thread that has been through both questions
@@ -610,10 +614,7 @@ export function openIntakeCard<
 >(messages: readonly M[]): M | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
-    if (message.kind !== "options") continue;
-    if (message.card?.answered) continue;
-    if (!readIntakeCard(message.card)) continue;
-    return message;
+    if (isOpenIntakeCard(message)) return message;
   }
   return null;
 }

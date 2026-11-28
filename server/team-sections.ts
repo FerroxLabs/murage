@@ -25,6 +25,7 @@ import { z } from "zod";
 import { beginTeamJournal } from "./team-lifecycle.ts";
 import { assertSectionUnlocked, teamRenameStalled } from "./team-identities.ts";
 import { readSectionContext } from "./section-context.ts";
+import { botAccessPolicy } from "./bot-access-role.ts";
 import { isWorkspaceChief, sectionKey, type BotRecord, type GroupRecord, type Store } from "./store.ts";
 
 import { RESERVED_TEAM_NAMES, TEAM_NAME_MAX } from "./team-name-rules.ts";
@@ -42,11 +43,25 @@ export interface TeamDeps {
   reachabilityChanged: () => void;
 }
 
+/** What a member's saved app choices are, shown before a delete clears them.
+ * `saved` is true for any stored policy, even one with no grants. */
+export interface TeamMemberChoices { saved: boolean; mode: "unrestricted" | "restricted"; allowWrites: boolean; apps: string[] }
+
+function memberChoices(bot: BotRecord): TeamMemberChoices {
+  const policy = botAccessPolicy(bot);
+  return {
+    saved: bot.connectedAppAccess !== undefined,
+    mode: policy.mode,
+    allowWrites: policy.allowWrites,
+    apps: [...new Set(policy.grants.map((grant) => grant.toolkit))].sort(),
+  };
+}
+
 export interface TeamView {
   name: string;
   revision: string;
   leadId: string | null;
-  members: Array<{ id: string; name: string; lead: boolean; chief: boolean; archived: boolean }>;
+  members: Array<{ id: string; name: string; lead: boolean; chief: boolean; archived: boolean; choices: TeamMemberChoices; accessRevision: number }>;
   channels: Array<{ id: string; name: string; archived: boolean }>;
   hasInstructions: boolean;
 }
@@ -131,7 +146,7 @@ export function describeTeam(store: Store, section: unknown): TeamView {
     leadId: lead?.id ?? null,
     members: [...bots]
       .sort((a, b) => Number(isLead(b)) - Number(isLead(a)) || Number(Boolean(a.hidden)) - Number(Boolean(b.hidden)))
-      .map((bot) => ({ id: bot.id, name: bot.name, lead: isLead(bot), chief: isWorkspaceChief(bot), archived: Boolean(bot.hidden) })),
+      .map((bot) => ({ id: bot.id, name: bot.name, lead: isLead(bot), chief: isWorkspaceChief(bot), archived: Boolean(bot.hidden), choices: memberChoices(bot), accessRevision: botAccessPolicy(bot).revision })),
     channels: teamGroups(store, key)
       .filter((group) => !group.dm)
       .map((group) => ({ id: group.id, name: group.name, archived: Boolean(group.hidden) })),
@@ -251,7 +266,15 @@ export function changeTeamMembers(store: Store, input: unknown, deps: TeamDeps):
 
 // ── delete ─────────────────────────────────────────────────────────────
 
-const deleteSchema = z.object({ section: sectionSchema, revision: z.string(), bots: z.enum(["keep", "archive"]) }).strict();
+const deleteSchema = z
+  .object({
+    section: sectionSchema,
+    revision: z.string(),
+    bots: z.enum(["keep", "archive"]),
+    /** every member's effective access revision as the owner reviewed it */
+    accessRevisions: z.record(z.string().min(1).max(180), z.number().int().nonnegative()),
+  })
+  .strict();
 
 /** Delete a team. Nothing is ever deleted with it: its bots and channels
  * stay, either ungrouped or archived (the owner's choice), with every
@@ -267,6 +290,13 @@ export function deleteTeam(store: Store, input: unknown, deps: TeamDeps): { bots
   checkRevision(store, parsed.data.revision);
   const archive = parsed.data.bots === "archive";
   const bots = teamBots(store, key);
+  // Admission: the owner reviewed each member's saved app choices. Exact member
+  // set and revisions, checked here (no await to beginTeamJournal), so a change
+  // after the review is refused before anything moves.
+  const reviewed = parsed.data.accessRevisions;
+  const changed = bots.find((bot) => !Object.hasOwn(reviewed, bot.id) || reviewed[bot.id] !== botAccessPolicy(bot).revision);
+  if (changed) fail(`${changed.name}'s app choices changed since you opened this. Look again before deleting the team.`);
+  if (Object.keys(reviewed).some((id) => !bots.some((bot) => bot.id === id))) fail("The team's members changed since you opened this. Look again before deleting the team.");
   const groups = teamGroups(store, key);
   if (archive) {
     const busy = bots.find((bot) => bot.busy && !bot.hidden && !isWorkspaceChief(bot));

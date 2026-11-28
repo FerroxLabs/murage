@@ -1,6 +1,6 @@
 # Computer use & browser use in Murage
 
-Decision doc, 2026-08-12. How bots in Murage get local computer use and
+Decision doc, 2026-08-12 (handover section added 2026-11-21). How bots in Murage get local computer use and
 browser use. macOS and packaged Ubuntu x64 builds use an out-of-the-box,
 release-pinned provider; source/dev Ubuntu may use a separately installed provider. Based
 on a survey of OSS chat-app MCP hosts, macOS control servers,
@@ -24,7 +24,7 @@ Electron main process
   servers get injected into each bot's `--mcp-config`. Same pattern as Claude
   Desktop / Cherry Studio / LibreChat.
 - **Local desktop use = `cua-driver`**. macOS packages the Rust Mach-O in app
-  Resources; Ubuntu x64 packages the certified 0.19.3 ELF plus its cursor-theme
+  Resources; Ubuntu x64 packages the certified 0.55.0 ELF plus its cursor-theme
   sidecar outside ASAR. Both remain paired with the application release. This
   applies to the Ubuntu 24.04 GNOME/Xorg beta and guarded GNOME/Wayland beta;
   remote/cloud boxes and the isolated Local VM remain separate providers.
@@ -165,6 +165,24 @@ behavior contract.
 
 Skip browser-use (Python; wants to own the agent loop; even their own desktop
 app doesn't embed it).
+
+## Browser to computer handover (1.0.22)
+
+The computer is the safety net, never the first route. When the browser
+routes cannot serve a turn and the bot's computer mount is granted
+(`computerKind !== null`), the bot is told in its system prompt (the
+"browser" layer, `server/computer-handover.ts`) to continue with the computer
+tools and to say one labelled line first: "Switching to the computer: <why>,
+so I'll use the screen instead." The trigger list is closed: extension setup
+required or not connected, `tab_gone`, a site that blocks automation (bot
+check, captcha, 403, CDP refused), and a browser mount that was refused or
+retired. Waiting states (paused, handed off, allow not given) never hand
+over. Order inside the turn: browser first, then the accessibility tree
+(`get_window_state`), then screenshot plus coordinates. Every computer action
+still goes through the local-computer approval card, a captcha or password
+step is left to the owner, and with local control off the existing enable
+notice is the only message and nothing is mounted. The setting is never
+changed silently.
 
 ## Rollout order
 

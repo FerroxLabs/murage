@@ -14,15 +14,20 @@ export interface DataWriterStops {
   stopSearchIndex?(): Promise<boolean>;
   /** Joins receipts checkpoint workers before releasing the installation lease. */
   stopLedgerCheckpoints?(): Promise<boolean>;
+  /** Ends every worker thread that holds a connection of its own to messages.db (index builds, identity recompute, space hand-back, deferred inbox fill); true once they exited. */
+  stopIndexBuilds?(): Promise<boolean>;
 }
 
-/** True only when the database is closed AND the engine-history worker AND the checkpointer have really exited. False keeps
+/** True only when the database is closed AND the engine-history worker, the checkpointer AND the index builds have really exited. False keeps
  * the lease (the next start recovers the stale record). */
 export async function stopDataWriters(steps: DataWriterStops): Promise<boolean> {
   const engines = steps.stopEngineHistory(); // admission closes in this call, before anything else here
+  // index builds and the other file-name workers end BEFORE the connection closes: one that commits between the close and its own end changes the file
+  // after the close, the state the handover (a restore swap, an upgrade) must never meet. The join after the close below catches one started meanwhile.
+  const earlyGone = (await steps.stopIndexBuilds?.()) ?? true; // false: a worker was alive at the close, so the lease is kept whatever the second join says
   steps.closeDatabase();                     // the server connection closes before the checkpointer's
-  const [enginesGone, checkpointerGone, searchGone, ledgerGone] = await Promise.all([engines, steps.stopWalMaintenance(), steps.stopSearchIndex?.() ?? true, steps.stopLedgerCheckpoints?.() ?? true]);
-  return enginesGone && checkpointerGone && searchGone && ledgerGone;
+  const [enginesGone, checkpointerGone, searchGone, ledgerGone, buildsGone] = await Promise.all([engines, steps.stopWalMaintenance(), steps.stopSearchIndex?.() ?? true, steps.stopLedgerCheckpoints?.() ?? true, steps.stopIndexBuilds?.() ?? true]);
+  return earlyGone && enginesGone && checkpointerGone && searchGone && ledgerGone && buildsGone;
 }
 
 /** Stops the data writers once, on whichever shutdown path gets there first. A stop that arrives before the writers ever started

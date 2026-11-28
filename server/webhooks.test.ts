@@ -60,6 +60,17 @@ afterEach(() => {
 });
 
 describe("WebhookManager", () => {
+  it("rejects a duplicate retry with the old secret after rotation", () => {
+    const h = harness();
+    const first = create(h.manager);
+    h.manager.update(first.webhook.id, { enabled: true });
+    const event = { payload: { message: "fixture" }, deliveryId: "same-delivery" };
+    const accepted = h.manager.receive(first.webhook.endpointId, first.secret, event);
+    const rotated = h.manager.rotateSecret(first.webhook.id)!;
+    expect(() => h.manager.receive(first.webhook.endpointId, first.secret, event)).toThrowError(expect.objectContaining({ status: 401 }));
+    expect(h.manager.receive(first.webhook.endpointId, rotated.secret, event)).toMatchObject({ duplicate: true, runId: accepted.runId });
+    expect(h.queued).toHaveLength(1);
+  });
   it("rejects malformed management input before it reaches stored state", () => {
     const h = harness();
     expect(() => h.manager.create({ name: 42, prompt: "Review it", botId: "ember-1" })).toThrow("name");

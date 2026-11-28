@@ -13,6 +13,7 @@ import { en } from "@/locales";
 import { settingsSearchResults } from "./SettingsModal";
 import { effortLabel } from "@/lib/effort-label";
 import { SHORTCUT_GROUPS } from "@/lib/keyboard-shortcuts";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
@@ -68,12 +69,16 @@ describe("a chat with bots is a channel, everywhere", () => {
 });
 
 describe("a bot is a bot, never an agent", () => {
-  it.each(["./RenameTitle.tsx", "./ChatHeader.tsx", "./SettingsPanel.tsx", "./Sidebar.tsx", "./CallView.tsx", "./CallControls.tsx", "./SpeakButton.tsx", "./ChatView.tsx"])(
+  it.each(["./RenameTitle.tsx", "./ChatHeader.tsx", "./Sidebar.tsx", "./CallView.tsx", "./CallControls.tsx", "./SpeakButton.tsx", "./ChatView.tsx"])(
     "%s says bot in the words a person reads",
     (file) => {
       expect(visibleWords(read(file)).filter((text) => /\bagents?\b/i.test(text))).toEqual([]);
     },
   );
+
+  it("the whole bot settings panel (every bot-pages file) says bot in the words a person reads", () => {
+    expect(visibleWords(settingsPanelSource()).filter((text) => /\bagents?\b/i.test(text))).toEqual([]);
+  });
 
   it("opens one dialog under one name", () => {
     expect(read("./RenameTitle.tsx")).toContain('title="Bot settings"');
@@ -99,7 +104,7 @@ describe("skills are skills, and 'Add a skill' opens them", () => {
     expect(read("./Sidebar.tsx")).toContain('intent: { section: "skills", addSkill: true }');
     expect(read("./BotSkillsPanel.tsx")).toContain("onBrowse={() => setAdding(true)}");
     expect(read("./BotSkillsPanel.tsx")).toContain("<SkillPicker");
-    expect(read("./SettingsPanel.tsx")).not.toContain('showTeamLibrary", botId: bot.id, view: "skills"');
+    expect(settingsPanelSource()).not.toContain('showTeamLibrary", botId: bot.id, view: "skills"');
   });
 
   it("titles the dialog by where you came from, and says Close", () => {
@@ -162,7 +167,7 @@ describe("connected apps", () => {
   });
 
   it("points a bot's Access at the panel that actually holds apps", () => {
-    const settings = read("./SettingsPanel.tsx");
+    const settings = settingsPanelSource();
     expect(settings).toContain('t("settings.bot.apps.connectFirst")');
     expect(en["settings.bot.apps.connectFirst"]).toBe("Connect apps first (Apps, in the sidebar), then give this bot access.");
     expect(settings).not.toContain("Connect apps in App Settings");
@@ -194,7 +199,7 @@ describe("the copy quick wins", () => {
     expect(effortLabel("medium")).toBe("Medium");
     expect(effortLabel(undefined)).toBe("Default");
     expect(read("./ModelPickerDialog.tsx")).toContain("{effortLabel(level)}");
-    expect(read("./SettingsPanel.tsx")).toContain("{effortLabel(level)}");
-    expect(read("./SettingsPanel.tsx")).not.toContain("(Default: no level is sent)");
+    expect(settingsPanelSource()).toContain("{effortLabel(level)}");
+    expect(settingsPanelSource()).not.toContain("(Default: no level is sent)");
   });
 });

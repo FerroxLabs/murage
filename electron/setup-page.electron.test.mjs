@@ -31,7 +31,7 @@ it.runIf(binary && bundledServer && (process.platform === "darwin" || process.en
   for (const lang of ["", "de"]) {
     const result = await runWindow(lang);
     expect(result, JSON.stringify(result)).toMatchObject({ code: 0, signal: null });
-    expect(result.stdout).toContain("setup-page-window-passed");
+    expect(result.stdout, JSON.stringify(result)).toContain("setup-page-window-passed");
     for (const step of ["step0-real-server-up-without-index-html", lang ? "step1-setup-page-shown-de" : "step1-setup-page-shown-en", "step2-show-the-log-opens-once", "step3-retry-stays-on-setup-page", "step4-app-arrived-by-itself", "step5-no-reload-after-success", "step6-no-json-main-frame-responses", "step6b-request-headers-document-navigate", "step7-error-page-log-link-opens-log", "step8-other-data-page-refused", "step9a-window-on-error-document-after-kill", "step9b-setup-page-back-in-", "step9bprime-setup-page-back-without-kick-in-", "step9c-app-back-no-json", "step9d-no-unsolicited-reload", "step9e-sandboxed-frame-left-alone"]) expect(result.stdout).toContain(step);
   }
 }, 340000);

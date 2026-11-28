@@ -44,7 +44,7 @@ describe("free text is an answer at every turn", () => {
     // The setup conversation still hears every typed answer — a question with
     // no chips at all (the second one is sometimes exactly that) would
     // otherwise have no way to be answered.
-    expect(composer).toContain("openIntakeCard(visibleMessages(bot))");
+    expect(composer).toContain("const question = openIntakeQuestion(bot);");
     // U36 (68b9631b1, merged 63f62cb33) names the typed text requestText (const requestText = t), one value for the send and the answer
     expect(composer).toContain("const requestText = t;");
     // PHONE-INTAKE-NOTICE: replyAlongside posts it with { alongside: true }, except through the browser door
@@ -62,7 +62,9 @@ describe("free text is an answer at every turn", () => {
     // Both, in this order: the send is dispatched first so the person's own
     // words are in the transcript before anything appended after them, and
     // the intake call cannot fail the send.
-    const branch = composer.slice(composer.indexOf("openIntakeCard(visibleMessages(bot))"));
+    const questionAt = composer.indexOf("const question = openIntakeQuestion(bot);");
+    expect(questionAt).toBeGreaterThan(-1);
+    const branch = composer.slice(questionAt);
     const sendAt = branch.indexOf('type: "send"');
     const intakeAt = branch.indexOf("replyAlongside(");
     expect(sendAt).toBeGreaterThan(-1);

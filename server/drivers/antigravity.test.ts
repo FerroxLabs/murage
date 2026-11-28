@@ -18,6 +18,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { HELD_RELAY_PID, holdBotRelay } from "../testing/held-relay-fixture.ts";
+import { decorateOwnerTurnInstance, setOwnerTurnResolver } from "../harness/power-owner-adapter.ts";
+import { assertRelayAvailable } from "./cli-mount-relay.ts";
 
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
@@ -151,10 +155,15 @@ describe("Antigravity decodeConfig", () => {
 // Each call names a fresh job, as engineJob does: on Windows spawnCli really creates the named job, and a second launch while a
 // first (warm) one still holds the same name is refused with EEXIST by design (procs.ts createPipJob).
 const jobProbe = vi.hoisted(() => ({ issued: [] as Array<{ name: string }>, jobs: [] as unknown[], badCli: null as string | null, hostPower: false }));
+// q1024-steerquar: the held relay's stand-in engine and mount children (testing/held-relay-fixture.ts HELD_RELAY_PID; a literal, as a mock factory may not import procs' importers).
+const heldRelayPid = vi.hoisted(() => 2_000_000_017);
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
   return {
     ...actual,
+    killCliTree: (...args: Parameters<typeof actual.killCliTree>) => { if (args[0].pid !== heldRelayPid) actual.killCliTree(...args); },
+    awaitCliTreeStopped: (...args: Parameters<typeof actual.awaitCliTreeStopped>) => args[0].pid === heldRelayPid ? Promise.resolve(false) : actual.awaitCliTreeStopped(...args),
+    cliTreeStoppedSignal: (...args: Parameters<typeof actual.cliTreeStoppedSignal>) => args[0].pid === heldRelayPid ? new Promise<true>(() => {}) : actual.cliTreeStoppedSignal(...args),
     engineJob: () => { const job = { name: `Local\\murage-pip-eng-probe-${process.pid}-${jobProbe.issued.length}` }; jobProbe.issued.push(job); return job; },
     spawnCli: (...args: Parameters<typeof actual.spawnCli>) => { jobProbe.jobs.push(args[3]); return actual.spawnCli(...(jobProbe.badCli ? ([jobProbe.badCli, ...args.slice(1)] as typeof args) : args)); },
     // USAGE-1 (ruling U): a row can make the turn child read as a host-power refusal
@@ -1090,7 +1099,6 @@ describe("Antigravity Murage MCP config", () => {
         MURAGE_COMMS_TOKEN: token,
         MURAGE_BOT_ID: "gemini-bot",
         MURAGE_THREAD_ID: "thread-1",
-        MURAGE_TURN_DEPTH: "0",
       },
     },
   });
@@ -1103,7 +1111,6 @@ describe("Antigravity Murage MCP config", () => {
       MURAGE_COMMS_TOKEN: token,
       MURAGE_BOT_ID: "gemini-bot",
       MURAGE_THREAD_ID: "thread-1",
-      MURAGE_TURN_DEPTH: "0",
     },
   });
 
@@ -1195,6 +1202,93 @@ describe("Antigravity Murage MCP config", () => {
       [`${ANTIGRAVITY_CUSTOM_MCP_PREFIX}notes`]: { command: "npx", args: ["-y", "@x/notes"], env: { NOTES_TOKEN: "n" } },
     });
   });
+
+  // q1024-steerquar (antigravity driver path, OPUS 583d64b809 H3 + H2, ASTRA 356cdf85f9): through the registry's owner decorator, the
+  // owner's mounted send runs past a held bot relay, and its relay starts no second copy of the custom integration (Antigravity names
+  // it murage-custom-<name>) whose held mount child is unconfirmed; an unheld one starts; a guest send and the held relay stay fenced.
+  it("q1024-steerquar antigravity: the owner's mounted send passes a held relay without a second copy of its unconfirmed integration", async () => {
+    expect(HELD_RELAY_PID, "fixture: the mocked pid is the held engine").toBe(heldRelayPid);
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+    const instance = await AntigravityDriver.create({ instanceId: "agy-steerquar", displayName: undefined, environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+    const recorder = recordEvents(instance.adapter);
+    const marks = mkdtempSync(join(tmpdir(), "steerquar-agy-"));
+    const integration = (name: string) => ({ command: process.execPath, args: ["-e", "require('fs').appendFileSync(process.argv[1], 'started\\n'); process.stdin.resume()", join(marks, name)], env: {} });
+    const starts = (name: string) => existsSync(join(marks, name)) ? readFileSync(join(marks, name), "utf8").split("\n").filter(Boolean).length : 0;
+    const botId = `steerquar-agy-${randomUUID()}`;
+    const held = await holdBotRelay(botId, { "murage-custom-notes": integration("notes-held") });
+    setOwnerTurnResolver(threadId => threadId.startsWith("owner-"));
+    try {
+      const adapter = decorateOwnerTurnInstance(instance).adapter;
+      const integrations = { custom: { notes: integration("notes"), calendar: integration("calendar") } };
+      const guest = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "guest-agy-quar", text: "one", integrations, warmIdentity: { botId, audience: "non-owner" } })
+        .then(() => "sent", (error: unknown) => String(error));
+      expect(guest, "a guest send to the held bot is still refused").toContain("MOUNT_RELAY_STOP_UNCONFIRMED");
+      const owner = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "owner-agy-quar", text: "one", integrations, warmIdentity: { botId, audience: "owner" } })
+        .then(({ turnId }) => turnId, (error: unknown) => `refused: ${String(error)}`);
+      expect(owner, "the owner's send is never refused by the held relay").not.toMatch(/^refused:/);
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === owner, 20_000), "the owner's turn runs to its reply").toMatchObject({ threadId: "owner-agy-quar", ok: true });
+      expect(starts("calendar"), "an integration the held relay did not have starts for the owner").toBe(1);
+      expect(starts("notes"), "no second copy of the integration whose held child is unconfirmed").toBe(0);
+      expect(() => assertRelayAvailable(held), "the held relay stays quarantined").toThrow("MOUNT_RELAY_STOP_UNCONFIRMED");
+    } finally { setOwnerTurnResolver(() => false); recorder.stop(); await instance.dispose(); rmSync(marks, { recursive: true, force: true }); }
+  }, 40_000);
+
+  // q1024-steerquar (FABLE 5f77117f74 H2 site): Antigravity mounts the computer and teammate servers under its reserved keys
+  // murage-computer / murage-agents (antigravity.ts ANTIGRAVITY_COMPUTER_MCP_KEY / ANTIGRAVITY_AGENTS_MCP_KEY), not "computer" /
+  // "agents". A held, unconfirmed child under either key gets no second copy on the owner's send; one key at a time, so each row
+  // proves its own key, while the other key, unheld, still starts.
+  it.each([["murage-computer", "murage-agents"], ["murage-agents", "murage-computer"]])("q1024-steerquar antigravity: no second copy of a held %s child on the owner's send", async (heldKey, freeKey) => {
+    expect(HELD_RELAY_PID, "fixture: the mocked pid is the held engine").toBe(heldRelayPid);
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+    const instance = await AntigravityDriver.create({ instanceId: "agy-steerquar-keys", displayName: undefined, environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+    const recorder = recordEvents(instance.adapter);
+    const marks = mkdtempSync(join(tmpdir(), "steerquar-agy-keys-"));
+    const integration = (name: string) => ({ command: process.execPath, args: ["-e", "require('fs').appendFileSync(process.argv[1], 'started\\n'); process.stdin.resume()", join(marks, name)], env: {} });
+    const starts = (name: string) => existsSync(join(marks, name)) ? readFileSync(join(marks, name), "utf8").split("\n").filter(Boolean).length : 0;
+    const botId = `steerquar-agy-keys-${randomUUID()}`;
+    const held = await holdBotRelay(botId, { [heldKey]: integration("held") });
+    setOwnerTurnResolver(threadId => threadId.startsWith("owner-"));
+    try {
+      const adapter = decorateOwnerTurnInstance(instance).adapter;
+      const integrations = { localComputer: integration("murage-computer"), agents: integration("murage-agents") };
+      const owner = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "owner-agy-keys", text: "one", integrations, warmIdentity: { botId, audience: "owner" } })
+        .then(({ turnId }) => turnId, (error: unknown) => `refused: ${String(error)}`);
+      expect(owner, "the owner's send is never refused by the held relay").not.toMatch(/^refused:/);
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === owner, 20_000), "the owner's turn runs to its reply").toMatchObject({ threadId: "owner-agy-keys", ok: true });
+      expect(starts(freeKey), "the reserved-key mount the held relay did not have starts for the owner").toBe(1);
+      expect(starts(heldKey), "no second copy of the reserved-key mount whose held child is unconfirmed").toBe(0);
+      expect(() => assertRelayAvailable(held), "the held relay stays quarantined").toThrow("MOUNT_RELAY_STOP_UNCONFIRMED");
+    } finally { setOwnerTurnResolver(() => false); recorder.stop(); await instance.dispose(); rmSync(marks, { recursive: true, force: true }); }
+  }, 40_000);
+
+  // q1024-steerquar (ASTRA 0faec876bb High, the other direction): a bot switched from Codex to Antigravity. The held relay ran the
+  // computer / teammate process as "computer" / "agents"; Antigravity mounts the same process as murage-computer / murage-agents.
+  it.each([["computer", "murage-computer", "murage-agents"], ["agents", "murage-agents", "murage-computer"]])("q1024-steerquar antigravity after Codex: no second copy of a held %s child as %s", async (heldName, agyKey, freeKey) => {
+    expect(HELD_RELAY_PID, "fixture: the mocked pid is the held engine").toBe(heldRelayPid);
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+    const instance = await AntigravityDriver.create({ instanceId: "agy-steerquar-switch", displayName: undefined, environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+    const recorder = recordEvents(instance.adapter);
+    const marks = mkdtempSync(join(tmpdir(), "steerquar-agy-switch-"));
+    const integration = (name: string) => ({ command: process.execPath, args: ["-e", "require('fs').appendFileSync(process.argv[1], 'started\\n'); process.stdin.resume()", join(marks, name)], env: {} });
+    const starts = (name: string) => existsSync(join(marks, name)) ? readFileSync(join(marks, name), "utf8").split("\n").filter(Boolean).length : 0;
+    const botId = `steerquar-agy-switch-${randomUUID()}`;
+    const held = await holdBotRelay(botId, { [heldName]: { ...integration(agyKey), env: { FIXTURE_TURN_TOKEN: "earlier-turn" } } });
+    setOwnerTurnResolver(threadId => threadId.startsWith("owner-"));
+    try {
+      const adapter = decorateOwnerTurnInstance(instance).adapter;
+      const integrations = { localComputer: integration("murage-computer"), agents: integration("murage-agents") };
+      const owner = await adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "owner-agy-switch", text: "one", integrations, warmIdentity: { botId, audience: "owner" } })
+        .then(({ turnId }) => turnId, (error: unknown) => `refused: ${String(error)}`);
+      expect(owner, "the owner's send is never refused by the held relay").not.toMatch(/^refused:/);
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === owner, 20_000), "the owner's turn runs to its reply").toMatchObject({ threadId: "owner-agy-switch", ok: true });
+      expect(starts(freeKey), "the integration the held relay did not have starts for the owner").toBe(1);
+      expect(starts(agyKey), "no second copy of the integration whose held Codex child is unconfirmed").toBe(0);
+      expect(() => assertRelayAvailable(held), "the held relay stays quarantined").toThrow("MOUNT_RELAY_STOP_UNCONFIRMED");
+    } finally { setOwnerTurnResolver(() => false); recorder.stop(); await instance.dispose(); rmSync(marks, { recursive: true, force: true }); }
+  }, 40_000);
 
   it("never mounts custom servers without full auto, where print mode cannot ask", async () => {
     ensureDirs();

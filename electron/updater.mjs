@@ -6,7 +6,7 @@
 // signing). In dev it's a no-op so the browser/dev shell is unaffected.
 // electron-updater is vendored (electron/vendor/electron-updater.cjs) because
 // the packaged app ships no node_modules.
-import { app, clipboard, ipcMain as electronIpcMain } from "electron";
+import { app, clipboard, ipcMain as electronIpcMain, net } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -20,6 +20,8 @@ import { openBlankTerminal } from "./terminal-launch.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
 import { createUpdateDownloadVerifier } from "./update-build-version.mjs";
 import { createGithubFallbackFeed } from "./updater-fallback.mjs";
+import { createRingFeed, createRingMembership, readGetUpdatesEarly, writeGetUpdatesEarly } from "./updater-rings.mjs";
+import { verifyDetachedSignature } from "./update-signature.mjs";
 import { installWindowsUpdateVerifier } from "./windows-update-signature.mjs";
 
 import { createUpdateNotifications, updateNotificationsEnabled } from "./update-notifications.mjs";
@@ -113,8 +115,13 @@ function setState(patch) {
 // main.mjs passes its owned-main-window gate (main-ipc-trust.mjs, B6).
 export function reportUpdateNotice(value) { return notifications?.report(value); }
 
+// "Get updates early" (ring beta, designs/RINGS-DESIGN.md section 4). Stored only on this computer, never sent.
+function updateChannelFile() { return join(app.getPath("userData"), "update-channel.json"); }
+
 export function registerUpdaterIpc(ipcMain = electronIpcMain) {
   ipcMain.handle("update:get-state", () => publicState());
+  ipcMain.handle("update:get-early", () => readGetUpdatesEarly(updateChannelFile()));
+  ipcMain.handle("update:set-early", (_event, early) => writeGetUpdatesEarly(updateChannelFile(), early === true));
   ipcMain.handle("update:check", () => updaterCoordinator?.check(true));
   ipcMain.handle("update:download", () => updaterCoordinator?.download());
   ipcMain.handle("update:install", () => updaterCoordinator?.install());
@@ -141,11 +148,46 @@ export function attachUpdaterWindow(mainWindow) {
 
 // `installerFallback` (macOS only, from main.mjs: electron/mac-install-guard.mjs) offers the dmg when Squirrel.Mac
 // cannot replace this copy, and brings the app back if an install stalls after the server stopped.
+// The packaged app's launch pause (electron/update-launch-pause.mjs), set by main.mjs at startup before any install.
+let launchPause = null;
+export function useUpdateLaunchPause(pause) { launchPause = pause; }
+
+function bundledRingsFloor() {
+  try { return Number(JSON.parse(readFileSync(new URL("./rings-floor.json", import.meta.url), "utf8"))?.seq) || 0; } catch { return 0; }
+}
+// A ring feed that cannot be built (unreadable key or profile path) leaves today's GitHub-latest path, never no updater.
+function createDesktopRingFeed(autoUpdater) {
+  try { return buildDesktopRingFeed(autoUpdater); } catch (error) {
+    autoUpdater.logger?.warn?.(`rings: unavailable ${error?.message ?? error}`);
+    return null;
+  }
+}
+function buildDesktopRingFeed(autoUpdater) {
+  const userData = app.getPath("userData");
+  return createRingFeed(autoUpdater, {
+    currentVersion: runningVersion(),
+    publicKey: readFileSync(new URL("./release-key.asc", import.meta.url)),
+    verify: verifyDetachedSignature,
+    cacheFile: join(userData, "rings-cache.json"),
+    killFile: join(userData, "kill-switches.json"),
+    floorSeq: bundledRingsFloor(),
+    // Electron's network stack (system proxy, like electron-updater's own requests): an install admission that only
+    // Node's fetch could make would refuse every install on a machine that reaches GitHub only through its proxy.
+    fetchImpl: (url, init) => net.fetch(url, init),
+    membership: createRingMembership({ ringFile: join(userData, "update-ring.json"), channelFile: updateChannelFile(), readText: (file) => readFileSync(file, "utf8") }),
+    log: (line) => autoUpdater.logger.info(line),
+  });
+}
+
 export function startUpdater({ beforeInstall = null, scheduleChecks = true, installerFallback = null, returnAuthority = null, notificationServices = null } = {}) {
   const publishOffer = () => {
     if (!scheduleChecks || !installerFallback || !updaterCoordinator) return;
     const pending = installerFallback.peekPendingOffer?.(runningVersion());
-    if (pending && updaterCoordinator.showInstallerOffer(pending.version,pending.reason)) installerFallback.acknowledgePendingOffer?.(pending);
+    if (!pending) return;
+    // With a ring feed the offer waits on R8 admission (a promise); the offer stays pending unless it was spent.
+    const spent = updaterCoordinator.showInstallerOffer(pending.version,pending.reason);
+    if (typeof spent?.then === "function") void spent.then((done) => { if (done) installerFallback.acknowledgePendingOffer?.(pending); }, () => {});
+    else if (spent) installerFallback.acknowledgePendingOffer?.(pending);
   };
   const enableChecks = () => {
     if (!scheduleChecks || checksScheduled) return;
@@ -194,8 +236,10 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true, inst
     nativeUpdater: autoUpdater.autoInstallOnAppQuit ? autoUpdater.nativeUpdater : null,
     handOffInstall: handOff ? handOffDownloadedPackage(packageType) : null,
     beforeInstall,
+    launchPause,
     returnAuthority,
     fallbackFeed: createGithubFallbackFeed(autoUpdater, { log: (line) => autoUpdater.logger.info(line) }),
+    ringFeed: createDesktopRingFeed(autoUpdater),
     // Every platform checks the download against something signed, whichever feed (the normal one or the latest-release
     // fallback) named it: Linux a signed SHA256SUMS, macOS and Windows the version the signed build itself carries.
     verifyDownload: createUpdateDownloadVerifier({ currentVersion: runningVersion(), packageType }),

@@ -61,6 +61,8 @@ If Murage still cannot find one, open **Settings → Models & engines** and use 
 
 The model picker groups models by the AI service they come from and marks the defaults. Engines that support it can refresh their list of models from the app. A new model choice applies to the next replies; earlier messages stay as they were.
 
+Models in a Flux account show by name, under the account's name, for example "GPT-6.2 Sol" rather than a long identifier. The name comes from the account when it sends a real one (not just the identifier). Otherwise Murage uses its own name for known models, and for any other it makes a readable name from the identifier. Flux Auto, Flux Reasoning, Flux Standard and Flux Fast keep their names.
+
 <ProductScreenshot name="docs-model-picker" alt="The Murage model picker with several cloud and local engines" caption="Every bot can use a different engine and model." />
 
 <Callout type="info" title="Your plan stays with your AI service">
@@ -69,6 +71,6 @@ The model picker groups models by the AI service they come from and marks the de
 
 ## Default models and saved choices
 
-For a new choice, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0; a live Codex catalog or a configured Codex default takes precedence. Update an older engine if it does not offer the model.
+For a new choice, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback recommends GPT-6.1 Sol, supported by the Codex 0.162.1 and Codex 0.167.0 catalogs; a live Codex catalog or a configured Codex default takes precedence. Update an older engine if it does not offer the model.
 
 Saved model choices stay as they are, including Claude Sonnet 5 and GPT-5.6 Sol. Changing a recommendation does not migrate bots or conversations. Desktop Murage bundles Fuigo; Claude Code and Codex are installed separately. Cloud home includes Claude Code and Codex. A model's availability still depends on your engine and account.

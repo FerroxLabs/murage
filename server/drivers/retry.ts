@@ -39,10 +39,10 @@ export interface ErrorClassification {
 const TRANSIENT_PATTERNS: Array<{ pattern: RegExp; reason: TransientReason }> = [
   { pattern: /\b(?:429|rate.?limit|too many requests)\b/i, reason: "rate_limited" },
   { pattern: /\boverloaded\b|\bcapacity\b/i, reason: "overloaded" },
-  { pattern: /\b5\d{2}\b|\binternal server error\b|\bbad gateway\b|\bservice unavailable\b/i, reason: "server_error" },
+  { pattern: /\b5\d{2}\b|\binternal server error\b|\binternal service failure\b|\bServiceUnavailableError\b|\bbad gateway\b|\bservice unavailable\b/i, reason: "server_error" },
   {
     pattern:
-      /\b(?:econnreset|econnrefused|epipe|etimedout|eai_again|connection reset|connection refused|socket hang up|network error|fetch failed)\b/i,
+      /\b(?:econnreset|econnrefused|epipe|etimedout|eai_again|unexpected_eof_while_reading|connection reset|connection refused|socket hang up|network error|fetch failed)\b/i,
     reason: "connection_reset",
   },
   { pattern: /\btimeout(ed)?\b|\btimed? out\b/i, reason: "timeout" },
@@ -60,7 +60,7 @@ const TERMINAL_PATTERNS: Array<{ pattern: RegExp; reason: TerminalReason }> = [
   { pattern: ORG_LOGIN_OFF, reason: "auth" },
   { pattern: /\b402\b|\bquota\b|\bbilling\b|\bsubscription\b/i, reason: "quota" },
   { pattern: /\bmodel not found\b|\bunknown model\b|\bdoes not exist for model\b|\bunsupported model\b/i, reason: "unknown_model" },
-  { pattern: /\b400\b|\b422\b|\binvalid request\b|\bmalformed\b|\bunexpected status\b/i, reason: "invalid_request" },
+  { pattern: /\b400\b|\b422\b|\binvalid request\b|\bmalformed\b/i, reason: "invalid_request" },
   { pattern: /\b404\b|\bno such thread\b|\bthread gone\b/i, reason: "not_found" },
   // interrupt/cancel vocabulary from the drivers' own stop paths — a turn the
   // user stopped must never come back as an auto-retry
@@ -139,17 +139,18 @@ export function classifyError(err: FailureInput): ErrorClassification {
   if (typeof fluxCode === "string" && fluxRefusalFinal(fluxRefusalCode({ flux_code: fluxCode }))) {
     return { transient: false, reason: "quota" };
   }
-  const status = httpStatusOf(err);
-  if (status !== undefined && !isProviderSafetyBlock(text)) {
-    const byStatus = classifyHttpStatus(status);
-    if (byStatus) return byStatus;
-  }
   // Preserve an explicit process interruption, even with prior safety text.
   if (err && "exitCode" in err && err.exitCode !== null && err.exitCode < 0) {
     return { transient: false, reason: "interrupted" };
   }
   // HTTP wrappers cannot make a provider's explicit safety block retryable.
   if (isProviderSafetyBlock(text)) return { transient: false, reason: "provider_safety" };
+  if (/\bcertificate[ _]verify[ _]failed\b/i.test(text)) return { transient: false, reason: "unknown" };
+  const status = httpStatusOf(err);
+  if (status !== undefined) {
+    const byStatus = classifyHttpStatus(status);
+    if (byStatus) return byStatus;
+  }
   if (err && "exitCode" in err) {
     for (const { pattern, reason } of TRANSIENT_PATTERNS) {
       if (pattern.test(text)) return { transient: true, reason };

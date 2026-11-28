@@ -117,9 +117,12 @@ describe("creation copies the default, existing bots are never changed", () => {
   }, 60_000);
   afterAll(async () => { await fixture?.close(); });
 
-  it("the frame reports this computer until the owner chooses", async () => {
+  // The fixture publishes no local-control descriptor, so until the owner chooses the default matches the machine: off.
+  // The "off" rule never applies on a Cloud home (server/local-control-line.test.ts); with local control on it is not
+  // taken (server/default-computer.ts newBotComputerChoice, localControlIsOff = no live descriptor).
+  it("the frame reports the machine's default until the owner chooses", async () => {
     const config = await call("GET", "/api/config");
-    expect(config.newBotComputer).toBe("this");
+    expect(config.newBotComputer).toBe("off");
   });
 
   it("copies the choice into a new bot, leaves older bots alone, and the bot's own choice wins", async () => {

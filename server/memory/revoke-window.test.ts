@@ -7,7 +7,7 @@
 // answer the installation-wide tombstone pass gives, and still does after a restart inside that window. T4-T6: the commit and
 // every slice stay flat from small to large files (revisions, versions, sources, records, receipts, evidence rows), counted in
 // statements and rows (testing/sql-work.ts), not milliseconds on a shared runner. Then the smaller promises: stances parsed once, copies found by their origin, the
-// start-up VACUUM waits for a job, a restore merge carries the deny rows. Every test runs on the build host (hz-test.sh), never on a Mac.
+// start-up VACUUM waits for a job, a restore merge carries the deny rows. Every test runs on Hetzner (hz-test.sh), never on a Mac.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -271,18 +271,27 @@ it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k
   const { scope } = live();
   countableInline();
   const db = database();
+  // cause10 v2 r2 (review High, revoke-window.test.ts:310): every source has its OWN content hashes (`<source>-h<revision>`). They all
+  // shared 'h', 'h2', ... in one scope, so the 100k-revision source Forget wrote the import key of every hash the record Forgets were
+  // then asked for, and the record assertion passed with the record writer disabled. Now a key is there only if its own Forget wrote it.
+  const ownHashes = (on: DatabaseSync, id: string) => {
+    on.prepare("UPDATE memory_source_versions SET content_hash=?1||'-h1' WHERE source_id=?1 AND revision=1").run(id);
+    on.prepare("UPDATE memory_sources SET content_hash=?1||'-h1' WHERE id=?1").run(id);
+  };
   const make = (id: string, revisions: number) => {
     source(id, scope, "t", `m-${id}`, "text", "owner", { text: "x" });
-    if (revisions > 1) db.prepare(`INSERT INTO memory_source_versions WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<?) SELECT ?,i,'h'||i,'{"text":"x"}',1 FROM n`).run(revisions, id);
+    ownHashes(db, id);
+    if (revisions > 1) db.prepare(`INSERT INTO memory_source_versions WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<?2) SELECT ?1,i,?1||'-h'||i,'{"text":"x"}',1 FROM n`).run(id, revisions);
     db.prepare("UPDATE memory_sources SET revision=? WHERE id=?").run(revisions, id);
   };
   const versioned = (id: string, versions: number) => {
     source(`src-${id}`, scope, "t", `m-${id}`, "text", "owner", { text: "x" });
+    ownHashes(db, `src-${id}`);
     // seeded through a plain connection: the app connection's identity trigger (provenance-stamp.ts ident_records_i) reads every
     // earlier version of a record id on each insert, so seeding 50k versions of one record through it is quadratic (not this lane)
     const raw = new DatabaseSync(join(DATA_DIR, "messages.db"));
     raw.exec("PRAGMA busy_timeout=5000; BEGIN");
-    if (versions > 1) raw.prepare(`INSERT INTO memory_source_versions WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<?) SELECT ?,i,'h'||i,'{"text":"x"}',1 FROM n`).run(versions, `src-${id}`);
+    if (versions > 1) raw.prepare(`INSERT INTO memory_source_versions WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<?2) SELECT ?1,i,?1||'-h'||i,'{"text":"x"}',1 FROM n`).run(`src-${id}`, versions);
     raw.prepare(`INSERT INTO memory_records WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) SELECT ?,i,?,'fact','x','assistant-inference',CASE WHEN i=? THEN 'active' ELSE 'superseded' END,0,1,NULL,NULL,1 FROM n`).run(versions, id, scope, versions);
     raw.prepare(`INSERT INTO memory_evidence WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) SELECT ?,i,?,i,0,1 FROM n`).run(versions, id, `src-${id}`);
     raw.exec("COMMIT"); raw.close();
@@ -292,32 +301,56 @@ it("T4: forgetting a source with 1 or 100k revisions, and a record with 1 or 50k
   db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   const tombstones = () => Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones").get()!.n);
   const sqls = new Set<string>();
-  const commit = (target: { kind: "source" | "record"; id: string }) => {
+  // the keys of ONE source, by its own hashes and its own id: the import keys (scope, content hash), the revisions left without one,
+  // and the supporting-source keys (source, revision)
+  const importKeys = (id: string) => Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE target_type='import' AND target_id=?1 AND substr(content_hash,1,length(?2)+2)=?2||'-h'").get(scope, id)!.n);
+  const unkeyed = (id: string) => Number(db.prepare(`SELECT count(*) AS n FROM memory_source_versions v WHERE v.source_id=?1
+    AND v.content_hash NOT IN (SELECT content_hash FROM memory_tombstones WHERE target_type='import' AND target_id=?2 AND content_hash IS NOT NULL)`).get(id, scope)!.n);
+  const sourceKeys = (id: string) => Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE target_type='source' AND reason='forgotten-supporting-source' AND target_id=?").get(id)!.n);
+  const distinctHashes = (id: string) => Number(db.prepare("SELECT count(DISTINCT content_hash) AS n FROM memory_source_versions WHERE source_id=?").get(id)!.n);
+  const keysOf = (id: string) => ({ imports: importKeys(id), unkeyed: unkeyed(id), sources: sourceKeys(id) });
+  // each Forget is measured against its own source, right at its commit: nothing of it keyed before (no other case's Forget wrote one
+  // of its keys), all of it keyed after, before any slice runs and before the next case's Forget
+  const commit = (target: { kind: "source" | "record"; id: string }, sourceId: string, revisions: number) => {
+    expect(distinctHashes(sourceId), sourceId).toBe(revisions);
+    expect(keysOf(sourceId), `${sourceId} before its Forget`).toEqual({ imports: 0, unkeyed: revisions, sources: 0 });
     const before = tombstones(); const { work } = sqlWork(db, () => forgetMemory(ownerMemoryTicket(), target)); stopMemoryRevocation();
     for (const sql of work.sqls.keys()) sqls.add(sql);
-    return { ...workOf(work), rows: tombstones() - before };
+    return { ...workOf(work), rows: tombstones() - before, keys: keysOf(sourceId) };
   };
-  const s1 = commit({ kind: "source", id: "small" }), sm = commit({ kind: "source", id: "mid" }), s2 = commit({ kind: "source", id: "large" });
-  const r1 = commit({ kind: "record", id: "small-r" }), rm = commit({ kind: "record", id: "mid-r" }), r2 = commit({ kind: "record", id: "large-r" });
+  const s1 = commit({ kind: "source", id: "small" }, "small", 1), sm = commit({ kind: "source", id: "mid" }, "mid", 5_000), s2 = commit({ kind: "source", id: "large" }, "large", 100_000);
+  const r1 = commit({ kind: "record", id: "small-r" }, "src-small-r", 1), rm = commit({ kind: "record", id: "mid-r" }, "src-mid-r", 2_000), r2 = commit({ kind: "record", id: "large-r" }, "src-large-r", 50_000);
   const said = JSON.stringify({ s1, sm, s2, r1, rm, r2 });
   // flat: 100k revisions cost no more than 5k, 50k versions no more than 2k, and the commits scan no table
-  expectNoMoreWork(s2, sm, said); expectNoMoreWork(r2, rm, said);
+  // 1.0.21 cause10 v2 (MAIN-RULING 2026-11-21T15:05Z, FORGET-ATOMIC): a Forget writes its WHOLE deny key set in its commit, so the rows
+  // it writes follow the history it forgets (one key per revision); what stays flat is the number of statements (set statements), and
+  // nothing scans a table. Until r3 this test asserted flat rows too, the deferral that left forgotten revisions importable meanwhile.
+  expect(s2.statements, said).toBeLessThanOrEqual(sm.statements); expect(r2.statements, said).toBeLessThanOrEqual(rm.statements);
   expect(unboundedScans(db, sqls)).toEqual([]);
-  // the target's own tombstone, the inline rows, and at most the inline budget of the job's first phase
-  expect(s2.rows).toBeLessThanOrEqual(1 + FORGET_INLINE_ROWS + INLINE_REVOCATION.rows); expect(r2.rows).toBeLessThanOrEqual(1 + 2 * (FORGET_INLINE_ROWS + INLINE_REVOCATION.rows));
-  // flat: bounded by the inline caps, whatever the history (100k revisions, 50k versions)
-  expect(s2.rows).toBeLessThanOrEqual(s1.rows + FORGET_INLINE_ROWS + INLINE_REVOCATION.rows); expect(s2.rows).toBe(sm.rows); expect(r2.rows).toBe(rm.rows);
-  // the job writes the rest, in slices: every revision's import tombstone, every supporting source
+  // every revision's import key is there at its own Forget's commit, once: a source Forget writes one per revision (forgetSourceKeys)
+  // and no supporting-source key; a record Forget one import key and one supporting-source key per revision the record rested on
+  // (forgetRecordKeys' two statements). One writer per number: with any of the three disabled its number is short (mutants T4-S, T4-RI, T4-RS).
+  expect(s1.keys, said).toEqual({ imports: 1, unkeyed: 0, sources: 0 });
+  expect(sm.keys, said).toEqual({ imports: 5_000, unkeyed: 0, sources: 0 });
+  expect(s2.keys, said).toEqual({ imports: 100_000, unkeyed: 0, sources: 0 });
+  expect(r1.keys, said).toEqual({ imports: 1, unkeyed: 0, sources: 1 });
+  expect(rm.keys, said).toEqual({ imports: 2_000, unkeyed: 0, sources: 2_000 });
+  expect(r2.keys, said).toEqual({ imports: 50_000, unkeyed: 0, sources: 50_000 });
+  // the job's slices only end and reclaim: no key is written again (r3 counted 1 + 5k + 100k + 1 + 2k + 50k import rows after the drain,
+  // rows its jobs wrote; here the same exact numbers stand at the commit and the drain adds none)
   const drained = drainSlices(db);
   expectBoundedSlices(db, drained);
   expect(drained.maxBytes).toBeLessThanOrEqual(1024);
-  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE target_type='import'").get()!.n)).toBe(1 + 5_000 + 100_000 + 1 + 2_000 + 50_000);
-  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_tombstones WHERE reason='forgotten-supporting-source' AND target_id='src-large-r'").get()!.n)).toBe(50_000);
+  expect(["small", "mid", "large", "src-small-r", "src-mid-r", "src-large-r"].map(keysOf)).toEqual([s1.keys, sm.keys, s2.keys, r1.keys, rm.keys, r2.keys]);
 });
 
 it("T4: deleting a conversation of 1k or 100k sources, or a bot of 1k or 50k records, is one deny row in a flat commit", () => {
   // an in-memory database (as T6): the commit and the slices measured are this lane's work, not the disk's
   countableInline();
+  // Open the main database first: a live recall reader left by an earlier test makes the commit's
+  // prepareActiveRecallReaders() (since fix/1020-fable-recallrest, merge 420659b00e) open it lazily, and its
+  // migration statements (routine_link_ready) would then be counted and EXPLAINed against this :memory: db.
+  database();
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys=ON");
   migrateMemorySchema(db, "active");

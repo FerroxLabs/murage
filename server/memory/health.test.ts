@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { MEMORY_SCHEMA_VERSION } from "./schema.ts";
 import { randomUUID } from "node:crypto";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -63,7 +64,7 @@ it("reports current v2 sources as captured before their real capture job is publ
   // current source only, rather than count both historical revisions.
   capture(id, "Current evidence");
 
-  expect(database().prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: 13 });
+  expect(database().prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()).toEqual({ schema_version: MEMORY_SCHEMA_VERSION });
   expect(memoryHealth("extractor")).toMatchObject({
     captured: { sources: 1 },
     processed: { sources: 0, lastAt: null },

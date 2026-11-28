@@ -14,8 +14,12 @@ afterEach(() => { _resetPhoneSecretsForTest(); forgetAllPhoneTurns(); });
 function fixture(file = ":memory:") {
   const db = new DatabaseSync(file);
   const store = new SqliteCallStore(db);
+  // As the app's start pass does: assistant cleanup waits for the key-table migration (D5 P8b gate).
+  while (!store.migrateBatch());
   const revisions = new RevisionStore();
-  const fetch = vi.fn<import("./vapi-adapter.ts").FetchLike>(async (_url: string, init: { method: string; body?: string }) => ({ status: 200, json: async () => init.method === "POST" ? { id: "vendor-1", status: "scheduled" } : [] }));
+  // Each created call gets its own vendor id: calls sharing one id would end together on a scoped result.
+  let created = 0;
+  const fetch = vi.fn<import("./vapi-adapter.ts").FetchLike>(async (_url: string, init: { method: string; body?: string }) => ({ status: 200, json: async () => init.method === "POST" ? { id: `vendor-${++created}`, status: "scheduled" } : [] }));
   const adapter = new VapiAdapter(fetch);
   const service = new PhoneCallService(adapter, revisions, () => "en", () => {}, store);
   return { db, store, revisions, fetch, adapter, service };
@@ -47,15 +51,18 @@ it("persistence failure before send makes no provider call; failure after send r
   const f = fixture();
   try {
     await f.service.saveSettings(defaultSettings("number", "Owner"));
-    const put = vi.spyOn(f.store, "put");
+    // D5 I13: place creates its intent row with insert (the only writer that creates rows), so the failing write is insert.
+    const put = vi.spyOn(f.store, "insert");
     put.mockImplementationOnce(() => { throw new Error("disk full"); });
     const before = f.fetch.mock.calls.length;
     await expect(f.service.place(args)).rejects.toThrow("disk full");
     expect(f.fetch).toHaveBeenCalledTimes(before);
     put.mockRestore();
     let count = 0;
-    const real = f.store.put.bind(f.store);
-    vi.spyOn(f.store, "put").mockImplementation(row => { if (++count === 2) throw new Error("disk full"); real(row); });
+    const real = f.store.update.bind(f.store);
+    // The intent row is inserted and every later write goes through the single terminal write (update, never put: D5 F3 B1),
+    // so the first update is the write after send.
+    vi.spyOn(f.store, "update").mockImplementation((row, o) => { if (++count === 1) throw new Error("disk full"); return real(row, o); });
     expect(await f.service.place(args)).toMatchObject({ ok: false });
     expect([...f.store.live()][0].status).toBe("uncertain");
     const sent = f.fetch.mock.calls.length;
@@ -72,10 +79,10 @@ it("settings save invalidates a pending Ask's turn; a fresh turn can execute", a
     expect(f.service.askPreview(args)?.settings_revision).toBe(1);
     await f.service.saveSettings({ ...defaultSettings("other", "Owner"), recordAudio: true });
     const before = f.fetch.mock.calls.length;
-    expect(await servePhoneTool(() => f.service, "phone_call_place", claim, args)).toEqual({ error: "not_set_up" });
+    expect(await servePhoneTool(() => f.service, "phone_call_place", claim, args, { botMayPhone: () => true })).toEqual({ error: "not_set_up" });
     expect(f.fetch).toHaveBeenCalledTimes(before);
     recordPhoneTurn("new", claim);
-    expect(await servePhoneTool(() => f.service, "phone_call_place", { ...claim, generation: "new" }, args)).toMatchObject({ settings_revision: 2 });
+    expect(await servePhoneTool(() => f.service, "phone_call_place", { ...claim, generation: "new" }, args, { botMayPhone: () => true })).toMatchObject({ settings_revision: 2 });
   } finally { f.db.close(); }
 });
 it("a 500 response retains the uncertain call and its superseded assistant", async () => {
@@ -292,6 +299,9 @@ it.each([false, true])("normal completion releases a superseded assistant (first
     if (failFirst) remove.mockRejectedValueOnce(new Error("offline"));
     vi.spyOn(f.adapter, "result").mockResolvedValue({ vendorId: "vendor-1", status: "ended", transcript: "Done", structured: { outcome: "done" } });
     await f.service.result({ call: placed.value.call });
+    // D5 P8d: a turn's result read never runs assistant cleanup; the next owner refresh releases it.
+    expect(remove).not.toHaveBeenCalled();
+    await phoneOwnerRoute(() => f.service, { method: "GET", path: "/api/phone-calls", desktop: true, botCredential: false });
     expect(remove).toHaveBeenCalledTimes(1);
     expect(f.revisions.get(1) === undefined).toBe(!failFirst);
     // A later owner refresh must retry even though there are no outstanding calls.
@@ -313,14 +323,21 @@ it.each(["live", "starting"] as const)("completion retains a superseded assistan
     await vi.waitFor(() => expect([...f.store.live()]).toHaveLength(2));
     await f.service.saveSettings(defaultSettings("other", "Owner"));
     const remove = vi.spyOn(f.adapter, "deleteAssistant").mockResolvedValue();
-    vi.spyOn(f.adapter, "result").mockResolvedValue({ vendorId: "vendor-1", status: "ended", transcript: "Done", structured: { outcome: "done" } });
+    // Only the calls named here have ended: the owner refresh reads every live call, and the other one is still ringing.
+    const ended = new Set([f.store.get(String(placed.value.call))!.vendorId]);
+    vi.spyOn(f.adapter, "result").mockImplementation(async vendorId => ended.has(vendorId)
+      ? { vendorId, status: "ended", transcript: "Done", structured: { outcome: "done" } } : { vendorId, status: "ringing" });
     await f.service.result({ call: placed.value.call });
+    // D5 P8d: cleanup runs on the owner refresh only; the other call still names revision 1, so it is kept.
+    await phoneOwnerRoute(() => f.service, { method: "GET", path: "/api/phone-calls", desktop: true, botCredential: false });
     expect(remove).not.toHaveBeenCalled();
     expect(f.revisions.get(1)).toBeDefined();
     hold.release();
     const placedSecond = await second;
     if (!placedSecond.ok) throw new Error("fixture placement failed");
+    ended.add(f.store.get(String(placedSecond.value.call))!.vendorId);
     await f.service.result({ call: placedSecond.value.call });
+    await phoneOwnerRoute(() => f.service, { method: "GET", path: "/api/phone-calls", desktop: true, botCredential: false });
     expect(remove).toHaveBeenCalledTimes(1);
   } finally { hold.release(); f.db.close(); }
 });

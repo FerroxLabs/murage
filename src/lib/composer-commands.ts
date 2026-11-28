@@ -6,7 +6,7 @@
 // equivalent in a test rather than by reading JSX.
 import { offersSkillCommand } from "../../shared/skill-command";
 
-export type ComposerSlashCommandId = "goal" | "learn" | "setup";
+export type ComposerSlashCommandId = "goal" | "learn" | "setup" | "teach";
 
 export interface ComposerSlashCommand {
   id: ComposerSlashCommandId;

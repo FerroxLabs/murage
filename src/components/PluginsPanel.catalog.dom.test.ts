@@ -20,7 +20,7 @@ vi.mock("@/lib/connected-apps-preload", () => ({
   cachedConnectedAppsAdmission: undefined, rememberConnectedAppsAdmission: vi.fn(), subscribeConnectedAppsAdmission: (listener: (status: undefined) => void) => { listener(undefined); return () => {}; },
   cachedConnectorStatus: null, cachedConnectorStatusAuthoritative: true, inventoryApps: {},
   preloadConnectedApps: () => stub.inventory(), pendingConnectedApps: () => null,
-  isCredentialStoreUnreadable: () => false, rememberConnectedApps: vi.fn(),
+  isCredentialStoreUnreadable: () => false, isRememberedUnconfirmed: () => false, rememberConnectedApps: vi.fn(),
 }));
 let restore: () => void;
 beforeAll(() => { restore = installDOMHarness(); });

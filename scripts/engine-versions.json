@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "note": "Every engine Murage bundles or pins, one version each. scripts/engine-versions.test.mjs reads each source constant and fails when this file and the source disagree, so a bump moves both and the next audit is a diff of this file.",
+  "engines": {
+    "agent-browser": { "version": "0.36.0", "source": "server/browser-engine-release.ts", "pattern": "AGENT_BROWSER_VERSION = \"([^\"]+)\"" },
+    "chrome-headless-shell": { "version": "158.0.8127.88", "source": "server/browser-bundle-release.ts", "pattern": "CHROME_VERSION = \"([^\"]+)\"" },
+    "cua-driver": { "version": "0.55.0", "source": "server/local-computer.ts", "pattern": "CUA_DRIVER_VERSION = \"([^\"]+)\"" },
+    "cua-driver-container": { "version": "0.20.0", "source": "server/container-computer.ts", "pattern": "CUA_DRIVER_VERSION = \"([^\"]+)\"" },
+    "fuigo": { "version": "1.0.48", "source": "scripts/prepare-fuigo.mjs", "pattern": "FUIGO_VERSION = \"([^\"]+)\"" },
+    "fuigo-qualified": { "version": "1.0.48", "source": "server/fuigo-native-update.ts", "pattern": "QUALIFIED_FUIGO_VERSION = \"([^\"]+)\"" },
+    "hermes": { "version": "0.22.2", "source": "shared/tool-identity.ts", "pattern": "HERMES_VERSION = \"([^\"]+)\"" },
+    "cloudflared": { "version": "2026.10.3", "source": "scripts/prepare-cloudflared.mjs", "pattern": "CLOUDFLARED_VERSION = \"([^\"]+)\"" },
+    "restic": { "version": "0.19.1", "source": "shared/backup-restic-pin.mjs", "pattern": "RESTIC_VERSION=\"([^\"]+)\"" },
+    "age": { "version": "1.3.2", "source": "scripts/build-inputs.json", "pattern": "age-v([0-9.]+)-darwin-arm64" },
+    "electron": { "version": "43.8.1", "source": "package.json", "pattern": "\"electron\": \"\\^([^\"]+)\"" }
+  }
+}

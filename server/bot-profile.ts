@@ -23,6 +23,8 @@ export const BOT_PROFILE_PATCH_FIELDS = [
   "speakReplies",
 ] as const;
 
+export const REPLY_LANGUAGE_MAX = 60;
+
 const profilePatchSchema = z.object({
   name: z
     .string({ error: "name must be a string" })
@@ -46,6 +48,11 @@ const profilePatchSchema = z.object({
   persona: z
     .string({ error: "persona must be a string" })
     .max(BOT_PROFILE_LIMITS.persona, { error: "persona must be at most 280 characters" })
+    .optional(),
+  // Settings v10 G7: the language this bot answers in; "" goes back to unchanged (stored as absent).
+  replyLanguage: z
+    .string({ error: "replyLanguage must be a string" })
+    .max(REPLY_LANGUAGE_MAX, { error: "replyLanguage must be at most 60 characters" })
     .optional(),
   notifications: z.boolean({ error: "notifications must be true or false" }).optional(),
   avatarUrl: z
@@ -79,6 +86,7 @@ export type BotProfilePatch = Partial<
     | "title"
     | "description"
     | "persona"
+    | "replyLanguage"
     | "notifications"
     | "avatarUrl"
     | "avatarCrop"
@@ -106,6 +114,8 @@ export type BotProfilePatchResult =
  * back to clients so Codable and object-spread clients both clear stale data.
  */
 export function parseBotProfilePatch(input: BotProfilePatchInput, strict = false): BotProfilePatchResult {
+  // G7: the reply language is an owner setting on the desktop endpoint only; paired clients may not write it.
+  if (strict && (input as { replyLanguage?: unknown }).replyLanguage !== undefined) return { ok: false, error: "unsupported profile field: replyLanguage" };
   const parsed = (strict ? profilePatchSchema.strict() : profilePatchSchema).safeParse(input);
   if (!parsed.success) {
     const unsupported = parsed.error.issues.find((issue) => issue.code === "unrecognized_keys");
@@ -119,7 +129,7 @@ export function parseBotProfilePatch(input: BotProfilePatchInput, strict = false
     return { ok: false, error: issue?.message ?? "invalid profile patch" };
   }
 
-  const { avatarUrl, persona, voiceProvider, ...fields } = parsed.data;
+  const { avatarUrl, persona, replyLanguage, voiceProvider, ...fields } = parsed.data;
   const patch: BotProfilePatch = fields;
   // "" goes back to the workspace's voice service: stored as absent
   if (voiceProvider !== undefined) patch.voiceProvider = voiceProvider || undefined;
@@ -127,5 +137,6 @@ export function parseBotProfilePatch(input: BotProfilePatchInput, strict = false
   // Same clear-value rule as avatarUrl: absent, never an empty string. A
   // cleared voice note must leave no `Personality:` line on the next turn.
   if (persona !== undefined) patch.persona = persona.trim() || undefined;
+  if (replyLanguage !== undefined) patch.replyLanguage = replyLanguage.replace(/[\u0000-\u001f\u007f]+/g, " ").trim() || undefined;
   return { ok: true, patch };
 }

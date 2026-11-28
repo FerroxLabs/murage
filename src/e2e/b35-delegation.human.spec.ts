@@ -185,7 +185,7 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   const delegated = (await waitFor("parent delegate_bot call", () => engine("parent-delegate"), list => list.length === before.delegated + 1, 60_000)).at(-1)!;
   expect(delegated.isError, delegated.text).toBe(false);
   expect(delegated.text).toContain(`Delegation queued: @${CHILD} will pick it up after your current turn finishes.`);
-  expect(delegated.env).toEqual({ MURAGE_BOT_ID: chiefId, MURAGE_THREAD_ID: chiefThread, MURAGE_TURN_DEPTH: "0" });
+  expect(delegated.env).toEqual({ MURAGE_BOT_ID: chiefId, MURAGE_THREAD_ID: chiefThread, claimDepth: 0 });
   const taskId = String(delegated.taskId);
   expect(taskId).toMatch(/^[\w-]{4,64}$/);
   await expectApprovalsOnlyOnChild("after delegate_bot");
@@ -203,7 +203,7 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   expect(item.link.threadId).not.toBe(chiefThread);
   expect(item.link.threadId).not.toBe((await channel()).threadId);
   const asked = await waitFor("child engine asked once", () => engine("child-asked"), list => list.length === before.asked + 1, 30_000);
-  expect(asked.at(-1)).toMatchObject({ env: { MURAGE_BOT_ID: childId, MURAGE_THREAD_ID: item.link.threadId, MURAGE_TURN_DEPTH: "1" }, delegatedBy: CHIEF, delegatedPrefix: `[Delegated by @${CHIEF}` });
+  expect(asked.at(-1)).toMatchObject({ env: { MURAGE_BOT_ID: childId, MURAGE_THREAD_ID: item.link.threadId, claimDepth: 1 }, delegatedBy: CHIEF, delegatedPrefix: `[Delegated by @${CHIEF}` });
   expect(engine("child-decision")).toHaveLength(before.decided);
   const childMessages = await messages(item.link.threadId);
   expect(childMessages.filter(m => m.role === "user" && m.text === DELEGATED_TEXT)).toHaveLength(before.asked + 1);
@@ -307,7 +307,7 @@ test("a Chief-created sub-bot's delegated permission is global attention, opens 
   await tellChief(`Stand up the fixture team.\n${B35_CREATE_MARKER}:${TEAM}`);
   const created = await waitFor("parent create_bot call", () => engine("parent-create"), list => list.length === 1, 60_000);
   expect(created[0].isError, created[0].text).toBe(false);
-  expect(created[0].env).toEqual({ MURAGE_BOT_ID: chiefId, MURAGE_THREAD_ID: chiefThread, MURAGE_TURN_DEPTH: "0" });
+  expect(created[0].env).toEqual({ MURAGE_BOT_ID: chiefId, MURAGE_THREAD_ID: chiefThread, claimDepth: 0 });
   await idle(chiefId, "Chief settled after create_bot");
   const named = (await roster()).bots.filter((bot: any) => bot.name === CHILD);
   expect(named).toHaveLength(1);

@@ -5,6 +5,7 @@ import { OPEN_PALETTE_EVENT } from "@/lib/app-events";
 import { imeComposing } from "@/lib/composer-enter";
 import { nextLayerSequence } from "@/lib/layers";
 import { openLayers, type TrapElement } from "@/lib/focus-trap";
+import { focusOpenSettingsSearch } from "@/lib/settings-search-focus";
 import { LazyOverlay } from "./LazyOverlay";
 import { retryableLazy } from "./LazyBoundary";
 import type { CommandPaletteProps } from "./CommandPalette";
@@ -44,7 +45,7 @@ export function CommandPaletteHost({ onOpenChange, palette = Palette }: {
       if (imeComposing(e)) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && !e.shiftKey && !e.altKey && !e.isComposing) {
         e.preventDefault();
-        if (current.current) closeRequest(current.current.token); else accept("");
+        if (current.current) closeRequest(current.current.token); else if (!focusOpenSettingsSearch()) accept("");
       }
     };
     const onOpen = (event: Event) => {

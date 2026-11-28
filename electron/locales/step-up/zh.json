@@ -1,5 +1,5 @@
 {
-  "@source": "968d807cca562a743b79127e48954176f04baabf",
+  "@source": "f5be60d75f8dfdae69794bd6aeba3a92fb69cfc5",
   "label.cloudPairing": "向你的 Cloud 主页添加新设备",
   "label.cloudDevicesAccount": "更改你的 Cloud 主页上的设备或账户",
   "label.modelSigninStart": "在你的 Cloud 主页上开始模型登录",
@@ -103,11 +103,6 @@
   "label.connectorDisconnect": "断开应用",
   "label.phoneCalls": "管理机器人的电话",
   "label.dataDirConfirmRoot": "确认已关联的数据文件夹现在指向的位置",
-  "label.highlevelCheck": "检查 HighLevel 位置",
-  "label.highlevelConnect": "连接 HighLevel 位置",
-  "label.highlevelAccess": "更改机器人在 HighLevel 中可读取的内容",
-  "label.highlevelDisconnect": "断开 HighLevel 位置",
-  "label.highlevelChange": "更改 HighLevel 连接",
   "label.fallback": "在你的 Cloud 主页上进行更改",
   "flag.fullAccess": "完全访问",
   "flag.noLimits": "无限制",

@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { murageTool } from "./murage-tool-surface.ts";
 
 /** What a bot set to the owner's browser is told when no browser tools are
- * mounted: plain text in its instructions, so every engine hears the same. */
-export function extensionBrowserUnavailablePrompt(reason: string, canRequest: boolean): string {
-  const next = canRequest
-    ? `call ${murageTool("request_browser_connection")} with a short reason and end your turn; Murage continues the task after the owner checks the connection.`
-    : "ask the owner to open Murage for Chrome, share a tab or resume it there, and then send the task again.";
-  return `OWNER'S BROWSER: you are set to work in the owner's own browser through Murage for Chrome, but it is not ready for this conversation, so no browser tools are mounted this turn. ${reason.trim().slice(0, 200)} Do not say you browsed or can browse now. If the task needs the owner's browser, ${next} Otherwise continue without it.`;
+ * mounted: plain text in its instructions, so every engine hears the same.
+ * DESIGN-JOURNEY-1024 W3 (P3, no setup inside a job): the bot is never told to request a connection, end its turn or have
+ * the task sent again; it carries on, and Murage tells the owner about the browser itself. */
+export function extensionBrowserUnavailablePrompt(reason: string): string {
+  return `OWNER'S BROWSER: the owner's own browser (Murage for Chrome) is not ready for this conversation, so no browser tools are mounted this turn. ${reason.trim().slice(0, 200)} Do not say you browsed or can browse now. Do not ask the owner to set up or connect a browser; Murage tells them about it. Continue the task without it.`;
 }
+
+/** What the retired bot route answers (W3): a bot cannot ask for browser setup. */
+export const BOT_BROWSER_SETUP_GONE = "Bots no longer ask for browser setup. Carry on without the owner's browser; Murage tells the owner.";
 
 export type ExtensionPromptOptions = {
   /** The bot's approval mode: a card for each step, one approval per task, or Full access. */

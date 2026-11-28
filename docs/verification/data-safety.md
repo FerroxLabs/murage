@@ -362,7 +362,7 @@ invokes; `rmSync`/`rm`/`rm -rf` rows are the allowlisted ones in section 5.
 | `scripts/smoke-app-permissions.mjs:35` | `safeWipeSync` | `data` | L28 `mkdtempSync(join(tmpdir(), "murage-permission-smoke-"));` |
 | `scripts/smoke-browser-bundle.mjs:356` | `safeWipe` | `fixture` | L173 parameter |
 | `scripts/smoke-clipboard.mjs:95` | `safeWipeSync` | `profile` | L21 `mkdtempSync(join(tmpdir(), "murage-native-clipboard-"));` |
-| `scripts/smoke-cua-x11-input.mjs:266` | `safeWipeSync` | `sandbox` | L18 `mkdtempSync(path.join(tmpdir(), prefix));` |
+| `scripts/smoke-cua-x11-input.mjs:223` | `safeWipeSync` | `sandbox` | L19 `mkdtempSync(path.join(tmpdir(), prefix));` |
 | `scripts/smoke-deb-upgrade.mjs:113` | `safeWipeSync` | `temporary` | L30 `fs.mkdtempSync(path.join(path.resolve(runnerTemp), "murage-deb-upgrade-"));` |
 | `scripts/smoke-installation-recovery.mjs:60` | `safeWipeSync` | `scratch` | L12 `mkdtempSync(join(tmpdir(), "murage-packaged-recovery-"));` |
 | `scripts/smoke-linux-package.mjs:594` | `safeWipeSync` | `sandbox` | L33 `mkdtempSync(path.join(tmpdir(), "murage-linux-smoke-"));` |

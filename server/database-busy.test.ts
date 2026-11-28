@@ -33,7 +33,8 @@ it("opens with the owner budget and a journal cap, and reads them back", () => {
   const db = database();
   expect(db.prepare("PRAGMA busy_timeout").get()).toEqual({ timeout: OWNER_BUSY_MS });
   expect(db.prepare("PRAGMA journal_size_limit").get()).toEqual({ journal_size_limit: JOURNAL_SIZE_LIMIT_BYTES });
-  expect(JOURNAL_SIZE_LIMIT_BYTES).toBe(0); // the next commit after a copied log cuts the file back (wal-maintenance.ts)
+  // 1.0.22 MAIN-RULING SQLITE-1022 item 1b: 16 MiB (was 0); the cut of a scrubbed log is proven in sqlite-cost-items12-1022.test.ts W1b-SCRUB
+  expect(JOURNAL_SIZE_LIMIT_BYTES).toBe(16 * 1024 * 1024); // the next commit after a copied log cuts the file back to 16 MiB (wal-maintenance.ts)
   // the first open of the process says how big the store is (this file's first open is this test)
   expect(lines.some(line => /^\[sqlite\] storage file=\d+ wal=\d+ freelist=\d+$/.test(line))).toBe(true);
 });

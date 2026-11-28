@@ -7,9 +7,11 @@ import { browserBundlePaths, browserBundleSpec } from "./browser-bundle-release.
 // Derived from the exact pinned arm64 upstream assets and compared byte-for-byte
 // with the signed 0.1.53 bundle. No x64 or general Mach-O normalization is implied.
 export const MAC_BROWSER_PAYLOADS = {
-  engine: { signatureCommand: 2200, signatureOffset: 12267216, linkeditCommand: 1600, payloadSha256: "361320726d8e5ab0a8703449225943b5c350c6aec20db0c86a1415ae6393cb44" },
-  chrome: { signatureCommand: 9176, signatureOffset: 165593360, linkeditCommand: 3352, payloadSha256: "103235dc0c917ffbaa9a45cc261e4e6ad20466751c5752debed96d7fa70a22b0" },
+  engine: { signatureCommand: 2200, signatureOffset: 12365616, linkeditCommand: 1600, payloadSha256: "c9b6cfe2018396161f02b8b81580fd7fd25ff2c0c5cef30726d009d8d90c25b5" },
+  chrome: { signatureCommand: 9680, signatureOffset: 177561904, linkeditCommand: 3752, payloadSha256: "26d75e8c235d125a98df6bcbca0bfdf286e5b3861bed21d79bc6e9e0ff17cf98" },
 } as const;
+/** Size of the pinned chrome-headless-shell arm64 executable (Chrome for Testing 158), as shipped signed. */
+export const MAC_CHROME_EXECUTABLE_BYTES = 178949264;
 type Image = keyof typeof MAC_BROWSER_PAYLOADS;
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
@@ -60,7 +62,15 @@ const inflight = new Set<Promise<void>>();
 const retries = new Map<string, { key: string; failures: number; notBefore: number }>();
 const RETRY_DELAYS_MS = [30_000, 120_000, 300_000];
 /** For tests: forget every remembered verdict. */
-export function clearMacBrowserCodesignCache() { verdicts.clear(); inflight.clear(); retries.clear(); }
+export function clearMacBrowserCodesignCache() { verdicts.clear(); inflight.clear(); retries.clear(); refusalsLogged.clear(); }
+/** One log line per refused tool file (path and identity), never one per turn. Names the tool, the check and the size only. */
+const refusalsLogged = new Set<string>();
+function logRefusal(image: string, check: string, file: string, stat: Stats) {
+  const key = `${check}|${identityOf(file, stat)}`;
+  if (refusalsLogged.has(key)) return;
+  refusalsLogged.add(key);
+  console.warn(`[browser] packaged ${image} refused: ${check} (${stat.size} bytes)`);
+}
 const CODESIGN_TIMEOUT_MS = 120_000;
 /** How long one caller waits on the shared check: a little over the longest codesign run. */
 const CHECK_WAIT_MS = CODESIGN_TIMEOUT_MS + 15_000;
@@ -127,18 +137,25 @@ export function packagedMacBrowserState(resources: string, currentExecutable = p
     if (JSON.stringify(recorded) !== JSON.stringify(spec) || !Array.isArray(files)) return "failed";
     for (const [image, file, relative, rawHash, rawSize] of [
       ["engine", paths.engine, spec.engine.executable, spec.engine.sha256, spec.engine.bytes],
-      ["chrome", paths.chrome, spec.chrome.executable, spec.chrome.executableSha256, 166887216],
+      ["chrome", paths.chrome, spec.chrome.executable, spec.chrome.executableSha256, MAC_CHROME_EXECUTABLE_BYTES],
     ] as const) {
       const records = files.filter((entry: { path?: unknown }) => entry?.path === relative);
       if (records.length !== 1 || records[0].kind !== "file" || records[0].sha256 !== rawHash || records[0].bytes !== rawSize) return "failed";
       // Every full admission reads and hashes the bytes of the descriptor it holds open; nothing earlier vouches for them.
-      if (!verifyMacBrowserImage(read(file, MAC_BROWSER_PAYLOADS[image].signatureOffset + 2 * 1024 ** 2), image)) return "failed";
+      if (!verifyMacBrowserImage(read(file, MAC_BROWSER_PAYLOADS[image].signatureOffset + 2 * 1024 ** 2), image)) {
+        logRefusal(image, "signature layout does not match the pinned build", file, held.find(entry => entry.file === file)!.stat);
+        return "failed";
+      }
     }
     // Only the two tools are codesigned, never the whole app: that takes 17 s warm and 37 s cold on a real Mac, always past the old bound,
     // so it refused every install. The app itself is bound by name and location above (Murage.app, running from its own Contents/MacOS).
     // The codesign runs once, off the event loop, and is remembered per binary (path, size, mtime, inode).
-    const states = [paths.engine, paths.chrome].map(file => toolSignature(file, held.find(entry => entry.file === file)!.stat, start));
-    if (states.includes("bad")) return "failed";
+    const tools = [paths.engine, paths.chrome].map(file => held.find(entry => entry.file === file)!);
+    const states = tools.map(tool => toolSignature(tool.file, tool.stat, start));
+    if (states.includes("bad")) {
+      states.forEach((state, i) => { if (state === "bad") logRefusal(i ? "chrome" : "engine", "codesign refused", tools[i].file, tools[i].stat); });
+      return "failed";
+    }
     if (states.includes("pending")) { checking = true; return "checking"; }
     if (states.includes("unfinished")) { unfinished = true; return "unfinished"; }
     accepted = held.every(({ file, fd, stat }) => same(stat, fstatSync(fd)) && same(stat, lstatSync(file)) && realpathSync(file) === file);

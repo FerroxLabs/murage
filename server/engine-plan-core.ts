@@ -440,6 +440,9 @@ export interface HomePlanData {
   steps: Step[];
   /** the programs this engine is configured to run as (real paths of its CLI), so the process check knows a renamed copy */
   identities?: string[];
+  /** delholder-1024: the conversation the plan removes (its folders, its session ids as planned): a default-home CLI in it still holds
+   * the home at every write (engine-closed.ts homeScope) */
+  conversation?: { folders: string[]; needles: string[] };
   /** the home is in a folder a sync client mirrors (decided when it was planned) */
   synced?: true;
 }

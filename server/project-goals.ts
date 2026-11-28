@@ -7,6 +7,7 @@
 // server (S) rows; the routes call the owner (O) rows; the envelope and the
 // internal tools call the lead (L) rows.
 import { projectIsClosing } from "./project-records.ts";
+import { dropsWords, secureDeleteOn } from "./secure-delete.ts";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -55,6 +56,7 @@ function goalActivity(db: DatabaseSync, goal: ProjectGoal, kind: "goal_state" | 
   insertProjectActivity(db, { groupId: goal.groupId, goalId: goal.id, kind, actor, at: now, detail });
 }
 
+const GOAL_TEXT_COLUMNS = ["title", "description", "criteria", "state_reason"];
 function writeGoal(db: DatabaseSync, goalId: string, fields: Record<string, unknown>): void {
   const sets: string[] = ["revision=revision+1"];
   const values: unknown[] = [];
@@ -63,7 +65,14 @@ function writeGoal(db: DatabaseSync, goalId: string, fields: Record<string, unkn
     values.push(value === undefined ? null : value);
   }
   values.push(goalId);
-  db.prepare(`UPDATE project_goals SET ${sets.join(", ")} WHERE id=?`).run(...values as never[]);
+  // The owner's title, description and criteria (and the reason line they typed) live in these columns: a write that drops words the row
+  // held (an edit, a removed criterion) runs at secure_delete=ON, so the freed page does not keep them (server/secure-delete.ts). A write
+  // that only moves state, or only grows a text, stays at the connection's FAST default.
+  const columns = Object.keys(fields).filter(key => GOAL_TEXT_COLUMNS.includes(key));
+  const prior = columns.length ? db.prepare(`SELECT ${columns.join(", ")} FROM project_goals WHERE id=?`).get(goalId) as Record<string, unknown> | undefined : undefined;
+  const drops = columns.length > 0 && (!prior || columns.some(key => dropsWords(prior[key], fields[key] === undefined ? null : fields[key])));
+  const restore = drops ? secureDeleteOn(db) : () => {};
+  try { db.prepare(`UPDATE project_goals SET ${sets.join(", ")} WHERE id=?`).run(...values as never[]); } finally { restore(); }
 }
 
 // ── create and edit (O) ─────────────────────────────────────────────────────

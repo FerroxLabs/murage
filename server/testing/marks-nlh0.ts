@@ -51,6 +51,35 @@ export function provenInitiator(patch: Record<string, unknown> = {}, base: Recor
   return false;
 }
 
+/** OVERREACH #6 (MAIN 2026-11-26): the owner's own attended Full access turn (not No limits). */
+export function isFullOwnerCell(bot: { fullAccess?: boolean; noLimits?: boolean }, patch: Record<string, unknown> = {}): boolean {
+  return bot.fullAccess === true && bot.noLimits !== true && patch.ownerStarted !== false && patch.routineLevel !== true && provenInitiator(patch);
+}
+
+/** True when this owner Full access cell runs a call the pinned NLH0 answer asked about with a rule that is not a wipe: the three run rules
+ * (unreadable, unknown-target, protected-path) no longer card on the owner's own Full access turn. A pinned wipe, a stated N2 and every
+ * non-owner cell keep comparing with the pin. */
+export function fullOwnerRunAllowed(id: string, bot: { fullAccess?: boolean; noLimits?: boolean }, patch: Record<string, unknown>, verdict: unknown, spec: { n2: boolean }): boolean {
+  if (RECORD || spec.n2 || !isFullOwnerCell(bot, patch)) return false;
+  const got = verdict as { approve?: unknown; source?: unknown } | null;
+  // the waived hit either runs, or falls through to a card the call keeps for its own reason (the key guard, an engine pin that cannot hold)
+  const keptCard = !!got && got.approve === null && (got.source === "sensitive-guard" || got.source === "unread-call");
+  if (!got || (!keptCard && (typeof got.approve !== "string" || got.source !== "full-access"))) return false;
+  const pin = pinned[`${id}|${JSON.stringify(bot)}|${JSON.stringify(patch)}`];
+  if (pin === undefined) return false;
+  const base = JSON.parse(pin) as { approve?: unknown; source?: unknown; rule?: string };
+  // a call Full access already ran at NLH0 still runs; the waived hit only adds the decision-log tag
+  if (typeof base.approve === "string") return !keptCard && canon({ ...(got as object), rule: undefined }) === canon({ ...base, rule: undefined }) && (got as { rule?: unknown }).rule === "held=waived";
+  expect(base.approve === null && base.source === "always-ask" && !WIPE_RULES.has(base.rule ?? ""), `${id}: the owner's Full access runs only a pinned card that is not a wipe`).toBe(true);
+  return true;
+}
+
+/** OVERREACH #6: a Full access verdict that ran, where a pinned card named a reason that is not a wipe. A wipe reason keeps its card. */
+export function fullOwnerRunIn(verdict: unknown, added?: { reason?: string }): boolean {
+  const got = verdict as { approve?: unknown; source?: unknown } | null;
+  return !!got && typeof got.approve === "string" && got.source === "full-access" && !WIPE_RULES.has(added?.reason ?? "");
+}
+
 export type Added = { classification?: "ask" | "deny"; reason?: string; namedCatastrophe?: true };
 export type CellSpec = {
   text: string;
@@ -153,6 +182,7 @@ export function cell(id: string, bot: { noLimits?: boolean }, patch: Record<stri
     }
     return;
   }
+  if (fullOwnerRunAllowed(id, bot, patch, verdict, spec)) return;
   const cellId = `${id}|${JSON.stringify(bot)}|${JSON.stringify(patch)}`;
   const pin = pinned[cellId];
   const added = selectForCell(pin === undefined ? undefined : JSON.parse(pin), verdict, spec, bot, patch);

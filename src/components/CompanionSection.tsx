@@ -24,6 +24,7 @@ import {
   loadCompanionBridgeState,
   shouldHydrateCompanionEmail,
   type CompanionBridge,
+  type CompanionRemovalStatus,
   type CompanionRemoteAccess,
   type CompanionState,
   type PhoneDevice,
@@ -32,6 +33,7 @@ import {
 } from "./PhoneSetupFlow";
 import { t } from "@/lib/i18n";
 import { companionPairingMode } from "../lib/phone-setup";
+import { outcomeCanCheckAgain, outcomeKey, phoneRemovalOutcome } from "../lib/phone-removal-outcome";
 import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { KEEP_AWAKE_DETAIL } from "../lib/keep-awake";
 import type { SettingsMode } from "@/lib/settings-mode";
@@ -582,7 +584,30 @@ function QrLogin({ c, mode }: { c: PhoneSetupController; mode?: SettingsMode }) 
 
 /** The per-phone row shows only when this computer offers share and ask (independent of phone tools) and the sidecar reports the phone's state. */
 /** Shown on a device row whose removal has not finished. The row stays until the computer confirms the removal. */
-export function RemovalPendingNote({ name, busy, onRetry }: { name: string; busy: boolean; onRetry: () => void }) {
+export function RemovalPendingNote({ name, busy, onRetry, status, onCheckAgain }: { name: string; busy: boolean; onRetry: () => void; status?: CompanionRemovalStatus | null; onCheckAgain?: () => void }) {
+  // This note is drawn only while the phone is still on the list, so a "removed" step is not the whole removal: its jobs and share-and-ask
+  // access may still be live. It says so, and Try again stays.
+  const recorded = phoneRemovalOutcome(status);
+  const outcome = recorded === "removed" || recorded === "removed-no-notifications" ? "finishing" : recorded;
+  if (status) {
+    return (
+      <div role="status" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-hairline/40 bg-control/40 p-3">
+        <p className="min-w-0 text-[12px] leading-relaxed text-ink-secondary">{t(outcomeKey(outcome))}</p>
+        <div className="flex shrink-0 gap-2">
+          {outcomeCanCheckAgain(outcome) && onCheckAgain && (
+            <button type="button" disabled={busy} onClick={onCheckAgain} aria-label={`${t("phone.removal.checkAgain")}: ${name}`}
+              className="rounded-lg border border-hairline/50 px-3 py-1.5 text-[12.5px] text-ink hover:bg-control disabled:opacity-40">
+              {t("phone.removal.checkAgain")}
+            </button>
+          )}
+          <button type="button" disabled={busy} onClick={onRetry} aria-label={`${t("phone.removal.retry")}: ${name}`}
+            className="rounded-lg border border-hairline/50 px-3 py-1.5 text-[12.5px] text-ink hover:bg-control disabled:opacity-40">
+            {t("phone.removal.retry")}
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div role="status" className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-hairline/40 bg-control/40 p-3">
       <div className="min-w-0">
@@ -654,6 +679,18 @@ export function CompanionSection({ profileEmail = "", mode }: { profileEmail?: s
   // The device whose removal is being asked about; nothing is revoked until
   // its confirm button is pressed.
   const [revoking, setRevoking] = useState<string | null>(null);
+  // The last recorded removal per device (the answer to Remove, then to Check again).
+  const [removals, setRemovals] = useState<Record<string, CompanionRemovalStatus>>({});
+  const revokeAndRecord = (deviceId: string) => c.act(async (companion) => {
+    const answer = await companion.revoke(deviceId);
+    if (answer.removal) setRemovals((current) => ({ ...current, [deviceId]: answer.removal! }));
+    return answer;
+  });
+  const checkAgain = (deviceId: string) => c.act(async (companion) => {
+    const recorded = await companion.removalStatus(deviceId);
+    setRemovals((current) => ({ ...current, [deviceId]: recorded }));
+    return companion.state();
+  });
   // Set when the switch is turned on here, cleared once a code was asked for.
   const [codeWanted, setCodeWanted] = useState(false);
   const openCode = c.tailscaleAvailable ? c.useTailscale : c.useLocal;
@@ -929,7 +966,9 @@ export function CompanionSection({ profileEmail = "", mode }: { profileEmail?: s
                   <RemovalPendingNote
                     name={device.name}
                     busy={c.busy}
-                    onRetry={() => void c.act((companion) => companion.revoke(device.id))}
+                    onRetry={() => void revokeAndRecord(device.id)}
+                    status={removals[device.id] ?? null}
+                    onCheckAgain={() => void checkAgain(device.id)}
                   />
                 )}
                 {revoking === device.id && (
@@ -939,7 +978,7 @@ export function CompanionSection({ profileEmail = "", mode }: { profileEmail?: s
                     onCancel={() => setRevoking(null)}
                     onConfirm={() => {
                       setRevoking(null);
-                      void c.act((companion) => companion.revoke(device.id));
+                      void revokeAndRecord(device.id);
                     }}
                   />
                 )}

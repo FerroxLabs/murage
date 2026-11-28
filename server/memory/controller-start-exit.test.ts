@@ -12,17 +12,19 @@ import { captureSource } from "./capture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { MEMORY_IDLE_SWEEP_MS, MemoryWorkerController } from "./worker-controller.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { setObserveSink, resetObserveWindows } from "../observe.ts";
+import { resetWorkerLog } from "./worker-log.ts";
 
 vi.mock("node:child_process",async importOriginal=>({...await importOriginal<typeof import("node:child_process")>(),fork:vi.fn()}));
 class Helper extends EventEmitter {
-  constructor(private readonly starts:boolean){super();}
+  constructor(private readonly starts:boolean,private readonly exit:[number|null,string|null]=[1,null]){super();}
   send=vi.fn((message:{type?:string})=>{
     if(message.type==="init")setTimeout(()=>this.emit("message",{type:"initialised"}),0);
     return true;
   });
   kill=vi.fn(()=>{this.emit("exit",null,"SIGKILL");return true;});
   disconnect(){this.emit("exit",0);}
-  boot(){setTimeout(()=>this.starts?this.emit("message",{type:"ready"}):this.emit("exit",1,null),0);}
+  boot(){setTimeout(()=>this.starts?this.emit("message",{type:"ready"}):this.emit("exit",...this.exit),0);}
 }
 let helpers:Helper[];
 let starts:number[];
@@ -72,4 +74,59 @@ it("the helper gets the server's data directory and home, so loading the config 
   expect(options.env.MURAGE_DATA_DIR).toBe(DATA_DIR);
   expect(process.env.HOME).toBeTruthy();
   expect(options.env.HOME).toBe(process.env.HOME);
+});
+
+// TRIAGE-1122 5: the start-failed line named no cause for the death. It now carries the child's exit code and signal (fixed words only).
+// The helper's stderr is NOT logged here: it can quote an error message that carries job content, which cannot be guaranteed away.
+function startFailedLine(exit:[number|null,string|null]){
+  const lines:string[]=[];resetWorkerLog();resetObserveWindows();setObserveSink(line=>lines.push(line));
+  vi.mocked(fork).mockImplementation(()=>{const next=new Helper(false,exit);helpers.push(next);next.boot();return next as unknown as ReturnType<typeof fork>;});
+  return {lines,run:async()=>{captureSource(database(),{id:"source",threadId:"thread",kind:"text",speaker:"owner",outcome:"recorded",text:"The smoke round is two."});controller.start();await vi.advanceTimersByTimeAsync(10);setObserveSink();return lines.find(line=>line.includes("cause=MEMORY_WORKER_START_FAILED"));}};
+}
+it("a helper that exits with code 3 before ready logs code=3, and the back-off is unchanged",async()=>{
+  const probe=startFailedLine([3,null]);
+  const line=await probe.run();
+  expect(line).toContain("code=3");
+  expect(line).toContain("signal=none");
+  expect(controller.error).toBe("MEMORY_WORKER_START_FAILED");
+  expect(helpers).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(MEMORY_IDLE_SWEEP_MS-1000);
+  expect(helpers).toHaveLength(1);
+});
+it("a helper killed by a signal before ready logs the signal name and no code",async()=>{
+  const line=await startFailedLine([null,"SIGKILL"]).run();
+  expect(line).toContain("code=none");
+  expect(line).toContain("signal=SIGKILL");
+});
+
+// TRIAGE-1127 N7: a send into a helper whose pipe is already closed makes the child emit `error` (EPIPE). That is the helper going away, not a
+// failed start: the status stays clean, the log carries a fixed-word reason (not the raw error), the helper is ended, and its exit restarts it.
+class PipeHelper extends Helper {
+  constructor(private readonly breakAt:string,private readonly code="EPIPE"){super(true);}
+  override send=vi.fn((message:{type?:string})=>{
+    if(message.type===this.breakAt)setTimeout(()=>this.emit("error",Object.assign(new Error("write "+this.code),{code:this.code})),0);
+    else if(message.type==="init")setTimeout(()=>this.emit("message",{type:"initialised"}),0);
+    return true;
+  });
+}
+it.each(["EPIPE","ERR_IPC_CHANNEL_CLOSED","ECONNRESET"])("%s on a starting helper's pipe is not a failed start: one calm reason instead of the raw error, the helper is ended and restarted",async code=>{
+  const lines:string[]=[];resetWorkerLog();resetObserveWindows();setObserveSink(line=>lines.push(line));
+  const pipes:PipeHelper[]=[];
+  vi.mocked(fork).mockImplementation(()=>{const next=new PipeHelper(pipes.length===0?"init":"never",code);pipes.push(next);next.boot();return next as unknown as ReturnType<typeof fork>;});
+  captureSource(database(),{id:"source",threadId:"thread",kind:"text",speaker:"owner",outcome:"recorded",text:"The smoke round is two."});
+  controller.start();
+  await vi.advanceTimersByTimeAsync(10);
+  setObserveSink();
+  expect(lines.some(line=>line.includes(`cause=${code}`))).toBe(false);
+  expect(lines.some(line=>line.includes("cause=MEMORY_WORKER_PIPE_CLOSED"))).toBe(true);
+  expect(pipes[0]!.kill).toHaveBeenCalled();
+  // The helper's exit then takes the ordinary death path (its status shows, the restart is scheduled), and the new helper is initialised.
+  expect(controller.error).toBe("MEMORY_WORKER_EXITED");
+  for(let second=0;second<2*60&&pipes.length<2;second++)await vi.advanceTimersByTimeAsync(1000);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(pipes).toHaveLength(2);
+  expect(pipes[1]!.send).toHaveBeenCalledWith(expect.objectContaining({type:"init"}));
+  // The queued capture is claimed by the replacement, so the restart is a working one.
+  expect(pipes[1]!.send).toHaveBeenCalledWith(expect.objectContaining({id:expect.any(String)}));
+  expect(jobStatus().status).toBe("leased");
 });

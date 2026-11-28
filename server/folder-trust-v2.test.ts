@@ -16,6 +16,8 @@ import { FUIGO_PROCESS_TRUST_REPLY, FuigoAgentDriver, fuigoFolderTrustGeneration
 import { FOLDER_LINE_ENGINE_DECIDES, FOLDER_LINE_TRUSTED, FOLDER_LINE_UNTRUSTED, fillFolderLineForEngine } from "./capabilities-primer.ts";
 import { FolderTrustStore, folderTrustAncestorDeclinesFor, folderTrustDeclinesFor, folderTrustRecordRows, folderTrustRejectFor } from "./folder-trust.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
+import { fixture as decisionFixture } from "./decision/fixture.ts";
+import { folderTrustOwner, trustOriginNow } from "./decision/trust-origin.ts";
 import { recordEvents, type EventRecorder } from "./testing/events.ts";
 import {
   describeFolderTrustDeclines,
@@ -33,6 +35,7 @@ import {
   folderTrustWithheldName,
 } from "../shared/folder-trust.ts";
 import { QUESTION_LIMITS } from "../shared/questions.ts";
+import { withTrustSnapshot } from "./testing/turn-gate-snapshot.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
 const TRUST_REPLY = '{"jsonrpc":"2.0","id":9006,"result":{"outcome":"trust","scope":"configAndCommands"}}';
@@ -448,7 +451,7 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
   const replies = () => log().filter((entry) => entry.event === "reply").map((entry) => entry.raw);
   const spawns = () => (existsSync(spawnLog) ? readFileSync(spawnLog, "utf8").split("\n").filter(Boolean) : []);
   const closed = (reason: string) => infoLines.some((line) => line.includes(`reason=${reason}`));
-  const gate = (over: Partial<FolderTrustTurnInput> = {}): FolderTrustTurnInput => ({ key: cwd, folder: cwd, sources: [], trustKeys: [], rejects: [], ...over });
+  const gate = (over: Partial<FolderTrustTurnInput> = {}): FolderTrustTurnInput => withTrustSnapshot({ key: cwd, folder: cwd, sources: [], trustKeys: [], rejects: [], ...over });
   const chips = () => recorder.events.filter((e) => e.type === "item.started").map((e) => (e as any).title as string).filter((title) => /^(untrusted folder|trusted folder|trust chosen):/.test(title));
   const done = (turnId: string) => recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
   const opened = (turnId: string) => recorder.until((e) => e.type === "request.opened" && e.turnId === turnId) as Promise<Extract<RuntimeEvent, { type: "request.opened" }> & { requestId: string }>;
@@ -459,6 +462,65 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
   const skip = (threadId: string, requestId: string) => instance!.adapter.respondToRequest(threadId, requestId, { behavior: "deny" });
   /** A pooled turn on a thread, its session resumed the way the harness does. */
   const nativeOrder = (threadId: string) => readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
+
+  it("OVERREACH #8: the owner's own turn below No limits is never asked about a folder with project configuration: a plain reject, then the prompt", async () => {
+    await create();
+    // The authority is built the way the server builds it: a registered Ask-level owner turn through trustOriginNow and folderTrustOwner.
+    const fixtureTurn = decisionFixture("ask");
+    const authority = () => { const o = trustOriginNow({ threadId: "t", generation: "g", botId: "b" }); return { generation: o.authorityGeneration, level: o.level, owner: o.kind !== "ineligible" && o.noLimits, ownerDirect: folderTrustOwner(o), revision: "r1" }; };
+    const turnId = await send("owner-no-card", { folderTrust: gate({ sources: ["AGENTS.md"], upstreamReadable: true, seedComplete: true }), folderTrustAuthorityNow: authority });
+    const event = await recorder.until(e => e.turnId === turnId && (e.type === "request.opened" || e.type === "turn.completed"));
+    fixtureTurn.dispose();
+    expect(event.type).toBe("turn.completed");
+    expect(replies().some(raw => String(raw).includes("reject"))).toBe(true);
+  });
+  /** F15 (1.0.24): an Ask-level owner turn, its authority built the way the server builds it (trustOriginNow + folderTrustOwner). */
+  const ownerTurn = async <T>(run: (authority: () => any) => Promise<T>) => {
+    const fixtureTurn = decisionFixture("ask");
+    try { return await run(() => { const o = trustOriginNow({ threadId: "t", generation: "g", botId: "b" }); return { generation: o.authorityGeneration, level: o.level, owner: o.kind !== "ineligible" && o.noLimits, ownerDirect: folderTrustOwner(o), revision: "r1" }; }); }
+    finally { fixtureTurn.dispose(); }
+  };
+  const firstOf = (turnId: string) => recorder.until(e => e.turnId === turnId && (e.type === "request.opened" || e.type === "turn.completed"));
+  it.each([
+    ["generation 1, before the spawn (Fuigo 1.0.34, AGENTS.md)", { FAKE_ACP_TRUST_V: "", FAKE_ACP_VERSION: "fuigo 1.0.34" }, ["AGENTS.md"]],
+    ["generation 1, the engine's own request (Fuigo 1.0.34, MCP it named)", { FAKE_ACP_TRUST_V: "", FAKE_ACP_VERSION: "fuigo 1.0.34", FAKE_ACP_TRUST_KINDS: "mcp" }, []],
+  ] as const)("F15: the owner's own turn is never asked: %s", async (_name, environment, sources) => {
+    await create({ ...environment }, { cli: ownCli() });
+    await ownerTurn(async (authority) => {
+      const turnId = await send(`f15-owner-${sources.length}`, { routeAsks: true, askLevel: true, folderTrust: gate({ sources: [...sources], upstreamReadable: true, seedComplete: true }), folderTrustAuthorityNow: authority });
+      const first = await firstOf(turnId);
+      if (first.type === "request.opened") await skip(`f15-owner-${sources.length}`, (first as any).requestId);
+      expect(first.type).toBe("turn.completed");
+      await done(turnId);
+      expect(readDump().argv).not.toContain("--trust");
+      // the engine's own request is answered (generation 1 replies are on the wire trace, not the fake's trust log)
+      expect(nativeOrder(`f15-owner-${sources.length}`)).toContain('"outcome":"reject"');
+      expect(nativeOrder(`f15-owner-${sources.length}`)).not.toContain('"outcome":"trust"');
+      // exactly one line names what was left out, however many times the engine asks
+      expect(chips().filter(title => title.startsWith("untrusted folder"))).toHaveLength(1);
+      await instance!.dispose(); instance = undefined;
+      expect(closed("folder-trust-card")).toBe(false);
+    });
+  });
+  it("OVERREACH #8: a turn that is not the owner own still gets the card", async () => {
+    await create();
+    const other = { generation: "g1", owner: false, level: "ask" as const, revision: "r1" };
+    const turnId = await send("other-card", { folderTrust: gate({ sources: ["AGENTS.md"], upstreamReadable: true, seedComplete: true }), folderTrustAuthorityNow: () => other });
+    const event = await recorder.until(e => e.turnId === turnId && (e.type === "request.opened" || e.type === "turn.completed"));
+    expect(event.type).toBe("request.opened");
+    if (event.type === "request.opened") await skip("other-card", event.requestId!);
+  });
+  it("an unreadable upstream store below No limits still asks before answering", async () => {
+    await create();
+    const turnId = await send("unreadable-auto", { folderTrust: gate({ sources: ["AGENTS.md"], upstreamReadable: false, seedComplete: false }) });
+    const event = await recorder.until(e => e.turnId === turnId && (e.type === "request.opened" || e.type === "turn.completed"));
+    expect(event.type).toBe("request.opened");
+    if (event.type !== "request.opened") throw new Error("missing folder question");
+    expect(event.requestType).toBe("question");
+    await skip("unreadable-auto", event.requestId!);
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(replies()).toEqual([REJECT_REPLY]);
+  });
 
   it("N7 below No limits honours the owner's stored Do not trust without a card", async () => {
     await create();
@@ -489,36 +551,36 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
   });
 
-  it("N7 No limits overrides the owner's stored Do not trust for this turn without a card", async () => {
+  it("N7 No limits withholds the owner's stored Do not trust without a card", async () => {
     await create();
     const turnId = await send("n7-reject", { stopLine: true, noLimits: true,
       folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
     expect(await done(turnId)).toMatchObject({ ok: true });
-    expect(readDump().argv).toContain("--trust");
-    expect(readDump().folderTrust.trustedAtBuild).toBe(true);
-    expect(replies()).toEqual([]);
+    expect(readDump().argv).not.toContain("--trust");
+    expect(readDump().folderTrust.trustedAtBuild).toBe(false);
+    expect(replies()).toEqual([REJECT_REPLY]);
     expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
-    expect(chips().some(line => line.startsWith("untrusted folder"))).toBe(false);
+    expect(chips().some(line => line.startsWith("untrusted folder"))).toBe(true);
   });
 
-  it("N7 No limits trusts despite a saved reject that answers the engine key", async () => {
+  it("N7 No limits withholds a saved reject that answers the engine key", async () => {
     await create();
     const turnId = await send("n7-records", { stopLine: true, noLimits: true,
       folderTrust: gate({ sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
     expect(await done(turnId)).toMatchObject({ ok: true });
-    expect(readDump().argv).toContain("--trust");
-    expect(readDump().folderTrust.trustedAtBuild).toBe(true);
-    expect(replies()).toEqual([]);
+    expect(readDump().argv).not.toContain("--trust");
+    expect(readDump().folderTrust.trustedAtBuild).toBe(false);
+    expect(replies()).toEqual([REJECT_REPLY]);
     expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
   });
 
-  it("N7 No limits generation 1 passes --trust despite a saved reject", async () => {
+  it("generation1-no-automatic-trust-flag (W-T05, N7 saved reject)", async () => {
     await create({ FAKE_ACP_TRUST_V: "", FAKE_ACP_VERSION: "fuigo 1.0.34" }, { cli: ownCli() });
     const turnId = await send("n7-g1", { stopLine: true, noLimits: true,
       folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
     expect(await done(turnId)).toMatchObject({ ok: true });
-    expect(readDump().argv).toContain("--trust");
-    expect(replies().every(line => line?.includes('"outcome":"trust"'))).toBe(true);
+    expect(readDump().argv).not.toContain("--trust");
+    expect(readDump().decision).toEqual({ outcome: 'reject' });
     expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
   });
 
@@ -812,7 +874,7 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
       mkdirSync(join(desk, ".murage-procedures"), { recursive: true });
       mkdirSync(join(desk, "outputs"), { recursive: true });
     });
-    const deskGate = (over: Partial<FolderTrustTurnInput> = {}): FolderTrustTurnInput => ({
+    const deskGate = (over: Partial<FolderTrustTurnInput> = {}): FolderTrustTurnInput => withTrustSnapshot({
       key: desk, folder: desk, sources: [], trustKeys: [], rejects: [],
       managedDesk: { botId: "bot_1", threadId: "thread-1", desk, bundleIds: ["bundle_a"], dataDir, ownerPicked: false }, ...over,
     });
@@ -891,6 +953,22 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
         await done(wider);
         expect(replies()).toEqual([version === "1.0.38" ? PROCESS_REPLY : REJECT_REPLY, REJECT_REPLY]);
       });
+      it(`F15 Fuigo ${version}: the owner's own turn on a desk Fuigo names more for is not asked, and no close says folder-trust-card`, async () => {
+        await create({ FAKE_ACP_TRUST_KINDS: "mcp", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
+        await ownerTurn(async (authority) => {
+          const turnId = await sendDesk(`d-f15-owner-${version}`, { routeAsks: true, askLevel: true, folderTrustAuthorityNow: authority });
+          const first = await firstOf(turnId);
+          if (first.type === "request.opened") await skip(`d-f15-owner-${version}`, (first as any).requestId);
+          expect(first.type).toBe("turn.completed");
+          expect(replies()).toEqual([REJECT_REPLY]);
+        });
+      });
+      it(`F15 Fuigo ${version}: the bare desk is answered with no card, so the engine's close never names folder-trust-card`, async () => {
+        await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
+        await done(await sendDesk(`d-f15-bare-${version}`, { routeAsks: true, askLevel: true }));
+        await instance!.dispose(); instance = undefined;
+        expect(closed("folder-trust-card")).toBe(false);
+      });
       it(`Fuigo ${version} on the owner's own home: a desk holding settings, a kind Fuigo names, or a picked folder still cards`, async () => {
         await create({ FAKE_ACP_TRUST_KINDS: "mcp", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
         const kind = await sendDesk(`d-own-kind-${version}`, { routeAsks: true, askLevel: true });
@@ -910,7 +988,8 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     }
     it("a warm in the bare desk on the owner's own home: no card, no grant; the turn after answers with no card", async () => {
       process.env.MURAGE_ACP_POOL = "1";
-      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      // Let the fixture consume the queued rejection during SIGTERM; retirement still starts immediately.
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_TERM: "linger" }, { cli: ownCli() });
       await instance!.adapter.sendTurn({ threadId: "d-warm", text: "", cwd: desk, folderTrust: deskGate(), prewarm: true } as SendTurnInput).catch(() => undefined);
       await vi.waitFor(() => expect(requests()).toHaveLength(1), { timeout: 10_000 });
       await vi.waitFor(() => expect(closed("folder-trust-undecided") || closed("post-turn-activity")).toBe(true), { timeout: 10_000 });

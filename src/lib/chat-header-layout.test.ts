@@ -16,10 +16,44 @@ import {
   METADATA_STEPS,
   NAME_TRACK_MAX_PX,
   NAME_TRACK_MIN_PX,
+  HEADER_FLOOR_PX,
+  HEADER_HYSTERESIS_PX,
+  PHONE_MENU_SLOTS,
+  chatHeaderContentKey,
   headerFits,
+  headerNeedsPhoneForm,
+  headerRestartsOnGrowth,
   nameTrackMinimum,
   relocatedSlots,
 } from "./chat-header-layout";
+
+// W7 (TEACH-ENTRY 1.0.23 D7): the order, the phone list, the hysteresis band, the floor and the content key.
+describe("W7 TEACH-ENTRY header ladder", () => {
+  it("relocates in the D7 order; Memory never moves on the desktop row", () => {
+    expect([...HEADER_RELOCATION_ORDER]).toEqual(["roleLabel", "usage", "inspector", "teach", "computer", "find", "folder"]);
+    expect(HEADER_RELOCATION_ORDER).not.toContain("memory");
+  });
+  it("the phone menu keeps Memory in today's place, before Folder", () => {
+    expect([...PHONE_MENU_SLOTS]).toEqual(["roleLabel", "usage", "inspector", "teach", "computer", "find", "memory", "folder"]);
+  });
+  it("growth restarts the ladder only 16 px past the last failed fit", () => {
+    const wf = 700;
+    expect(HEADER_HYSTERESIS_PX).toBe(16);
+    expect(headerRestartsOnGrowth(wf + 15, wf + HEADER_HYSTERESIS_PX)).toBe(false);
+    expect(headerRestartsOnGrowth(wf + 16, wf + HEADER_HYSTERESIS_PX)).toBe(true);
+    expect(headerRestartsOnGrowth(wf + 1, null)).toBe(true);
+  });
+  it("takes the phone form below the 240 px floor", () => {
+    expect(HEADER_FLOOR_PX).toBe(240);
+    expect(headerNeedsPhoneForm(239)).toBe(true);
+    expect(headerNeedsPhoneForm(240)).toBe(false);
+  });
+  it("the content key changes when Teach appears", () => {
+    expect(chatHeaderContentKey(["dax"], true)).toContain("teach:1");
+    expect(chatHeaderContentKey(["dax"], false)).toContain("teach:0");
+    expect(chatHeaderContentKey(["dax"], true)).not.toBe(chatHeaderContentKey(["dax"], false));
+  });
+});
 
 describe("the ladder only ever gets leaner", () => {
   it("never gives a relocated control its place back, and never returns to one row", () => {
@@ -56,7 +90,7 @@ describe("the ladder only ever gets leaner", () => {
     // go first — a second row is a bigger change to the page than folding a
     // read-only figure into a menu — then the task/model context becomes a
     // compact control, and only after the second row does a real control
-    // (computer, find, memory, folder) move into the menu.
+    // (teach, computer, find, folder) move into the menu.
     expect(HEADER_RELOCATION_ORDER.slice(0, METADATA_STEPS)).toEqual(["roleLabel", "usage", "inspector"]);
     expect(HEADER_LAYOUTS.slice(0, METADATA_STEPS + 5)).toEqual([
       { twoRow: false, chips: "full", relocated: 0 },

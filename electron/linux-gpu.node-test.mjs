@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import * as linuxGpu from "./linux-gpu.mjs";
 import { linuxDisablesGpu, linuxGpuDecision } from "./linux-gpu.mjs";
 
 const only = (...paths) => (p) => paths.includes(p);
@@ -42,4 +43,20 @@ test("detection never touches the filesystem when the override decides", () => {
   const exists = () => { throw new Error("must not probe"); };
   assert.equal(linuxDisablesGpu({ env: { MURAGE_LINUX_GPU: "off" }, exists }), true);
   assert.equal(linuxDisablesGpu({ env: { MURAGE_LINUX_GPU: "on" }, exists }), false);
+});
+
+test("Plasma Wayland disables the noisy color manager and preserves other flags", () => {
+  const switches = new Map([["disable-features", "ExistingFeature"]]);
+  const commandLine = {
+    getSwitchValue: name => switches.get(name),
+    appendSwitch: (name, value) => switches.set(name, value),
+  };
+  linuxGpu.configureWaylandColorManager?.(commandLine, { XDG_SESSION_TYPE: "x11", XDG_CURRENT_DESKTOP: "KDE" });
+  assert.equal(switches.get("disable-features"), "ExistingFeature");
+  linuxGpu.configureWaylandColorManager?.(commandLine, { XDG_SESSION_TYPE: "wayland", XDG_CURRENT_DESKTOP: "GNOME" });
+  assert.equal(switches.get("disable-features"), "ExistingFeature");
+  const plasma = { XDG_SESSION_TYPE: "wayland", XDG_CURRENT_DESKTOP: "KDE" };
+  linuxGpu.configureWaylandColorManager?.(commandLine, plasma);
+  linuxGpu.configureWaylandColorManager?.(commandLine, plasma);
+  assert.equal(switches.get("disable-features"), "ExistingFeature,WaylandWpColorManagerV1");
 });

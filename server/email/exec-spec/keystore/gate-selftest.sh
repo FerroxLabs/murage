@@ -3,8 +3,10 @@
 # usage: gate-selftest.sh [gate-script]   Prints "SELFTEST SUMMARY: cases=N passed=P failed=F"; exit 0 only when failed=0.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
+source "$HERE/../../../../scripts/safe-wipe.sh" || exit
 GATE=${1:-$HERE/gate-rc-d6.sh}
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) || exit
+trap 'rc=$?; safe_wipe "${T:?}" || rc=$?; exit "$rc"' EXIT
 sed "s#^L=.*#L=$T#" "$GATE" > "$T/gate.sh"; chmod +x "$T/gate.sh"
 cat > "$T/runbig-r3.sh" <<'STUB'
 #!/bin/bash

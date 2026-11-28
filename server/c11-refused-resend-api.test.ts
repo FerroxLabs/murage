@@ -85,7 +85,22 @@ beforeAll(async () => {
         // Q2 room: the engine's close (every interrupt of this instance, the lease's and the owner's) is held until the test opens the gate.
         const closeGate=input.environment.FAKE_C11_CLOSE_GATE;
         if(closeGate&&!fs.existsSync(closeGate)){fs.writeFileSync(closeGate+'.waiting','');await new Promise(resolve=>{const poll=setInterval(()=>{if(fs.existsSync(closeGate)){clearInterval(poll);resolve();}},5);});}
+        // q1024-steerhang: the first turn's close never confirms (its process went away mid-cancel): HANG never answers, FAIL answers unconfirmed.
+        // Only that turn's close: later turns of the instance close normally.
+        const closeFault=input.environment.FAKE_C11_CLOSE_FAULT,faulted=input.environment.FAKE_C11_LOG+'.closefault';
+        if(closeFault&&(!fs.existsSync(faulted)||fs.readFileSync(faulted,'utf8')===String(args[1]))){
+          fs.writeFileSync(faulted,String(args[1]));
+          if(closeFault==='hang'||closeFault==='hangall')return new Promise(()=>{});
+          await interrupt(...args);return {closeConfirmed:false};
+        }
         return interrupt(...args);};
+      const faultedTeardown=instance.adapter.awaitTurnTeardown?.bind(instance.adapter);
+      if(input.environment.FAKE_C11_CLOSE_FAULT)instance.adapter.awaitTurnTeardown=async(...args)=>{const faulted=input.environment.FAKE_C11_LOG+'.closefault';
+        if(fs.existsSync(faulted)&&fs.readFileSync(faulted,'utf8')===String(args[1])){
+          // hangall: the engine's own teardown never answers either (a stop proof with no bound of its own)
+          if(input.environment.FAKE_C11_CLOSE_FAULT==='hangall')return new Promise(()=>{});
+          return {closeConfirmed:false};}
+        return faultedTeardown?faultedTeardown(...args):{closeConfirmed:false};};
       const teardown=instance.adapter.awaitTurnTeardown?.bind(instance.adapter);
       if(input.environment.FAKE_C11_TEARDOWN&&teardown)instance.adapter.awaitTurnTeardown=async(...args)=>{
         const result=await teardown(...args),gate=input.environment.FAKE_C11_TEARDOWN;
@@ -110,7 +125,7 @@ beforeAll(async () => {
     const controls=${JSON.stringify(REQUIRED_CONTROLS.filter(n => n !== "project_propose"))};
     // ENGINES-C11-1018:15: the provider consumes every catalog page before its session can prompt.
     cfg.instances.c11={driver:'c11Fixture',displayName:'C11 fixture',config:{cli:${JSON.stringify(join(dir, "testing/fake-acp-cli.ts"))}},environment:{FAKE_ACP_MODE:'c11-budget',FAKE_C11_LOG:path.join(data,'c11.jsonl'),FAKE_C11_SPEC:JSON.stringify({native:11,limit:40,awaitCatalogExit:true,recoveryGate:path.join(data,'c11-gate'),catalogs:{agents:[...controls,...Array.from({length:40},(_,i)=>'extra'+i)],'murage-memory':[]}})}};
-    for(const variant of ['early','confirmed','uncertain','correction','unwritten','duplicate','stopped','teardowncard','concurrentA','concurrentB','restart','retained','refuse','roomunwritten','roompinned','roomqueue','roomconfirmed','roomuncertain','roomstop','roomclose','earlystop','earlyclose','earlystopfirst','earlystopnever','earlystopheld','roomnoview']){
+    for(const variant of ['early','confirmed','uncertain','correction','unwritten','duplicate','stopped','teardowncard','concurrentA','concurrentB','restart','retained','refuse','roomunwritten','roompinned','roomqueue','roomconfirmed','roomuncertain','roomstop','roomclose','earlystop','earlyclose','earlystopfirst','earlystopnever','earlystopheld','roomnoview','roomclosenever','roomcloseunconfirmed','directclosenever','directcloseunconfirmed']){
       const item=structuredClone(cfg.instances.c11);
       item.environment.FAKE_C11_LOG=path.join(data,variant+'.jsonl');
       const spec=JSON.parse(item.environment.FAKE_C11_SPEC);spec.recoveryGate=path.join(data,variant+'-gate');item.environment.FAKE_C11_SPEC=JSON.stringify(spec);
@@ -122,6 +137,13 @@ beforeAll(async () => {
       else if(variant==='stopped'||variant==='teardowncard')item.environment.FAKE_C11_TEARDOWN=path.join(data,variant+'-teardown');
       else if(variant==='roomstop'||variant==='roomclose')item.environment.FAKE_C11_CLOSE_GATE=path.join(data,variant+'-close');
       else if(variant==='earlystop'||variant==='earlyclose'||variant==='earlystopfirst'||variant==='earlystopnever'){item.environment.FAKE_C11_HANDBACK=path.join(data,variant+'-handback');item.environment.FAKE_C11_TEARDOWN=path.join(data,variant+'-teardown');}
+      if(variant==='roomclosenever')item.environment.FAKE_C11_CLOSE_FAULT='hang';
+      if(variant==='roomcloseunconfirmed')item.environment.FAKE_C11_CLOSE_FAULT='unconfirmed';
+      // the direct rows send words nobody proved (fewer tools): a lower engine limit still makes their first prompt over the limit, so the turn
+      // re-submits through the recovery gate, the late submission a memory refusal lands on
+      if(variant.startsWith('direct')){spec.limit=15;item.environment.FAKE_C11_SPEC=JSON.stringify(spec);}
+      if(variant==='directclosenever')item.environment.FAKE_C11_CLOSE_FAULT='hangall';
+      if(variant==='directcloseunconfirmed')item.environment.FAKE_C11_CLOSE_FAULT='unconfirmed';
       if(variant==='earlystopheld'){item.environment.FAKE_C11_HANDBACK=path.join(data,variant+'-handback');item.environment.FAKE_C11_TEARDOWN=path.join(data,variant+'-teardown');item.environment.FAKE_C11_CLOSE_GATE=path.join(data,variant+'-close');}
       cfg.instances[variant]=item;
     }
@@ -179,7 +201,7 @@ it.each(["c11", "early", "confirmed", "uncertain", "duplicate", "retained", "ref
     // Q1: an exact native write is confirmed, so the owner is never told to send what the engine already received.
     expect(errors[0].memoryNote).toBeUndefined(); expect(JSON.stringify(after)).not.toContain(RESEND_LINE);
   }
-  expect(JSON.stringify(after)).not.toContain("could not start this reply");
+  expect(JSON.stringify(after)).not.toMatch(/could not start this reply|couldn't start this reply/);
   expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain("re-preparing");
 }, 60000);
 
@@ -453,7 +475,10 @@ it("T9/T37 crash and registry recreation retain the original stamp without redis
   expect((await messages()).find(m => m.id === owner.id).dispatchedIn).toBe(owner.dispatchedIn);
   expect(rows().filter(r => r.event === "prompt")).toHaveLength(1);
   expect((await new ToolLimitStore(file).get("a".repeat(64)))?.limit).toBe(40);
-  await recallReady(bot, bot.threadId);
+  // q1022-idlefix (MAIN-RULING 2026-11-25T12:40:11Z): the bounded fixture wait is the guarded behaviour here: after the crash and the
+  // restart, with nobody active, the bot's recall view is ready for the new send. Named assertion, not a fixture Error.
+  const recall = await recallReady(bot, bot.threadId).then(() => "ready", (error: unknown) => String((error as Error)?.message ?? error));
+  expect(recall, "after a crash and restart on an idle minute the bot's recall view is ready for the next send (a turn never loses memory because the app was idle)").toBe("ready");
   expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "Explicit authorized new send" })).status).toBe(202);
   await expect.poll(() => rows().filter(r => r.event === "prompt").length, { timeout: 20000 }).toBe(2);
   await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id).busy, { timeout: 20000 }).toBe(false);
@@ -486,7 +511,7 @@ it.each(["roomconfirmed", "roomuncertain"])("c11-review-3 room resend refusal pr
   expect(errors[0].tool).toEqual({ name: engineLimitLine("c11Fixture"), ok: false });
   if (variant === "roomuncertain") { expect(errors[1].memoryNote).toBe("resend"); expect(errors[1].tool.name).toBe(RESEND_LINE); expect(errors[1].from?.botId).toBe(bot.id); const asked = messages.filter(m => m.role === "user"); expect(asked).toHaveLength(1); expect(errors[1].resendOf).toEqual({ messageId: asked[0].id, threadId: room.threadId, botId: bot.id }); }
   else expect(errors[1].tool.name).toContain("The original message was submitted.");
-  expect(JSON.stringify(messages)).not.toContain("could not start this reply");
+  expect(JSON.stringify(messages)).not.toMatch(/could not start this reply|couldn't start this reply/);
   expect(rows().filter(r => r.event === "spawn")).toHaveLength(2);
   expect(rows().filter(r => r.event === "prompt")).toHaveLength(1);
 }, 45000);
@@ -559,6 +584,86 @@ it.each(["roomstop", "roomclose"])("Q2 room refusal card waits for the engine's 
   expect(rows().filter(r => r.event === "prompt")).toHaveLength(1);
   expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(`thread ${room.threadId}; re-preparing`);
 }, 45000);
+
+// q1024-steerhang (MAIN-RULING 2026-11-27T10:14:50Z (1), option B): an owner turn refused after its prompt was written, whose engine never
+// confirms the close (the close hangs, or the engine reports it unconfirmed), is still released. Before, the member's end waited on a
+// teardown confirmation that never came: the run stayed counted, the bot stayed busy and the owner's next message never left the queue. Now
+// the refusal row is told once, the room is free and the owner's follow-up is taken and answered by the engine in a fresh session. The fence
+// stays: the refused turn is not rebuilt, and other audiences stay fenced (the direct rows below).
+it.each(["roomclosenever", "roomcloseunconfirmed"])("q1024-steerhang an owner turn whose engine close cannot confirm is released and the queued next owner message is not stranded %s", async variant => {
+  log = join(fixture.info.dataDir, variant + ".jsonl"); gate = join(fixture.info.dataDir, variant + "-gate");
+  rmSync(join(fixture.info.dataDir, "native/opencode-tool-limits.json"), { force: true });
+  const created = await api("POST", "/api/bots", { name: variant, modelSelection: { instanceId: variant, model: "opencode/mock" } });
+  expect(created.status).toBe(201); const bot = created.body.bot;
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
+  const createdRoom = await api("POST", "/api/groups", { name: variant, memberIds: [bot.id], setup: { bulletin: "", defaultResponder: { kind: "member", botId: bot.id } } });
+  expect(createdRoom.status).toBe(201); const room = createdRoom.body.group;
+  await recallReady(bot, room.threadId);
+  expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Refused room request" })).status).toBe(202);
+  await expect.poll(() => existsSync(gate + ".waiting"), { timeout: 20000 }).toBe(true);
+  // the roster moves while the turn holds memory: its context is revoked after the prompt was written, and the lease interrupts the engine
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { section: "Moved before an unconfirmed close" })).status).toBe(200);
+  writeFileSync(gate, "release");
+  await expect.poll(() => existsSync(log + ".closefault"), { timeout: 20000 }).toBe(true);
+  // the owner's next message arrives while the refused turn still holds the bot
+  expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "Second owner message" })).status).toBe(202);
+  const messages = async () => (await api("GET", `/api/threads/${room.threadId}/messages?limit=100`)).body.messages as any[];
+  const cards = (list: any[]) => list.filter(m => m.memoryNote === "resend" || m.tool?.name?.includes("The original message was submitted."));
+  const busy = async () => Boolean((await api("GET", "/api/bots?messages=0")).body.groups.find((g: any) => g.threadId === room.threadId)?.busyBotId);
+  // the refused turn is released although its close never confirmed: the room is free again (before: busy until quit)
+  await expect.poll(busy, { timeout: 30000 }).toBe(false);
+  // JOINT RULING STOP-VS-REFUSAL: no Stop was confirmed, so the refused turn ends with its refusal row, once
+  expect(cards(await messages())).toHaveLength(1);
+  // the follow-up queued behind it is not stranded: it was taken off the queue and is in the transcript
+  const followAt = async () => (await messages()).findIndex(m => m.role === "user" && m.text === "Second owner message");
+  expect(await followAt()).toBeGreaterThan(-1);
+  // option B (owner turns are never held): the owner's follow-up is ANSWERED by the engine, in a fresh session, not refused by the fence
+  // that keeps the unconfirmed session (before: "could not get ready" for it and every later owner message)
+  await expect.poll(async () => { const list = await messages(); return list.slice(await followAt() + 1).some(m => m.role === "bot" && m.provenance === "provider" && m.text === "Fixture complete"); }, { timeout: 30000 }).toBe(true);
+  expect((await messages()).slice(await followAt() + 1).filter(m => blockedRow(m) || /could not get ready|MEMORY_CONTEXT_REVOKED/.test(JSON.stringify(m)))).toEqual([]);
+  // fenced: the refused turn was not rebuilt into the session whose close is unconfirmed
+  expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(`thread ${room.threadId}; re-preparing`);
+}, 60000);
+
+// q1024-steerhang direct (MAIN-RULING 2026-11-27T10:14:50Z (1), the lead at settleRefusedLeaseTerminal): a turn on the bot's own thread,
+// POST /api/bots/:id/messages, refused at its late submission after the prompt was written. The close never answers and neither does the engine's own teardown (directclosenever), or
+// the close is reported unconfirmed (directcloseunconfirmed). Before, the ticket's decision waited on a confirmation that never came: the run
+// stayed counted, the bot stayed busy and the owner's next message never left the queue.
+it.each(["directclosenever", "directcloseunconfirmed"])("q1024-steerhang direct a refused turn whose engine close cannot confirm is released and the next message queued behind it is not stranded %s", async variant => {
+  log = join(fixture.info.dataDir, variant + ".jsonl"); gate = join(fixture.info.dataDir, variant + "-gate");
+  rmSync(join(fixture.info.dataDir, "native/opencode-tool-limits.json"), { force: true });
+  const created = await api("POST", "/api/bots", { name: variant, modelSelection: { instanceId: variant, model: "opencode/mock" } });
+  expect(created.status).toBe(201); const bot = created.body.bot;
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false })).status).toBe(200);
+  await recallReady(bot, bot.threadId);
+  // words nobody proved are the owner's (a loopback caller without the desktop secret): the turn reads memory as a non-owner audience, so a
+  // revoke of what it holds ends it as a ledger refusal (the owner's own proven words keep their turn: 1.0.20 revokekeep)
+  const send = async (text: string) => (await fetch(`${fixture.info.url}/api/bots/${bot.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ threadId: bot.threadId, text }) })).status;
+  expect(await send("Refused request")).toBe(202);
+  await expect.poll(() => existsSync(gate + ".waiting"), { timeout: 20000 }).toBe(true);
+  // the bot's roster section moves while its re-submission is held (the first prompt is already written): the thread's authority moves, the
+  // turn's context is revoked at the late submission, and the lease interrupts the engine
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { section: "Moved before an unconfirmed close" })).status).toBe(200);
+  writeFileSync(gate, "release");
+  await expect.poll(() => existsSync(log + ".closefault"), { timeout: 20000 }).toBe(true);
+  // the next message arrives while the refused turn still holds the bot
+  expect(await send("Next message")).toBe(202);
+  const messages = async () => (await api("GET", `/api/threads/${bot.threadId}/messages?limit=100`)).body.messages as any[];
+  const busy = async () => Boolean((await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id)?.busy);
+  const cards = (list: any[]) => list.filter(m => m.memoryNote === "resend" || m.tool?.name?.includes("The original message was submitted."));
+  // the refused turn is released although its close never confirmed: the bot is free again (before: busy until quit)
+  await expect.poll(busy, { timeout: 30000 }).toBe(false);
+  // JOINT RULING STOP-VS-REFUSAL: no Stop was confirmed, so the refused turn ends with its refusal row, once
+  expect(cards(await messages())).toHaveLength(1);
+  // the next message queued behind it is not stranded: it left the queue and its turn ran to a visible outcome after the refusal row
+  await expect.poll(async () => { const list = await messages(), at = list.indexOf(cards(list)[0]); return list.slice(at + 1).some(m => m.role === "bot"); }, { timeout: 30000 }).toBe(true);
+  // the fence stays for every audience but the owner's: words nobody proved are refused on the fenced thread, never answered in it
+  const outcome = (await messages()).slice((await messages()).indexOf(cards(await messages())[0]) + 1);
+  expect(outcome.some(m => m.tool?.name === "error: MEMORY_CONTEXT_REVOKED")).toBe(true);
+  expect(outcome.some(m => m.provenance === "provider")).toBe(false);
+  // fenced: the refused turn was not rebuilt into the session whose close is unconfirmed
+  expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(`thread ${bot.threadId}; re-preparing`);
+}, 60000);
 
 // Q2 direct, refusal before the engine handed its turn id back (no late-memory ticket: the lease's confirmation is the decision). The row
 // waits for the engine's teardown; an owner Stop pressed first leaves no refusal row; without one the row is written exactly once.

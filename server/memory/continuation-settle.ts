@@ -5,6 +5,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { sessionLookup } from './deny-read.ts';
 import type { LineageReader, LineageVerdict, SessionKey } from './lineage-types.ts';
+import { readsSettledView } from './lineage-types.ts';
 import type { LineageAllowance } from './lineage-allowance.ts';
 import { admitMarkerSlice, beginRevokeMeasure, endRevokeMeasure } from './revoke-budget.ts';
 import { validateSettleJob } from './settle-target.ts';
@@ -25,6 +26,11 @@ export function forgoContinuationSettle(allowance: LineageAllowance): void { att
  * and exhausted budgets stay closed.
  */
 export function continuationSessionVerdict(db: DatabaseSync, key: SessionKey, reader: LineageReader, allowance: LineageAllowance): LineageVerdict {
+  // The owner's own turn (LineageReader.settled), MAIN-RULING 2026-11-27T02:36:43Z REMOVAL: one read of the last settled view, the durable
+  // deny rows; no revoke work and no window on the owner's turn (the runner ends walks in the background).
+  return readsSettledView(reader) ? sessionLookup(db, key, reader) : boundedSessionVerdict(db, key, reader, allowance);
+}
+function boundedSessionVerdict(db: DatabaseSync, key: SessionKey, reader: LineageReader, allowance: LineageAllowance): LineageVerdict {
   let verdict = sessionLookup(db, key, reader);
   if (verdict.state !== 'checking' || (verdict.reason !== 'pending' && verdict.reason !== 'thread-not-ready')
     || (allowance.scope !== 'turn' && allowance.scope !== 'room')

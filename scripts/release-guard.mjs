@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -66,7 +67,7 @@ function pause(ms, run) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function checked(command, args, run) {
+export function checked(command, args, run) {
   const result = run(command, args);
   if (result.error || result.status !== 0) {
     // CLI errors can include response bodies, paths, or credentials. Emit only
@@ -207,10 +208,14 @@ export function publishDraft(version, id, assetsDir, run = execute, authenticate
   }
   const draft = assertDraft(version, id, run);
   assertCompleteDraftDigests(expected, draft.assets);
+  // Rings B6 (designs/RINGS-DESIGN.md section 5): publishing is day 0 of the calendar. The release is always a
+  // prerelease that is NOT latest, so no shipped client and no README button sees it; only the ring manifest
+  // names it, and only `ring promote-all` with its gates makes it latest.
   checked("gh", ["api", "--method", "PATCH", `repos/${RELEASE_REPO}/releases/${id}`,
-    "--field", "draft=false", "--raw-field", "make_latest=true"], run);
+    "--field", "draft=false", "--field", "prerelease=true", "--raw-field", "make_latest=false"], run);
   const release = releaseRecord(apiGet(`repos/${RELEASE_REPO}/releases/${id}`, { run }), version, id);
   if (release.draft) throw new Error("publication was not confirmed");
+  if (release.prerelease !== true) throw new Error("the published release is not a prerelease; refusing to report day 0");
 }
 
 /** Any edit of a release body clears its tag: GitHub turns the release into "untagged-<hash>" (seen on 1.0.3 and 1.0.3.1).
@@ -233,7 +238,8 @@ export function setReleaseBody(version, id, notesFile, target, run = execute) {
   return verifyReleaseTag(version, id, run);
 }
 
-/** The release still carries its tag and title; a published one also has the tag on the remote and is releases/latest. */
+/** The release still carries its tag and title; a published one also has the tag on the remote. Rings (B6): a
+ * prerelease (day 0/1) must NOT be releases/latest; a promoted release (prerelease=false) must be. */
 export function verifyReleaseTag(version, id, run = execute) {
   const release = releaseRecord(apiGet(`repos/${RELEASE_REPO}/releases/${id}`, { run }), version, id);
   if (release.name !== `Murage ${version}`) throw new Error(`release ${id} is titled ${JSON.stringify(release.name)}, not "Murage ${version}"`);
@@ -243,10 +249,116 @@ export function verifyReleaseTag(version, id, run = execute) {
     throw new Error(`tag v${version} is not on ${RELEASE_REPO}; refusing to report the release as published`);
   }
   const latest = apiGet(`repos/${RELEASE_REPO}/releases/latest`, { run });
+  if (release.prerelease === true) {
+    if (latest?.id === id || latest?.tag_name === `v${version}`) throw new Error(`v${version} is a prerelease but releases/latest; refusing`);
+    return release;
+  }
   if (latest?.id !== id || latest?.tag_name !== `v${version}`) {
     throw new Error(`releases/latest is ${latest?.tag_name ?? "missing"}, not v${version}`);
   }
   return release;
+}
+
+/** Capability-db diff baseline (B6): the newest PUBLISHED release older than `version`, prereleases included, so
+ * an N+1 cut during N's day 0-2 diffs against N, not N-1. Returns {tag, url} (url "" = that release has no export). */
+export function capabilityBaseline(releases, version) {
+  parseVersion(version);
+  if (!Array.isArray(releases)) throw new Error("release listing is not an array");
+  const older = releases.filter(r => r && r.draft === false && /^v\d+\.\d+\.\d+$/.test(String(r.tag_name)) && Array.isArray(r.assets))
+    .map(r => ({ r, v: parseVersion(r.tag_name.slice(1)) }))
+    .filter(({ v }) => compareParsed(v, parseVersion(version)) < 0)
+    .sort((a, b) => compareParsed(b.v, a.v));
+  if (!older.length) throw new Error(`no published release older than v${version}`);
+  const { r } = older[0];
+  return { tag: r.tag_name, url: r.assets.find(a => /^capability-db-.*\.json$/.test(a.name))?.browser_download_url ?? "" };
+}
+function compareParsed(a, b) {
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+  return 0;
+}
+
+// Rings (designs/RINGS-DESIGN.md sections 5-6; MAIN-RULING 2026-11-27 option A). Every GitHub write a ring op makes
+// lives here, behind the same release prerequisite as every other release mutation: the promote flip, pin-latest
+// and the one-commit rings branch write. scripts/release-rings.mjs holds the gates and the order and reaches these
+// only as `ringWriters`; release.yml reaches them only through the fixed commands `ring-publish-internal` and
+// `ring-op`, which also import the signing key themselves (no shell step holds it).
+const RINGS_BRANCH = "rings", RINGS_MANIFEST = "rings/rings.json", RINGS_SIGNATURE = "rings/rings.json.asc";
+
+/** promote-all's flip: v stops being a prerelease and becomes releases/latest (release-rings.mjs gates it). */
+export function promoteRingRelease(id, run = execute) {
+  assertSignalReleaseReady();
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error("release id must be a positive integer");
+  checked("gh", ["api", "--method", "PATCH", `repos/${RELEASE_REPO}/releases/${id}`, "--field", "prerelease=false", "--raw-field", "make_latest=true"], run);
+}
+
+/** Section 6 pin-latest: the bad release goes back to prerelease, the previous one becomes latest, then verified.
+ * A rollback only goes back to an older release that was already promoted: never a D0/D1 prerelease (Astra r4). */
+export function pinLatest(bad, previous, run = execute) {
+  assertSignalReleaseReady();
+  parseVersion(bad); parseVersion(previous);
+  if (compareParsed(parseVersion(previous), parseVersion(bad)) >= 0) throw new Error(`ring-op refused: previous ${previous} must be older than ${bad}`);
+  const badRelease = apiGet(`repos/${RELEASE_REPO}/releases/tags/v${bad}`, { run });
+  const previousRelease = apiGet(`repos/${RELEASE_REPO}/releases/tags/v${previous}`, { run });
+  if (badRelease?.tag_name !== `v${bad}` || previousRelease?.tag_name !== `v${previous}` || previousRelease.draft !== false) throw new Error("ring-op refused: pin-latest needs both published releases");
+  if (previousRelease.prerelease !== false) throw new Error(`ring-op refused: v${previous} is a prerelease; pin-latest never makes an unpromoted release latest`);
+  checked("gh", ["api", "--method", "PATCH", `repos/${RELEASE_REPO}/releases/${previousRelease.id}`, "--field", "prerelease=false", "--raw-field", "make_latest=true"], run);
+  checked("gh", ["api", "--method", "PATCH", `repos/${RELEASE_REPO}/releases/${badRelease.id}`, "--field", "prerelease=true", "--raw-field", "make_latest=false"], run);
+  const latest = apiGet(`repos/${RELEASE_REPO}/releases/latest`, { run });
+  if (latest?.tag_name !== `v${previous}`) throw new Error(`releases/latest is ${latest?.tag_name ?? "missing"}, not v${previous}`);
+}
+
+/** Write rings.json + rings.json.asc in ONE commit on the rings branch (git data API). `parent` = the commit the op
+ * read its manifest from; the ref update is fast-forward only, so if another op wrote since, GitHub refuses it and
+ * this op fails red instead of overwriting (Astra r4 pass 1). */
+export function writeRingsBranch({ bytes, signature }, { message, parent, run = execute }) {
+  assertSignalReleaseReady();
+  if (parent === undefined) throw new Error("writeRingsBranch needs the commit the manifest was read from");
+  const post = (args) => JSON.parse(String(checked("gh", ["api", "--method", "POST", ...args], run)));
+  const manifestBlob = post([`repos/${RELEASE_REPO}/git/blobs`, "--raw-field", `content=${Buffer.from(bytes).toString("base64")}`, "--raw-field", "encoding=base64"]).sha;
+  const signatureBlob = post([`repos/${RELEASE_REPO}/git/blobs`, "--raw-field", `content=${Buffer.from(signature).toString("base64")}`, "--raw-field", "encoding=base64"]).sha;
+  const parentTree = parent ? apiGet(`repos/${RELEASE_REPO}/git/commits/${parent}`, { run }).tree.sha : null;
+  const entry = (path, sha) => ["--raw-field", `tree[][path]=${path}`, "--raw-field", "tree[][mode]=100644", "--raw-field", "tree[][type]=blob", "--raw-field", `tree[][sha]=${sha}`];
+  const tree = post([`repos/${RELEASE_REPO}/git/trees`, ...(parentTree ? ["--raw-field", `base_tree=${parentTree}`] : []), ...entry(RINGS_MANIFEST, manifestBlob), ...entry(RINGS_SIGNATURE, signatureBlob)]).sha;
+  const commit = post([`repos/${RELEASE_REPO}/git/commits`, "--raw-field", `message=${message}`, "--raw-field", `tree=${tree}`, ...(parent ? ["--raw-field", `parents[]=${parent}`] : [])]).sha;
+  if (parent) checked("gh", ["api", "--method", "PATCH", `repos/${RELEASE_REPO}/git/refs/heads/${RINGS_BRANCH}`, "--raw-field", `sha=${commit}`, "--field", "force=false"], run);
+  else post([`repos/${RELEASE_REPO}/git/refs`, "--raw-field", `ref=refs/heads/${RINGS_BRANCH}`, "--raw-field", `sha=${commit}`]);
+  return commit;
+}
+
+/** The writers release-rings.mjs runRingOp may use, bound to one command runner. */
+export function ringWriters(run = execute) {
+  return {
+    promoteRelease: (id) => promoteRingRelease(id, run),
+    pinLatest: (bad, previous) => pinLatest(bad, previous, run),
+    writeRingsBranch: (signed, { message, parent }) => writeRingsBranch(signed, { message, parent, run }),
+  };
+}
+
+/** The ring signing key: imported from RELEASE_GPG_PRIVATE_KEY into a private GNUPGHOME made here, used for one op,
+ * then removed. The passphrase goes on stdin, never argv. No shell step of release.yml touches the key. */
+export function withRingSigner(env, use, spawn = spawnSync) {
+  assertSignalReleaseReady();
+  if (!env.GPG_PRIVATE_KEY) throw new Error("RELEASE_GPG_PRIVATE_KEY is not set; no ring manifest can be signed");
+  const home = mkdtempSync(join(tmpdir(), "rings-gnupg-"));
+  chmodSync(home, 0o700);
+  const gpg = (step, args, input) => {
+    const result = spawn("gpg", ["--homedir", home, "--batch", "--quiet", ...args], { input, encoding: "utf8", timeout: 60_000 });
+    if (result.error || result.status !== 0) throw new Error(`gpg ${step} failed (exit=${Number.isInteger(result.status) ? result.status : "none"}); refusing to proceed`);
+  };
+  try {
+    gpg("import", ["--import"], `${env.GPG_PRIVATE_KEY}\n`);
+    return use((bytes) => {
+      const dir = mkdtempSync(join(tmpdir(), "rings-sign-"));
+      try {
+        writeFileSync(join(dir, "rings.json"), bytes);
+        gpg("sign", ["--yes", "--pinentry-mode", "loopback", "--passphrase-fd", "0", "--armor", "--detach-sign", "--output", join(dir, "rings.json.asc"), join(dir, "rings.json")], env.GPG_PASSPHRASE ?? "");
+        return readFileSync(join(dir, "rings.json.asc"), "utf8");
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+  } finally {
+    spawn("gpgconf", ["--homedir", home, "--kill", "gpg-agent"], { encoding: "utf8", timeout: 30_000 });
+    rmSync(home, { recursive: true, force: true });
+  }
 }
 
 /** Exercise the token against a unique throwaway draft after qualification. */
@@ -401,12 +513,18 @@ export function waitForReleaseBarrier(kind, env = process.env, run = execute, at
       if (jobs.length >= response.total_count) break;
       if (page === 10 || response.jobs.length === 0) throw new Error('release jobs pagination incomplete');
     }
-    const matches = jobs.filter(job => job.name === name && String(job.run_id) === env.GITHUB_RUN_ID && String(job.run_attempt) === env.GITHUB_RUN_ATTEMPT);
+    const sameAttempt = job => String(job.run_id) === env.GITHUB_RUN_ID && String(job.run_attempt) === env.GITHUB_RUN_ATTEMPT;
+    const matches = jobs.filter(job => job.name === name && sameAttempt(job));
     if (matches.length > 1) throw new Error('ambiguous release barrier job');
     const job = matches[0];
     if (!job) continue;
     const target = kind === 'probe' ? job.steps?.find(step => step.name === 'Probe release token before builds') : job;
     if (target?.status === 'completed') {
+      if (kind === 'stage' && target.conclusion === 'skipped') {
+        const ciFailed = jobs.some(job => job.name === 'CI must have passed on the pinned commit' &&
+          sameAttempt(job) && job.status === 'completed' && job.conclusion === 'failure');
+        throw new Error(ciFailed ? 'stage skipped after CI gate failure; release stopped' : 'stage skipped; release stopped');
+      }
       if (target.conclusion !== 'success') throw new Error(`${kind} failed; release stopped`);
       if (kind === 'probe' && job.status === 'completed' && job.conclusion !== 'success') throw new Error('probe job failed; release stopped');
       return;
@@ -524,6 +642,46 @@ async function main([command, ...args]) {
     const { checkBrowserExtensionBuild } = await import("./browser-extension-release-config.mjs");
     const problems = checkBrowserExtensionBuild(resolve(args[0]), resolve(args[1]));
     if (problems.length) throw new Error(`packaged Murage for Chrome identity: ${problems.join("; ")}`);
+  } else if (command === "ring-publish-internal" || command === "ring-op" || command === "rings-floor" || command === "rings-floor-check") {
+    const rings = await import("./release-rings.mjs");
+    const publicKey = readFileSync(new URL("../electron/release-key.asc", import.meta.url), "utf8");
+    if (command === "rings-floor-check") rings.assertRingsFloorFile(readFileSync(args[0], "utf8"));
+    else if (command === "rings-floor") {
+      // Anonymous read of the live manifest; 404 on both files = no manifest yet = floor 0. Anything else fails the build.
+      const get = async name => {
+        const response = await fetch(`https://raw.githubusercontent.com/${rings.RINGS_REPO}/${rings.RINGS_BRANCH}/${name}`, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
+        if (response.status === 404) return null;
+        if (response.status !== 200) throw new Error(`rings floor: HTTP ${response.status} for ${name}`);
+        return Buffer.from(await response.arrayBuffer());
+      };
+      const bytes = await get(rings.MANIFEST_PATH), signature = await get(rings.SIGNATURE_PATH);
+      if ((bytes === null) !== (signature === null)) throw new Error("rings floor: only one of rings.json / rings.json.asc exists");
+      const floor = rings.ringsFloor(bytes, signature?.toString("utf8") ?? null, publicKey);
+      writeFileSync(args[0], `${JSON.stringify(floor)}\n`);
+      rings.assertRingsFloorFile(readFileSync(args[0], "utf8"));
+      console.log(`rings floor seq ${floor.seq}`);
+    } else {
+      // Fixed commands, no arguments: everything comes from the step env the capability audit admits.
+      if (args.length) throw new Error(`${command} takes no arguments`);
+      const env = process.env, writers = ringWriters(execute);
+      const op = command === "ring-publish-internal" ? "publish-internal" : env.RING_OP;
+      if (op === "pin-latest") {
+        writers.pinLatest(env.RING_VERSION, rings.parseRingArgs(env.RING_ARGS ?? "").previous);
+        return;
+      }
+      if (!rings.RING_OPS.includes(op)) throw new Error(`unknown ring op ${JSON.stringify(op)}`);
+      const input = command === "ring-publish-internal" ? { version: env.VERSION || undefined } : {
+        version: env.RING_VERSION || undefined, ...rings.parseRingArgs(env.RING_ARGS ?? ""),
+        receipts: String(env.RING_RECEIPTS ?? "").split(" | ").map(line => line.trim()).filter(Boolean) };
+      const ruling = command === "ring-op" ? String(env.RING_RULING ?? "").trim() : "";
+      if (op === "promote-all" && ruling) input[/\bbootstrap\b/.test(ruling) ? "bootstrap" : "waiver"] = ruling;
+      const next = withRingSigner(env, sign => rings.runRingOp(op, input, { apiGet, run: execute, publicKey, sign, writers, log: line => console.log(line) }));
+      if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `ring-op ${op}: ${next ? `seq ${next.seq}` : "already in effect"}${input.waiver ? ` (waiver: ${input.waiver})` : ""}\n`);
+    }
+  } else if (command === "capability-baseline") {
+    const { tag, url } = capabilityBaseline(JSON.parse(readFileSync(args[1], "utf8")), args[0]);
+    console.error(`capability baseline ${tag}`);
+    process.stdout.write(url);
   } else if (command === "update-feed") {
     if (!args.length) throw new Error("name at least one packaged app-update.yml");
     for (const file of args) assertReleaseUpdateFeed(readFileSync(file, "utf8"));

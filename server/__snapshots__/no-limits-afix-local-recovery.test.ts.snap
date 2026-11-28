@@ -8,11 +8,8 @@ exports[`local unread-word recovery: owner > case body > Full access snapshot pr
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -25,11 +22,8 @@ exports[`local unread-word recovery: owner > case body > Full access snapshot pr
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -42,11 +36,8 @@ exports[`local unread-word recovery: owner > earlier operand > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -59,11 +50,8 @@ exports[`local unread-word recovery: owner > earlier operand > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -76,11 +64,8 @@ exports[`local unread-word recovery: owner > fixed path prefix > Full access sna
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -93,11 +78,8 @@ exports[`local unread-word recovery: owner > fixed path prefix > Full access sna
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -110,11 +92,8 @@ exports[`local unread-word recovery: owner > for expansion > Full access snapsho
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -127,11 +106,8 @@ exports[`local unread-word recovery: owner > for expansion > Full access snapsho
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -144,11 +120,8 @@ exports[`local unread-word recovery: owner > function arguments > Full access sn
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -161,11 +134,8 @@ exports[`local unread-word recovery: owner > function arguments > Full access sn
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -178,11 +148,8 @@ exports[`local unread-word recovery: owner > function body > Full access snapsho
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -195,11 +162,8 @@ exports[`local unread-word recovery: owner > function body > Full access snapsho
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -212,11 +176,8 @@ exports[`local unread-word recovery: owner > later command > Full access snapsho
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -229,11 +190,8 @@ exports[`local unread-word recovery: owner > later command > Full access snapsho
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -246,11 +204,8 @@ exports[`local unread-word recovery: owner > later operand > Full access snapsho
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -263,11 +218,8 @@ exports[`local unread-word recovery: owner > later operand > Full access snapsho
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -280,11 +232,8 @@ exports[`local unread-word recovery: owner > later redirect > Full access snapsh
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -297,11 +246,8 @@ exports[`local unread-word recovery: owner > later redirect > Full access snapsh
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -313,12 +259,8 @@ exports[`local unread-word recovery: owner > nested shell > Full access snapshot
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
 }
 `;
@@ -331,11 +273,8 @@ exports[`local unread-word recovery: owner > nested shell > Full access snapshot
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -348,11 +287,8 @@ exports[`local unread-word recovery: owner > unknown loop variable > Full access
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -365,11 +301,8 @@ exports[`local unread-word recovery: owner > unknown loop variable > Full access
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -381,12 +314,8 @@ exports[`local unread-word recovery: owner > unread substitution > Full access s
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
 }
 `;
@@ -399,11 +328,8 @@ exports[`local unread-word recovery: owner > unread substitution > Full access s
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -416,11 +342,8 @@ exports[`local unread-word recovery: owner > until body > Full access snapshot p
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -433,11 +356,8 @@ exports[`local unread-word recovery: owner > until body > Full access snapshot p
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -450,11 +370,8 @@ exports[`local unread-word recovery: owner > while body > Full access snapshot p
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -467,11 +384,8 @@ exports[`local unread-word recovery: owner > while body > Full access snapshot p
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -484,11 +398,8 @@ exports[`local unread-word recovery: routine > case body > Full access snapshot 
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -501,11 +412,8 @@ exports[`local unread-word recovery: routine > case body > Full access snapshot 
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -518,11 +426,8 @@ exports[`local unread-word recovery: routine > earlier operand > Full access sna
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -535,11 +440,8 @@ exports[`local unread-word recovery: routine > earlier operand > Full access sna
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -552,11 +454,8 @@ exports[`local unread-word recovery: routine > fixed path prefix > Full access s
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -569,11 +468,8 @@ exports[`local unread-word recovery: routine > fixed path prefix > Full access s
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -586,11 +482,8 @@ exports[`local unread-word recovery: routine > for expansion > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -603,11 +496,8 @@ exports[`local unread-word recovery: routine > for expansion > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -620,11 +510,8 @@ exports[`local unread-word recovery: routine > function arguments > Full access 
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -637,11 +524,8 @@ exports[`local unread-word recovery: routine > function arguments > Full access 
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -654,11 +538,8 @@ exports[`local unread-word recovery: routine > function body > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -671,11 +552,8 @@ exports[`local unread-word recovery: routine > function body > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -688,11 +566,8 @@ exports[`local unread-word recovery: routine > later command > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -705,11 +580,8 @@ exports[`local unread-word recovery: routine > later command > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -722,11 +594,8 @@ exports[`local unread-word recovery: routine > later operand > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -739,11 +608,8 @@ exports[`local unread-word recovery: routine > later operand > Full access snaps
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -756,11 +622,8 @@ exports[`local unread-word recovery: routine > later redirect > Full access snap
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -773,11 +636,8 @@ exports[`local unread-word recovery: routine > later redirect > Full access snap
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -789,12 +649,8 @@ exports[`local unread-word recovery: routine > nested shell > Full access snapsh
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
 }
 `;
@@ -807,11 +663,8 @@ exports[`local unread-word recovery: routine > nested shell > Full access snapsh
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -824,11 +677,8 @@ exports[`local unread-word recovery: routine > unknown loop variable > Full acce
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -841,11 +691,8 @@ exports[`local unread-word recovery: routine > unknown loop variable > Full acce
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -857,12 +704,8 @@ exports[`local unread-word recovery: routine > unread substitution > Full access
     "source": "unread-call",
   },
   "verdict": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
 }
 `;
@@ -875,11 +718,8 @@ exports[`local unread-word recovery: routine > unread substitution > Full access
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -892,11 +732,8 @@ exports[`local unread-word recovery: routine > until body > Full access snapshot
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -909,11 +746,8 @@ exports[`local unread-word recovery: routine > until body > Full access snapshot
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -926,11 +760,8 @@ exports[`local unread-word recovery: routine > while body > Full access snapshot
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
 }
 `;
@@ -943,11 +774,8 @@ exports[`local unread-word recovery: routine > while body > Full access snapshot
   },
   "verdict": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
 }
 `;

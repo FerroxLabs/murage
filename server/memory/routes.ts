@@ -20,7 +20,7 @@ import { learningWriteDecision,learningEvidenceScopes,learningSourceBot } from "
 import { recordLearningEvent } from "./learning-ledger.ts";
 import { activateGroundedMemory, candidateReviewReason, holdMemoryCandidate, learningReviewReason, ownerLearningRefusal, pendingSaveNote } from "./automatic-learning.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
-import { saveProjectCloseLesson, saveMemoryCandidate, saveGroundedMemory, assertMemoryCaptureComplete, assertGenericMemoryTarget, savedMemoryEvidence, memoryCandidateId } from "./authority.ts";
+import { markOwnerTurnSave, saveProjectCloseLesson, saveMemoryCandidate, saveGroundedMemory, assertMemoryCaptureComplete, assertGenericMemoryTarget, savedMemoryEvidence, memoryCandidateId } from "./authority.ts";
 import { MEMORY_HANDLE_PATTERN } from "../../shared/memory.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
@@ -63,12 +63,19 @@ function bounded<T>(result:T):T {
 
 /** Called only after the harness binds a live memory capability to this context. */
 export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAccess,bridge:MemorySearchBridge,handles?:MemoryHandleResolver,extractor:TextOnlyExtractor|null=null,options:{authority?:ServiceAuthority;budgetGate?:(scopeId:string)=>boolean;executingRequestId?:string;
+  /** MEMSWEEP-1024 (MAIN-RULING memory G/H): this call was made by the owner's own typed turn in the owner's direct chat (index.ts
+   * ownerDirectLine, same generation). Its search, get and correction target are read by the settled view (readable.ts ownerTurn), and a
+   * save or a correction judges the owner's own attended words by it (authority.ts assertEvidenceAllowed). Absent or false: strict. */
+  ownerTurn?:boolean;
   /** The captured sources whose text a read hands the turn (every record's evidence): they join the calling turn's sources (server/steer-lineage.ts). */
   onRead?:(sourceIds:string[])=>void}={}) {
   const executingRequestId=options.executingRequestId;
   try { assertMemoryAccess(access); }
   catch(error) {
-    const executing = error instanceof RecallViewLost && path==="/api/internal/memory/save" && executingRequestId ? roomRequest(database(),executingRequestId) : null;
+    // A revoked access is a lost view or (oneindex, policy.ts assertMemoryAccess) a moved authority epoch or principal: a Reopen moves the
+    // epoch, so a close turn whose lesson path it ended reports the lesson refusal either way, never the generic revoke.
+    const revoked = error instanceof RecallViewLost || error instanceof Error && error.message==="MEMORY_CONTEXT_REVOKED";
+    const executing = revoked && path==="/api/internal/memory/save" && executingRequestId ? roomRequest(database(),executingRequestId) : null;
     if(executing && executing.toBotId===access.botId && (executing.targetThreadId??executing.rootThreadId)===access.threadId
       && isCloseTurnRequest(database(),executing) && !isProjectCloseLesson(database(),executing))throw new Error("MEMORY_CLOSE_LESSON_REQUIRED");
     throw error;
@@ -84,7 +91,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
   try {
     if(path==="/api/internal/memory/search"){
       const input=search.parse(body);
-      const found=await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.search(recallHydrationLimitMs("tool")),withheldMessage:readerWithheldMessage(access),caller:"tool"});
+      const found=await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.search(recallHydrationLimitMs("tool")),withheldMessage:readerWithheldMessage(access),caller:"tool",ownerTurn:options.ownerTurn===true});
       // bot email (5.4): a hit resting on a source from a marked row is fenced, kind email-derived, and marks this turn
       const result=bounded({...found,hits:fenceEmailDerivedRecords(database(),found.hits,access.threadId)});
       // NOLIMITS v1 1.0.19 4.2 r3: the reading turn marks memory only when a returned record is not proven clean
@@ -100,7 +107,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       const withheld=readerWithheldMessage(access);
       // A bot's own read (agent): owner-authored continuity reaches the bot only through the frame (PIP A1). Every
       // check is readableMemoryRecord's (readable.ts), the same one memory_search applies to each hit.
-      const reader={allowance:LineageAllowance.tool(),agent:true,...withheld?{withheldMessage:withheld}:{}};
+      const reader={allowance:LineageAllowance.tool(),agent:true,...withheld?{withheldMessage:withheld}:{},...options.ownerTurn===true?{ownerTurn:true}:{}};
       const records=input.handles.map(item=>{
         if(!("handle" in item))return hydrateMemoryRecord(item.id,item.version,access,reader);
         const {id:recordId,version:recordVersion}=resolve(item.handle);
@@ -114,6 +121,8 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       options.onRead?.(records.flatMap(record=>record.evidence.map(handle=>String(handle.sourceId))));
       return memoryReadResponse(result,records);
     }
+    // MEMSWEEP-1024: a save or a correction proposal of the owner's own typed turn (the two writers of this route).
+    if(options.ownerTurn===true&&(path==="/api/internal/memory/save"||path==="/api/internal/memory/propose-correction"))markOwnerTurnSave(access);
     if(path==="/api/internal/memory/save"){
       const parsed=save.parse(body),db=database();
       // a retry of the same save (same key) re-resolves its quotes to the evidence the first one stored, never to a newer echo of the words
@@ -144,7 +153,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       }
       // the reader's own rule, as memory_get applies it: a record resting on a line this reader may not see is not a target
       const withheld=readerWithheldMessage(access);
-      hydrateMemoryRecord(target.id,target.version,access,{allowance:LineageAllowance.tool(),...withheld?{withheldMessage:withheld}:{}});
+      hydrateMemoryRecord(target.id,target.version,access,{allowance:LineageAllowance.tool(),...withheld?{withheldMessage:withheld}:{},...options.ownerTurn===true?{ownerTurn:true}:{}});
       const db=database();
       assertGenericMemoryTarget(db,target.id,target.version);
       // sampled before the target and evidence words are read: the support check is dropped unsent if anything they rest on moves

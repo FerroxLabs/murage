@@ -23,7 +23,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: (await response.json().catch(() => null)) as any };
 };
 const dataFile = (name: string) => join(fixture.info.dataDir, name);
-type Turn = { token: string; botId: string; threadId: string; depth: number };
+type Turn = { token: string; botId: string; threadId: string };
 /** The turn of `botId` whose prompt carries `marker`, read from the instance's dump history (one line per dumped turn). */
 const dumpToken = (tag: string, botId: string, marker: string): Turn | null => {
   let lines: string[];
@@ -33,7 +33,7 @@ const dumpToken = (tag: string, botId: string, marker: string): Turn | null => {
       const dump = withTurnSecrets(JSON.parse(line));
       const env = dump.mcpConfig.mcpServers.agents.env;
       if (env.MURAGE_BOT_ID !== botId || !JSON.stringify(dump.prompt ?? "").includes(marker)) continue;
-      return { token: env.MURAGE_COMMS_TOKEN, botId: env.MURAGE_BOT_ID, threadId: env.MURAGE_THREAD_ID, depth: Number(env.MURAGE_TURN_DEPTH ?? 0) };
+      return { token: env.MURAGE_COMMS_TOKEN, botId: env.MURAGE_BOT_ID, threadId: env.MURAGE_THREAD_ID };
     } catch { /* a line being written */ }
   }
   return null;
@@ -56,7 +56,7 @@ const requestTo = (botId: string, verb: string) => withDb((db) => db.prepare("SE
 const requestById = (id: string) => withDb((db) => db.prepare("SELECT id,state,parent_id,verb FROM room_requests WHERE id=?").get(id) as Row | undefined);
 const call = (turn: Turn, path: string, body: Record<string, unknown>, signal?: AbortSignal) => fetch(fixture.info.url + path, { method: "POST", signal,
   headers: { authorization: `Bearer ${turn.token}`, "content-type": "application/json" },
-  body: JSON.stringify({ fromBotId: turn.botId, fromThreadId: turn.threadId, depth: turn.depth, ...body }) });
+  body: JSON.stringify({ fromBotId: turn.botId, fromThreadId: turn.threadId, ...body }) });
 
 beforeAll(async () => {
   fixture = await launchVerificationServer(process.env, undefined, { portRange: { from: 48_400, span: 90 }, readyTimeoutMs: 90_000, instrumentationSource: `

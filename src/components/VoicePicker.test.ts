@@ -104,8 +104,7 @@ describe("the voice picker", () => {
 describe("the Voice & alerts copy", () => {
   const voice = readFileSync(new URL("./VoiceSettings.tsx", import.meta.url), "utf8");
   const picker = readFileSync(new URL("./VoicePicker.tsx", import.meta.url), "utf8");
-  const panel = readFileSync(new URL("./SettingsPanel.tsx", import.meta.url), "utf8");
-  const notifications = panel.slice(panel.indexOf('<SettingsSection id="voice"'), panel.indexOf('<SettingsSection id="routines"'));
+  const notifications = readFileSync(new URL("./bot-pages/BotVoicePage.tsx", import.meta.url), "utf8");
   it("says bot, not agent, and has no em dashes", () => {
     for (const text of [voice, picker, notifications]) {
       expect(text).not.toMatch(/—/);

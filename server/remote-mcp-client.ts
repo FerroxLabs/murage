@@ -17,6 +17,7 @@
 // Each security rule is a named function so the review can read and test it
 // alone: parseWwwAuthenticate, classifyUnauthorized, safeResourceMetadataUrl,
 // reasonForGuardedError, isSameOriginEndpoint, redactUpstreamText, createSseReader.
+import { redactConfiguredValues } from "../shared/configured-value-redaction.cjs";
 import { Readable } from "node:stream";
 import { currentUpstreamAccounting, type UpstreamAccounting } from "./memory/upstream-reader.ts";
 
@@ -43,6 +44,9 @@ export interface RemoteProbeInput {
   resolver?: GuardedRequestOptions["resolver"];
   /** How long the legacy SSE stream may be silent (review L7). */
   idleMs?: number;
+  /** The saved entry keeps a secret in its link (config `urlSecret`). Such a
+   * probe never sends the sign-in check (G34). */
+  urlSecret?: boolean;
 }
 
 // ── named security rules ────────────────────────────────────────────────
@@ -168,11 +172,7 @@ export function isSameOriginEndpoint(serverUrl: string, endpoint: string): boole
 /** Replace every configured secret value in text with a marker. Values shorter
  * than 4 characters are not replaced (they would shred ordinary words). */
 export function redactUpstreamText(text: string, secrets: Iterable<string>): string {
-  let redacted = text;
-  for (const secret of secrets) {
-    if (secret.length >= 4) redacted = redacted.split(secret).join("[redacted]");
-  }
-  return redacted;
+  return redactConfiguredValues(text, [...secrets].filter(secret => secret.length >= 4));
 }
 
 // ── reasons and their fixed sentences ───────────────────────────────────
@@ -207,7 +207,9 @@ export function remoteFailureSentence(reason: McpProbeFailureReason, detail: Rem
     case "server-error": return `${host} had a problem answering. Try again in a moment.`;
     case "no-answer": return "The server did not answer in time. Try again in a moment.";
     case "session-gone": return "The connection to this server was closed. Try again in a moment.";
+    case "stream-broke": return "The connection to this server broke before it answered. Try again in a moment.";
     case "cancelled": return "Connection test was cancelled.";
+    case "not-in-chats": return "Chats cannot use this server as it is set up now. Check that its keys are entered, then test again.";
     default: return "The server did not complete MCP initialization.";
   }
 }
@@ -230,12 +232,10 @@ export interface SseEvent {
 }
 
 /** Read server-sent events from a byte stream. Fails with `idle-timeout` when
- * nothing arrives for `idleMs`, and with `event-too-large` when one event
- * (its data lines together) passes `maxEventBytes`. Comment lines count as
- * activity but carry no bytes toward the cap. */
+ * nothing arrives for `idleMs`. An event of any size is read (MAIN-RULING cause22-no-transport-caps). */
 export function createSseReader(
   stream: AsyncIterable<Buffer | Uint8Array | string>,
-  options: { idleMs: number; maxEventBytes: number; accounting?: UpstreamAccounting; probeOnly?: true },
+  options: { idleMs: number; accounting?: UpstreamAccounting; probeOnly?: true },
 ): AsyncGenerator<SseEvent> {
   const inherited = currentUpstreamAccounting("sse");
   const accounting = options.accounting ?? inherited;
@@ -251,7 +251,6 @@ export function createSseReader(
   let buffered = "";
   let event = "message";
   let data: string[] = [];
-  let eventBytes = 0;
   const flush = (): SseEvent | null => {
     if (data.length === 0) {
       event = "message";
@@ -260,8 +259,20 @@ export function createSseReader(
     const out = { event, data: data.join("\n") };
     event = "message";
     data = [];
-    eventBytes = 0;
     return out;
+  };
+  // CR ends a line immediately, even on a live CR-only stream. If LF comes
+  // in the next chunk it belongs to that same terminator, not a blank line.
+  let skipLf = false;
+  const line = (text: string): SseEvent | null => {
+    if (text === "") return flush();
+    if (text.startsWith(":")) return null;
+    const colon = text.indexOf(":");
+    const field = colon === -1 ? text : text.slice(0, colon);
+    const value = colon === -1 ? "" : text.slice(colon + 1).replace(/^ /, "");
+    if (field === "event") event = value || "message";
+    else if (field === "data") data.push(value);
+    return null;
   };
   try {
     for (;;) {
@@ -276,32 +287,26 @@ export function createSseReader(
       if (next.done) {
         accounting?.end();
         buffered += decoder.decode();
+        // EOF also completes an unterminated line before the final event is flushed.
+        if (buffered) line(buffered);
         break;
       }
       const chunk = next.value;
       accounting?.accept(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-      buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-      // A line that never ends is an event that never ends.
-      if (buffered.length > options.maxEventBytes + 1_024 && !buffered.includes("\n")) throw new SseReaderError("event-too-large");
+      let text = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+      if (text.length > 0) {
+        if (skipLf && text.startsWith("\n")) text = text.slice(1);
+        skipLf = false;
+        buffered += text;
+      }
       let newline = buffered.search(/\r\n|\n|\r/);
       while (newline !== -1) {
-        const line = buffered.slice(0, newline);
+        const text = buffered.slice(0, newline);
         const eol = buffered.startsWith("\r\n", newline) ? 2 : 1;
+        skipLf = buffered[newline] === "\r" && newline + 1 === buffered.length;
         buffered = buffered.slice(newline + eol);
-        if (line === "") {
-          const out = flush();
-          if (out) yield out;
-        } else if (!line.startsWith(":")) {
-          const colon = line.indexOf(":");
-          const field = colon === -1 ? line : line.slice(0, colon);
-          const value = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
-          if (field === "event") event = value;
-          else if (field === "data") {
-            eventBytes += Buffer.byteLength(value) + 1;
-            if (eventBytes > options.maxEventBytes) throw new SseReaderError("event-too-large");
-            data.push(value);
-          }
-        }
+        const out = line(text);
+        if (out) yield out;
         newline = buffered.search(/\r\n|\n|\r/);
       }
     }
@@ -357,7 +362,7 @@ function validInitialize(frame: Record<string, unknown> | null): boolean {
     && isRecord(result.serverInfo) && typeof result.serverInfo.name === "string" && typeof result.serverInfo.version === "string";
 }
 
-function collectTools(frame: Record<string, unknown> | null, secrets: string[]): ({ tools: McpProbeTool[] } & McpToolsBeyondList) | null {
+export function collectTools(frame: Record<string, unknown> | null, secrets: string[]): ({ tools: McpProbeTool[] } & McpToolsBeyondList) | null {
   if (!frame || frame.jsonrpc !== "2.0" || "error" in frame || !isRecord(frame.result) || !Array.isArray(frame.result.tools)) return null;
   const tools: McpProbeTool[] = [];
   for (const raw of frame.result.tools.slice(0, LIMITS.toolsListed)) {
@@ -368,6 +373,26 @@ function collectTools(frame: Record<string, unknown> | null, secrets: string[]):
     });
   }
   return { tools, ...toolsBeyondList(frame.result.tools, frame.result.nextCursor, tools.length) };
+}
+
+/** G34: the tool name the sign-in check calls. A space and a "?" sit outside
+ * the MCP tool-name characters [A-Za-z0-9_.-], so no conforming server defines
+ * it and nothing runs. */
+export const SIGN_IN_CHECK_TOOL = "murage sign-in check?";
+const SIGN_IN_CHECK_MS = 5_000;
+
+/** The server's whole list came back: no further page and fewer raw entries
+ * than the probe keeps, and the check name is not on it. */
+export function listIsComplete(frame: Record<string, unknown> | null): boolean {
+  if (!frame || !isRecord(frame.result) || !Array.isArray(frame.result.tools)) return false;
+  const { tools } = frame.result;
+  if (Object.hasOwn(frame.result, "nextCursor")) return false;
+  if (tools.length >= LIMITS.toolsListed) return false;
+  return !tools.some((tool) => isRecord(tool) && tool.name === SIGN_IN_CHECK_TOOL);
+}
+
+function signInCheckFrame(id: number): string {
+  return JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name: SIGN_IN_CHECK_TOOL, arguments: {} } });
 }
 
 function initializeFrame(id: number): string {
@@ -418,6 +443,9 @@ export async function probeRemoteMcp(input: RemoteProbeInput): Promise<McpProbeR
   const host = parsed.ok ? parsed.hostname : "this server";
   const secrets = [...Object.values(input.headers ?? {}), ...(input.bearer ? [input.bearer] : []), input.url].filter(Boolean);
   const sent: UnauthorizedInput["sent"] = input.bearer ? "bearer" : Object.keys(input.headers ?? {}).length > 0 ? "key" : "nothing";
+  // G34: only a probe that carries no credential at all (no key, no bearer, no
+  // secret in the link, none saved) sends the sign-in check.
+  const maySignInCheck = sent === "nothing" && !urlHasSecret(input.url) && input.urlSecret !== true;
   const totalMs = input.totalMs ?? LIMITS.probeTotalMs;
   const deadline = Date.now() + totalMs;
   const fail = (reason: McpProbeFailureReason, extra: Partial<Extract<McpProbeResult, { ok: false }>> & { needs?: LocalConfirmation } = {}): McpProbeResult => ({
@@ -491,10 +519,29 @@ export async function probeRemoteMcp(input: RemoteProbeInput): Promise<McpProbeR
   };
 
   const textOf = (response: { body?: Buffer }) => (response.body ? response.body.toString("utf8", 0, 4_096) : "");
+  const checkMs = () => Math.max(1, Math.min(SIGN_IN_CHECK_MS, deadline - Date.now()));
+
+  /** G34: a server that lists tools to anyone but refuses calls without a
+   * sign-in. Only an HTTP 401 that classifies as needs-sign-in from a
+   * protected-resource source changes the verdict; any other answer, a 403, a
+   * timeout or a network error keeps Connected (null). */
+  const signInCheck = async (call: () => Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body?: Buffer }>): Promise<McpProbeResult | null> => {
+    let answer: Awaited<ReturnType<typeof call>>;
+    try {
+      answer = await call();
+    } catch {
+      if (input.signal?.aborted) return fail("cancelled");
+      return null;
+    }
+    if (answer.status !== 401) return null;
+    const verdict = await explainStatus(401, answer.headers, textOf(answer));
+    if (input.signal?.aborted) return fail("cancelled");
+    return !verdict.ok && verdict.reason === "needs-sign-in" ? verdict : null;
+  };
 
   const viaStreamableHttp = async (): Promise<McpProbeResult | "fallback"> => {
-    const post = (body: string, session?: string, protocol?: string) => request({
-      url: input.url, method: "POST", body,
+    const post = (body: string, session?: string, protocol?: string, totalMs?: number) => request({
+      url: input.url, method: "POST", body, ...(totalMs ? { totalMs } : {}),
       headers: {
         "content-type": "application/json", accept: "application/json, text/event-stream", ...authHeaders(),
         ...(session ? { "mcp-session-id": session } : {}), ...(protocol ? { "mcp-protocol-version": protocol } : {}),
@@ -513,15 +560,21 @@ export async function probeRemoteMcp(input: RemoteProbeInput): Promise<McpProbeR
     if (initialized.status >= 400) return explainStatus(initialized.status, initialized.headers, textOf(initialized as { body?: Buffer }));
     const list = await post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }), session, protocol);
     if (list.status !== 200) return explainStatus(list.status, list.headers, textOf(list as { body?: Buffer }));
-    const listed = collectTools(parseRpcResponse((list as { body: Buffer }).body.toString("utf8"), 2), secrets);
-    return listed ? { ok: true, ...listed, transport: "http" } : fail("wrong-address");
+    const listFrame = parseRpcResponse((list as { body: Buffer }).body.toString("utf8"), 2);
+    const listed = collectTools(listFrame, secrets);
+    if (!listed) return fail("wrong-address");
+    if (maySignInCheck && listIsComplete(listFrame)) {
+      const refused = await signInCheck(() => post(signInCheckFrame(3), session, protocol, checkMs()) as Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body?: Buffer }>);
+      if (refused) return refused;
+    }
+    return { ok: true, ...listed, transport: "http" };
   };
 
   const viaLegacySse = async (): Promise<McpProbeResult> => {
     const opened = await request({ url: input.url, method: "GET", kind: "sse", responseMode: "stream", headers: { accept: "text/event-stream", ...authHeaders() } });
     if (opened.status !== 200 || !("stream" in opened)) return explainStatus(opened.status, opened.headers, "");
     const stream = opened as unknown as GuardedStreamResponse;
-    const events = createSseReader(stream.stream as Readable, { idleMs: input.idleMs ?? 10_000, maxEventBytes: LIMITS.sseEventBytes, probeOnly: true });
+    const events = createSseReader(stream.stream as Readable, { idleMs: input.idleMs ?? 10_000, probeOnly: true });
     // Every wait on the stream is bounded by the probe's own deadline and its
     // caller's abort, not only by the reader's per-event idle timer (comment
     // lines reset that one): M4.
@@ -531,7 +584,7 @@ export async function probeRemoteMcp(input: RemoteProbeInput): Promise<McpProbeR
       if (first.done || first.value.event !== "endpoint") return fail("wrong-address");
       if (!isSameOriginEndpoint(input.url, first.value.data.trim())) return fail("wrong-address");
       const endpoint = new URL(first.value.data.trim(), input.url).href;
-      const send = (body: string) => request({ url: endpoint, method: "POST", body, headers: { "content-type": "application/json", ...authHeaders() } });
+      const send = (body: string, totalMs?: number) => request({ url: endpoint, method: "POST", body, ...(totalMs ? { totalMs } : {}), headers: { "content-type": "application/json", ...authHeaders() } });
       const answer = async (id: number): Promise<Record<string, unknown> | null> => {
         for (;;) {
           const item = await next();
@@ -552,8 +605,15 @@ export async function probeRemoteMcp(input: RemoteProbeInput): Promise<McpProbeR
       await send(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
       const sentList = await send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }));
       if (sentList.status >= 300) return explainStatus(sentList.status, sentList.headers, textOf(sentList as { body?: Buffer }));
-      const listed = collectTools(await answer(2), secrets);
-      return listed ? { ok: true, ...listed, transport: "sse" } : fail("wrong-address");
+      const listFrame = await answer(2);
+      const listed = collectTools(listFrame, secrets);
+      if (!listed) return fail("wrong-address");
+      const checkEndpoint = new URL(endpoint);
+      if (maySignInCheck && checkEndpoint.pathname === "/messages" && !checkEndpoint.search && listIsComplete(listFrame)) {
+        const refused = await signInCheck(() => send(signInCheckFrame(3), checkMs()) as Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body?: Buffer }>);
+        if (refused) return refused;
+      }
+      return { ok: true, ...listed, transport: "sse" };
     } catch (error) {
       if (error instanceof Stop) throw error;
       if (error instanceof SseReaderError) return fail(error.code === "idle-timeout" ? "no-answer" : "wrong-address");

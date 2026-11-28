@@ -12,34 +12,22 @@ exports[`G-NL Full access twins remain unchanged 1`] = `
   {
     "id": "F2 unread unmodeled",
     "verdict": {
-      "approve": null,
-      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-      "reader": "held",
-      "reason": "value-path",
-      "rule": "unreadable",
-      "source": "always-ask",
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access",
     },
   },
   {
     "id": "F2 unread reader-failed",
     "verdict": {
-      "approve": null,
-      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-      "reader": "held",
-      "reason": "tokenizer",
-      "rule": "unreadable",
-      "source": "always-ask",
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access",
     },
   },
   {
     "id": "F2 unread tokenizer",
     "verdict": {
-      "approve": null,
-      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-      "reader": "held",
-      "reason": "tokenizer",
-      "rule": "unreadable",
-      "source": "always-ask",
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access",
     },
   },
   {
@@ -53,11 +41,9 @@ exports[`G-NL Full access twins remain unchanged 1`] = `
   {
     "id": "F3 protected-path",
     "verdict": {
-      "approve": null,
-      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-      "reason": "protected-path",
-      "rule": "protected-path",
-      "source": "always-ask",
+      "approve": "auto-approved Bash (full access)",
+      "rule": "held=waived",
+      "source": "full-access",
     },
   },
   {
@@ -101,11 +87,9 @@ exports[`G-NL Full access twins remain unchanged 1`] = `
   {
     "id": "F5 refusal",
     "verdict": {
-      "approve": null,
-      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
-      "reason": "protected-path",
-      "rule": "protected-path",
-      "source": "always-ask",
+      "approve": "auto-approved Bash (full access)",
+      "rule": "held=waived",
+      "source": "full-access",
     },
   },
   {
@@ -120,12 +104,8 @@ exports[`G-NL Full access twins remain unchanged 1`] = `
   {
     "id": "F6 no-grant",
     "verdict": {
-      "approve": null,
-      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-      "reader": "held",
-      "reason": "value-path",
-      "rule": "unreadable",
-      "source": "always-ask",
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access",
     },
   },
 ]

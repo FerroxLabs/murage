@@ -23,7 +23,7 @@ for(const venue of ['bot','channel'] as const)for(const error of ['MemoryPinProj
   await run([venue==='bot'?'send':'send-channel',...destination,'--text','Fixture input']);
   await run(['wait',...destination,'--timeout','20']);
   const rows=JSON.stringify(await run(['messages',...destination,'--limit','30']));
-  expect(rows).toContain('Could not start this reply. Send it again.');
+  expect(rows).toContain(venue==='bot'?"Murage couldn't start this reply because this conversation's memory was not ready in time.":"Murage couldn't start this reply. Send it again.");
   expect(rows).not.toContain('pinned memory');expect(rows).not.toContain('pinned memories');expect(rows).not.toContain('still being prepared');
   const log=readFileSync(fixture.info.logPath,'utf8');expect(log).toContain('fixture non-owner refusal');expect(log).not.toContain('turn dispatch recall=');
   expect(existsSync(fixture.fixtureTurnLogPath)?readFileSync(fixture.fixtureTurnLogPath,'utf8').trim():'').toBe('');

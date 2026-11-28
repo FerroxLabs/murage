@@ -11,6 +11,7 @@ import * as marker from "./revoke-marker.ts";
 import * as commit from "./revoke-commit.ts";
 import * as m103 from "./testing/legacy-lineage/revoke-marker-103.ts";
 import { denyLookup } from "./deny-read.ts";
+import { INLINE_REVOCATION } from "./memory-revocation.ts";
 import { CARRY_CHILD_CODE, lineChildRef, turnChildRef } from "./lineage-types.ts";
 import { CONTENT, testThreadNo, WritetimeFixture } from "./testing/writetime-fixture.ts";
 
@@ -27,8 +28,23 @@ function carry(db: Db, P: string, from: number, to: number, child: { line: [stri
   db.prepare("INSERT OR IGNORE INTO memory_lineage_carry(parent_thread_no,to_lsn,from_lsn,child_kind,child_ref,child_thread_no) VALUES(?,?,?,?,?,?)").run(testThreadNo(db, P), to, from, row[0]!, row[1]!, row[2]!);
 }
 
+const INLINE_MS = INLINE_REVOCATION.ms;
 beforeEach(() => { marker.setScopeFlowEdgesRecorded(true); m103.setScopeFlowEdgesRecorded(true); });
-afterEach(() => { marker.setScopeFlowEdgesRecorded(true); });
+afterEach(() => { marker.setScopeFlowEdgesRecorded(true); commit.INHERIT_CLOSE.inline = true; INLINE_REVOCATION.ms = INLINE_MS; });
+// MEMORY V2 V3 (MEMORY-V2-DESIGN 4.3): "An inherit job closes in the write that creates it. The job, its mark, its node and its hold are
+// written as today and the same positional walk runs, at once, in the writer's transaction, inside the inline cap (576 rows, 8 ms). A walk
+// that does not fit stays queued exactly as today, window open." The Astra r4 / r5 cases below therefore run in both forms. `closed`: the
+// walk fits (the clock bound is lifted so the result does not depend on this machine's speed) and the job is done at the write; its tidy
+// prunes finished rows older than the newest (revoke-marker.ts pruneFinished), so the job-row COUNT no longer tells how many walks opened:
+// the walk is identified by the revoke id the child's mark is written under and by the job ids above the highest one before the write.
+// `queued` (commit.INHERIT_CLOSE.inline off, the form a walk that does not fit takes): every assertion the cases made before 1.0.21,
+// unchanged. In both forms the child is withheld from its write on and after every job is done.
+const forms = ["closed", "queued"] as const;
+const setForm = (form: typeof forms[number]): void => { commit.INHERIT_CLOSE.inline = form === "closed"; if (form === "closed") INLINE_REVOCATION.ms = 1000; };
+const maxJob = (db: Db) => n(db, "SELECT coalesce(max(revoke_id),0) AS n FROM memory_revoke_jobs");
+const jobsAbove = (db: Db, id: number) => db.prepare("SELECT revoke_id,kind,state FROM memory_revoke_jobs WHERE revoke_id>? ORDER BY revoke_id").all(id) as Array<{ revoke_id: number; kind: string; state: string }>;
+const marksOf = (db: Db, T: string, lsn: number) => (db.prepare("SELECT DISTINCT revoke_id AS r FROM memory_deny_point WHERE thread_id=? AND lsn=? ORDER BY revoke_id").all(T, lsn) as Array<{ r: number }>).map(row => Number(row.r));
+const active = (db: Db) => n(db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE state IN ('active','undoing')");
 
 describe("T3: a late child of a deleted conversation is withheld whatever job row marked its parent (2.3)", () => {
   // T (deleted) carried its reply 2 into T2's reply 11; later T2's turn at head 200 quotes line 11 (its prompt carried [11, 11]) and
@@ -137,8 +153,9 @@ describe("T3: a late child of a deleted conversation is withheld whatever job ro
       } finally { fx.close(); }
     });
   }
-  it("Astra r4 residual: a late prefix child of T after T's range rows coalesced and its job row was pruned opens ONE inherit walk", () => {
+  for (const form of forms) it(`Astra r4 residual: a late prefix child of T after T's range rows coalesced and its job row was pruned opens ONE inherit walk (${form})`, () => {
     const { fx, db } = store();
+    setForm(form);
     try {
       const J = deleteT(db, "done-pruned");
       // T was reached by many earlier revokes: with the deletion's own range row it holds 64 and they merge into one row of revoke -1
@@ -146,8 +163,8 @@ describe("T3: a late child of a deleted conversation is withheld whatever job ro
       expect(n(db, "SELECT count(*) AS n FROM memory_deny_range WHERE thread_id='T'")).toBe(1);
       expect(n(db, "SELECT count(*) AS n FROM memory_deny_range WHERE thread_id='T' AND revoke_id=-1")).toBe(1);
       // the deletion's receipt (a line row at FIRST_LSN under J) survives both
-      expect(n(db, "SELECT count(*) AS n FROM memory_deny_line WHERE thread_id='T' AND lsn=? AND revoke_id=?", Number.MIN_SAFE_INTEGER, J)).toBe(1);
-      const jobsBefore = n(db, "SELECT count(*) AS n FROM memory_revoke_jobs");
+      expect(n(db, "SELECT count(*) AS n FROM memory_deny_point WHERE thread_id='T' AND lsn=? AND revoke_id=?", Number.MIN_SAFE_INTEGER, J)).toBe(1);
+      const jobsBefore = n(db, "SELECT count(*) AS n FROM memory_revoke_jobs"), top = maxJob(db);
       // T2's turn at 200 carries T's whole prefix (FIRST_LSN .. 4) and replies at 201
       tx(db, () => {
         db.prepare("UPDATE memory_lsn SET next=max(next,200) WHERE id=1").run();
@@ -156,7 +173,19 @@ describe("T3: a late child of a deleted conversation is withheld whatever job ro
         commit.inheritMarks(db, { kind: "turn", threadId: "T2", lsn: 200, line: 201, holdFrom: 201 }, [], [{ threadId: "T", from: Number.MIN_SAFE_INTEGER, to: 4 }]);
       });
       // one walk, as the base opened for a coalesced parent: the receipt is not a denied line, so J is not re-created beside the fresh job
-      expect(n(db, "SELECT count(*) AS n FROM memory_revoke_jobs") - jobsBefore).toBe(1);
+      // (both forms) exactly one fresh inherit job, and the child's mark is under that job alone
+      const freshJobs = jobsAbove(db, top);
+      expect(freshJobs.map(job => job.kind)).toEqual(["inherit"]);
+      expect(marksOf(db, "T2", 201)).toEqual([Number(freshJobs[0]!.revoke_id)]);
+      if (form === "queued") {
+        expect(n(db, "SELECT count(*) AS n FROM memory_revoke_jobs") - jobsBefore).toBe(1);
+        expect(freshJobs[0]!.state).toBe("active");
+      } else {
+        // V3: closed in the write that created it: no active job, no pending row left by it
+        expect(freshJobs[0]!.state).toBe("done");
+        expect(active(db)).toBe(0);
+        expect(n(db, "SELECT count(*) AS n FROM memory_deny_pending WHERE revoke_id=?", Number(freshJobs[0]!.revoke_id))).toBe(0);
+      }
       expect(jobRow(db, J)).toBeUndefined();
       expect(verdict(db, "T2", "T2-201")).toBe("withheld");
       drainAll(db);
@@ -164,13 +193,14 @@ describe("T3: a late child of a deleted conversation is withheld whatever job ro
       expect(verdict(db, "T2", "T2-201")).toBe("withheld");
     } finally { fx.close(); }
   });
-  for (const coalesced of [false, true]) {
-    it(`Astra r5: a late prefix child carrying only T's owner line (no range row matches it) is still denied by the receipt${coalesced ? ", after coalescing" : ""}`, () => {
+  for (const coalesced of [false, true]) for (const form of forms) {
+    it(`Astra r5: a late prefix child carrying only T's owner line (no range row matches it) is still denied by the receipt${coalesced ? ", after coalescing" : ""} (${form})`, () => {
       const { fx, db } = store();
+      setForm(form);
       try {
         const J = deleteT(db, "done-pruned");
         if (coalesced) tx(db, () => { for (let k = 1; k < 64; k++) marker.writeRange(db, 100_000 + k, "T", 1000 + k, 2000 + k, "forget"); });
-        const jobsBefore = n(db, "SELECT count(*) AS n FROM memory_revoke_jobs");
+        const jobsBefore = n(db, "SELECT count(*) AS n FROM memory_revoke_jobs"), top = maxJob(db);
         // T2's turn at 200 carries [FIRST_LSN, 1] of T: owner line T-1 alone (no turn_lsn, so the range rows' line test passes over it)
         tx(db, () => {
           db.prepare("UPDATE memory_lsn SET next=max(next,200) WHERE id=1").run();
@@ -179,8 +209,19 @@ describe("T3: a late child of a deleted conversation is withheld whatever job ro
           commit.inheritMarks(db, { kind: "turn", threadId: "T2", lsn: 200, line: 201, holdFrom: 201 }, [], [{ threadId: "T", from: Number.MIN_SAFE_INTEGER, to: 1 }]);
         });
         // denied, through one walk: the deletion's revoke re-opened from its receipt
-        expect(n(db, "SELECT count(*) AS n FROM memory_revoke_jobs") - jobsBefore).toBe(1);
-        expect(jobRow(db, J)).toBeTruthy();
+        // (both forms) the child's mark is under the deletion's own id J and no fresh job stands beside it
+        expect(marksOf(db, "T2", 201)).toEqual([J]);
+        expect(jobsAbove(db, top)).toEqual([]);
+        if (form === "queued") {
+          expect(n(db, "SELECT count(*) AS n FROM memory_revoke_jobs") - jobsBefore).toBe(1);
+          expect(jobRow(db, J)).toBeTruthy();
+        } else {
+          // V3: J, re-opened as an inherit job for this child, closed in the same write (its finished row may already be pruned: it is
+          // older than the newest); nothing is left active and it left no pending row
+          expect(active(db)).toBe(0);
+          expect(jobRow(db, J)?.state ?? "done").toBe("done");
+          expect(n(db, "SELECT count(*) AS n FROM memory_deny_pending WHERE revoke_id=?", J)).toBe(0);
+        }
         expect(verdict(db, "T2", "T2-201")).toBe("withheld");
         drainAll(db);
         expect(n(db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE state IN ('active','undoing')")).toBe(0);

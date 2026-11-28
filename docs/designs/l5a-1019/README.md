@@ -52,7 +52,7 @@ in the consolidated contract and the exact ruling source.
 
 ## Scope and reference reuse
 
-Read the supplied `hl-amend.md`, `hl-refs.md` and `HL-WRITES-1019.md`.
+The supplied HighLevel source notes (hl-amend.md, hl-refs.md) were removed with the HighLevel leftovers in 1.0.24; they remain in git history.
 The HighLevel S0 manifest/registry is a different slice from L5a Slice 0;
 no HighLevel API, family or UI files are changed here. The HighLevel rules
 remain binding on their own lane. No provider operation was researched,

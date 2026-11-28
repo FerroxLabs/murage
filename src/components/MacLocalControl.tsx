@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, Shield } from "lucide-react";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
+import { MAC_LOCAL_CONTROL_VERSION_TEXT } from "@/lib/local-computer";
 
 export function MacLocalControl() {
   const { capabilities } = useDesktopCapabilities();
@@ -51,6 +52,9 @@ export function MacLocalControl() {
   }, [awaitingGrant]);
 
   if (capabilities.host.platform !== "darwin") return null;
+  if (capabilities.localComputer.reasonCode === "macos-version-unsupported") {
+    return <p className="mt-4 text-sm text-ink-secondary">{MAC_LOCAL_CONTROL_VERSION_TEXT}</p>;
+  }
   if (capabilities.localComputer.available) return null;
 
   return (

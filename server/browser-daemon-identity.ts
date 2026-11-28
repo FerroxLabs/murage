@@ -1,5 +1,6 @@
 import { withHideInherit } from "../shared/win-hide-child-process.mjs";
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { nativeProcessList } from './drivers/win-process-table.ts';
 
@@ -58,6 +59,29 @@ export async function captureDaemonIdentity(pid: number, command: string): Promi
     if (entry?.exe?.toLowerCase() === command.toLowerCase()) start = windowsStart(entry);
   } else start = await processStart(pid);
   return start && boot && alive(pid) === true ? { pid, start, bootId: boot } : undefined;
+}
+/** A refused close with no daemon identity: nothing of the session is left. Its pid file and its ownership record each name no
+ * live process, and its control endpoint is gone (or a pid file proves its daemon dead). Anything unreadable, or any live
+ * process named, is not proof: a pid that was reused stays refused. */
+export function closeTargetGone(target: CloseTarget): boolean {
+  if (process.env.MURAGE_CLOUD_ROLE === 'home' || !validCloseTarget(target)) return false;
+  const file = (suffix: string) => join(target.socketDir, `${target.session}${suffix}`);
+  const read = (path: string): string | null | undefined => { try { return readFileSync(path, 'utf8'); } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? null : undefined; } };
+  const deadPid = (value: unknown) => Number.isSafeInteger(value) && (value as number) > 0 && alive(value as number) === false;
+  const pidText = read(file('.pid')); if (pidText === undefined) return false;
+  if (pidText !== null && !deadPid(Number(pidText.trim()))) return false;
+  const ownerText = read(file('.owner.json')); if (ownerText === undefined) return false;
+  if (ownerText !== null) { try { if (!deadPid(JSON.parse(ownerText)?.daemon?.pid)) return false; } catch { return false; } }
+  return pidText !== null || (!existsSync(file('.sock')) && !existsSync(file('.port')));
+}
+/** The process at `pid` runs the engine binary itself (the check the owned close makes before it signals a panel daemon), so a
+ * stale pid file that came to name another program is never a stop target. Unknown is false. */
+export function daemonExeMatches(pid: number, command: string): boolean {
+  try {
+    const exe = process.platform === 'linux' ? readlinkSync(`/proc/${pid}/exe`) : nativeProcessList()?.find(e => e.pid === pid)?.exe;
+    if (!word(exe) || !word(command)) return false;
+    return process.platform === 'win32' ? exe.toLowerCase() === command.toLowerCase() : realpathSync(exe) === realpathSync(command);
+  } catch { return false; }
 }
 type Reads = { alive: (pid: number) => boolean | undefined | Promise<boolean | undefined>; boot: () => string | undefined | Promise<string | undefined>; start: (pid: number) => string | undefined | Promise<string | undefined> };
 export async function judgeDaemonIdentity(identity: DaemonIdentity | undefined, command: string, reads?: Reads): Promise<DaemonVerdict> {

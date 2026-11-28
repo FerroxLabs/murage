@@ -235,3 +235,36 @@ describe("05-A3: a keyboard step is judged on the element that really has focus"
     expect(await gate.guardAgentBrowser("agent_browser_press", { key: "Enter" }, read)).toBeNull();
   });
 });
+
+// MAIN-RULING (tip audit High 1) and FABLE 2d7de40260 H2: No limits on the flag alone lifts nothing. Only a gate that was given the server's
+// per-step answer can lift, and only when that answer is yes. One row per way a gate is built (class sweep in the lane's SITES.md):
+// drivers/browser-proxy.ts (flag only), drivers/headless-browser-proxy.ts (options.noLimits, no callback), drivers/unified-browser-proxy.ts (callback).
+describe("No limits without the server's per-step answer keeps the floor", () => {
+  const checkout = () => page([{ ref: "b1", role: "textbox", name: "Card number" }, { ref: "b3", role: "button", name: "Pay $42.00" }], "https://shop.example/checkout", "Checkout");
+  const press = async (gate: BuiltinFloorGate) => {
+    const calls: Array<{ op: string }> = []; const p = checkout();
+    const request = async (op: string) => { calls.push({ op }); return p; };
+    await callTool("browser_snapshot", {}, request, gate);
+    const res = await callTool("browser_click", { ref: "b3" }, request, gate);
+    return { text: res.content.map((c: any) => c.text ?? "").join("\n"), acted: acted(calls).map(c => c.op) };
+  };
+  it("W-LIFT-NOCALLBACK-PANEL: the panel proxy's gate (flag on, no callback) hands the pay button to the owner, nothing is pressed", async () => {
+    const out = await press(new BuiltinFloorGate(true));
+    expect([out.text.startsWith("YOUR TURN:"), out.acted]).toEqual([true, []]);
+  });
+  it("W-LIFT-NOCALLBACK-HEADLESS: the headless proxy with noLimits and no callback hands a password field to the owner, nothing is sent", async () => {
+    const sent: string[] = [];
+    const request = vi.fn(async (method: string, params?: any) => { if (method === "tools/call") sent.push(params.name); return { content: [{ type: "text", text: params?.name === "agent_browser_snapshot" ? '- textbox "Password" [ref=e1]' : "ok" }] }; });
+    const proxy = createHeadlessBrowserProxy({ noLimits: true, authorize: async () => ({ spec: { command: "/fixture/engine", args: ["mcp"], env: { AGENT_BROWSER_SESSION: "owned", AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64) } }, held: false }), start: () => ({ request, close: async () => {} }), closeSession: async () => {} } as never);
+    await proxy.handle({ id: 1, method: "tools/call", params: { name: "agent_browser_snapshot", arguments: {} } });
+    const out = await proxy.handle({ id: 2, method: "tools/call", params: { name: "agent_browser_fill", arguments: { selector: "@e1", text: "x" } } }) as any;
+    expect([String(out.result.content[0].text).startsWith("YOUR TURN:"), sent]).toEqual([true, ["agent_browser_snapshot"]]);
+    await proxy.close();
+  });
+  it("W-LIFT-CALLBACK: with the callback the server's answer decides: yes presses, no or an error hands over", async () => {
+    const yes = await press(new BuiltinFloorGate(true, async () => true));
+    const no = await press(new BuiltinFloorGate(true, async () => false));
+    const broken = await press(new BuiltinFloorGate(true, async () => { throw new Error("offline"); }));
+    expect([yes.text.startsWith("YOUR TURN:"), yes.acted, no.text.startsWith("YOUR TURN:"), no.acted, broken.text.startsWith("YOUR TURN:"), broken.acted]).toEqual([false, ["click"], true, [], true, []]);
+  });
+});

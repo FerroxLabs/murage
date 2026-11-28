@@ -107,9 +107,9 @@ describe("harness HTTP API", () => {
     }
   }, 20000);
 
-  // The second run is an engine that never announces MCP readiness: the reply must still arrive
-  // (the first prompt waits at most MURAGE_ACP_MCP_READY_MS) and the lifecycle records mcp_ready_timeout.
-  for (const announces of [true, false]) it(`persists structured provider 402 credit guidance from the real ACP error fold without raw secrets${announces ? "" : " (engine that never announces MCP readiness)"}`, async () => {
+  for (const mcp of ["notify", "list", "empty"] as const) it(mcp === "empty"
+    ? "refuses a mounted ACP turn when the engine lists no MCP servers"
+    : `persists structured provider 402 credit guidance from the real ACP error fold without raw secrets${mcp === "notify" ? "" : " (engine that never announces MCP readiness)"}`, async () => {
     const isolatedHome = mkdtempSync(join(tmpdir(), "murage-provider402-api-"));
     const data = join(isolatedHome, ".murage");
     const staticRoot = join(isolatedHome, "static");
@@ -127,7 +127,10 @@ describe("harness HTTP API", () => {
     // host-power fixture symbol must be installed again in the spawned server.
     const fakeEngineSetup = join(isolatedHome, "fake-engine-setup.mjs");
     writeFileSync(fakeEngineSetup, "globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;\n");
-    const env: NodeJS.ProcessEnv = { NODE_ENV: "test", TMPDIR: tmpdir(), HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", ...(announces ? { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" } : { MURAGE_ACP_MCP_READY_MS: "1500" }), PATH: process.env.PATH };
+    const env: NodeJS.ProcessEnv = { NODE_ENV: "test", TMPDIR: tmpdir(), HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted",
+      FAKE_ACP_MCP_LIST: mcp === "empty" ? "{}" : "all:ready",
+      ...(mcp === "notify" ? { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" } : { MURAGE_ACP_MCP_READY_MS: "1500" }),
+      PATH: process.env.PATH };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     // The IPC channel asks the server to close the way the desktop does: on Windows a signal is TerminateProcess and nothing is flushed.
     const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(fakeEngineSetup).href, join(SERVER_DIR, "index.ts")], { windowsHide: true, cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
@@ -162,6 +165,20 @@ describe("harness HTTP API", () => {
       events = await openSse(`http://127.0.0.1:${port}/api/events`, DESKTOP_HEADERS);
       await events.until(frame => frame.kind === "hello");
       expect((await request("POST", `/api/bots/${bot.id}/messages`, { text: "Trigger the fake credit-exhausted response only." })).status).toBe(202);
+      if (mcp === "empty") {
+        await expect.poll(async () => {
+          const page = (await request("GET", `/api/threads/${bot.threadId}/messages?limit=50`)).body;
+          return page.messages?.some((message: { text?: string }) => message.text === LEDGER_REFUSAL_LINE);
+        }, { timeout: 30_000 }).toBe(true);
+      }
+      const nativeRows = () => readFileSync(nativeTraces[0]!, "utf8").split("\n").filter(Boolean)
+        .map((line) => JSON.parse(line) as { dir: string; msg: Record<string, unknown> });
+      if (mcp === "empty") {
+        const rows = nativeRows();
+        expect(rows.filter((row) => row.dir === "lifecycle").map((row) => row.msg.event)).toContain("mcp_ready_timeout");
+        expect(rows.some(row => row.dir === "out" && row.msg.method === "session/prompt")).toBe(false);
+        return;
+      }
       let errorMessage: any;
       // The roster (`?messages=n`) is a preview since rc10-preview2: a row over ROSTER_ROW_BYTES (512 since the rc11 roster bound) loses
       // providerError and errorDetails there, and an opened thread reads its full page. So `busy` comes from the roster and the error row
@@ -201,9 +218,10 @@ describe("harness HTTP API", () => {
         // Every row of the thread as text: the file scan below reads raw pages, where a long row can split across two.
         expect(JSON.stringify(db.prepare("SELECT json FROM messages WHERE thread_id=?").all(bot.threadId))).not.toMatch(providerText);
       } finally { db.close(); }
-      if (!announces) {
-        const rows = readFileSync(join(data, "native", `${bot.threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { dir: string; msg: Record<string, unknown> });
-        expect(rows.filter((row) => row.dir === "lifecycle").map((row) => row.msg.event)).toContain("mcp_ready_timeout");
+      if (mcp === "list") {
+        const rows = nativeRows();
+        expect(rows.some(row => row.dir === "in" && row.msg.method === "_x.ai/mcp_initialized")).toBe(false);
+        expect(rows.filter(row => row.dir === "lifecycle").map(row => row.msg.event)).toContain("mcp_ready");
       }
     } finally {
       events?.close();
@@ -1479,7 +1497,7 @@ describe("harness HTTP API", () => {
       for (const scope of ["section", "workspace"]) {
         const denied = await desktopApi("PATCH", `/api/bots/${bot.id}`, { name: "Must not save", chiefOfStaff: true, chiefScope: scope, individual: false });
         expect(denied.status).toBe(409);
-        expect(denied.body.error).toMatch(/coordinate bots|already Chief/);
+        expect(denied.body.error).toMatch(/coordinate bots|already Chief|Choose a new Chief first/);
         const current = (await api("GET", "/api/bots")).body.bots.find((row: any) => row.id === bot.id);
         expect(current.name).toBe("Capability fixture"); expect(current.chiefOfStaff).toBe(bot.chiefOfStaff);
         expect(current.modelSelection).toEqual(STATE_ONLY_SELECTION);
@@ -2016,6 +2034,48 @@ describe("harness HTTP API", () => {
     }
   }, 40_000);
 
+  it("Settings v10 tools: one bot's switch and the app-wide reader switch reach the real routes (T1/T2 wiring)", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const other = (await desktopApi("POST", "/api/bots")).body.bot;
+    try {
+      // switched off before the turn: the launch names them in what the tool list hides. (A config write revokes a live turn, so the
+      // app-wide reader switch is set here too.)
+      await desktopApi("PATCH", "/api/config", { webRead: { enabled: false } });
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { toolOff: { tool: "web_search", off: true } })).status).toBe(200);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { toolOff: { tool: "images", off: true } })).status).toBe(200);
+      const turn = await startInternalFixtureTurn(bot.id);
+      expect(JSON.parse(turn.env.MURAGE_TOOLS_HIDDEN)).toEqual(expect.arrayContaining(["web_search", "generate_image"]));
+      expect(JSON.parse(turn.env.MURAGE_TOOLS_HIDDEN)).toContain("web_read");
+      const call = (route: string, input: object) => fetch(`${BASE}${route}`, { method: "POST", headers: turn.headers, body: JSON.stringify({ fromBotId: bot.id, fromThreadId: turn.env.MURAGE_THREAD_ID, ...input }) });
+      const body = async (label: string, response: Response) => { const text = await response.text(); try { return JSON.parse(text); } catch { throw new Error(`${label}: ${response.status} ${text}`); } };
+      const switches = async () => body("tool-switches", await fetch(`${BASE}/api/internal/tool-switches?self=${bot.id}`, { headers: turn.headers }));
+      expect(await switches()).toMatchObject({ webRead: { enabled: false } });
+      // the two quick toggles above both stuck, one tool per request
+      expect((await switches()).toolsOff).toEqual(["web_search", "images"]);
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { toolOff: { tool: "bogus", off: true } })).status).toBe(400);
+      const refused = await call("/api/internal/web-search", { query: "fixture search", maxResults: 2 });
+      expect(refused.status).toBe(409);
+      expect(await body("web-search", refused)).toMatchObject({ code: "tool-off-for-bot", settingRef: { id: "tools.web-search.bots", bot: bot.id } });
+      // the second bot is unchanged
+      expect(((await desktopApi("GET", `/api/bots/${other.id}`)).body.bot.toolsOff ?? [])).toEqual([]);
+      // the app-wide reader switch refuses a new read for every bot
+      const read = await call("/api/internal/web-read", { input: { url: "https://example.com/page" } });
+      expect(read.status).toBe(409);
+      expect(await body("web-read", read)).toMatchObject({ settingRef: { id: "tools.web-read" } });
+      expect((await fetch(`${BASE}/api/internal/tool-switches?self=nobody`, { headers: turn.headers })).status).toBe(403);
+      expect((await fetch(`${BASE}/api/internal/tool-switches?self=${other.id}`, { headers: turn.headers })).status).toBe(403);
+      // the server is the last gate for the tools that are not search or read: images off for this bot refuses at the route itself
+      const image = await call("/api/internal/generate-image", { requestId: "r1", prompt: "a cat" });
+      expect(image.status).toBe(409);
+      expect(await body("generate-image", image)).toMatchObject({ code: "tool-off-for-bot", settingRef: { id: "tools.images.bots" } });
+    } finally {
+      await desktopApi("PATCH", "/api/config", { webRead: { enabled: true } });
+      await api("POST", `/api/bots/${bot.id}/interrupt`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      await desktopApi("DELETE", `/api/bots/${other.id}`);
+    }
+  }, 40_000);
+
   it("routes scoped native search without exposing credentials or allowing retired turns", async () => {
     const bot = (await desktopApi("POST", "/api/bots")).body.bot;
     const requestFile = join(home, "search-fixture-calls.json");
@@ -2093,14 +2153,14 @@ describe("harness HTTP API", () => {
       expect(switched.status).toBe(200);
       expect((await fetch(`${BASE}/api/internal/agents?self=${activeBotId}`, { headers: activeTurn.headers })).status).toBe(200);
       const frame = await events.until(frame => frame.kind === "config" && frame.webSearch?.provider === "exa");
-      expect(frame.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true, fluxConfigured: false });
+      expect(frame.webSearch).toEqual({ provider: "exa", readEnabled: true, tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true, fluxConfigured: false });
       expect(JSON.stringify(frame)).not.toContain(secret);
       // FOLLOW5: the pushed frame replaces the renderer's config wholesale,
       // so the harness announcement must ride on it too, not only on the GET.
       expect(frame.harness).toEqual({ platform: process.platform });
       for (const get of [api, desktopApi]) {
         const visible = await get("GET", "/api/config");
-        expect(visible.body.webSearch).toEqual({ provider: "exa", tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true, fluxConfigured: false });
+        expect(visible.body.webSearch).toEqual({ provider: "exa", readEnabled: true, tavilyConfigured: true, exaConfigured: true, firecrawlConfigured: true, fluxConfigured: false });
         expect(JSON.stringify(visible.body)).not.toContain(secret);
       }
       const persisted = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
@@ -2108,7 +2168,7 @@ describe("harness HTTP API", () => {
       expect((await desktopApi("PATCH", "/api/config", { webSearch: { provider: "automatic-paid-fallback" } })).status).toBe(400);
       const cleared = await desktopApi("PATCH", "/api/config", { webSearch: { provider: "off", tavilyApiKey: "", exaApiKey: "", firecrawlApiKey: "" } });
       expect(cleared.status).toBe(200);
-      expect((await api("GET", "/api/config")).body.webSearch).toEqual({ provider: "off", tavilyConfigured: false, exaConfigured: false, firecrawlConfigured: false, fluxConfigured: false });
+      expect((await api("GET", "/api/config")).body.webSearch).toEqual({ provider: "off", readEnabled: false, tavilyConfigured: false, exaConfigured: false, firecrawlConfigured: false, fluxConfigured: false });
     } finally {
       events.close();
       if (activeBotId) {

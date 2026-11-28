@@ -31,6 +31,13 @@ export const revealRetryAt=(saved:Receipt,reason:string)=>{
   const attempts=saved.reason===reason?(saved.attempts??0)+1:1;
   return {attempts,retryAt:Date.now()+Math.min(60_000*2**(attempts-1),3_600_000)};
 };
+/** 1.0.22 idle burn (HIDDEN-COST C3): verdicts a retry cannot change settle the receipt for good (status complete, the reason kept), so a
+ *  store with 25k-80k of them stops re-reading and re-writing each one every hour, and again after every boot. `reveal-source-gone` is
+ *  only the job's own reply (gone, forgotten, retired, not a whole terminal bot reply, a room's, another speaker's); an ineligibility a
+ *  roster, policy, exclusion, principal or lineage change can lift stays `reveal-source-ineligible` and is retried. */
+export const TERMINAL_REVEAL_REASONS:ReadonlySet<string>=new Set(["reveal-source-gone","reveal-learning-disabled"]);
+/** Same-reason retries back off in memory only (the row already says pending with that reason): attempts by job id. */
+const deferLooks=new Map<string,number>();
 const receiptId=(jobId:string)=>`reveal-capture:${jobId}`;
 function receipt(db:DatabaseSync,jobId:string):Receipt {
   const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(receiptId(jobId));
@@ -110,7 +117,7 @@ export const INELIGIBLE_RECHECK_MAX_MS=24*3_600_000;
 /** The delay before the next look at a receipt found ineligible `looks` times before. */
 export function ineligibleRecheckMs(looks:number):number{return Math.min(INELIGIBLE_RECHECK_MAX_MS,INELIGIBLE_RECHECK_MS*2**Math.max(0,Math.min(looks,12)));}
 /** Forget what is held in memory, as a restart does: the persisted mark remains. */
-export function resetRevealScan(){revealWindow=1024;scan.db=null;scan.mark={hwm:0,open:[]};scan.retryCursor=0;scan.retryWake=0;scan.cycleMin=Infinity;scan.eventMin=Infinity;scan.cycleCandidates=false;scan.hot.clear();scan.known.clear();scan.ineligible.clear();scan.loaded=false;}
+export function resetRevealScan(){revealWindow=1024;scan.db=null;scan.mark={hwm:0,open:[]};scan.retryCursor=0;scan.retryWake=0;scan.cycleMin=Infinity;scan.eventMin=Infinity;scan.cycleCandidates=false;scan.hot.clear();scan.known.clear();scan.ineligible.clear();scan.loaded=false;deferLooks.clear();}
 function loadScan(db:DatabaseSync){
   if(scan.db===db)return;
   resetRevealScan();scan.db=db;
@@ -148,6 +155,9 @@ function noteRetry(jobId:string,value:Receipt){
  * 669 ms a visit. Measured 2026-09-22.) */
 export function pendingBotRevealJobs(limit=1):string[]{
   const db=database(),want=Math.min(4,Math.max(1,Math.trunc(limit)||1));
+  // Learning off: no reveal can be captured, so the scan and the receipt sweep are not run at all (C3). Jobs found later are looked at then.
+  let learningOn=false;try{learningOn=readMemoryLearning(db).automaticFacts;}catch{/* unreadable policy: nothing is learned */}
+  if(!learningOn)return [];
   loadScan(db);
   const found:string[]=[],take=(id:string)=>{if(!found.includes(id)&&found.length<want)found.push(id);};
   const now=Date.now(),eligible=db.prepare(REVEAL_ELIGIBLE_SQL);
@@ -197,8 +207,10 @@ export function pendingBotRevealJobs(limit=1):string[]{
         let value:Receipt;try{value=JSON.parse(String(row.intent));}catch{continue;}
         if(value.status!=="pending")continue;
         const jobId=String(row.id).slice("reveal-capture:".length);
-        if(scan.known.size<KNOWN_LIMIT||scan.known.has(jobId))scan.known.set(jobId,value.retryAt);
-        if(value.retryAt>now){scan.cycleMin=Math.min(scan.cycleMin,value.retryAt);continue;}
+        // a same-reason retry moved only the in-memory due time (the row keeps its old one): the later of the two wins
+        const due=Math.max(value.retryAt,scan.known.get(jobId)??0);
+        if(scan.known.size<KNOWN_LIMIT||scan.known.has(jobId))scan.known.set(jobId,due);
+        if(due>now){scan.cycleMin=Math.min(scan.cycleMin,due);continue;}
         if(found.length<want&&eligible.get(jobId)){take(jobId);scan.cycleCandidates=true;}
       }
       if(rows.length<REVEAL_RETRY_WINDOW){
@@ -237,24 +249,27 @@ function sweepKnown(db:DatabaseSync,now:number,want:number,found:string[],take:(
   }
   scan.retryWake=Math.min(next,scan.eventMin);scan.eventMin=Infinity;
 }
-function sourceFor(jobId:string,roster:MemoryRoster){
+/** `why.gone` is set when the null is about the reply itself (no retry can change it). */
+function sourceFor(jobId:string,roster:MemoryRoster,why:{gone?:boolean}={}){
+  const gone=()=>{why.gone=true;return null;};
   const db=database(),source=db.prepare(`SELECT s.*,v.payload,j.cursor,length(CAST(json_extract(v.payload,'$.text') AS BLOB)) AS bytes
     FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision
     JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
     WHERE j.id=? AND j.stage='capture' AND j.status='complete' AND s.state='active'`).get(jobId);
-  if(!source||source.kind!=="text"||source.cursor!==source.bytes||!source.message_id)return null;
-  if(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision))return null;
+  if(!source||source.kind!=="text"||source.cursor!==source.bytes||!source.message_id)return gone();
+  if(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision))return gone();
   // the consolidator's admission too (consolidate.ts): a reply withheld from bots, or one a revoke denies or is still marking, gives no
   // words to the support check, on a first visit and on a retry after a restart alike
   if(sourceIsWithheldMessage(LineageAllowance.tool(),source)||writetimeSourceState(source)!=="shown")return null;
   const raw=db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(source.thread_id,source.message_id);
-  if(!raw)return null;
+  if(!raw)return gone();
   const message=rowToMessage({json:String(raw.json)}),payload=JSON.parse(String(source.payload));
-  if(message.kind!=="text"||message.role!=="bot"||message.turnTerminal!==true||typeof message.text!=="string"||redactSecretsInText(wholeTurnText(db,String(source.thread_id),message))!==payload.text)return null;
+  if(message.kind!=="text"||message.role!=="bot"||message.turnTerminal!==true||typeof message.text!=="string"||redactSecretsInText(wholeTurnText(db,String(source.thread_id),message))!==payload.text)return gone();
   const threadId=String(source.thread_id);
-  if(roster.groups.some(g=>g.threadId===threadId||g.tasks?.some(t=>t.threadId===threadId)))return null;
+  if(roster.groups.some(g=>g.threadId===threadId||g.tasks?.some(t=>t.threadId===threadId)))return gone();
   const bots=roster.bots.filter(b=>b.threadId===threadId||b.tasks?.some(t=>t.threadId===threadId));
-  if(bots.length!==1||message.from?.botId&&message.from.botId!==bots[0].id||!["assistant",bots[0].id].includes(String(source.speaker)))return null;
+  if(bots.length!==1)return null;
+  if(message.from?.botId&&message.from.botId!==bots[0].id||!["assistant",bots[0].id].includes(String(source.speaker)))return gone();
   const bot=executionStore()?.bot(bots[0].id);
   if(bot?.partitionedAt!==undefined&&!isHomePartition(threadPartition(bot,threadId)))return null;
   const principal=threadHumanPrincipal(threadId);assertHumanPrincipal(principal);
@@ -279,23 +294,33 @@ function liveCanon(db:DatabaseSync,scopeId:string,cursor:string){
 export async function captureBotReveals(jobId:string,roster:()=>MemoryRoster,extractor:TextOnlyExtractor|null,signal:AbortSignal){
   const db=database(),saved=receipt(db,jobId);
   if(saved.status==="complete")return {status:"unchanged" as const};
+  // A terminal verdict settles the receipt; a pending one whose row already holds the same reason is not written again, only its in-memory
+  // retry time moves (C3: one row rewrite per retry per receipt, forever).
+  const park=(scopeId:string,reason:string)=>{
+    if(TERMINAL_REVEAL_REASONS.has(reason)){deferLooks.delete(jobId);persist(db,jobId,scopeId,{...saved,status:"complete",retryAt:0,reason});return {status:"settled" as const,reason};}
+    if(saved.status==="pending"&&saved.reason===reason){
+      const attempts=Math.max(deferLooks.get(jobId)??0,saved.attempts??0)+1;
+      if(deferLooks.size<KNOWN_LIMIT||deferLooks.has(jobId))deferLooks.set(jobId,attempts);
+      noteRetry(jobId,{...saved,attempts,retryAt:Date.now()+Math.min(60_000*2**(attempts-1),3_600_000)});
+    }else{deferLooks.delete(jobId);persist(db,jobId,scopeId,{...saved,status:"pending",reason,...revealRetryAt(saved,reason)});}
+    return {status:"deferred" as const,reason};
+  };
   const ineligible=(reason:string)=>{
     const source=db.prepare("SELECT s.scope_id FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE j.id=?").get(jobId);
-    if(source)persist(db,jobId,String(source.scope_id),{...saved,status:"pending",reason,...revealRetryAt(saved,reason)});
+    if(source)return park(String(source.scope_id),reason);
     return {status:"deferred" as const,reason};
   };
   // the learning fence counter, sampled before the reply and canon words are read (memory/learning-send.ts)
   const fenceAt=sampleLearningFence();
-  let observed:ReturnType<typeof sourceFor>;
-  try{observed=sourceFor(jobId,roster());}catch{return ineligible("reveal-authority-unavailable");}
+  let observed:ReturnType<typeof sourceFor>;const why:{gone?:boolean}={};
+  try{observed=sourceFor(jobId,roster(),why);}catch{return ineligible("reveal-authority-unavailable");}
   const initial=observed;
-  if(!initial)return ineligible("reveal-source-ineligible");
+  if(!initial)return ineligible(why.gone?"reveal-source-gone":"reveal-source-ineligible");
   const learning=readMemoryLearning(db);
-  const defer=(reason:string)=>{
-    persist(db,jobId,String(initial!.source.scope_id),{...saved,status:"pending",reason,...revealRetryAt(saved,reason)});
-    return {status:"deferred" as const,reason};
-  };
-  if(signal.aborted||!learning.automaticFacts)return defer("reveal-learning-disabled-or-cancelled");
+  const defer=(reason:string)=>park(String(initial!.source.scope_id),reason);
+  // a cancelled visit is transient; learning switched off is a verdict on this reply (it was produced while nothing was learned)
+  if(signal.aborted)return defer("reveal-learning-disabled-or-cancelled");
+  if(!learning.automaticFacts)return defer("reveal-learning-disabled");
   const canon=liveCanon(db,initial.scopeId,saved.cursor);
   if(!canon){persist(db,jobId,String(initial.source.scope_id),{...saved,status:"complete",retryAt:0});return {status:"complete" as const};}
   if(!initial.text.trim()||Buffer.byteLength(initial.text)>65536)return defer("reveal-source-budget");

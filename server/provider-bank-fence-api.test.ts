@@ -11,6 +11,8 @@ const token = "c".repeat(64);
 const bank = JSON.stringify([
   { id: "fixture-mistral", preset: "mistral", label: "Fixture", enabled: false, key: "FAKE_MISTRAL_ONLY", revision: "r1" },
 ]);
+// P9 (1.0.24): an owner turn now waits for a lifted fence; this fixture never lifts it, so the wait is cut short (instrumentation below)
+// and the coded 409 stands.
 const fenceModule = new URL("./provider-bank-fence.ts", import.meta.url).href;
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
@@ -38,6 +40,7 @@ beforeAll(async () => {
     config.modelProviders={bank:${JSON.stringify(bank)}};
     writeFileSync(file,JSON.stringify(config));
     process.env.MURAGE_MODEL_PROVIDER_COMMIT_TOKEN='${token}';
+    process.env.MURAGE_ENGINE_START_WAIT_MS='300';
     if(!applyProviderBankFenceMessage({type:'murage:provider-bank-fence',held:true}))throw Error('fence fixture rejected');
     const originalFetch=globalThis.fetch;
     globalThis.fetch=(input,init)=>String(input).startsWith('https://')?Promise.reject(Error('External network blocked in fence fixture')):originalFetch(input,init);

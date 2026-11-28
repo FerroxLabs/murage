@@ -113,6 +113,17 @@ export class TelegramChannel {
     this.mutate(state => { state.enabled = false; state.binding = null; state.pairing = null; for (const record of state.records) record.state = record.state === "sending" ? "uncertain" : ["accepted", "queued"].includes(record.state) ? "cancelled" : record.state; });
   }
   stop() { this.approvals?.clear(); this.stopped = true; this.generation++; this.controller?.abort(); }
+  /** CHIEF-TRANSFER D4: the channel state file is the third record that names the paired target. Only moveTarget, under the epoch fence,
+   * may rewrite it; binding, offset and records are kept as they are. A file that is missing or does not parse is left alone (returns false). */
+  static retargetFile(file: string, to: string): boolean {
+    let raw: unknown;
+    try { raw = JSON.parse(readFileSync(file, "utf8")); } catch { return false; }
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) return false;
+    const bytes = JSON.stringify(schema.parse({ ...parsed.data, targetBotId: to }));
+    writeFileAtomic(file, bytes, { mode: 0o600 });
+    return true;
+  }
   pollOnce(): Promise<void> {
     if (this.polling) return this.polling;
     if (this.stopped || !this.state.enabled || this.state.targetBotId !== this.options.targetBotId) return Promise.resolve();

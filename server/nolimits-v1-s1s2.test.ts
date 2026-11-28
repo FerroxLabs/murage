@@ -18,7 +18,7 @@ import { installPathUnknown, noteEnginePath } from "./outside-wire.ts";
 import { symlinkSync } from "node:fs";
 import { cloudTurnEnvironment } from "./cloud-home/turn-process.ts";
 import { acpJudgedAtSource, noteAcpCallOutside, noteToolStartOutside, outsideContextFields, toolStartOutside, type DlScan, type ToolStart } from "./outside-wire.ts";
-import { ACP_LOCATIONS_MAX, acpOutsideCall } from "./drivers/acp/core.ts";
+import { acpOutsideCall } from "./drivers/acp/core.ts";
 import { claudeToolKey } from "./drivers/claude.ts";
 import { loggedRuntimeEvent, windowRuntimeEvent } from "./runtime-event-out.ts";
 import type { RuntimeEvent } from "./contracts.ts";
@@ -206,29 +206,36 @@ describe("Astra r1 H3-H5: every path a call names goes to the DL check", () => {
   const holding = (file: string) => { const r = new DownloadRegistry(); r.add([{ kind: "file", path: registryKey(file), since: 1 }]); return r; };
   const locations = (folder: string, n: number) => Array.from({ length: n }, (_, i) => ({ path: join(folder, `f${i + 1}.txt`) }));
 
-  it("H3: a read whose only downloaded target is past the location cap marks (fail closed on overflow)", () => {
+  // cause22 design3 section 2 (C1, flipped from the 32-location cap): "`paths` = every location (plain loop). Delete
+  // ACP_LOCATIONS_MAX, `pathsOverflow` ... and both readers"; C2: "Every judged item takes one [TextBudget.alone()] ... So
+  // an item's hit or span comes only from its own lookups". A call is judged on every location, never on how many it names.
+  it("H3 (cause22 C1): a read whose only downloaded target is its 70th location marks; 33 or 70 clean locations do not", () => {
     const folder = dir("h3r");
     const cwd = dir("h3cwd");
     const registry = holding(join(folder, "f70.txt"));
     expect(toolStartOutside(acpOutsideCall({ kind: "read", title: "Read", locations: locations(folder, 70) } as never), scan(registry, cwd), acp)).toBe("downloaded file");
-    expect(toolStartOutside(acpOutsideCall({ kind: "read", title: "Read", locations: locations(folder, ACP_LOCATIONS_MAX + 1) } as never), scan(registry, cwd), acp)).toBe("downloaded file");
-    // the cap itself is not a mark: a call at the cap is judged path by path within one call's syscall budget (a fresh
-    // budget per call, as dlFor gives), so cap clean locations stay clean, existing or not
-    expect(toolStartOutside(acpOutsideCall({ kind: "read", title: "Read", locations: locations(folder, ACP_LOCATIONS_MAX) } as never), scan(registry, cwd), acp)).toBeNull();
-    for (const loc of locations(folder, ACP_LOCATIONS_MAX)) writeFileSync(loc.path, "x");
-    expect(toolStartOutside(acpOutsideCall({ kind: "read", title: "Read", locations: locations(folder, ACP_LOCATIONS_MAX) } as never), scan(registry, cwd), acp)).toBeNull();
+    // the cap is gone: past 32 the call is judged path by path, each on its own budget, missing or existing
+    expect(toolStartOutside(acpOutsideCall({ kind: "read", title: "Read", locations: locations(folder, 33) } as never), scan(registry, cwd), acp)).toBeNull();
+    expect(toolStartOutside(acpOutsideCall({ kind: "read", title: "Read", locations: locations(folder, 69) } as never), scan(registry, cwd), acp)).toBeNull();
+    for (const loc of locations(folder, 69)) writeFileSync(loc.path, "x");
+    expect(toolStartOutside(acpOutsideCall({ kind: "read", title: "Read", locations: locations(folder, 69) } as never), scan(registry, cwd), acp)).toBeNull();
   });
-  it("H3 (relay 6): the location cap fits one call's syscall budget (a realpath and an lstat per location)", () => {
-    expect(ACP_LOCATIONS_MAX * 2).toBeLessThanOrEqual(TEXT_SYSCALLS);
+  it("H3 (cause22 C2): a judged location costs at most its own budget of TEXT_SYSCALLS, whatever its neighbours spent", () => {
+    const budget = new TextBudget(nodeFsHooks());
+    budget.left = 0;
+    expect(budget.alone().spent()).toBe(false);
+    expect(budget.alone().left).toBe(TEXT_SYSCALLS);
   });
-  it("H3: a marked edit with more locations than the cap spans the turn", () => {
+  it("H3 (cause22 C1/C2): a marked edit with 70 locations registers each one and spans nothing", () => {
     expect(wireOutsideStore(fileOutsideStore(join(dir("h3s"), "s.jsonl")))).toBe(true);
     beginOutsideTurn("t-h3", "i-h3", `turn-h3-${Date.now()}`, false);
     markTurnOutside("t-h3", "web page");
     expect(downloadRegistry().spanCount()).toBe(0);
     const folder = dir("h3w");
     noteAcpCallOutside("t-h3", acpOutsideCall({ kind: "edit", title: "Edit", rawInput: {}, locations: locations(folder, 70) } as never), folder, true);
-    expect(downloadRegistry().spanCount()).toBeGreaterThan(0);
+    expect(downloadRegistry().spanCount()).toBe(0);
+    const keys = new Set(downloadRegistry().list().filter((e) => e.kind === "file").map((e) => e.path));
+    for (const loc of locations(folder, 70)) expect(keys.has(registryKey(loc.path))).toBe(true);
   });
   it("H4: a search's dir, directory, glob, include and file_pattern are Matched as searched folders", () => {
     const outside = dir("h4out");

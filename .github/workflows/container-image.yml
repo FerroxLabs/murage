@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Qualify server container image
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  image:
+    # The builder label is reserved for dedicated Hetzner Linux builders.
+    # Each has its native offline tool cache,
+    # the pinned base image, Podman, a C compiler, and gitleaks preinstalled.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: X64
+          - architecture: arm64
+            runner: ARM64
+    runs-on: [self-hosted, linux, murage-container-builder, '${{ matrix.runner }}']
+    timeout-minutes: 60
+    env:
+      IMAGE: murage-server-fixture:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.architecture }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build native packaged runtime from the offline cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          test "$(node -p 'process.versions.node.split(".")[0]')" = 24
+          pnpm install --offline --frozen-lockfile
+          node --test scripts/container-image.node-test.mjs
+          pnpm build
+          pnpm build:server
+          node scripts/build-cloud-engine-exclusion.mjs
+          mkdir -p dist-server/resources
+          cp resources/engine-exclusion.node dist-server/resources/engine-exclusion.node
+      - name: Build and check the isolated image without network access
+        id: qualify
+        env:
+          EVIDENCE: ${{ runner.temp }}/murage-image-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.architecture }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          printf 'path=%s\n' "$EVIDENCE" >> "$GITHUB_OUTPUT"
+          podman build --network none --pull=never --platform linux/${{ matrix.architecture }} -f Containerfile -t "$IMAGE" .
+          CONTAINER_ENGINE=podman node scripts/smoke-container-image.mjs "$IMAGE" "$EVIDENCE"
+      - name: Remove this job's image
+        if: always()
+        shell: bash
+        run: podman image rm "${IMAGE:?}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: server-image-check-${{ matrix.architecture }}
+          path: ${{ steps.qualify.outputs.path }}
+          retention-days: 7

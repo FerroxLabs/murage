@@ -14,7 +14,7 @@ import { readTurnPolicy } from "../decision/index.ts";
 import { isFilteredMail, isHeldForOwner } from "./inbound.ts";
 import type { EmailStore, SendRow, BindingRow } from "./email-store.ts";
 import type { EmailSendService } from "./send-service.ts";
-import type { FluxEmailClient, FluxOutcome } from "./flux-email-client.ts";
+import type { FluxOutcome } from "./flux-email-client.ts";
 import { emailRef, type EmailDraft } from "./canonical.ts";
 import { EMAIL_RULE, bodyParts, bounded, EMAIL_RESULT_CAP, fenceEmail, htmlToText, scanWords, token } from "./fence.ts";
 import { readEmailAttachments } from "./attachments.ts";
@@ -22,6 +22,7 @@ import { EMAIL_UNAVAILABLE } from "./admission.ts";
 import { emailGeneration, type EmailTurnRecord } from "./email-turns.ts";
 import { EMAIL_TOOLS, type EmailToolName } from "../drivers/email-tool-schemas.ts";
 import type { BotRecord } from "../store.ts";
+import type { MailboxReadBinding, MailReadPort } from "../mailbox/contract.ts";
 
 /** The tool lines (3.1, 3.4, 6). Murage's own words: no em dashes, no prices. */
 export const EMAIL_LINES = {
@@ -109,7 +110,8 @@ const ok = (text: string): EmailToolResult => ({ text });
 export interface EmailToolDeps {
   store: EmailStore;
   send: EmailSendService;
-  client: Pick<FluxEmailClient, "listMessages" | "getMessage" | "getThread">;
+  client: MailReadPort;
+  readPortFor?(botId: string): MailboxReadBinding | undefined;
   /** selectFileWorkspace(DATA_DIR, store, botId, threadId)?.root */
   workspaceRoot(botId: string, threadId: string): string | undefined;
   bot(botId: string): BotRecord | undefined;
@@ -190,6 +192,12 @@ export class EmailTools {
     if (refusal) return fail(refusal);
     const body = args as Record<string, unknown>;
     const noLimits = readTurnPolicy({ threadId: record.threadId, generation })?.permission.noLimits === true;
+    const mailbox = this.deps.readPortFor?.(record.botId);
+    if (mailbox) {
+      if (process.env.MURAGE_CLOUD_ROLE === "home" || (tool !== "email_list" && tool !== "email_read")) return fail(EMAIL_UNAVAILABLE);
+      if (mailbox.seal(record.threadId) !== "complete") return fail("Email privacy setup hasn't finished; this conversation is paused.");
+      return tool === "email_list" ? this.list(record, body, noLimits, mailbox) : this.read(record, body, noLimits, mailbox);
+    }
     switch (tool) {
       case "email_list": return this.list(record, body, noLimits);
       case "email_read": return this.read(record, body, noLimits);
@@ -217,7 +225,7 @@ export class EmailTools {
   }
 
   /** One message's envelope: Murage's own facts outside, every sender-written field in its own fence. */
-  private envelope(message: Message, botId: string, noLimits = false): string[] {
+  private envelope(message: Message, botId: string, noLimits = false, mailbox = false): string[] {
     const from = addrSpec(message.from) ?? (typeof message.from === "string" ? message.from : "");
     const fence = (value: unknown) => fenceEmail(value, from);
     const scan = isRecord(message.injection_scan) ? message.injection_scan : {};
@@ -228,7 +236,7 @@ export class EmailTools {
       message.thread_id ? `thread ${token(message.thread_id)}` : "",
       direction,
       time ? `at ${time}` : "",
-      typeof message.sender_authenticated === "boolean" ? `sender authenticated: ${message.sender_authenticated ? "yes" : "no"}` : "",
+      mailbox ? "sender not verified" : typeof message.sender_authenticated === "boolean" ? `sender authenticated: ${message.sender_authenticated ? "yes" : "no"}` : "",
       `scan: ${scanWords(scan)}`,
       message.held_for_owner === true ? "held for the owner" : "",
     ].filter(Boolean).join(", ");
@@ -257,8 +265,9 @@ export class EmailTools {
     return lines;
   }
 
-  private async list(record: EmailTurnRecord, args: Record<string, unknown>, noLimits = false): Promise<EmailToolResult> {
-    const inboxId = this.readInbox(record.botId);
+  private async list(record: EmailTurnRecord, args: Record<string, unknown>, noLimits = false, mailbox?: MailboxReadBinding): Promise<EmailToolResult> {
+    const inboxId = mailbox?.inboxId ?? this.readInbox(record.botId);
+    const port = mailbox?.port ?? this.deps.client;
     if (!inboxId) return fail(EMAIL_UNAVAILABLE);
     const limit = optInt(args.limit, 1, 25, 10);
     if (limit === null) return fail("limit is 1 to 25.");
@@ -268,13 +277,13 @@ export class EmailTools {
     if (since === null) return fail("since is an ISO time.");
     const threadId = args.thread_id === undefined ? undefined : token(args.thread_id) || null;
     if (threadId === null) return fail("thread_id is an id from email_list.");
-    const outcome = await this.deps.client.listMessages({ kind: "bot", botId: record.botId }, inboxId, { direction, since, thread_id: threadId, limit });
-    if (outcome.kind !== "ok") return outcome.kind === "held" ? fail(EMAIL_LINES.couldNotRead) : this.failure(outcome, true);
+    const outcome = await port.listMessages({ kind: "bot", botId: record.botId }, inboxId, { direction, since, thread_id: threadId, limit });
+    if (outcome.kind !== "ok") return mailbox || outcome.kind === "held" ? fail(EMAIL_LINES.couldNotRead) : this.failure(outcome, true);
     // 5.2: spam, blocked and unauthenticated mail is hidden from the bot (the owner sees it under Filtered)
     const messages = list((outcome.body as { data?: unknown }).data).filter(isRecord).filter(message => noLimits || !isFilteredMail(message));
     const lines: string[] = [EMAIL_RULE];
     // the emails Murage holds for the owner never reached Flux: they are listed from Murage's own record, with no text
-    if (direction !== "inbound" && !threadId) {
+    if (!mailbox && direction !== "inbound" && !threadId) {
       for (const row of this.deps.store.sendsOfBot(record.botId, ["prepared", "awaiting_owner"])) {
         lines.push(`Murage reference ${emailRef(row.sendId)}, Murage state ${row.state}, ${row.kind}, ${row.summary.to.length + row.summary.cc.length} recipient(s), not yet sent to Flux`);
       }
@@ -282,7 +291,7 @@ export class EmailTools {
     if (!messages.length) lines.push(EMAIL_LINES.noMatch);
     let shown = 0;
     for (const message of messages) {
-      const next = [...lines, "", ...this.envelope(message, record.botId, noLimits)];
+      const next = [...lines, "", ...this.envelope(message, record.botId, noLimits, Boolean(mailbox))];
       // leave room for the "more emails" line; never a partial envelope
       if (next.filter(line => line !== "").join("\n").length > EMAIL_RESULT_CAP - 200) break;
       lines.splice(0, lines.length, ...next);
@@ -292,8 +301,9 @@ export class EmailTools {
     return ok(bounded(lines));
   }
 
-  private async read(record: EmailTurnRecord, args: Record<string, unknown>, noLimits = false): Promise<EmailToolResult> {
-    const inboxId = this.readInbox(record.botId);
+  private async read(record: EmailTurnRecord, args: Record<string, unknown>, noLimits = false, mailbox?: MailboxReadBinding): Promise<EmailToolResult> {
+    const inboxId = mailbox?.inboxId ?? this.readInbox(record.botId);
+    const port = mailbox?.port ?? this.deps.client;
     if (!inboxId) return fail(EMAIL_UNAVAILABLE);
     const messageId = args.message_id === undefined ? undefined : token(args.message_id);
     const threadId = args.thread_id === undefined ? undefined : token(args.thread_id);
@@ -302,11 +312,11 @@ export class EmailTools {
     if (part === null) return fail("part is a number from 1.");
     const bot = { kind: "bot" as const, botId: record.botId };
     if (messageId !== undefined) {
-      const outcome = await this.deps.client.getMessage(bot, inboxId, messageId);
-      if (outcome.kind !== "ok") return outcome.kind === "held" ? fail(EMAIL_LINES.couldNotRead) : this.failure(outcome, true);
+      const outcome = await port.getMessage(bot, inboxId, messageId);
+      if (outcome.kind !== "ok") return mailbox || outcome.kind === "held" ? fail(EMAIL_LINES.couldNotRead) : this.failure(outcome, true);
       const message = outcome.body as Message;
       if (!noLimits && isFilteredMail(message)) return fail(EMAIL_LINES.noMatch);
-      const lines = [EMAIL_RULE, ...this.envelope(message, record.botId, noLimits)];
+      const lines = [EMAIL_RULE, ...this.envelope(message, record.botId, noLimits, Boolean(mailbox))];
       if (!noLimits && message.held_for_owner === true) return ok(bounded([...lines, EMAIL_LINES.heldForOwner]));
       const from = addrSpec(message.from) ?? "";
       const parts = bodyParts(messageText(message));
@@ -315,8 +325,8 @@ export class EmailTools {
       if (part < parts.length) lines.push(`This email continues: call email_read with message_id ${messageId} and part ${part + 1}.`);
       return ok(bounded(lines));
     }
-    const outcome = await this.deps.client.getThread(bot, inboxId, threadId!);
-    if (outcome.kind !== "ok") return outcome.kind === "held" ? fail(EMAIL_LINES.couldNotRead) : this.failure(outcome, true);
+    const outcome = await port.getThread(bot, inboxId, threadId!);
+    if (outcome.kind !== "ok") return mailbox || outcome.kind === "held" ? fail(EMAIL_LINES.couldNotRead) : this.failure(outcome, true);
     const thread = outcome.body as Message;
     const messages = list(thread.messages).filter(isRecord).filter(message => noLimits || !isFilteredMail(message));
     const pages = Math.max(1, Math.ceil(messages.length / THREAD_PAGE));
@@ -327,7 +337,7 @@ export class EmailTools {
     const participants = list(thread.participants).filter(item => typeof item === "string");
     if (participants.length) lines.push(`Participants: ${fenceEmail(participants.join(", "), firstFrom)}`);
     for (const message of messages.slice((part - 1) * THREAD_PAGE, part * THREAD_PAGE)) {
-      lines.push("", ...this.envelope(message, record.botId, noLimits));
+      lines.push("", ...this.envelope(message, record.botId, noLimits, Boolean(mailbox)));
       if (!noLimits && message.held_for_owner === true) { lines.push(EMAIL_LINES.heldForOwner); continue; }
       const text = messageText(message);
       const cut = text.length > THREAD_MESSAGE_CHARS ? bodyParts(text, THREAD_MESSAGE_CHARS)[0]! : text;

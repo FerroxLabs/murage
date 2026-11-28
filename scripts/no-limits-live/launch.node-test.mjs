@@ -1,10 +1,11 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,existsSync,rmSync} from 'node:fs';
+import {mkdtempSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {launchLive} from './run.mjs';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 // Native loader probe lets the mutation qualifier break the actual launch
 // path without rewriting a product file or relying on Vitest transform hooks.
 test('the owned launcher enables permissions and authenticates its paired phone', {timeout:90000},async()=>{
@@ -19,6 +20,6 @@ test('the owned launcher enables permissions and authenticates its paired phone'
   });
  }finally{
   await f?.client.disconnect();await f?.close();if(f)assert.equal(existsSync(f.root),false);
-  rmSync(out,{recursive:true,force:true});
+  safeWipeSync(out);
  }
 });

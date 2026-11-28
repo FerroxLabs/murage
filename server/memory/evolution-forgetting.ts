@@ -7,6 +7,7 @@ import { learningLocalPath } from "../bot-learning.ts";
 import { DATA_DIR } from "../config.ts";
 import { cascadeLineageForget, forgetLineageOfBot } from "./lesson-lineage.ts";
 import { DENIED_PLACE } from "./deny.ts";
+import { withSecureDelete } from "../secure-delete.ts";
 
 /** Offline-safe cleanup of evaluation copies, shared by live forgetting and
  * restore. Original cost/digest receipts survive; copied response text does not. */
@@ -256,13 +257,14 @@ function learningLocalBotDir(dataDir: string, botId: string): string {
 export function forgetBotLearningData(db: DatabaseSync, dataDir: string, botId: string): { rows: number; localRemoved: boolean } {
   const dir = learningLocalBotDir(dataDir, botId);
   let rows = 0;
-  if (hasTable(db, "memory_lessons")) {
+  // 1.0.22 item 1a: "forget this learning data" removes reply snippets and lesson text: secure_delete=ON while it deletes
+  if (hasTable(db, "memory_lessons")) withSecureDelete(db, () => {
     forgetLineageOfBot(db, botId, Date.now()); // copies this bot handed to other bots go with it
     for (const table of ["memory_outcomes", "memory_feedback", "memory_lessons", "memory_episodes", "memory_learning_runs", "memory_backfill_cursors"]) rows += Number(db.prepare(`DELETE FROM ${table} WHERE bot_id=?`).run(botId).changes);
     // The ledger holds reply snippets and the suggestion rows hold skill and routine words: both are this bot's learning data (T1-16c).
     if (hasTable(db, "memory_learning_events")) rows += Number(db.prepare("DELETE FROM memory_learning_events WHERE bot_id=?").run(botId).changes);
     rows += Number(db.prepare("DELETE FROM memory_scope_bindings WHERE subject_type='system' AND subject_id IN ('procedure-review-pending','procedure-review') AND json_extract(intent,'$.botId')=?").run(botId).changes);
-  }
+  });
   const localRemoved = existsSync(dir);
   if (localRemoved) rmSync(dir, { recursive: true, force: true });
   return { rows, localRemoved };

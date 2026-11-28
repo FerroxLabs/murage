@@ -52,7 +52,27 @@ FunctionEnd
   IntOp $0 $0 + 25
   StrLen $1 $INSTDIR
   IntOp $1 $1 + 1
-  IntCmp $0 $1 murage_stage_probe murage_stage_probe murage_stage_fail
+  IntCmp $0 $1 murage_stage_probe murage_stage_probe murage_stage_measure
+  murage_stage_measure:
+  ; The staging prefix ($0) is longer than the installed prefix ($1): a short
+  ; install folder chosen with /D=. That is only unsafe when a staged path
+  ; would pass the Windows path limit, so measure the longest installed path
+  ; (files and folders) and admit the upgrade when every staged path still
+  ; fits 247 characters, the tighter folder limit. The helper answers the
+  ; length as its exit code and 0 when anything could not be read; a missing
+  ; helper, a timeout or an answer shorter than the folder itself aborts as
+  ; before. The folder goes through the environment, never the command line.
+  System::Call 'kernel32::SetEnvironmentVariableW(w "MURAGE_STAGE_INSTDIR", w "$INSTDIR") i .r2'
+  StrCmp $2 "0" murage_stage_fail
+  nsExec::ExecToStack /TIMEOUT=300000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "try { $$m = 0; Get-ChildItem -LiteralPath $$env:MURAGE_STAGE_INSTDIR -Recurse -Force -ErrorAction Stop | ForEach-Object { if ($$_.FullName.Length -gt $$m) { $$m = $$_.FullName.Length } }; exit $$m } catch { exit 0 }"'
+  Pop $2
+  Exch $2
+  Pop $2
+  System::Call 'kernel32::SetEnvironmentVariableW(w "MURAGE_STAGE_INSTDIR", p 0)'
+  IntCmp $2 $1 murage_stage_fail murage_stage_fail 0
+  IntOp $2 $2 - $1
+  IntOp $2 $2 + $0
+  IntCmp $2 247 murage_stage_probe murage_stage_probe murage_stage_fail
   murage_stage_probe:
   ClearErrors
   GetTempFileName $2 "$murageStageRoot"

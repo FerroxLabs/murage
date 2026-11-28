@@ -17,4 +17,9 @@ describe("withNewBotEffort", () => {
     expect(withNewBotEffort(selection, "high", undefined)).toEqual(selection);
     expect(withNewBotEffort(selection, null, ["high"])).toEqual(selection);
   });
+
+  it("keeps an explicit native choice without adding the workspace default", () => {
+    const native = { ...selection, variant: "native-a" };
+    expect(withNewBotEffort(native, "high", ["high"])).toEqual(native);
+  });
 });

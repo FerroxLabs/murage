@@ -1,0 +1,40 @@
+timestamp=2026-11-22T08:48:16.250Z level=INFO run=991e7a8f message="creating instance" directory=/home/user/scratch/opencode/work
+timestamp=2026-11-22T08:48:16.251Z level=INFO run=991e7a8f message=fromDirectory directory=/home/user/scratch/opencode/work
+timestamp=2026-11-22T08:48:16.256Z level=INFO run=991e7a8f message=bootstrapping directory=/home/user/scratch/opencode/work
+timestamp=2026-11-22T08:48:16.260Z level=INFO run=991e7a8f message=loading path=/home/user/scratch/opencode/home/config/opencode/config.json
+timestamp=2026-11-22T08:48:16.260Z level=INFO run=991e7a8f message=loading path=/home/user/scratch/opencode/home/config/opencode/opencode.json
+timestamp=2026-11-22T08:48:16.260Z level=INFO run=991e7a8f message=loading path=/home/user/scratch/opencode/home/config/opencode/opencode.jsonc
+timestamp=2026-11-22T08:48:16.412Z level=INFO run=991e7a8f message="all LSPs are disabled"
+timestamp=2026-11-22T08:48:16.412Z level=INFO run=991e7a8f message="all formatters are disabled"
+timestamp=2026-11-22T08:48:16.412Z level=INFO run=991e7a8f message=init
+timestamp=2026-11-22T08:48:16.529Z level=INFO run=991e7a8f message="setup connection"
+timestamp=2026-11-22T08:48:16.536Z level=INFO run=991e7a8f message="global event connected"
+timestamp=2026-11-22T08:48:16.543Z level=INFO run=991e7a8f message="creating instance" directory=/home/user/scratch/opencode/work
+timestamp=2026-11-22T08:48:16.543Z level=INFO run=991e7a8f message=fromDirectory directory=/home/user/scratch/opencode/work
+timestamp=2026-11-22T08:48:16.549Z level=INFO run=991e7a8f message=bootstrapping directory=/home/user/scratch/opencode/work
+timestamp=2026-11-22T08:48:16.550Z level=INFO run=991e7a8f message=loading path=/home/user/scratch/opencode/home/config/opencode/config.json
+timestamp=2026-11-22T08:48:16.551Z level=INFO run=991e7a8f message=loading path=/home/user/scratch/opencode/home/config/opencode/opencode.json
+timestamp=2026-11-22T08:48:16.551Z level=INFO run=991e7a8f message=loading path=/home/user/scratch/opencode/home/config/opencode/opencode.jsonc
+timestamp=2026-11-22T08:48:16.579Z level=INFO run=991e7a8f message="all LSPs are disabled"
+timestamp=2026-11-22T08:48:16.579Z level=INFO run=991e7a8f message="all formatters are disabled"
+timestamp=2026-11-22T08:48:16.579Z level=INFO run=991e7a8f message=init
+timestamp=2026-11-22T08:48:17.124Z level=INFO run=991e7a8f message=init count=1
+timestamp=2026-11-22T08:48:17.147Z level=INFO run=991e7a8f message=created id=ses_dfd8ee304ffe86SSehkfyIpwOx slug=jolly-star version=1.19.5 projectID=global directory=/home/user/scratch/opencode/work path=home/user/scratch/opencode/work workspaceID=undefined parentID=undefined title="New session - 2026-11-22T08:48:17.147Z" agent=build model.id=mock model.providerID=fixture metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1795337297147 time.updated=1795337297147
+timestamp=2026-11-22T08:48:17.169Z level=INFO run=991e7a8f message=loop session.id=ses_dfd8ee304ffe86SSehkfyIpwOx step=0
+timestamp=2026-11-22T08:48:17.177Z level=INFO run=991e7a8f message="shell tool using shell" shell=/usr/bin/bash
+timestamp=2026-11-22T08:48:17.190Z level=INFO run=991e7a8f message=stream providerID=fixture modelID=mock session.id=ses_dfd8ee304ffe86SSehkfyIpwOx small=true agent=title mode=primary
+timestamp=2026-11-22T08:48:17.194Z level=INFO run=991e7a8f message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-22T08:48:17.231Z level=INFO run=991e7a8f message="watcher backend" directory=/home/user/scratch/opencode/work platform=linux backend=inotify
+timestamp=2026-11-22T08:48:17.233Z level=INFO run=991e7a8f message="project copy refresh started" projectID=global
+timestamp=2026-11-22T08:48:17.234Z level=INFO run=991e7a8f message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-11-22T08:48:17.248Z level=INFO run=991e7a8f message="booting location services" directory=/home/user/scratch/opencode/work workspaceID=undefined
+timestamp=2026-11-22T08:48:17.507Z level=INFO run=991e7a8f message=process session.id=ses_dfd8ee304ffe86SSehkfyIpwOx messageID=msg_202711d130015QXqCqzVm2If75
+timestamp=2026-11-22T08:48:17.508Z level=INFO run=991e7a8f message=stream providerID=fixture modelID=mock session.id=ses_dfd8ee304ffe86SSehkfyIpwOx small=false agent=build mode=primary
+timestamp=2026-11-22T08:48:17.510Z level=INFO run=991e7a8f message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-22T08:48:17.512Z level=ERROR run=991e7a8f message="stream error" providerID=fixture modelID=mock session.id=ses_dfd8ee304ffe86SSehkfyIpwOx small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-22T08:48:18.514Z level=INFO run=991e7a8f message=stream providerID=fixture modelID=mock session.id=ses_dfd8ee304ffe86SSehkfyIpwOx small=false agent=build mode=primary
+timestamp=2026-11-22T08:48:18.516Z level=INFO run=991e7a8f message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-22T08:48:19.236Z level=ERROR run=991e7a8f message="stream error" providerID=fixture modelID=mock session.id=ses_dfd8ee304ffe86SSehkfyIpwOx small=true agent=title mode=primary error.error="AI_RetryError: Failed after 3 attempts. Last error: Local fixture rate limit"
+timestamp=2026-11-22T08:49:26.588Z level=WARN run=991e7a8f message="background dependency install failed" dir=/home/user/scratch/opencode/home/config/opencode error="Cause([Die(ReleaseError: token mismatch)])"
+timestamp=2026-11-22T08:49:33.588Z level=INFO run=991e7a8f message=loop session.id=ses_dfd8ee304ffe86SSehkfyIpwOx step=1
+timestamp=2026-11-22T08:49:33.589Z level=INFO run=991e7a8f message="exiting loop" session.id=ses_dfd8ee304ffe86SSehkfyIpwOx

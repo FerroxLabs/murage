@@ -23,8 +23,18 @@ test.beforeAll(async () => {
 test.afterAll(async()=>{await server?.close();safeWipeSync(cache);});
 for(const skin of ['light','dark'])test('sender custom avatar and failed-image fallback in '+skin,async({page},info)=>{
   await page.emulateMedia({reducedMotion:'reduce'});
-  await page.route('**/api/attachments/sender.png',route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=','base64')}));
-  await page.goto(origin+'/__avatar?skin='+skin); const avatar=page.getByRole('img',{name:'Sable avatar'});await expect(avatar).toBeVisible();await expect(avatar).toHaveAttribute('src','/api/attachments/sender.png');expect(await avatar.evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
+  let ready = false;
+  await page.route('**/api/attachments/sender.png',route=>ready
+    ? route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=','base64')})
+    : route.fulfill({status:503,headers:{'cache-control':'no-store'},body:'fixture starting'}));
+  const startupError = page.waitForResponse(response => response.url().endsWith('/api/attachments/sender.png') && response.status() === 503);
+  await page.goto(origin+'/__avatar?skin='+skin);
+  await startupError;
+  const avatar=page.locator('img[src="/api/attachments/sender.png"]');
+  await expect(avatar).toBeHidden();await expect(page.getByText('S',{exact:true})).toBeVisible();
+  ready = true;
+  await expect(avatar).toBeVisible();await expect(avatar).toHaveAttribute('src','/api/attachments/sender.png');await expect(avatar).toHaveAttribute('alt','');expect(await avatar.evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
   await page.screenshot({path:info.outputPath('sender-'+skin+'.png')});
+  ready = false;
   await avatar.dispatchEvent('error');await expect(page.locator('img')).toHaveCount(0);await expect(page.getByRole('button',{name:/Message from @Sable/})).toBeVisible();await page.screenshot({path:info.outputPath('sender-fallback-'+skin+'.png')});
 });

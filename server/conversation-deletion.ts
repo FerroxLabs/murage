@@ -35,7 +35,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { rootsFor, WorkspaceTreeError } from "./data-roots.ts";
 import { lstatOrNull, removeConfined, type RemoveOutcome } from "./engine-exec.ts";
 import type { AcpHistoryEngine } from "./engine-history-deletion.ts";
-import { applyFactsDelta, MAX_ENGINE_ROUNDS } from "./engine-history-run.ts";
+import { applyFactsDelta, conversationOn, MAX_ENGINE_ROUNDS } from "./engine-history-run.ts";
 import { configureRedo, listRedo } from "./engine-redo.ts";
 import { inScopeFolder, privateScopeHome, scopeCandidates } from "./engine-closed.ts";
 import { runEngineHistoryOffThread, startEngineHistoryJob, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryOptions, type EngineHistoryResult } from "./engine-history-offthread.ts";
@@ -46,12 +46,14 @@ import { runningAppVersion } from "./memory/app-version.ts";
 import { OPEN_PASS_ENGINES } from "./engine-history-run.ts";
 import { closeThreadLog, threadLogNames, threadSessionLines, threadTempFiles, type SessionReadOptions } from "./harness/event-log.ts";
 import { observeDeletionAttempt, observeDeletionCompleted, observeDeletionEvent, observeDeletionJournal } from "./health/deletion-observer.ts";
+import { secureDeleteOn } from "./secure-delete.ts";
+import { readPersistedRecords } from "./persisted-state.ts";
 
 const ID = /^[\w-]+$/;
 /** How long a synced-folder line stays on screen. */
 const DONE_LINE_MS = 5 * 60_000;
-const ATTACHMENT_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}$/i;
-const ATTACHMENT_IN_TEXT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}/gi;
+const ATTACHMENT_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:tar\.(?:gz|bz2|xz|zst)|[a-z0-9]{1,5})$/i;
+const ATTACHMENT_IN_TEXT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:tar\.(?:gz|bz2|xz|zst)|[a-z0-9]{1,5})/gi;
 const ARTIFACT_BLOB = /^[a-f0-9]{64}\.[a-z0-9]{1,12}$/;
 
 export type DeletionEngine = "fuigo" | "grok" | "claude" | "codex" | AcpHistoryEngine;
@@ -77,7 +79,7 @@ export interface DeletionLeftover { what: string; where: string }
 export const ENGINE_LABEL: Readonly<Record<string, string>> = {
   fuigoAgent: "Fuigo", grokAgent: "Grok", claudeAgent: "Claude Code", codex: "Codex", piAgent: "Pi", opencodeGo: "OpenCode",
   geminiAgent: "Gemini CLI", qwenAgent: "Qwen Code", kimiAgent: "Kimi", cursorAgent: "Cursor", droidAgent: "Droid",
-  antigravityAgent: "Antigravity", hermesAgent: "Hermes", openclawAgent: "OpenClaw", clineAgent: "Cline", museCode: "Muse Code", deepseekAgent: "DeepSeek Harness", copilotAgent: "GitHub Copilot", customAcp: "your custom engine",
+  antigravityAgent: "Antigravity", hermesAgent: "Hermes", openclawAgent: "OpenClaw", clineAgent: "Cline", commandCodeAgent: "Command Code", kiroAgent: "Kiro", ompAgent: "OMP", devinAgent: "Devin", museCode: "Muse Code", deepseekAgent: "DeepSeek Harness", copilotAgent: "GitHub Copilot", customAcp: "your custom engine",
 };
 const engineLabel = (kind: string) => ENGINE_LABEL[kind] ?? "An engine";
 /** The driver kind whose label names an engine (codex -> Codex, grok -> Grok). */
@@ -109,7 +111,7 @@ export interface PendingConversationDeletion {
   createdAt: number;
   threadIds: string[];
   /** one entry per working folder found for a thread (a channel has one per member) */
-  desks: Array<{ botId: string; threadId: string; checkpointKey?: string; memoryFolder?: string }>;
+  desks: Array<{ botId: string; threadId: string; checkpointKey?: string; memoryFolder?: string; /** Relative partition workspace; absent in older records means the bot's home. */ workspace?: string }>;
   engineHomes: DeletionEngineHome[];
   /** bots deleted with these conversations: their own folder was theirs alone */
   botIds?: string[];
@@ -295,15 +297,44 @@ export { claudeProjectKey, engineSlug, fuigoMemoryKey, fuigoSessionKey, rustUrlE
 export { allowOwnerWrites, removeConfined, type RemoveOutcome } from "./engine-exec.ts";
 export { removeEngineHistoryFiles, runEngineHistoryJob } from "./engine-history-run.ts";
 
-/** Names in `path`; absent or unreadable is empty. Only the deletion service's own folders (workspaces, skill-state) are listed
- * this way: the engines' files are always read through the strict reader (engine-fs.ts). */
+/** Names in Murage's own folders, without following links. Only an absent
+ * folder is empty: an unreadable folder must keep deletion pending for retry. */
 function listDir(path: string): string[] {
   try {
     const stat = lstatSync(path);
     return stat.isDirectory() && !stat.isSymbolicLink() ? readdirSync(path) : [];
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return [];
   }
+}
+
+/** The workspace spellings used by partitionRoots (execution-audience.ts).
+ * Saved as slash-separated components so a journal cannot supply an arbitrary path. */
+function workspaceParts(botId: string, workspace = botId): string[] | undefined {
+  if (!ID.test(botId)) return undefined;
+  const parts = workspace.split("/");
+  if (parts.length === 1 && (parts[0] === botId || parts[0] === `${botId}.general`)) return parts;
+  if (parts.length === 2 && ["teams", "projects", "rooms"].some(suffix => parts[0] === `${botId}.${suffix}`) && ID.test(parts[1])) return parts;
+  return undefined;
+}
+
+/** Only Murage-owned namespaces, without walking a link below the root. */
+function workspaceFolders(root: string): Array<{ botId: string; workspace: string }> {
+  const out: Array<{ botId: string; workspace: string }> = [];
+  for (const name of listDir(root)) {
+    const stat = lstatOrNull(nodePath.join(root, name));
+    if (!stat?.isDirectory() || stat.isSymbolicLink()) continue;
+    if (ID.test(name)) { out.push({ botId: name, workspace: name }); continue; }
+    const match = /^([\w-]+)\.(general|teams|projects|rooms)$/.exec(name);
+    if (!match) continue;
+    if (match[2] === "general") out.push({ botId: match[1], workspace: name });
+    else for (const key of listDir(nodePath.join(root, name)).filter(key => ID.test(key))) {
+      const child = lstatOrNull(nodePath.join(root, name, key));
+      if (child?.isDirectory() && !child.isSymbolicLink()) out.push({ botId: match[1], workspace: `${name}/${key}` });
+    }
+  }
+  return out;
 }
 
 /** Is `folder` inside a git repository (a `.git` entry in it or any parent)? */
@@ -398,6 +429,9 @@ export interface DeletionServiceOptions {
   retryDelaysMs?: number[];
   /** tests: the shortest gap between two `home not read` lines for one home another program keeps open (FOREIGN_RELOG_MS) */
   foreignRelogMs?: number;
+  /** The least time between two whole attempts (pause, hold, plan) on a home another program keeps open, across every pending deletion
+   * (default FULL_TRY_MS). "Try again now" is not bound by it. */
+  fullTryMs?: number;
   /** The pause between replays once the list above has run out (default 6 hours). */
   slowRetryMs?: number;
   /** How long the worker-exit barrier waits before it logs one warning that the engine's holds are still up (default
@@ -409,7 +443,7 @@ export interface DeletionServiceOptions {
    * in the log): whether an engine process holds each home, with a fingerprint of the holders (SELF-OVERLOAD-105 item 2). Before a retry,
    * homes held by the SAME holders as after the last attempt are not planned again; the look is repeated every openRetryMs until the
    * holders change or go, then the attempt runs as before. */
-  probeHomes?: (homes: DeletionEngineHome[]) => Array<{ key: string; open: boolean; holders: string }>;
+  probeHomes?: (homes: Array<DeletionEngineHome & { conversation?: { folders: string[]; needles: string[] } }>) => Array<{ key: string; open: boolean; holders: string; unknown?: true }>;
   /** Looks at an unchanged holder set before an attempt runs anyway (default OPEN_LOOKS_MAX). */
   openLooksMax?: number;
   /** Calls `wake` once, when no Murage turn is running on any instance that uses these homes and one of them saw a turn end at or
@@ -432,6 +466,8 @@ export interface DeletionServiceOptions {
   /** New turns on these homes wait from this moment, in one synchronous step, and until the returned function is called. Before the port
    * opens nothing runs, so there is nothing to wait for: a crash journal is repaired before any turn can read the file it names. */
   holdHomesNow?: (homes: DeletionEngineHome[]) => () => void;
+  /** Boot records share this gate even when attachment indexing wakes them before the boot pass. */
+  bootSettled?: () => Promise<void>;
   /** What is owed to the owner changed (a notice appeared, changed or went away). */
   onOwed?: (notices: OwnerNotice[], rev: number) => void;
   /** How long a home that keeps changing is left alone before it is planned again (default 10 s). */
@@ -446,8 +482,12 @@ export interface DeletionServiceOptions {
 }
 
 /** A home skipped because another program has it open is still given one whole attempt (pause, hold, plan) every this many tries
- * (an hour at the ten-minute pace), so a home held by a process of Murage's own that the probe cannot place still gets the hold. */
+ * (an hour at the ten-minute pace; a look that made no attempt counts as one, noteLook), so a home held by a process of Murage's own that the probe cannot place still gets the hold. */
 export const FULL_TRY_EVERY = 6;
+/** The least time between two such whole attempts on ONE home, whichever deletions ask (cause7-1021): the try counter is per home, so
+ * with many deletions pending on one home every sixth try of ANY of them was a whole attempt (several a minute: each pauses the
+ * background runs, holds the engine's new turns and closes Murage's own idle sessions on it). Just under the hour of six 10-minute tries. */
+export const FULL_TRY_MS = 3_000_000;
 /** While another program keeps an engine home open, a changed holder is logged again at most this often. */
 export const FOREIGN_RELOG_MS = 3_600_000;
 
@@ -527,9 +567,9 @@ export class ConversationDeletions {
     // C9: refused before its record is written when the root is not ok
     const workspaces = this.workspacesBase();
     const desks: PendingConversationDeletion["desks"] = [];
-    for (const botId of listDir(workspaces).filter((name) => ID.test(name))) {
+    for (const { botId, workspace } of workspaceFolders(workspaces)) {
       for (const threadId of threadIds) {
-        const desk = nodePath.join(workspaces, botId, "threads", threadId);
+        const desk = nodePath.join(workspaces, ...workspace.split("/"), "threads", threadId);
         const stat = lstatOrNull(desk);
         if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) continue;
         let real: string | undefined;
@@ -537,7 +577,7 @@ export class ConversationDeletions {
         // Engines that file notes by folder (Fuigo/Grok memory) name them by
         // the canonical path only outside a git repository.
         const memoryFolder = real && !insideGitRepository(real) ? real : undefined;
-        desks.push({ botId, threadId, ...(real ? { checkpointKey: checkpointKey(real) } : {}), ...(memoryFolder ? { memoryFolder } : {}) });
+        desks.push({ botId, threadId, ...(workspace !== botId ? { workspace } : {}), ...(real ? { checkpointKey: checkpointKey(real) } : {}), ...(memoryFolder ? { memoryFolder } : {}) });
       }
     }
     const leftovers: DeletionLeftover[] = [];
@@ -549,7 +589,7 @@ export class ConversationDeletions {
       if (ENGINE_FOR_DRIVER[kind] || NO_LOCAL_HISTORY.has(kind)) continue;
       leftovers.push({ what: `${engineLabel(kind)}'s own copy of this conversation`, where: `${engineLabel(kind)}'s history on this computer` });
     }
-    const attached = this.attachmentsOnlyIn(threadIds);
+    const attached = this.attachmentsOnlyIn(threadIds, input.botIds ?? []);
     const entry: PendingConversationDeletion = {
       id: randomUUID(),
       createdAt: Date.now(),
@@ -581,6 +621,12 @@ export class ConversationDeletions {
   private recovery: Promise<void> = Promise.resolve();
   private bootRelease: (() => void) | undefined;
   private resumed = false;
+  private bootPreparation: Promise<void> | undefined;
+
+  // Both callers share the original startup deadline.
+  private waitForBootPreparation(): Promise<void> | undefined {
+    return this.bootPreparation ??= this.options.bootSettled?.();
+  }
 
   /** The attachment-name index has reached every row (or a later pass cleared deferrals): decide the files a deletion had to keep, now,
    * without a restart. Returns how many records it finished. A deletion that fails here stays pending for the next pass or the next boot. */
@@ -695,14 +741,27 @@ export class ConversationDeletions {
     const realWorkspaces: string | undefined = workspaces;
     for (const desk of entry.desks) {
       if (!ID.test(desk.botId) || !ID.test(desk.threadId) || !threadIds.includes(desk.threadId)) continue;
-      for (const root of new Set([dirs.workspaces, realWorkspaces].filter((dir): dir is string => Boolean(dir)))) folders.push(nodePath.join(root, desk.botId, "threads", desk.threadId));
-      trees.push({ root: workspaces, target: nodePath.join(workspaces, desk.botId, "threads", desk.threadId) });
+      const parts = workspaceParts(desk.botId, desk.workspace);
+      if (!parts) continue;
+      for (const root of new Set([dirs.workspaces, realWorkspaces].filter((dir): dir is string => Boolean(dir)))) folders.push(nodePath.join(root, ...parts, "threads", desk.threadId));
+      trees.push({ root: workspaces, target: nodePath.join(workspaces, ...parts, "threads", desk.threadId) });
       trees.push({ root: dirs.skillState, target: nodePath.join(dirs.skillState, desk.botId, "task-bundles", desk.threadId) });
       if (desk.checkpointKey && /^[a-f0-9]{16}$/.test(desk.checkpointKey)) trees.push({ root: dirs.checkpoints, target: nodePath.join(dirs.checkpoints, desk.botId, desk.checkpointKey) });
     }
     for (const botId of (entry.botIds ?? []).filter((id) => ID.test(id))) {
       for (const root of new Set([dirs.workspaces, realWorkspaces].filter((dir): dir is string => Boolean(dir)))) folders.push(nodePath.join(root, botId));
       for (const root of [workspaces, dirs.skillState, dirs.checkpoints]) trees.push({ root, target: nodePath.join(root, botId) });
+      // Store's first attempt also removes these. The durable sweep owns retries
+      // if a file was held, or the process stopped after the bot registry changed.
+      for (const suffix of ["general", "teams", "projects", "rooms"]) trees.push({ root: workspaces, target: nodePath.join(workspaces, `${botId}.${suffix}`) });
+    }
+    // Media sources sit beside threads/, not inside a desk. Find them even
+    // when no desk was ever made, including a render stopped before publication.
+    // Each leaf belongs to one thread; shared notebooks and other media stay.
+    for (const { workspace } of workspaceFolders(workspaces)) {
+      for (const threadId of threadIds) for (const kind of ["generated-audio", "generated-images"]) {
+        trees.push({ root: workspaces, target: nodePath.join(workspaces, ...workspace.split("/"), kind, threadId) });
+      }
     }
     // Antigravity's own per-thread folder when a turn has none
     // (drivers/antigravity.ts: workspaces/<thread id>), and the engine
@@ -731,20 +790,22 @@ export class ConversationDeletions {
     const removeAttachment = (name: string) => {
       const path = nodePath.join(dirs.attachments, name);
       if (this.options.deleteAttachment) {
+        // The injected deleter checks the lexical parent only, so a root that is itself a link would be followed by its unlink.
+        if (lstatOrNull(dirs.attachments)?.isSymbolicLink()) { failed.push(path); return; }
         try { this.options.deleteAttachment(path); } catch { failed.push(path); }
         if (lstatOrNull(path)) failed.push(path);
         else removed.push(path);
       } else record(removeConfined(dirs.attachments, path), path, removed, failed);
     };
-    for (const name of entry.attachments.filter((item) => ATTACHMENT_NAME.test(item))) removeAttachment(name);
-    this.pendingFiles.delete(entry.id);
-    // files the index could not yet vouch for: decided now if it can (no reference elsewhere: gone; one: kept), else left for a later pass
+    // Recheck after the commit: another chat or bot may have adopted a file
+    // while the engines were settling. Unknown references stay owed.
     const stillDeferred: string[] = [];
-    for (const name of (entry.deferredAttachments ?? []).filter((item) => ATTACHMENT_NAME.test(item))) {
+    for (const name of new Set([...entry.attachments, ...(entry.deferredAttachments ?? [])].filter((item) => ATTACHMENT_NAME.test(item)))) {
       const verdict = this.referencedElsewhere(name, threadIds);
       if (verdict === "unknown") stillDeferred.push(name);
-      else if (verdict === "no" && lstatOrNull(nodePath.join(dirs.attachments, name))?.isFile()) removeAttachment(name);
+      else if (verdict === "no" && (entry.attachments.includes(name) || lstatOrNull(nodePath.join(dirs.attachments, name))?.isFile())) removeAttachment(name);
     }
+    this.pendingFiles.delete(entry.id);
     for (const name of entry.artifactBlobs.filter((item) => ARTIFACT_BLOB.test(item))) {
       if (this.artifactBlobStillUsed(name)) continue;
       const path = nodePath.join(dirs.artifacts, name);
@@ -760,7 +821,7 @@ export class ConversationDeletions {
     const homes = deferred.length ? entry.engineHomes.filter((home) => !deferredKeys.has(homeKey(home.engine, home.home))) : entry.engineHomes;
     // The engines' history and messages.db's log are independent: both start now, and neither waits for the other (an engine
     // job can take as long as its own timeout).
-    const engineWork = folders.length ? this.removeEngineHistory(entry, { homes, folders: [...new Set(folders)], memoryFolders, sessions: entry.engineSessions ?? {}, redoDir: this.redoDir, nativeDir: this.dir.native }) : undefined;
+    const engineWork = folders.length ? this.removeEngineHistory(entry, { homes, folders: [...new Set(folders)], memoryFolders, sessions: entry.engineSessions ?? {}, redoDir: this.redoDir, nativeDir: this.dir.native }, allHomes) : undefined;
     // The rows are gone and overwritten (secure_delete); the write-ahead log still holds the old pages until the log is
     // copied and restarted. That happens without holding the writer lock (wal-maintenance.ts); if a reader holds the log
     // for now, the scrub stays owed there and is retried, and the next start's TRUNCATE settles it after a crash.
@@ -813,6 +874,7 @@ export class ConversationDeletions {
     this.waitForOwnTurns(entry, ownTurnKeys.length ? entry.engineHomes.filter((home) => ownTurnKeys.includes(homeKey(home.engine, home.home))) : [], startedAt);
     if (!failed.length && !stillDeferred.length) {
       this.abandon(entry);
+      this.heldAfter.delete(entry.id);
       observeDeletionCompleted(entry);
       const retry = this.retries.get(entry.id);
       if (retry?.timer) clearTimeout(retry.timer);
@@ -823,7 +885,14 @@ export class ConversationDeletions {
       // every yielded attempt is a loss, so five yields in a row at most come before the top rung, which runs whole (SELF-OVERLOAD-105)
       state.ownTurnLosses = ownTurnKeys.length > 0 || engines?.yielded ? (state.ownTurnLosses ?? 0) + 1 : 0;
       state.holders = this.holdersOf(entry); state.looks = 0;
+      // row 86: every home this attempt left owed was held by Murage's own running turn alone (nothing else failed)
+      state.ownTurnOnly = ownTurnKeys.length > 0 && failed.length === engines!.failed.length && engines!.failedHomes.every((key) => ownTurnKeys.includes(key)) ? ownTurnKeys : undefined;
       this.retries.set(entry.id, state);
+      // delholder-1024: the homes this attempt found held (another program, Murage's own turn): the start-up pass tries no other
+      // deletion owed only on them (drain)
+      // (a whole home held, never one locked file; and only when nothing but engine homes failed)
+      const onlyEngines = !!engines && failed.length === engines.failed.length;
+      this.heldAfter.set(entry.id, { keys: onlyEngines ? engines.failedHomes.filter((key) => engines.homeReasons?.[key] === "engine-running" || engines.homeReasons?.[key] === "engine-open") : [], ownTurn: onlyEngines ? ownTurnKeys : [] });
       // Only engine homes whose helper would not load under THIS version are owed: no retry can change that before Murage is updated,
       // so no timer is armed (the 6-hour cadence would run for good). Every start still runs reconcile in full (rows, records, Murage's
       // own files) and leaves only those homes out; a start of another version, and "Try again now", plan them too. Anything else
@@ -836,6 +905,15 @@ export class ConversationDeletions {
     return { leftovers: dedupeLeftovers(leftovers), failed };
   }
 
+  /** The engine homes an earlier attempt left a deletion owing (`engine\0home`). Empty when it was never tried, an attachment is still
+   * owed, or an owed item names no home: only an attempt settles those. */
+  private owedHomeKeys(entry: PendingConversationDeletion): string[] {
+    if (entry.attachments.length || entry.deferredAttachments?.length) return [];
+    const items = normalizeOwed(entry.owed)?.items ?? [];
+    return items.length && items.every((item) => item.home) ? [...new Set(items.map((item) => item.home!))] : [];
+  }
+  /** The homes the last failed attempt of each deletion found held, and those held by Murage's own turn (drain reads and drops it). */
+  private readonly heldAfter = new Map<string, { keys: string[]; ownTurn: string[] }>();
   /** The waits for Murage's own turns to end, by deletion. At most one per deletion; each attempt replaces it. */
   private readonly ownTurnWaits = new Map<string, () => void>();
 
@@ -1058,7 +1136,7 @@ export class ConversationDeletions {
       const state = this.retries.get(entry.id);
       if (state?.timer) clearTimeout(state.timer);
       // the schedule starts again; the ladder of attempts lost to Murage's own turns does not (a press never lowers the rung)
-      this.retries.set(entry.id, { attempts: 0, ...(state?.ownTurnLosses ? { ownTurnLosses: state.ownTurnLosses } : {}) });
+      this.retries.set(entry.id, { attempts: 0, ...(state?.ownTurnLosses ? { ownTurnLosses: state.ownTurnLosses } : {}), ...(state?.logged !== undefined ? { logged: state.logged } : {}) });
       started++;
       try { await this.finish(entry, { allHomes: true }); } catch (error) { console.warn("conversation deletion: a retry could not finish", error); }
     }
@@ -1120,7 +1198,9 @@ export class ConversationDeletions {
   /** Replays: after the pauses of the list, one more every `slowRetryMs` (6 hours), and the next start's reconcile. */
   private readonly retries = new Map<string, { attempts: number; timer?: NodeJS.Timeout; /** the last attempt was held back by Murage's own turn */ ownTurn?: boolean;
     /** the holders of the owed homes after the last attempt (probeHomes), and the looks since that found them unchanged */ holders?: string; looks?: number;
-    /** attempts in a row lost to Murage's own running turn (engine-running): the next hold waits longer */ ownTurnLosses?: number }>();
+    /** attempts in a row lost to Murage's own running turn (engine-running): the next hold waits longer */ ownTurnLosses?: number;
+    /** the homes the last attempt lost to Murage's own running turn, when nothing else was owed */ ownTurnOnly?: string[];
+    /** the holders the "still open" line was last written for */ logged?: string }>();
   private disposed = false;
 
   /** An unfinished deletion keeps its pending record, and is tried again after a growing pause (the record is the retry
@@ -1147,11 +1227,23 @@ export class ConversationDeletions {
       // a journal that cannot be read now is not "finished": the record stays and is looked at again on the schedule
       try { current = this.pending().find((item) => item.id === entry.id); } catch (error) { console.warn("conversation deletion: the pending deletions could not be read; trying again later", error); this.scheduleRetry(entry); return; }
       if (!current || this.disposed) { this.retries.delete(entry.id); return; }
+      const ownTurn = this.waitingOnOwnTurn(current, state);
+      if (ownTurn === "look") { state.looks = (state.looks ?? 0) + 1; this.retryAfter(entry, state, Math.min(this.options.openRetryMs ?? 600_000, 600_000)); return; }
       // The owed homes are still held by the same programs as after the last attempt: nothing an attempt could do has changed, so none is
       // made (no worker, no pause of the background runs, no plan line in the log). The look is repeated every openRetryMs.
-      if (this.heldBySameHolders(current, state)) {
+      if (ownTurn !== "attempt" && this.heldBySameHolders(current, state)) {
         state.looks = (state.looks ?? 0) + 1;
-        if (state.looks === 1) console.warn("conversation deletion: the engine history is still open by the same program; looked at again every 10 minutes, planned again once it changes");
+        this.noteLook(current);
+        // once per deletion and holder set: an attempt the looks force (OPEN_LOOKS_MAX) zeroes `looks`, and the line came back after
+        // every one of them, all day against a program the owner keeps open (DELETE-LOOP-1020)
+        // cause7-1021: and once per holder set across deletions: thirty deletions owed on one home wrote thirty lines per round
+        // MUTANT:still-open-per-deletion (drop `&& !this.openLogged.has(state.holders!)`)
+        if (state.looks === 1 && state.logged !== state.holders && !this.openLogged.has(state.holders!)) {
+          state.logged = state.holders;
+          if (this.openLogged.size >= 256) this.openLogged.delete(this.openLogged.values().next().value!);
+          this.openLogged.add(state.holders!);
+          console.warn("conversation deletion: the engine history is still open by the same program; looked at again every 10 minutes, planned again once it changes");
+        }
         this.retryAfter(entry, state, Math.min(this.options.openRetryMs ?? 600_000, 600_000));
         return;
       }
@@ -1162,13 +1254,41 @@ export class ConversationDeletions {
 
   /** A look at the owed homes with no plan: `probeHomes` over the homes still owed (every home when nothing is owed yet). Undefined when
    * there is no probe, or any owed home is not open (closed or unknown): then the attempt runs as before. */
+  /** delholder-1024: the working folders of the deleted conversation, as finishOnce gives them to the engine job (its desks' thread
+   * folders and its bots' folders under both spellings of the workspaces root). */
+  private conversationFolders(entry: PendingConversationDeletion): string[] {
+    let workspaces: string | undefined;
+    try { workspaces = this.workspacesBase(); } catch { workspaces = undefined; }
+    const roots = [...new Set([this.dir.workspaces, workspaces].filter((dir): dir is string => Boolean(dir)))];
+    const threadIds = entry.threadIds.filter((id) => ID.test(id));
+    const folders: string[] = [];
+    for (const desk of entry.desks) {
+      if (!ID.test(desk.botId) || !ID.test(desk.threadId) || !threadIds.includes(desk.threadId)) continue;
+      const parts = workspaceParts(desk.botId, desk.workspace);
+      if (parts) for (const root of roots) folders.push(nodePath.join(root, ...parts, "threads", desk.threadId));
+    }
+    for (const botId of (entry.botIds ?? []).filter((id) => ID.test(id))) for (const root of roots) folders.push(nodePath.join(root, botId));
+    // Antigravity's own per-thread folder, as finishOnce finds it
+    for (const threadId of workspaces ? threadIds : []) {
+      const own = nodePath.join(workspaces!, threadId);
+      const stat = lstatOrNull(own);
+      if (!stat || stat.isSymbolicLink() || !stat.isDirectory() || lstatOrNull(nodePath.join(own, "threads"))) continue;
+      for (const root of roots) folders.push(nodePath.join(root, threadId));
+    }
+    return [...new Set(folders)];
+  }
   private holdersOf(entry: PendingConversationDeletion): string | undefined {
     if (!this.options.probeHomes || !entry.engineHomes.length) return undefined;
     const owed = new Set((normalizeOwed(entry.owed)?.items ?? []).map((item) => item.home));
     const homes = owed.size ? entry.engineHomes.filter((home) => owed.has(homeKey(home.engine, home.home))) : entry.engineHomes;
     if (!homes.length) return undefined;
     let probe: Array<{ key: string; open: boolean; holders: string }>;
-    try { probe = this.options.probeHomes(homes); } catch { return undefined; }
+    try {
+      // delholder-1024: each home with the deleted conversation, as the attempt's gate has it: a default-home CLI in it (`claude
+      // --resume <id>`, `claude -c` in its folder) holds the home here too, so its looks stay quiet instead of a whole attempt each
+      const job = { folders: this.conversationFolders(entry), sessions: entry.engineSessions ?? {}, known: entry.engineDiscovery ?? {} };
+      probe = this.options.probeHomes(homes.map((home) => ({ ...home, conversation: conversationOn(job, home.engine, homeKey(home.engine, home.home)) })));
+    } catch { return undefined; }
     if (!probe.length || probe.some((item) => !item.open)) return undefined;
     return probe.map((item) => `${item.key}=${item.holders}`).sort().join("|");
   }
@@ -1181,6 +1301,38 @@ export class ConversationDeletions {
     if ((state.looks ?? 0) >= (this.options.openLooksMax ?? OPEN_LOOKS_MAX)) { state.looks = 0; return false; }
     return true;
   }
+  /** Row 86 (TRAIN-1024 F15): the last attempt lost only to Murage's own running turn, the wake for that turn's end is still armed (the
+   * turn still runs; whenEnginesFree retries the moment it ends) and no program Murage did not start is on those homes: an attempt now
+   * could change nothing, so none is made. No wake, no probe, a probe that throws or sees an outside holder, or OPEN_LOOKS_MAX looks in
+   * a row: the attempt runs (an outside holder gets the open-home pass at once).
+   * "look": no attempt now. "attempt": the looks ran out, so the attempt runs now. The looks count is shared with heldBySameHolders and
+   * was just zeroed, so asking it next would skip the forced attempt again, for good while an outsider stays on the home. undefined:
+   * the base rules decide (heldBySameHolders, then the attempt). */
+  private waitingOnOwnTurn(entry: PendingConversationDeletion, state: { ownTurnOnly?: string[]; looks?: number }): "look" | "attempt" | undefined {
+    const keys = state.ownTurnOnly;
+    // MUTANT:own-turn-wake-ignored (drop `|| !this.ownTurnWaits.has(entry.id)`)
+    if (!keys?.length || !this.options.probeHomes || !this.ownTurnWaits.has(entry.id)) return undefined;
+    // MUTANT:own-turn-looks-unbounded (drop this line); MUTANT:own-turn-cap-falls-through (`return undefined;` for `return "attempt";`)
+    if ((state.looks ?? 0) >= (this.options.openLooksMax ?? OPEN_LOOKS_MAX)) { state.looks = 0; return "attempt"; }
+    const homes = entry.engineHomes.filter((home) => keys.includes(homeKey(home.engine, home.home)));
+    if (homes.length !== keys.length) return undefined;
+    try {
+      const job = { folders: this.conversationFolders(entry), sessions: entry.engineSessions ?? {}, known: entry.engineDiscovery ?? {} };
+      const probe = this.options.probeHomes(homes.map((home) => ({ ...home, conversation: conversationOn(job, home.engine, homeKey(home.engine, home.home)) })));
+      // MUTANT:own-turn-outsider-ignored (`return probe.length === homes.length;`); an unreadable process list is no proof either
+      return probe.length === homes.length && probe.every((item) => !item.open && !item.unknown) ? "look" : undefined;
+    } catch { return undefined; }
+  }
+  /** A look that made no attempt counts toward the whole try of each home another program holds (FULL_TRY_EVERY), as the attempt it
+   * stands for did: with the probe no longer changing at every look (cause7-1021), attempts on a held home are an hour apart, and a
+   * count of attempts alone would put the whole try six hours out. FULL_TRY_MS still bounds it per home. */
+  private noteLook(entry: PendingConversationDeletion): void {
+    // MUTANT:looks-not-counted (make this method return at once)
+    for (const home of entry.engineHomes) {
+      const key = homeKey(home.engine, home.home), skips = this.foreignSkips.get(key);
+      if (skips !== undefined) this.foreignSkips.set(key, Math.min(skips + 1, FULL_TRY_EVERY));
+    }
+  }
   /** The next look at `pause`, outside the schedule's own delays: a probe, and the attempt only once the holders changed or went. */
   private retryAfter(entry: PendingConversationDeletion, state: { timer?: NodeJS.Timeout }, pause: number): void {
     if (this.disposed) return;
@@ -1190,7 +1342,9 @@ export class ConversationDeletions {
       try { current = this.pending().find((item) => item.id === entry.id); } catch { this.retryAfter(entry, state, pause); return; }
       if (!current || this.disposed) { this.retries.delete(entry.id); return; }
       const held = this.retries.get(entry.id);
-      if (held && this.heldBySameHolders(current, held)) { held.looks = (held.looks ?? 0) + 1; this.retryAfter(entry, held, pause); return; }
+      const ownTurn = held && this.waitingOnOwnTurn(current, held);
+      if (ownTurn === "look") { held!.looks = (held!.looks ?? 0) + 1; this.retryAfter(entry, held!, pause); return; }
+      if (held && ownTurn !== "attempt" && this.heldBySameHolders(current, held)) { held.looks = (held.looks ?? 0) + 1; this.noteLook(current); this.retryAfter(entry, held, pause); return; }
       void this.finish(current).catch((error) => console.warn("conversation deletion: a retry could not finish", error));
     }, pause);
     state.timer.unref();
@@ -1222,7 +1376,7 @@ export class ConversationDeletions {
    * Every attempt starts from a fresh plan of all homes; nothing saved by an earlier attempt counts as proof. Up to
    * MAX_ENGINE_ROUNDS plan/execute/verify rounds per attempt; what is still owed stays in the record for the retry schedule.
    * Never throws. */
-  private async removeEngineHistory(entry: PendingConversationDeletion, base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">): Promise<EngineHistoryResult & { failedHomes: string[]; yielded?: boolean; yieldedHomes?: string[] }> {
+  private async removeEngineHistory(entry: PendingConversationDeletion, base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">, /** the owner pressed "Try again now" */ pressed = false): Promise<EngineHistoryResult & { failedHomes: string[]; yielded?: boolean; yieldedHomes?: string[] }> {
     const homesFailed = (): EngineHistoryResult & { failedHomes: string[] } => ({ removed: [], failed: [...new Set(base.homes.map((home) => home.home))], leftovers: [], failedHomes: [...new Set(base.homes.map((home) => homeKey(home.engine, home.home)))] });
     if (!base.homes.length) return { removed: [], failed: [], leftovers: [], failedHomes: [] };
     const removed: string[] = [], leftovers: EngineHistoryResult["leftovers"] = [];
@@ -1321,15 +1475,27 @@ export class ConversationDeletions {
       // anything is paused or held: the full gate below would only find it open again, after closing Murage's own idle sessions on it
       // and pausing its background runs for nothing, every ten minutes for as long as that program runs. A probe that fails or sees
       // nothing changes nothing: the attempt goes on exactly as before.
-      const foreign = await this.foreignHomes(base, keys, job);
+      // delholder-1024: with the ids earlier plans found, so a default-home CLI in this conversation holds its home here as at the gate
+      const foreign = await this.foreignHomes({ ...base, known: entry.engineDiscovery ?? {} }, keys, job);
       const logged: string[] = []; // homes on their hourly whole try whose holder line is already written: the plan adds no second one
       for (const [key, seen] of Object.entries(foreign)) {
         // Every FULL_TRY_EVERY-th skip of a home runs the whole attempt anyway: a process of Murage's own that is not under this
         // process in the list (a parent that exited before it) reads as another program here, and only the hold can close it.
         const skips = (this.foreignSkips.get(key) ?? 0) + 1;
         // a full map never renews a skip allowance: a home with no counter left is given its whole attempt now
-        if (skips >= FULL_TRY_EVERY || (!this.foreignSkips.has(key) && this.foreignSkips.size >= 256)) { this.foreignSkips.delete(key); if (this.foreignLogged.has(key)) logged.push(key); continue; }
-        this.foreignSkips.set(key, skips);
+        const due = skips >= FULL_TRY_EVERY || (!this.foreignSkips.has(key) && this.foreignSkips.size >= 256);
+        // cause7-1021: the counter is per home and every pending deletion on the home counts into it, so the whole try is also held to
+        // one per FULL_TRY_MS per home (an owner's press is not). A due try inside that time stays a skip and stays due.
+        // MUTANT:whole-try-per-count (drop the time floor: `const soon = false;`)
+        const soon = !pressed && Date.now() - (this.foreignFullAt.get(key) ?? -Infinity) < (this.options.fullTryMs ?? FULL_TRY_MS);
+        if (due && !soon) {
+          this.foreignSkips.delete(key);
+          if (!this.foreignFullAt.has(key) && this.foreignFullAt.size >= 256) this.foreignFullAt.delete(this.foreignFullAt.keys().next().value!);
+          this.foreignFullAt.set(key, Date.now());
+          if (this.foreignLogged.has(key)) logged.push(key);
+          continue;
+        }
+        if (this.foreignSkips.has(key) || this.foreignSkips.size < 256) this.foreignSkips.set(key, Math.min(skips, FULL_TRY_EVERY));
         stuck.add(key); failedHomes.add(key); failed.add(homeOf(key).home);
         homeReasons[key] ??= "engine-open";
         if (seen.app) homeApps[key] = seen.app;
@@ -1505,18 +1671,22 @@ export class ConversationDeletions {
   private readonly foreignLogged = new Map<string, { signature: string; at: number }>();
   /** How many attempts in a row skipped each home for another program (see FULL_TRY_EVERY). */
   private readonly foreignSkips = new Map<string, number>();
+  /** When each home last got its whole try while another program held it (see FULL_TRY_MS). */
+  private readonly foreignFullAt = new Map<string, number>();
+  /** The holder sets the "still open" line was written for, whichever deletion wrote it (bounded). */
+  private readonly openLogged = new Set<string>();
 
   /** The homes of this attempt that a program Murage did not start has open (engine-history-run.ts probeEngineHomes, off the thread).
    * Logs one `home not read` line per home when another program starts holding it, then at most once an hour while it is still held,
    * and only when what holds it changed (by program and rule, not by pid). The owner's own Claude Code starts a shell or a search
    * for every tool call, so its holder list changes all day; a line per change was a line every few seconds (Sean's 1.0.6 log). */
-  private async foreignHomes(base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">, keys: string[], run: (job: EngineHistoryJob) => Promise<EngineHistoryResult> = runEngineHistoryOffThread): Promise<NonNullable<EngineHistoryResult["foreignHomes"]>> {
+  private async foreignHomes(base: Omit<EngineHistoryJob, "kind" | "only" | "plans">, keys: string[], run: (job: EngineHistoryJob) => Promise<EngineHistoryResult> = runEngineHistoryOffThread): Promise<NonNullable<EngineHistoryResult["foreignHomes"]>> {
     let probed: EngineHistoryResult;
     try { probed = await run({ ...base, kind: "probe", only: keys }); } catch { return {}; }
     const found = probed.foreignHomes ?? {};
     for (const key of keys) {
       const seen = found[key];
-      if (!seen) { this.foreignLogged.delete(key); this.foreignSkips.delete(key); continue; }
+      if (!seen) { this.foreignLogged.delete(key); this.foreignSkips.delete(key); this.foreignFullAt.delete(key); continue; }
       const holders = seen.holders ?? [];
       const signature = JSON.stringify([seen.app ?? null, seen.kinds ?? [...new Set(holders.map((item) => `${item.name ?? ""}|${item.by}`))].sort()]);
       const last = this.foreignLogged.get(key);
@@ -1690,6 +1860,7 @@ export class ConversationDeletions {
     let running = this.preparing.get(entry.id);
     if (!running) {
       running = (async () => {
+        await this.waitForBootPreparation();
         for (const threadId of entry.threadIds) this.prepareRows?.(threadId);
         await this.options.forgetThreads?.(entry.threadIds.filter((id) => ID.test(id)));
         this.unprepared.delete(entry.id);
@@ -1699,7 +1870,7 @@ export class ConversationDeletions {
     return running;
   }
 
-  /** The rows of every boot record, one per turn of the event loop, straight after the first health answer. */
+  /** The rows of every boot record, one per turn of the event loop. */
   async prepareBoot(ids: readonly string[]): Promise<void> {
     for (const id of ids) {
       const entry = this.unprepared.get(id);
@@ -1717,12 +1888,17 @@ export class ConversationDeletions {
    * tried, read fresh from the journal each time. A record whose thread is live again is left alone (triage decides that, at the next
    * start). Never throws. Returns the attempts that ended without an error. */
   async drain(ids: readonly string[]): Promise<number> {
-    let finished = 0;
+    let finished = 0, deferred = 0;
     const startedAt = Date.now();
     try {
       await this.recovery;
       const visited = new Set<string>();
       const wanted = new Set(ids);
+      // delholder-1024: homes an attempt of this pass found held, and those held by Murage's own turn. Sean's 1.0.22 logs: 50 deletions
+      // owed on one home the owner's CLI keeps open got a whole attempt each at every start (470-850 s); one is enough to learn it.
+      const held = new Set<string>(), heldByTurn = new Set<string>();
+      // the holders of each owed-home set, read once per pass (a probe reads the process list, and lsof on macOS)
+      const holdersBy = new Map<string, string | undefined>();
       while (!this.disposed) {
         let entries: PendingConversationDeletion[];
         try { entries = this.pending(); } catch (error) { console.error("conversation deletion: the pending deletions could not be read; they stay as they are", error); break; }
@@ -1734,6 +1910,24 @@ export class ConversationDeletions {
         const next = [...left].sort((a, b) => Number(hasJournal(b)) - Number(hasJournal(a)) || (a.lastTriedAt ?? 0) - (b.lastTriedAt ?? 0))[0]!;
         visited.add(next.id);
         if (next.threadIds.some((id) => this.bootIsLive?.(id))) { console.warn("conversation deletion: a pending deletion's conversation is live; it is left for the next start"); continue; }
+        // Owed only on homes found held in this pass: no attempt now. It gets the retry an attempt would have left it (looks every 10
+        // minutes, its attempt once the holders change or go; a home Murage's own turn holds is woken when the turn ends).
+        const owedKeys = this.owedHomeKeys(next);
+        if (owedKeys.length && owedKeys.every((key) => held.has(key))) {
+          deferred++;
+          const state = this.retries.get(next.id) ?? { attempts: 0 };
+          const byTurn = owedKeys.filter((key) => heldByTurn.has(key));
+          state.ownTurn = byTurn.length > 0;
+          // row 86: owed only on homes Murage's own running turn holds: its ticks look until that turn ends (waitingOnOwnTurn)
+          state.ownTurnOnly = byTurn.length === owedKeys.length ? byTurn : undefined;
+          const signature = [...owedKeys].sort().join("|");
+          if (!holdersBy.has(signature)) holdersBy.set(signature, this.holdersOf(next));
+          state.holders = holdersBy.get(signature); state.looks = 0;
+          this.retries.set(next.id, state);
+          this.waitForOwnTurns(next, next.engineHomes.filter((home) => byTurn.includes(homeKey(home.engine, home.home))), Date.now());
+          this.scheduleRetry(next);
+          continue;
+        }
         // Only an order: a journal that cannot be written now never stops the attempt.
         next.lastTriedAt = Date.now();
         try { this.save(entries); } catch (error) { console.warn("conversation deletion: the time of this try was not saved", error); }
@@ -1743,6 +1937,11 @@ export class ConversationDeletions {
         } catch (error) {
           console.error("conversation deletion: could not finish an interrupted delete", error);
         }
+        const after = this.heldAfter.get(next.id);
+        this.heldAfter.delete(next.id);
+        for (const key of after?.keys ?? []) held.add(key);
+        for (const key of after?.ownTurn ?? []) { held.add(key); heldByTurn.add(key); }
+        if (after) { const owed = this.owedHomeKeys(this.pending().find((item) => item.id === next.id) ?? next); if (owed.length) holdersBy.set([...owed].sort().join("|"), this.retries.get(next.id)?.holders); }
         await new Promise<void>((resolve) => { setImmediate(resolve); });
       }
     } catch (error) {
@@ -1750,17 +1949,17 @@ export class ConversationDeletions {
     } finally {
       this.releaseBootHold();
     }
-    if (ids.length) console.info(`conversation deletion: start-up pass tried ${finished} of ${ids.length} pending deletions in ${Math.round((Date.now() - startedAt) / 1000)} s`);
+    if (ids.length) console.info(`conversation deletion: start-up pass tried ${finished} of ${ids.length} pending deletions in ${Math.round((Date.now() - startedAt) / 1000)} s${deferred ? `; ${deferred} left for homes still in use` : ""}`);
     return finished;
   }
 
-  /** The rest of the start-up pass, once, after the port is open: the rows now, the engine work once the start's own work has settled. */
-  async resumeAfterBoot(ids: readonly string[], settled: () => Promise<void>): Promise<void> {
+  /** Triage keeps the records hidden while startup writes settle, so resumed deletes do not fill the WAL alongside them. */
+  async resumeAfterBoot(ids: readonly string[]): Promise<void> {
     if (this.resumed) return;
     this.resumed = true;
     try {
+      await this.waitForBootPreparation();
       await this.prepareBoot(ids);
-      await settled();
     } catch (error) {
       console.error("conversation deletion: the start-up pass stopped", error);
     }
@@ -1801,7 +2000,8 @@ export class ConversationDeletions {
   /** Whether a message outside `threadIds` names this attachment file. Answered from the attachment-name index (a keyed read, each
    * pointer re-checked against its row), never by a scan of every message. "unknown" when the index has not reached every row yet:
    * the file is then kept, never removed on a guess. A database without the index (an old or partial file) is scanned. */
-  private referencedElsewhere(name: string, threadIds: string[]): "yes" | "no" | "unknown" {
+  private referencedElsewhere(name: string, threadIds: string[], botIds: string[] = []): "yes" | "no" | "unknown" {
+    if (this.botPictures().some(picture => picture.name === name && !botIds.includes(picture.botId))) return "yes";
     const db = this.options.database();
     const marks = threadIds.map(() => "?").join(",");
     if (!this.hasTable("attachment_name") || !this.hasTable("transcript_index_state")) {
@@ -1815,19 +2015,30 @@ export class ConversationDeletions {
     return state?.done ? "no" : "unknown";
   }
 
-  /** Attachment files these threads' messages name that no other thread names (`remove`), and those the index could not yet vouch for (`deferred`). */
-  private attachmentsOnlyIn(threadIds: string[]): { remove: string[]; deferred: string[] } {
+  /** The durable roster is read before commit and again before unlink: pictures
+   * are attachment references too. An unreadable roster throws, never means unused. */
+  private botPictures(): Array<{ botId: string; name: string }> {
+    const bots = readPersistedRecords<{ id: string; avatarUrl?: unknown }>(nodePath.join(this.options.dataDir, "bots.json"));
+    return bots.flatMap(bot => {
+      const prefix = "/api/attachments/";
+      const name = typeof bot.avatarUrl === "string" && bot.avatarUrl.startsWith(prefix) ? bot.avatarUrl.slice(prefix.length).toLowerCase() : "";
+      return ATTACHMENT_NAME.test(name) ? [{ botId: bot.id, name }] : [];
+    });
+  }
+
+  /** Files the deleted messages or bots name, excluding references kept by other chats or bot pictures. */
+  private attachmentsOnlyIn(threadIds: string[], botIds: string[] = []): { remove: string[]; deferred: string[] } {
     const none = { remove: [] as string[], deferred: [] as string[] };
     if (!threadIds.length || !this.hasTable("messages")) return none;
     const db = this.options.database();
     const marks = threadIds.map(() => "?").join(",");
-    const names = new Set<string>();
+    const names = new Set(this.botPictures().filter(picture => botIds.includes(picture.botId)).map(picture => picture.name));
     for (const row of db.prepare(`SELECT json FROM messages WHERE thread_id IN (${marks})`).all(...threadIds) as Array<{ json: string }>) {
       for (const match of row.json.matchAll(ATTACHMENT_IN_TEXT)) names.add(match[0].toLowerCase());
     }
     for (const name of names) {
       if (!ATTACHMENT_NAME.test(name) || !lstatOrNull(nodePath.join(this.dir.attachments, name))?.isFile()) continue;
-      const verdict = this.referencedElsewhere(name, threadIds);
+      const verdict = this.referencedElsewhere(name, threadIds, botIds);
       if (verdict === "no") none.remove.push(name);
       else if (verdict === "unknown") none.deferred.push(name);
     }
@@ -1850,9 +2061,12 @@ export class ConversationDeletions {
   private deleteArtifactRows(threadIds: string[]): void {
     if (!threadIds.length) return;
     const db = this.options.database();
+    const restoreDelete = secureDeleteOn(db); // 1.0.22 item 1a: the deleted chat's artifact rows: freed pages zeroed (server/secure-delete.ts)
+    try {
     const marks = threadIds.map(() => "?").join(",");
     if (this.hasTable("output_publications")) db.prepare(`DELETE FROM output_publications WHERE thread_id IN (${marks})`).run(...threadIds);
     if (this.hasTable("artifacts")) db.prepare(`DELETE FROM artifacts WHERE thread_id IN (${marks})`).run(...threadIds);
+    } finally { restoreDelete(); }
   }
 }
 

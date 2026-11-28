@@ -501,7 +501,9 @@ it('owner pruning uses acknowledged progress without reading search.db after a c
  try{
   capture.start();search.pruneMessageSearchIntents(db);capture.stop();
   expect(capture.sql.filter(sql=>/FROM search_state/i.test(sql))).toEqual([]);
-  expect(capture.sql.filter(sql=>/DELETE FROM search_intents/i.test(sql))).toHaveLength(1);
+  // CHANGED-EXPECTATION (q1022-sqlite item 6, MAIN 1.0.22 MUST-FIX): the second prune has nothing owed (no acknowledgement since the first),
+  // so it now runs no statement at all; still none reads search.db
+  expect(capture.sql.filter(sql=>/DELETE FROM search_intents/i.test(sql))).toHaveLength(0);
  }finally{capture.restore();clock.mockRestore();}
 });
 

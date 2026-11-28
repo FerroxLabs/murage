@@ -18,7 +18,7 @@ import { pinOverrideIn } from "../../shared/prompt-capable.ts";
 import { approvalKey, exactAllowKeyFor, exactCommandForRequest } from "../auto-approve.ts";
 import { invalidateCliVersions } from "../cli-version-cache.ts";
 import { ensureDirs } from "../config.ts";
-import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
+import type { ProviderInstance } from "../contracts.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { recordAdmittedEvents, type EventRecorder } from "../testing/admitted-events.ts";
 import * as claude from "./claude.ts";
@@ -186,43 +186,44 @@ describe("14.3 item 2 and item 5 through the driver (fake CLI)", () => {
     return lines;
   };
 
-  it("a project's apiKeyHelper holds the turn on the card; Don't allow ends it before anything launches, with no value logged", async () => {
+  // CHANGED-EXPECTATIONS (FRICTION-1025 F13, q1024-trustquiet r6): the sign-in card is gone. The repository's sign-in settings
+  // are left out (--setting-sources user) with one plain line, and the turn runs; before, the turn waited on the card and a
+  // "Don't allow" ended it unlaunched. A remembered Allow (from the card older versions showed) still lets the values through.
+  it("F13 a project's apiKeyHelper never opens a card: the turn runs on the owner's settings only, with one line and no value logged", async () => {
     const lines = logged();
     await create();
     const dump = join(dir, "dump.json");
     setEnv("FAKE_CLAUDE_DUMP", dump);
     const cwd = repoWith({ apiKeyHelper: `/repo/${SENTINEL}`, env: { ANTHROPIC_BASE_URL: `https://${SENTINEL}.example` } });
-    // the turn waits on the card before it launches: sendTurn settles once the card is answered
-    const sent = instance!.adapter.sendTurn({ threadId: "t-signin-deny", text: "hi", cwd });
-    const opened = await recorder!.until((e) => e.type === "request.opened" && e.threadId === "t-signin-deny") as Extract<RuntimeEvent, { type: "request.opened" }>;
-    expect(opened.requestType).toBe("question");
-    expect(opened.summary).toBe("This project's settings change how Claude signs in. Allow?");
-    expect(await instance!.adapter.respondToRequest("t-signin-deny", opened.requestId!, { behavior: "answer", answers: [{ id: "signin", selected: ["Don't allow"] }] })).toBe("rejected");
-    await sent;
-    const done = await recorder!.until((e) => e.type === "turn.completed" && e.threadId === "t-signin-deny");
-    expect(done).toMatchObject({ ok: false });
-    expect(JSON.stringify(recorder!.events)).toContain("you chose not to allow that");
-    expect(existsSync(dump)).toBe(false);
+    void instance!.adapter.sendTurn({ threadId: "t-signin-skip", text: "hi", cwd });
+    const first = await recorder!.until((e) => e.threadId === "t-signin-skip" && (e.type === "request.opened" || e.type === "turn.completed"));
+    expect(first.type, "F13 no sign-in card: the turn ends on its own").toBe("turn.completed"); // F13-W1
+    expect(first).toMatchObject({ ok: true });
+    const argv = (JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] }).argv;
+    expect(argv[argv.indexOf("--setting-sources") + 1], "F13 the CLI loads the owner's user settings only").toBe("user"); // F13-W2
+    const notices = recorder!.events.filter((e) => e.threadId === "t-signin-skip" && e.type === "item.started" && (e as { toolKind?: string }).toolKind === "notice");
+    expect(notices.map((e) => (e as { title?: string }).title), "F13 exactly one line says so").toEqual([mod.CLAUDE_SIGNIN_SKIPPED]); // F13-W3
+    expect(mod.CLAUDE_SIGNIN_SKIPPED).not.toMatch(/[A-Z]{2,}_[A-Z_]+|apiKeyHelper|\bMURAGE_/);
     expect(JSON.stringify(recorder!.events)).not.toContain(SENTINEL);
     expect(lines.join("\n")).not.toContain(SENTINEL);
     expect(lines.join("\n")).toContain("claude sign-in hold: project settings set apiKeyHelper,ANTHROPIC_BASE_URL");
   });
 
-  it("Allow runs the turn, with the repository's value of the names it asked about let through", async () => {
+  it("F13 a remembered Allow runs the turn with the repository's value of the names found let through, no card, no line", async () => {
     logged();
     await create();
     const dump = join(dir, "dump-allow.json");
     setEnv("FAKE_CLAUDE_DUMP", dump);
     const cwd = repoWith({ env: { ANTHROPIC_MODEL: "repo-model" } });
-    // the turn waits on the card before it launches: sendTurn settles once the card is answered
-    const sent = instance!.adapter.sendTurn({ threadId: "t-signin-allow", text: "hi", cwd });
-    const opened = await recorder!.until((e) => e.type === "request.opened" && e.threadId === "t-signin-allow");
-    expect(await instance!.adapter.respondToRequest("t-signin-allow", (opened as { requestId: string }).requestId, { behavior: "answer", answers: [{ id: "signin", selected: ["Allow"] }] })).toBe("answered");
-    await sent;
+    mod.claudeSigninAnswers.remember(mod.claudeSigninScope(process.platform, [{ path: join(cwd, ".claude", "settings.json"), source: "project" }]), true);
+    await instance!.adapter.sendTurn({ threadId: "t-signin-allow", text: "hi", cwd });
     await recorder!.until((e) => e.type === "turn.completed" && e.threadId === "t-signin-allow");
-    const files = (JSON.parse(readFileSync(dump, "utf8")) as { settingsFiles: Array<{ env?: Record<string, string> } | null> }).settingsFiles;
+    expect(recorder!.events.some((e) => e.type === "request.opened")).toBe(false);
+    expect(recorder!.events.some((e) => e.type === "item.started" && (e as { title?: string }).title === mod.CLAUDE_SIGNIN_SKIPPED)).toBe(false);
+    const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; settingsFiles: Array<{ env?: Record<string, string> } | null> };
+    expect(seen.argv).not.toContain("--setting-sources");
     // the overlay is the settings object carrying the plugin-directory pin (14.6: routing names with no owner value are absent)
-    const overlay = files.find((settings) => settings?.env && "CLAUDE_CODE_PLUGIN_DIRS" in settings.env)!;
+    const overlay = seen.settingsFiles.find((settings) => settings?.env && "CLAUDE_CODE_PLUGIN_DIRS" in settings.env)!;
     expect(overlay).toBeDefined();
     expect(overlay.env).not.toHaveProperty("ANTHROPIC_MODEL");
     expect(overlay.env).not.toHaveProperty("ANTHROPIC_BASE_URL"); // 14.6: no owner value, left out, never ""
@@ -231,9 +232,13 @@ describe("14.3 item 2 and item 5 through the driver (fake CLI)", () => {
   it("no project settings: no card, the turn runs", async () => {
     logged();
     await create();
+    const dump = join(dir, "dump-none.json");
+    setEnv("FAKE_CLAUDE_DUMP", dump);
     await instance!.adapter.sendTurn({ threadId: "t-signin-none", text: "hi", cwd: repoWith({ env: { MY_TOOL_FLAG: "1" } }) });
     await recorder!.until((e) => e.type === "turn.completed" && e.threadId === "t-signin-none");
     expect(recorder!.events.some((e) => e.type === "request.opened")).toBe(false);
+    // nothing held: every setting source loads as the owner's own Claude Code does
+    expect((JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] }).argv).not.toContain("--setting-sources");
   });
 
   // item 5: the live proof saw these sentinels in the probes

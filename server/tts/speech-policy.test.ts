@@ -70,10 +70,10 @@ it.each([500, 502, 503, 429, 404, 403, 400, 402])("P-fallback Flux single-attemp
   await expect(flux("Safe words.", "marin", endpoint, true, call, 0, { attempts: 1 })).rejects.toThrow();
   expect(call).toHaveBeenCalledOnce();
 });
-it("P-fallback Flux single-attempt policy does not retry a network error and keeps call defaults", async () => {
+it.each([undefined, 1] as const)("P-fallback Flux does not replay a network failure with attempts=%s", async (attempts) => {
   const call = vi.fn(async () => { throw Error("fixture network failure"); });
-  await expect(flux("Safe words.", "marin", endpoint, true, call, 0, { attempts: 1 })).rejects.toThrow(); expect(call).toHaveBeenCalledOnce();
-  call.mockClear(); await expect(flux("Safe words.", "marin", endpoint, true, call, 0)).rejects.toThrow(); expect(call).toHaveBeenCalledTimes(2);
+  await expect(flux("Safe words.", "marin", endpoint, true, call, 0, { attempts })).rejects.toThrow("Couldn't reach Flux");
+  expect(call).toHaveBeenCalledOnce();
 });
 it("unread refusal bodies are cancelled and local ownership is released", async () => {
   const cancel = vi.fn(); const tracked: Promise<void>[] = [];

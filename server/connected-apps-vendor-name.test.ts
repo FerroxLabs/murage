@@ -224,7 +224,6 @@ const INTERNAL_ONLY: Record<string, string> = {
   "server/data-dir-inventory.ts": "a credential file name",
   "server/flux-composio-dev-token.ts": "a credential file name and the broker's route",
   "server/flux-admission.ts": "closed source-file inventory and billing classifications, never displayed",
-  "server/highlevel/native-wins.ts": "function identifier in an SSE serialization expression; app data is preserved",
   "server/flux-contract-endpoints.ts": "broker routes",
   "server/flux-memory-headers.ts": "the broker's route",
   "server/index.ts": "an event type",
@@ -237,7 +236,7 @@ const INTERNAL_ONLY: Record<string, string> = {
   "shared/connected-app-readonly.ts": "the service's tool id",
   "shared/engine-switch.ts": "a capability key",
   "src/components/PluginsPanel.tsx": "an error code",
-  "src/components/SettingsPanel.tsx": "a settings section id",
+  "src/components/bot-pages/context.tsx": "a bot field name in the PATCH key type (moved out of SettingsPanel.tsx)",
   "src/state/bot-patch-queue.ts": "a bot field name",
   "src/state/store.tsx": "a config section id",
 };

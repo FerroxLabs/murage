@@ -40,17 +40,51 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
  * never move. Call is left in place deliberately: its availability, label and
  * voice-setup fallback live inside `CallTargetButton`, and a menu copy would
  * be a second implementation of that logic rather than the same control. It
- * is already a single icon at these widths. */
+ * is already a single icon at these widths. Memory never moves on the
+ * desktop/tablet row either (Sean 2026-11-22, TEACH-ENTRY D7a): its trigger
+ * only folds its word with the chips. Teach goes after the metadata and the
+ * chips have given way, before the real controls. */
 export const HEADER_RELOCATION_ORDER = [
   "roleLabel",
   "usage",
   "inspector",
+  "teach",
+  "computer",
+  "find",
+  "folder",
+] as const;
+
+/** The phone ••• menu holds every slot, Memory in today's place before Folder (D7a). */
+export const PHONE_MENU_SLOTS = [
+  "roleLabel",
+  "usage",
+  "inspector",
+  "teach",
   "computer",
   "find",
   "memory",
   "folder",
 ] as const;
-export type HeaderSlot = (typeof HEADER_RELOCATION_ORDER)[number];
+export type HeaderSlot = (typeof HEADER_RELOCATION_ORDER)[number] | (typeof PHONE_MENU_SLOTS)[number];
+
+/** Growth restarts the ladder only this far past the width at which a layout last failed to fit (D7c), so a
+ *  width wobbling on a boundary cannot move an icon in and out. About half an icon box. */
+export const HEADER_HYSTERESIS_PX = 16;
+export function headerRestartsOnGrowth(width: number, retryAbove: number | null): boolean {
+  return retryAbove === null || width >= retryAbove;
+}
+
+/** Below this content width even the two-row never-move set cannot fit, so the header takes the phone form (D7d). */
+export const HEADER_FLOOR_PX = 240;
+export function headerNeedsPhoneForm(contentWidth: number): boolean {
+  return contentWidth > 0 && contentWidth < HEADER_FLOOR_PX;
+}
+
+/** Everything that changes what the header has to fit, as one key. Includes whether Teach shows (D1), so the ladder
+ *  re-fits once when the config loads and the button appears. */
+export function chatHeaderContentKey(parts: readonly string[], teach: boolean): string {
+  return [...parts, `teach:${teach ? 1 : 0}`].join("\u0001");
+}
 
 /** How many steps of pure metadata/diagnostics are folded away before the
  * chips are compacted or the header takes a second row. Role label, usage
@@ -165,16 +199,22 @@ export function useChatHeaderLayout(
   const [fontsTick, setFontsTick] = useState(0);
   const lastKey = useRef(contentKey);
   const lastWidth = useRef(0);
+  // The width a step was last taken at, plus the hysteresis band: growth below it keeps the leaner layout (D7c).
+  const retryAbove = useRef<number | null>(null);
 
-  // Width changes: growing may let controls come back, so start over from the
-  // richest layout; shrinking can only need leaner ones, so continue.
+  // Width changes: growing well past the last failed fit may let controls come
+  // back, so start over from the richest layout; shrinking can only need leaner
+  // ones, so continue.
   useLayoutEffect(() => {
     const header = headerRef.current;
     if (!header) return;
     const read = () => {
       const width = measureHeader(header).contentWidth;
       if (Math.abs(width - lastWidth.current) < 0.5) return;
-      if (width > lastWidth.current) setIndex(0);
+      if (width > lastWidth.current && headerRestartsOnGrowth(width, retryAbove.current)) {
+        retryAbove.current = null;
+        setIndex(0);
+      }
       lastWidth.current = width;
       setContentWidth(width);
     };
@@ -198,6 +238,7 @@ export function useChatHeaderLayout(
 
   if (lastKey.current !== contentKey) {
     lastKey.current = contentKey;
+    retryAbove.current = null;
     if (index !== 0) setIndex(0);
   }
 
@@ -222,7 +263,11 @@ export function useChatHeaderLayout(
   useLayoutEffect(() => {
     const header = headerRef.current;
     if (!header) return;
-    if (!headerFits(measureHeader(header)) && index < HEADER_LAYOUTS.length - 1) setIndex(index + 1);
+    const measured = measureHeader(header);
+    if (!headerFits(measured) && index < HEADER_LAYOUTS.length - 1) {
+      retryAbove.current = measured.contentWidth + HEADER_HYSTERESIS_PX;
+      setIndex(index + 1);
+    }
   }, [headerRef, index, contentWidth, contentKey, fontsTick, nameTick]);
 
   // A font change restarts from the richest layout (the first `fonts.ready`
@@ -233,6 +278,7 @@ export function useChatHeaderLayout(
       firstFonts.current = false;
       return;
     }
+    retryAbove.current = null;
     setIndex(0);
   }, [fontsTick]);
 

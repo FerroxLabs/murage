@@ -311,7 +311,7 @@ describe("cards that need this computer, in the Cloud window", () => {
 
 describe.each([
   ["browser", "use a browser tab you can watch and take over"],
-  ["skillRecorder", "learn a skill from a recording or /learn"],
+  ["skillRecorder", "learn a skill from a recording or from chat"],
 ] as const)("%s workspace switch", (feature, letsBots) => {
   it("off: one Off line beside the switch", () => {
     fixture.config = { features: { [feature]: false } };

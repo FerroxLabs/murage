@@ -417,5 +417,24 @@
   },
   "spErrStorageUnavailable": {
     "message": "Chrome storage could not be read. Restart Chrome, then share your tabs again."
+  },
+  "spGrantTitle": {
+    "message": "Your browser"
+  },
+  "spGrantOn": {
+    "message": "$BOT$ can use your browser.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
+  },
+  "spGrantOff": {
+    "message": "$BOT$ can't use your browser. To turn it on, open the Murage app on your computer.",
+    "placeholders": {
+      "bot": {
+        "content": "$1"
+      }
+    }
   }
 }

@@ -86,23 +86,32 @@ const LINE_ORDER = ["Opening your conversations", "Loading your memory", "Checki
  * `tip` and `tryIt` label a tip, `updating` and `whatsNew` are the update screen's heading and button, and `defaultTip` is the one tip shown
  * before a picture has been saved (it names nobody, so it needs no names). `{key}` is the search shortcut for this computer. */
 export const STARTUP_TEXT = Object.freeze({
-  en: { first: FIRST_LINE, note: FIRST_AFTER_UPDATE_NOTE, lines: LINE_ORDER, tip: "TIP", tryIt: "Try it:", updating: "Finishing the update", whatsNew: "What's new",
+  en: { copying: "Making a copy first", first: FIRST_LINE, note: FIRST_AFTER_UPDATE_NOTE, lines: LINE_ORDER, tip: "TIP", tryIt: "Try it:", updating: "Finishing the update", whatsNew: "What's new",
     defaultTip: { head: "Find anything in a second", line: "Every chat, note and file your team has touched is one search away.", try: "Press {key} and type a name" } },
-  de: { first: "Murage wird gestartet", note: "Der erste Start nach einem Update dauert etwas länger", lines: ["Deine Unterhaltungen werden geöffnet", "Dein Gedächtnis wird geladen", "Deine Skills werden angesehen", "Gleich fertig"], tip: "TIPP", tryIt: "Probier es:", updating: "Das Update wird abgeschlossen", whatsNew: "Was ist neu",
+  de: { copying: "Zuerst wird eine Kopie angelegt", first: "Murage wird gestartet", note: "Der erste Start nach einem Update dauert etwas länger", lines: ["Deine Unterhaltungen werden geöffnet", "Dein Gedächtnis wird geladen", "Deine Skills werden angesehen", "Gleich fertig"], tip: "TIPP", tryIt: "Probier es:", updating: "Das Update wird abgeschlossen", whatsNew: "Was ist neu",
     defaultTip: { head: "Alles in einer Sekunde finden", line: "Jeder Chat, jede Notiz und jede Datei deines Teams ist nur eine Suche entfernt.", try: "Drücke {key} und tippe einen Namen" } },
-  es: { first: "Iniciando Murage", note: "El primer inicio tras una actualización tarda un poco más", lines: ["Abriendo tus conversaciones", "Cargando tu memoria", "Revisando tus habilidades", "Casi listo"], tip: "CONSEJO", tryIt: "Pruébalo:", updating: "Terminando la actualización", whatsNew: "Novedades",
+  es: { copying: "Haciendo primero una copia", first: "Iniciando Murage", note: "El primer inicio tras una actualización tarda un poco más", lines: ["Abriendo tus conversaciones", "Cargando tu memoria", "Revisando tus habilidades", "Casi listo"], tip: "CONSEJO", tryIt: "Pruébalo:", updating: "Terminando la actualización", whatsNew: "Novedades",
     defaultTip: { head: "Encuentra cualquier cosa en un segundo", line: "Cada chat, nota y archivo que tu equipo ha tocado está a una búsqueda de distancia.", try: "Pulsa {key} y escribe un nombre" } },
-  fr: { first: "Démarrage de Murage", note: "Le premier démarrage après une mise à jour prend un peu plus de temps", lines: ["Ouverture de tes conversations", "Chargement de ta mémoire", "Examen de tes compétences", "Presque prêt"], tip: "ASTUCE", tryIt: "Essaie :", updating: "Fin de la mise à jour", whatsNew: "Nouveautés",
+  fr: { copying: "Création d'une copie d'abord", first: "Démarrage de Murage", note: "Le premier démarrage après une mise à jour prend un peu plus de temps", lines: ["Ouverture de tes conversations", "Chargement de ta mémoire", "Examen de tes compétences", "Presque prêt"], tip: "ASTUCE", tryIt: "Essaie :", updating: "Fin de la mise à jour", whatsNew: "Nouveautés",
     defaultTip: { head: "Trouve n'importe quoi en une seconde", line: "Chaque conversation, note et fichier touché par ton équipe est à une recherche.", try: "Appuie sur {key} et tape un nom" } },
-  hi: { first: "Murage शुरू हो रहा है", note: "अपडेट के बाद पहली बार शुरू होने में थोड़ा ज़्यादा समय लगता है", lines: ["आपकी बातचीत खुल रही है", "आपकी मेमोरी लोड हो रही है", "आपके स्किल देखे जा रहे हैं", "लगभग तैयार"], tip: "टिप", tryIt: "आज़माएँ:", updating: "अपडेट पूरा हो रहा है", whatsNew: "नया क्या है",
+  hi: { copying: "पहले एक कॉपी बनाई जा रही है", first: "Murage शुरू हो रहा है", note: "अपडेट के बाद पहली बार शुरू होने में थोड़ा ज़्यादा समय लगता है", lines: ["आपकी बातचीत खुल रही है", "आपकी मेमोरी लोड हो रही है", "आपके स्किल देखे जा रहे हैं", "लगभग तैयार"], tip: "टिप", tryIt: "आज़माएँ:", updating: "अपडेट पूरा हो रहा है", whatsNew: "नया क्या है",
     defaultTip: { head: "कुछ भी एक सेकंड में खोजें", line: "आपकी टीम की हर चैट, नोट और फ़ाइल बस एक खोज दूर है।", try: "{key} दबाएँ और कोई नाम लिखें" } },
-  ja: { first: "Murage を起動しています", note: "アップデート後の最初の起動は少し時間がかかります", lines: ["会話を開いています", "メモリを読み込んでいます", "スキルを確認しています", "まもなく完了"], tip: "ヒント", tryIt: "試してみる:", updating: "アップデートを仕上げています", whatsNew: "新機能",
+  ja: { copying: "最初にコピーを作成しています", first: "Murage を起動しています", note: "アップデート後の最初の起動は少し時間がかかります", lines: ["会話を開いています", "メモリを読み込んでいます", "スキルを確認しています", "まもなく完了"], tip: "ヒント", tryIt: "試してみる:", updating: "アップデートを仕上げています", whatsNew: "新機能",
     defaultTip: { head: "何でも1秒で見つかる", line: "チームが触れたチャット、メモ、ファイルは、検索ひとつで見つかります。", try: "{key} を押して名前を入力" } },
-  pt: { first: "Iniciando o Murage", note: "A primeira inicialização após uma atualização demora um pouco mais", lines: ["Abrindo suas conversas", "Carregando sua memória", "Conferindo suas habilidades", "Quase pronto"], tip: "DICA", tryIt: "Experimente:", updating: "Concluindo a atualização", whatsNew: "Novidades",
+  pt: { copying: "Primeiro, fazendo uma cópia", first: "Iniciando o Murage", note: "A primeira inicialização após uma atualização demora um pouco mais", lines: ["Abrindo suas conversas", "Carregando sua memória", "Conferindo suas habilidades", "Quase pronto"], tip: "DICA", tryIt: "Experimente:", updating: "Concluindo a atualização", whatsNew: "Novidades",
     defaultTip: { head: "Encontre qualquer coisa em um segundo", line: "Cada conversa, nota e arquivo que sua equipe tocou está a uma busca de distância.", try: "Pressione {key} e digite um nome" } },
-  zh: { first: "正在启动 Murage", note: "更新后的首次启动会稍慢一些", lines: ["正在打开你的对话", "正在加载你的记忆", "正在检查你的技能", "即将就绪"], tip: "提示", tryIt: "试试看：", updating: "正在完成更新", whatsNew: "新功能",
+  zh: { copying: "先创建一份副本", first: "正在启动 Murage", note: "更新后的首次启动会稍慢一些", lines: ["正在打开你的对话", "正在加载你的记忆", "正在检查你的技能", "即将就绪"], tip: "提示", tryIt: "试试看：", updating: "正在完成更新", whatsNew: "新功能",
     defaultTip: { head: "一秒找到任何内容", line: "你的团队接触过的每个聊天、笔记和文件，一次搜索就能找到。", try: "按 {key} 并输入名称" } },
 });
+/** 1.0.22 q1022-startmem: the shell's boot watch (main.mjs, boot-progress-watch.mjs onStatus) hands every read of the start-up note here.
+ * The rescue copy's step goes to the start-up window (`bootStep`), made by `create` when this start has none (unpackaged, or opened at
+ * login), as an upgrade does; every other step changes nothing. Returns the window to keep. */
+export function showBootStep(splash, step, create) {
+  if (typeof step !== "string" || !step.startsWith("database.memory-rescue-copy")) return splash;
+  const shown = splash ?? create();
+  shown?.bootStep?.(step);
+  return shown;
+}
 /** The words for a stage line, in a language. */
 export function startupLine(language, line) {
   const table = STARTUP_TEXT[memoryUpgradeLocale(language)] ?? STARTUP_TEXT.en;
@@ -208,6 +217,8 @@ window.__set = (state) => {
   if (state.kind === "show") { if (strip && !reduce) setElapsed(typeof state.elapsedMs === "number" ? state.elapsedMs : 0); return; }
   if (state.kind === "fade") { if (!reduce && dataset) dataset.fade = "1"; return; }
   if (state.kind === "stage") { setBar(state.pct); activity(typeof state.pct !== "number"); text("p", state.line); return; }
+  // the inner step a slow start is in (1.0.21 N2 bootprog), in the counter slot; an upgrade view (mode set) owns that slot
+  if (state.kind === "step") { if (!mode) text("c", typeof state.text === "string" ? state.text : ""); return; }
   if (state.kind === "bar") { setBar(state.pct); activity(false); if (counter && counter.kind === "count") { counter = { ...counter, done: counter.total }; shown = counter.total; paintCounter(); } return; }
   if (state.kind !== "upgrade") return;
   locale = state.locale || "en";
@@ -462,6 +473,26 @@ export function createStartupSplash({ BrowserWindow, dark = false, icon, note = 
       if (upgrading) { if (name === "ready") call({ kind: "bar", pct: 100 }); return true; }
       // a milestone is not a percentage of anything the owner can count on: only the end of start-up (ready) fills the bar
       call({ kind: "stage", pct: name === "ready" ? 100 : null, line: startupLine(language, entry.line) });
+      return true;
+    },
+    /** Name the inner step a slow start is in (boot-step-words.mjs bootStepLine; "" clears it). It has its own quiet line and never moves
+     * the bar; while an upgrade view is up that view owns the text, so it is ignored. */
+    step(text) {
+      if (!win || closing || upgrading || typeof text !== "string") return false;
+      call({ kind: "step", text: text.slice(0, 120) });
+      return true;
+    },
+    /** 1.0.22 q1022-startmem (MAIN-RULING 2026-11-25T18:04Z): the start-up note's step (server/boot-progress.ts, read by
+     * boot-progress-watch.mjs) while the rescue copy runs before listen ("database.memory-rescue-copy:<percent>") shows as the line
+     * "Making a copy first (42%)" in this window, so a long copy is seen moving. The bar shows activity, never a percent of the copy
+     * (it never goes back). Also over an upgrade view (a migration that failed sets memory aside and the copy runs next): its line is
+     * replaced until the view next changes. Any other step is ignored. */
+    bootStep(step) {
+      const match = typeof step === "string" ? /^database\.memory-rescue-copy(?::(\d{1,2}))?$/.exec(step) : null;
+      if (!win || !match) return false;
+      const table = STARTUP_TEXT[memoryUpgradeLocale(language)] ?? STARTUP_TEXT.en;
+      showNow();
+      call({ kind: "stage", pct: null, line: match[1] === undefined ? table.copying : `${table.copying} (${Number(match[1])}%)` });
       return true;
     },
     /** Show an upgrade view (electron/upgrade-screen.mjs) in this same window. The first one makes the window larger, and, while the view says

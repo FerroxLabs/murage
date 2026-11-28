@@ -3,7 +3,7 @@ import { Worker } from "node:worker_threads";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -176,6 +176,55 @@ describe("path confinement", () => {
     expect(removeConfined(root, join(root, "link"))).toBe("removed");
     expect(existsSync(join(root, "link"))).toBe(false);
     expect(existsSync(join(outside, "keep", "file.txt"))).toBe(true);
+  });
+
+  it("CONFINE-ROOT-SYMLINK: refuses a root that is itself a link, and a root replaced by a file", () => {
+    const outside = fresh("outside");
+    touch(join(outside, "a", "keep.txt"));
+    const holder = fresh("holder");
+    const linkRoot = join(holder, "root-link");
+    symlinkSync(outside, linkRoot);
+    expect(removeConfined(linkRoot, join(linkRoot, "a"))).toBe("refused");
+    expect(existsSync(join(outside, "a", "keep.txt"))).toBe(true);
+    const fileRoot = join(holder, "root-file");
+    touch(fileRoot, "x");
+    expect(removeConfined(fileRoot, join(fileRoot, "a"))).toBe("refused");
+    // a link in an ancestor of the root (a symlinked home) is not the owned tree's own identity: the root is still a real folder
+    const real = fresh("real-root");
+    touch(join(real, "a", "b.txt"));
+    const viaParent = join(holder, "parent-link");
+    symlinkSync(path.dirname(real), viaParent);
+    expect(removeConfined(join(viaParent, path.basename(real)), join(viaParent, path.basename(real), "a"))).toBe("removed");
+  });
+
+  it("CONFINE-ROOT-SYMLINK: a conversation delete whose events root was swapped for a link removes nothing outside and stays pending", async () => {
+    const data = fresh("data");
+    const outside = fresh("outside");
+    touch(join(outside, `${THREAD}.ndjson`), "victim");
+    const db = messagesDb(data);
+    rmSync(join(data, "events"), { recursive: true, force: true });
+    symlinkSync(outside, join(data, "events"));
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [] });
+    const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineKinds: [], engineHomes: [] }, () => true, async () => {});
+    expect(existsSync(join(outside, `${THREAD}.ndjson`))).toBe(true);
+    expect(report.failed.some((p) => p.includes(`${THREAD}.ndjson`))).toBe(true);
+  });
+
+  it("CONFINE-ROOT-SYMLINK: an attachments root swapped for a link is never unlinked through the injected attachment deleter", async () => {
+    const data = fresh("data");
+    const outside = fresh("outside");
+    const image = "0b7c1f2e-1111-4222-8333-444455556666.png";
+    touch(join(outside, image), "victim");
+    const db = messagesDb(data);
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(THREAD, "m1", 1, "bot", "text", "hi", JSON.stringify({ attachments: [{ kind: "image", path: join(data, "attachments", image) }] }));
+    rmSync(join(data, "attachments"), { recursive: true, force: true });
+    symlinkSync(outside, join(data, "attachments"));
+    // the production callback (attachments.deleteAttachment) checks the lexical parent only, then unlinks through the root
+    const deleteAttachment = (path: string) => unlinkSync(path);
+    const deletions = new ConversationDeletions({ dataDir: data, database: () => db, retryDelaysMs: [], deleteAttachment });
+    const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineKinds: [], engineHomes: [] }, () => true, async () => {});
+    expect(existsSync(join(outside, image))).toBe(true);
+    expect(report.failed.some((p) => p.includes(image))).toBe(true);
   });
 });
 

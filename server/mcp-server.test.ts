@@ -380,6 +380,28 @@ describe("MCP tool execution", () => {
     expect(JSON.stringify(result)).not.toContain("pixels");
   });
 
+  it("saves a native choice only when the selected model advertises it", async () => {
+    const writes: unknown[] = [];
+    const fetcher = async (path: string, options?: RequestInit) => {
+      if (path === "/api/instances") return { instances: [{
+        instanceId: "fixture", snapshot: { state: "available" },
+        models: {
+          default: "fixture/a",
+          options: [{ id: "fixture/a", variants: [{ id: "native-a" }] }, { id: "fixture/b" }],
+        },
+      }] };
+      if (path !== "/api/bots" || options?.method !== "POST") throw new Error(`unexpected path ${path}`);
+      writes.push(JSON.parse(String(options.body)).modelSelection);
+      return { bot: { id: "fixture-bot" } };
+    };
+    const choice = { name: "Fixture", instance_id: "fixture", variant: "native-a" };
+    await expect(handleToolCall("create_bot", { ...choice, model: "fixture/b" }, fetcher))
+      .rejects.toThrow("Thinking choice is not offered by this model");
+    await expect(handleToolCall("create_bot", { ...choice, model: "fixture/a" }, fetcher))
+      .resolves.toMatchObject({ success: true });
+    expect(writes).toEqual([{ instanceId: "fixture", model: "fixture/a", variant: "native-a" }]);
+  });
+
   it("waits on a bot conversation and returns a compact attention tail", async () => {
     const fetcher = vi.fn(async (path: string) => {
       if (path === "/api/bots?messages=0") return {

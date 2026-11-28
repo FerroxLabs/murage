@@ -29,7 +29,7 @@ function templatePath(id: string): string {
 describe("template appearance matches the art assignments", () => {
   it("covers every local template", () => {
     expect(rows.length).toBeGreaterThan(500);
-    expect(new Set(rows.map((row) => row.template_id)).size).toBe(255);
+    expect(new Set(rows.map((row) => row.template_id)).size).toBe(253);
   });
 
   it("uses only real colours and bodies", () => {

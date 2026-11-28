@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import { createHash } from 'node:crypto';
 import type { RequestDelivery } from '../contracts.ts';
 
@@ -39,7 +40,7 @@ export class AnswerDelivery {
     resolve({ state: current.state });
    };
    current.retire = () => finish(false);
-   void Promise.resolve().then(() => current.state === 'pending' ? send() : false).then(finish, () => finish(false));
+   void Promise.resolve().then(() => current.state === 'pending' ? NotModelRequest("Bookkeeping calls the owned reply writer; its transport has its own fence and inventory.", send()) : false).then(finish, () => finish(false));
   });
   return current.done;
  }

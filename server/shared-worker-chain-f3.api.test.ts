@@ -22,7 +22,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: (await response.json().catch(() => null)) as any };
 };
 const dataFile = (name: string) => join(fixture.info.dataDir, name);
-type Turn = { token: string; botId: string; threadId: string; depth: number };
+type Turn = { token: string; botId: string; threadId: string };
 /** The turn of `botId` whose prompt carries `marker`, read from the instance's dump history (one line per dumped turn), never the single
  * latest-turn file: another turn of the same instance (a second thread of the same bot) may replace that file before or after the one wanted. */
 const dumpToken = (tag: string, botId: string, marker: string): Turn | null => {
@@ -33,7 +33,7 @@ const dumpToken = (tag: string, botId: string, marker: string): Turn | null => {
       const dump = withTurnSecrets(JSON.parse(line));
       const env = dump.mcpConfig.mcpServers.agents.env;
       if (env.MURAGE_BOT_ID !== botId || !JSON.stringify(dump.prompt ?? "").includes(marker)) continue;
-      return { token: env.MURAGE_COMMS_TOKEN, botId: env.MURAGE_BOT_ID, threadId: env.MURAGE_THREAD_ID, depth: Number(env.MURAGE_TURN_DEPTH ?? 0) };
+      return { token: env.MURAGE_COMMS_TOKEN, botId: env.MURAGE_BOT_ID, threadId: env.MURAGE_THREAD_ID };
     } catch { /* a line being written */ }
   }
   return null;
@@ -54,8 +54,14 @@ const withDb = <T>(use: (db: DatabaseSync) => T): T | undefined => {
 const roots = (): Array<{ id: string; owner: string; paths: string[][] }> => { try { return JSON.parse(readFileSync(dataFile("coordination-roots.json"), "utf8")).roots; } catch { return []; } };
 const call = (turn: Turn, path: string, body: Record<string, unknown>, signal?: AbortSignal) => fetch(fixture.info.url + path, { method: "POST", signal,
   headers: { authorization: `Bearer ${turn.token}`, "content-type": "application/json" },
-  body: JSON.stringify({ fromBotId: turn.botId, fromThreadId: turn.threadId, depth: turn.depth, ...body }) });
+  body: JSON.stringify({ fromBotId: turn.botId, fromThreadId: turn.threadId, ...body }) });
 const answer = async (response: Response) => ({ status: response.status, body: await response.json().catch(() => null) as any });
+// depth is read from the token record (L2W #5768), not the engine env: the body depth the real route's cross-check accepts
+const claimDepths = async (turn: Turn) => {
+  const accepted: number[] = [];
+  for (const depth of [0, 1, 2, 3]) if (!/different turn depth/.test(JSON.stringify((await answer(await call(turn, "/api/internal/ask-bot", { depth }))).body))) accepted.push(depth);
+  return accepted;
+};
 const refusedForAllowance = (body: any) => /can't hand work on from here|start a new owner task|ALLOWANCE_UNAVAILABLE/i.test(JSON.stringify(body ?? {}));
 
 beforeAll(async () => {
@@ -122,7 +128,7 @@ describe("F3 02-3: a shared worker's chain is derived from its request tree", ()
     // the worker asks a second shared bot; that one is the end of the chain
     void hold(worker, "/api/internal/ask-bot", { toBotId: w.Second.id, message: "HOLDC the last part" });
     const second = await until(() => dumpToken("C", w.Second.id, "HOLDC the last part"));
-    expect(second.depth).toBe(2);
+    expect(await claimDepths(second)).toEqual([2]);
     const third = await answer(await call(second, "/api/internal/delegate-bot", { toBotId: w.Helper.id, message: "one more hop" }));
     expect(third.body?.queued, JSON.stringify(third)).toBeUndefined();
     // refused by the chain's own cap (the budget's path of three), before anything is queued

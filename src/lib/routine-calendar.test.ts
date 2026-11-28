@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Routine, RoutineRun } from "./routines";
 import {
   atLocalTime,
+  defaultOnceMoment,
   formatGmtOffset,
   packCalendarCollisions,
   projectedRoutineItems,
@@ -312,5 +313,23 @@ describe("eventTimeCaption", () => {
     expect(eventTimeCaption({ ran: false, at, when: "Saturday, September 19 · 8:00 AM", schedule: { type: "once" as const, at }, scheduleText: "Saturday, September 19, 8:00 AM" }))
       .toEqual({ occurrence: "Saturday, September 19 · 8:00 AM", schedule: null });
     expect(eventTimeCaption({ ran: false, at, when: "x", schedule: null, scheduleText: null })).toEqual({ occurrence: "x", schedule: null });
+  });
+});
+
+describe("defaultOnceMoment", () => {
+  it("is the next 5-minute mark at least 2 minutes ahead, never the current instant", () => {
+    const base = new Date(2026, 10, 26, 15, 0, 0, 0).getTime();
+    const minute = 60_000;
+    expect(defaultOnceMoment(base)).toBe(base + 5 * minute);
+    expect(defaultOnceMoment(base + 2 * minute + 500)).toBe(base + 5 * minute);
+    expect(defaultOnceMoment(base + 3 * minute)).toBe(base + 5 * minute);
+    expect(defaultOnceMoment(base + 3 * minute + 1)).toBe(base + 10 * minute);
+    for (let offset = 0; offset < 24 * 60 * 60_000; offset += 37_000) {
+      const at = defaultOnceMoment(base + offset);
+      expect(at - (base + offset)).toBeGreaterThanOrEqual(2 * minute);
+      expect(at - (base + offset)).toBeLessThanOrEqual(7 * minute);
+      expect(new Date(at).getMinutes() % 5).toBe(0);
+      expect(new Date(at).getSeconds()).toBe(0);
+    }
   });
 });

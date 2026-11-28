@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { BotShapesView, SHAPE_GROUPS, type ShapeRow, type ShapesView } from "./BotShapesPanel";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const noop = () => {};
 const row = (id: string, group: ShapeRow["group"], extra: Partial<ShapeRow> = {}): ShapeRow => ({ id, group, label: id, what: `${id} does a thing.`, text: `${id} text`, switchable: false, locked: false, ...extra });
@@ -58,7 +59,7 @@ describe("What shapes a bot", () => {
   });
 
   it("is a section of the bot's window, shown only on the desktop", () => {
-    const panel = readFileSync(new URL("./SettingsPanel.tsx", import.meta.url), "utf8");
+    const panel = settingsPanelSource();
     expect(panel).toContain('<SettingsSection id="shapes" active={section}>');
     expect(panel).toContain("{desktop === true && <BotShapesPanel");
   });

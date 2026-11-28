@@ -1,5 +1,6 @@
 import { beginOutsideShutdown } from "./email/external-marks.ts";
 import { writeFileSync } from "./counted-fs.ts";
+import { beginServerQuit } from "./quit-latch.ts";
 import { basename, isAbsolute } from "node:path";
 
 /** The server's own shutdown allowance (U24 design R7): every provider's immediate stop wait (child-teardown.ts
@@ -32,6 +33,9 @@ export function createGracefulShutdown({
     if (started) return;
     started = true;
     beginOutsideShutdown();
+    // Synchronously, before any cleanup job: a stop never waits for a process listing once Quit began (quit-latch.ts), so every
+    // mount server's stdin end and group signal are sent inside this allowance.
+    beginServerQuit();
     try { onStart?.(); } catch { /* a latch never stops the shutdown */ }
 
     let expired = false;

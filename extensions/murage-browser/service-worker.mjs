@@ -13,13 +13,16 @@ const UPDATE_ALARM = 'murage-update';
 const ready = Promise.all([runtime.initialize(), api.storage.local.get(RETRY_KEY)]).then(([, stored]) => {
   const retry = stored[RETRY_KEY];
   attempts = Number.isSafeInteger(retry?.attempts) && retry.attempts >= 0 ? Math.min(retry.attempts, 10) : 0;
-  nextRetryAt = Number.isSafeInteger(retry?.nextRetryAt) && retry.nextRetryAt >= 0 ? retry.nextRetryAt : 0;
+  // A deadline stored by an older worker (up to ~12 min out) must not delay finding a restarted Murage.
+  nextRetryAt = Number.isSafeInteger(retry?.nextRetryAt) && retry.nextRetryAt >= 0 ? Math.min(retry.nextRetryAt, Date.now() + RETRY_CAP) : 0;
 });
-// Positive jitter keeps mature retries at least ten minutes apart in each profile.
-const retryDelay = () => Math.ceil(Math.min(1000 * 2 ** attempts, 600000) * (1 + Math.random() * 0.2));
+// A restarted Murage must be found within seconds: the delay never exceeds 30 s. Jitter only shortens it (80-100%), so the cap holds.
+const RETRY_CAP = 30000;
+const retryDelay = () => Math.ceil(Math.min(1000 * 2 ** attempts, RETRY_CAP) * (1 - Math.random() * 0.2));
 function persistRetry() {
   const value = { attempts, nextRetryAt };
-  savingRetry = savingRetry.then(() => api.storage.local.set({ [RETRY_KEY]: value }));
+  // An earlier failed write must not poison every later one, or a healed store could never lift the block.
+  savingRetry = savingRetry.catch(() => {}).then(() => api.storage.local.set({ [RETRY_KEY]: value }));
   return savingRetry;
 }
 function stopRetry() {
@@ -31,7 +34,7 @@ function retry() {
   if (port || reconnectBlocked) return;
   const delay = Math.max(0, nextRetryAt - Date.now());
   // A short timer handles the first retries; the alarm survives worker suspension.
-  if (delay < 30000) retryTimer = setTimeout(() => { void connect().catch(() => {}); }, delay);
+  if (delay <= RETRY_CAP) retryTimer = setTimeout(() => { void connect().catch(() => {}); }, delay);
   api.alarms.create(RECONNECT_ALARM, { when: Math.max(nextRetryAt, Date.now() + 30000) });
 }
 function disconnect(current) {
@@ -44,9 +47,10 @@ function disconnect(current) {
       const fenced = runtime.connection(false);
       try { current?.disconnect(); } catch { /* The port may already be closed. */ }
       await fenced;
-      if (nextRetryAt <= Date.now()) { nextRetryAt = Date.now() + retryDelay(); await persistRetry(); }
-      if (!port) retry();
-    } catch { reconnectBlocked = true; stopRetry(); } // A failed durable fence must not reconnect.
+    } catch { reconnectBlocked = true; stopRetry(); return; } // A failed durable fence must not reconnect (until the worker restarts).
+    // The fence held. A failed write of the retry time only loses the persisted deadline: keep the in-memory one and retry.
+    if (nextRetryAt <= Date.now()) { nextRetryAt = Date.now() + retryDelay(); await persistRetry().catch(() => {}); }
+    if (!port) retry();
   })();
   return disconnecting;
 }
@@ -63,7 +67,8 @@ async function connect(force = false) {
     attempts = force ? 1 : Math.min(attempts + 1, 10);
     nextRetryAt = Date.now() + retryDelay();
     // Record the next allowed attempt before opening the host, including a synchronous failure.
-    try { await persistRetry(); } catch (error) { reconnectBlocked = true; throw error; }
+    // Refused (and retried within the cap) while the deadline cannot be recorded; the owner's Connect is told.
+    await persistRetry().catch(() => { throw Object.assign(new Error('Reconnect unavailable'), { code: 'reconnect_required' }); });
     retry();
     current = api.runtime.connectNative('com.murage.browser');
     port = current;
@@ -89,7 +94,7 @@ async function connect(force = false) {
     if (port === current) { current.postMessage(hello); for (const report of runtime.restartReports()) current.postMessage(report); }
   } catch (error) {
     await disconnect(current);
-    if (reconnectBlocked) throw error;
+    if (reconnectBlocked || error?.code === 'reconnect_required') throw error;
   } finally { connecting = false; }
 }
 api.runtime.onMessage.addListener((message, sender, respond) => {

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+**
+!Containerfile
+!dist-server/
+!dist-server/**
+!dist/
+!dist/**
+!scripts/
+!scripts/container-image-health.mjs
+!LICENSE
+!NOTICE

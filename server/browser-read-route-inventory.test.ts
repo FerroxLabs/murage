@@ -5,23 +5,25 @@ import { join } from 'node:path';
 import { UnifiedBrowserController } from './browser-control.ts';
 import { createNativeBrowser, type NativeBrowser } from './browser-native-relay.ts';
 import { removeTempDirSync } from './testing/cleanup.ts';
+import { fixture as decisionFixture } from './decision/fixture.ts';
+import { BrowserExtensionEngine } from './browser-extension-engine.ts';
 
 const source = 'café 😀 ' + 'x'.repeat(39988) + ' END';
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
-function fixture(cdp = false, extraEnv: Record<string, string> = {}) {
+function fixture(cdp = false, extraEnv: Record<string, string> = {}, pageText = source) {
   const dir = mkdtempSync(join(tmpdir(), 'webread-route-')); dirs.push(dir);
   const request = vi.fn(async (method: string, params?: Record<string, any>) => {
     if (method === 'tools/list') return { tools: [{ name: 'agent_browser_read' }] };
     const data = params?.name === 'agent_browser_get_url' ? { url: 'https://fixture.test/' }
-      : params?.name === 'agent_browser_eval' ? { result: `<p>${source}</p>` }
+      : params?.name === 'agent_browser_eval' ? { result: `<p>${pageText}</p>` }
       : { content: source.slice(0, 12000) + '[Content truncated' };
     return { structuredContent: { response: { success: true, data } } };
   });
   const native: NativeBrowser = { request, protected: async () => false, resetStream() {}, input() {}, command: async () => ({}), connect: async () => 'fixture', close: async () => {} };
   const controller = new UnifiedBrowserController({ stateFile: join(dir, 'state.json'), createNative: () => native, judgeDaemon: async () => 'gone' });
   controller.register('profile', { command: 'fixture', args: [], env: { ...extraEnv, ...(cdp ? { AGENT_BROWSER_CDP: 'http://127.0.0.1:9222' } : {}) } });
-  const read = async (args: object, scope = 'bot:threadA') => (await (controller.dispatch as any)('profile', 'tools/call', { name: 'agent_browser_read', arguments: args }, () => true, { readScope: scope }))?.structuredContent;
+  const read = async (args: object, scope = 'bot:threadA', authority?: unknown) => (await (controller.dispatch as any)('profile', 'tools/call', { name: 'agent_browser_read', arguments: args }, () => true, { readScope: scope, ...(authority ? { authority } : {}) }))?.structuredContent;
   return { controller, request, read };
 }
 const unfence = (value: string) => value.slice(value.indexOf('\n') + 1, value.lastIndexOf('\n'));
@@ -126,7 +128,7 @@ import ts from "typescript";
 
 it('T1-static inventories every browser reader reference and document save', () => {
   const referenceHashes: Record<string, string> = {
-  "server/browser-control.ts": "8e85c58e1f95aef4486311d7f014d832539261743c5edf8a10797104415dbb68",
+  "server/browser-control.ts": "17a5601eb8392c3f3d4c6386835bd00f6e58a18f589e9a9c006edf8c06c8d66f",
   "server/browser-engine-policy.ts": "7776e4d80a4735fc5708281a6f5016e64e3aa2389651da6241230bac5efdc6c1",
   "server/browser-extension-engine.ts": "23bcad396a8a049a02fba68bda0346b4c03ee785ba3aa2ef59fcc4f0353a8ef6",
   "server/browser-extension-service.ts": "83466a2e04bc9bc62b6d416b4c8e27e059f760d0dd803ca61c5a5abdfe04ba73",
@@ -280,9 +282,9 @@ import { serviceOwnerNoLimits } from './narrow-denials.ts';
 import { BrowserExtensionApprovals } from './browser-extension-approvals.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
-async function extensionReadFixture(noLimits = false, never = false, origin: 'owner' | 'owner-channel' | 'routine' | 'other' = 'owner', mode: 'step' | 'task' = 'task', extra: Partial<Parameters<typeof createBrowserExtensionService>[0]> = {}, captureGate?: () => Promise<void>) {
+async function extensionReadFixture(noLimits = false, never = false, origin: 'owner' | 'owner-channel' | 'routine' | 'other' = 'owner', mode: 'step' | 'task' = 'task', extra: Partial<Parameters<typeof createBrowserExtensionService>[0]> = {}, captureGate?: () => Promise<void>, pageText = source) {
   const dir = mkdtempSync(join(tmpdir(), 'webread-extension-')); dirs.push(dir);
-  const world = createContext({ document: { documentElement: { outerHTML: `<p>${source}</p>` } } });
+  const world = createContext({ document: { documentElement: { outerHTML: `<p>${pageText}</p>` } } });
   let captures = 0, nativeReads = 0;
   const engineCalls: string[] = [];
   const authority = { noLimits, origin, mode };
@@ -553,4 +555,50 @@ it.each(readRoutes.flatMap(route => (['immediate', 'delayed'] as const).flatMap(
     }
     expect(saved.taskL1).toEqual([]); expect(saved.taskL2).toEqual([]);
   } finally { vi.unstubAllGlobals(); await f.service.close(); }
+});
+
+// OVERREACH #4 (MAIN 2026-11-26): the owner's own turn reads their own pages as they are on every read route; another person's thread keeps
+// page-output redaction. One witness per changed route: unified (browser-control.ts dispatch), extension (executor read), engine ReadLayer.
+const CARD = '4111 1111 1111 1111';
+const cardPage = `Card on file: ${CARD}. Order 2026 shipped.`;
+const turnAuthority = (level: 'ask' | 'auto' | 'full' | 'unlimited', owner: boolean) => {
+  const f = decisionFixture(level); f.setOwner(owner);
+  return { claim: f.claim, proof: {}, identity: { threadId: 't', generation: 'g' } };
+};
+it.each(['ask', 'auto', 'full'] as const)('O4-unified the owner turn at %s reads the card number; another thread does not', async level => {
+  const f = fixture(false, {}, cardPage);
+  try {
+    const mine = await f.read({ length: 4000 }, 'bot:threadA', turnAuthority(level, true));
+    expect(unfence(mine.content)).toContain(CARD);
+    const theirs = await f.read({ length: 4000 }, 'bot:threadB', turnAuthority(level, false));
+    expect(unfence(theirs.content)).not.toContain('4111');
+    expect(unfence(theirs.content)).toContain('Order 2026 shipped.');
+  } finally { await f.controller.close(); }
+});
+it.each(['ask', 'auto'] as const)('O4-extension the owner turn at %s reads the card number through the executor read route', async level => {
+  const f = await extensionReadFixture(false, false, 'owner', level === 'ask' ? 'step' : 'task', {}, undefined, cardPage);
+  try {
+    await f.service.setSiteAccess(f.binding.bindingId, 'https://fixture.test', 'allow');
+    const response = await f.read({ length: 4000 });
+    expect(JSON.stringify(response), JSON.stringify(response).slice(0, 600)).toContain(CARD);
+  } finally { await f.service.close(); }
+});
+it('O4-engine the engine ReadLayer shows a field value on the owner turn and hides it otherwise', async () => {
+  const nodes = [{ nodeId: '1', backendDOMNodeId: 1, role: { value: 'textbox' }, name: { value: CARD } }];
+  const cdp = async (method: string) => {
+    if (method === 'Page.getFrameTree') return { result: { frameTree: { frame: { id: 'F', loaderId: 'L' } } } };
+    if (method === 'Accessibility.getFullAXTree') return { result: { nodes } };
+    if (method === 'DOM.describeNode') return { result: { node: { attributes: [] } } };
+    if (method === 'Page.getLayoutMetrics') return { result: { cssLayoutViewport: { clientHeight: 800 } } };
+    if (method === 'DOM.getBoxModel') return { result: { model: { border: [0, 0, 10, 0, 10, 20, 0, 20] } } };
+    return { result: {} };
+  };
+  const document = { profileId: 'profile', tabId: 7, frameId: 'main', navigationEpoch: 1, origin: 'https://shop.test', url: 'https://shop.test/' };
+  const make = (readUnredacted: boolean) => new BrowserExtensionEngine({ dataDir: '/unused-fixture', realmId: 'w', bindingId: 'b', authorize: () => true, beforeCommand: async () => {}, beforeDestination: async () => {},
+    noLimits: () => false, readUnredacted: () => readUnredacted,
+    transport: { documents: async () => [document], selected: async () => ({ ...document }), send: async (method: string) => (await cdp(method)).result, newTab: async () => document, closeTab: async () => {}, selectTab: async () => document } as never });
+  const shown = await make(true).readLayer(document as never, () => 'https://shop.test').snapshot();
+  const hidden = await make(false).readLayer(document as never, () => 'https://shop.test').snapshot();
+  expect(JSON.stringify(shown)).toContain(CARD);
+  expect(JSON.stringify(hidden)).not.toContain(CARD);
 });

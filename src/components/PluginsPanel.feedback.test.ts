@@ -29,7 +29,7 @@ vi.mock("@/lib/connected-apps-preload", () => ({
   // No admission refusal is cached: the real module starts empty and tells a new subscriber so at once.
   cachedConnectedAppsAdmission: undefined, rememberConnectedAppsAdmission: vi.fn(), subscribeConnectedAppsAdmission: (listener: (status: undefined) => void) => { listener(undefined); return () => {}; },
   cachedConnectorStatus: {}, cachedConnectorStatusAuthoritative: true, inventoryApps: {},
-  isCredentialStoreUnreadable: () => false, rememberConnectedApps: vi.fn(), pendingConnectedApps: () => null, preloadConnectedApps: async () => ({ services: {}, authoritative: true, backendReady: true }),
+  isCredentialStoreUnreadable: () => false, isRememberedUnconfirmed: () => false, rememberConnectedApps: vi.fn(), pendingConnectedApps: () => null, preloadConnectedApps: async () => ({ services: {}, authoritative: true, backendReady: true }),
 }));
 function find(node: ReactNode, predicate: (el: ReactElement<any>) => boolean): ReactElement<any> | undefined {
   if (Array.isArray(node)) return node.map(child => find(child, predicate)).find(Boolean);

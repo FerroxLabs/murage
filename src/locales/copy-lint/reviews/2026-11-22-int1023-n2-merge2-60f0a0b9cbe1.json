@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "int1023n2-copyrev",
+    "account": "claude opus 5.5, independent read-only copy seat for the 1.0.23 integrator merge of dev/1022 into dev/1023 (union of the reviewers list)"
+  },
+  "author": "int-1023-n2",
+  "date": "2026-11-22",
+  "base": "369beae821",
+  "scope": "1.0.23 integrator merge of dev/1022 4a919b6b10: union of the reviewers list",
+  "strings": {},
+  "files": {
+    "reviewers.json": {
+      "text": "{\n  \"version\": 1,\n  \"reviewers\": [\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol\",\n      \"account\": \"gpt-6.1-sol read-only, codex acct2 and acct6\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"claude-copyrev\",\n      \"account\": \"claude sonnet 5.5, copy-review seat for MurageMain\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"muragemain-copyrev\",\n      \"account\": \"claude opus 5.5, MurageMain copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-sc-issues-r3\",\n      \"account\": \"sc-issues-r3 independent review of inherited sc-issues copy\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol-copyrev-m5-followup\",\n      \"account\": \"Independent Sol review session for the copyrev-m5 replacement titles\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"g9-ux-fable\",\n      \"account\": \"Fable copy seat g9-ux-fable, read-only G9 Settings copy review\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"ctxstop-lease-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.20 A-2 refusal line\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"polish-1021-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.21 Settings polish strings\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"held1022-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 held rows 21 (Fuigo Trust) and 29 (Sentinel Health)\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"held1022b2-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 N5 command send notices\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"int1022n2-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 integrator merge of the reviewers list (wave233)\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"settingstruth-1022-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 row 22 settings-truth strings\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"settingstruth1022r2-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.22 row 22 settings-truth r2 merge of the reviewers list\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"cr1023-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.23 CHROME-RESUME-FROM-APP strings\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"int1023n2-copyrev\",\n      \"account\": \"claude opus 5.5, independent read-only copy seat for the 1.0.23 integrator merge of dev/1022 into dev/1023 (union of the reviewers list)\"\n    }\n  ]\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

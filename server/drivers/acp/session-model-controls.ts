@@ -1,3 +1,4 @@
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
 import type { ModelVariantOption } from "../../contracts.ts";
 import { acpModelOption, acpVariantOption } from "./config-options.ts";
 
@@ -73,6 +74,11 @@ export class SessionModelControls {
     return option;
   }
 
+  /** The live thinking control of the selected model, as the session last reported it. */
+  variantOption(): ReturnType<typeof acpVariantOption> {
+    return this.input.variants ? acpVariantOption(this.input.state()) : undefined;
+  }
+
   /** A loaded currentValue is saved state, not evidence of the native default. */
   async resetVariant(request: Request, sessionId: string, timeoutMs: number): Promise<boolean> {
     if (!this.input.variants) return true;
@@ -80,8 +86,8 @@ export class SessionModelControls {
     if (!option) return true;
     if (option.defaultValue === undefined) return false;
     if (option.currentValue !== option.defaultValue) {
-      await request("session/set_config_option", { sessionId, configId: option.configId, value: option.defaultValue }, timeoutMs,
-        response => this.receive(response));
+      await NotModelRequest("ACP selects a model or model configuration using session control RPC.", request("session/set_config_option", { sessionId, configId: option.configId, value: option.defaultValue }, timeoutMs,
+        response => this.receive(response)));
     }
     return this.variant(option.defaultValue).currentValue === option.defaultValue;
   }
@@ -97,16 +103,16 @@ export class SessionModelControls {
         throw new Error(`${this.input.displayName} does not advertise model ${wanted}`);
       }
       const before = this.revision;
-      await request("session/set_model", { sessionId, modelId: wanted }, timeoutMs, (response) => {
+      await NotModelRequest("ACP selects a model or model configuration using session control RPC.", request("session/set_model", { sessionId, modelId: wanted }, timeoutMs, (response) => {
         if (response?.models || Array.isArray(response?.configOptions)) this.receive(response, true);
         if (this.revision === before) {
           // ACP's legacy set_model succeeds with an empty result; it does not confirm the new model's thought options.
           this.receive({ models: { availableModels: option.options.map(({ id, label }) => ({ modelId: id, name: label })), currentModelId: wanted } }, true);
         }
-      });
+      }));
     } else {
-      await request("session/set_config_option", { sessionId, configId: option?.configId ?? configId, value: wanted }, timeoutMs,
-        (response) => this.receive(response));
+      await NotModelRequest("ACP selects a model or model configuration using session control RPC.", request("session/set_config_option", { sessionId, configId: option?.configId ?? configId, value: wanted }, timeoutMs,
+        (response) => this.receive(response)));
     }
     selected = this.modelOf(this.input.state());
     if (!this.confirms(wanted)) {

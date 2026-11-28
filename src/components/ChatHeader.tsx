@@ -19,7 +19,7 @@
 // in a 1600px window with the sidebar and the computer panel open.
 import { preloadBotSettings } from "@/lib/preload-bot-settings";
 import { useMemo, useRef, useState } from "react";
-import { Bug, Cpu, Folder, Monitor, Plus, Search, Square, UserRound } from "lucide-react";
+import { Bug, Cpu, Folder, Monitor, Plus, Search, Sparkles, Square, UserRound } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { browserIsThePlace } from "@/lib/browser-is-the-place";
@@ -32,7 +32,10 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { useNarrowViewport } from "@/lib/media-query";
 import { OPEN_MODEL_PICKER_EVENT } from "@/lib/local-models-view";
 import { formatTokens, formatUsd, freshTokens, hasFiniteCost, usageChip, usageReport } from "@/lib/usage";
-import { HEADER_RELOCATION_ORDER, useChatHeaderLayout, type HeaderSlot } from "@/lib/chat-header-layout";
+import { HEADER_FLOOR_PX, HEADER_HYSTERESIS_PX, HEADER_RELOCATION_ORDER, PHONE_MENU_SLOTS, chatHeaderContentKey, headerNeedsPhoneForm, useChatHeaderLayout, type HeaderSlot } from "@/lib/chat-header-layout";
+import { skillRecorderAvailable } from "@/lib/feature-flags";
+import { isCloudOrigin } from "@/lib/cloud-workspace";
+import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { useStore, type AppState, type Bot, type InstanceInfo, type Message } from "@/state/store";
 
 import { BotAvatar } from "./Avatar";
@@ -202,7 +205,10 @@ export function ChatHeader({
   // "..." menu. The model, the bot's computer and the bot's profile live in
   // that menu, along with every control the row would otherwise fold. The
   // tablet and desktop headers do not change.
-  const phone = useNarrowViewport();
+  const narrowViewport = useNarrowViewport();
+  const { capabilities } = useDesktopCapabilities();
+  // TEACH-ENTRY D1: the same gate the You menu uses (desktop app, macOS, not Cloud, switch on).
+  const teachAvailable = skillRecorderAvailable(state.config, desktop, isCloudOrigin(), capabilities.host?.platform);
   const workspace = effectiveWorkspace(bot);
   const usageText = usageMenuText(bot, state.instances);
   const task = findTask(bot, bot.threadId);
@@ -216,7 +222,7 @@ export function ChatHeader({
   // Anything that changes what the header has to fit restarts the ladder at
   // its richest layout, so a shorter name or a settled turn gives relocated
   // controls their place back.
-  const contentKey = [
+  const contentKey = chatHeaderContentKey([
     bot.id,
     bot.threadId,
     bot.name,
@@ -233,12 +239,18 @@ export function ChatHeader({
     bot.modelSelection.instanceId,
     bot.modelSelection.model,
     String(bot.modelSelection.effort ?? ""),
-  ].join("\u0001");
-  const { layout, slots } = useChatHeaderLayout(headerRef, contentKey);
+  ], teachAvailable);
+  const { layout, slots, contentWidth } = useChatHeaderLayout(headerRef, contentKey);
+  // D7d: a column too narrow for the two-row never-move set (a right panel open) takes the phone form,
+  // and leaves it only 16 px past the floor so a wobble cannot flip it.
+  const floorPhone = useRef(false);
+  if (!floorPhone.current && headerNeedsPhoneForm(contentWidth)) floorPhone.current = true;
+  else if (floorPhone.current && contentWidth >= HEADER_FLOOR_PX + HEADER_HYSTERESIS_PX) floorPhone.current = false;
+  const phone = narrowViewport || floorPhone.current;
   const twoRow = layout.twoRow;
   // On a phone every relocatable slot is in the menu, whatever the measured
   // layout says; `roleLabel` still folds to its icon in place.
-  const menuSlots = useMemo<ReadonlySet<HeaderSlot>>(() => (phone ? new Set<HeaderSlot>(HEADER_RELOCATION_ORDER) : slots), [phone, slots]);
+  const menuSlots = useMemo<ReadonlySet<HeaderSlot>>(() => (phone ? new Set<HeaderSlot>(PHONE_MENU_SLOTS) : slots), [phone, slots]);
   const inHeader = (slot: HeaderSlot) => !menuSlots.has(slot);
 
   const menuItems = useMemo<HeaderMenuItem[]>(() => {
@@ -276,6 +288,15 @@ export function ChatHeader({
         checked: findOpen,
         onSelect: onToggleFind,
       },
+      teach: teachAvailable
+        ? {
+            id: "teach",
+            label: t("chatHeader.teach", { name: bot.name }),
+            description: t("chatHeader.teachDetail"),
+            icon: <Sparkles size={16} />,
+            onSelect: () => dispatch({ type: "showSkillRecorder", via: "entry", forBotId: bot.id }),
+          }
+        : undefined,
       memory: {
         id: "memory",
         label: t("chatHeader.memory"),
@@ -294,7 +315,8 @@ export function ChatHeader({
     };
     // Menu order follows the header's own priority order, so the control that
     // moved most recently is always last in the list.
-    const relocated = HEADER_RELOCATION_ORDER.filter((slot) => menuSlots.has(slot))
+    const order: readonly HeaderSlot[] = phone ? PHONE_MENU_SLOTS : HEADER_RELOCATION_ORDER;
+    const relocated = order.filter((slot) => menuSlots.has(slot))
       .map((slot) => byId[slot])
       .filter((item): item is HeaderMenuItem => Boolean(item));
     if (!phone) return relocated;
@@ -322,6 +344,8 @@ export function ChatHeader({
   }, [
     menuSlots,
     phone,
+    teachAvailable,
+    bot.id,
     bot.name,
     bot.modelSelection.model,
     usageText,
@@ -553,6 +577,18 @@ export function ChatHeader({
             title={t("chatHeader.inspectorDetail")}
           >
             <Bug size={18} />
+          </button>
+        )}
+        {/* TEACH-ENTRY D1: beside the other "about this bot" controls, directly before Memory. The word folds with the chips. */}
+        {teachAvailable && inHeader("teach") && (
+          <button
+            onClick={() => dispatch({ type: "showSkillRecorder", via: "entry", forBotId: bot.id })}
+            aria-label={t("chatHeader.teach", { name: bot.name })}
+            className="flex shrink-0 items-center gap-1 rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+            title={t("chatHeader.teachTip", { name: bot.name })}
+          >
+            <Sparkles size={18} />
+            <span className="text-[13px] chip-trim:hidden">{t("chatHeader.teachWord")}</span>
           </button>
         )}
         {/* Mounted at every width: only the TRIGGER moves into the menu, so a

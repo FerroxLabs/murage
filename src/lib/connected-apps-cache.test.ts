@@ -27,7 +27,7 @@ describe("connected apps cache", () => {
   it("round-trips an inventory", () => {
     const storage = fakeStorage();
     writeCachedInventory({ gmail }, 1_700_000_000_000, storage);
-    expect(readCachedInventory(storage)).toEqual({ at: 1_700_000_000_000, services: { gmail } });
+    expect(readCachedInventory(storage)).toEqual({ at: 1_700_000_000_000, scope: null, services: { gmail } });
   });
 
   it("returns nothing when the user has no cache yet", () => {

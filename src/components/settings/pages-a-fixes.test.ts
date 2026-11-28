@@ -20,9 +20,15 @@ describe("Settings pages A: no dead-end links", () => {
   it("an engine fix with no setup card lands on the engine command lines instead of doing nothing", () => {
     expect(src("components/EnginesSettings.tsx")).toContain('anchor: "engine-command-lines-heading"');
   });
-  it("an engine row gives its line the full width on a phone and keeps file paths in Advanced", () => {
+  // 1.0.21: the path left the row in every mode (the command lines in Advanced still show it); the rendered witness is
+  // models-engines-polish.test.ts "shows no raw file path, even in Advanced".
+  it("an engine row gives its line the full width on a phone and shows no file path", () => {
     expect(src("components/EngineRow.tsx")).toContain("basis-full");
-    expect(src("components/EnginesSettings.tsx")).toContain('mode !== "advanced" ? null : instance.cli');
+    // The row is EngineBlock; the Advanced command lines (EngineCommandLine) keep the path on purpose.
+    const engines = src("components/EnginesSettings.tsx");
+    const row = engines.slice(engines.indexOf("function EngineBlock("), engines.indexOf("function EngineCommandLine("));
+    expect(row.length).toBeGreaterThan(0);
+    expect(row).not.toContain("font-mono text-[11.5px] text-accent");
   });
   it("the pages lane commits no runner logs", () => {
     expect(() => readFileSync(new URL("../../../.pw.log", import.meta.url))).toThrow();

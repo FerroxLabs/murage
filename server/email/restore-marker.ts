@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "../sqlite-open.ts";
 import { prepareRestoredEmail } from "./restore.ts";
 import { bumpWriteEpoch } from "../app-write-revision.ts";
+import { dropRestoredBrowserGrants } from "../browser-grant.ts";
 
 /** True when a marker was found and consumed. A missing database is never created; an unmarked one is not touched. */
 export function consumeRestoreMarker(dataDir: string, hooks: { prepare?: (db: DatabaseSync) => unknown } = {}): boolean {
@@ -19,6 +20,8 @@ export function consumeRestoreMarker(dataDir: string, hooks: { prepare?: (db: Da
     db.exec("BEGIN IMMEDIATE");
     try {
       if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='restore_pending'").get()) { db.exec("ROLLBACK"); return false; }
+      // DESIGN-JOURNEY-1024 W13: an On and the screen bit never come back from a reset; an Off survives (inside the marker transaction).
+      dropRestoredBrowserGrants(dataDir);
       (hooks.prepare ?? prepareRestoredEmail)(db);
       // M6 (J4): when an owner restore job swapped this database in, the job's boot recovery would prepare it again (a second re-key of the parks). The job's prepared
       // mark is written here, inside the same transaction, so recovery sees the preparation done. A Cloud reset no job swapped in has no swapped mark and gets none.

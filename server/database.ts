@@ -1,3 +1,4 @@
+import { initializeMailboxCustody } from "./mailbox/custody.ts";
 import { ensureExternalRecallEpoch } from './memory/recall-view-schema.ts';
 import { prepareReclaimSchema } from "./memory/root-set-reclaim.ts";
 import { initializeOwnWriteHolds } from "./own-write-holds.ts";
@@ -21,15 +22,21 @@ import { basename, join } from "node:path";
 import { DatabaseSync } from "./sqlite-open.ts";
 import { randomUUID } from "node:crypto";
 import { DATA_DIR } from "./config.ts";
+import { DatabaseShutdownError, sealForShutdown, sealedForShutdown } from "./shutdown-seal.ts";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_PRE_V3_SNAPSHOT, MEMORY_PRE_V4_SNAPSHOT, MEMORY_SCHEMA_VERSION, lineageRepairPending, migrateMemorySchema, repairOutputRootBackfill } from "./memory/schema.ts";
+import { noteCleanMemoryOpen } from "./memory/upgrade-copies.ts";
 import type { BlockingHeartbeat } from "./memory/blocking-heartbeat.ts";
-import { buildEagerIndexesBeforeListen, buildPreListenIndexes, optionalIndexReady, preListenIndexMissing } from "./memory/optional-index.ts";
+import { writeLegacyForgetKeys } from "./memory/legacy-forget-keys.ts";
+import { MEMORY_OPEN_HOLD, memoryOpenFailureCode, memoryOpenHoldMessage, noteRescueCopyKept, rescueCopyOnce, setsMemoryAside, standInForUnreadableMeta } from "./memory/open-set-aside.ts";
+import { setBootStep } from "./boot-progress.ts";
+import { buildEagerIndexesBeforeListen, buildPreListenIndexes, optionalIndexReady, preListenIndexDeferred, preListenIndexMissing } from "./memory/optional-index.ts";
 import { createProgressBoard, preListenHealthPort, setActivePreListenHealth, startPreListenHealth, type PreListenHealth, type ProgressBoard } from "./memory/upgrade-health.ts";
 import { UpgradeProgressTracker, nextUpgradeSeq, restampedUpgrade, upgradeCounts } from "./memory/upgrade-progress.ts";
 import { unknownUpgradeState } from "../shared/upgrade-contract.mjs";
+import { noteDataVersion } from "../shared/data-version-marker.mjs";
 import { bootLaunchId } from "./memory/boot-nonce.ts";
 import { bumpWriteEpoch, ensureWriteRevision, installWriteRevisionTriggers } from "./app-write-revision.ts";
-import { integrityPending, setIntegrityFlags } from "./memory/integrity-flags.ts";
+import { connectionHoldCode, integrityPending, setConnectionHold, setIntegrityFlags } from "./memory/integrity-flags.ts";
 import { memoryHeldCode } from "./memory/memory-gate.ts";
 import { integrityHoldOf, integrityRunning, maxRowid, readIntegrityPass, writeIntegrityPass } from "./memory/integrity-state.ts";
 import { backgroundStatus, backgroundJobsPending, upgradeOutside, startBackgroundUpgradeWork, runBackgroundUpgradeWorkToEnd, walPressureGauge, type BackgroundHandle, type BackgroundHooks } from "./memory/upgrade-background.ts";
@@ -38,7 +45,8 @@ import { initializeInbox } from "./inbox.ts";
 import { verifyDerivedRows } from "./branch-index.ts";
 import { pendingBranchChanges } from "./memory/branch-change-flag.ts";
 import { bumpMessagesVersion } from "./inbox-version.ts";
-import { inStatementReusePass, instrumentDatabase, sharedRowsStamp, ioBudget, noteBusyTimeout, startWriteTrace, writeStatementCount } from "./io-budget.ts";
+import { inStatementReusePass, instrumentDatabase, observeConnection, rawConnection, sharedRowsStamp, ioBudget, noteBusyTimeout, startWriteTrace, writeStatementCount } from "./io-budget.ts";
+import { commitNotice, detachMemoryWake, installMemoryWake, suspendMemoryWake, wakeInstalled } from "./memory/wake.ts";
 import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, DatabaseBusyError, DiskFloorRefusal, awaitWriterGate, isLowDisk, backgroundSourceNow, isDatabaseBusy, noteBusy, setBusy, writersHeldForIndexBuild } from "./db-busy.ts";
 import { noteIdentityEpoch } from "./memory/provenance-stamp.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
@@ -55,6 +63,7 @@ import { initializeVenuePosts } from "./venue-post-held.ts";
 import { initializeReplySchema } from "./tts/reply-schema.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeAppTriggers } from "./app-trigger-store.ts";
+import { initializeEventResultRoutes } from "./event-results.ts";
 import { initializeRoomShares } from "./room-shares-schema.ts";
 import { initializeDelegationPacks } from "./delegation-pack/schema.ts";
 import { prepareMessageSearchBackfill, settleInheritedSearchMerge, startSearchIndex, stopSearchIndex } from "./message-search-index.ts";
@@ -264,7 +273,9 @@ export function memoryIntegrityStatus() {
   const replayHeld = ancestryUnrepaired(handle);
   const status = backgroundStatus(handle, replayHeld);
   // `complete` is the one word that the whole upgrade is over: every proof passed, every job finished, no lineage left to repair, nothing held
-  return { ...status, replayHeld, integrityPending: integrityPending(handle), complete: status.complete && !replayHeld, upgrade: restampedUpgrade(status.upgrade, { source: "health" }) };
+  // memory set aside at open (memory/open-set-aside.ts): the health answer carries its one plain line, as it does a pass's hold
+  const openHold = status.hold === null && connectionHoldCode(handle) === MEMORY_OPEN_HOLD;
+  return { ...status, ...(openHold ? { hold: MEMORY_OPEN_HOLD, holdMessage: memoryOpenHoldMessage(), complete: false } : {}), replayHeld, integrityPending: integrityPending(handle), complete: status.complete && !replayHeld && !openHold, upgrade: restampedUpgrade(status.upgrade, { source: "health" }) };
 }
 
 let handle: DatabaseSync | null = null;
@@ -289,7 +300,23 @@ export function databaseSharedRowsStamp(): number | undefined { return handle ? 
 let writesAtOpen: { db: DatabaseSync; count: number } | undefined;
 /** The writing statements run on the first handle since its open finished; undefined once that handle is gone. */
 export function writesSinceOpen(): number | undefined { return writesAtOpen && handle === writesAtOpen.db ? writeStatementCount(handle) - writesAtOpen.count : undefined; }
+/** Code of the hold a failed wake install sets: a missing trigger could hide a wake, so memory is set aside (fail closed) until the next open. */
+export const MEMORY_WAKE_HOLD = "MEMORY_WAKE_INSTALL";
+function installWakeBus(db: DatabaseSync): void {
+  const raw = rawConnection(db) ?? { exec: db.exec.bind(db), prepare: db.prepare.bind(db) };
+  const wake = installMemoryWake(db, raw, { readOnly: isReadOnly() });
+  if (wake.events) { observeConnection(db, wake.events); return; }
+  if (!wake.error) return; // a read-only start: nothing installed, recall is served as before
+  setConnectionHold(db, MEMORY_WAKE_HOLD);
+  // the owner is told once per open: the hold shows as "memory set aside" (memory-gate.ts), and this line names the cause
+  console.error(`[memory-wake] install failed, memory is set aside until the next start: ${wake.error.message}`);
+}
+/** Set once the server's own connection was closed for shutdown: nothing may open messages.db again in this process. */
+export { DatabaseShutdownError };
+/** True once shutdown closed the connection; background timers check it and do nothing. */
+export function databaseSealedForShutdown(): boolean { return sealedForShutdown(); }
 export function database(): DatabaseSync {
+  if (sealedForShutdown()) throw new DatabaseShutdownError();
   const file = join(DATA_DIR, "messages.db");
   // (inside a synchronous pass the file cannot be swapped, so the existence check is not repeated for each of its thousands of statements)
   if (handle && handlePath === file && (inStatementReusePass() || handleInMemory || existsSync(file))) return handle;
@@ -305,24 +332,31 @@ export function database(): DatabaseSync {
   // query_only refuses statements, but only a read-only handle also prevents the last close from checkpointing a retained WAL.
   const db = new DatabaseSync(readOnlyEmpty ? ":memory:" : file, { readOnly: isReadOnly() && !freshInstallation });
   const release = instrumentDatabase(db);
+  let memoryAside: string | null = null; // set when memory could not be opened (below): the connection then holds memory aside
   try {
     if (isReadOnly() && !freshInstallation) db.exec("PRAGMA query_only=ON");
-    // secure_delete: a deleted conversation's words are overwritten in the
-    // file, not left in free space for anyone reading the raw bytes.
+    // secure_delete=FAST (1.0.22 MAIN-RULING SQLITE-1022 item 1a): deleted cells are zeroed inside pages a write touches anyway; every
+    // transaction that removes owner-visible text runs at ON (server/secure-delete.ts withSecureDelete), so a deleted conversation's words
+    // are overwritten in the file, not left in free space for anyone reading the raw bytes.
     // A new file frees pages back to the disk in small steps (incremental
     // vacuum, root-set-compaction.ts); it can only be chosen before the first table.
     // The wait comes before the first statement that reads the file: another connection still leaving it (a worker that opened it by
     // path, a checkpointer) may hold it for a moment, and without the wait even this first pragma fails at once with "database is locked".
+    // the start-up note names the open: a large write-ahead log is replayed by the first statements below (boot-progress.ts)
+    if (firstOpen) setBootStep("database.wal");
     db.exec("PRAGMA busy_timeout=1000");
     if (freshInstallation) db.exec("PRAGMA auto_vacuum=INCREMENTAL");
     if (!isReadOnly()) db.exec("PRAGMA journal_mode=WAL");
-    db.exec("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;");
+    db.exec("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA secure_delete=FAST;");
     // The write-ahead log keeps the size of the largest transaction it ever
-    // held unless told otherwise (a 3.6 GB log after the 1.0.0 upgrade). Zero:
-    // the first commit after a checkpoint has copied the whole log restarts it
-    // and cuts the file back to its own frames, inside an ordinary write, so no
-    // second connection ever has to take the writer lock to shrink it
-    // (wal-maintenance.ts).
+    // held unless told otherwise (a 3.6 GB log after the 1.0.0 upgrade). 16 MiB
+    // (1.0.22 MAIN-RULING SQLITE-1022 item 1b): the first commit after a checkpoint
+    // has copied the whole log restarts it and cuts the file back to 16 MiB,
+    // inside an ordinary write, so no second connection ever has to take the
+    // writer lock to shrink it (wal-maintenance.ts); below that the file is
+    // reused in place instead of being cut and grown again on every pass. The
+    // deletion scrub's nudge commits at 0, so a forget still cuts the log to
+    // its own frames (nudge below).
     db.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=0;`);
     noteBusyTimeout(db, DEFAULT_BUSY_MS);
     // Backstop for the Inbox disk burn: a sort that outgrows the page cache must
@@ -365,6 +399,7 @@ export function database(): DatabaseSync {
     if (migrating) { try { db.exec("PRAGMA cache_size=-524288"); } catch { /* the default stays */ } }
     try {
       schemaStep(db, "messages", local => initializeMessageTables(local, { defer: true }));
+      schemaStep(db, "mailbox_sealed_threads", initializeMailboxCustody);
       // the hold log a turn's sources are checked against (turn-source-holds.ts): its triggers record every change from here on
       schemaStep(db, "turn_source_holds", initializeTurnSourceHolds);
     }
@@ -373,12 +408,39 @@ export function database(): DatabaseSync {
     // branch move is still being flipped: counted once here (one seek), known after
     verifyDerivedRows(db);
     pendingBranchChanges(db);
+    if (firstOpen) setBootStep("database.memory");
     try {
-      migrateMemorySchema(db, freshInstallation ? "active" : "off", { snapshotPath: join(DATA_DIR, MEMORY_PRE_V2_SNAPSHOT), snapshotV2Path: join(DATA_DIR, MEMORY_PRE_V3_SNAPSHOT), snapshotV3Path: join(DATA_DIR, MEMORY_PRE_V4_SNAPSHOT), onPhase: event => upgrade.phase(event), onValidating: () => upgrade.checking(), onBlocking: (first, from) => upgrade.blocking(first, from) });
+      // 1.0.22 q1022-startmem: memory that cannot be read, checked or migrated sets memory aside for this run instead of ending the start
+      // (memory/open-set-aside.ts); a full disk, a read-only start and memory from a newer Murage still end it as before.
+      try { migrateMemorySchema(db, freshInstallation ? "active" : "off", { snapshotPath: join(DATA_DIR, MEMORY_PRE_V2_SNAPSHOT), snapshotV2Path: join(DATA_DIR, MEMORY_PRE_V3_SNAPSHOT), snapshotV3Path: join(DATA_DIR, MEMORY_PRE_V4_SNAPSHOT), onPhase: event => upgrade.phase(event), onValidating: () => upgrade.checking(), onBlocking: (first, from) => upgrade.blocking(first, from) }); }
+      catch (error) {
+        if (!setsMemoryAside(error, from, MEMORY_SCHEMA_VERSION)) throw error;
+        try { if (db.isTransaction) db.exec("ROLLBACK"); } catch { /* the failed statement already rolled back */ }
+        memoryAside = memoryOpenFailureCode(error);
+        standInForUnreadableMeta(db, MEMORY_SCHEMA_VERSION);
+        const rescue: ReturnType<typeof rescueCopyOnce> = isReadOnly() || readOnlyEmpty ? (noteRescueCopyKept(DATA_DIR), { status: "skipped", reason: "read-only" }) : rescueCopyOnce(DATA_DIR);
+        console.error(`[startup] memory set aside: could not open memory (${memoryAside}); chats, bots and files open as usual; rescue copy ${rescue.status === "copied" ? `made (${rescue.method})` : rescue.status === "partial" ? `partial, no room for ${rescue.leftOut.length} file(s) (made again at the next start)` : `not made (${rescue.reason})`}`);
+      }
+      // 1.0.23 (MAIN-RULING 2026-11-26T22:27:29Z D2): nothing of the revoke jobs a 1.0.22 file carries is walked here. The start opens at
+      // once; the paced runner ends those walks in the background in bounded slices (memory-revocation.ts, as on 1.0.22), and the owner's
+      // own turn reads the durable deny rows directly, never a pending window (lineage-types.ts LineageReader.settled).
       // A migration rewrites memory tables: whatever figures an earlier launch cached are void.
-      if (migrating) { try { bumpWriteEpoch(db); } catch { /* as above */ } }
+      if (migrating && !memoryAside) { try { bumpWriteEpoch(db); } catch { /* as above */ } }
+      // This release accepted the memory tables (and migrated them if it had to): the data folder records it as the newest writer, so an
+      // older build that later refuses this data can name the version to install (shared/data-version-marker.mjs). Only ever raised; a
+      // source run (no released MURAGE_APP_VERSION) and a read-only start write nothing.
+      if (!isReadOnly() && !memoryAside) noteDataVersion(DATA_DIR, process.env.MURAGE_APP_VERSION);
+      // q1022-disk: a clean (not migrating) writable open counts toward removing the upgrade's copies of messages.db. Not while the
+      // integrity pass is still proving the upgraded rows, nor after it left a hold: the copy is the way back until it passed.
+      // q1022-startmem: an open with memory set aside is not a clean open (those copies may be the way back to that memory), and the pass
+      // reads the memory tables that failed.
+      if (!memoryAside) {
+        const pass = readIntegrityPass(db);
+        if (!isReadOnly() && !migrating && !freshInstallation && !integrityRunning(pass) && integrityHoldOf(pass) === null) for (const name of noteCleanMemoryOpen(DATA_DIR, Date.now())) observeLine(`[memory] removed upgrade copy ${name}`);
+      }
       // What the connection holds back until the background work has finished.
-      loadBackgroundFlags(db); if (firstOpen) startupMark("database.flags");
+      // (memory set aside: what the background flags would read is the memory that failed; the hold refuses every use of it anyway)
+      try { loadBackgroundFlags(db); } catch (error) { if (!memoryAside) throw error; } if (firstOpen) startupMark("database.flags");
       // The search index tail is noted here (a seek), filled in the background; the log's high-water mark is cut back while the note is
       // still up, so a long checkpoint after a big migration is never silent.
       // A read-only start writes neither the preview tables' schema nor an empty history's "filled" mark: the tables in the file are read as they are.
@@ -417,6 +479,16 @@ export function database(): DatabaseSync {
         try { beat = upgrade.blocking("backfill", undefined, undefined, "indexing"); } catch { /* a status write never stops an upgrade */ }
         try { buildEagerIndexesBeforeListen(db, { log: firstOpen }); } finally { try { beat?.end(); } catch { /* as above */ } }
       }
+      // 1.0.21 cause10 v2 (FORGET-ATOMIC, MAIN-RULING 2026-11-21T15:42Z): a Forget an older build left queued owes deny keys its job never
+      // wrote on a profile whose runner does not drain. Every one is keyed here, before this open returns, so nothing is served on a
+      // half-forgotten profile (memory/legacy-forget-keys.ts: one transaction per batch of jobs, resumed by the next open after a kill;
+      // an open with none queued is one indexed read). An error ends the start like a failed memory migration: fail closed, never skipped.
+      // A read-only start writes nothing: its queue is keyed by the next writable start.
+      if (!isReadOnly() && !memoryAside) {
+        let beat: BlockingHeartbeat | undefined;
+        try { writeLegacyForgetKeys(db, () => { try { beat = upgrade.blocking("backfill", undefined, undefined, "indexing"); } catch { /* a status write never stops a start */ } }); }
+        finally { try { beat?.end(); } catch { /* as above */ } }
+      }
       if (!isReadOnly()) removeDevTurnSpan(db);
       // The owner-pin index on every launch where it is missing (one scan, once per install): without it the first turn walked every active
       // record of its scopes for its pins (MEM-PIN-INDEX-BOOT, 1.3 to 2.0 s on the owner's data). On a slow disk that scan outlasts the shell's
@@ -429,7 +501,7 @@ export function database(): DatabaseSync {
           if (!optionalIndexReady(db, TURN_INDEX)) { console.error("[startup] read-only start: required index missing"); throw new TurnIndexNotReadyError(); }
           skippedAtStart.push("database.preListenIndexes");
         } else {
-          try { buildPreListenIndexes(db, { log: firstOpen }); if (!optionalIndexReady(db, TURN_INDEX)) throw new TurnIndexNotReadyError(); } finally { try { beat?.end(); } catch { /* as above */ } }
+          try { buildPreListenIndexes(db, { log: firstOpen }); if (!optionalIndexReady(db, TURN_INDEX) && !preListenIndexDeferred(db, TURN_INDEX)) throw new TurnIndexNotReadyError(); } finally { try { beat?.end(); } catch { /* as above */ } }
         }
       }
       {
@@ -447,6 +519,7 @@ export function database(): DatabaseSync {
       if (isLowDisk(error)) upgrade.done(); else upgrade.blocked(error);
       void responder?.close(); setActivePreListenHealth(null); throw error;
     } if (firstOpen) startupMark("database.noteDone");
+    if (firstOpen) setBootStep("database.initializers");
     if (isReadOnly() && !readOnlyEmpty) {
       initializeOwnerSends(db); initializeOwnWriteHolds(db);
     } else {
@@ -454,7 +527,7 @@ export function database(): DatabaseSync {
       initializeThreadSnooze(db);
       initializeHighLevelThreadMarks(db);
       initializeArtifacts(db);
-      initializeProjectTables(db); initializeTeamIdentityTables(db); ensureExternalRecallEpoch(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializeSendAttempts(db); initializePendingDelegations(db); initializeDelegationPacks(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeOwnWriteHolds(db); initializeVenuePosts(db); initializeRoomShares(db); if (firstOpen) startupMark("database.tablesAll");
+      initializeProjectTables(db); initializeTeamIdentityTables(db); ensureExternalRecallEpoch(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializeSendAttempts(db); initializePendingDelegations(db); initializeDelegationPacks(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeEventResultRoutes(db); initializeOwnWriteHolds(db); initializeVenuePosts(db); initializeRoomShares(db); if (firstOpen) startupMark("database.tablesAll");
       runOwnerHandoffMigration(db);   // admission of hand-offs is held until it succeeds (pending-delegations-schema.ts)
       // Every counted write from here on moves the counter the upgrade screen's figures are keyed to (app-write-revision.ts).
       installWriteRevisionTriggers(db);
@@ -469,9 +542,14 @@ export function database(): DatabaseSync {
   }
   connectionId(db);
   handle = db; handlePath = file; handleInMemory = readOnlyEmpty; releaseIoBudget = release; generation++;
+  if (memoryAside) setConnectionHold(db, MEMORY_OPEN_HOLD);
   // Boot tolerance, write authority: in a read-only process the engine refuses every write on this connection (SQLITE_READONLY), so a writer no
   // caller guarded changes nothing. Reads, and the checkpoint that returns log space, still run.
   if (isReadOnly()) db.exec("PRAGMA query_only=ON");
+  // MEMORY V2 (design 3.1, M0): the TEMP wake table, its triggers, the guards and the memo watches die with a handle, so they are
+  // installed on EVERY open (first start, snapshot swap, restore, quarantine), outside any transaction and outside the background budget,
+  // and the open-time probes then raise what a crash may have left. A read-only start installs nothing.
+  installWakeBus(db);
   // Boot tolerance (A2): a read-only start makes no write between the end of its open and listen. The count starts here, and every write
   // in that window notes its caller, so a count over 0 names the recovery that still has to be held back.
   if (firstOpen) { writesAtOpen = { db, count: writeStatementCount(db) }; if (isReadOnly()) startWriteTrace(); }
@@ -486,10 +564,13 @@ export function database(): DatabaseSync {
     }).catch(error => console.warn("[message-search] worker start failed:", error instanceof Error ? error.message : String(error)));
   } else if (!isReadOnly()) startSearchIndex(db, file); // the search worker's start writes its owner row and its own file: not in a read-only process
   if (!isReadOnly()) startWalMaintenance(file, {
+    // 1.0.21 W4 (lane D, WAL maintenance's port): the commit notice only where the wake bus observes this connection's commits
+    commitNotice: () => (handle === db && wakeInstalled(db) && rawConnection(db) !== undefined ? commitNotice() : null),
     // (a read-only start writes nothing, so no automatic checkpoint can fall due: its setting is left as the open found it)
     setAutocheckpoint: pages => { if (handle === db && !isReadOnly()) db.exec(`PRAGMA wal_autocheckpoint=${Math.trunc(pages)}`); },
     journalSizeLimit: () => (handle === db ? Number((db.prepare("PRAGMA journal_size_limit").get() as { journal_size_limit?: number } | undefined)?.journal_size_limit) : null),
     pinJournalSizeLimit: () => { if (handle === db) db.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT_BYTES}`); },
+    setJournalSizeLimit: bytes => { if (handle === db) db.exec(`PRAGMA journal_size_limit=${Math.trunc(bytes)}`); },
     nudge: async () => {
       if (handle !== db || db.isTransaction) return false;
       await awaitWriterGate();
@@ -498,6 +579,8 @@ export function database(): DatabaseSync {
         withBusyBudget(BACKGROUND_BUSY_MS, "wal-scrub", d => {
           // the same version written again: one page-1 frame, which restarts a fully copied log
           const version = Number((d.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined)?.user_version ?? 0);
+          // 1.0.22 item 1b: the settle that calls it holds journal_size_limit at 0 around it (wal-maintenance.ts scrubLimit), so the
+          // restart this commit makes cuts the file to its own frames, not to the 16 MiB kept tail whose old-salt frames hold deleted text
           d.exec(`PRAGMA user_version=${Math.trunc(version)}`);
         });
         return true;
@@ -514,8 +597,8 @@ export function database(): DatabaseSync {
   return db;
 }
 
-/** Zero: see the comment at the pragma above. */
-export const JOURNAL_SIZE_LIMIT_BYTES = 0;
+/** 16 MiB: see the comment at the pragma above (the deletion scrub's nudge commits at 0). */
+export const JOURNAL_SIZE_LIMIT_BYTES = 16 * 1024 * 1024;
 // The lock budgets, the busy error, the writer hold and the background begin live in db-busy.ts (a leaf module the slice runners import
 // without the whole server); they are re-exported here, where the rest of the server has always found them.
 export { OWNER_BUSY_MS, DEFAULT_BUSY_MS, BACKGROUND_BUSY_MS, backgroundSourceNow, currentBusy, DatabaseBusyError, DATABASE_BUSY_RETRY_AFTER_S, isDatabaseBusy,
@@ -529,9 +612,9 @@ export { OWNER_BUSY_MS, DEFAULT_BUSY_MS, BACKGROUND_BUSY_MS, backgroundSourceNow
 export function guardedWriter(op: string, run: () => unknown): () => Promise<void> {
   let running = false; // a tick that is still waiting or running is not stacked on by the next one
   return async () => {
-    if (running) return;
+    if (running || sealedForShutdown()) return; // after the shutdown close a background writer has nothing to write to
     running = true;
-    try { await awaitWriterGate(); await run(); }
+    try { await awaitWriterGate(); if (sealedForShutdown()) return; await run(); }
     catch (error) {
       if (isDatabaseBusy(error)) noteBusy(op, 0);
       else console.error(`[background] ${op} failed:`, error);
@@ -637,7 +720,7 @@ function startupStorage(db: DatabaseSync, file: string, log: boolean) {
 }
 
 // A boot step that meets low disk turns the process read-only after the open: the live connection is closed to writes at that moment.
-onReadOnly(() => { if (handle) { try { handle.exec("PRAGMA query_only=ON"); } catch { /* handle closed: the next open sets it */ } } });
+onReadOnly(() => { if (handle) { suspendMemoryWake(handle); try { handle.exec("PRAGMA query_only=ON"); } catch { /* handle closed: the next open sets it */ } } });
 
 export function closeDatabase() {
   launchCounts = null; // a new connection counts again (or reads the cache)
@@ -645,6 +728,7 @@ export function closeDatabase() {
   if (storageTimer) { clearInterval(storageTimer); storageTimer = undefined; }
   if (handle) { const state = unrepaired.get(handle); if (state?.timer) clearTimeout(state.timer); unrepaired.delete(handle); }
   for (const hook of closeHooks) { try { hook(); } catch { /* idempotent shutdown */ } }
+  if (handle) { observeConnection(handle, null); detachMemoryWake(handle); }
   try { handle?.close(); } catch { /* idempotent shutdown */ }
   // After the server connection has closed, so the checkpointer's is the last one and not this one.
   void stopWalMaintenance();
@@ -652,6 +736,20 @@ export function closeDatabase() {
   // After the handle closes, so dropping the shm descriptor cannot release a lock SQLite still holds.
   try { releaseIoBudget?.(); } catch { /* idempotent shutdown */ }
   handle = null; handlePath = null; handleInMemory = false; releaseIoBudget = null; generation++;
+}
+/** The shutdown close: closes the connection and refuses every later open, so a timer that fires afterwards cannot reopen the file. */
+export function closeDatabaseForShutdown() {
+  sealForShutdown();
+  closeDatabase();
+  // A timer this file does not know of may still ask for the database in the handover window (the lane SITES.md). Its refusal is expected and
+  // absorbed from here on; anything else is raised again exactly as without this listener (server-child-crash.mjs: observe, never swallow a fault).
+  if (!absorbingLateRefusals) { absorbingLateRefusals = true; process.on("uncaughtException", absorbLateRefusal); }
+}
+let absorbingLateRefusals = false;
+function absorbLateRefusal(error: unknown): void {
+  if (error instanceof DatabaseShutdownError) { console.warn("[shutdown] a timer asked for the database after it closed; refused"); return; }
+  process.off("uncaughtException", absorbLateRefusal); absorbingLateRefusals = false;
+  process.nextTick(() => { throw error; });
 }
 // Under vitest only: lets test cleanup close this copy of the module even after vi.resetModules() made it a stranger.
 registerTestHandle("close", dir => { if (dir === undefined || (handlePath && pathIsWithin(handlePath, dir))) closeDatabase(); });

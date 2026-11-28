@@ -107,6 +107,7 @@ export interface RoutineRun {
   manual: boolean;
   triggerSource?: RoutineRunTrigger;
   webhookId?: string;
+  eventResult?: { state: "owed" | "held" | "done"; reason?: string };
   deliveryId?: string;
   /** Room task created for a team-goal run. */
   executionThreadId?: string;
@@ -131,6 +132,8 @@ export interface RoutineRun {
 }
 
 export interface RoutineInput {
+  /** Create only: a one-time moment that passed within the last 10 minutes is accepted as "run now". */
+  runNow?: boolean;
   name: string;
   prompt: string;
   target?: RoutineTarget;

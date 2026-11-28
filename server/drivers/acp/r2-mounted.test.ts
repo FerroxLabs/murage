@@ -56,8 +56,8 @@ async function create(extra: Partial<AcpSupport> = {}) {
     environment: { HOME: root }, config: { cli: CLI, fullAuto: false } });
   return recordEvents(instance.adapter);
 }
-const mounted = (resumeCursor?: string) => fixtureMountTurn({ threadId: "r2-mounted", cwd: root, text: "hello", resumeCursor,
-  warmIdentity: { botId: "r2-bot", audience: "owner", decidedOwner: true },
+const mounted = (resumeCursor?: string, decidedOwner = true) => fixtureMountTurn({ threadId: "r2-mounted", cwd: root, text: "hello", resumeCursor,
+  warmIdentity: { botId: "r2-bot", audience: "owner", decidedOwner },
   integrations: { agents: { command: process.execPath, args: ["-e", "process.stdin.resume()"], env: {} } } });
 function sessions() { return wire.filter(row => ["session/new", "session/load"].includes(row.method)); }
 function expectShims(rows = sessions()) {
@@ -93,10 +93,24 @@ describe("LASTRESORT §6.2, §7.5a and §7.6 mounted ACP", () => {
     if (branch === "RETRY") expect(sessions().filter(row => row.method === "session/load").length).toBeGreaterThan(1);
     if (branch !== "LOAD") expect(sessions().at(-1).method).toBe("session/new");
   }, 30_000);
+  it("T-ACP-OPTIONAL-BROWSER: the reply survives a lost browser even when the native list has no ready browser", async () => {
+    vi.stubEnv("FAKE_ACP_MCP_LIST", '{"browser":"failed"}');
+    const records = await create();
+    const sent = await instance!.adapter.sendTurn(fixtureMountTurn({
+      threadId: "r2-mounted", cwd: root, text: "hello", warmIdentity: { botId: "r2-bot", audience: "owner" },
+      integrations: { browser: { command: join(root, "missing-browser"), args: [], env: {} } },
+    }));
+    expect(await records.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+    expect(wire.some(row => row.method === "session/prompt")).toBe(true);
+    expect(records.events.filter(event => event.type === "item.started" && event.itemType === "tool" && event.toolKind === "notice"))
+      .toEqual([expect.objectContaining({ title: "Murage couldn't use the browser for this reply." })]);
+  });
+  // 1.0.23 winfirst (MAIN): a decided owner turn now retires an unproven required mount and runs (winfirst-gate-1023.test.ts W2-*);
+  // the refusal below holds for every other audience, so these fail-closed rows run as an undecided one.
   it("T-ACP-READINESS-REFUSES", async () => {
     vi.stubEnv("FAKE_ACP_MCP_LIST", "all:error");
     const records = await create();
-    const sent = await instance!.adapter.sendTurn(mounted());
+    const sent = await instance!.adapter.sendTurn(mounted(undefined, false));
     expect(await records.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: false, stopReason: "memory-refused" });
     expect(records.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: "I stopped this turn because some of its context is no longer available." }));
     const failedCheck = wire.findIndex(row => row.method === "_fuigo/mcp/list");
@@ -109,7 +123,7 @@ describe("LASTRESORT §6.2, §7.5a and §7.6 mounted ACP", () => {
     vi.stubEnv("FAKE_ACP_MCP_READY", state === "silent" ? "0" : "1");
     vi.stubEnv("MURAGE_ACP_MCP_READY_MS", "300");
     const records = await create({ mcpReadyNotification: "_fuigo/mcp_initialized" });
-    const sent = await instance!.adapter.sendTurn(mounted());
+    const sent = await instance!.adapter.sendTurn(mounted(undefined, false));
     const done = await records.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
     if (state === "unsupported") expect(done).toMatchObject({ ok: true });
     else {

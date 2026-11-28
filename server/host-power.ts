@@ -36,27 +36,31 @@ export const HOST_POWER_MESSAGE = process.platform === "win32" ? HOST_POWER_MESS
  * IOKIT_OPEN_SERVICE and IOKIT_OPEN_USER_CLIENT to iokit-open unless USE(SANDBOX_VERSION_3).
  * Naming the version-3 operations in a version-1 profile can refuse the entire launch on older macOS.
  * https://github.com/apple-oss-distributions/WebKit/blob/main/Source/WebKit/Shared/Sandbox/macOS/common.sb */
-export const SEATBELT_POWER_PROFILE = `(version 1)
+const SEATBELT_HEADER = `(version 1)
 (allow default)
-(deny mach-lookup
+`;
+/** The power block's rules, one per SBPL form. Each can be left out on its own when this macOS refuses to apply it
+ *  (selectSeatbeltProfile); the text of the whole is what SEATBELT_POWER_PROFILE has always been. */
+const SEATBELT_RULES: ReadonlyArray<{ name: string; text: string }> = [
+  { name: "mach-lookup", text: `(deny mach-lookup
   (global-name "com.apple.logind")
   (global-name "com.apple.PowerManagement.control")
   (global-name "com.apple.iokit.powerdxpc"))
-(deny iokit-open
+` },
+  { name: "iokit-open", text: `(deny iokit-open
   (iokit-registry-entry-class "IOPMrootDomain")
   (iokit-user-client-class "RootDomainUserClient"))
-(deny appleevent-send
+` },
+  { name: "appleevent-send", text: `(deny appleevent-send
   (appleevent-destination "com.apple.loginwindow")
   (appleevent-destination "com.apple.systemevents")
   (appleevent-destination "com.apple.finder"))
-`;
+` },
+];
+export const SEATBELT_POWER_PROFILE = SEATBELT_HEADER + SEATBELT_RULES.map((rule) => rule.text).join("");
 
 /** No limits permits ordinary automation; only the power facilities remain denied. */
-export const NO_LIMITS_SEATBELT_POWER_PROFILE = SEATBELT_POWER_PROFILE.replace(`(deny appleevent-send
-  (appleevent-destination "com.apple.loginwindow")
-  (appleevent-destination "com.apple.systemevents")
-  (appleevent-destination "com.apple.finder"))
-`, "");
+export const NO_LIMITS_SEATBELT_POWER_PROFILE = SEATBELT_HEADER + SEATBELT_RULES.filter((rule) => rule.name !== "appleevent-send").map((rule) => rule.text).join("");
 
 /** Section 4: the bwrap process's own environment. The turn's reaches the engine through --clearenv and --setenv, which bwrap reads
  *  from its --args pipe (BWRAP_ARGS_FD), never from its argv: /proc/<pid>/cmdline is readable by every local user for the life of
@@ -573,6 +577,11 @@ export function takeNoLimitsPowerFallbackNotice(session: object): string | undef
   noLimitsPowerNoticed.add(session);
   return "This engine is running without Murage's shutdown and restart protection because macOS refused it.";
 }
+/** A No limits turn whose launch sandbox-exec refused may start again: its session already runs without the block, or the refused
+ *  child really ran (pid) and the next launch of the session takes the next narrower rule set. */
+export function noLimitsPowerRetry(session: object, pid: number | undefined): boolean {
+  return noLimitsPowerFallbackActive(session) || (hostPowerPlatform() === "darwin" && pid !== undefined);
+}
 /** Probe once per driver session; an actual launch can still correct the result. */
 export function noLimitsMacPowerFallback(session: object): boolean {
   const cached = noLimitsMacSessions.get(session);
@@ -583,16 +592,106 @@ export function noLimitsMacPowerFallback(session: object): boolean {
   return noLimitsPowerFallbackActive(session);
 }
 
-export function planHostPower(command: string, args: string[], env: NodeJS.ProcessEnv | undefined, cwd: string | undefined, noLimitsSession?: object): HostPowerPlan {
+
+/** What the macOS power block applies for one launch: the profile that runs (null: none), the rules left out, and why. */
+export interface SeatbeltSelection { profile: string | null; dropped: string[]; reason: string; /** every remaining profile was refused by sandbox-exec at launch for this session */ launchRefused: boolean }
+/** What sandbox-exec itself said about a profile, process-wide: only a definite non-zero exit of a probe of that exact profile
+ *  (fresh evidence, never the engine's stderr) is kept here. */
+const seatbeltProbed = new Map<string, { ok: boolean; why: string }>();
+/** Profiles one session's launches were refused (after a passing probe). Scoped to that session; never process-wide. */
+const seatbeltSessionRefused = new WeakMap<object, Set<string>>();
+/** The text of the last launch refusal for a session, for the one notice if its rule sets run out. */
+const seatbeltSessionDetail = new WeakMap<object, string>();
+const seatbeltDropLogged = new Set<string>();
+/** The most launches one turn may spend walking down the profile ladder: every variant, and then the unwrapped one. */
+export const SEATBELT_LAUNCH_ATTEMPTS = 8;
+/** A profile with some of the base profile's rules left out, strongest first: all rules, then every one-rule-fewer set, and so on
+ *  down to a single rule. */
+function seatbeltVariants(base: string): Array<{ profile: string; dropped: string[] }> {
+  const rules = SEATBELT_RULES.filter((rule) => base.includes(rule.text));
+  const out: Array<{ profile: string; dropped: string[] }> = [];
+  for (let mask = (1 << rules.length) - 1; mask > 0; mask--) {
+    const kept = rules.filter((_, i) => mask & (1 << i));
+    out.push({ profile: SEATBELT_HEADER + kept.map((rule) => rule.text).join(""), dropped: rules.filter((rule) => !kept.includes(rule)).map((rule) => rule.name) });
+  }
+  return out.sort((x, y) => x.dropped.length - y.dropped.length);
+}
+
+/** Probe one exact profile. A probe that could not run (no exit code) is no evidence either way: the profile stands. */
+function seatbeltProbePasses(profile: string): { ok: boolean; why: string } {
+  const known = seatbeltProbed.get(profile);
+  if (known !== undefined) return known;
+  const result = hostPowerProbeDeps.runSync(hostPowerDeps.sandboxExec, ["-p", profile, "/usr/bin/true"]);
+  const rejected = typeof result.code === "number" && result.code !== 0;
+  const answer = { ok: !rejected, why: rejected ? redactSecretsInText(`probe exit ${String(result.code)}: ${result.stderr}`).replace(/[\r\n\x00-\x1f]+/g, " ").trim().slice(0, 500) : "" };
+  if (typeof result.code === "number") seatbeltProbed.set(profile, answer);
+  return answer;
+}
+
+/** Pick the strongest power-block profile this macOS applies and this session was not refused. A probe rejecting a profile never
+ *  refuses the launch: the rule macOS does not take is left out and recorded, the others stay. When no rule applies (profile null),
+ *  launchRefused says it was this session's own launch refusals that used the profiles up; the caller decides (planHostPower). */
+export function selectSeatbeltProfile(base: string, session?: object): SeatbeltSelection {
+  const refused = session ? seatbeltSessionRefused.get(session) : undefined;
+  let why = "", launchRefused = false;
+  for (const variant of seatbeltVariants(base)) {
+    if (refused?.has(variant.profile)) { launchRefused = true; continue; }
+    const probe = seatbeltProbePasses(variant.profile);
+    if (!probe.ok) { why = probe.why || why; continue; }
+    if (variant.dropped.length > 0 && !seatbeltDropLogged.has(variant.profile)) {
+      seatbeltDropLogged.add(variant.profile);
+      console.warn(`[host-power] macOS could not apply the power block rule(s) ${variant.dropped.join(", ")}; the engine launches with the other rules in place: ${why}`);
+    }
+    return { profile: variant.profile, dropped: variant.dropped, reason: why, launchRefused: false };
+  }
+  const dropped = SEATBELT_RULES.filter((rule) => base.includes(rule.text)).map((rule) => rule.name);
+  if (launchRefused && !why && session) why = seatbeltSessionDetail.get(session) ?? "";
+  if (!launchRefused && !seatbeltDropLogged.has(base)) {
+    seatbeltDropLogged.add(base);
+    console.warn(`[host-power] macOS could not apply any power block rule: ${why}`);
+  }
+  return { profile: null, dropped, reason: why, launchRefused };
+}
+
+/** A launch under a profile was refused with the "sandbox-exec: " stderr text. After exec that text can come from the engine or
+ *  its tools, so it never retires anything by itself: the exact profile is probed again, and only a definite non-zero exit of that
+ *  probe retires it (process-wide, like any probe result). Otherwise the profile is skipped for this one session only, so its next
+ *  launch takes the next narrower rule set. Returns what was recorded. */
+export function recordSeatbeltLaunchRefusal(profile: string, session?: object, detail = ""): "probe" | "session" | "none" {
+  if (hostPowerPlatform() !== "darwin") return "none";
+  const again = hostPowerProbeDeps.runSync(hostPowerDeps.sandboxExec, ["-p", profile, "/usr/bin/true"]);
+  if (typeof again.code === "number" && again.code !== 0) { seatbeltProbed.set(profile, { ok: false, why: redactSecretsInText(`probe exit ${String(again.code)}: ${again.stderr}`).replace(/[\r\n\x00-\x1f]+/g, " ").trim().slice(0, 500) }); return "probe"; }
+  if (!session) return "none";
+  let set = seatbeltSessionRefused.get(session);
+  if (!set) seatbeltSessionRefused.set(session, set = new Set());
+  set.add(profile);
+  if (detail) seatbeltSessionDetail.set(session, detail);
+  return "session";
+}
+
+/** Test seam: forget what this process learned about the macOS profiles. */
+export function resetSeatbeltSelectionsForTests(): void { seatbeltProbed.clear(); seatbeltDropLogged.clear(); }
+
+export function planHostPower(command: string, args: string[], env: NodeJS.ProcessEnv | undefined, cwd: string | undefined, noLimitsSession?: object, powerSession?: object): HostPowerPlan {
   cwd = botFolderOrThrow({ cwd });
   const platform = hostPowerPlatform();
   if (platform === "darwin") {
-    if (noLimitsSession && noLimitsMacPowerFallback(noLimitsSession)) return { kind: "unwrapped", reason: "No limits: macOS could not apply the power block" };
+    if (noLimitsSession && noLimitsPowerFallbackActive(noLimitsSession)) return { kind: "unwrapped", reason: "No limits: macOS could not apply the power block" };
     const file = hostPowerDeps.sandboxExec;
     let present = false;
     try { present = statSync(file).isFile(); } catch { present = false; }
     if (!present) return { kind: "refuse", reason: `${file} is missing` };
-    return { kind: "seatbelt", command: file, args: ["-p", noLimitsSession ? NO_LIMITS_SEATBELT_POWER_PROFILE : SEATBELT_POWER_PROFILE, command, ...args] };
+    const session = powerSession ?? noLimitsSession;
+    const selection = selectSeatbeltProfile(noLimitsSession ? NO_LIMITS_SEATBELT_POWER_PROFILE : SEATBELT_POWER_PROFILE, session);
+    if (selection.profile === null) {
+      // No rule set applies (every probe rejected, or sandbox-exec refused every one at launch for this session). Only a No limits
+      // session runs without sandbox-exec (its one session, with the notice); a level below it stays refused (GROK-HOLD: whether
+      // anything weaker is acceptable there is not decided here).
+      if (!noLimitsSession) return { kind: "refuse", reason: selection.launchRefused ? "sandbox-exec refused every power block rule set at launch" : "macOS could not apply any power block rule" };
+      recordNoLimitsMacPowerRefusal(noLimitsSession, selection.reason || "sandbox-exec refused every power block rule set at launch");
+      return { kind: "unwrapped", reason: "macOS could not apply any power block rule" };
+    }
+    return { kind: "seatbelt", command: file, args: ["-p", selection.profile, command, ...args] };
   }
   if (platform !== "linux") return { kind: "refuse", reason: `no power block on ${String(hostPowerDeps.platform())}` };
   const arch = hostPowerDeps.arch();

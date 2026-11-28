@@ -154,7 +154,7 @@ describe.skipIf(!SCALE)("thread deletion drain bench", () => {
       const changes = n("SELECT total_changes() n") - c0;
       const popped = counts.run; // every pop is one frontier DELETE; a lower bound on nodes
       out({ k: "done", finished: !markerWorkPending(db), virtMin: Math.round(virt() / 60000), cpuS: Math.round(cpu / 1000), slices, changes, measuredSlices: measured, walMB: Math.round(walBytes / 1048576), bytesPerChange: measured ? Math.round(walBytes / changes) : null, C: Math.round(revokeCostPerChange(db)),
-        stmts: counts, deny: { line: n("SELECT count(*) n FROM memory_deny_line"), range: n("SELECT count(*) n FROM memory_deny_range"), memory: n("SELECT count(*) n FROM memory_deny_memory"), session: n("SELECT count(*) n FROM memory_deny_session") }, reached: n("SELECT count(*) n FROM memory_revoke_reached"), frontier: n("SELECT count(*) n FROM memory_revoke_frontier"), pending: windowsOpen(), jobs: db.prepare("SELECT revoke_id r,kind k,state s,phase p FROM memory_revoke_jobs").all(), popped, dbMB: Math.round(statSync(path).size / 1048576) });
+        stmts: counts, deny: { line: n("SELECT count(*) n FROM memory_deny_point"), range: n("SELECT count(*) n FROM memory_deny_range"), memory: n("SELECT count(*) n FROM memory_deny_object"), session: n("SELECT count(*) n FROM memory_deny_session") }, reached: n("SELECT count(*) n FROM memory_revoke_reached"), frontier: n("SELECT count(*) n FROM memory_revoke_frontier"), pending: windowsOpen(), jobs: db.prepare("SELECT revoke_id r,kind k,state s,phase p FROM memory_revoke_jobs").all(), popped, dbMB: Math.round(statSync(path).size / 1048576) });
       expect(slices).toBeGreaterThan(0);
     } finally {
       proto.run = orig.run; proto.get = orig.get; proto.all = orig.all;

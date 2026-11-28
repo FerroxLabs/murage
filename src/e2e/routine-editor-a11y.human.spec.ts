@@ -15,7 +15,7 @@ import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openSidebar } from "./fixtures.ts";
+import { dismissFirstRunWelcome, openSidebar } from "./fixtures.ts";
 import { axeScriptPath } from "./axe.ts";
 import { openSidebarPlace } from "./sidebar-nav";
 import { openQuickForm } from "./routine-grid";
@@ -53,6 +53,10 @@ async function openRoutines(page: import("@playwright/test").Page) {
   // about the routine editor, so it starts from a machine that has seen it
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
+  const welcome = page.getByRole("dialog", { name: "Welcome to Murage", exact: true });
+  await expect(welcome, "a fresh install opens the first-run welcome").toBeVisible();
+  await dismissFirstRunWelcome(page);
+  await expect(welcome, "the first-run welcome is dismissed before the first action").toBeHidden();
   const sidebar = await openSidebar(page);
   await openSidebarPlace(sidebar, "routines");
   await expect(page.getByRole("heading", { name: "Routines", exact: true })).toBeVisible();

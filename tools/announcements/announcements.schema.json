@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://updates.ferroxlabs.com/murage/announcements.schema.json",
+  "$id": "https://murage.ai/murage/announcements.schema.json",
   "title": "Murage announcements.yml",
   "description": "Editor help for announcements.yml. lint.mjs is the real check: it runs the app's own rules (shared/announcements.ts) plus the copy rules.",
   "type": "object",

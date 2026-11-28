@@ -55,3 +55,25 @@ export class RetainedCloses {
     return merged;
   }
 }
+
+/** E15-V3: one turn a reload ended, on one engine instance. */
+export interface EndedTurn { readonly threadId: string; readonly turnId: string; readonly instanceId: string }
+
+/** E15-V3: which of the turns a reload ended still have their OWN engine child open. Decided per turn by that turn's own instance and
+ * only against THIS reload's `unconfirmed` instances, never by `reloadRetained` (a thread an earlier reload kept, or another member's
+ * engine on the same thread, says nothing about this turn). A turn whose instance is not unconfirmed, whose adapter cannot observe a
+ * close, or whose adapter says it holds no child of the exact turn (`knowsTurnClose` / `turnChildTracked` false) is closed now. The
+ * adapter is asked with the turn id: Claude answers a call without one with a promise that never settles. Only turns still open
+ * carry a `close`. The caller never lets this throw into the reload (a throw means "closed now" for every turn). */
+export async function turnCloses(turns: readonly EndedTurn[], unconfirmed: readonly (Watcher & { instanceId: string })[] | undefined): Promise<Array<{ turn: EndedTurn; close?: Promise<void> }>> {
+  const byInstance = new Map((unconfirmed ?? []).map((instance) => [instance.instanceId, instance.adapter] as const));
+  return Promise.all(turns.map(async (turn) => {
+    const adapter = byInstance.get(turn.instanceId);
+    if (!adapter?.awaitTurnClose) return { turn };
+    const known = adapter.knowsTurnClose ? adapter.knowsTurnClose(turn.threadId, turn.turnId) : adapter.turnChildTracked?.(turn.threadId, turn.turnId);
+    if (known === false) return { turn };
+    const close = adapter.awaitTurnClose(turn.threadId, turn.turnId);
+    close.catch(() => undefined);
+    return await stillOpen(close) ? { turn, close } : { turn };
+  }));
+}

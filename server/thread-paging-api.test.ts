@@ -14,7 +14,8 @@ const CARD_AT = 20;
 const FRAME_PAGE = 100;
 
 let fixture: VerificationServer, headers: Record<string, string>;
-let ids: { bot: string; long: string; short: string; group: string; groupLong: string; groupShort: string; card: string };
+let ids = {} as { bot: string; long: string; short: string; group: string; groupLong: string; groupShort: string; card: string };
+let seedStatus = 0;
 
 beforeAll(async () => {
   // Build the open card through its real owner authority and durable queue,
@@ -49,8 +50,9 @@ beforeAll(async () => {
     registerHooks({load(url,context,next){
       const loaded=next(url,context);
       if(!url.endsWith('/server/index.ts'))return loaded;
-      const source=String(loaded.source),anchor='    const accessRoute =';
-      if(!source.includes(anchor))throw Error('paging fixture route anchor missing');
+      const source=String(loaded.source),anchor='    // GET/PUT /api/bots/:id/access lives in server/settings/access-routes.ts';
+      // A moved anchor leaves the seed route out; the seed assertion below (status 200) reports it.
+      if(!source.includes(anchor)){console.error('[paging-fixture] anchor missing');return loaded;}
       return {...loaded,source:source.replace(anchor,${JSON.stringify(seedRoute)}+anchor)};
     }});
   ` });
@@ -60,7 +62,9 @@ beforeAll(async () => {
   };
   await signIn();
   const seeded = await fetch(`${fixture.info.url}/api/paging-fixture-seed`, { method: 'POST', headers });
-  expect(seeded.status).toBe(200);
+  // Asserted in the first test, not here, so a missing seed route fails tests at their own lines instead of skipping them all.
+  seedStatus = seeded.status;
+  if (seedStatus !== 200) return;
   ids = await seeded.json() as typeof ids;
   await fixture.restart();
   await signIn();
@@ -73,6 +77,10 @@ const call = async (method: string, path: string) => {
 };
 const snapshot = async () => (await call("GET", "/api/bots?messages=0")).body as { bots: any[]; groups: any[] };
 const texts = (messages: any[]) => messages.map((message) => message.text ?? message.card?.title);
+
+it("seeds its threads through a route seated in the production router", () => {
+  expect(seedStatus, 'paging seed route is seated in the production router').toBe(200);
+});
 
 describe("bot thread switch", () => {
   it("answers a page that reaches back to the open request card", async () => {

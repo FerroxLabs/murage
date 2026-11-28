@@ -56,7 +56,7 @@ it('G-D5: checking transition is logged and replaces recalled context',async()=>
 });
 it('G-D6: no-receipt steer proves recall-free and room last resort judges before return',()=>{
  const s=readFileSync(new URL('../index.ts',import.meta.url),'utf8');
- const steer=s.slice(s.indexOf('const steerSessionHolds'),s.indexOf('// Only an engine',s.indexOf('const steerSessionHolds')));
+ const steer=s.slice(s.indexOf('const steerSessionState'),s.indexOf('// Only an engine',s.indexOf('const steerSessionState')));
  expect(steer).toContain('proveRetainedSession(');expect(steer).toContain('sessionHadFrame(');
  const room=s.slice(s.indexOf('const prepareRoomMemory=async'),s.indexOf('const selection=memberTurnSelection',s.indexOf('const prepareRoomMemory=async')));
  expect(room.indexOf('proveRetainedSession(')).toBeGreaterThan(0);

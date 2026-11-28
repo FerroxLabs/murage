@@ -28,7 +28,7 @@ const committed = () => meter("paceMeasured") + meter("paceUnmeasured");
 afterEach(() => {
   revokeBudget.REVOKE_PACE.bytesPerMinute = PACE0; revokeBudget.REVOKE_PACE_COMMIT.rows = ROWS0;
   revokeBudget.revokePaceTestHooks.unmeasurable = false; revokeBudget.revokePaceTestHooks.osUnknown = false; revokeBudget.revokePaceTestHooks.inResetWindow = null; revokeBudget.revokePaceTestHooks.beforeResetGuard = null;
-  revokeBudget.revokePaceTestHooks.resetCounter = null; revokeBudget.revokePaceTestHooks.dataVersion = null; revokeBudget.revokePaceTestHooks.platform = null;
+  revokeBudget.revokePaceTestHooks.dataVersion = null;
   setRevokeBudgetClock(); resetRevokeWriteBudget(); stopMemoryRevocation(); resetDarwinWrittenForTest();
 });
 
@@ -600,6 +600,30 @@ describe("r3.6: the macOS OS write floor and the unknown minute", () => {
   });
 });
 
+describe("sweep-1021 B7: the os-unknown line names the cause that made the minute unknown", () => {
+  const unknownLine = (reading: (k: number) => Record<string, unknown>): string => {
+    let at = 0, k = 0;
+    const lines: string[] = [];
+    const budget = new IoBudget({ read: () => ({ at, fsWriteBlocks: 0, cpuMicros: 0, ...reading(k) }), log: (l: string) => lines.push(l), onScale: () => {}, isIdle: () => true, systemOverloaded: () => null, onSample: () => {} } as never);
+    for (k = 0; k <= 3; k++) { at = k * MINUTE; budget.tick(); }
+    // rel/1023: the line is "os writes unknown (...)" when the os count was unreadable and "write coverage unknown (...)" when it was read (io-budget-idle-planned.test.ts)
+    return lines.find(l => l.includes("os writes unknown") || l.includes("write coverage unknown")) ?? "";
+  };
+  it("a meter that does not cover every writer is not blamed on the diskWritten reader", () => {
+    const line = unknownLine(() => ({ coverageKnown: false }));
+    expect(line).toContain("does not cover every writer");
+    expect(line).not.toContain("diskWritten");
+  });
+  it("a restarted meter is not blamed on the diskWritten reader", () => {
+    const line = unknownLine(k => ({ coverageKnown: true, sentinelGeneration: `gen-${k}` }));
+    expect(line).toContain("restarted");
+    expect(line).not.toContain("diskWritten");
+  });
+  it("an unreadable OS count still names the diskWritten reader", () => {
+    expect(unknownLine(() => ({ osKnown: false }))).toContain("diskWritten could not be read");
+  });
+});
+
 /** A copied log before any drain commit, with another connection in this process for the reset window. */
 function resetFixture() {
   const fx = walStorm(500), other = new DatabaseSync(dbFile(fx.db));
@@ -623,15 +647,13 @@ describe("r3.6d reset accounting on every OS", { timeout: 900_000 }, () => {
       flipAll(fx);
       other.exec("CREATE TABLE IF NOT EXISTS iod36_win(x BLOB)");
       other.prepare("PRAGMA wal_checkpoint(PASSIVE)").get(); // a completely copied log: the drain's next look resets it
-      let foreign = -1, tail = -1, counter = 1000;
-      revokeBudget.revokePaceTestHooks.resetCounter = () => counter;
+      let foreign = -1, tail = -1;
       revokeBudget.revokePaceTestHooks.inResetWindow = () => {
         revokeBudget.revokePaceTestHooks.inResetWindow = null;
         const m0 = walIndexMark(fx.db)!;
         other.prepare("INSERT INTO iod36_win VALUES (randomblob(20000))").run(); // the first foreign commit inside the window
         expect(Number((other.prepare("SELECT count(*) AS n FROM iod36_win").get() as { n: number }).n)).toBe(1);
         other.prepare("INSERT INTO iod36_win VALUES (randomblob(20000))").run();
-        counter += 123456;
         const m1 = walIndexMark(fx.db)!;
         foreign = m1.salt === m0.salt ? m1.mxFrame - m0.mxFrame : m1.mxFrame; // its own frames (a restart starts the log at them)
         tail = m1.mxFrame - m1.nBackfill; // all the TRUNCATE has to copy
@@ -645,17 +667,19 @@ describe("r3.6d reset accounting on every OS", { timeout: 900_000 }, () => {
       expect(meter("logResets") - r0).toBe(1);
       expect(after.mxFrame).toBe(0); // and it was copied and reset: nothing else was in the log
       expect(Number((other.prepare("SELECT count(*) AS n FROM iod36_win").get() as { n: number }).n)).toBe(2);
-      expect(meter("paceDated") - d0).toBe(123456);
-      expect(revokeBudget.revokePacedBytes(now) - p0).toBe(123456);
-      expect(meter("resetForeignMeasured")).toBe(1);
-      expect(meter("resetForeignUnknown")).toBe(0);
+      // 1.0.21 B1 (MEMORY-V2-DESIGN 4.8: no OS counter is an input on any OS): the foreign commits are charged at the rows x W fallback,
+      // no longer at the thread's OS delta (was 123456 here)
+      const fallback = (revokeBudget.REVOKE_PACE_COMMIT.rows + 512) * revokeBudget.revokeChangeCeiling(fx.db);
+      expect(meter("paceDated") - d0).toBe(fallback);
+      expect(revokeBudget.revokePacedBytes(now) - p0).toBe(fallback);
+      expect(meter("resetForeignMeasured")).toBe(0);
+      expect(meter("resetForeignUnknown")).toBe(1);
     } finally { other.close(); fx.close(); }
   });
 
   it("reset zero counter is unknown", () => {
     const f = resetFixture();
     try {
-      revokeBudget.revokePaceTestHooks.resetCounter = () => 100;
       revokeBudget.revokePaceTestHooks.inResetWindow = f.foreign;
       f.reset();
       expect(revokeBudget.revokePacedBytes()).toBe(f.fallback());
@@ -667,8 +691,6 @@ describe("r3.6d reset accounting on every OS", { timeout: 900_000 }, () => {
   it("reset quiet", () => {
     const f = resetFixture();
     try {
-      let counter = 0;
-      revokeBudget.revokePaceTestHooks.resetCounter = () => counter += 4096;
       f.reset();
       expect(revokeBudget.revokePacedBytes()).toBe(0);
       expect(meter("logResets")).toBe(1);
@@ -679,7 +701,7 @@ describe("r3.6d reset accounting on every OS", { timeout: 900_000 }, () => {
   it("reset unknown counter win32", () => {
     const f = resetFixture();
     try {
-      revokeBudget.revokePaceTestHooks.platform = "win32";
+      // 1.0.21 B1: there is no per-OS rule left; this case keeps the win32 name and checks the one rule (fallback)
       revokeBudget.revokePaceTestHooks.inResetWindow = f.foreign;
       f.reset();
       expect(revokeBudget.revokePacedBytes()).toBe(f.fallback());
@@ -693,7 +715,6 @@ describe("r3.6d reset accounting on every OS", { timeout: 900_000 }, () => {
     const dv = () => Number(f.fx.db.prepare("PRAGMA data_version").get()!.data_version);
     try {
       const before = dv();
-      revokeBudget.revokePaceTestHooks.resetCounter = () => null;
       f.reset();
       expect(dv()).toBe(before);
       expect(revokeBudget.revokePacedBytes()).toBe(0);
@@ -710,33 +731,31 @@ describe("r3.6d reset accounting on every OS", { timeout: 900_000 }, () => {
   it("reset busy copies foreign", () => {
     const f = resetFixture(), reader = new DatabaseSync(dbFile(f.fx.db));
     try {
-      let counter = 0, frames = 0;
+      let frames = 0;
       f.fx.db.exec("PRAGMA busy_timeout=5000");
-      revokeBudget.revokePaceTestHooks.resetCounter = () => counter;
       revokeBudget.revokePaceTestHooks.inResetWindow = () => {
         f.foreign();
         frames = walIndexMark(f.fx.db)!.mxFrame;
         reader.exec("BEGIN"); reader.prepare("SELECT count(*) FROM iod36_reset").get();
-        counter = 65536;
       };
       f.reset();
       expect(meter("logResetsBusy")).toBe(1);
       expect(meter("logResets")).toBe(0);
       expect(walIndexMark(f.fx.db)!.nBackfill).toBe(frames);
       expect(frames).toBeGreaterThan(0);
-      expect(revokeBudget.revokePacedBytes()).toBe(65536);
-      expect(meter("paceDated")).toBe(65536);
-      expect(meter("resetForeignMeasured")).toBe(1);
+      // 1.0.21 B1: charged at the fallback on every OS, not at the OS delta (was 65536)
+      expect(revokeBudget.revokePacedBytes()).toBe(f.fallback());
+      expect(meter("paceDated")).toBe(f.fallback());
+      expect(meter("resetForeignUnknown")).toBe(1);
+      expect(meter("resetForeignMeasured")).toBe(0);
       expect(Number(f.fx.db.prepare("PRAGMA busy_timeout").get()!.timeout)).toBe(5000);
     } finally { reader.close(); f.close(); }
   });
 
   it("readyLog before first commit", () => {
-    for (const samples of [[null, null], [100, 50], [100, 100]]) {
+    for (let round = 0; round < 3; round++) { // 1.0.21 B1: the three OS-counter shapes this looped over are no longer read; three rounds stay
       const f = resetFixture();
       try {
-        let i = 0;
-        revokeBudget.revokePaceTestHooks.resetCounter = () => samples[i++]!;
         revokeBudget.revokePaceTestHooks.inResetWindow = f.foreign;
         f.reset();
         expect(revokeBudget.revokePacedBytes()).toBe(f.fallback());
@@ -751,10 +770,9 @@ describe("r3.6d reset accounting on every OS", { timeout: 900_000 }, () => {
     for (const beforeMissing of [true, false]) {
       const f = resetFixture(); flipAll(f.fx); f.other.prepare("PRAGMA wal_checkpoint(PASSIVE)").get(); // a copied log, as in the win32 sibling: the TRUNCATE is deterministic
       try {
-        let reads = 0, counter = 0, called = false;
+        let reads = 0, called = false;
         f.fx.db.exec("PRAGMA busy_timeout=5000");
         revokeBudget.revokePaceTestHooks.dataVersion = () => beforeMissing || reads++ > 0 ? null : 1;
-        revokeBudget.revokePaceTestHooks.resetCounter = () => counter += 4096;
         revokeBudget.revokePaceTestHooks.inResetWindow = () => { called = true; f.foreign(); };
         f.reset();
         expect(called).toBe(!beforeMissing);

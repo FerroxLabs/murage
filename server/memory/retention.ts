@@ -5,10 +5,12 @@ import { requireMemoryOwner, readCorrectionTarget, approveCorrection, assertGene
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { contentStampOf, PagedScan, storeAtMost } from "./status-scan.ts";
 import { STATUS_SCAN_INTERVAL_MS } from "./health.ts";
+import { withSecureDelete } from "../secure-delete.ts";
 
 function transition(ticket:object,id:string,version:number,from:"active"|"archived",to:"active"|"archived",familyMember=false){
   requireMemoryOwner(ticket);
-  transaction(db=>{
+  // 1.0.22 item 1a: an owner archive blanks record text: freed pages zeroed (server/secure-delete.ts)
+  withSecureDelete(database(),()=>transaction(db=>{
     // Memory screen B2 (spec r3 2.5): a forgotten record is never made active again, before or after its job ends.
     if(to==="active")assertNotForgotten(db,id);
     const row=db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state=?").get(id,version,from);
@@ -81,7 +83,7 @@ function transition(ticket:object,id:string,version:number,from:"active"|"archiv
     db.prepare("UPDATE memory_projection_receipts SET lexical_status=? WHERE record_id=? AND record_version=?").run(to==="active"?"pending":"pending-archive",id,version);
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
     revokeRecordDisclosures(db,to==="archived"?"archive":"restore-archive",{recordIds:[id]});
-  });
+  }));
   return {id,version,state:to};
 }
 export function archiveMemoryRecord(ticket:object,id:string,version:number){return transition(ticket,id,version,"active","archived");}

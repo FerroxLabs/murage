@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createDataWriterGate } from "./data-writers.ts";
+import { createDataWriterGate, stopDataWriters } from "./data-writers.ts";
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 
 /** The server releases its delegated lease from process "exit" only when this flag is set (server/index.ts). */
@@ -60,5 +60,32 @@ describe("data writer gate", () => {
     finish(true);
     expect(await Promise.all([a, b])).toEqual([true, true]);
     expect(stop).toHaveBeenCalledOnce();
+  });
+});
+
+describe("stopDataWriters order", () => {
+  it("the file-name workers are joined before the connection closes, and again after it (one started meanwhile)", async () => {
+    const events: string[] = [];
+    const ok = await stopDataWriters({
+      stopEngineHistory: async () => { events.push("engines"); return true; },
+      closeDatabase: () => { events.push("close"); },
+      stopWalMaintenance: async () => { events.push("wal"); return true; },
+      stopIndexBuilds: async () => { events.push("builds"); return true; },
+    });
+    expect(ok).toBe(true);
+    // a build that commits between the close and its own end changes the file after the close
+    expect(events.indexOf("builds")).toBeLessThan(events.indexOf("close"));
+    expect(events.filter(event => event === "builds")).toHaveLength(2);
+    expect(events.lastIndexOf("builds")).toBeGreaterThan(events.indexOf("close"));
+  });
+  it("a build that does not end before the close keeps the lease", async () => {
+    let calls = 0;
+    const ok = await stopDataWriters({ stopEngineHistory: async () => true, closeDatabase: () => {}, stopWalMaintenance: async () => true, stopIndexBuilds: async () => ++calls > 1 ? false : true });
+    expect(ok).toBe(false);
+  });
+  it("a build still alive at the close keeps the lease even when the join after the close succeeds", async () => {
+    let calls = 0;
+    const ok = await stopDataWriters({ stopEngineHistory: async () => true, closeDatabase: () => {}, stopWalMaintenance: async () => true, stopIndexBuilds: async () => ++calls > 1 });
+    expect(ok).toBe(false);
   });
 });

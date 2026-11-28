@@ -108,7 +108,10 @@ describe("settings control survival (G1)", () => {
 
   it("knows every shipped control from both page lanes, including memory.browser and connections.claude-code", () => {
     // 39: G9 gap check H5 added the Browser choice row (bot.access.browser-choice), where "use my Chrome" lands.
-    expect(built.counts).toMatchObject({ app: 84, bot: 39, botIndexed: 39, dataSetting: 39 });
+    // 83: the 1.0.20 re-cut removed the usage analytics switch (general.analytics): Murage sends no usage analytics.
+    // 82: the 1.0.20 re-cut removed Murage's own HighLevel card (connections.highlevel): HighLevel connects through Connected apps.
+    // 40: bot pages B2 added the Archive or delete row (bot.identity.archive).
+    expect(built.counts).toMatchObject({ app: 82, bot: 40, botIndexed: 40, dataSetting: 40 });
     expect(built.dataSetting).toEqual(built.bot.map((row) => row.id).sort());
   });
 

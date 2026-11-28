@@ -226,7 +226,7 @@ export function ensureBotReviewIndex(db: DatabaseSync, hooks: EnsureIndexHooks =
 }
 
 /** Every stored-attachment file name (uuid.ext, lowercase) a message's JSON mentions: the definition conversation deletion asks by. */
-export const ATTACHMENT_NAME_IN_JSON = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,5}/gi;
+export const ATTACHMENT_NAME_IN_JSON = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:tar\.(?:gz|bz2|xz|zst)|[a-z0-9]{1,5})/gi;
 export function attachmentNamesIn(json: string): string[] {
   return [...new Set([...json.matchAll(ATTACHMENT_NAME_IN_JSON)].map((m) => m[0].toLowerCase()))];
 }
@@ -255,6 +255,8 @@ export function indexAttachmentNamesChunk(db: DatabaseSync, rows = BACKFILL_CHUN
     const cursor = Math.max(state.cursor, reached);
     const done = cursor >= newest;
     writeIndexState(db, "attachment_name", { done: done ? 1 : 0, cursor, skipped: state.skipped });
+    // in this same synchronous step, so no request can run between the index being complete and what reads it being warm
+    if (done) for (const hook of attachmentIndexDoneHooks) { try { hook(db); } catch { /* the first lookup does the work instead */ } }
     return !done;
   });
 }
@@ -564,6 +566,11 @@ export async function runTranscriptBackfill(db: DatabaseSync, stillOpen: () => b
     }
   }
 }
+
+/** Called synchronously by the chunk that completes the attachment-name index, with the handle it ran on (message-db.ts warms the phone image
+ * lookup's pointers here, off every request). */
+const attachmentIndexDoneHooks = new Set<(db: DatabaseSync) => void>();
+export function onAttachmentIndexDone(hook: (db: DatabaseSync) => void): void { attachmentIndexDoneHooks.add(hook); }
 
 /** Called when a pass finds the attachment-name index complete (the deletion of a conversation that had to keep a file waits on it). */
 const attachmentIndexListeners = new Set<() => void>();

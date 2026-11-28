@@ -44,6 +44,7 @@ describe("what an unconfigured connectors response carries", () => {
       fluxBrokerEnabled: false,
       freeRunsRemainingToday: null,
       ownKeyRetired: false,
+      inventoryScope: null, // K17 S2: the scope rides every panel answer; null unless the answer carries the owner's own list
     });
     // `fluxConfigured` is a boolean the server computes; the key itself never
     // leaves the process.

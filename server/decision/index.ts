@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 export {
   installProducerBindings, producerAuthorityFor, producerNoLimitsPolicyFor, registerProducerQueue, installProducerQueueFactory, producerQueue,
-  readRequestExecution, readApprovalExecution, openRequest, decide, presentApproval, attachQueue, answerApproval, onLevelChange,
+  readRequestExecution, readApprovalExecution, openRequest, decide, presentApproval, attachQueue, answerApproval, retryDelivery, onLevelChange,
   installProvenanceReader, installDenySources, describeAction, installRequestIngress,
   installClaimVerifier, recover, settle, readApproval, openApprovals, lookupApproval,
   installDecisionTransport, installDecisionHost, installQueueSources, deliverRequest, readTurnPolicy, cancelRequests, answerQuestionReply, relistQuestions, executeService, saveContinuation, readContinuation, deleteContinuation, listContinuations, installDecisionObserver,

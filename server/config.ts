@@ -258,6 +258,10 @@ const featureConfigSchema = z.object({
   botsSharedAcrossTeams: z.boolean().optional(),
   /** 1.0.9 phone tools. Off unless explicitly true; also needs a desktop host, the launch proof and an unshared workspace (server/phones/offered.ts). */
   phoneTools: z.boolean().optional(),
+  /** WARM W1 D1 flag `warm.s2r`: mounted Claude S2-R + Codex reuse. Off unless explicitly true (server/drivers/warm-s2r-flag.ts). */
+  warmS2r: z.boolean().optional(),
+  /** grokwarm flag `warm.acpReuse`: prompt-scoped ACP reuse. Off unless explicitly true (server/drivers/warm-acp-reuse-flag.ts). */
+  warmAcpReuse: z.boolean().optional(),
   /** 1.0.9 share and ask. Its own flag, independent of phoneTools; same host conditions (server/phones/offered.ts shareAskOffered). */
   phoneShareAsk: z.boolean().optional(),
   /** Unset: on when a Flux key is present (index.ts learningDefaultOn); an explicit false keeps the activation hold. */
@@ -305,6 +309,9 @@ const appConfigSchema = z.object({
   automationsPaused: z.boolean().optional(),
   /** The No limits terms this install accepted (full-access.ts). One door, on the desktop proof: no generic config route. */
   noLimitsTermsVersion: z.number().int().nonnegative().optional(),
+  /** F33: the one Automatic-mode notice of a fresh install (automatic-default.ts). Written only at the fresh-install seed and by
+   *  its own desktop door; an upgraded install never has it, so it never sees the notice. */
+  automaticNotice: z.enum(["pending", "acknowledged"]).optional(),
   modelProviders: z.object({ bank: z.string().max(200000).optional() }).strict().optional(),
   telegram: z.object({ botToken: z.string().max(256).optional(), targetBotId: z.string().max(160).optional() }).strict().optional(),
   slack: z.object({ appToken: z.string().max(512).optional(), botToken: z.string().max(512).optional(),
@@ -372,8 +379,13 @@ const appConfigSchema = z.object({
   /** Optional external search credentials are write-only workspace state.
    * Absent keeps engine search. Only desktop Murage-specific key variables
    * are imported; ambient engine/MCP provider credentials remain separate. */
-  webSearch: z.object({ provider: z.enum(["engine", "auto", "flux", "tavily", "exa", "firecrawl", "off"]).optional(), tavilyApiKey: optionalText, exaApiKey: optionalText, firecrawlApiKey: optionalText }).strict().optional(),
-  /** Native HighLevel (HL-S2): the owner's Private Integration token. Write-only workspace state kept in the secret
+  webRead: z.object({ enabled: z.boolean().optional() }).strict().optional(),
+  /** The provider Web search had before the Tools page switched it Off, so On can restore it. A top-level key on purpose:
+   * v1.0.20's strict webSearch section rejects unknown keys (the whole config would fail to load on rollback), while it strips an unknown top-level key. */
+  webSearchLast: z.enum(["engine", "auto", "flux", "tavily", "exa", "firecrawl"]).optional(),
+  webSearch: z.object({ provider: z.enum(["engine", "auto", "flux", "tavily", "exa", "firecrawl", "off"]).optional(), readEnabled: z.boolean().optional(), tavilyApiKey: optionalText, exaApiKey: optionalText, firecrawlApiKey: optionalText }).strict().optional(),
+  /** Murage's own HighLevel (removed in 1.0.20): the section stays in the schema only so a save never drops the owner's
+   *  stored token from disk (cleanup is a 1.0.21 row, with consent). Nothing reads it. Was: the owner's Private Integration token. Write-only workspace state kept in the secret
    * store (credentials.bin / the Cloud supervisor); a location is live only after the owner checks and confirms it. */
   highlevel: z.object({ privateToken: optionalText }).strict().optional(),
   /** Flux Router key. Workspace-scoped on purpose: FLUX_API_KEY is listed in
@@ -423,6 +435,11 @@ const appConfigSchema = z.object({
     servers: z.number().int().nonnegative().max(100000).optional(),
     needsKey: z.number().int().nonnegative().max(100000).optional(),
   }).strict().optional(),
+  /** F5n (Q-K5) source cells (C-K5, section 5a): the owner's read switch per other-app cell and its epoch. Written only through the
+   *  source route's state function (never the generic config route); a restore never carries it (W15). */
+  engineSetup: z.object({
+    sources: z.record(z.string().regex(/^src_[0-9a-f]{24}$/), z.object({ optIn: z.boolean(), epoch: z.number().int().nonnegative() }).strict()).optional(),
+  }).strict().optional(),
   /** User-configured MCP servers, mounted into every capable engine. Kept
    * loosely typed HERE on purpose: parseStoredConfig throws away the whole
    * file on a schema error, and one bad server entry must degrade to a
@@ -443,7 +460,8 @@ const notificationPreferencesPatchSchema = notificationPreferencesSchema.extend(
   previewContent: notificationPreferencesSchema.shape.previewContent.removeDefault().optional(),
 });
 // The Claude Code receipt (time and counts) is written only by the import route, so a patch may carry nothing but the switch.
-const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, settingsDefaultMode: true, hermesProfilesPinned: true, noLimitsTermsVersion: true }).extend({ notifications: notificationPreferencesPatchSchema.optional(), claudeCodeImport: z.object({ enabled: z.boolean() }).strict().optional() });
+const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, engineSetup: true, settingsDefaultMode: true, hermesProfilesPinned: true, noLimitsTermsVersion: true, automaticNotice: true }).extend({ notifications: notificationPreferencesPatchSchema.optional(), claudeCodeImport: z.object({ enabled: z.boolean() }).strict().optional() });
+const isJsonObject = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
@@ -451,6 +469,7 @@ export interface AppConfig {
   /** Pause scheduled/webhook admission; manual owner work remains available. */
   automationsPaused?: boolean;
   noLimitsTermsVersion?: number;
+  automaticNotice?: "pending" | "acknowledged";
   telegram?: { botToken?: string; targetBotId?: string };
   slack?: { appToken?: string; botToken?: string; teamId?: string; appId?: string; ownerUserId?: string; targetBotId?: string };
   discord?: { botToken?: string; applicationId?: string; ownerUserId?: string; targetBotId?: string };
@@ -467,6 +486,7 @@ export interface AppConfig {
   newBots?: { effort?: EffortLevel | null; permissionLevel?: "ask" | "auto" | "full" | "no-limits" };
   computer?: { defaultForNewBots?: DefaultComputerChoice };
   claudeCodeImport?: { enabled?: boolean; lastImportedAt?: number | null; skills?: number; servers?: number; needsKey?: number };
+  engineSetup?: { sources?: Record<string, { optIn: boolean; epoch: number }> };
   mcpServers?: Record<string, unknown>;
   language?: string;
   xai?: { key?: string; url?: string };
@@ -481,7 +501,9 @@ export interface AppConfig {
   imageGen?: { key?: string; enabled?: boolean; connectionId?: string; model?: string;
     /** Check the default image model once a day with one small render (off by default). */
     dailyProbe?: boolean };
-  webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
+  webRead?: { enabled?: boolean };
+  webSearchLast?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl";
+  webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; readEnabled?: boolean; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   highlevel?: { privateToken?: string };
   flux?: { apiKey?: string; memory?: { enabled?: boolean; inject?: boolean; owner?: boolean; spaces?: boolean; external?: boolean }; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
   decider?: { enabled?: boolean; provider?: "flux"; jobs?: { roomRouting?: boolean }; byoKey?: string; baseUrl?: string };
@@ -494,6 +516,8 @@ export interface AppConfig {
   features?: {
     botsSharedAcrossTeams?: boolean;
     phoneTools?: boolean;
+    warmS2r?: boolean;
+    warmAcpReuse?: boolean;
     phoneShareAsk?: boolean;
     learningDefaultOn?: boolean;
     projectsLead?: boolean; projectsGoals?: boolean; projectsBudgets?: boolean; projectsWorkProfile?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; skillRecorder?: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; cloudBoxComputers?: boolean; browser?: boolean; catalogFeaturedOnly?: boolean;
@@ -610,6 +634,8 @@ export function parseConfigPatch(value: JsonValue): ConfigPatch {
   // refuses the field outright rather than leaning on the patch schema's
   // silent strip — a strip is a side effect of `.omit()` that a later schema
   // change could quietly undo, and this must be a code property.
+  // F5n source cells: the owner's read switches for other apps change only through the source route's state function.
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "engineSetup")) throw Object.assign(new Error("engineSetup is managed from Your tools, not this route"), { status: 400 });
   if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "mcpServers")) {
     throw Object.assign(
       new Error("mcpServers is managed from the MCP servers panel on the desktop, not this route"),
@@ -619,6 +645,9 @@ export function parseConfigPatch(value: JsonValue): ConfigPatch {
   // The terms decide whether a turn runs with no cards, and this route is reachable from a paired phone: same refusal.
   if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "noLimitsTermsVersion")) {
     throw Object.assign(new Error("No limits terms are accepted in the Murage app on the desktop."), { status: 400 });
+  }
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "automaticNotice")) {
+    throw Object.assign(new Error("The Automatic mode notice is answered in the Murage app on the desktop."), { status: 400 });
   }
   // The owner's time zone is applied to the running server as it is saved, so
   // it has one door: PUT /api/owner/timezone (owner-time-zone.ts).
@@ -738,6 +767,12 @@ function loadConfigWithoutOverlay(): AppConfig {
     catch { throw new PersistedStateRecoveryError(file, "invalid-shape"); }
   }
   cfg.settingsDefaultMode ??= saved === undefined ? "simple" : "advanced";
+  // A webSearch.readEnabled a dev build wrote reads as the one stored switch (webRead.enabled); the next save rewrites the file v1.0.20-safe.
+  if (cfg.webSearch && cfg.webSearch.readEnabled !== undefined) {
+    // fail closed: a leftover Off wins over a stored On (the dev build that wrote it was the later write; backup/restore agree, projectWebReadPermission)
+    if (cfg.webSearch.readEnabled === false) cfg.webRead = { ...cfg.webRead, enabled: false };
+    delete cfg.webSearch.readEnabled;
+  }
   if (process.env.MURAGE_CLOUD_ROLE === "home") {
     assertNoCloudPlaintext(cfg);
     // The saved Flux Memory switches apply on a cloud home too: without this a
@@ -788,7 +823,6 @@ function loadConfigWithoutOverlay(): AppConfig {
     if (process.env.MURAGE_EXA_SEARCH_KEY !== undefined) cfg.webSearch.exaApiKey = process.env.MURAGE_EXA_SEARCH_KEY;
     if (process.env.MURAGE_FIRECRAWL_SEARCH_KEY !== undefined) cfg.webSearch.firecrawlApiKey = process.env.MURAGE_FIRECRAWL_SEARCH_KEY;
   }
-  if (process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN !== undefined) cfg.highlevel = { ...cfg.highlevel, privateToken: process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN };
   cfg.flux = { ...cfg.flux };
   if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
   if (process.env.MURAGE_FLUX_CONNECTION_ALIASES !== undefined) cfg.flux.connectionAliases = appConfigSchema.shape.flux.unwrap().shape.connectionAliases.parse(JSON.parse(process.env.MURAGE_FLUX_CONNECTION_ALIASES));
@@ -827,7 +861,6 @@ export function syncCredentialEnv(patch: ConfigWritePatch): void {
     [patch.webSearch?.tavilyApiKey, "MURAGE_TAVILY_SEARCH_KEY"],
     [patch.webSearch?.exaApiKey, "MURAGE_EXA_SEARCH_KEY"],
     [patch.webSearch?.firecrawlApiKey, "MURAGE_FIRECRAWL_SEARCH_KEY"],
-    [patch.highlevel?.privateToken, "MURAGE_HIGHLEVEL_PRIVATE_TOKEN"],
     [patch.flux?.apiKey, "FLUX_API_KEY"],
   ];
   for (const [value, name] of secrets) {
@@ -886,8 +919,6 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "MURAGE_TAVILY_SEARCH_KEY",
   "MURAGE_EXA_SEARCH_KEY",
   "MURAGE_FIRECRAWL_SEARCH_KEY",
-  // The owner's HighLevel Private Integration token: only the harness's native HighLevel client sends it.
-  "MURAGE_HIGHLEVEL_PRIVATE_TOKEN",
   // Flux Router. The whole point of listing it: the raw workspace key must
   // never ride into a spawned CLI's env. Routing injects it post-strip.
   "FLUX_API_KEY",
@@ -952,6 +983,9 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "CURSOR_AUTH_TOKEN",
   "CLINE_API_KEY",
   "META_API_KEY",
+  "COMMAND_CODE_API_KEY",
+  "KIRO_API_KEY",
+  "WINDSURF_API_KEY",
 ] as const;
 
 /** Strip every credential from the env of a pre-save CLI probe or a Claude
@@ -1070,13 +1104,23 @@ function writeConfigPatch(patch: ConfigWritePatch): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "highlevel", "notifications", "spend", "flux", "profile", "rooms", "localVm", "features", "decider", "computer", "claudeCodeImport"] as const) {
+  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webRead", "webSearch", "highlevel", "notifications", "spend", "flux", "profile", "rooms", "localVm", "features", "decider", "computer", "claudeCodeImport"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
     const merged: JsonObject = current.success ? { ...current.data } : {};
     Object.assign(merged, section);
     disk[key] = merged;
+  }
+  // Page reading has ONE stored home: top-level webRead.enabled, which v1.0.20 strips. v1.0.20's strict webSearch section rejects any other
+  // key (the whole config would fail to load on rollback), so a webSearch.readEnabled save, or one left by a dev build, moves here.
+  if (isJsonObject(disk.webSearch) && Object.hasOwn(disk.webSearch, "readEnabled")) {
+    const moved = disk.webSearch.readEnabled;
+    delete disk.webSearch.readEnabled;
+    const patchedReadEnabled = checkedPatch.webSearch?.readEnabled !== undefined;
+    // an explicit webRead.enabled in this save always wins; else this save's webSearch.readEnabled; a leftover from a dev build only ever moves Off (fail closed), never re-enables
+    const keepsOwn = checkedPatch.webRead?.enabled !== undefined || (!patchedReadEnabled && moved !== false);
+    if (typeof moved === "boolean" && !keepsOwn) disk.webRead = { ...(isJsonObject(disk.webRead) ? disk.webRead : {}), enabled: moved };
   }
   if (checkedPatch.vps !== undefined) disk.vps = normalizeVpsConfig(checkedPatch.vps);
   // Custom MCP mutations arrive only from the desktop-gated /api/mcp/servers
@@ -1086,15 +1130,22 @@ function writeConfigPatch(patch: ConfigWritePatch): void {
   if (checkedPatch.mcpServers !== undefined) {
     disk.mcpServers = jsonObjectSchema.parse(checkedPatch.mcpServers);
   }
+  // The source-cell map is the unit of change too (an opt-out or a startup prune arrives as the whole map).
+  if (checkedPatch.engineSetup?.sources !== undefined) {
+    const current = jsonObjectSchema.safeParse(disk.engineSetup);
+    disk.engineSetup = { ...(current.success ? current.data : {}), sources: jsonObjectSchema.parse(checkedPatch.engineSetup.sources) };
+  }
   // scalar, not a section: the merge loop above only walks objects
   if (checkedPatch.language !== undefined) disk.language = checkedPatch.language;
   if (checkedPatch.settingsDefaultMode !== undefined) disk.settingsDefaultMode = checkedPatch.settingsDefaultMode;
   // scalar, not a section: held only in memory it vanished at the next config reload (refreshCfg drops keys the file lacks)
+  if (checkedPatch.webSearchLast !== undefined) disk.webSearchLast = checkedPatch.webSearchLast;
   if (checkedPatch.automationsPaused !== undefined) disk.automationsPaused = checkedPatch.automationsPaused;
   // scalar too: the schema and patch validation accept it, but without this line a requested "explicit" was dropped and refreshCfg wiped the in-memory value
   if (checkedPatch.engineDiscovery !== undefined) disk.engineDiscovery = checkedPatch.engineDiscovery;
   if (checkedPatch.hermesProfilesPinned !== undefined) disk.hermesProfilesPinned = checkedPatch.hermesProfilesPinned;
   if (checkedPatch.noLimitsTermsVersion !== undefined) disk.noLimitsTermsVersion = checkedPatch.noLimitsTermsVersion;
+  if (checkedPatch.automaticNotice !== undefined) disk.automaticNotice = checkedPatch.automaticNotice;
   if (checkedPatch.newBots !== undefined) {
     const current = jsonObjectSchema.safeParse(disk.newBots);
     const merged: JsonObject = { ...(current.success ? current.data : {}), ...checkedPatch.newBots };
@@ -1349,6 +1400,10 @@ export function allInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
     cline: { driver: "clineAgent" },
     muse: { driver: "museCode" },
     pi: { driver: "piAgent" },
+    commandCode: { driver: "commandCodeAgent" },
+    kiro: { driver: "kiroAgent" },
+    omp: { driver: "ompAgent" },
+    devin: { driver: "devinAgent" },
     deepseek: { driver: "deepseekAgent" },
     githubCopilot: { driver: "copilotAgent" },
   } as const;

@@ -19,6 +19,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { beginBackground } from "../db-busy.ts";
+import { withSecureDelete } from "../secure-delete.ts";
 import { scrubWalAfterDelete } from "../wal-maintenance.ts";
 import { FINANCIAL_RULE_VERSION, maskFinancialIdentifiers, passesFinancialFastPath } from "../../shared/financial-ids.ts";
 import { integrityHoldOf, integrityRunning, readIntegrityPass } from "./integrity-state.ts";
@@ -257,5 +258,6 @@ export function stepScrubPass(db: DatabaseSync, options: ScrubOptions = {}): Scr
   try { integrity = readIntegrityPass(db); } catch { integrity = null; }
   if (integrityRunning(integrity) || integrityHoldOf(integrity) !== null) return { more: true, phase: pass.phase, done: 0, total: 1, retryMs: SCRUB_SETTLE_RETRY_MS };
   if (pass.phase === "settle") return settleSlice(db, pass, clock);
-  return walkSlice(db, pass, { rows: options.rows ?? SCRUB_SLICE_ROWS, deadline: now() + (options.budgetMs ?? 20), now, clock });
+  // 1.0.22 item 1a: the rewrite removes owner-visible text, so its freed pages are zeroed (secure_delete=ON, server/secure-delete.ts)
+  return withSecureDelete(db, () => walkSlice(db, pass, { rows: options.rows ?? SCRUB_SLICE_ROWS, deadline: now() + (options.budgetMs ?? 20), now, clock }));
 }

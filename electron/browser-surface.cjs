@@ -20,6 +20,7 @@
 // never reach file://, chrome:// or the app's own origin.
 "use strict";
 
+const { configuredValueRanges, redactConfiguredValues } = require("../shared/configured-value-redaction.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 const { normalizeDesktopWorkspaceBounds } = require("./desktop-workspace.cjs");
@@ -233,13 +234,16 @@ const DEEPEST_ACTIVE_ELEMENT_EXPRESSION = `(() => {
   return element;
 })()`;
 const PAGE_TEXT_EXPRESSION = `(() => {
+  ${configuredValueRanges.toString()}
+  ${redactConfiguredValues.toString()}
   const root = document.body;
   if (!root) return "";
   const classify = ${SENSITIVE_FIELD_FUNCTION};
   // Preserve innerText's rendered/hidden filtering, then remove the rendered
   // text of every protected subtree. Replacing repeated occurrences is an
   // intentional privacy-biased over-redaction.
-  let text = root.innerText || "";
+  const text = root.innerText || "";
+  const redactions = [];
   const stack = [root];
   while (stack.length) {
     const element = stack.pop();
@@ -263,9 +267,9 @@ const PAGE_TEXT_EXPRESSION = `(() => {
         if (typeof value === "string" && value.length > 0) values.push(value);
       }
     }
-    for (const value of values) text = text.split(value).join("[redacted]");
+    redactions.push(...values);
   }
-  return text.replace(/[ \\t]+\\n/g, "\\n").replace(/\\n{3,}/g, "\\n\\n").trim();
+  return redactConfiguredValues(text, redactions).replace(/[ \\t]+\\n/g, "\\n").replace(/\\n{3,}/g, "\\n\\n").trim();
 })()`;
 const MAX_PRIVACY_SNAPSHOT_NODES = 100_000;
 
@@ -442,6 +446,7 @@ function domSnapshotContainsProtectedValue(snapshot) {
  * @param {(session: object, hostname: string) => Promise<{endpoints?: Array<{address?: string}>}>} [options.resolveHost]
  * @param {NodeJS.Platform} [options.platform]
  * @param {(botId: string) => string} [options.partitionFor] test seam for the per-bot partition
+ * @param {(session: object) => Promise<unknown>} [options.applyNetwork] sets the optional proxy and locale once per session; every request waits for it and is refused if it fails
  * @param {number} [options.settleMs]
  * @param {number} [options.loadWaitMs]
  * @param {number} [options.firstContentWaitMs] bounded test seam; no user setting
@@ -454,6 +459,7 @@ function createBrowserSurfaceManager({
   notify,
   onUserInteraction,
   resolveHost,
+  applyNetwork,
   platform = process.platform,
   partitionFor: ownPartitionFor = browserPartition,
   profilePartitionFor: ownProfilePartitionFor = browserProfilePartition,
@@ -474,6 +480,7 @@ function createBrowserSurfaceManager({
   /** One listener and one short DNS cache per Electron session. Named
    * profiles share a session across views, so this must not belong to a bot. */
   const sessionSecurity = new WeakMap();
+  const sessionNetworkTail = new WeakMap();
   /** every live view, keyed by `${botId}\0${partition}` */
   const entries = new Map();
   /** the view a bot currently shows / acts on */
@@ -655,6 +662,9 @@ function createBrowserSurfaceManager({
     // Literal addresses were already checked by browserNavigationUrl.
     if (/^[\d.]+$/.test(hostname) || hostname.includes(":")) return;
     const security = sessionSecurity.get(ses);
+    const network = await security?.network;
+    // Proxy DNS must stay remote, but its answers have the same public-only
+    // boundary as local DNS. Missing remote resolution fails closed below.
     const cached = security?.dns.get(hostname);
     if (cached && cached.until > now()) {
       // Map insertion order doubles as a tiny LRU.
@@ -665,7 +675,9 @@ function createBrowserSurfaceManager({
     }
     let resolved;
     try {
-      resolved = await resolveNavigationHost(ses, hostname);
+      resolved = network?.remoteDns
+        ? await network.resolveHost(hostname)
+        : await resolveNavigationHost(ses, hostname);
     } catch {
       throw new Error(`Could not resolve ${hostname}`);
     }
@@ -683,6 +695,7 @@ function createBrowserSurfaceManager({
   };
 
   const validateNavigationTarget = async (entry, rawUrl) => {
+    await entry.sessionSecurity?.network;
     const url = browserNavigationUrl(rawUrl);
     if (url === "about:blank") return url;
     const parsed = new URL(url);
@@ -702,6 +715,7 @@ function createBrowserSurfaceManager({
     // wedge Electron behind a native modal.
     await ensureProtocol(entry);
     assertAgentLease(entry, actionLease, source);
+    await entry.sessionSecurity?.network;
     await entry.view.webContents.loadURL(url);
     return url;
   };
@@ -709,7 +723,18 @@ function createBrowserSurfaceManager({
   const remove = (entry, code) => {
     if (entries.get(entry.key) !== entry) return;
     entries.delete(entry.key);
-    entry.sessionSecurity?.entries.delete(entry);
+    const security = entry.sessionSecurity;
+    security?.entries.delete(entry);
+    if (security && security.entries.size === 0) {
+      const ses = entry.view.webContents.session;
+      // One manager owns the policy and network lease for its live views.
+      // Dispose a late relay too if the last guest closed during setup.
+      sessionSecurity.delete(ses);
+      ses.removeListener?.("will-download", security.download);
+      // The partition can still have background requests after its last view closes.
+      ses.webRequest?.onBeforeRequest((_details, callback) => callback({ cancel: true }));
+      if (security.network) sessionNetworkTail.set(ses, security.network.then(network => network?.close?.()).catch(() => {}));
+    }
     const wasActive = active.get(entry.botId) === entry;
     if (wasActive) active.delete(entry.botId);
     try {
@@ -763,15 +788,23 @@ function createBrowserSurfaceManager({
     security = { dns: new Map(), entries: new Set([entry]) };
     sessionSecurity.set(ses, security);
     entry.sessionSecurity = security;
+    // Proxy and locale are set before any request leaves; a failure refuses requests rather than going direct.
+    const previousNetwork = sessionNetworkTail.get(ses);
+    const ready = previousNetwork ? previousNetwork.catch(() => {}) : Promise.resolve();
+    security.network = applyNetwork ? ready.then(() => applyNetwork(ses)) : null;
+    if (security.network) sessionNetworkTail.set(ses, security.network);
+    security.network?.catch(() => {});
     ses.setPermissionCheckHandler(() => false);
     ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     // A download would land on the user's disk under a bot's control; refuse
     // until there is a reviewed place for it to go. Install once: named
     // profiles share a session, and EventEmitter listeners accumulate.
-    ses.on("will-download", (event) => event.preventDefault());
+    security.download = (event) => event.preventDefault();
+    ses.on("will-download", security.download);
     ses.webRequest?.onBeforeRequest((details, callback) => {
       void (async () => {
         try {
+          await security.network;
           const parsed = new URL(String(details?.url ?? ""));
           if (["http:", "https:", "ws:", "wss:"].includes(parsed.protocol)) {
             // Reuse the top-level URL checks by mapping WebSocket schemes to
@@ -784,7 +817,7 @@ function createBrowserSurfaceManager({
           } else if (!["about:", "blob:", "data:"].includes(parsed.protocol)) {
             throw new Error("Only safe web resources can be loaded in the built-in browser");
           }
-          callback({ cancel: false });
+          callback({ cancel: security.entries.size === 0 });
         } catch (error) {
           const notice = `Blocked page request: ${error?.message ?? error}`;
           for (const candidate of security.entries) pushBounded(candidate.notices, notice);
@@ -802,6 +835,10 @@ function createBrowserSurfaceManager({
     const contents = entry.view.webContents;
     const ses = contents.session;
     installSessionPolicy(entry);
+    // WebRTC sends STUN/ICE UDP straight from this machine, outside onBeforeRequest and the checked proxy relay:
+    // it would show the person's real address to any page and reach hosts the public-only check never sees. Only
+    // proxied UDP is allowed, which the TCP relay cannot carry, and a view that cannot take the policy is not created.
+    contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
     try {
       ses.setUserAgent(browserUserAgent(ses.getUserAgent()));
     } catch {}
@@ -1024,7 +1061,15 @@ function createBrowserSurfaceManager({
       lastUsed: now(),
     };
     entries.set(entry.key, entry);
-    secure(entry);
+    try {
+      secure(entry);
+    } catch (error) {
+      entries.delete(entry.key);
+      try {
+        if (!view.webContents.isDestroyed()) view.webContents.close({ waitForBeforeUnload: false });
+      } catch {}
+      throw error;
+    }
     // A tab nobody is looking at (panel closed, another tab shown) still
     // needs a real viewport: a zero-size view lays the page out as nothing
     // visible, and Playwright's snapshot hands out refs only for visible
@@ -1234,12 +1279,7 @@ function createBrowserSurfaceManager({
   );
 
   const redactPrivacyStrings = (value, privacies) => {
-    let result = String(value ?? "");
-    const redactions = [...new Set(privacies.flatMap((privacy) => privacy?.redactions ?? []))]
-      .filter(Boolean)
-      .sort((left, right) => right.length - left.length);
-    for (const secret of redactions) result = result.split(secret).join("[redacted]");
-    return result;
+    return redactConfiguredValues(String(value ?? ""), privacies.flatMap((privacy) => privacy?.redactions ?? []));
   };
 
   const safePageRead = async (entry) => {

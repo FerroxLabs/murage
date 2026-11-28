@@ -160,6 +160,12 @@ export function snapshotPathMissing(snapshot: string, botPath: string, platform:
   return value.split(":").filter(Boolean).filter((entry) => !bot.has(pathEntryKey(entry, platform))).length;
 }
 
+/** The one value-free log line for a snapshot PATH check, or null when there is nothing to say (no snapshot PATH, or nothing missing). */
+export function pathMissingLine(threadId: string, missing: number | null): string | null {
+  // 0 missing is the healthy answer (every snapshot entry is on the bot PATH): no line
+  return missing === null || missing === 0 ? null : `claude exec path-missing thread=${threadId} entries=${missing}`;
+}
+
 // Diagnostics are optional and have fixed work budgets on the dispatch path.
 const DIAGNOSTIC_BYTES = 65_536;
 const SNAPSHOT_ENTRIES = 64;

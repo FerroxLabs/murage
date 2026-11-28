@@ -16,6 +16,8 @@ export class BrowserModeStorage {
   private readonly write:(file:string,data:string)=>void;
   constructor(file:string,write:(file:string,data:string)=>void=(file,data)=>writeFileAtomic(file,data,{mode:0o600})){this.file=file;this.write=write;}
   get reservation(){return this.root.chromeDirectReservation;}
+  /** The validated selection this root holds for a bot (load() maps only unambiguous legacy records); undefined = none. */
+  storedMode(id:string){return Object.hasOwn(this.root.bots,id)?this.root.bots[id]!.browserMode:undefined;}
   load(bots:BrowserChoiceBot[]){
     const before=JSON.stringify(bots);
     const text=existsSync(this.file)?readFileSync(this.file,'utf8'):undefined;

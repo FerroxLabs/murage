@@ -25,7 +25,7 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import { migrateMemorySchema } from "./schema.ts";
 import { applyForgetTombstones, applyMemoryTombstones, type ForgetTargets } from "./restore.ts";
-import { BUNDLE_PAGE_END, FLIP_SQL, citingSeekSql, lateBuildStep, memoryRevocationIdle, memoryRevocationStats, resetMemoryRevocationStats, stopMemoryRevocation, wakeMemoryRevocation } from "./memory-revocation.ts";
+import { BUNDLE_PAGE_END, FLIP_SQL, citingSeekSql, lateBuildStep, memoryRevocationIdle, fenceWaitersNow, memoryRevocationStats, noteFenceWaiter, resetMemoryRevocationStats, stopMemoryRevocation, wakeMemoryRevocation } from "./memory-revocation.ts";
 import { lockedError, startRevocationIndexBackfill } from "./revocation-index.ts";
 import { revocationIndexReady } from "./revocation.ts";
 import type { MemorySearchBridge } from "./search.ts";
@@ -131,7 +131,7 @@ it("the index build survives 'table is locked' from an open statement on its con
   const held = db.prepare("SELECT bundle_id FROM memory_disclosures").iterate(); // a cursor another caller left open on the shared connection
   held.next();
   const run = startRevocationIndexBackfill(db, { slice: 10, targetMs: 0.0001, pauseMs: 1, retryMs: 1, retryCapMs: 4 });
-  await expect(run.done).resolves.toEqual({ built: true });
+  expect(await run.done).toEqual({ built: true });
   held.return?.(undefined);
   expect(revocationIndexReady(db)).toBe(true);
   expect(db.prepare("SELECT count(*) AS n FROM memory_disclosure_refs").get()!.n).toBe(600);
@@ -149,7 +149,7 @@ it("the index build retries a lock error and any other error with backoff until 
   const ready = vi.fn();
   const run = startRevocationIndexBackfill(db, { slice: 10, targetMs: 0.0001, pauseMs: 1, retryMs: 1, retryCapMs: 4, onReady: ready,
     afterChunk: () => { if (failures < 3) { failures++; throw failures === 1 ? Object.assign(new Error("database table is locked"), { errcode: 6 }) : new Error("transient failure"); } } });
-  await expect(run.done).resolves.toEqual({ built: true });
+  expect(await run.done).toEqual({ built: true });
   expect(run.stats.lockedRetries).toBe(1);
   expect(run.stats.errorRetries).toBe(2);
   expect(ready).toHaveBeenCalledTimes(1);
@@ -167,6 +167,10 @@ it("slow commits do not shrink cheap revocation batches, but still earn the full
     if (sql === "COMMIT") now += 12;
     return result;
   });
+  // MEMORY V2 lane C (mechanics only): the runner's first tick after a wake now reads the queue and stops, with no transaction, when it is
+  // empty (memory-revocation.ts tickOnce, firstTick), so the stubbed slice below was never reached on this empty file. One standing
+  // revoke job (never walked: the slice is the stub) gives the runner its queue; every oracle below is as it was.
+  db.prepare("INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(1,'content','{}',0,0,'mark','','active')").run();
   const rows: number[] = [];
   vi.spyOn(revokeBudget, "budgetedMarkerSlice").mockImplementation((_db, limit) => {
     rows.push(limit); now += 1;
@@ -532,6 +536,49 @@ it("a failing slice keeps the job and is tried again; an owner turn slows the ru
   expect(jobRows(db)).toBe(0);
   expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state!='revoked'").get()!.n)).toBe(0);
 }, 300_000);
+
+it("1.0.20 checkfix-n4: a turn waiting on a checking:pending fence is not the live turn the closing walk slows for; without a waiter it still yields", async () => {
+  const { scope } = liveSetup(), db = database();
+  addSource("heavy", scope);
+  db.prepare(BULK.replace(/CASE WHEN .* END,'revision'/, "'heavy','revision'")).run(0, 1_999);
+  // an owner turn is live the whole time (busy always true) and it is the turn that waits on the window: the walk runs at full slices
+  forgetMemory(ownerMemoryTicket(), { kind: "source", id: "heavy" });
+  stopMemoryRevocation();
+  const release = noteFenceWaiter();
+  try {
+    wakeMemoryRevocation(() => database(), { pauseMs: 1, retryMs: 1, busyPauseMs: 2, busy: () => true });
+    await memoryRevocationIdle();
+  } finally { release(); }
+  expect(jobRows(db)).toBe(0);
+  expect(memoryRevocationStats.busyPauses + memoryRevocationStats.markerYields).toBe(0);
+  // the waiter is gone: the same live turn slows the next walk again (owner-first for everything else is unchanged)
+  resetMemoryRevocationStats();
+  addSource("heavy2", scope);
+  db.prepare(BULK.replace(/CASE WHEN .* END,'revision'/, "'heavy2','revision'")).run(2_000, 3_999);
+  forgetMemory(ownerMemoryTicket(), { kind: "source", id: "heavy2" });
+  stopMemoryRevocation();
+  wakeMemoryRevocation(() => database(), { pauseMs: 1, retryMs: 1, busyPauseMs: 2, busy: () => true });
+  await memoryRevocationIdle();
+  expect(memoryRevocationStats.busyPauses + memoryRevocationStats.markerYields).toBeGreaterThan(0);
+}, 300_000);
+
+it("1.0.20 checkfix-n4: the production pending-fence waits register their waiter for the whole wait and release it on every exit", async () => {
+  const { awaitExactPendingCheck, settleRefusedFence } = await import("./fence-pending.ts");
+  const db = new DatabaseSync(":memory:"); dbs.push(db);
+  const refusal = { fence: { state: "checking", reason: "pending" } };
+  for (const wait of [awaitExactPendingCheck, settleRefusedFence]) {
+    const seen: number[] = [];
+    let calls = 0;
+    // cancelled on the third look: the wait ran, saw no verdict, and ends as a Stop
+    const ok = await wait(db, refusal, () => ++calls >= 3, 5_000, () => { seen.push(fenceWaitersNow()); });
+    expect(ok).toBe(false);
+    expect(seen).toEqual([1]);
+    expect(fenceWaitersNow()).toBe(0);
+    // a wake that throws still releases it
+    await wait(db, refusal, () => false, 5_000, () => { throw new Error("wake failed"); });
+    expect(fenceWaitersNow()).toBe(0);
+  }
+});
 
 it("the revoke lookups are late objects: a v8 file is valid with or without them (exact text only), a downgrade drops them, the next open makes them", async () => {
   const { validateMemorySchema, downgradeMemorySchema, ensureRevokeLateObjects } = await import("./schema.ts");

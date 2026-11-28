@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { SpendHold, SpendPauseStatus } from "../../shared/spend-pause";
 import { formatDollars } from "./spend-meter";
+import { opensPurchasePages } from "./native-shell";
 import { t } from "./i18n";
 
 /** A response from a retired key can never put its holds on the current one. */
@@ -30,6 +31,6 @@ export function pauseActions(holds: SpendHold[]): Array<"raise" | "check" | "ope
   const actions: Array<"raise" | "check" | "openFlux"> = [];
   if (holds.length === 1 && holds[0]?.kind === "limit") actions.push("raise");
   if (holds.length) actions.push("check");
-  if (holds.some(h => h.kind === "flux" || (h.kind === "unknown" && (h.otherAccount || h.noAccount)))) actions.push("openFlux");
+  if (holds.some(h => h.kind === "flux" || (h.kind === "unknown" && (h.otherAccount || h.noAccount))) && opensPurchasePages()) actions.push("openFlux");
   return actions;
 }

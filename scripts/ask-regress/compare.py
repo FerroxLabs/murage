@@ -13,23 +13,27 @@ def load(phase):
         exits.append(exit_row)
         if exit_row['exit'] not in [0,1] or not exit_row['report']:
             raise RuntimeError(f'Incomplete shard: {exit_row}')
+        source_root=exit_row.get('sourceRoot') or f'/tmp/ask-full-{phase}-{shard}'
+        def relative(path):
+            # Current receipts name their randomized source root; older ones used a fixed /ask-full-<phase>-<shard>/ directory.
+            return path[len(source_root)+1:] if path.startswith(source_root+'/') else path.split(f'/ask-full-{phase}-{shard}/')[-1]
         inventory_path=root / f'{phase}-{shard}.inventory.json'
         if inventory_path.exists():
             inventory=json.loads(inventory_path.read_text())
-            expected_files.update(row['file'].split(f'/ask-full-{phase}-{shard}/')[-1]for row in inventory)
+            expected_files.update(relative(row['file'])for row in inventory)
         report = json.loads((root / f'{phase}-{shard}.json').read_text())
         assertion_count=sum(len(s['assertionResults']) for s in report['testResults'])
         if assertion_count!=report['numTotalTests']:raise RuntimeError(f'Incomplete assertion report: {phase}-{shard}')
         if report.get('snapshot',{}).get('didUpdate'):raise RuntimeError(f'Snapshots updated during {phase}-{shard}')
         for suite in report['testResults']:
-            path = suite['name'].split(f'/ask-full-{phase}-{shard}/')[-1]
+            path = relative(suite['name'])
             if path in actual_files:raise RuntimeError(f'Duplicate suite file across shards: {path}')
             actual_files.add(path)
             occurrences = collections.Counter()
             if suite['status'] == 'failed' and (suite.get('message') or not any(t['status']=='failed'for t in suite['assertionResults'])):
                 suites.append({'file':path,'message':suite.get('message','')})
             for test in suite['assertionResults']:
-                name=test['fullName'].replace(f'/tmp/ask-full-{phase}-{shard}','<source>'); occurrences[name]+=1
+                name=test['fullName'].replace(source_root,'<source>'); occurrences[name]+=1
                 key = f'{path} :: {name} :: {occurrences[name]}'
                 if key in tests: raise RuntimeError(f'Duplicate shard ID: {key}')
                 tests[key] = {'rawFullName':test['fullName'],'status':test['status'], 'failureMessages':test.get('failureMessages',[])}

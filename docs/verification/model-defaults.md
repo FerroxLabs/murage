@@ -9,9 +9,11 @@ evidence: [Claude Fable 5.2](#claude-fable-52-checked-2026-11-17-against-the-101
 The defaults and pins this qualification rests on are unchanged on the 1.0.19
 tip: `server/drivers/claude.ts` defaults to `claude-sonnet-5-5`,
 `server/drivers/codex-catalog.ts` defaults to `gpt-6.1-sol`, and
-`deploy/cloud-home/build-image.sh` still pins Claude Code 2.1.292 and Codex
-0.162.1 with the same x64 hashes recorded below. The binary evidence below
-therefore applies to 1.0.19 as is. Claude Fable 5.2 is listed but **not yet
+`deploy/cloud-home/build-image.sh` pinned Claude Code 2.1.292 and Codex
+0.162.1 with the x64 hashes recorded below (1.0.22 moved the Cloud pins to
+Claude Code 2.1.323 and Codex 0.171.0; these two builds remain the support
+floors the evidence below qualifies). The binary evidence below applies to
+those floor builds. Claude Fable 5.2 is listed but **not yet
 qualified on Cloud home**; its section at the end records what was and was not
 checked.
 
@@ -23,22 +25,22 @@ Desktop Murage bundles Fuigo, but does not bundle Codex or Claude Code:
 checks the downloaded release digest. Claude uses its vendor native installer.
 
 **Cloud home does bundle both engines.** `deploy/cloud-home/build-image.sh`
-pins Codex **0.162.1** and Claude Code **2.1.292**, with per-architecture hashes.
-`deploy/cloud-home/LICENSES.md`, the qualification script's `PINS`, and
-`server/cloud-home/engine-cli-pins.test.ts` agree. The previous bump is
-`583fe69850` (build recipe, redistribution inventory, pin tests); architecture
-hashes were subsequently added in `f8c4e08a61`. No bump is necessary:
+pinned Codex **0.162.1** and Claude Code **2.1.292** when this evidence was
+captured; 1.0.22 moved the pins to Codex 0.171.0 and Claude Code 2.1.323
+(LICENSES.md, the qualification script's `PINS` and `engine-cli-pins.test.ts`
+agree on the new pins). The hashes below are those of the 0.162.1 / 2.1.292
+support-floor builds, not the current recipe pins:
 
-- The pinned Codex x64 archive from
+- The floor Codex x64 archive from
   `https://github.com/openai/codex/releases/download/rust-v0.162.1/codex-x86_64-unknown-linux-musl.tar.gz`
   hashes to `86f268d81b898f3e144c5ecff2ad2fda2c5802e042d6195b72538fe0fa125057`,
-  exactly the recipe's pin. Its embedded catalog contains `gpt-6.1-sol`,
+  the floor build's hash. Its embedded catalog contains `gpt-6.1-sol`,
   display name `GPT-6.1-Sol`, `visibility: list`, `supported_in_api: true`,
-  and priority 1. This is direct support evidence from the bundled version.
-- The pinned Claude binary from
+  and priority 1. This is direct support evidence from the floor version.
+- The floor Claude binary from
   `https://downloads.claude.ai/claude-code-releases/2.1.292/linux-x64/claude`
   hashes to `a967e7b1d8b4e47ee421d5433027880347952b0c0857abf880e2c942a4ec93b3`,
-  exactly the recipe's pin, and contains the first-party `claude-sonnet-5-5` ID.
+  the floor build's hash, and contains the first-party `claude-sonnet-5-5` ID.
 
 Public package evidence (no login, credentials, or inference):
 
@@ -86,10 +88,10 @@ The foreground launcher was interrupted normally and removed its fixture data.
 ## Review fixes and reproducible artifact evidence
 
 The checked-in [artifact capture](model-defaults-artifacts.json) records the
-exact pinned x64 download hashes, binary hashes, byte offsets, the complete
+exact x64 download hashes of the floor builds, binary hashes, byte offsets, the complete
 embedded Codex model row, and a Claude embedded model-map excerpt. Reproduce
 without executing either binary: download the two URLs in the capture, verify
-SHA-256 against build-image.sh, extract the Codex tarball, and read the indicated
+SHA-256 against the capture, extract the Codex tarball, and read the indicated
 byte offsets. Codex's offset starts a JSON object; Claude's excerpt is 300 bytes.
 These are binary catalog evidence, not a claim about an account's entitlement.
 
@@ -122,10 +124,10 @@ Fable id is first) and `shared/model-order.test.ts` (ordering and version
 parse of `claude-fable-5-2`). The row lives in Murage's list; nothing in the
 driver gates it on a Claude Code version.
 
-**Cloud home pinned Claude Code 2.1.292: UNVERIFIED for `claude-fable-5-2`.**
+**Claude Code 2.1.292 (the support floor, no longer the Cloud pin): UNVERIFIED for `claude-fable-5-2`.**
 The x64 binary from
 `https://downloads.claude.ai/claude-code-releases/2.1.292/linux-x64/claude`
-hashes to the recipe's pin (`a967e7b1...c93b3`, same as above). A byte search
+hashes to the floor build's hash (`a967e7b1...c93b3`, same as above). A byte search
 of that file (read only, never executed) finds `claude-fable-5-1` and
 `claude-fable-5`, `claude-sonnet-5-5` and `claude-opus-5-5`, but **no**
 `claude-fable-5-2`, no `fable-5-2` or "Fable 5.2" display text, and no

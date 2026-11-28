@@ -1,4 +1,5 @@
 import { checkpointDebtCount } from "./checkpoint-debt.ts";
+import { bumpMessagesVersion } from "../inbox-version.ts";
 import { partitionOfScopeKey, executionStore, homeThread, isHomePartition, threadPartition } from "../execution-audience.ts";
 import { teamLabel } from "../team-identities.ts";
 import { candidateReviewReason } from "./automatic-learning.ts";
@@ -12,6 +13,7 @@ import { reflectionStatus, retryReflection, setReflectExcluded } from "./pip-ref
 import { supportsNativeMemoryModel } from "./embeddings.ts";
 import { bundledModelState } from "./model-location.ts";
 import { rebuildSearchIndex, semanticIndexStatus } from "./model-adoption.ts";
+import { startModelAdoption } from "./recall-producers.ts";
 import { archiveMemoryRecord, restoreArchivedMemoryRecord, memoryRetentionStatus } from "./retention.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
@@ -24,6 +26,7 @@ import { z } from "zod";
 import { DATA_DIR } from "../config.ts";
 import { SERVER_ROOT } from "../proxy-paths.ts";
 import { database, memoryHoldCode, transaction } from "../database.ts";
+import { MEMORY_OPEN_HOLD } from "./open-set-aside.ts";
 import { holdMessage } from "./integrity-pass.ts";
 import { assertGenericMemoryTarget, assertNotForgotten, requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope, readCorrectionTarget, rememberMemory, REMEMBER_TEXT_MAX } from "./authority.ts";
 import { LAM_PROVIDERS } from "../../shared/learn-about-me/parse.ts";
@@ -128,7 +131,11 @@ const actions=z.discriminatedUnion("action",[
   // Learn about me: one kept line, the exact words the owner saw, and where they came from (a label only)
   z.object({action:z.literal("remember"),actionId,text:z.string().min(1).max(REMEMBER_TEXT_MAX),origin:z.object({provider:z.enum(LAM_PROVIDERS),date:z.string().regex(/^\d{4}(-\d{2}(-\d{2})?)?$/).optional()}).strict().optional()}).strict(),
   z.object({action:z.literal("promote"),id,version,scopeId:id}).strict(),
-  z.object({action:z.literal("forget"),kind:z.enum(["source","record"]),id,revision:z.number().int().nonnegative().optional()}).strict(),
+  z.object({action:z.literal("forget"),kind:z.enum(["source","record"]),id,revision:z.number().int().nonnegative().optional(),expectedHead:z.discriminatedUnion("state",[
+    z.object({state:z.literal("record"),recordId:id,version:z.number().int().positive()}).strict(),
+    z.object({state:z.literal("active"),familyId:id,recordId:id,version:z.number().int().positive()}).strict(),
+    z.object({state:z.literal("archived"),familyId:id,sequence:z.number().int().positive(),memberRecordId:id,memberVersion:z.number().int().positive()}).strict(),
+  ]).optional()}).strict(),
   z.object({action:z.literal("forget-pip"),id,expectedVersion:z.number().int().positive()}).strict(),
   z.object({action:z.literal("bind"),scopeId:id,...subject}).strict(),
   z.object({action:z.literal("project"),path:z.string().min(1).max(4096),...subject}).strict(),
@@ -215,6 +222,11 @@ function reindex(id:string,version:number){
   if(isPipRecord(id))return;
   database().prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL) ON CONFLICT(record_id,record_version,index_generation) DO UPDATE SET lexical_status='pending',embedding_status='pending',error=NULL").run(id,version);
   database().exec("UPDATE memory_meta SET data_revision=data_revision+1");
+}
+/** MEMSWEEP-1024 (ASTRA-MEMAUDIT 30): the wording an owner edit replaced leaves the index as replaced, like every other supersede
+ * (routes.ts correction, consolidate.ts): its receipt is owed again for the versions below the new one that are no longer current. */
+function retireReplaced(id:string,next:number){
+  database().prepare("UPDATE memory_projection_receipts SET lexical_status='pending-archive' WHERE record_id=? AND record_version<? AND lexical_status IN ('pending','indexed') AND EXISTS(SELECT 1 FROM memory_records r WHERE r.id=record_id AND r.version=record_version AND r.state='superseded')").run(id,next);
 }
 /** Re-key a project scope stored under an older, non-canonical spelling of
  * `path` so the memories bound to it keep surfacing.
@@ -337,7 +349,10 @@ async function downloadModel(options:MemoryOwnerOptions){
       if((await stat(part)).size!==asset.bytes||await fileHash(part)!==asset.sha256){rmSync(part,{force:true});throw new Error("MEMORY_MODEL_HASH_MISMATCH");}
       renameSync(part,target);download.bytesDownloaded+=asset.bytes;
     }
-    database().prepare("UPDATE memory_projection_receipts SET lexical_status='pending',embedding_status='pending' WHERE embedding_status='unavailable' AND lexical_status='indexed'").run();
+    // memv2 lane A (A10): the receipts indexed without a model are owed again in pages of at most 256, each one transaction and one journal
+    // range row, the producer waiting for the recall applier between pages; a store of one page is adopted before this returns, a longer one
+    // goes on in the background and is finished by the next start if the process dies (recall-producers.ts, marker memory-v2:model-adoption).
+    startModelAdoption(database());
     await options.onModelReady?.();download.state="ready";
   } catch(error){download.state="failed";download.error=error instanceof Error&&/^MEMORY_MODEL_/.test(error.message)?error.message:"MEMORY_MODEL_DOWNLOAD_FAILED";}
 }
@@ -407,20 +422,26 @@ export function memoryOwnerStatus(ticket:object,roster:MemoryRoster,options:Memo
   requireMemoryOwner(ticket);const db=database();
   let upgrading=false;
   try{upgrading=options.upgradeRunning?.()??false;}catch{upgrading=false;}
-  const figures=upgrading&&lastFigures?.db===db?lastFigures.figures:tableFigures(db);
-  lastFigures={db,figures};
+  // 1.0.22 q1022-startmem (MAIN-RULING 2026-11-25T18:04Z): memory set aside at open (MEMORY_UNREADABLE_AT_OPEN) means the tables behind
+  // these figures may be the ones that failed (a torn memory_records page). Each figure that cannot be read then reads as empty, so the
+  // page opens held and says why, never a 400 "malformed". Outside that hold a failed read still fails as before.
+  const asideAtOpen=memoryHoldCode()===MEMORY_OPEN_HOLD;
+  const read=<T,>(value:()=>T,empty:T):T=>{if(!asideAtOpen)return value();try{return value();}catch{return empty;}};
+  const figures=upgrading&&lastFigures?.db===db?lastFigures.figures:read(()=>tableFigures(db),EMPTY_FIGURES());
+  if(!asideAtOpen)lastFigures={db,figures};
   const {counts,recordsMore,omittedScopes}=figures;
-  const debt=checkpointDebtCount(db,MEMORY_COUNT_CAP+1),totalPending=figures.backlog.pending+debt;
+  const debt=read(()=>checkpointDebtCount(db,MEMORY_COUNT_CAP+1),0),totalPending=figures.backlog.pending+debt;
   const backlog={...figures.backlog,pending:Math.min(totalPending,MEMORY_COUNT_CAP),more:{...figures.backlog.more,...(totalPending>MEMORY_COUNT_CAP?{pending:true}:{})},oldestQueuedAt:debt?null:figures.backlog.oldestQueuedAt};
   const runtime=options.runtimeStatus?.();
   const {settings,revision,resolved,connection,ceiling}=readLearningStatus(db,options);
   const learning={settings,revision,connection,defaultOn:options.learningDefaultOn?.()??false,ceiling};
-  const hold=memoryHoldCode(),stored=String(db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode??"");
+  const hold=memoryHoldCode(),stored=read(()=>String(db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode??""),"off");
   const model=modelStatus();
   // what the owner is told about capture and recall comes from the same predicates the capture path uses (capture-gate.ts); a hold switches both off
-  return {...memoryState(),hold,held:hold!==null,capture:memoryCaptures(stored,hold)?"on":"off",recall:memoryRecalls(stored,hold)?"on":"off",storedMode:stored,holdMessage:hold?holdMessage(hold):null,learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:memoryHealth(resolved?(resolved.extractor?resolved.instanceId:null):configuration().extractorInstanceId),retention:memoryRetentionStatus(),configuration:configuration(),scopes:figures.scopeRows.map(row=>scopeAudience(roster,row)),scopesOmitted:omittedScopes,records:counts,recordsMore,backlog,model,semantic:semanticIndexStatus({nativeSupported:supportsNativeMemoryModel(),model:model.state,revision:model.revision}),extractors:options.extractors?.()??[],
-    deletion:memoryDeletionStatus(),workerError:runtime?.error??null,runtime:runtime??null,sealedTurns:sealedTurnSummary(),pastChats:pastChatsCounters(db)};
+  return {...memoryState(),hold,held:hold!==null,capture:memoryCaptures(stored,hold)?"on":"off",recall:memoryRecalls(stored,hold)?"on":"off",storedMode:stored,holdMessage:hold?holdMessage(hold):null,learning,evolution:options.evolution?.status()??null,classificationEvolution:options.evolution?.status("classification")??null,procedureEvolution:options.procedureEvolution?.status(ticket)??null,health:read(()=>memoryHealth(resolved?(resolved.extractor?resolved.instanceId:null):configuration().extractorInstanceId),null),retention:read(()=>memoryRetentionStatus(),null),configuration:configuration(),scopes:figures.scopeRows.map(row=>scopeAudience(roster,row)),scopesOmitted:omittedScopes,records:counts,recordsMore,backlog,model,semantic:semanticIndexStatus({nativeSupported:supportsNativeMemoryModel(),model:model.state,revision:model.revision}),extractors:options.extractors?.()??[],
+    deletion:read(()=>memoryDeletionStatus(),null),workerError:runtime?.error??null,runtime:runtime??null,sealedTurns:read(()=>sealedTurnSummary(),{threads:0,turns:0,recent:[]}),pastChats:read(()=>pastChatsCounters(db),null)};
 }
+const EMPTY_FIGURES=():TableFigures=>({counts:{candidate:0,active:0,archived:0,superseded:0,deleted:0},recordsMore:{},backlog:{pending:0,leased:0,deferred:0,failed:0,oldestQueuedAt:null,more:{}},omittedScopes:0,scopeRows:[]});
 function tableFigures(db:ReturnType<typeof database>):TableFigures{
   const steps=figureSteps(db);
   for(;;){const step=steps.next();if(step.done)return step.value;}
@@ -474,7 +495,15 @@ function plainMemoryEditError<T>(action:()=>T):T{
   }
 }
 
+/** The actions that move the waiting count the Inbox adds to Needs you (a memory kept, put off, brought back, edited, undone, removed). */
+const WAITING_MOVERS=new Set(["review-keep","review-keep-all","review-later","review-back","review-edit","review-undo","learning-keep","learning-undo","approve","remember","forget","promote","correct","archive","restore-archive"]);
 export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions={}){
+  const result=await memoryOwnerRouteInner(path,body,ticket,roster,options);
+  const action=body&&typeof body==="object"?(body as {action?:unknown}).action:undefined;
+  if(path==="/api/memory/action"&&typeof action==="string"&&WAITING_MOVERS.has(action))bumpMessagesVersion();
+  return result;
+}
+async function memoryOwnerRouteInner(path:string,body:unknown,ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions={}){
   requireMemoryOwner(ticket);
   if(path==="/api/memory/learning-usage"){
     const {ceiling,connection}=readLearningStatus(database(),options);
@@ -605,9 +634,12 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(input.action==="archive"){archiveMemoryRecord(ticket,input.id,input.version);return {record:getRecord(input.id,input.version)};}
   if(input.action==="restore-archive"){plainMemoryEditError(()=>restoreArchivedMemoryRecord(ticket,input.id,input.version));return {record:getRecord(input.id,input.version)};}
   if(input.action==="approve"){approveMemory(ticket,input.id,input.version,input.correctionPin?{correctionPin:input.correctionPin}:{});reindex(input.id,input.version);return {record:getRecord(input.id,input.version)};}
-  if(input.action==="remember"){const kept=rememberMemory(ticket,input);if(kept.fresh)reindex(kept.id,kept.version);return {record:getRecord(kept.id,kept.version),...(kept.duplicate?{duplicate:true as const}:{})};}
+  // MEMSWEEP-1024 (ASTRA-MEMAUDIT 30): an owner remember or edit and its index receipt are ONE transaction, so a failure between them
+  // leaves neither (the owner's retry then does both), never a current memory that search was not told about. Approve gets its receipt
+  // inside the approval itself (q1024-memrecall, authority.ts).
+  if(input.action==="remember"){const kept=transaction(()=>{const done=rememberMemory(ticket,input);if(done.fresh)reindex(done.id,done.version);return done;});return {record:getRecord(kept.id,kept.version),...(kept.duplicate?{duplicate:true as const}:{})};}
   if(input.action==="pin"){pinMemory(ticket,input.id,input.version,input.pinned,roster);return {record:getRecord(input.id,input.version)};}
-  if(input.action==="correct"){const next=plainMemoryEditError(()=>correctMemory(ticket,input.id,input.version,input.text,{correctionPin:input.correctionPin}));reindex(input.id,next);return {record:getRecord(input.id,next)};}
+  if(input.action==="correct"){const next=plainMemoryEditError(()=>transaction(()=>{const made=correctMemory(ticket,input.id,input.version,input.text,{correctionPin:input.correctionPin});reindex(input.id,made);retireReplaced(input.id,made);return made;}));return {record:getRecord(input.id,next)};}
   if(input.action==="promote"){
     // Copy to (spec r3 3): never a continuity or identity row, never a forgotten one, only an active original, and only to another
     // audience the status itself lists (scopeRows: every scope, or no per-conversation scope once those pass the status limit).
@@ -619,8 +651,9 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   }
   if(input.action==="forget"){
     // B2 (spec r3 2.1): a second tap on a record already forgotten whole makes no second forget (NULL revisions are distinct in the
-    // UNIQUE index, so the insert alone would not stop it).
-    if(input.kind==="record"&&input.revision===undefined&&db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND revision IS NULL LIMIT 1").get(input.id))return {status:"excluded" as const,already:true as const};
+    // UNIQUE index, so the insert alone would not stop it). A confirmation naming a head (M0) is checked by the fence instead, which
+    // refuses a head already forgotten (MEMORY_CHANGED) before any write.
+    if(input.kind==="record"&&input.revision===undefined&&input.expectedHead===undefined&&db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND revision IS NULL LIMIT 1").get(input.id))return {status:"excluded" as const,already:true as const};
     return forgetMemory(ticket,input);
   }
   if(input.action==="forget-pip"){

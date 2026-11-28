@@ -16,7 +16,7 @@ import { downgradeTranscriptSeqTo102 } from "./transcript-seq.ts";
 import { copyFileSync } from "./counted-fs.ts";
 import { chmodSync, closeSync, fsyncSync, mkdtempSync, openSync, existsSync, lstatSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { downgradePushPhoneUsedTo102, downgradePushRetentionIndexesTo102 } from "./mobile-push-store.ts";
-import { downgradeAppTriggers } from "./app-trigger-store.ts";
+import { assertNoAppResultsOwedForDowngrade, downgradeAppTriggers, downgradeL5hObjects } from "./app-trigger-store.ts";
 import { downgradeBotCallsTo108 } from "./bot-calls-schema.ts";
 import { downgradeMessageIdIndexTo102 } from "./message-id-index.ts";
 import { downgradeOutputPublicationTurnTo102 } from "./artifacts.ts";
@@ -64,7 +64,7 @@ export function resetRetainedSessionCursors(root: string): number {
     let changed = false;
     const clear = (holder: Record<string, unknown>) => {
       if (Object.hasOwn(holder, "resumeCursors") && nonEmpty(holder.resumeCursors)) { holder.resumeCursors = {}; cleared++; changed = true; }
-      for (const field of ["resumePolicies", "replayPending"]) if (Object.hasOwn(holder, field)) { delete holder[field]; changed = true; }
+      for (const field of ["resumePolicies", "replayPending", "effortTouch"]) if (Object.hasOwn(holder, field)) { delete holder[field]; changed = true; }
       if (Object.hasOwn(holder, "resumeSeals")) { delete holder.resumeSeals; changed = true; }
     };
     for (const record of records) {
@@ -112,7 +112,7 @@ function clearRetainedContext(root: string): number {
       if (!holder || typeof holder !== "object" || Array.isArray(holder)) throw new Error(`Invalid retained context holder: ${name}`);
       const row = holder as Record<string, unknown>;
       let touched = false;
-      for (const field of ["resumeCursors", "resumePolicies", "replayPending", "resumeSeals", "resumeIncarnations"]) {
+      for (const field of ["resumeCursors", "resumePolicies", "replayPending", "effortTouch", "resumeSeals", "resumeIncarnations"]) {
         if (Object.hasOwn(row, field)) { delete row[field]; touched = true; }
       }
       if (touched) { cleared++; changed = true; }
@@ -181,7 +181,7 @@ export function resetIncarnatedSessionCursors(root: string, db: DatabaseSync): n
         if (!later.has(pair(instance, String(cursor))) && !(n >= 2)) continue;
         delete (cursors as Record<string, unknown>)[instance];
         if (counted) delete counted[instance];
-        for (const field of ["resumePolicies", "replayPending"]) if (holder[field] && typeof holder[field] === "object") delete (holder[field] as Record<string, unknown>)[instance];
+        for (const field of ["resumePolicies", "replayPending", "effortTouch"]) if (holder[field] && typeof holder[field] === "object") delete (holder[field] as Record<string, unknown>)[instance];
         if (holder.resumeSeals && typeof holder.resumeSeals === "object") delete (holder.resumeSeals as Record<string, unknown>)[instance];
         cleared++; changed = true;
       }
@@ -213,8 +213,16 @@ export function resetIncarnatedSessionCursors(root: string, db: DatabaseSync): n
  * and the HighLevel folder (highlevel/, 1.0.18: the connection record with ids, the location name and a token fingerprint, never the
  * token, and the change journal; 1.0.2 has no HighLevel, and a later upgrade asks the owner to check the location again, as after a restore).
  * The Windows Signal bootstrap marker is derived permission-check state, rebuilt on the next start.
+ * The data-version marker (data-version.json, 1.0.20) names the newest Murage that wrote the folder; the folder this prepares is for 1.0.2, so
+ * it leaves, and the next 1.0.20 or later start writes it again.
+ * The start-up note (boot-progress.json, 1.0.20: the step before listen a start is in, removed at listen) names no data; 1.0.2 never reads it.
+ * The saved ChatGPT plan refusals (chatgpt-refused-models.json, 1.0.22: models the plan refused for the current sign-in) are runtime state; 1.0.2 never reads them.
+ * The automation ancestry ledger (automation-ancestry.json, 1.0.21 automation-ancestry.ts: which recent turns descended from a routine) is
+ * never restored and a missing ledger fails closed; 1.0.2 never reads it.
+ * The pre-upgrade copies note (memory-upgrade-copies.json and its unfinished write, 1.0.22 memory/upgrade-copies.ts: clean opens counted
+ * since each messages.pre-memory-v*.db copy appeared) is never restored and a missing note starts the count again; 1.0.2 never reads it.
  * The Cloud-only names are never on a desktop that reinstalls 1.0.2. */
-export const DATA_DIR_NAMES_AFTER_102 = ["browser-window", "model-catalogs", "claude-private", "claude-signin-answers.json", "draft-only-cwd", "email-capabilities.json", "email-capabilities.json.tmp", "env", "feedback-install-id", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json", "cloud-computer-turns.json", "cloud-computer-turns.json.unreadable", "news-signup.json", "health", "health-key", "sentinel-delivery.json", "power-guard-notice.json", "highlevel", ".signal-owner-only.json", "sentinel-io", "memory-index.db-walstop", "memory-index.db-walok", "memory-index.db-walattempt"] as const;
+export const DATA_DIR_NAMES_AFTER_102 = ["browser-window", "model-catalogs", "claude-private", "claude-signin-answers.json", "data-version.json", "draft-only-cwd", "email-capabilities.json", "email-capabilities.json.tmp", "env", "feedback-install-id", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "memory-repairs-selfheal.json", "pending-grants.json", "setup-backup.json", "cloud-computer-turns.json", "cloud-computer-turns.json.unreadable", "news-signup.json", "health", "health-key", "sentinel-delivery.json", "power-guard-notice.json", "highlevel", ".signal-owner-only.json", "sentinel-io", "memory-index.db-walstop", "memory-index.db-walok", "memory-index.db-walattempt", "boot-progress.json", "automation-ancestry.json", "memory-upgrade-copies.json", "memory-upgrade-copies.json.tmp", "chatgpt-refused-models.json"] as const;
 /** Owner-kept notes written after 1.0.2 (backed up, so they are not in the derived list above), that 1.0.2's backup does not classify
  * either. The follow-model marker (thread-follow-model.ts) only records that the one-time chat model cleanup ran; 1.0.2 never reads
  * it. Removing it lets 1.0.2 take a backup; a later upgrade runs the cleanup once more, which drops only pins proved equal to the
@@ -367,6 +375,8 @@ function assertTombstonesReadable(db: DatabaseSync): void {
 
 /** The memory schema versions `memory-downgrade --to` recognizes. 7 to 13 run (10: 1.0.2; 11: 1.0.3 before the lineage door epoch; 12: 1.0.3 to 1.0.6;
  * 13: 1.0.17, the same version, where only the 1.0.18 optional memory indexes leave and the source stamps stay);
+ * a 1.0.23 file (schema 14) asked for 13 or lower first takes the 14 -> 13 deny-rule step (downgradeMemorySchema, deny-rule-migrate.ts: the
+ * 1.0.22 mark tables rebuilt with every implied mark, one transaction, the file stays at 14 on any failure), then the step asked for;
  * 1 to 6, like no target at all, get the one sentence below. */
 export const MEMORY_DOWNGRADE_TARGETS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] as const satisfies readonly MemoryDowngradeTarget[];
 /** The search index file did not finish going back (a stop it keeps, or a bound step): nothing after it ran, a rerun resumes it. */
@@ -427,6 +437,8 @@ export async function downgradeInstallationMemorySchema(dataDir: string, to: Mem
         assertNoFluxMemoryForDowngrade(probe);
         if (probe.prepare("SELECT 1 FROM sqlite_schema WHERE name='own_write_holds'").get() && probe.prepare("SELECT 1 FROM own_write_holds WHERE state='applying' LIMIT 1").get()) throw new Error('A reviewed change may still be running. Check its result before downgrading.');
         assertNoOwedWorkForDowngrade(probe, root);
+        // L5H: an unfinished connected-app run or a result still owed or held refuses here, on every target, before anything is written
+        assertNoAppResultsOwedForDowngrade(probe);
         if (!probe.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get()) fail("MEMORY_SCHEMA_UNSUPPORTED");
         validateMemorySchema(probe);
         if (ftsProbeBoth(probe) === "unknown") fail("SEARCH_INDEX_NOT_SETTLED");
@@ -489,6 +501,8 @@ export async function downgradeInstallationMemorySchema(dataDir: string, to: Mem
       downgradeRoomRequestPark(db);
       downgradeChatsPreviewTables(db);
       if (!to117) downgradeBotCallsTo108(db);
+      // every older build lacks the L5H lineage and results objects (1.0.17 included): they leave first, whatever the target (app-trigger-store.ts)
+      downgradeL5hObjects(db);
       // every build before 1.0.12 lacks the connected-app trigger tables: they leave first on the way to one (app-trigger-store.ts)
       if (!to117) downgradeAppTriggers(db);
       // every older build lacks the 1.0.18 card tables (venue_posts, room_shares): they leave first, whatever the target (installation-app-schema-downgrade.ts)
@@ -502,6 +516,8 @@ export async function downgradeInstallationMemorySchema(dataDir: string, to: Mem
       // HighLevel marks are newer than every supported downgrade target.
       // DROP TABLE also removes its primary-key index before the legacy stamp.
       db.exec("DROP TABLE IF EXISTS highlevel_thread_marks");
+      // Removal receipts (settings v10 P1) are newer than every supported downgrade target; DROP TABLE takes its indexes with it.
+      db.exec("DROP TABLE IF EXISTS push_removal_receipts");
       // The device-id disclosure choice is 1.0.19 state. Every supported
       // downgrade target predates it, including 1.0.17 which keeps phone registrations.
       downgradePhoneAskOptIns(db);

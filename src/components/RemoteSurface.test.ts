@@ -27,6 +27,7 @@ import { describe, expect, it } from "vitest";
 
 import { resolveDesktopSurface } from "../lib/use-surface";
 import { webUiReadinessRows, type WebUiReadiness } from "./PhoneSetupFlow";
+import { settingsPanelSource } from "./bot-pages/panel-source";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
 
@@ -35,7 +36,7 @@ const phases = read("./FirstRunPhases.tsx");
 const firstRun = read("../lib/first-run.ts");
 const phoneSetup = read("./PhoneSetupFlow.tsx");
 const companion = read("./CompanionSection.tsx");
-const settings = read("./SettingsPanel.tsx");
+const settings = settingsPanelSource();
 const sidebar = read("./Sidebar.tsx");
 const hook = read("../lib/use-surface.ts");
 

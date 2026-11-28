@@ -236,6 +236,9 @@ function parseKeyInfo(body: unknown): FluxKeyInfo | null {
  *  while an answer is fresh, the key is known invalid, or a failure is backing
  *  off. `unknown` means "could not tell; do not treat the key as bad". */
 export async function checkFluxKey(key: string, options: { fetchImpl?: typeof fetch; now?: number; manual?: boolean } = {}): Promise<FluxKeyCheck> {
+  // A Cloud home holds only the key Flux issued for that one home, and Flux refuses /key/info for it (403): never ask.
+  // The home's own check is flux-home-gate.ts (GET /v1/cloud-home/status); no answer here never blocks or pauses a run.
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return { state: "unknown" };
   const id = fingerprint(key);
   const now = options.now ?? Date.now();
   const held = keyInfo.get(id);

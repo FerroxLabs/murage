@@ -22,7 +22,7 @@ import { TERMS_VERSION } from "../shared/terms.ts";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FAKE_CLI = join(ROOT, "server", "testing", "fake-claude-cli.ts");
 /** The executable launchVerificationServer names for the fake engine on POSIX (see there). */
-const FAKE_ENGINE_NAME = "fake-claude-engine";
+export const FAKE_ENGINE_NAME = "fake-claude-engine";
 const MUTATING = new Set(["new-bot", "new-channel", "send", "send-channel", "interrupt"]);
 
 /** Data folders of the verification servers this process launched, by origin,
@@ -373,6 +373,11 @@ export function probeVerificationHealth(url: string, timeoutMs: number, signal?:
   });
 }
 
+/** The verification engine's config.json entry, as a fresh fixture's owner would add it (`freshInstall`). */
+export function verificationInstances(cli: string) {
+  return { verification: { driver: "claudeAgent", displayName: "Verification fixture", config: { cli } } };
+}
+
 export async function launchVerificationServer(
   parentEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
@@ -389,7 +394,7 @@ export async function launchVerificationServer(
      *  a companion launch proof for a test standing in for the phone's door, or
      *  the fake engine's scripted background-helper run (see __fixture_background__
      *  in server/testing/fake-claude-cli.ts), or an owned test native meter. */
-    env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY" | "MURAGE_COMPANION_TOKEN" | "FAKE_CLAUDE_BG_STAGGER_DIR" | "FAKE_CLAUDE_BG_TASKS" | "FAKE_CLAUDE_BG_ASKS" | "FAKE_CLAUDE_BG_LOG" | "NODE_ENV" | "MURAGE_ENGINE_EXCLUSION_PATH" | "FAKE_CLAUDE_PERM_INPUT", string>>;
+    env?: Partial<Record<"MURAGE_ANNOUNCEMENTS_URL" | "MURAGE_ANNOUNCEMENTS_TEST_KEY" | "MURAGE_COMPANION_TOKEN" | "FAKE_CLAUDE_BG_STAGGER_DIR" | "FAKE_CLAUDE_BG_TASKS" | "FAKE_CLAUDE_BG_ASKS" | "FAKE_CLAUDE_BG_LOG" | "NODE_ENV" | "MURAGE_ENGINE_EXCLUSION_PATH" | "FAKE_CLAUDE_PERM_INPUT" | "FAKE_CLAUDE_NO_CACHE", string>>;
     /** Give the child a HOME outside its data folder, so everything at the
      * data folder's root is Murage's own (data-dir-inventory.test.ts). */
     separateHome?: boolean;
@@ -407,6 +412,11 @@ export async function launchVerificationServer(
     /** Keep every fake engine dump in order (`fixtureDumpLogPath`), not only the latest turn's file: a spec whose turns
      * overlap other bots' turns finds its own turn there. */
     dumpLog?: boolean;
+    /** Start as a brand-new install: no config.json before the first boot (F33 reads its absence), so the verification engine is
+     *  not configured yet. The fixture CLI is still written; `verificationInstanceConfig(fixture)` is the entry an owner adds later. */
+    freshInstall?: boolean;
+    /** Files written into the data folder before the first boot (relative name -> contents), e.g. an earlier version's bots.json. */
+    seedFiles?: Record<string, string>;
   } = {},
 ): Promise<VerificationServer> {
   const exclusionStub = join(ROOT, "server", "testing", "engine-exclusion-stub.cjs");
@@ -460,15 +470,8 @@ export async function launchVerificationServer(
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
     writeFileSync(fixtureCli, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(FAKE_CLI)} "$@"\n`, { mode: 0o755 });
   }
-  writeFileSync(join(dataDir, "config.json"), JSON.stringify({
-    instances: {
-      verification: {
-        driver: "claudeAgent",
-        displayName: "Verification fixture",
-        config: { cli: fixtureCli },
-      },
-    },
-  }, null, 2));
+  if (!options.freshInstall) writeFileSync(join(dataDir, "config.json"), JSON.stringify({ instances: verificationInstances(fixtureCli) }, null, 2));
+  for (const [name, contents] of Object.entries(options.seedFiles ?? {})) writeFileSync(join(dataDir, name), contents, { mode: 0o600 });
 
   let fixtureExclusion = parentEnv.MURAGE_ENGINE_EXCLUSION_PATH;
   if (parentEnv.NODE_ENV === "test" && parentEnv.MURAGE_TEST_DOOR_TOKEN) {

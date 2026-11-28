@@ -51,6 +51,8 @@ test("Firecrawl key setup preserves engine-first default until explicitly select
   await page.goto(origin + "/__search");
   await expect(page.getByLabel("Search provider", { exact: true })).toHaveValue("engine");
   await expect(page.getByText("Use the engine's own search first.", { exact: false })).toBeVisible();
+  // polish-1021: a search service with no key and not chosen waits behind "Other search services".
+  await page.getByRole("button", { name: "Other search services", exact: true }).click();
   await page.getByLabel("Firecrawl API key", { exact: true }).fill("fake-firecrawl-key");
   await page.getByRole("button", { name: "Save Firecrawl key", exact: true }).click();
   await expect(page.getByLabel("Firecrawl API key", { exact: true })).toHaveValue("");
@@ -145,7 +147,7 @@ test("browser fallback saves provider separately and replaces or clears write-on
   expect(writes.at(-1)).toEqual({ webSearch: { tavilyApiKey: "" } });
   await expect(page.getByLabel("Search provider", { exact: true })).toHaveValue("tavily");
   await page.getByLabel("Search provider", { exact: true }).selectOption("off");
-  await expect(page.getByText(/Search tools provided separately by engines or connected tools \(MCP\) may still be available/)).toBeVisible();
+  await expect(page.getByText(/Page reading is off while web search is off\. Search tools that engines or connected tools \(MCP\) provide separately may still be available/)).toBeVisible();
   await expect(page.getByText(/Connected|Ready/, { exact: true })).toHaveCount(0);
 });
 
@@ -156,6 +158,7 @@ test("failed key save retains the typed value without claiming custody or sendin
     return route.fulfill({ status: 503, json: { error: "fixture failure" } });
   });
   await page.goto(origin + "/__search");
+  await page.getByRole("button", { name: "Other search services", exact: true }).click();
   const input = page.getByLabel("Exa API key", { exact: true });
   await input.fill("fixture-exa-failed");
   await page.getByRole("button", { name: "Save Exa key" }).click();

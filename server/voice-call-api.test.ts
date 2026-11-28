@@ -24,6 +24,8 @@ const voiceList = (eleven: string[], entitlement = "open") => ({
 let fluxVoiceList: unknown = voiceList(ELEVEN);
 const callSockets: WebSocket[] = [];
 const callHeaders = new Map<string, Record<string, string>>();
+let speechRefusal: number | undefined;
+const speechCanary = "fixture private speech metadata";
 let hostRefusal: { status: number; body: string } | null = null;
 
 beforeAll(async () => {
@@ -53,6 +55,11 @@ beforeAll(async () => {
         return;
       }
       if (req.url?.endsWith("/audio/speech")) {
+        if (speechRefusal) {
+          res.writeHead(speechRefusal, { "content-type": "application/json", "retry-after": "0.001" });
+          res.end(JSON.stringify({ error: { message: speechCanary } }));
+          return;
+        }
         res.writeHead(200, { "content-type": "audio/mpeg" });
         res.end(Buffer.from([0xff, 0xf3, 0x44, 0xc4]));
         return;
@@ -258,6 +265,24 @@ it("each agent speaks with its own voice service, chosen on the agent", async ()
   expect(config.body.tts.available).toMatchObject({ xai: true });
 });
 
+
+it.each([500, 501, 429])("speaking HTTP %i keeps provider metadata private", async (status) => {
+  const configured = await api("PUT", "/api/config", { tts: { provider: "flux" } });
+  expect(configured.status).toBe(200);
+  const before = seen.length;
+  speechRefusal = status;
+  try {
+    const result = await api("POST", "/api/tts/speak", { text: "Fixture utterance.", voiceId: "marin", call: true });
+    expect(result.status).toBe(status === 429 ? 429 : 502);
+    expect(seen.slice(before).filter(item => item.path.endsWith("/audio/speech"))).toHaveLength(status === 501 ? 1 : 2);
+    expect(result.body).toEqual({ error: status === 429
+      ? "Flux is rate-limiting this account. Wait a moment and try again."
+      : `Speaking failed (${status})` });
+    expect(readFileSync(fixture.info.logPath, "utf8")).not.toContain(speechCanary);
+  } finally {
+    speechRefusal = undefined;
+  }
+});
 
 it("D24 phone code omission moves to the real prepare/speak provider boundary", async () => {
   await api("PUT", "/api/config", { tts: { provider: "flux" } });

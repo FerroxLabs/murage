@@ -213,7 +213,10 @@ function connectedAppPlain(input: Json, tool: string): PlainApproval | undefined
   const firstArgs = object(first?.arguments) ?? object(first?.input) ?? object(first?.params) ?? object(input.arguments);
   if (actions.length === 1) {
     const { app, action } = actions[0]!;
-    return { action: `use ${app} to ${action}`, lines: messageLines(firstArgs) };
+    const lines = messageLines(firstArgs);
+    const account = text(first?.account);
+    if (account) lines.unshift(`Account: ${account}`);
+    return { action: `use ${app} to ${action}`, lines };
   }
   const apps = [...new Set(actions.map((a) => a.app))];
   const appText = apps.length === 1 ? apps[0]! : `${apps.slice(0, -1).join(", ")} and ${apps.at(-1)}`;

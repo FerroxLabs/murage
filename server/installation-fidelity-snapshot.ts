@@ -7,6 +7,7 @@ import { portableArchivePath, type ArchiveLimits } from "./installation-archive.
 import { InstallationSnapshotError, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import type { StateSnapshotManifest } from "./installation-state-snapshot.ts";
 import { classifyDataDirEntry, classifyDataDirEntryForBackup } from "./data-dir-inventory.ts";
+import { omitBedrockBindings } from "./bedrock-env.ts";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES } from "../shared/backup-limits.ts";
 // Every top-level name is classified by data-dir-inventory.ts, the one list
 // shared with the restorable stage and the damaged-installation export. A
@@ -16,6 +17,8 @@ function fail(code:string,path?:string):never{throw new InstallationSnapshotErro
 const same=(a:Stats,b:Stats)=>a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs;
 export interface FidelitySource { path:string; bytes:number; sha256:string; source:string; identity:Stats }
 /** Inventory only the selected application files. No external roots or native custody. */
+/** Refusals of the memory search index copy that leave it out of the backup instead of refusing the backup. */
+const MEMORY_INDEX_SKIPPABLE:ReadonlySet<string>=new Set(["DATABASE_INTEGRITY_FAILED","DATABASE_UNREADABLE","DATABASE_SNAPSHOT_FAILED","UNSAFE_DATABASE_FILE"]);
 export async function inventoryFidelity(installation:OfflineInstallation,stage:{directory:string;manifest:StateSnapshotManifest},selection:BackupSelection,options:ArchiveLimits={}) {
   backupSelectionSchema.parse(selection);
   const root=installation.dataDir;
@@ -52,9 +55,17 @@ export async function inventoryFidelity(installation:OfflineInstallation,stage:{
     for(const name of ["memory-index.db","memory-index.db-wal"]){
       if(roots.includes(name))memoryOriginals.set(join(root,name),lstatSync(join(root,name)));
     }
-    const snapshot=await installation.snapshotMemoryIndex(join(stage.directory,"memory-index.db"));
-    if(snapshot.status!=="copied")fail("BACKUP_REQUIRED_COMPONENT_MISSING");
-    selectedFiles.push({path:"memory-index.db"});
+    // 1.0.22 q1022-startmem: the memory search index is a projection of messages.db that a restore rebuilds. A copy of it that cannot
+    // be read or fails its check is left out of this backup (named in the coverage), never a reason to refuse the backup itself.
+    let snapshot:Awaited<ReturnType<OfflineInstallation["snapshotMemoryIndex"]>>|null=null;
+    try{snapshot=await installation.snapshotMemoryIndex(join(stage.directory,"memory-index.db"));}
+    catch(error){if(!(error instanceof InstallationSnapshotError)||!MEMORY_INDEX_SKIPPABLE.has(error.code))throw error;}
+    if(snapshot?.status==="copied")selectedFiles.push({path:"memory-index.db"});
+    else{
+      memoryOriginals.clear();
+      const entry=components.find(component=>component.path==="memory-index.db");
+      if(entry){entry.status="excluded";entry.reason="The memory search index could not be read, so it was left out; a restore rebuilds it from your chats";}
+    }
   }
   const channelDirectories=new Map<string,{identity:Stats;names:string[]}>();
   let channelEntries=0;
@@ -93,17 +104,22 @@ export async function inventoryFidelity(installation:OfflineInstallation,stage:{
     const path=file.path.replaceAll("\\","/");if(!portableArchivePath(path))fail("UNSAFE_ARCHIVE_PATH");
     let source=path==="messages.db"?join(stage.directory,"state",file.path):path==="memory-index.db"?join(stage.directory,"memory-index.db"):stagedLedgers.get(path)??join(root,file.path);
     if(path==="config.json"){
-      // The retired own connected-apps key is never copied into a backup. The
-      // source file itself is left untouched; only this raw copy omits it.
+      // The retired own connected-apps key is never copied into a backup, and
+      // neither is a Bedrock binding (M9 W25: the AWS profile, region and
+      // account id stay on this computer; the account restores unbound). The
+      // source file itself is left untouched; only this raw copy omits them.
       const copy=join(stage.directory,"raw-config.json");
-      try{
-        const parsed=JSON.parse(readFileSync(source,"utf8"));
-        if(parsed&&typeof parsed==="object"&&parsed.composio&&typeof parsed.composio==="object"&&"apiKey"in parsed.composio){
-          parsed.composio.apiKey="";
-          writeFileSync(copy,JSON.stringify(parsed,null,2),{mode:0o600});
-          source=copy;
-        }
-      }catch{/* unreadable or not JSON: keep the raw bytes as before */}
+      let parsed:unknown;
+      try{parsed=JSON.parse(readFileSync(source,"utf8"));}catch{/* unreadable or not JSON: keep the raw bytes as before */}
+      let omitted=false;
+      const record=parsed as {composio?:unknown}|null|undefined;
+      if(record&&typeof record==="object"&&record.composio&&typeof record.composio==="object"&&"apiKey"in record.composio){(record.composio as {apiKey:string}).apiKey="";omitted=true;}
+      if(omitBedrockBindings(parsed))omitted=true;
+      // Fail closed (r4 ASTRA): a copy that cannot be written fails the backup; the raw file, which still holds what was omitted, is never used instead.
+      if(omitted){
+        writeFileSync(copy,JSON.stringify(parsed,null,2),{mode:0o600});
+        source=copy;
+      }
     }
     const before=lstatSync(source);
     if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1)fail("UNSAFE_SNAPSHOT_ENTRY",path);

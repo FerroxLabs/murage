@@ -6,7 +6,8 @@ import ts from "typescript";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createBackgroundLifecycle } from "./background-lifecycle.mjs";
 
-const { updater, handlers, fixturePath } = vi.hoisted(() => ({
+const { updater, handlers, fixturePath, netFetch, ringFeedOptions } = vi.hoisted(() => ({
+  netFetch: vi.fn(async () => new Response("")), ringFeedOptions: [],
   fixturePath: { root: "" },
   updater: { on: vi.fn(), checkForUpdates: vi.fn(), downloadUpdate: vi.fn() },
   handlers: new Map(),
@@ -15,6 +16,7 @@ vi.mock("electron", () => ({
   app: { isPackaged: true, getPath: () => fixturePath.root, getVersion: () => "9.8.7-fixture" },
   clipboard: { writeText: vi.fn() },
   ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+  net: { fetch: netFetch },
 }));
 vi.mock("node:module", () => ({ createRequire: () => () => ({ autoUpdater: updater }) }));
 vi.mock("./package-install-command.mjs", async (original) => ({
@@ -24,6 +26,9 @@ vi.mock("./package-install-command.mjs", async (original) => ({
 // publisher verifier and the macOS/Windows signed-build version check have
 // their own fixtures (update-signature / update-build-version node tests).
 const { downloadVerifier } = vi.hoisted(() => ({ downloadVerifier: { create: null } }));
+// These rows predate rings (designs/RINGS-DESIGN.md) and run with no ring feed, as updater-staging.node-test.mjs does; the
+// ring step and its install admission are witnessed through the same coordinator in updater-rings.node-test.mjs.
+vi.mock("./updater-rings.mjs", async (original) => ({ ...(await original()), createRingFeed: (_updater, options) => { ringFeedOptions.push(options); return null; } }));
 vi.mock("./update-build-version.mjs", () => ({
   createUpdateDownloadVerifier: (options) => downloadVerifier.create?.(options) ?? (async () => ({ recheck: async () => {} })),
 }));
@@ -54,6 +59,18 @@ beforeEach(async () => {
   registerMainNotice({ handle: (channel, listener) => handlers.set(channel, listener) }, api.reportUpdateNotice);
 });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); rmSync(fixturePath.root, { recursive: true, force: true }); });
+
+// Fable 6cdb66fe4b M3: the ring manifest and install-admission lookups go through Electron's network stack (system
+// proxy), not Node's fetch, so a proxy-only machine is not refused every install.
+it("the desktop ring feed fetches through Electron net, with the caller's request options", async () => {
+  const api = await import("./updater.mjs");
+  api.startUpdater({ scheduleChecks: false });
+  const options = ringFeedOptions.at(-1);
+  expect(typeof options?.fetchImpl).toBe("function");
+  const init = { credentials: "omit", redirect: "manual" };
+  await options.fetchImpl("https://raw.githubusercontent.com/fixture/rings.json", init).catch(() => undefined); // Node fetch has no network here
+  expect(netFetch).toHaveBeenCalledWith("https://raw.githubusercontent.com/fixture/rings.json", init);
+});
 
 it("retargets progress and retained state without adding updater listeners or timers", async () => {
   const api = await import("./updater.mjs");
@@ -390,4 +407,18 @@ it('refuses foreign update notice reports before reading their payload', async (
   const payload = Object.defineProperty({}, 'version', { get: read });
   await expect(handlers.get('update:notice-report')({}, payload)).rejects.toMatchObject({ code: OWNED_MAIN_IPC_REFUSAL });
   expect(read).not.toHaveBeenCalled();
+});
+
+// fablehunt-1020q item 9: the launch pause main.mjs registers at startup is the one the install uses.
+it("the registered launch pause takes the timed jobs down before quitAndInstall", async () => {
+  const api = await import("./updater.mjs");
+  const order = [];
+  api.useUpdateLaunchPause({ pause: () => { order.push("pause"); }, resume: () => { order.push("resume"); } });
+  api.registerUpdaterIpc();
+  api.startUpdater();
+  fakeDownload();
+  await handlers.get("update:download")();
+  updater.quitAndInstall = vi.fn(() => { order.push("quitAndInstall"); });
+  await handlers.get("update:install")();
+  expect(order).toEqual(["pause", "quitAndInstall"]);
 });

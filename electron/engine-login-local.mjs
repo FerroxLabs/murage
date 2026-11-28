@@ -34,6 +34,7 @@ export const LOCAL_COPY = Object.freeze({
   terminalFailed: "The terminal didn't open.",
   startFailed: "This engine's sign-in didn't start.",
   unreachable: "Murage isn't ready yet. Try again in a moment.",
+  apiKeyConfigured: "Codex is signed in with an API key. To switch to ChatGPT, sign out of Codex in your terminal first.",
 });
 
 const validRecipe = (recipe) => Boolean(recipe) && ["headless", "terminal", "none"].includes(recipe.kind) && Array.isArray(recipe.argv) && recipe.argv.every((part) => typeof part === "string")
@@ -62,12 +63,15 @@ export function createLocalEngineLogin({ api, spawn, killTree, launchTerminal, t
     } catch { return { code: "unreachable" }; }
   }
 
-  /** That one instance's `authenticated`: true, false, or null when the probe could not answer. */
   async function probe(instanceId) {
     try {
       const reply = await api("/api/engine-signin-probe", { instanceId });
-      return reply.status === 200 && typeof reply.body?.authenticated === "boolean" ? reply.body.authenticated : null;
-    } catch { return null; }
+      if (reply.status === 200) return {
+        authenticated: typeof reply.body?.authenticated === "boolean" ? reply.body.authenticated : null,
+        apiKeyConfigured: reply.body?.apiKeyConfigured === true,
+      };
+    } catch { /* the probe could not answer */ }
+    return { authenticated: null, apiKeyConfigured: false };
   }
 
   /** The sign-in finished: tell the server, so a rejection from before it stops marking this engine signed out. */
@@ -105,7 +109,8 @@ export function createLocalEngineLogin({ api, spawn, killTree, launchTerminal, t
     if (outcome === "stopped" || outcome === "handoff") return "stopped";
     if (outcome === "failed") return "failed";
     if (quitting) return "not-finished";
-    const signedIn = await probe(session.instanceId);
+    const { authenticated: signedIn, apiKeyConfigured } = await probe(session.instanceId);
+    if (apiKeyConfigured) { session.message = LOCAL_COPY.apiKeyConfigured; return "not-finished"; }
     // Two probe readings alone prove nothing: a first reading that timed out says false, and a stale login then reads true. A login
     // CLI that left by itself with 0 said it finished. Anything else that looks like a change has to pass the one real reply.
     const changed = session.startedSignedIn === false && (session.flipped || signedIn === true);
@@ -143,9 +148,9 @@ export function createLocalEngineLogin({ api, spawn, killTree, launchTerminal, t
   async function watch(session) {
     if (session.over || session.flipped || session.probing || session.startedSignedIn !== false) return;
     session.probing = true;
-    const signedIn = await probe(session.instanceId);
+    const { authenticated: signedIn, apiKeyConfigured } = await probe(session.instanceId);
     session.probing = false;
-    if (session.over || signedIn !== true) return;
+    if (session.over || signedIn !== true || apiKeyConfigured) return;
     session.flipped = true;
     if (session.watchTimer) { timers.clearInterval(session.watchTimer); session.watchTimer = null; }
     sendTo(session.sender, LOCAL_ENGINE_LOGIN_CHANNELS.data, { id: session.id, finishing: true });
@@ -193,8 +198,10 @@ export function createLocalEngineLogin({ api, spawn, killTree, launchTerminal, t
     if (session.over) return refuse("not-open", LOCAL_COPY.notOpen);
     if (recipe.kind !== "headless") return refuse("start-failed", LOCAL_COPY.startFailed);
     session.recipe = recipe;
-    session.startedSignedIn = await probe(instanceId);
+    const initial = await probe(instanceId);
+    session.startedSignedIn = initial.authenticated;
     if (session.over) return refuse("not-open", LOCAL_COPY.notOpen);
+    if (initial.apiKeyConfigured) return refuse("api-key-configured", LOCAL_COPY.apiKeyConfigured);
     if (!spawnChild(session)) return refuse("start-failed", LOCAL_COPY.startFailed);
     session.started = true;
     session.totalTimer = timers.setTimeout(() => { void finish(session, "timeout"); }, limits.totalMs);
@@ -227,8 +234,13 @@ export function createLocalEngineLogin({ api, spawn, killTree, launchTerminal, t
     const { recipe } = await readRecipe(instanceId);
     if (!recipe || recipe.argv.length === 0 || recipe.kind === "none") { await finish(session, "failed"); return { ok: false, code: "terminal-failed", message: LOCAL_COPY.terminalFailed }; }
     session.recipe = recipe;
-    session.startedSignedIn = await probe(instanceId);
+    const initial = await probe(instanceId);
+    session.startedSignedIn = initial.authenticated;
     if (session.over) { await session.ending; return { ok: false, code: "not-open", message: LOCAL_COPY.notOpen }; }
+    if (initial.apiKeyConfigured) {
+      await finish(session, "failed");
+      return { ok: false, code: "api-key-configured", message: LOCAL_COPY.apiKeyConfigured };
+    }
     // Quit and Cancel await this launch through finish, then stop what it opened.
     session.launching = (async () => launchTerminal(recipe))().catch(() => ({ ok: false, code: "failed" }));
     const launched = await session.launching;

@@ -62,7 +62,7 @@ it("(b) a thread with nothing memory-made still gets an explicit floor for a rea
 
 it("(c) a lookup that cannot be read drops the line (fails closed)", () => {
   memoryThread();
-  f.db.exec("DROP TABLE memory_deny_line");
+  f.db.exec("DROP TABLE memory_deny_point");
   const dropped = ids(floor(READER));
   expect(dropped).not.toContain("g1");
   expect(dropped).not.toContain("g2");
@@ -82,7 +82,7 @@ it("(d2) no reader, a memory-held thread: the audience mark drops nothing and wi
 
 it("(e) additive: a reply the owner forgot stays dropped for a reader that would show it (the content rule is not replaced)", () => {
   memoryThread();
-  f.db.prepare("DELETE FROM memory_deny_line").run(); // g1 and g2 are audience-shown now
+  f.db.prepare("DELETE FROM memory_deny_point").run(); // g1 and g2 are audience-shown now
   f.tombstone("source", "message:D:g1");
   expect(ids(floor(READER))).toEqual(["o1", "g2"]);
   expect(ids(floor())).toEqual(["o1", "g2"]); // and without a reader too: today's behaviour, unchanged
@@ -99,7 +99,9 @@ it("(f) additive: words nobody proved are the owner's (unproven) plus a reader a
 // Astra F2: the rows above build their own refs and readers, so they cannot see the production call sites. These read index.ts (as
 // direct-replay-without-memory.test.ts does) and pin the owner-only tag at both producers and the reader at all three floors.
 const index = readFileSync(fileURLToPath(new URL("../index.ts", import.meta.url)), "utf8");
-it("(g) wiring: direct and room minimal prompts use only fresh human input, with stored replay removed", () => {
+it("(g) wiring: direct and room minimal prompts use only fresh human input; the only stored replay is the direct one named line by line (SABLE-IDENTITY-1020)", () => {
+  expect(index).toContain('? recentReplayPrompt(turnLineage, { rawHumanText,');
+  expect(index).toContain('if (!lastResortReplay) transcript = [];');
   expect(index).toContain('let directPrompt = memoryLastResort ? messageOnlyPrompt(turnLineage,');
   expect(index).toContain('let roomPrompt = roomLastResort ? messageOnlyPrompt(roomTurnLineage,');
   expect(index).not.toContain('ownReplayRefs(');

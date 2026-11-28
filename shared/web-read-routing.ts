@@ -21,6 +21,10 @@ export const WEB_READ_ROUTING: Record<string, { route: string; limitation?: stri
   cursorAgent: { route: 'web_read mounted', limitation: 'Cursor ACP has no verified native reader exclusion independent of permission mode.' },
   hermesAgent: { route: 'managed agent.disabled_toolsets: web, browser with agents mounted' },
   clineAgent: { route: 'web_read mounted', limitation: 'Cline ACP has no verified native browser/page-fetch exclusion.' },
+  commandCodeAgent: { route: 'web_read mounted', limitation: 'Command Code ACP has no verified native browser/page-fetch exclusion.' },
+  kiroAgent: { route: 'web_read mounted', limitation: 'Kiro ACP has no verified native browser/page-fetch exclusion.' },
+  ompAgent: { route: 'web_read mounted', limitation: 'OMP ACP has no verified native browser/page-fetch exclusion.' },
+  devinAgent: { route: 'web_read mounted', limitation: 'Devin ACP has no verified native browser/page-fetch exclusion.' },
   deepseekAgent: { route: 'web_read mounted', limitation: 'DeepSeek Harness ACP has no verified native reader exclusion.' },
   museCode: { route: 'web_read mounted', limitation: 'Muse app-server has no verified native reader exclusion.' },
   antigravityAgent: { route: 'web_read mounted', limitation: 'Antigravity has no verified native reader exclusion at every permission level.' },
@@ -30,7 +34,7 @@ export const WEB_READ_ROUTING: Record<string, { route: string; limitation?: stri
 };
 
 export const ENGINE_LIMIT_PREFIX = "engine limit: web-read:";
-const engineNames: Record<string, string> = { kimiAgent: "Kimi Code", cursorAgent: "Cursor", clineAgent: "Cline", deepseekAgent: "DeepSeek Harness", museCode: "Muse Code", antigravityAgent: "Antigravity", openclawAgent: "OpenClaw", boxAgent: "Box Agent" };
+const engineNames: Record<string, string> = { kimiAgent: "Kimi Code", cursorAgent: "Cursor", clineAgent: "Cline", commandCodeAgent: "Command Code", kiroAgent: "Kiro", ompAgent: "OMP", devinAgent: "Devin", deepseekAgent: "DeepSeek Harness", museCode: "Muse Code", antigravityAgent: "Antigravity", openclawAgent: "OpenClaw", boxAgent: "Box Agent" };
 export function engineLimitLine(driver: string) { return `${ENGINE_LIMIT_PREFIX}${driver}`; }
 export function engineLimitText(driver: string, surface: "chat" | "settings" = "chat"): string | undefined {
   const row = WEB_READ_ROUTING[driver];

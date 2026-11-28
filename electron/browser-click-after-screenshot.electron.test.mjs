@@ -3,11 +3,13 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 const require = createRequire(import.meta.url);
+const linuxElectron = process.platform === "linux" && process.env.MURAGE_TEST_ELECTRON;
 
-it.runIf(process.platform === "darwin")("keeps the actual browser host click target and viewport stable after screenshots", async () => {
+it.runIf(process.platform === "darwin" || linuxElectron)("keeps the actual browser host click target and viewport stable after screenshots", async () => {
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
   const result = await new Promise((resolve, reject) => {
-    const child = spawn(require("electron"), [fileURLToPath(new URL("./fixtures/browser-click-after-screenshot.cjs", import.meta.url))], { windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] });
+    const fixture = fileURLToPath(new URL("./fixtures/browser-click-after-screenshot.cjs", import.meta.url));
+    const child = spawn(linuxElectron || require("electron"), linuxElectron ? ["--no-sandbox", fixture] : [fixture], { windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "";
     child.stdout.on("data", chunk => { stdout += chunk; }); child.stderr.on("data", chunk => { stderr += chunk; });
     const timeout = setTimeout(() => { child.kill(); }, 25000);

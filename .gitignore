@@ -94,3 +94,21 @@ server/testing/.git-ls-files.fixture
 
 # Generated package qualification receipts, like dist-native build receipts.
 /qualification-evidence/
+
+# integrator/test scratch (never tracked)
+__pycache__/
+.sw*.txt
+
+# Qualification captures and lane reports belong outside source checkouts.
+evidence/
+lane-evidence/
+c2-rule-evidence/
+/proof/
+/lanes/*/shots/
+/.vitest-lane.json
+*.pyc
+# W-COMPAT (4): the f6ae52c670 tree compat-v2-oldbuild.test.ts extracts or is given (memv2-I)
+/.memv2-compat-old*/
+
+# test output written into cwd, never evidence in the tree
+.data-fix-evidence/

@@ -1,6 +1,7 @@
 import { CONNECTED_APP_EXECUTE_TOOL } from "../../shared/connected-app-names.ts";
 import { wipeEnvironment } from '../wipe/context.ts';
-import { wipeBreaker, nativeWipeBreaker, type WipeContext } from '../wipe-breaker.ts';
+import { nativeWipeBreaker, type WipeContext } from '../wipe-breaker.ts';
+import { noLimitsWipe } from '../no-limits-wipe.ts';
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { posix } from 'node:path';
 import { readExecutable, readExecutableOwnerNl } from '../no-limits-code.ts';
@@ -100,7 +101,8 @@ export function describeOwnerNoLimits(input:RequestSnapshot|ServiceCall, context
  if(native)deletes.push({path:wipeClass(native.rule),op:'delete',note:native.what});
  if(typeof text==='string'){
   executables.push({lang,text:text.slice(0,65536),from:code?'code':'command',...(typeof obj.cwd==='string'?{cwd:obj.cwd}:{})});
-  const wipe=wipeBreaker(text,{...wipeContext,lang});
+  // MAIN-RULING NOLIMITS-1022 H1 correction: No limits' wipe check reads obfuscated wipes too (noLimitsWipe)
+  const wipe=noLimitsWipe(text,{...wipeContext,lang});
   if(wipe)deletes.push({path:wipeClass(wipe.rule),op:'delete',note:wipe.what});
   if(!context.wipeOnly){
   let read: ReturnType<typeof readExecutableOwnerNl>;
@@ -120,7 +122,7 @@ export function describeOwnerNoLimits(input:RequestSnapshot|ServiceCall, context
   }
  }
  if(typeof text!=='string' && engine?.summary && executable){
-  const wipe=wipeBreaker(engine.summary,wipeContext);
+  const wipe=noLimitsWipe(engine.summary,wipeContext);
   if(wipe)deletes.push({path:wipeClass(wipe.rule),op:'delete',note:wipe.what});
  }
  if(context.wipeOnly)return freeze({tool,codeIdentity:hash({tool,executables}),executables,deletes,targets,content,ownerAuthority:{version:1,decisions,exhausted}});

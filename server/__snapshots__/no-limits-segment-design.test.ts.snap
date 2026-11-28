@@ -4,11 +4,8 @@ exports[`segment design: owner > 'A1-a-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -27,12 +24,8 @@ exports[`segment design: owner > 'A1-a-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A1-a-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -52,11 +45,8 @@ exports[`segment design: owner > 'A1-b-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -75,12 +65,8 @@ exports[`segment design: owner > 'A1-b-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A1-b-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -100,11 +86,8 @@ exports[`segment design: owner > 'A1-c-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -123,12 +106,8 @@ exports[`segment design: owner > 'A1-c-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A1-c-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -148,11 +127,8 @@ exports[`segment design: owner > 'A1-d-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -171,12 +147,8 @@ exports[`segment design: owner > 'A1-d-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A1-d-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -196,11 +168,8 @@ exports[`segment design: owner > 'A1-e-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -219,12 +188,8 @@ exports[`segment design: owner > 'A1-e-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A1-e-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -244,11 +209,8 @@ exports[`segment design: owner > 'A1-f-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -267,12 +229,8 @@ exports[`segment design: owner > 'A1-f-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A1-f-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -292,11 +250,8 @@ exports[`segment design: owner > 'A1-g-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -315,12 +270,8 @@ exports[`segment design: owner > 'A1-g-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A1-g-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -340,11 +291,8 @@ exports[`segment design: owner > 'A1-h-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -363,12 +311,8 @@ exports[`segment design: owner > 'A1-h-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A1-h-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -388,11 +332,8 @@ exports[`segment design: owner > 'A2-a-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -411,12 +352,8 @@ exports[`segment design: owner > 'A2-a-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A2-a-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -436,11 +373,8 @@ exports[`segment design: owner > 'A2-b-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -459,12 +393,8 @@ exports[`segment design: owner > 'A2-b-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A2-b-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -484,11 +414,8 @@ exports[`segment design: owner > 'A2-c-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -507,12 +434,8 @@ exports[`segment design: owner > 'A2-c-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A2-c-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -532,11 +455,8 @@ exports[`segment design: owner > 'A2-d-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -555,12 +475,8 @@ exports[`segment design: owner > 'A2-d-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A2-d-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -580,11 +496,8 @@ exports[`segment design: owner > 'A2-e-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -603,12 +516,8 @@ exports[`segment design: owner > 'A2-e-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A2-e-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -628,11 +537,8 @@ exports[`segment design: owner > 'A2-f-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -651,12 +557,8 @@ exports[`segment design: owner > 'A2-f-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A2-f-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -676,11 +578,8 @@ exports[`segment design: owner > 'A2-g-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -699,12 +598,8 @@ exports[`segment design: owner > 'A2-g-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A2-g-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -724,11 +619,8 @@ exports[`segment design: owner > 'A2-h-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -747,12 +639,8 @@ exports[`segment design: owner > 'A2-h-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A2-h-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -772,11 +660,8 @@ exports[`segment design: owner > 'A2-i-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -795,12 +680,8 @@ exports[`segment design: owner > 'A2-i-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A2-i-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -820,11 +701,8 @@ exports[`segment design: owner > 'A3-a-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -843,12 +721,8 @@ exports[`segment design: owner > 'A3-a-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A3-a-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -868,11 +742,8 @@ exports[`segment design: owner > 'A3-b-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -891,12 +762,8 @@ exports[`segment design: owner > 'A3-b-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A3-b-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -916,11 +783,8 @@ exports[`segment design: owner > 'A3-c-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -939,12 +803,8 @@ exports[`segment design: owner > 'A3-c-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A3-c-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -964,11 +824,8 @@ exports[`segment design: owner > 'A3-d-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -987,12 +844,8 @@ exports[`segment design: owner > 'A3-d-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A3-d-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1012,11 +865,8 @@ exports[`segment design: owner > 'A3-e-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1035,12 +885,8 @@ exports[`segment design: owner > 'A3-e-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A3-e-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1060,11 +906,8 @@ exports[`segment design: owner > 'A3-f-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1083,12 +926,8 @@ exports[`segment design: owner > 'A3-f-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'A3-f-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1108,11 +947,8 @@ exports[`segment design: owner > 'A4-a-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1133,12 +969,8 @@ EOF",
 exports[`segment design: owner > 'A4-a-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1160,11 +992,8 @@ exports[`segment design: owner > 'A4-b-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1185,12 +1014,8 @@ EOF",
 exports[`segment design: owner > 'A4-b-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1212,11 +1037,8 @@ exports[`segment design: owner > 'A4-c-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1237,12 +1059,8 @@ EOF",
 exports[`segment design: owner > 'A4-c-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1264,11 +1082,8 @@ exports[`segment design: owner > 'command-subst-RED' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1287,12 +1102,8 @@ exports[`segment design: owner > 'command-subst-RED' > Full access snapshot 1`] 
 exports[`segment design: owner > 'command-subst-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1312,11 +1123,8 @@ exports[`segment design: owner > 'compressor-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1335,12 +1143,8 @@ exports[`segment design: owner > 'compressor-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'compressor-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1360,11 +1164,8 @@ exports[`segment design: owner > 'cpio-cwd-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1383,12 +1184,8 @@ exports[`segment design: owner > 'cpio-cwd-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'cpio-cwd-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1407,12 +1204,8 @@ exports[`segment design: owner > 'cpio-cwd-RUN' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'cwd-relative-RED' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1431,12 +1224,8 @@ exports[`segment design: owner > 'cwd-relative-RED' > Full access snapshot 1`] =
 exports[`segment design: owner > 'cwd-relative-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1455,12 +1244,8 @@ exports[`segment design: owner > 'cwd-relative-RUN' > Full access snapshot 1`] =
 exports[`segment design: owner > 'cwd-subshell-RED' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1479,12 +1264,8 @@ exports[`segment design: owner > 'cwd-subshell-RED' > Full access snapshot 1`] =
 exports[`segment design: owner > 'cwd-subshell-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1503,12 +1284,8 @@ exports[`segment design: owner > 'cwd-subshell-RUN' > Full access snapshot 1`] =
 exports[`segment design: owner > 'cwd-wrapper-RED' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1527,12 +1304,8 @@ exports[`segment design: owner > 'cwd-wrapper-RED' > Full access snapshot 1`] = 
 exports[`segment design: owner > 'cwd-wrapper-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1552,11 +1325,8 @@ exports[`segment design: owner > 'env-S-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: env -S changes the environment the command inherits, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -1576,11 +1346,8 @@ exports[`segment design: owner > 'env-S-RUN' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: env -S changes the environment the command inherits, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -1600,11 +1367,8 @@ exports[`segment design: owner > 'process-subst-RED' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1623,12 +1387,8 @@ exports[`segment design: owner > 'process-subst-RED' > Full access snapshot 1`] 
 exports[`segment design: owner > 'process-subst-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1648,11 +1408,8 @@ exports[`segment design: owner > 'read-0' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1671,12 +1428,8 @@ exports[`segment design: owner > 'read-0' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-1' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1695,12 +1448,8 @@ exports[`segment design: owner > 'read-1' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-2' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1719,12 +1468,8 @@ exports[`segment design: owner > 'read-2' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-3' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1743,12 +1488,8 @@ exports[`segment design: owner > 'read-3' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-4' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1767,12 +1508,8 @@ exports[`segment design: owner > 'read-4' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-5' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1791,12 +1528,8 @@ exports[`segment design: owner > 'read-5' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-6' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1815,12 +1548,8 @@ exports[`segment design: owner > 'read-6' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-7' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -1840,11 +1569,8 @@ exports[`segment design: owner > 'read-8' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1864,11 +1590,8 @@ exports[`segment design: owner > 'read-9' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1888,11 +1611,8 @@ exports[`segment design: owner > 'read-10' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1912,11 +1632,8 @@ exports[`segment design: owner > 'read-11' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1938,11 +1655,8 @@ exports[`segment design: owner > 'read-12' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -1964,11 +1678,8 @@ exports[`segment design: owner > 'read-13' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -1988,12 +1699,8 @@ touch ~/.ssh/config",
 exports[`segment design: owner > 'read-14' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2060,12 +1767,9 @@ exports[`segment design: owner > 'read-16' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-17' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2108,12 +1812,8 @@ exports[`segment design: owner > 'read-18' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-19' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2132,12 +1832,8 @@ exports[`segment design: owner > 'read-19' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'read-20' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2157,11 +1853,8 @@ exports[`segment design: owner > 'round2-body-RED' > Full access snapshot 1`] = 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2181,11 +1874,8 @@ exports[`segment design: owner > 'round2-body-RUN' > Full access snapshot 1`] = 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2205,11 +1895,8 @@ exports[`segment design: owner > 'round2-word-RED' > Full access snapshot 1`] = 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2229,11 +1916,8 @@ exports[`segment design: owner > 'round2-word-RUN' > Full access snapshot 1`] = 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2253,11 +1937,8 @@ exports[`segment design: owner > 'round3-body-RED' > Full access snapshot 1`] = 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2276,12 +1957,8 @@ exports[`segment design: owner > 'round3-body-RED' > Full access snapshot 1`] = 
 exports[`segment design: owner > 'round3-body-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2301,11 +1978,8 @@ exports[`segment design: owner > 'round3-list-RED' > Full access snapshot 1`] = 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2324,12 +1998,8 @@ exports[`segment design: owner > 'round3-list-RED' > Full access snapshot 1`] = 
 exports[`segment design: owner > 'round3-list-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2349,11 +2019,8 @@ exports[`segment design: owner > 'round3-word-RED' > Full access snapshot 1`] = 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2372,12 +2039,8 @@ exports[`segment design: owner > 'round3-word-RED' > Full access snapshot 1`] = 
 exports[`segment design: owner > 'round3-word-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2397,11 +2060,8 @@ exports[`segment design: owner > 'round4-opaque-RED' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2420,12 +2080,9 @@ exports[`segment design: owner > 'round4-opaque-RED' > Full access snapshot 1`] 
 exports[`segment design: owner > 'round4-opaque-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "rule": "held=waived",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2445,11 +2102,8 @@ exports[`segment design: owner > 'sudo-u-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2468,12 +2122,8 @@ exports[`segment design: owner > 'sudo-u-RED' > Full access snapshot 1`] = `
 exports[`segment design: owner > 'sudo-u-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2493,11 +2143,8 @@ exports[`segment design: routine > 'A1-a-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2517,12 +2164,8 @@ exports[`segment design: routine > 'A1-a-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A1-a-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2543,11 +2186,8 @@ exports[`segment design: routine > 'A1-b-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2567,12 +2207,8 @@ exports[`segment design: routine > 'A1-b-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A1-b-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2593,11 +2229,8 @@ exports[`segment design: routine > 'A1-c-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2617,12 +2250,8 @@ exports[`segment design: routine > 'A1-c-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A1-c-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2643,11 +2272,8 @@ exports[`segment design: routine > 'A1-d-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2667,12 +2293,8 @@ exports[`segment design: routine > 'A1-d-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A1-d-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2693,11 +2315,8 @@ exports[`segment design: routine > 'A1-e-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2717,12 +2336,8 @@ exports[`segment design: routine > 'A1-e-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A1-e-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2743,11 +2358,8 @@ exports[`segment design: routine > 'A1-f-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2767,12 +2379,8 @@ exports[`segment design: routine > 'A1-f-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A1-f-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2793,11 +2401,8 @@ exports[`segment design: routine > 'A1-g-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2817,12 +2422,8 @@ exports[`segment design: routine > 'A1-g-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A1-g-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2843,11 +2444,8 @@ exports[`segment design: routine > 'A1-h-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2867,12 +2465,8 @@ exports[`segment design: routine > 'A1-h-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A1-h-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2893,11 +2487,8 @@ exports[`segment design: routine > 'A2-a-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2917,12 +2508,8 @@ exports[`segment design: routine > 'A2-a-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A2-a-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2943,11 +2530,8 @@ exports[`segment design: routine > 'A2-b-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -2967,12 +2551,8 @@ exports[`segment design: routine > 'A2-b-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A2-b-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -2993,11 +2573,8 @@ exports[`segment design: routine > 'A2-c-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3017,12 +2594,8 @@ exports[`segment design: routine > 'A2-c-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A2-c-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3043,11 +2616,8 @@ exports[`segment design: routine > 'A2-d-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3067,12 +2637,8 @@ exports[`segment design: routine > 'A2-d-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A2-d-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3093,11 +2659,8 @@ exports[`segment design: routine > 'A2-e-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3117,12 +2680,8 @@ exports[`segment design: routine > 'A2-e-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A2-e-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3143,11 +2702,8 @@ exports[`segment design: routine > 'A2-f-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3167,12 +2723,8 @@ exports[`segment design: routine > 'A2-f-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A2-f-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3193,11 +2745,8 @@ exports[`segment design: routine > 'A2-g-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3217,12 +2766,8 @@ exports[`segment design: routine > 'A2-g-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A2-g-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3243,11 +2788,8 @@ exports[`segment design: routine > 'A2-h-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3267,12 +2809,8 @@ exports[`segment design: routine > 'A2-h-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A2-h-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3293,11 +2831,8 @@ exports[`segment design: routine > 'A2-i-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3317,12 +2852,8 @@ exports[`segment design: routine > 'A2-i-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A2-i-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3343,11 +2874,8 @@ exports[`segment design: routine > 'A3-a-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3367,12 +2895,8 @@ exports[`segment design: routine > 'A3-a-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A3-a-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3393,11 +2917,8 @@ exports[`segment design: routine > 'A3-b-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3417,12 +2938,8 @@ exports[`segment design: routine > 'A3-b-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A3-b-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3443,11 +2960,8 @@ exports[`segment design: routine > 'A3-c-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3467,12 +2981,8 @@ exports[`segment design: routine > 'A3-c-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A3-c-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3493,11 +3003,8 @@ exports[`segment design: routine > 'A3-d-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3517,12 +3024,8 @@ exports[`segment design: routine > 'A3-d-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A3-d-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3543,11 +3046,8 @@ exports[`segment design: routine > 'A3-e-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3567,12 +3067,8 @@ exports[`segment design: routine > 'A3-e-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A3-e-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3593,11 +3089,8 @@ exports[`segment design: routine > 'A3-f-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3617,12 +3110,8 @@ exports[`segment design: routine > 'A3-f-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'A3-f-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3643,11 +3132,8 @@ exports[`segment design: routine > 'A4-a-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3669,12 +3155,8 @@ EOF",
 exports[`segment design: routine > 'A4-a-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3697,11 +3179,8 @@ exports[`segment design: routine > 'A4-b-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3723,12 +3202,8 @@ EOF",
 exports[`segment design: routine > 'A4-b-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3751,11 +3226,8 @@ exports[`segment design: routine > 'A4-c-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3777,12 +3249,8 @@ EOF",
 exports[`segment design: routine > 'A4-c-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3805,11 +3273,8 @@ exports[`segment design: routine > 'command-subst-RED' > Full access snapshot 1`
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3829,12 +3294,8 @@ exports[`segment design: routine > 'command-subst-RED' > Full access snapshot 1`
 exports[`segment design: routine > 'command-subst-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3855,11 +3316,8 @@ exports[`segment design: routine > 'compressor-RED' > Full access snapshot 1`] =
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3879,12 +3337,8 @@ exports[`segment design: routine > 'compressor-RED' > Full access snapshot 1`] =
 exports[`segment design: routine > 'compressor-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3905,11 +3359,8 @@ exports[`segment design: routine > 'cpio-cwd-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -3929,12 +3380,8 @@ exports[`segment design: routine > 'cpio-cwd-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'cpio-cwd-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3954,12 +3401,8 @@ exports[`segment design: routine > 'cpio-cwd-RUN' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'cwd-relative-RED' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -3979,12 +3422,8 @@ exports[`segment design: routine > 'cwd-relative-RED' > Full access snapshot 1`]
 exports[`segment design: routine > 'cwd-relative-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4004,12 +3443,8 @@ exports[`segment design: routine > 'cwd-relative-RUN' > Full access snapshot 1`]
 exports[`segment design: routine > 'cwd-subshell-RED' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4029,12 +3464,8 @@ exports[`segment design: routine > 'cwd-subshell-RED' > Full access snapshot 1`]
 exports[`segment design: routine > 'cwd-subshell-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4054,12 +3485,8 @@ exports[`segment design: routine > 'cwd-subshell-RUN' > Full access snapshot 1`]
 exports[`segment design: routine > 'cwd-wrapper-RED' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4079,12 +3506,8 @@ exports[`segment design: routine > 'cwd-wrapper-RED' > Full access snapshot 1`] 
 exports[`segment design: routine > 'cwd-wrapper-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4105,11 +3528,8 @@ exports[`segment design: routine > 'env-S-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: env -S changes the environment the command inherits, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -4130,11 +3550,8 @@ exports[`segment design: routine > 'env-S-RUN' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: env -S changes the environment the command inherits, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -4155,11 +3572,8 @@ exports[`segment design: routine > 'process-subst-RED' > Full access snapshot 1`
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4179,12 +3593,8 @@ exports[`segment design: routine > 'process-subst-RED' > Full access snapshot 1`
 exports[`segment design: routine > 'process-subst-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4205,11 +3615,8 @@ exports[`segment design: routine > 'read-0' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4229,12 +3636,8 @@ exports[`segment design: routine > 'read-0' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'read-1' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4254,12 +3657,8 @@ exports[`segment design: routine > 'read-1' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'read-2' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4279,12 +3678,8 @@ exports[`segment design: routine > 'read-2' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'read-3' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4304,12 +3699,8 @@ exports[`segment design: routine > 'read-3' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'read-4' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4329,12 +3720,8 @@ exports[`segment design: routine > 'read-4' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'read-5' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4354,12 +3741,8 @@ exports[`segment design: routine > 'read-5' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'read-6' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4379,12 +3762,8 @@ exports[`segment design: routine > 'read-6' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'read-7' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4405,11 +3784,8 @@ exports[`segment design: routine > 'read-8' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4430,11 +3806,8 @@ exports[`segment design: routine > 'read-9' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4455,11 +3828,8 @@ exports[`segment design: routine > 'read-10' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4480,11 +3850,8 @@ exports[`segment design: routine > 'read-11' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4507,11 +3874,8 @@ exports[`segment design: routine > 'read-12' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4534,11 +3898,8 @@ exports[`segment design: routine > 'read-13' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "This command changes a setting Murage fixes so engines never ask for input: where a here-document ends cannot be read with certainty, so Murage's pin may not hold",
+    "source": "unread-call",
   },
   "finalized": {
     "approve": null,
@@ -4559,12 +3920,8 @@ touch ~/.ssh/config",
 exports[`segment design: routine > 'read-14' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4684,12 +4041,8 @@ exports[`segment design: routine > 'read-18' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'read-19' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4709,12 +4062,8 @@ exports[`segment design: routine > 'read-19' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'read-20' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4735,11 +4084,8 @@ exports[`segment design: routine > 'round2-body-RED' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4760,11 +4106,8 @@ exports[`segment design: routine > 'round2-body-RUN' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4785,11 +4128,8 @@ exports[`segment design: routine > 'round2-word-RED' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4810,11 +4150,8 @@ exports[`segment design: routine > 'round2-word-RUN' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "a brace with too many values could name a key file",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4835,11 +4172,8 @@ exports[`segment design: routine > 'round3-body-RED' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4859,12 +4193,8 @@ exports[`segment design: routine > 'round3-body-RED' > Full access snapshot 1`] 
 exports[`segment design: routine > 'round3-body-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4885,11 +4215,8 @@ exports[`segment design: routine > 'round3-list-RED' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4909,12 +4236,8 @@ exports[`segment design: routine > 'round3-list-RED' > Full access snapshot 1`] 
 exports[`segment design: routine > 'round3-list-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -4935,11 +4258,8 @@ exports[`segment design: routine > 'round3-word-RED' > Full access snapshot 1`] 
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -4959,12 +4279,8 @@ exports[`segment design: routine > 'round3-word-RED' > Full access snapshot 1`] 
 exports[`segment design: routine > 'round3-word-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "value-path",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,
@@ -5035,11 +4351,8 @@ exports[`segment design: routine > 'sudo-u-RED' > Full access snapshot 1`] = `
 {
   "action": {
     "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys",
+    "source": "sensitive-guard",
   },
   "finalized": {
     "approve": null,
@@ -5059,12 +4372,8 @@ exports[`segment design: routine > 'sudo-u-RED' > Full access snapshot 1`] = `
 exports[`segment design: routine > 'sudo-u-RUN' > Full access snapshot 1`] = `
 {
   "action": {
-    "approve": null,
-    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
-    "reader": "held",
-    "reason": "tokenizer",
-    "rule": "unreadable",
-    "source": "always-ask",
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
   },
   "finalized": {
     "approve": null,

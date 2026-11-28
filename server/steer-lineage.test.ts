@@ -136,7 +136,7 @@ afterEach(async () => {
 
 /** A Fuigo turn on thread "desk", running and held; its interjection echo
  * (the acknowledgement) arrives `echoMs` after the write. */
-async function runningFuigo(echoMs: number) {
+async function runningFuigo(echoMs: number, extraEnv: Record<string, string> = {}, starting = false) {
   const home = join(root, "home");
   mkdirSync(join(home, ".fuigo"), { recursive: true });
   writeFileSync(join(home, ".fuigo", "auth.json"), "{}");
@@ -150,14 +150,19 @@ async function runningFuigo(echoMs: number) {
       FAKE_ACP_RPC_DUMP: dump,
       FAKE_ACP_INTERJECT: "silent",
       FAKE_ACP_LATE_ECHO_MS: String(echoMs),
+      ...extraEnv,
     },
     config: { cli: FAKE_ACP, fullAuto: false },
   });
   await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "desk", text: "Count the invoices" });
   // the fake engine rewrites its dump while this polls: a half-written file is "not yet", never a failure
   const prompted = () => { try { return existsSync(dump) && (JSON.parse(readFileSync(dump, "utf8")) as string[]).includes("session/prompt"); } catch { return false; } };
-  for (let i = 0; i < 500 && !prompted(); i++) await new Promise((r) => setTimeout(r, 20));
-  expect(prompted()).toBe(true);
+  // `starting`: the line is sent while the engine is still starting (turn.started is out, the prompt is not written yet)
+  if (starting) expect(prompted()).toBe(false);
+  else {
+    for (let i = 0; i < 500 && !prompted(); i++) await new Promise((r) => setTimeout(r, 20));
+    expect(prompted()).toBe(true);
+  }
   // the running turn's lineage and its engine session (v6 marks every session it saw)
   const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "fuigo-steer", startGeneration: 0, session: "s-desk", generation: "g-desk", turn: { threadId: "desk", turnId: "t-desk", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
   recordSessionRoots("desk", "fuigo-steer", "s-desk", lineage.roots);
@@ -174,6 +179,14 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
     expect(await adapter.steer!("desk", readFileSync(quote, "utf8"))).toBe("rejected");
     expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
     expect(methods()).not.toContain("_fuigo/interject");
+  }, 30_000);
+
+  it("turnpolish-5: a line sent through the send route's steer (steerWithQuoteLineage) while Fuigo is still starting is steered, not queued behind the turn", async () => {
+    // the engine takes 4.6 s to answer initialize: past the desk's 4 s wait for Claude, inside the 8 s Fuigo gets
+    const { adapter, lineage, methods } = await runningFuigo(300, { FAKE_ACP_INIT_DELAY_MS: "4600" }, true);
+    const turn = openTurn("desk", "t-desk");
+    expect(await steerWithQuoteLineage(adapter, "desk", "and end with a haiku", true, { holds: () => true, steerId: "slow-start", lineage, turn })).toBe("steer");
+    expect(methods()).toContain("_fuigo/interject");
   }, 30_000);
 
   it("a hook throwing MEMORY_CONTEXT_REVOKED refuses before any interjection write", async () => {
@@ -271,6 +284,20 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
     captureBranchChange(database(), "older", null);
     stampFreshSession(database(), "desk", "fuigo-steer", "s-desk"); // the session as a 1.0.3 fresh start left it (S6 rule 26)
     expect(retainedSessionInvalid(LineageAllowance.tool(), "desk", "fuigo-steer", "s-desk")).toBe(false);
+  }, 30_000);
+
+  // Real leg s5 (Fuigo, 1.0.20): the owner's next send arrived after three delegated replies had made the bot busy for
+  // their follow-up turn, but before that turn started, so no running turn existed to take the words. The steer rejected
+  // with no status and the send route answered 503 "Murage couldn't record that message"; the words were refused, not queued.
+  it("a send that finds the bot busy but no running turn yet waits in the queue: no rejection, nothing written", async () => {
+    const { adapter, methods } = await runningFuigo(300);
+    const before = methods().filter(method => method === "_fuigo/interject").length;
+    for (const allowed of [false, true]) {
+      const delivery = await steerWithQuoteLineage(adapter, "desk", "Run `sleep 150` in the shell, then reply SLEPT.", allowed, { holds: () => false, steerId: `steer-noturn-${allowed}`, lineage: undefined, turn: undefined });
+      expect(delivery).toBe("queue");
+    }
+    expect(methods().filter(method => method === "_fuigo/interject")).toHaveLength(before);
+    expect(methods().filter(method => method === "session/prompt")).toHaveLength(1);
   }, 30_000);
 
   it("a quote whose source is revoked after its text was rendered, before the fence runs, is refused: nothing written, nothing recorded", async () => {
@@ -419,11 +446,13 @@ posixOnly("ACP steer final writer", () => {
     const source = readFileSync(new URL("./drivers/acp/core.ts", import.meta.url), "utf8");
     expect(source.replace(/\s+/g, " ")).toContain(`if (steerWrite) return emitEngineWire(beforeWrite, wire, write, () => {
       if (turnHalted()) throw new Error("ACP_TURN_STOPPED");
+      checkTrustEpoch();
       if (!beforeWrite) throw new Error("MEMORY_CONTEXT_REVOKED");
       beforeWrite();
     });
     return fencedSubmit(turn, write, wire, () => {
       if (turnHalted()) throw new Error("ACP_TURN_STOPPED");
+      checkTrustEpoch();
       fenceBeforeWrite(fence, state, obj, settleHalted);
     });
     } catch (error) { if (!steerWrite) submissionRefused = true; throw error; }`.replace(/\s+/g, " "));
@@ -437,7 +466,8 @@ posixOnly("ACP steer final writer", () => {
       ts.forEachChild(node, walk);
     };
     walk(tree);
-    expect(callers).toEqual(['request("session/prompt", { sessionId, prompt: [{ type: "text", text }] }, undefined, acpPromptIdleTimeoutMs(), undefined, undefined, undefined, beforeWrite, true)']);
+    // design-1022-grokwarm B3: the steer prompt carries its prompt id when this dispatch classifies frames (flag ON + capability)
+    expect(callers).toEqual(['request("session/prompt", { sessionId, prompt: [{ type: "text", text }], ...(pscope.on ? promptMetaOf() : {}) }, undefined, acpPromptIdleTimeoutMs(), undefined, undefined, undefined, beforeWrite, true)']);
   });
 });
 

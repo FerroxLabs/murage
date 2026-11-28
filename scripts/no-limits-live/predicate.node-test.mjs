@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { safeWipeSync } from '../../server/testing/safe-wipe.mjs';
 test('one predicate means one implementation, not imports or duplicate definitions',async()=>{
   const {predicateDefinitions}=await import('./predicate-inventory.mjs');
   const root=mkdtempSync(join(tmpdir(),'gnl-predicate-'));
@@ -13,5 +14,5 @@ test('one predicate means one implementation, not imports or duplicate definitio
     assert.equal(predicateDefinitions(root).length,1);
     writeFileSync(join(root,'shared','duplicate.ts'),'export const noLimitsAppliesTo = value => value.level === "unlimited";');
     assert.equal(predicateDefinitions(root).length,2);
-  }finally{rmSync(root,{recursive:true,force:true});}
+  }finally{safeWipeSync(root);}
 });
